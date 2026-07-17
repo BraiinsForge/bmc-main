@@ -14,11 +14,12 @@ use bmc_wasm_sdk::*;
 
 use crate::screens::icons;
 use crate::screens::parts::{
-    BACK_CHIP, BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
-    TITLE_FONT, VALUE_FONT, back_button, icon, scaled_area_chart, status_glyph,
+    BACK_CHIP, BORDER, CARD_BG, Crumb, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
+    VALUE_FONT, back_button, breadcrumb, icon, scaled_area_chart, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::telemetry::DeviceTemp;
+use crate::view::{CrumbTarget, crumb_click_id};
 
 // Charts need an explicit canvas size, so derive each tile's inner dimensions
 // from the frame: a 4-wide, 2-tall grid filling the body below the header.
@@ -32,6 +33,7 @@ const STATE_ICON: f32 = 32.0;
 
 #[derive(Debug)]
 pub struct DeviceDetailData {
+    pub fleet_name: String,
     pub model: String,
     pub hostname: String,
     pub ip: String,
@@ -51,7 +53,7 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
     col(
         props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
         [
-            header(&d.model, &d.hostname),
+            header(&d.fleet_name, &d.model, &d.hostname),
             col(
                 props!(gap: GAP, flex: 1.0),
                 [
@@ -103,15 +105,25 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
     )
 }
 
-fn header(model: &str, hostname: &str) -> Node {
+fn header(fleet_name: &str, model: &str, hostname: &str) -> Node {
     row(
         props!(height: BACK_CHIP, cross_align: CrossAlign::Center, gap: 16.0),
         [
             back_button(),
-            text(
-                fmt!("{model} - {hostname}"),
-                style!(size: TITLE_FONT, weight: FontWeight::BOLD, color: WHITE),
-            ),
+            breadcrumb(&[
+                Crumb {
+                    label: fleet_name,
+                    click_id: Some(crumb_click_id(CrumbTarget::Fleet)),
+                },
+                Crumb {
+                    label: model,
+                    click_id: Some(crumb_click_id(CrumbTarget::Model)),
+                },
+                Crumb {
+                    label: hostname,
+                    click_id: None,
+                },
+            ]),
         ],
     )
 }

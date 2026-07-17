@@ -65,11 +65,21 @@ pub enum ClickAction {
         id: String,
     },
     Back,
+    /// Jump straight to an ancestor level from a breadcrumb segment, skipping
+    /// intermediate levels that a one-step Back would stop at.
+    Jump(CrumbTarget),
     Page {
         scope: PagerScope,
         turn: PageTurn,
     },
     SetView(ViewMode),
+}
+
+/// The ancestor level a breadcrumb jump targets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CrumbTarget {
+    Fleet,
+    Model,
 }
 
 /// Which view's pager a click belongs to.
@@ -94,6 +104,15 @@ pub const fn view_click_id(mode: ViewMode) -> &'static str {
     match mode {
         ViewMode::Grid => "view:grid",
         ViewMode::List => "view:list",
+    }
+}
+
+/// The click id of a breadcrumb segment that jumps to an ancestor level.
+#[must_use]
+pub const fn crumb_click_id(target: CrumbTarget) -> &'static str {
+    match target {
+        CrumbTarget::Fleet => "crumb:fleet",
+        CrumbTarget::Model => "crumb:model",
     }
 }
 
@@ -136,6 +155,11 @@ pub fn device_click_id(id: &str) -> String {
 pub fn parse_click(id: &str) -> Option<ClickAction> {
     if id == "back" {
         return Some(ClickAction::Back);
+    }
+    for target in [CrumbTarget::Fleet, CrumbTarget::Model] {
+        if id == crumb_click_id(target) {
+            return Some(ClickAction::Jump(target));
+        }
     }
     for mode in [ViewMode::Grid, ViewMode::List] {
         if id == view_click_id(mode) {
@@ -208,6 +232,11 @@ pub fn apply(state: &mut ViewState, action: ClickAction, page_count: usize) -> b
             }
             state.model_detail.take().is_some()
         }
+        ClickAction::Jump(CrumbTarget::Fleet) => state.model_detail.take().is_some(),
+        ClickAction::Jump(CrumbTarget::Model) => state
+            .model_detail
+            .as_mut()
+            .is_some_and(|detail| detail.device.take().is_some()),
         ClickAction::SetView(mode) => {
             if state.mode == mode {
                 return false;
@@ -568,5 +597,54 @@ mod tests {
             1,
         ));
         assert!(state.model_detail.is_none());
+    }
+
+    #[test]
+    fn crumb_ids_round_trip_to_jumps() {
+        assert_eq!(
+            parse_click("crumb:fleet"),
+            Some(ClickAction::Jump(CrumbTarget::Fleet))
+        );
+        assert_eq!(
+            parse_click("crumb:model"),
+            Some(ClickAction::Jump(CrumbTarget::Model))
+        );
+    }
+
+    fn drilled_into_device() -> ViewState {
+        let mut state = ViewState::new();
+        state.fleet_page = 2;
+        state.model_detail = Some(ModelDetailSelection {
+            family: Some(DeviceFamily::Bos),
+            label: "BMM 101".to_owned(),
+            page: 1,
+            device: Some("bos/a".to_owned()),
+        });
+        state
+    }
+
+    #[test]
+    fn jump_to_fleet_from_a_device_clears_the_whole_selection() {
+        let mut state = drilled_into_device();
+        assert!(apply(&mut state, ClickAction::Jump(CrumbTarget::Fleet), 1));
+        assert!(
+            state.model_detail.is_none(),
+            "a two-level jump lands on the fleet"
+        );
+        assert_eq!(state.fleet_page, 2, "the fleet page is restored");
+        assert!(!apply(&mut state, ClickAction::Jump(CrumbTarget::Fleet), 1));
+    }
+
+    #[test]
+    fn jump_to_model_from_a_device_drops_only_the_device() {
+        let mut state = drilled_into_device();
+        assert!(apply(&mut state, ClickAction::Jump(CrumbTarget::Model), 1));
+        let sel = state
+            .model_detail
+            .as_ref()
+            .expect("BUG: still on the model");
+        assert_eq!(sel.device, None);
+        assert_eq!(sel.page, 1, "the model page is kept");
+        assert!(!apply(&mut state, ClickAction::Jump(CrumbTarget::Model), 1));
     }
 }

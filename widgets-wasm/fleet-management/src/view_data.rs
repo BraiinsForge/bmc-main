@@ -97,6 +97,7 @@ impl ModelDetailViewData {
     /// (id, group) pairs and each device's recorded history.
     #[must_use]
     pub(crate) fn from_summary(
+        fleet_name: &str,
         title: &str,
         rows: &[(DeviceId, GroupSummary, DeviceStatus)],
         page: usize,
@@ -122,6 +123,7 @@ impl ModelDetailViewData {
             })
             .collect();
         Self {
+            fleet_name: fleet_name.to_owned(),
             title: title.to_owned(),
             device_count: rows.len(),
             rows: devices,
@@ -142,6 +144,7 @@ impl DeviceDetailData {
     /// the raw reading gives MAC/uptime/nominal/temperature.
     #[must_use]
     pub(crate) fn from_device(
+        fleet_name: &str,
         model: &str,
         group: &GroupSummary,
         device: &KnownDevice,
@@ -153,6 +156,7 @@ impl DeviceDetailData {
             .or_else(|| device.model.as_ref().and_then(|m| m.nominal_hashrate_ths));
         let state = device_status(device);
         Self {
+            fleet_name: fleet_name.to_owned(),
             model: model.to_owned(),
             hostname: group.label.clone(),
             ip: device.identity.host.clone(),
@@ -239,12 +243,12 @@ mod tests {
             })
             .collect();
         let history = HashrateHistory::default();
-        let first = ModelDetailViewData::from_summary("BMM 101", &rows, 0, &history);
+        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &history);
         assert_eq!(first.device_count, 6);
         assert_eq!(first.page_count, 2, "6 devices, 4 per page");
         assert_eq!(first.rows.len(), MODEL_DETAIL_PAGE_SIZE);
         assert_eq!(first.rows[0].click_id, "device:dev-0");
-        let last = ModelDetailViewData::from_summary("BMM 101", &rows, 9, &history);
+        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &history);
         assert_eq!(last.page, 1, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 2);
     }
@@ -291,6 +295,7 @@ mod tests {
             ..TelemetryReading::default()
         };
         let data = DeviceDetailData::from_device(
+            "Rig",
             "Mini Miner",
             &grp("John's Miner", 1, 1, 0),
             &device(None, Some(reading)),
@@ -331,7 +336,8 @@ mod tests {
         // Unreachable with no telemetry: state comes from the device, not the group.
         let mut dev = device(Some(model), None);
         dev.reachable = false;
-        let data = DeviceDetailData::from_device("HashNode", &grp("bmm", 1, 0, 1), &dev, vec![]);
+        let data =
+            DeviceDetailData::from_device("Rig", "HashNode", &grp("bmm", 1, 0, 1), &dev, vec![]);
         assert_eq!(data.state, DeviceStatus::Unreachable);
         assert_eq!(data.mac, None);
         assert_eq!(data.uptime_hours, 0);

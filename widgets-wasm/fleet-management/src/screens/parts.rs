@@ -13,6 +13,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::summary::DeviceStatus;
 use crate::view::{PageTurn, PagerScope, ViewMode, pager_click_id, view_click_id};
@@ -27,6 +28,7 @@ pub const DEGRADED: Color = ORANGE_40;
 pub const OFF: Color = BLUE_60;
 pub const ERROR: Color = RED_50;
 pub const CHART: Color = VIOLET_60;
+pub const LINK: Color = VIOLET_50;
 
 pub const TITLE_FONT: u32 = 24;
 pub const VALUE_FONT: u32 = 40;
@@ -63,7 +65,8 @@ pub fn icon(svg: &Svg, size: f32, color: Color) -> Node {
     )
 }
 
-// The back chip — a tappable `back` button with a left chevron.
+/// The Back chip — steps out one nav level (device → model → fleet), while a
+/// breadcrumb jumps straight to any ancestor.
 #[must_use]
 pub fn back_button() -> Node {
     touchable(
@@ -71,6 +74,39 @@ pub fn back_button() -> Node {
         props!(width: BACK_CHIP, height: BACK_CHIP, background: GRAY_90),
         vec![Draw::svg(10.0, 10.0, 20.0, 20.0, &icons::CHEVRON_LEFT, WHITE).with_anti_alias()],
     )
+}
+
+const CRUMB_FONT: u32 = TITLE_FONT;
+const CRUMB_MAX_CHARS: usize = 22;
+
+/// One breadcrumb segment: an ancestor jump when `click_id` is set,
+/// else the current level (plain, non-clickable).
+#[derive(Debug)]
+pub struct Crumb<'a> {
+    pub label: &'a str,
+    pub click_id: Option<&'a str>,
+}
+
+/// A `/`-separated path — ancestors link-coloured and tappable (each jumps
+/// straight to its level), ending in the plain, non-clickable current level.
+#[must_use]
+pub fn breadcrumb(crumbs: &[Crumb<'_>]) -> Node {
+    let mut children: Vec<Node> = Vec::new();
+    for (i, crumb) in crumbs.iter().enumerate() {
+        if i > 0 {
+            children.push(text("/", style!(size: CRUMB_FONT, color: LABEL)));
+        }
+        children.push(crumb_segment(crumb));
+    }
+    row(props!(cross_align: CrossAlign::Center, gap: 12.0), children)
+}
+
+fn crumb_segment(crumb: &Crumb<'_>) -> Node {
+    let label = truncate_label(crumb.label, CRUMB_MAX_CHARS);
+    match crumb.click_id {
+        Some(id) => link(id, &label, style!(size: CRUMB_FONT, color: LINK)),
+        None => text(label, style!(size: CRUMB_FONT, color: WHITE)),
+    }
 }
 
 #[must_use]

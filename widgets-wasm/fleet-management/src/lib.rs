@@ -524,7 +524,11 @@ pub extern "C" fn render(_delta_ms: u32) {
                                     .find(|dev| dev.identity.id.as_str() == device_id)
                                     .map(|dev| {
                                         screens::device_detail::DeviceDetailData::from_device(
-                                            &sel.label, group, dev, series,
+                                            &derived.fleet_name,
+                                            &sel.label,
+                                            group,
+                                            dev,
+                                            series,
                                         )
                                     })
                             })
@@ -534,6 +538,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                     } else {
                         let data = HISTORY.with(|h| {
                             screens::model_detail::ModelDetailViewData::from_summary(
+                                &derived.fleet_name,
                                 &sel.label,
                                 rows,
                                 sel.page,
@@ -546,6 +551,7 @@ pub extern "C" fn render(_delta_ms: u32) {
                 } else {
                     let data = HISTORY.with(|h| {
                         screens::model_detail::ModelDetailViewData::from_summary(
+                            &derived.fleet_name,
                             &sel.label,
                             rows,
                             sel.page,

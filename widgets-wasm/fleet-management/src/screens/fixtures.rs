@@ -280,6 +280,7 @@ pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
         .take(TABLE_PAGE_SIZE)
         .collect();
     ModelDetailViewData {
+        fleet_name: "Dominika's Mining Rig".to_owned(),
         title: "BOS BMM".to_owned(),
         device_count,
         rows,
@@ -294,6 +295,7 @@ fn device_detail_fixture(
     state: DeviceStatus,
 ) -> DeviceDetailData {
     DeviceDetailData {
+        fleet_name: "Dominika's Mining Rig".to_owned(),
         model: "Mini Miner".to_owned(),
         hostname: "John's Miner".to_owned(),
         ip: "192.111.18".to_owned(),

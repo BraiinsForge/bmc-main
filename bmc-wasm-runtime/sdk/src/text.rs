@@ -21,10 +21,11 @@
 //! Text primitives: spans, styles, and text/paragraph builders.
 
 use bmc_wasm_protocol::{
-    AnimProperty, Color, Easing, FontWeight, GRAY_10, LoopMode, PropsData, TextStyle,
+    AnimProperty, Color, CrossAlign, Easing, FontWeight, GRAY_10, LoopMode, PropsData, TextStyle,
 };
 
-use crate::tree::Node;
+use crate::props;
+use crate::tree::{Draw, Node, row, touchable};
 
 /// Definition of a single animation (serialized to host).
 #[derive(Clone, Debug)]
@@ -187,6 +188,25 @@ pub fn text(content: impl Into<String>, style: StyleResult) -> Node {
         base_style: style.0,
         spans: vec![span(content, ())],
     }
+}
+
+/// Tappable text that hugs its label: the label sizes the box and a transparent,
+/// touch-keyed canvas absolutely fills it, so the hit region matches the glyphs.
+/// The SDK can't measure text, so the overlay avoids guessing a width. `id` is
+/// the click key surfaced in the render readback.
+#[must_use]
+pub fn link(id: &str, label: impl Into<String>, style: StyleResult) -> Node {
+    row(
+        props!(cross_align: CrossAlign::Center),
+        [
+            text(label, style),
+            touchable(
+                id,
+                props!(inset_top: 0.0, inset_right: 0.0, inset_bottom: 0.0, inset_left: 0.0),
+                Vec::<Draw>::new(),
+            ),
+        ],
+    )
 }
 
 /// Rich paragraph with multiple styled spans

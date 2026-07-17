@@ -12,12 +12,12 @@ use bmc_wasm_sdk::*;
 use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::screens::parts::{
-    BACK_CHIP, BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
-    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TITLE_FONT, area_chart, back_button,
+    BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
+    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, area_chart, back_button, breadcrumb,
     icon, pager, status_glyph,
 };
 use crate::summary::DeviceStatus;
-use crate::view::PagerScope;
+use crate::view::{CrumbTarget, PagerScope, crumb_click_id};
 
 // Column widths within the table card.
 const COL_HOST: f32 = 260.0;
@@ -49,6 +49,7 @@ pub struct DeviceRow {
 
 #[derive(Debug)]
 pub struct ModelDetailViewData {
+    pub fleet_name: String,
     /// The drilled-into model name.
     pub title: String,
     pub device_count: usize,
@@ -62,7 +63,7 @@ pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
     col(
         props!(background: BLACK, width: FRAME_W, height: FRAME_H, padding: PAD, gap: 16.0),
         [
-            detail_header(&data.title, data.device_count),
+            detail_header(&data.fleet_name, &data.title, data.device_count),
             row(
                 props!(gap: GAP, flex: 1.0),
                 [
@@ -74,15 +75,21 @@ pub fn model_detail_view(data: &ModelDetailViewData) -> Node {
     )
 }
 
-fn detail_header(title: &str, count: usize) -> Node {
+fn detail_header(fleet_name: &str, title: &str, count: usize) -> Node {
     row(
         props!(height: BACK_CHIP, cross_align: CrossAlign::Center, gap: 16.0),
         [
             back_button(),
-            text(
-                title,
-                style!(size: TITLE_FONT, weight: FontWeight::BOLD, color: WHITE),
-            ),
+            breadcrumb(&[
+                Crumb {
+                    label: fleet_name,
+                    click_id: Some(crumb_click_id(CrumbTarget::Fleet)),
+                },
+                Crumb {
+                    label: title,
+                    click_id: None,
+                },
+            ]),
             text(
                 fmt!("{count} Devices"),
                 style!(size: LABEL_FONT, color: LABEL),
