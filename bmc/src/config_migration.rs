@@ -78,12 +78,15 @@ struct FormatHeader {
 /// the v0 → current mapping is still in scope.
 #[derive(Debug, Clone, Default)]
 pub struct Report {
-    /// Scenes in the source (unchanged by the upgrade).
+    /// Scenes that survived the upgrade, i.e. kept at least one widget.
     pub scenes: usize,
+    /// Scenes dropped because every widget in them was dropped,
+    /// leaving the scene empty.
+    pub dropped_scenes: usize,
     /// Widgets that survived the upgrade with a reserved
     /// `widget_type_id`. Includes both deep-translated widgets
-    /// (e.g. digital-clock) and pass-through widgets whose params
-    /// are handed unchanged to a future manifest.
+    /// (clock, block height, remote image) and pass-through widgets
+    /// whose params are handed unchanged to a future manifest.
     pub translated_widgets: usize,
     /// Widgets dropped because their v0 `kind` or `remote_widget`
     /// URL did not match any reserved UID in the current schema.
@@ -189,6 +192,19 @@ impl FromStr for LoadedConfig {
     }
 }
 
+/// Best-effort read of the `version` field from a raw config without
+/// committing to a full parse. `None` if the text is not even valid
+/// JSON. The boot path uses this to tell a genuinely corrupt config
+/// (safe to replace after backing it up) apart from a readable config
+/// whose version is newer than this firmware understands (which must
+/// be preserved, never clobbered — see the downgrade-refusal story).
+#[must_use]
+pub fn peek_version(raw: &str) -> Option<u32> {
+    serde_json::from_str::<FormatHeader>(raw)
+        .ok()
+        .map(|header| header.version)
+}
+
 /// Read a config from disk and upgrade it to the current schema in
 /// memory. No disk writes other than the one-time legacy-path move
 /// from `/etc/bmc_config.json` → `/etc/bmc/config.json` (see
@@ -290,8 +306,9 @@ pub async fn migrate_on_disk(path: &Path) -> Result<LoadedConfig> {
     {
         info!(
             scenes = report.scenes,
-            translated = report.translated_widgets,
-            dropped = report.dropped_widgets,
+            dropped_scenes = report.dropped_scenes,
+            translated_widgets = report.translated_widgets,
+            dropped_widgets = report.dropped_widgets,
             "upgrading legacy config on disk",
         );
         save_with_backup(current, path).await?;

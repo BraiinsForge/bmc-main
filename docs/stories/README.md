@@ -93,10 +93,9 @@ Information about all implemented official widgets.
 
 ### [Config Migration on Firmware Upgrade](config-migration.md)
 
-When upgrading from the slint-monolith firmware to the manifest-driven widget
-system, the existing config is converted automatically.  Scenes and widget
-positions survive; widgets without a manifest yet leave placeholders that a
-future firmware can restore without user re-entry.
+When upgrading from the slint-monolith firmware to the manifest-driven widget system, the existing config is converted
+automatically. Scenes and widget positions survive; widgets this firmware can't translate are dropped with a warning
+rather than kept as placeholders.
 
 ### Audio & Alarms
 

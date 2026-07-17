@@ -347,23 +347,10 @@ impl Config {
         Ok(())
     }
 
-    async fn load(path: impl AsRef<Path>) -> Result<Self> {
-        let config_data = fs::read_to_string(path)
-            .await
-            .context("Failed to read config file")?;
-
-        let config: Self =
-            serde_json::from_str(config_data.as_str()).context("Failed to deserialize config")?;
-
-        config.validate().context("Config validation failed")?;
-
-        Ok(config)
-    }
-
     async fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
         // Belt-and-braces: every on-disk config carries the current
-        // schema version. `Default::default()` already sets it, but a
-        // caller could mutate `self.version` directly — pin it here.
+        // schema version. Constructors already set it, but a caller
+        // could mutate `self.version` directly — pin it here.
         self.version = CONFIG_VERSION;
         let config_data =
             serde_json::to_string_pretty(&self).context("Failed to serialize config")?;
@@ -377,6 +364,34 @@ impl Config {
 }
 
 impl Config {
+    /// Assemble a current-schema config from the parts a v0 migration
+    /// can recover: the scene layout and the account list. Everything
+    /// else (localization, night mode, alarms, autoupgrade, …) starts
+    /// empty and falls back to the same defaults a field-less current
+    /// config would use. `version` is pinned to [`CONFIG_VERSION`] so
+    /// the migrated config serialises as the current schema without a
+    /// further save-time fixup.
+    pub(crate) fn from_migrated_parts(
+        scenes: IndexMap<SceneId, Scene>,
+        accounts: IndexMap<AccountId, Account>,
+    ) -> Self {
+        Self {
+            version: CONFIG_VERSION,
+            scenes,
+            scene_cycling: None,
+            localization: None,
+            data_collection: None,
+            brightness_pct: None,
+            night_mode: None,
+            sound_volume_pct: None,
+            alarms: None,
+            led_enabled: None,
+            boot_sound_enabled: None,
+            autoupgrade: None,
+            accounts,
+        }
+    }
+
     #[must_use]
     pub fn platform_default(product: bmc_platform::Product) -> Self {
         Self {
@@ -429,6 +444,60 @@ pub struct ConfigHandle {
 }
 
 impl ConfigHandle {
+    /// Load the config, migrating a legacy schema to the current one
+    /// in place if needed, and validate the result. A migration
+    /// rewrites the on-disk file (after a timestamped backup); an
+    /// already-current config is loaded untouched.
+    async fn load_migrate_validate(path: &Path) -> Result<Config> {
+        let loaded = crate::config_migration::migrate_on_disk(path).await?;
+        let config = loaded.into_current();
+        config
+            .validate()
+            .context("loaded config failed validation")?;
+        Ok(config)
+    }
+
+    /// Fallback when [`Self::load_migrate_validate`] fails. A config on
+    /// disk whose declared version is newer than this firmware
+    /// understands must never be overwritten — a newer firmware may
+    /// have written it, and the user can roll forward or restore a
+    /// backup. In that case keep in-memory defaults but leave the file
+    /// intact. Any other failure means the file is corrupt or missing:
+    /// back it up (if present) and replace it with a platform default.
+    async fn recover_from_failed_load(path: &Path, product: bmc_platform::Product) -> Config {
+        if let Ok(raw) = fs::read_to_string(path).await
+            && crate::config_migration::peek_version(&raw).is_some_and(|v| v > CONFIG_VERSION)
+        {
+            warn!(
+                path = %path.display(),
+                current = CONFIG_VERSION,
+                "config on disk declares a newer schema than this firmware understands; \
+                 refusing to overwrite it. Using in-memory defaults — restore a \
+                 `.backup.<ts>` copy or update the firmware to recover the saved config."
+            );
+            return Config::platform_default(product);
+        }
+
+        warn!("Replacing unreadable config with default config");
+        if path.exists() {
+            let backup_path = path.with_extension("json.bcp");
+            if let Err(err) = fs::copy(path, &backup_path).await {
+                warn!(
+                    "Failed to back up config to {}: {err:#}",
+                    backup_path.display()
+                );
+            } else {
+                warn!("Backed up broken config to {}", backup_path.display());
+            }
+        }
+
+        let mut default_config = Config::platform_default(product);
+        if let Err(err) = default_config.save(path).await {
+            warn!(?err, "Failed to save default config");
+        }
+        default_config
+    }
+
     pub async fn init(
         path: PathBuf,
         default_brightness_pct: u8,
@@ -437,30 +506,15 @@ impl ConfigHandle {
         default_night_mode_sound_volume_pct: u8,
         product: bmc_platform::Product,
     ) -> Self {
-        let config = match Config::load(&path).await {
+        // On first boot of the new firmware this migrates a legacy
+        // `version: 0` config in place (backing it up first) and, from
+        // then on, is a cheap no-op for already-current configs. See
+        // `crate::config_migration`.
+        let config = match Self::load_migrate_validate(&path).await {
             Ok(config) => config,
             Err(err) => {
-                warn!(?err, "Failed to load config. Replacing with default config");
-
-                if path.exists() {
-                    let backup_path = path.with_extension("json.bcp");
-                    if let Err(err) = fs::copy(&path, &backup_path).await {
-                        warn!(
-                            "Failed to back up config to {}: {err:#}",
-                            backup_path.display()
-                        );
-                    } else {
-                        warn!("Backed up broken config to {}", backup_path.display());
-                    }
-                }
-
-                let mut default_config = Config::platform_default(product);
-
-                if let Err(err) = default_config.save(&path).await {
-                    warn!(?err, "Failed to save default config");
-                }
-
-                default_config
+                warn!(?err, "Failed to load or migrate config");
+                Self::recover_from_failed_load(&path, product).await
             }
         };
 
@@ -956,6 +1010,83 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "no notification must be sent when sound settings are untouched"
+        );
+    }
+
+    /// A legacy (`version: 0`) config on disk must be migrated in
+    /// place when `ConfigHandle::init` loads it: the on-disk file is
+    /// rewritten to the current schema and a timestamped backup of the
+    /// original is left next to it.
+    #[tokio::test]
+    async fn init_migrates_legacy_config_in_place() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let legacy = r#"{
+            "scenes": [
+                {
+                    "id": "a418d38d-a506-489d-9627-0c7909374ef1",
+                    "enabled": true,
+                    "kind": "fullscreen",
+                    "widgets": [
+                        {
+                            "id": "3c32f8c7-e678-466d-a331-39b5c8f89153",
+                            "row": 0, "col": 0, "size": "full", "kind": "clock",
+                            "params": { "clock_style": "digital" }
+                        }
+                    ]
+                }
+            ],
+            "accounts": []
+        }"#;
+        fs::write(&path, legacy)
+            .await
+            .expect("BUG: seed legacy file");
+
+        let handle =
+            ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+        assert_eq!(handle.config.version, CONFIG_VERSION);
+        assert_eq!(handle.config.scenes().len(), 1);
+
+        // The file on disk must now be the current schema, not the
+        // legacy shape we seeded.
+        let on_disk = fs::read_to_string(&path).await.expect("BUG: read migrated");
+        let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
+        assert_eq!(v["version"], CONFIG_VERSION);
+
+        let mut saw_backup = false;
+        let mut entries = fs::read_dir(dir.path()).await.expect("BUG: readdir");
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .contains("config.json.backup.")
+            {
+                saw_backup = true;
+            }
+        }
+        assert!(saw_backup, "migration must leave a timestamped backup");
+    }
+
+    /// A config whose declared schema version is newer than this
+    /// firmware understands must never be overwritten — the boot path
+    /// falls back to in-memory defaults but leaves the file intact so
+    /// the user can restore a backup or roll the firmware forward.
+    #[tokio::test]
+    async fn init_refuses_to_overwrite_newer_config() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let newer = format!(r#"{{"version":{},"scenes":[]}}"#, CONFIG_VERSION + 1);
+        fs::write(&path, &newer)
+            .await
+            .expect("BUG: seed newer file");
+
+        let _handle =
+            ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+
+        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
+        assert_eq!(
+            on_disk, newer,
+            "newer-version config must be left untouched"
         );
     }
 }

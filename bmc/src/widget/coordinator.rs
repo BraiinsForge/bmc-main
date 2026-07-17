@@ -500,17 +500,13 @@ impl Coordinator {
     pub async fn spawn_widget(&self, scene_id: &crate::scene::SceneId, widget: &Widget) {
         let instance_id = widget.id.as_uuid().to_string();
 
-        // Migration placeholders (BDK-346) carry `Uuid::nil()` as their
-        // widget_type_id because the legacy kind has no matching
-        // manifest. They are not runnable — skip silently so the grid
-        // cell stays empty and the boot log isn't flooded with
-        // not-found errors for every placeholder on every scene.
+        // Defensive: a widget with a nil `widget_type_id` has no
+        // manifest to run. The v0 config migration never
+        // emits nil UIDs, but a hand-edited or malformed config could.
+        // Skip it so the grid cell stays empty instead of logging a
+        // not-found error on every scene.
         if widget.widget_type_id.is_nil() {
-            info!(
-                scene_id = %scene_id,
-                widget_id = %instance_id,
-                "skipping migration placeholder widget (no manifest installed for its legacy kind)"
-            );
+            info!(widget_id = %instance_id, "skipping widget with nil widget_type_id");
             return;
         }
 

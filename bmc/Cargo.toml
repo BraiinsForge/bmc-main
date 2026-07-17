@@ -82,12 +82,14 @@ tower-http = { workspace = true, features = [
     "normalize-path",
 ] }
 tracing.workspace = true
+# Used by the `bmc-migrate-config` bin to surface the migration's
+# per-widget `warn!` output; also by the widget-capture test harness.
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
 uuid.workspace = true
 walkdir.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-tracing-subscriber = { workspace = true, features = ["env-filter"] }
 
 [lints]
 workspace = true

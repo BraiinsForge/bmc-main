@@ -35,14 +35,18 @@ async fn migrates_device_sample_without_losing_scenes() {
     let report = loaded
         .report()
         .expect("BUG: migrated load must carry a report");
+    // The fixture has 3 scenes; the ticker-only scene loses its sole
+    // widget (`ticker_btc` has no native counterpart) and drops with
+    // it, per the no-placeholders policy.
+    assert_eq!(report.scenes, 2, "both scenes with survivors must stay");
+    assert_eq!(report.dropped_scenes, 1, "the ticker-only scene drops");
     assert_eq!(
-        report.scenes, 3,
-        "fixture has 3 scenes and they must all survive",
+        report.translated_widgets, 3,
+        "both clocks and the block height must translate",
     );
-    assert!(
-        report.translated_widgets >= 1,
-        "at least the digital clock must translate (got {})",
-        report.translated_widgets,
+    assert_eq!(
+        report.dropped_widgets, 2,
+        "both ticker_btc widgets must drop",
     );
 
     // The preserved v0 struct must still be available after the
@@ -52,7 +56,11 @@ async fn migrates_device_sample_without_losing_scenes() {
     let original = loaded
         .original_v0()
         .expect("BUG: migrated load must preserve the v0 struct");
-    assert_eq!(original.scenes.len(), 3);
+    assert_eq!(
+        original.scenes.len(),
+        3,
+        "the preserved v0 struct keeps all scenes, dropped or not"
+    );
 
     // The number of widgets on disk equals translated (dropped
     // widgets do not appear in the output).
@@ -69,7 +77,7 @@ async fn migrates_device_sample_without_losing_scenes() {
     let scenes = v["scenes"]
         .as_array()
         .expect("BUG: migrated config must have a scenes array");
-    assert_eq!(scenes.len(), 3);
+    assert_eq!(scenes.len(), 2, "the dropped scene must not be on disk");
 
     // Post-upgrade invariant: every widget carries a reserved
     // (non-nil) UID. No placeholder widgets are allowed.

@@ -11,47 +11,49 @@
 //!   widget either maps to a reserved `widget_type_id` in the
 //!   current schema or is dropped outright with a `warn!`. There is
 //!   no `_legacy` / `_legacy_remote` placeholder in the output.
-//! - **Each known widget class has a reserved UID.** Native kinds
-//!   (`clock`, `ticker_btc`, …) use sequential UIDs matching the
-//!   manifest convention (`550e8400-e29b-41d4-a716-44665544000N`).
+//! - **Each mapped widget targets a real manifest UID.** Native
+//!   kinds (`clock`, `block_height`, `remote_image`) map to the
+//!   `uid` declared in their `widgets-wasm/*/manifest.json`.
 //!   Braiinsforge-hosted remote widgets use deterministic UUID v5
 //!   derived from their URL slug, so adding a new remote widget is
 //!   one line in [`REMOTE_WIDGET_SLUGS`] without any UUID bookkeeping.
-//! - **Deep translators only where the target manifest already
-//!   ships.** Today that is just the digital-clock variant of the
-//!   legacy `clock` widget. Everything else passes `params` through
-//!   untouched; the future widget's manifest is authoritative over
-//!   its own param schema and can migrate internally when it loads.
+//! - **Deep translation where param shape changed.** `clock`,
+//!   `block_height`, and `remote_image` get value-level translation
+//!   (font-weight vocabulary, humantime → seconds, enum renames)
+//!   into their shipped manifest's param names. Remote widgets pass
+//!   their inner `params` through untouched; that widget's manifest
+//!   is authoritative over its own schema and can migrate internally
+//!   when it loads.
 //! - **Unknown v0 kinds or unrecognised remote-widget URLs drop.**
 //!   Per review, users migrate all widgets at once; an unmappable
 //!   widget is an edge case, not an inter-state we need to preserve.
 
+use std::collections::BTreeMap;
+use std::time::Duration;
+
+use bmc_widget_manifest::{ParamKey, ParamValue, ViewportShape};
 use indexmap::IndexMap;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use tracing::warn;
 use uuid::Uuid;
 
 use super::{Report, Upgrade, Version, v0};
 use crate::config::Config;
-use crate::scene::{Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPosition, WidgetSize};
+use crate::scene::{
+    Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
+};
 
 // --- Reserved UIDs for native v0 widget kinds -------------------------------
 //
-// The digital-clock and flip-clock UIDs are the real values declared in
-// the widgets' `manifest.json` files. The remaining IDs are dummies
-// reserved in advance so that migrated configs can reference the
-// eventual manifest widget without re-migration when it ships. Order
-// matches the `WidgetKind` enum in `bmc-display/src/data.rs`.
+// Each constant is the real `uid` declared in the corresponding widget's
+// `manifest.json` under `widgets-wasm/`:
+//   CLOCK_UID        -> widgets-wasm/clock
+//   BLOCK_HEIGHT_UID -> widgets-wasm/blockheight
+//   REMOTE_IMAGE_UID -> widgets-wasm/image
 
-const DIGITAL_CLOCK_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0001);
-const ANALOG_ROUND_CLOCK_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0003);
-const ANALOG_RECT_CLOCK_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0004);
-const TICKER_BTC_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0005);
-const BLOCK_HEIGHT_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0006);
-const BRAIINS_POOL_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0007);
-const REMOTE_IMAGE_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0008);
-const BLOCKCHAIN_DATA_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_0009);
-const HALVING_COUNTDOWN_UID: Uuid = Uuid::from_u128(0x550e_8400_e29b_41d4_a716_4466_5544_000a);
+const CLOCK_UID: Uuid = Uuid::from_u128(0xfbc8_67c9_b722_4bdb_8738_c15d_20fe_2b88);
+const BLOCK_HEIGHT_UID: Uuid = Uuid::from_u128(0x7cb5_84a8_1f26_42a0_867e_955a_add2_391c);
+const REMOTE_IMAGE_UID: Uuid = Uuid::from_u128(0xf9e4_956c_719d_450c_909d_4fc9_d444_0e15);
 
 // --- Reserved UIDs for Braiinsforge remote widgets --------------------------
 
@@ -101,28 +103,21 @@ impl Upgrade for v0::Config {
 /// caller that wants counts (`LoadedConfig::from_str`) can get them
 /// without re-walking the result.
 pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
-    let mut report = Report {
-        scenes: v0.scenes.len(),
-        ..Report::default()
-    };
+    let mut report = Report::default();
 
     let scenes: IndexMap<SceneId, Scene> = v0
         .scenes
         .iter()
-        .map(|scene| {
-            let converted = upgrade_scene(scene, &mut report);
-            (converted.id, converted)
-        })
+        .filter_map(|scene| upgrade_scene(scene, &mut report).map(|scene| (scene.id, scene)))
         .collect();
 
     // The current `Config` has more fields than v0 ever knew about
-    // (localization, night mode, alarms, autoupgrade, …). Start from
-    // `Default::default()` and overwrite only what v0 can derive.
-    // Everything else inherits sensible defaults from the current
-    // schema.
-    let mut current = Config::default();
-    current.scenes = scenes;
-    current.accounts = deserialize_accounts_passthrough(v0.accounts);
+    // (localization, night mode, alarms, autoupgrade, …). Only the
+    // scene layout and accounts carry over; `from_migrated_parts`
+    // pins the schema version and lets every other field fall back to
+    // the same defaults a field-less current config would use.
+    let accounts = deserialize_accounts_passthrough(v0.accounts);
+    let current = Config::from_migrated_parts(scenes, accounts);
     (current, report)
 }
 
@@ -135,7 +130,7 @@ const _: () = {
 
 // --- Per-widget dispatch -----------------------------------------------------
 
-fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Scene {
+fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
     let widgets: IndexMap<WidgetId, Widget> = scene
         .widgets
         .iter()
@@ -150,7 +145,13 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Scene {
         })
         .collect();
 
-    Scene {
+    if widgets.is_empty() {
+        report.dropped_scenes += 1;
+        return None;
+    }
+
+    report.scenes += 1;
+    Some(Scene {
         id: SceneId::from(scene.id),
         enabled: scene.enabled,
         cycle_duration: None,
@@ -159,7 +160,7 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Scene {
             v0::SceneKind::Combined => SceneKind::Combined,
         },
         widgets,
-    }
+    })
 }
 
 /// Map a v0 widget to a current-schema [`Widget`], or drop it.
@@ -169,13 +170,9 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Scene {
 /// does not survive the upgrade" and count it accordingly.
 fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
     let (widget_type_id, params) = match widget.kind.as_str() {
-        "clock" => dispatch_clock(widget)?,
-        "ticker_btc" => (TICKER_BTC_UID, widget.params.clone()),
-        "block_height" => (BLOCK_HEIGHT_UID, widget.params.clone()),
-        "braiins_pool" => (BRAIINS_POOL_UID, widget.params.clone()),
-        "remote_image" => (REMOTE_IMAGE_UID, widget.params.clone()),
-        "blockchain_data" => (BLOCKCHAIN_DATA_UID, widget.params.clone()),
-        "halving_countdown" => (HALVING_COUNTDOWN_UID, widget.params.clone()),
+        "clock" => dispatch_clock(widget),
+        "block_height" => dispatch_block_height(widget),
+        "remote_image" => dispatch_remote_image(widget),
         "remote_widget" => dispatch_remote_widget(widget)?,
         other => {
             warn!(
@@ -193,72 +190,189 @@ fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
             row: widget.row,
             col: widget.col,
         },
-        size: parse_size(&widget.size),
+        placement: WidgetPlacement::from(parse_size(&widget.size)),
         widget_type_id,
-        params,
+        // v0 had no per-widget viewport shape; the current default is
+        // rectangular. A future manifest can override it when it loads.
+        viewport_shape: ViewportShape::Rectangular,
+        params: params_from_value(params),
     })
 }
 
-/// Legacy `clock` has three styles: `digital`, `analog_round`,
-/// `analog_rect`. Only `digital` has a shipped target manifest
-/// today, so only that style gets a deep param translation; the
-/// analog variants use reserved UIDs with their original params
-/// passed through. A missing `clock_style` is treated as `digital`
-/// for backwards compatibility with very old configs.
-fn dispatch_clock(widget: &v0::Widget) -> Option<(Uuid, Value)> {
-    let style = widget.params.get("clock_style").and_then(Value::as_str);
-    match style {
-        Some("digital") | None => Some(translate_clock_digital(widget)),
-        Some("analog_round") => Some((ANALOG_ROUND_CLOCK_UID, widget.params.clone())),
-        Some("analog_rect") => Some((ANALOG_RECT_CLOCK_UID, widget.params.clone())),
-        Some(other) => {
-            warn!(
-                clock_style = %other,
-                id = %widget.id,
-                "unknown clock_style; dropping"
-            );
-            None
+/// Convert a legacy free-form JSON params blob into the current typed
+/// param map. v0 stored params as arbitrary JSON; the current
+/// [`Widget`] constrains them to a flat map of scalar [`ParamValue`]s.
+///
+/// A non-object blob yields an empty map. Individual entries whose key
+/// is not a valid [`ParamKey`] or whose value is not a scalar the new
+/// schema can hold (nested objects/arrays, non-finite numbers) are
+/// dropped with a `warn!` — the same "drop the unmappable, never fail
+/// the whole migration" stance applied at the widget level.
+fn params_from_value(value: Value) -> BTreeMap<ParamKey, ParamValue> {
+    let Value::Object(entries) = value else {
+        if !value.is_null() {
+            warn!("legacy widget params were not a JSON object; dropping them");
+        }
+        return BTreeMap::new();
+    };
+
+    let mut out = BTreeMap::new();
+    for (key, raw) in entries {
+        let Ok(param_key) = ParamKey::try_new(key.clone()) else {
+            warn!(key = %key, "legacy param key is not a valid ParamKey; dropping");
+            continue;
+        };
+        match serde_json::from_value::<ParamValue>(raw) {
+            Ok(param_value) => {
+                out.insert(param_key, param_value);
+            }
+            Err(err) => {
+                warn!(
+                    key = %key,
+                    error = %err,
+                    "legacy param value is not a scalar the current schema can hold; dropping"
+                );
+            }
         }
     }
+    out
 }
 
-/// Deep translator for the digital-clock variant. Maps v0 param
-/// names to the names used by the shipped `digital-clock` manifest
-/// (`showSeconds`, `showTimezone`, `fontStyle`) and drops
-/// `show_date` with a warning (no equivalent on the new manifest).
-fn translate_clock_digital(widget: &v0::Widget) -> (Uuid, Value) {
-    let show_seconds = widget
-        .params
-        .get("show_seconds")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let show_timezone = widget
-        .params
-        .get("show_timezone")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
-    let font_style = widget
+/// Translate a legacy `clock` widget into the current unified Clock
+/// widget ([`CLOCK_UID`]), which folds the old digital/analog styles
+/// behind its `clock_style` param.
+///
+/// The shipped manifest (`widgets-wasm/clock/manifest.json`) keeps
+/// v0's snake_case param names verbatim, so this is a value-level
+/// migration, not a rename. We rebuild the param object from the
+/// manifest's known keys — dropping any legacy key the manifest does
+/// not declare, and leaving absent params out so the widget applies
+/// its own manifest defaults rather than pinning them here. The one
+/// real transformation is `numbers_font_style`, whose vocabulary
+/// changed from `light`/`medium`/`bold` to `regular`/`semi-bold`/`bold`.
+fn dispatch_clock(widget: &v0::Widget) -> (Uuid, Value) {
+    let mut params = Map::new();
+
+    // `clock_style` shares its vocabulary across v0 and the current
+    // manifest (`digital` / `analog_round` / `analog_rect`), so it
+    // passes through unchanged when present.
+    if let Some(style) = widget.params.get("clock_style").and_then(Value::as_str) {
+        params.insert("clock_style".to_owned(), json!(style));
+    }
+
+    // Booleans carry identical meaning on both sides; copy the ones
+    // that are present and actually boolean-typed, so a malformed v0
+    // value falls back to the manifest default instead of migrating a
+    // wrong-typed param.
+    for key in ["show_date", "show_seconds", "show_timezone"] {
+        if let Some(flag) = widget.params.get(key).and_then(Value::as_bool) {
+            params.insert(key.to_owned(), json!(flag));
+        }
+    }
+
+    // Font-weight vocabulary changed, so a raw pass-through could emit
+    // an enum value the manifest no longer accepts. Always remap,
+    // falling back to the clock manifest's own default weight.
+    let font_style = migrate_font_style(widget, "semi-bold");
+    params.insert("numbers_font_style".to_owned(), json!(font_style));
+
+    (CLOCK_UID, Value::Object(params))
+}
+
+/// Translate a legacy `block_height` widget into the current Block
+/// Height widget ([`BLOCK_HEIGHT_UID`]). Like the clock, the shipped
+/// manifest (`widgets-wasm/blockheight/manifest.json`) keeps v0's
+/// param names, so the only real transformation is the
+/// `numbers_font_style` vocabulary remap; `show_timestamp` passes
+/// through when present, and an absent param defers to the manifest
+/// default.
+fn dispatch_block_height(widget: &v0::Widget) -> (Uuid, Value) {
+    let mut params = Map::new();
+
+    if let Some(flag) = widget.params.get("show_timestamp").and_then(Value::as_bool) {
+        params.insert("show_timestamp".to_owned(), json!(flag));
+    }
+
+    // The block-height manifest defaults this weight to `bold`, unlike
+    // the clock's `semi-bold`; only the vocabulary remap is shared.
+    let font_style = migrate_font_style(widget, "bold");
+    params.insert("numbers_font_style".to_owned(), json!(font_style));
+
+    (BLOCK_HEIGHT_UID, Value::Object(params))
+}
+
+/// Read a v0 `numbers_font_style`, remap it to the current
+/// `regular`/`semi-bold`/`bold` vocabulary, and fall back to
+/// `default` when the param is absent or carries a weight outside the
+/// v0 set. `default` is the target widget's own manifest default,
+/// which differs per widget (clock `semi-bold`, block height `bold`).
+fn migrate_font_style(widget: &v0::Widget, default: &'static str) -> &'static str {
+    widget
         .params
         .get("numbers_font_style")
         .and_then(Value::as_str)
-        .filter(|s| matches!(*s, "light" | "medium" | "bold"))
-        .unwrap_or("medium");
+        .and_then(translate_font_style)
+        .unwrap_or(default)
+}
 
-    if widget.params.get("show_date").and_then(Value::as_bool) == Some(true) {
-        warn!(
-            id = %widget.id,
-            "legacy clock had `show_date: true`; dropped (digital-clock manifest has no date param)"
-        );
+/// Map a v0 numeral font weight (`light`/`medium`/`bold`) to the
+/// current shared vocabulary (`regular`/`semi-bold`/`bold`). `None`
+/// for a weight outside the v0 set, so callers can substitute their
+/// own per-widget manifest default.
+fn translate_font_style(font_style: &str) -> Option<&'static str> {
+    match font_style {
+        "light" => Some("regular"),
+        "medium" => Some("semi-bold"),
+        "bold" => Some("bold"),
+        _ => None,
+    }
+}
+
+/// Translate a legacy `remote_image` widget into the current Image
+/// widget ([`REMOTE_IMAGE_UID`], `widgets-wasm/image/manifest.json`).
+///
+/// Two params changed shape between v0 and the current manifest:
+///
+/// - `refresh_duration` (humantime string, e.g. `"1h"`) became
+///   `refresh_seconds` (integer seconds).
+/// - `image_scale_mode` (`fit` / `fill`) became `sizing`
+///   (`contain` / `cover`).
+///
+/// `url` keeps its name and passes through. Absent, wrong-typed, or
+/// unparseable params fall back to the manifest defaults.
+fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
+    let mut params = Map::new();
+
+    if let Some(url) = widget.params.get("url").and_then(Value::as_str) {
+        params.insert("url".to_owned(), json!(url));
     }
 
-    (
-        DIGITAL_CLOCK_UID,
-        json!({
-            "showSeconds": show_seconds,
-            "showTimezone": show_timezone,
-            "fontStyle": font_style,
-        }),
-    )
+    // v0 stored the refresh interval as a humantime string; the
+    // current manifest wants integer seconds. Reparse through the same
+    // `humantime_serde` machinery the rest of the config uses, falling
+    // back to the manifest default when it is absent or unparseable.
+    let refresh_seconds = widget
+        .params
+        .get("refresh_duration")
+        .and_then(|v| humantime_serde::deserialize::<Duration, _>(v).ok())
+        .map_or(3600, |d| d.as_secs());
+    params.insert("refresh_seconds".to_owned(), json!(refresh_seconds));
+
+    // `image_scale_mode` (`fit` / `fill`) was renamed to `sizing`
+    // (`contain` / `cover`). Anything other than `fill` — v0 `fit`, an
+    // unknown value, or an absent param — lands on the manifest default
+    // `contain`.
+    let sizing = match widget
+        .params
+        .get("image_scale_mode")
+        .and_then(Value::as_str)
+    {
+        Some("fill") => "cover",
+        _ => "contain",
+    };
+    params.insert("sizing".to_owned(), json!(sizing));
+
+    (REMOTE_IMAGE_UID, Value::Object(params))
 }
 
 /// Map a legacy `remote_widget` to a reserved remote-widget UID via
@@ -351,8 +465,8 @@ fn parse_size(size: &str) -> WidgetSize {
 /// dropped rather than failing the whole migration.
 fn deserialize_accounts_passthrough(
     accounts: Vec<Value>,
-) -> IndexMap<bmc_display::data::AccountId, bmc_display::data::Account> {
-    use bmc_display::data::{Account, AccountId};
+) -> IndexMap<crate::data::AccountId, crate::data::Account> {
+    use crate::data::{Account, AccountId};
 
     let mut out = IndexMap::<AccountId, Account>::new();
     for (idx, raw) in accounts.into_iter().enumerate() {
@@ -388,85 +502,220 @@ mod tests {
         }
     }
 
+    /// Build the current typed param map from `(key, value)` pairs so
+    /// pass-through expectations can be stated without leaning on
+    /// [`params_from_value`] (which is what we're checking against).
+    fn param_map(pairs: &[(&str, ParamValue)]) -> BTreeMap<ParamKey, ParamValue> {
+        pairs
+            .iter()
+            .map(|(k, v)| {
+                (
+                    ParamKey::try_new((*k).to_owned()).expect("BUG: test param key must be valid"),
+                    v.clone(),
+                )
+            })
+            .collect()
+    }
+
+    /// Upgrade a single widget of `kind` and unwrap it, panicking if
+    /// it was dropped. For the many cases that must survive.
+    fn upgrade(kind: &str, params: Value) -> Widget {
+        upgrade_widget(&mk_widget(kind, params))
+            .unwrap_or_else(|| panic!("BUG: {kind} widget must survive the upgrade"))
+    }
+
+    /// Shorthand for a `ParamValue::String`.
+    fn str_param(value: &str) -> ParamValue {
+        ParamValue::String(value.to_owned())
+    }
+
+    // --- clock ---------------------------------------------------------------
+
     #[test]
-    fn digital_clock_deep_translated() {
-        let w = mk_widget(
+    fn clock_maps_to_clock_uid() {
+        assert_eq!(upgrade("clock", json!({})).widget_type_id, CLOCK_UID);
+    }
+
+    #[test]
+    fn clock_remaps_font_style_vocabulary() {
+        for (v0_weight, expected) in [
+            ("light", "regular"),
+            ("medium", "semi-bold"),
+            ("bold", "bold"),
+        ] {
+            let upgraded = upgrade("clock", json!({ "numbers_font_style": v0_weight }));
+            assert_eq!(
+                upgraded.params["numbers_font_style"],
+                str_param(expected),
+                "v0 `{v0_weight}` must map to `{expected}`"
+            );
+        }
+    }
+
+    #[test]
+    fn clock_missing_or_unknown_font_style_defaults_to_semi_bold() {
+        for params in [json!({}), json!({ "numbers_font_style": "gigantic" })] {
+            let upgraded = upgrade("clock", params);
+            assert_eq!(
+                upgraded.params["numbers_font_style"],
+                str_param("semi-bold")
+            );
+        }
+    }
+
+    #[test]
+    fn clock_passes_through_style_and_booleans() {
+        let upgraded = upgrade(
             "clock",
             json!({
-                "clock_style": "digital",
-                "numbers_font_style": "bold",
-                "show_seconds": false,
+                "clock_style": "analog_round",
+                "show_date": false,
+                "show_seconds": true,
                 "show_timezone": true,
-                "show_date": true,
             }),
         );
-        let upgraded = upgrade_widget(&w).expect("BUG: digital clock must survive the upgrade");
-        assert_eq!(upgraded.widget_type_id, DIGITAL_CLOCK_UID);
-        assert_eq!(upgraded.params["showSeconds"], false);
-        assert_eq!(upgraded.params["showTimezone"], true);
-        assert_eq!(upgraded.params["fontStyle"], "bold");
-        assert!(
-            upgraded.params.get("show_date").is_none(),
-            "show_date must be dropped by the deep translator"
-        );
+        assert_eq!(upgraded.params["clock_style"], str_param("analog_round"));
+        assert_eq!(upgraded.params["show_date"], ParamValue::Boolean(false));
+        assert_eq!(upgraded.params["show_seconds"], ParamValue::Boolean(true));
+        assert_eq!(upgraded.params["show_timezone"], ParamValue::Boolean(true));
     }
 
     #[test]
-    fn analog_clocks_get_reserved_uids_and_keep_params() {
-        for (style, expected_uid) in [
-            ("analog_round", ANALOG_ROUND_CLOCK_UID),
-            ("analog_rect", ANALOG_RECT_CLOCK_UID),
-        ] {
-            let params = json!({ "clock_style": style, "numbers_font_style": "medium" });
-            let w = mk_widget("clock", params.clone());
-            let upgraded = upgrade_widget(&w)
-                .unwrap_or_else(|| panic!("BUG: analog_{style} must survive the upgrade"));
-            assert_eq!(upgraded.widget_type_id, expected_uid);
-            // Shallow pass-through: the params blob is preserved unchanged.
-            assert_eq!(upgraded.params, params);
-        }
-    }
-
-    #[test]
-    fn unknown_clock_style_drops() {
-        let w = mk_widget(
+    fn clock_drops_keys_outside_the_manifest() {
+        let upgraded = upgrade(
             "clock",
-            json!({ "clock_style": "gigantic", "numbers_font_style": "medium" }),
+            json!({ "clock_style": "digital", "legacy_junk": "x" }),
         );
-        assert!(upgrade_widget(&w).is_none());
+        assert!(!upgraded.params.contains_key("legacy_junk"));
+        // Only `clock_style` plus the always-set `numbers_font_style`.
+        assert_eq!(upgraded.params.len(), 2);
+    }
+
+    // --- block height --------------------------------------------------------
+
+    #[test]
+    fn block_height_maps_to_uid_and_defaults_font_to_bold() {
+        let upgraded = upgrade("block_height", json!({}));
+        assert_eq!(upgraded.widget_type_id, BLOCK_HEIGHT_UID);
+        assert_eq!(upgraded.params["numbers_font_style"], str_param("bold"));
     }
 
     #[test]
-    fn missing_clock_style_defaults_to_digital() {
-        let w = mk_widget("clock", json!({ "show_seconds": true }));
-        let upgraded =
-            upgrade_widget(&w).expect("BUG: missing clock_style must default to digital");
-        assert_eq!(upgraded.widget_type_id, DIGITAL_CLOCK_UID);
+    fn block_height_remaps_font_and_passes_timestamp() {
+        let upgraded = upgrade(
+            "block_height",
+            json!({ "numbers_font_style": "medium", "show_timestamp": false }),
+        );
+        assert_eq!(
+            upgraded.params["numbers_font_style"],
+            str_param("semi-bold")
+        );
+        assert_eq!(
+            upgraded.params["show_timestamp"],
+            ParamValue::Boolean(false)
+        );
+    }
+
+    // --- remote image --------------------------------------------------------
+
+    #[test]
+    fn remote_image_maps_to_uid() {
+        assert_eq!(
+            upgrade("remote_image", json!({})).widget_type_id,
+            REMOTE_IMAGE_UID
+        );
     }
 
     #[test]
-    fn native_kinds_get_reserved_uids_and_pass_params_through() {
-        for (kind, expected) in [
-            ("ticker_btc", TICKER_BTC_UID),
-            ("block_height", BLOCK_HEIGHT_UID),
-            ("braiins_pool", BRAIINS_POOL_UID),
-            ("remote_image", REMOTE_IMAGE_UID),
-            ("blockchain_data", BLOCKCHAIN_DATA_UID),
-            ("halving_countdown", HALVING_COUNTDOWN_UID),
-        ] {
-            let params = json!({ "some_param": "abc", "another": 42 });
-            let w = mk_widget(kind, params.clone());
-            let upgraded = upgrade_widget(&w)
-                .unwrap_or_else(|| panic!("BUG: {kind} must survive the upgrade"));
-            assert_eq!(upgraded.widget_type_id, expected);
-            assert_eq!(upgraded.params, params);
+    fn remote_image_parses_humantime_refresh_into_seconds() {
+        for (human, secs) in [("30s", 30), ("5m", 300), ("1h", 3600)] {
+            let upgraded = upgrade("remote_image", json!({ "refresh_duration": human }));
+            assert_eq!(
+                upgraded.params["refresh_seconds"],
+                ParamValue::Integer(secs),
+                "`{human}` must become {secs} seconds"
+            );
         }
+    }
+
+    #[test]
+    fn remote_image_missing_or_unparseable_refresh_defaults_to_3600() {
+        for params in [json!({}), json!({ "refresh_duration": "not a duration" })] {
+            let upgraded = upgrade("remote_image", params);
+            assert_eq!(
+                upgraded.params["refresh_seconds"],
+                ParamValue::Integer(3600)
+            );
+        }
+    }
+
+    #[test]
+    fn remote_image_renames_scale_mode_to_sizing() {
+        for (mode, sizing) in [("fit", "contain"), ("fill", "cover")] {
+            let upgraded = upgrade("remote_image", json!({ "image_scale_mode": mode }));
+            assert_eq!(upgraded.params["sizing"], str_param(sizing));
+        }
+    }
+
+    #[test]
+    fn remote_image_missing_or_unknown_scale_mode_defaults_to_contain() {
+        for params in [json!({}), json!({ "image_scale_mode": "warp" })] {
+            let upgraded = upgrade("remote_image", params);
+            assert_eq!(upgraded.params["sizing"], str_param("contain"));
+        }
+    }
+
+    #[test]
+    fn remote_image_passes_url_through() {
+        let upgraded = upgrade(
+            "remote_image",
+            json!({ "url": "https://example.com/a.png" }),
+        );
+        assert_eq!(
+            upgraded.params["url"],
+            str_param("https://example.com/a.png")
+        );
     }
 
     #[test]
     fn unknown_kind_drops() {
         let w = mk_widget("mystery_widget", json!({}));
         assert!(upgrade_widget(&w).is_none());
+    }
+
+    // --- scene dropping ------------------------------------------------------
+
+    fn scene_with(widgets: Vec<v0::Widget>) -> v0::Scene {
+        v0::Scene {
+            id: Uuid::nil(),
+            enabled: true,
+            kind: v0::SceneKind::Fullscreen,
+            widgets,
+        }
+    }
+
+    #[test]
+    fn scene_with_only_unmappable_widgets_is_dropped() {
+        let scene = scene_with(vec![mk_widget("mystery_widget", json!({}))]);
+        let (_current, report) = upgrade_with_report(v0::Config {
+            scenes: vec![scene],
+            accounts: vec![],
+        });
+        assert_eq!(report.scenes, 0, "the empty scene must not be kept");
+        assert_eq!(report.dropped_scenes, 1);
+        assert_eq!(report.dropped_widgets, 1);
+    }
+
+    #[test]
+    fn scene_with_a_survivor_is_kept() {
+        let scene = scene_with(vec![mk_widget("clock", json!({}))]);
+        let (_current, report) = upgrade_with_report(v0::Config {
+            scenes: vec![scene],
+            accounts: vec![],
+        });
+        assert_eq!(report.scenes, 1);
+        assert_eq!(report.dropped_scenes, 0);
+        assert_eq!(report.translated_widgets, 1);
     }
 
     #[test]
@@ -486,7 +735,13 @@ mod tests {
             upgrade_widget(&w).expect("BUG: weather slug must resolve to a reserved UID");
         assert_ne!(upgraded.widget_type_id, Uuid::nil());
         // Inner params survive verbatim; legacy metadata (name, URLs) drops.
-        assert_eq!(upgraded.params, inner);
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("city", ParamValue::String("Brno".to_owned())),
+                ("units", ParamValue::String("c".to_owned())),
+            ])
+        );
     }
 
     #[test]
