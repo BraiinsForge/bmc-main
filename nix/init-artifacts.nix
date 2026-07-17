@@ -33,6 +33,15 @@ let
     "bos-avahi"
   ] ++ widgetNames;
 
+  # Minted as installed_by: system in the tarball's profile manifest.
+  # Their absence from a later package index aborts the upgrade; every
+  # other shipped package (widgets included) is user-owned and merely
+  # goes stale when it disappears from the indexes.
+  requiredPackageNames = [
+    "core"
+    "nix"
+  ];
+
   mkInitArtifacts =
     { bosVersion ? defaultBosVersion
     , packageBump ? null
@@ -75,6 +84,7 @@ let
         packages = initPackages;
         inherit bmc-nix-cli hooksOverridePath;
         bos_version = bosVersion;
+        system_packages = requiredPackageNames;
         profile_path = profilePath;
       };
     };

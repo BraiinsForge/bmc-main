@@ -31,18 +31,56 @@ pub fn make_package_feed_url(base_url: &str) -> String {
     )
 }
 
+/// Errors returned when resolving every package from an index.
+#[derive(Debug, thiserror::Error)]
+pub enum ResolveAllFromIndexError {
+    #[error("system packages missing from index: {}", names.join(", "))]
+    MissingSystemPackages { names: Vec<String> },
+}
+
 /// Resolve all packages in an index to [`ResolvedPackage`] values.
 ///
-/// Each package entry is given Stage 1 defaults: `installed_by = System`,
-/// `installed_from = "local"`, `pinned = None`. Cache metadata from
-/// `PackageEntry.cache` is intentionally ignored — store paths are
-/// realised through configured Nix substituters.
+/// Each package entry is given from-scratch defaults: `installed_by =
+/// System` when its name is in `system_packages`, `User` otherwise;
+/// `installed_from = "local"`; `pinned = None`. The caller names the
+/// packages the image is broken without — a `System` package missing
+/// from a later merged index aborts the whole upgrade
+/// (`MissingSystemPackages`), while every other package degrades to a
+/// stale carry instead. Cache metadata from `PackageEntry.cache` is
+/// intentionally ignored — store paths are realised through
+/// configured Nix substituters.
 ///
-/// This is used by `bmc-nix-cli build-profile` when packages are
-/// already present in the local Nix store.
-#[must_use]
-pub fn resolve_all_from_index(index: &PackageIndex) -> Vec<ResolvedPackage> {
-    index
+/// This is used by `bmc-nix-cli build-profile` and `reset-profile`
+/// when packages are already present in the local Nix store.
+///
+/// # Errors
+///
+/// Returns [`ResolveAllFromIndexError::MissingSystemPackages`] when a
+/// requested system package is absent from the index.
+pub fn resolve_all_from_index(
+    index: &PackageIndex,
+    system_packages: &[String],
+) -> Result<Vec<ResolvedPackage>, ResolveAllFromIndexError> {
+    let index_package_names: HashSet<&str> = index
+        .packages
+        .iter()
+        .map(|package| package.name.as_str())
+        .collect();
+    let mut missing_system_packages: Vec<String> = system_packages
+        .iter()
+        .filter(|name| !index_package_names.contains(name.as_str()))
+        .cloned()
+        .collect();
+    missing_system_packages.sort();
+    missing_system_packages.dedup();
+
+    if !missing_system_packages.is_empty() {
+        return Err(ResolveAllFromIndexError::MissingSystemPackages {
+            names: missing_system_packages,
+        });
+    }
+
+    Ok(index
         .packages
         .iter()
         .map(|entry| ResolvedPackage {
@@ -53,12 +91,16 @@ pub fn resolve_all_from_index(index: &PackageIndex) -> Vec<ResolvedPackage> {
             description: entry.description.clone(),
             upgrade_strategy: entry.upgrade_strategy.clone(),
             install_strategy: entry.install_strategy.clone(),
-            installed_by: InstalledBy::System,
+            installed_by: if system_packages.contains(&entry.name) {
+                InstalledBy::System
+            } else {
+                InstalledBy::User
+            },
             installed_from: "local".into(),
             pinned: None,
             metadata: entry.metadata.clone(),
         })
-        .collect()
+        .collect())
 }
 
 /// Errors that can occur when fetching indexes from servers.
@@ -973,7 +1015,8 @@ mod tests {
     fn resolve_all_from_index_basic() {
         let index = make_index(vec![default_cache()], vec![make_package("hello", None)]);
 
-        let resolved = resolve_all_from_index(&index);
+        let resolved = resolve_all_from_index(&index, &[])
+            .expect("an index without required system packages must resolve");
 
         assert_eq!(resolved.len(), 1);
         let pkg = &resolved[0];
@@ -982,7 +1025,7 @@ mod tests {
         assert_eq!(pkg.store_path, "/nix/store/abc-hello-1.0.0");
         assert_eq!(pkg.installed_from, "local");
         assert_eq!(pkg.pinned, None);
-        assert!(matches!(pkg.installed_by, InstalledBy::System));
+        assert!(matches!(pkg.installed_by, InstalledBy::User));
     }
 
     #[test]
@@ -992,7 +1035,8 @@ mod tests {
             vec![make_package("broken", Some("nonexistent"))],
         );
 
-        let resolved = resolve_all_from_index(&index);
+        let resolved = resolve_all_from_index(&index, &[])
+            .expect("an index without required system packages must resolve");
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].name, "broken");
@@ -1002,31 +1046,57 @@ mod tests {
     fn resolve_all_accepts_empty_cache_list() {
         let index = make_index(vec![], vec![make_package("orphan", None)]);
 
-        let resolved = resolve_all_from_index(&index);
+        let resolved = resolve_all_from_index(&index, &[])
+            .expect("an index without required system packages must resolve");
 
         assert_eq!(resolved.len(), 1);
         assert_eq!(resolved[0].name, "orphan");
     }
 
     #[test]
-    fn resolve_all_multiple_packages() {
+    fn resolve_all_rejects_system_packages_missing_from_index() {
+        let index = make_index(vec![], vec![make_package("core", None)]);
+
+        let error =
+            resolve_all_from_index(&index, &["nix".into(), "core".into(), "bmc-nix-cli".into()])
+                .expect_err("required system packages missing from the index must fail");
+
+        assert!(matches!(
+            error,
+            ResolveAllFromIndexError::MissingSystemPackages { names }
+                if names == ["bmc-nix-cli", "nix"]
+        ));
+    }
+
+    /// Exactly the caller-listed packages may resolve as `System`: a
+    /// `System` package missing from a later merged index aborts the
+    /// whole upgrade, so a factory-shipped widget marked `System`
+    /// would brick upgrades the moment it leaves the server index,
+    /// while a required package marked `User` would let such an index
+    /// silently strand a device without its runtime.
+    #[test]
+    fn resolve_all_only_listed_system_packages_are_system() {
         let index = make_index(
             vec![default_cache()],
             vec![
-                make_package("alpha", None),
-                make_package("beta", None),
-                make_package("gamma", None),
+                make_package("core", None),
+                make_package("nix", None),
+                make_package("bmc-nix-cli", None),
+                make_package("bos-avahi", None),
+                make_package("widget-clock", None),
             ],
         );
 
-        let resolved = resolve_all_from_index(&index);
+        let resolved = resolve_all_from_index(&index, &["core".into(), "nix".into()])
+            .expect("all required system packages are present");
 
-        assert_eq!(resolved.len(), 3);
-        let names: Vec<&str> = resolved.iter().map(|p| p.name.as_str()).collect();
-        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
-
+        assert_eq!(resolved.len(), 5);
         for pkg in &resolved {
-            assert!(matches!(pkg.installed_by, InstalledBy::System));
+            let expected = match pkg.name.as_str() {
+                "core" | "nix" => InstalledBy::System,
+                _ => InstalledBy::User,
+            };
+            assert_eq!(pkg.installed_by, expected, "package {}", pkg.name);
             assert_eq!(pkg.installed_from, "local");
         }
     }

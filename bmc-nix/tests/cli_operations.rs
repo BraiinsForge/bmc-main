@@ -442,6 +442,8 @@ fn reset_profile_ignores_existing_manifest() {
         &profile,
         "--index",
         &index_arg,
+        "--system-package",
+        "c",
     ]);
     let gen_path = run.generation_path("reset to index with c");
 
@@ -465,6 +467,61 @@ fn reset_profile_ignores_existing_manifest() {
         "old generation 1-link should still exist on disk"
     );
     assert_eq!(env.current_link_target(), PathBuf::from("2-link"));
+}
+
+/// `--system-package` decides ownership in the minted manifest: listed
+/// names persist as `system` (their later disappearance from every
+/// index aborts upgrades), everything else as `user` (merely goes
+/// stale). The flag is required — a from-scratch profile must state
+/// its required set explicitly.
+#[test]
+#[serial]
+fn reset_profile_marks_only_listed_packages_system() {
+    use bmc_nix::types::InstalledBy;
+
+    let env = setup();
+    let store_sys = env.make_store("store-sys-1.0.0", &["bin/sys"]);
+    create_activation_entrypoint(&store_sys);
+    let store_extra = env.make_store("store-extra-1.0.0", &["bin/extra"]);
+    let index = write_index(
+        &env,
+        "index.json",
+        &[
+            ("sys", "1.0.0", &store_sys),
+            ("extra", "1.0.0", &store_extra),
+        ],
+    );
+
+    let profile = env.profile_dir_arg();
+    let index_arg = index.display().to_string();
+
+    let missing_flag = env.run(&[
+        "reset-profile",
+        "--profile-dir",
+        &profile,
+        "--index",
+        &index_arg,
+    ]);
+    assert_eq!(
+        missing_flag.exit_code(),
+        Some(2),
+        "omitting --system-package must be a usage error, not an all-user profile"
+    );
+
+    let run = env.run(&[
+        "reset-profile",
+        "--profile-dir",
+        &profile,
+        "--index",
+        &index_arg,
+        "--system-package",
+        "sys",
+    ]);
+    let gen_path = run.generation_path("reset with --system-package sys");
+
+    let manifest = read_manifest(&gen_path).expect("BUG: read manifest");
+    assert_eq!(manifest.packages["sys"].installed_by, InstalledBy::System);
+    assert_eq!(manifest.packages["extra"].installed_by, InstalledBy::User);
 }
 
 // ── base selector + activation default tests ────────────────────────────────
@@ -534,6 +591,8 @@ fn add_packages_with_base_generation_n_uses_specific_generation() {
         &profile,
         "--index",
         &index_arg,
+        "--system-package",
+        "noise",
     ])
     .ok("seed gen 2 with noise");
 

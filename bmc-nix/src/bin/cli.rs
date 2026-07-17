@@ -227,6 +227,13 @@ enum Commands {
         #[arg(long)]
         index: PathBuf,
 
+        /// Package name to record as `installed_by: system` in the
+        /// minted manifest (repeatable). A system package missing from
+        /// every index aborts later upgrades; all other packages are
+        /// recorded as user-installed.
+        #[arg(long = "system-package", required = true)]
+        system_packages: Vec<String>,
+
         /// Directory for the profile generations
         #[arg(long)]
         profile_dir: PathBuf,
@@ -288,6 +295,13 @@ enum Commands {
         /// Path to nix-package-index.v1.json
         #[arg(long)]
         index: PathBuf,
+
+        /// Package name to record as `installed_by: system` in the
+        /// minted manifest (repeatable). A system package missing from
+        /// every index aborts later upgrades; all other packages are
+        /// recorded as user-installed.
+        #[arg(long = "system-package", required = true)]
+        system_packages: Vec<String>,
 
         #[command(flatten)]
         common: ProfileCommonArgs,
@@ -739,6 +753,7 @@ fn activation_mode_from_no_activate(no_activate: bool) -> ActivationMode {
 
 async fn cmd_build_profile(
     index: PathBuf,
+    system_packages: Vec<String>,
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
@@ -747,7 +762,7 @@ async fn cmd_build_profile(
 ) -> anyhow::Result<()> {
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
-    let packages = bmc_nix::index::resolve_all_from_index(&package_index);
+    let packages = bmc_nix::index::resolve_all_from_index(&package_index, &system_packages)?;
 
     std::fs::create_dir_all(&profile_dir)?;
 
@@ -885,6 +900,7 @@ async fn cmd_remove_packages(
 
 async fn cmd_reset_profile(
     index: PathBuf,
+    system_packages: Vec<String>,
     profile_dir: PathBuf,
     hooks_dir: String,
     hooks_override_path: Option<PathBuf>,
@@ -893,7 +909,7 @@ async fn cmd_reset_profile(
 ) -> anyhow::Result<()> {
     let index_content = std::fs::read_to_string(&index)?;
     let package_index: bmc_nix::types::PackageIndex = serde_json::from_str(&index_content)?;
-    let packages = bmc_nix::index::resolve_all_from_index(&package_index);
+    let packages = bmc_nix::index::resolve_all_from_index(&package_index, &system_packages)?;
 
     std::fs::create_dir_all(&profile_dir)?;
 
@@ -1339,6 +1355,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command {
         Commands::BuildProfile {
             index,
+            system_packages,
             profile_dir,
             hooks_dir,
             hooks_override_path,
@@ -1346,6 +1363,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         } => {
             cmd_build_profile(
                 index,
+                system_packages,
                 profile_dir,
                 hooks_dir,
                 hooks_override_path,
@@ -1393,9 +1411,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             .await
         }
 
-        Commands::ResetProfile { index, common } => {
+        Commands::ResetProfile {
+            index,
+            system_packages,
+            common,
+        } => {
             cmd_reset_profile(
                 index,
+                system_packages,
                 common.profile_dir,
                 common.hooks_dir,
                 common.hooks_override_path,

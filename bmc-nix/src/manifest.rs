@@ -554,6 +554,54 @@ mod tests {
         merged_index_with(Vec::new())
     }
 
+    /// A manifest minted from a factory index (the `build-profile` /
+    /// `reset-profile` path) must keep upgrading when a factory-shipped
+    /// widget disappears from every server index — the widget goes
+    /// stale — while a missing required package (`core`, `nix`) must
+    /// still abort the plan loudly.
+    #[test]
+    fn factory_profile_widget_vanishing_from_index_does_not_block_upgrade() {
+        use crate::types::{PackageEntry, PackageIndex};
+
+        let entry = |name: &str| PackageEntry {
+            name: name.into(),
+            version: "1.0.0".into(),
+            cache: None,
+            store_path: format!("/nix/store/abc-{name}-1.0.0"),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            server_id: String::new(),
+            metadata: BTreeMap::new(),
+        };
+        let factory_index = PackageIndex {
+            version: 1,
+            provenance: None,
+            indexes: vec![],
+            caches: vec![],
+            packages: vec![entry("core"), entry("widget-clock")],
+        };
+        let factory_packages =
+            crate::index::resolve_all_from_index(&factory_index, &["core".into()])
+                .expect("the factory index contains every required system package");
+        let manifest = build_manifest(&factory_packages);
+
+        let without_widget = merged_index_with(vec![merged_entry("core", "2.0.0", 10)]);
+        let plan = compute_upgrade_plan(&manifest, Some(&without_widget), &[], &[])
+            .expect("a vanished factory widget must not abort the upgrade");
+        assert_eq!(plan.stale.len(), 1);
+        assert_eq!(plan.stale[0].name, "widget-clock");
+
+        let without_core = merged_index_with(vec![merged_entry("widget-clock", "2.0.0", 10)]);
+        let err = compute_upgrade_plan(&manifest, Some(&without_core), &[], &[])
+            .expect_err("a vanished core must abort the upgrade");
+        assert!(matches!(
+            err,
+            ComputeUpgradePlanError::MissingSystemPackages { names } if names == ["core"]
+        ));
+    }
+
     #[test]
     fn build_manifest_round_trips() {
         let packages = vec![

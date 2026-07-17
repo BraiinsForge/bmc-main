@@ -53,7 +53,7 @@ async fn full_profile_build() {
     // Create fake store paths
     let core_store = create_fake_store_path(
         tmp.path(),
-        "core-app",
+        "core",
         &[
             ("bin/core-binary", "#!/bin/sh\necho core"),
             ("lib/libcore.so", "fake-lib"),
@@ -86,7 +86,7 @@ async fn full_profile_build() {
         }],
         packages: vec![
             PackageEntry {
-                name: "core-app".into(),
+                name: "core".into(),
                 version: "1.0.0".into(),
                 cache: None,
                 store_path: core_store
@@ -119,7 +119,8 @@ async fn full_profile_build() {
     };
 
     // Resolve packages
-    let packages = bmc_nix::index::resolve_all_from_index(&index);
+    let packages = bmc_nix::index::resolve_all_from_index(&index, &["core".into()])
+        .expect("the profile index contains every required system package");
     assert_eq!(packages.len(), 2);
 
     // Profile dir
@@ -160,8 +161,19 @@ async fn full_profile_build() {
     let manifest: bmc_nix::types::Manifest =
         serde_json::from_str(&manifest_content).expect("BUG: parse manifest should succeed");
     assert_eq!(manifest.packages.len(), 2);
-    assert!(manifest.packages.contains_key("core-app"));
-    assert!(manifest.packages.contains_key("widget-clock"));
+    let core = manifest
+        .packages
+        .get("core")
+        .expect("BUG: core should be in the manifest");
+    let widget = manifest
+        .packages
+        .get("widget-clock")
+        .expect("BUG: widget-clock should be in the manifest");
+    // Only the required packages (core, nix) may persist as `system`;
+    // a factory-shipped widget must persist as `user` or its later
+    // removal from the server index would block every upgrade.
+    assert_eq!(core.installed_by, InstalledBy::System);
+    assert_eq!(widget.installed_by, InstalledBy::User);
 
     // Activate (runs entrypoint which creates current symlink)
     bmc_nix::profile::activate_profile(&profile_dir, gen1.number, &gen1.path, None)

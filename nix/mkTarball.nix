@@ -11,6 +11,7 @@
 { packages # same format as mkIndex
 , bmc-nix-cli # derivation of the bmc-nix CLI tool (native build)
 , bos_version # e.g. "26.02"
+, system_packages # package names minted as installed_by: system — the ones the image is broken without
 , profile_path ? "/nix/var/nix/gcroots/profiles/bmc"
 , hooksOverridePath ? null # path to native hook executables for cross-compilation bootstrap
 }:
@@ -61,6 +62,7 @@ pkgs.runCommand "nix-tarball-${bos_version}"
     --no-activate \
     --index ${index}/nix-package-index.v1.json \
     --profile-dir $rootDir${profile_path} \
+    ${lib.concatMapStringsSep " " (name: "--system-package ${lib.escapeShellArg name}") system_packages} \
     ${lib.optionalString (hooksOverridePath != null) "--hooks-override-path ${hooksOverridePath}"}
 
   # 4. Create tarball
