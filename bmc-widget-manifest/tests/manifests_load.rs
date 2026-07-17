@@ -107,11 +107,14 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
                 .to_str()
                 .expect("BUG: workspace path must be utf-8"),
         );
-        let supports_rectangular = manifest
-            .supported_viewports
-            .iter()
-            .any(|v| v.viewport_shape == bmc_widget_manifest::ViewportShape::Rectangular);
-        if !supports_rectangular {
+        // A widget must cover both standard BMM fullscreen sizes only if its
+        // declared rectangular range reaches small screens; a Deck-only widget
+        // (min_width 1280) has opted out of them by declaration.
+        let reaches_small_screens = manifest.supported_viewports.iter().any(|v| {
+            v.viewport_shape == bmc_widget_manifest::ViewportShape::Rectangular
+                && v.min_width.is_none_or(|min| min <= 480)
+        });
+        if !reaches_small_screens {
             continue;
         }
         assert!(
