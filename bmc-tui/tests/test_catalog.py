@@ -1489,6 +1489,19 @@ def test_cleardown_logs_only_under_dry_run() -> None:
     assert not any("umount" in c or "rm -rf" in c or "stop" in c for c in reads)
 
 
+def _ticking_clock() -> Callable[[], float]:
+    ticks = iter(range(0, 100_000))
+    return lambda: float(next(ticks))
+
+
+def test_quiesce_nix_stops_services_and_unmounts_without_deleting() -> None:
+    exc = _Exec(_cleardown_routes())
+    catalog.quiesce_nix(Device("h", backend=exc), sleep=lambda _s: None, clock=_ticking_clock())
+    joined = [argv[-1] for argv in exc.runs]
+    assert not any("rm -rf" in c for c in joined)  # quiesce never deletes
+    assert any("umount /nix" in c for c in joined)
+
+
 def test_flash_e2e_never_skips_on_matching_version(tmp_path: Path) -> None:
     image = _image(tmp_path)
     exc = _Exec(_routes({"bos_version": image.version}))

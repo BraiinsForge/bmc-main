@@ -946,12 +946,30 @@ def clear_nix_store(
         ),
         "cleardown declined — pass --yes to skip the prompt",
     )
+    _quiesce(dev, timeout=timeout, sleep=sleep, clock=clock)
+    if dry_run.get():
+        return "cleardown logged (dry-run)"
+    dev.run(f"rm -rf {_NIX_BACKING}")
+    return f"cleared {console.lit(_NIX_BACKING)}"
+
+
+def _quiesce(
+    dev: Device,
+    *,
+    timeout: int,
+    sleep: Callable[[float], None],
+    clock: Callable[[], float],
+) -> None:
+    """Stop everything the active generation runs, prove nothing still
+    references /nix, and peel its bind mounts — shared between the
+    cleardown (which then deletes) and the B/C fault surgeries (which
+    then corrupt)."""
     generation = dev.read(f"readlink -f {_PROFILE_DIR}/current 2>/dev/null || true")
     _clear_orchestrator(dev, timeout=timeout, sleep=sleep, clock=clock)
     if generation:
         _stop_generation_services(dev, generation)
     if dry_run.get():
-        return "cleardown logged (dry-run)"
+        return
     failure = _poll_until(
         lambda: _nix_reference_holders(dev), timeout=timeout, sleep=sleep, clock=clock
     )
@@ -968,8 +986,23 @@ def clear_nix_store(
         not dev.read(f"grep ' {_NIX_STORE} ' /proc/mounts || true"),
         f"{console.lit(_NIX_STORE)} is still mounted after umount",
     )
-    dev.run(f"rm -rf {_NIX_BACKING}")
-    return f"cleared {console.lit(_NIX_BACKING)}"
+
+
+@stage("Quiesce nix services")
+def quiesce_nix(
+    dev: Device,
+    *,
+    timeout: int = 60,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """The fault suite's non-destructive half of the cleardown: services
+    stopped, /nix references gone, bind mounts peeled — the store data
+    itself is left for the scenario to corrupt precisely."""
+    _quiesce(dev, timeout=timeout, sleep=sleep, clock=clock)
+    if dry_run.get():
+        return "quiesce logged (dry-run)"
+    return f"services stopped, {console.lit(_NIX_STORE)} unmounted"
 
 
 def _clear_orchestrator(
