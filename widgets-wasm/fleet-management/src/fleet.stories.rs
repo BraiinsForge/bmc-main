@@ -85,3 +85,9 @@ fn device_detail_error(ctx: &mut StoryCtx) {
         ),
     );
 }
+
+#[story(order = 7)]
+fn searching(ctx: &mut StoryCtx) {
+    // Empty state before the first miner answers: the indeterminate bar animates.
+    ctx.ui.div(Full, screens::searching());
+}
