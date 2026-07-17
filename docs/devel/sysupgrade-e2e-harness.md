@@ -18,8 +18,9 @@ The run has two scenarios, driven against a fully local package rig served from 
   staging a `next` generation; at boot the activator consumes it, the store is upgraded **in place** (the marker
   survives), `current` advances, and a bumped package path is realised from the rig cache.
 
-A `full` run does A then B back to back. Registration re-runs before each flash: sysupgrade preserves
-`/etc/nix/nix.conf` but not the runtime `servers.json`.
+A `full` run does A then B back to back. Registration re-runs before each flash — it is idempotent and keeps the rig
+authoritative regardless of what the previous flash left behind (sysupgrade preserves both `/etc/nix/nix.conf` and the
+runtime `servers.json` as registered conffiles).
 
 ## Building the Two Firmware Images
 
@@ -105,9 +106,9 @@ fails here rather than after the store is gone).
    before any mutation, so a failed check leaves the device untouched: the device is on image A's lineage, the store is
    initialized, and the bumped store path does not yet exist (its later presence is what proves the upgrade realised it
    from the rig).
-2. **Push bmc-nix-cli** / **Register rig on device** / **Drop e2e marker** / **Record generation** — re-register (the
-   reboot into A cleared the runtime registry), drop the preservation marker outside the store/profile trees, and record
-   variant B's current generation for the advance check.
+2. **Push bmc-nix-cli** / **Register rig on device** / **Drop e2e marker** / **Record generation** — re-register
+   (idempotent — the rig stays authoritative whatever the reboot into A left behind), drop the preservation marker
+   outside the store/profile trees, and record variant B's current generation for the advance check.
 3. **Memory headroom** / **Pin device address** / **Upload firmware** / **Uploaded image on pinned device** / **Trust
    image signing keys** — as in scenario A, for image B.
 4. **Flash firmware (e2e)** — flash image B, wait for the reboot, then **Verify upgraded**: the device runs image B's
@@ -116,7 +117,8 @@ fails here rather than after the store is gone).
    was consumed, and the generation's services are running.
 
 On any exit — success or abort, once the first device mutation has happened — the harness best-effort removes the e2e
-marker, the runtime `servers.json`, and the uploaded firmware tars.
+marker and the uploaded firmware tars, and restores the runtime `servers.json` to its pre-run bytes (removing it only if
+it was absent before the run; the registry is captured at run start).
 
 ## Cleanup
 
@@ -124,3 +126,31 @@ The harness cleans up after itself device-side, with one exception it cannot und
 `extra-substituters` and `extra-trusted-public-keys` lines that registration adds to `/etc/nix/nix.conf`. That file is a
 preserved conffile, so those lines survive the flashes and outlive the run, still pointing at the (now gone) ephemeral
 rig. Remove them from `/etc/nix/nix.conf` on the device when you are done.
+
+## Fault-injection suite (`deck e2e-sysupgrade-faults`)
+
+The negative counterpart of the happy path (BDK-601): nineteen scenarios across four groups — init-signature faults (A),
+partition/partial-store damage (B), upgrade-path faults (C), and delivery variants (D). Same preamble and two-image
+contract as `deck e2e-sysupgrade`; both image arguments are always required.
+
+```
+nix run .#deck -- e2e-sysupgrade-faults --device deck.local \
+    --image-a fw-A.tar --image-b fw-B.tar --scenario all --yes
+```
+
+- `--scenario` takes a scenario slug (e.g. `unsigned-feed`; the BDK-601 matrix ids A1…D5 map 1:1), a group (`a`–`d`), or
+  `all` (default). Every scenario asserts its read-only preconditions first, so a mis-sequenced single run aborts with
+  the device untouched. Group/suite runs thread the lineage themselves (one cleardown for `all`; C5/D1/D4/D5 ride other
+  scenarios' flashes instead of spending extra flash cycles).
+- `--no-servers-json-preserved` downgrades D5 to observe-only for images predating the conffile registration (#BDK-358).
+  By default D5 snapshots the runtime `servers.json` before the flash and asserts it comes back byte-identical.
+- The rig signs its init tarballs (mandatory since BDK-376): the cache key doubles as the factory trust anchor, and the
+  feed carries per-variant `signature` lines produced by `bmc-nix-cli sign-init-tarball`.
+- B-group recovery contract: a failed B-scenario leaves the device reachable over ssh with services stopped and a
+  damaged or absent store. The suite attempts one good-rig re-flash of image A before aborting; the manual fallback is
+  another `deck e2e-sysupgrade --scenario init` run (or `bmc-nix-cli init --wipe` on the device). The serial console is
+  never required.
+- B2's ext4 corruption recipe is proven host-side by `bmc-tui/tests/test_ext4_recipe.py` on a loopback image; the device
+  run only confirms the fixture. A divergence is a finding, not an accepted outcome. OpenWRT's e2fsprogs ships no
+  `debugfs`, so the harness cross-builds a static one and pushes it to a tmpfs `/tmp` path (built lazily, only when a B2
+  run needs it, and swept with the other pushed artifacts) rather than requiring `debugfs` on the device.
