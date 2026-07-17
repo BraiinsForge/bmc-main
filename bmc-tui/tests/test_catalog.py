@@ -1590,6 +1590,91 @@ def test_flash_e2e_aborts_when_declined(tmp_path: Path, monkeypatch: pytest.Monk
         catalog.flash_e2e(Device("h", backend=_Exec(_routes({}))), _image(tmp_path))
 
 
+def _abort_backend(returncode: int, output: str) -> _Exec:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if cmd.startswith("sysupgrade"):
+            raise subprocess.CalledProcessError(returncode, argv, output=output, stderr="")
+        if "bos_version" in cmd:
+            return _cp(argv, "2026-06-14-x")
+        return _cp(argv)
+
+    return _Exec(respond)
+
+
+def test_flash_expect_abort_passes_on_matching_remote_failure(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    state = catalog.FaultsState()
+    dev = Device("h", backend=_abort_backend(1, "init tarball signature verification failed"))
+    catalog.flash_expect_abort(
+        dev, image, expect="signature verification failed", state=state, assume_yes=True
+    )
+    assert "signature verification failed" in (state.flash_output or "")
+
+
+def test_flash_expect_abort_rejects_clean_exit(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_routes({"bos_version": "2026-06-14-x"}))
+    with pytest.raises(Abort, match="did not fire"):
+        catalog.flash_expect_abort(
+            Device("h", backend=backend),
+            image,
+            expect="whatever",
+            state=catalog.FaultsState(),
+            assume_yes=True,
+        )
+
+
+def test_flash_expect_abort_rejects_session_death(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    dev = Device("h", backend=_abort_backend(255, "flashing..."))
+    with pytest.raises(Abort, match="session"):
+        catalog.flash_expect_abort(
+            dev, image, expect="x", state=catalog.FaultsState(), assume_yes=True
+        )
+
+
+def test_flash_expect_abort_rejects_wrong_message(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    dev = Device("h", backend=_abort_backend(1, "some other failure"))
+    with pytest.raises(Abort, match="does not mention"):
+        catalog.flash_expect_abort(
+            dev,
+            image,
+            expect=("signature", "stalled"),
+            state=catalog.FaultsState(),
+            assume_yes=True,
+        )
+
+
+def test_upgrade_state_round_trip_detects_a_new_next_marker() -> None:
+    routes = {
+        "readlink -f /nix/var/nix/gcroots/profiles/bmc/current": "/nix/store/gen-3",
+        ".sysupgrade-e2e-marker": "yes",
+        "next.": "",
+    }
+    state = catalog.FaultsState()
+    catalog.record_upgrade_state(Device("h", backend=_Exec(_routes(routes))), state)
+    assert state.upgrade_state == catalog.UpgradeState(
+        current="/nix/store/gen-3", marker_present=True, next_markers=[]
+    )
+    catalog.require_upgrade_state_untouched(Device("h", backend=_Exec(_routes(routes))), state)
+    routes["next."] = "next.2026-07-15-x"
+    with pytest.raises(Abort, match="next"):
+        catalog.require_upgrade_state_untouched(Device("h", backend=_Exec(_routes(routes))), state)
+
+
+def test_require_staged_once_counts_the_staging_lines() -> None:
+    state = catalog.FaultsState()
+    init_token, upgrade_token = catalog._STAGING_TOKENS
+    state.flash_output = f"{init_token}\nother output\n"
+    catalog.require_staged_once(state)
+    # one init + one upgrade line would mean staging ran twice
+    state.flash_output = f"{init_token}\n{upgrade_token}\n"
+    with pytest.raises(Abort, match="once"):
+        catalog.require_staged_once(state)
+
+
 def test_require_lineage_accepts_image_a_version(tmp_path: Path) -> None:
     run = _e2e_run(tmp_path)
     exc = _Exec(_routes({"bos_version": run.image_a.version}))

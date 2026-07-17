@@ -1265,7 +1265,14 @@ def trust_image_keys(dev: Device, image: Image) -> str:
 
 
 @stage("Flash firmware (e2e)")
-def flash_e2e(dev: Device, image: Image, *, assume_yes: bool = False) -> str:
+def flash_e2e(
+    dev: Device,
+    image: Image,
+    *,
+    assume_yes: bool = False,
+    remote_path: str | None = None,
+    state: FaultsState | None = None,
+) -> str:
     """Flash unconditionally — deliberately no same-version skip: after the
     destructive cleardown a skip would strand the device storeless. The
     bytes were uploaded and verified before anything destructive ran."""
@@ -1279,8 +1286,171 @@ def flash_e2e(dev: Device, image: Image, *, assume_yes: bool = False) -> str:
         ),
         "flash declined — pass --yes to skip the prompt",
     )
-    dev.run(f"sysupgrade {shlex.quote(image.remote_path)}", expect_disconnect=True)
-    return f"{console.lit(image.version)} → reboot"
+    command = f"sysupgrade {shlex.quote(remote_path or image.remote_path)}"
+    if state is None:
+        dev.run(command, expect_disconnect=True)
+        return f"{console.lit(image.version)} → reboot"
+    outcome = dev.run_captured(command)
+    if outcome is not None:
+        require(
+            outcome.status != "failed",
+            f"sysupgrade failed (exit {outcome.returncode}): {outcome.output[-2000:]}",
+        )
+        state.flash_output = outcome.output
+    return f"{console.lit(image.version)} → reboot (output captured)"
+
+
+# The lines COMMAND's v() prints when it actually stages (init_nix_store /
+# stage_nix_upgrade); the dedupe-marker skip prints "already prepared"
+# instead. sysupgrade exports VERBOSE=1, so ssh captures them. D4 counts
+# the union: exactly one across the whole flash output.
+_STAGING_TOKENS = ("Initializing Nix store", "Staging Nix profile for the new firmware")
+
+# bmc-nix downloads the factory tarball to the FIXED path
+# <download-dir>/init-tarball.tar.gz (store.rs joins that constant name onto
+# --download-dir, which COMMAND sets to /mnt/data); the served feed filename
+# never appears on the device.
+_DOWNLOAD_ARTIFACT = f"{_DATA_MOUNT}/init-tarball.tar.gz"
+
+
+def _next_markers(dev: Device) -> list[str]:
+    # An unescaped dot keeps the literal "next." in the emitted command (what
+    # the harness tests match on); the filenames are always next.<version>,
+    # so treating the dot as any-char over-matches nothing that exists.
+    listed = dev.read(f"ls {_PROFILE_DIR}/ 2>/dev/null | grep '^next.' || true")
+    return listed.split()
+
+
+@stage("Flash expecting abort")
+def flash_expect_abort(  # noqa: PLR0913  the abort contract needs image, expect, and state together
+    dev: Device,
+    image: Image,
+    *,
+    expect: str | tuple[str, ...],
+    state: FaultsState,
+    assume_yes: bool = False,
+    remote_path: str | None = None,
+) -> str:
+    """The fault must abort sysupgrade before flashing: require a remote
+    nonzero exit (session death here means the fault likely failed to
+    prevent the flash), a per-scenario message in the captured output,
+    and an unchanged firmware version afterwards."""
+    require(
+        assume_yes
+        or dry_run.get()
+        or console.confirm(
+            f"Attempt a flash of {console.lit(image.version)} on {console.lit(dev.host)} "
+            "expecting it to abort?"
+        ),
+        "flash declined — pass --yes to skip the prompt",
+    )
+    patterns = (expect,) if isinstance(expect, str) else expect
+    version_before = dev.version
+    outcome = dev.run_captured(f"sysupgrade {shlex.quote(remote_path or image.remote_path)}")
+    if outcome is None:
+        return "abort expected (dry-run)"
+    state.flash_output = outcome.output
+    tail = outcome.output[-2000:]
+    require(
+        outcome.status != "session-death",
+        f"session lost during an expect-abort flash — the fault may not have "
+        f"prevented the flash (exit {outcome.returncode}): {tail}",
+    )
+    require(
+        outcome.status == "failed",
+        f"sysupgrade exited cleanly — the fault did not fire: {tail}",
+    )
+    matched = next((p for p in patterns if p in outcome.output), None)
+    require(
+        matched is not None,
+        f"abort output does not mention any of {patterns!r}: {tail}",
+    )
+    version_after = dev.version
+    require(
+        version_after == version_before,
+        f"firmware changed {version_before} → {version_after} despite the abort",
+    )
+    return f"aborted with {console.lit(matched)}, still on {console.lit(version_before)}"
+
+
+@stage("Store absent")
+def require_store_absent(dev: Device) -> str:
+    require(
+        not dev.read(f"[ -d {_NIX_BACKING} ] && echo yes || true"),
+        f"{console.lit(_NIX_BACKING)} exists — the store is not absent",
+    )
+    return f"{console.lit(_NIX_BACKING)} absent"
+
+
+@stage("Record upgrade state")
+def record_upgrade_state(dev: Device, state: FaultsState) -> str:
+    state.upgrade_state = UpgradeState(
+        current=dev.read(f"readlink -f {_PROFILE_DIR}/current 2>/dev/null || true"),
+        marker_present=bool(dev.read(f"[ -f {_E2E_MARKER} ] && echo yes || true")),
+        next_markers=_next_markers(dev),
+    )
+    return f"current {console.lit(state.upgrade_state.current)}"
+
+
+@stage("Upgrade state untouched")
+def require_upgrade_state_untouched(dev: Device, state: FaultsState) -> str:
+    before = state.upgrade_state
+    if before is None:
+        msg = "BUG: upgrade state was not recorded before the abort attempt"
+        raise RuntimeError(msg)
+    current = dev.read(f"readlink -f {_PROFILE_DIR}/current 2>/dev/null || true")
+    require(current == before.current, f"current moved: {before.current} → {current}")
+    marker = bool(dev.read(f"[ -f {_E2E_MARKER} ] && echo yes || true"))
+    require(marker == before.marker_present, "the e2e marker changed across the abort")
+    markers = _next_markers(dev)
+    require(
+        markers == before.next_markers,
+        f"next.* markers changed: {before.next_markers} → {markers}",
+    )
+    return "store, marker, current, and next.* untouched"
+
+
+@stage("Sweep download artifact")
+def sweep_download_artifact(dev: Device) -> str:
+    """Init downloads the factory tarball to the FIXED path
+    <download-dir>/init-tarball.tar.gz (store.rs joins that constant
+    name onto --download-dir, which COMMAND sets to /mnt/data); the
+    served feed filename never appears on the device. Stall and
+    mid-download failures leave the partial file behind — the harness
+    sweeps it here."""
+    dev.run(f"rm -f {shlex.quote(_DOWNLOAD_ARTIFACT)}")
+    if dry_run.get():
+        return f"sweep of {console.lit(_DOWNLOAD_ARTIFACT)} logged (dry-run)"
+    require(
+        not dev.read(f"[ -e {shlex.quote(_DOWNLOAD_ARTIFACT)} ] && echo yes || true"),
+        f"{console.lit(_DOWNLOAD_ARTIFACT)} survived the sweep",
+    )
+    return f"{console.lit(_DOWNLOAD_ARTIFACT)} absent"
+
+
+@stage("Download artifact absent")
+def require_download_artifact_absent(dev: Device) -> str:
+    require(
+        not dev.read(f"[ -e {shlex.quote(_DOWNLOAD_ARTIFACT)} ] && echo yes || true"),
+        f"{console.lit(_DOWNLOAD_ARTIFACT)} exists — bytes were fetched or left behind",
+    )
+    return f"{console.lit(_DOWNLOAD_ARTIFACT)} absent"
+
+
+@stage("Staging ran once (D4)")
+def require_staged_once(state: FaultsState) -> str:
+    output = state.flash_output
+    if output is None:
+        msg = "BUG: no flash output was captured for the staged-once check"
+        raise RuntimeError(msg)
+    count = sum(output.count(token) for token in _STAGING_TOKENS)
+    require(
+        count == 1,
+        f"nix staging lines appeared {count} times, expected exactly once "
+        "(the double-validation dedupe failed, or sysupgrade ran without "
+        "VERBOSE=1 and the lines never reached the captured output)",
+    )
+    return "staging line seen once"
 
 
 @stage("Device on image A's firmware")
