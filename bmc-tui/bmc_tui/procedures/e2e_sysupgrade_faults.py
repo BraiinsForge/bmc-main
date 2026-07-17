@@ -112,6 +112,16 @@ def _best_effort(action: Callable[[], object]) -> None:
         console.kv("cleanup failed", str(e))
 
 
+def _restore_step(*, failed: bool, action: Callable[[], object]) -> None:
+    """A restore that must fail the run when the body succeeded — silently
+    leaving the rig broken would poison every later scenario — but must
+    not replace a primary failure being unwound."""
+    if failed:
+        _best_effort(action)
+    else:
+        action()
+
+
 @dataclass
 class _Ctx:
     dev: Device
@@ -162,15 +172,157 @@ def _unimplemented(ctx: _Ctx) -> None:
     raise NotImplementedError("implemented in a later task")
 
 
+def _prepare_flash(ctx: _Ctx, image: Image) -> None:
+    """Everything a flash attempt needs, idempotent per attempt: CLI +
+    registration, RAM headroom, pinned address, verified upload, trusted
+    keys. Ordered like the happy path's scenario drivers."""
+    ctx.run.device_mutated = True
+    catalog.push_nix_cli(ctx.dev, ctx.prov)
+    catalog.register_rig(ctx.dev, ctx.run)
+    catalog.ensure_memory(ctx.dev, image.size + image.rootfs_size + _FLASH_HEADROOM)
+    catalog.pin_device_address(ctx.dev, ctx.run)
+    pinned = _pinned(ctx)
+    catalog.upload_firmware(ctx.dev, image)
+    catalog.require_uploaded(pinned, image)
+    catalog.trust_image_keys(pinned, image)
+
+
+def _tarball_a(ctx: _Ctx) -> str:
+    """Image A's SERVED tarball filename — for rig-side tampering only.
+    The on-device download path is fixed (init-tarball.tar.gz) and never
+    carries this name; the artifact stages take no name for that reason."""
+    a = ctx.run.variant_a
+    if a is None:
+        msg = "BUG: variants were not built before the A-group"
+        raise RuntimeError(msg)
+    return a.tarball.name
+
+
+def _attempt_init_abort(
+    ctx: _Ctx,
+    *,
+    tamper: Callable[[], None],
+    expect: str | tuple[str, ...],
+    artifact_deleted: bool = True,
+) -> None:
+    """One tampered init attempt: precondition, tamper, expect-abort flash
+    of image A, then the observables: store absent, and (by default) the
+    fixed-path download artifact absent. The artifact assertion is
+    device behavior, not cleanup: A2/A3 abort before any bytes are
+    fetched, and A1/A4's downloaded tarball is deleted by bmc-nix
+    itself on signature rejection (store.rs). A5 passes
+    artifact_deleted=False — the stall/download-error paths return
+    WITHOUT deleting the partial file, so only the finally-sweep (which
+    always runs, pass or fail) cleans it there."""
+    catalog.require_store_absent(ctx.dev)
+    _prepare_flash(ctx, ctx.image_a)
+    pinned = _pinned(ctx)
+    failed = False
+    try:
+        _host_tamper(tamper)
+        catalog.sweep_download_artifact(pinned)
+        catalog.flash_expect_abort(
+            pinned, ctx.image_a, expect=expect, state=ctx.state, assume_yes=ctx.yes
+        )
+        catalog.require_store_absent(pinned)
+        if artifact_deleted:
+            catalog.require_download_artifact_absent(pinned)
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        catalog.sweep_download_artifact(pinned)
+        _restore_step(failed=failed, action=lambda: _restore_rig(ctx))
+
+
+def _serve_root(ctx: _Ctx) -> Path:
+    r = ctx.run.rig
+    if r is None:
+        msg = "BUG: the rig was not assembled before tampering"
+        raise RuntimeError(msg)
+    return r.serve_root
+
+
+def _wrong_key_signature(ctx: _Ctx) -> str:
+    """A signature over image A's tarball by a fresh key under the trusted
+    key NAME — verification must fail on the bytes, not the name (A1)."""
+    r = ctx.run.rig
+    a = ctx.run.variant_a
+    if r is None or a is None:
+        msg = "BUG: the rig was not assembled before tampering"
+        raise RuntimeError(msg)
+    wrong_secret = r.secret.with_name("wrong-key.secret")
+    ctx.nix.generate_cache_key(rig.CACHE_KEY_NAME, wrong_secret)
+    signed = rig.sign_variant(r.host_cli, wrong_secret, a)
+    if signed.signature is None:
+        msg = "BUG: sign_variant returned an unsigned variant"
+        raise RuntimeError(msg)
+    return signed.signature
+
+
+def _scenario_wrong_key_signature(ctx: _Ctx) -> None:
+    # the wrong-key generation happens inside the tamper lambda so the
+    # dry-run guard in _host_tamper covers it too
+    _attempt_init_abort(
+        ctx,
+        tamper=lambda: rig.set_feed_signatures(_serve_root(ctx), _wrong_key_signature(ctx)),
+        expect="init tarball signature verification failed",
+    )
+
+
+def _scenario_unsigned_feed(ctx: _Ctx) -> None:
+    _attempt_init_abort(
+        ctx,
+        tamper=lambda: rig.strip_feed_signatures(_serve_root(ctx)),
+        expect="has no signature",
+    )
+
+
+def _scenario_untrusted_key_name(ctx: _Ctx) -> None:
+    a = ctx.run.variant_a
+    if a is None or a.signature is None:
+        msg = "BUG: variant A is unsigned"
+        raise RuntimeError(msg)
+    renamed = "e2e-wrong-name:" + a.signature.split(":", 1)[1]
+    _attempt_init_abort(
+        ctx,
+        tamper=lambda: rig.set_feed_signatures(_serve_root(ctx), renamed),
+        expect="does not match trusted key name",
+    )
+
+
+def _scenario_corrupt_tarball(ctx: _Ctx) -> None:
+    _attempt_init_abort(
+        ctx,
+        tamper=lambda: rig.corrupt_tarball(_serve_root(ctx), _tarball_a(ctx)),
+        expect="init tarball signature verification failed",
+    )
+
+
+def _scenario_download_stall(ctx: _Ctx) -> None:
+    # artifact_deleted=False: a stalled download returns without deleting
+    # the partial file (store.rs) — the attempt's finally-sweep cleans it
+    _attempt_init_abort(
+        ctx,
+        tamper=lambda: ctx.server.set_fault(rig.FaultMode.STALL),
+        expect=("download stalled", "tarball download failed"),
+        artifact_deleted=False,
+    )
+
+
 def _flash_good_init(ctx: _Ctx) -> None:
-    """Group A's closing `good-init` flash — a clean init leaving the store
-    in a known-good state for the next group. Implemented in a later task."""
-    raise NotImplementedError("implemented in a later task")
+    """Good-rig flash of image A + full init verification — the A-group
+    finale (recovery proof) and the B-group's recovery flash."""
+    _prepare_flash(ctx, ctx.image_a)
+    catalog.flash_e2e(_pinned(ctx), ctx.image_a, assume_yes=ctx.yes, state=ctx.state)
+    catalog.wait_for_device(ctx.dev)
+    catalog.verify_initialized(ctx.dev, ctx.run)
+    catalog.require_staged_once(ctx.state)
 
 
 def _group_a(ctx: _Ctx) -> None:
+    catalog.clear_nix_store(ctx.dev, assume_yes=ctx.yes)
     ctx.run.device_mutated = True
-    catalog.clear_nix_store(_pinned(ctx), assume_yes=ctx.yes)
     for sid in (
         "unsigned-feed",
         "untrusted-key-name",
@@ -220,11 +372,11 @@ def _all(ctx: _Ctx) -> None:
 
 
 _DRIVERS: dict[str, Callable[[_Ctx], None]] = {
-    "wrong-key-signature": _unimplemented,
-    "unsigned-feed": _unimplemented,
-    "untrusted-key-name": _unimplemented,
-    "corrupt-tarball": _unimplemented,
-    "download-stall": _unimplemented,
+    "wrong-key-signature": _scenario_wrong_key_signature,
+    "unsigned-feed": _scenario_unsigned_feed,
+    "untrusted-key-name": _scenario_untrusted_key_name,
+    "corrupt-tarball": _scenario_corrupt_tarball,
+    "download-stall": _scenario_download_stall,
     "blank-data-partition": _unimplemented,
     "corrupt-fs-metadata": _unimplemented,
     "store-remnants": _unimplemented,
