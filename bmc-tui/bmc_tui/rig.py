@@ -47,20 +47,24 @@ class Variant:
     profile_path: str  # from the tarball's metadata.json
     index: Path  # out-path directory holding nix-package-index.v1.json
     tarball: Path  # the archive itself, inside its out-path directory
+    signature: str | None = None  # nix-style Ed25519 line for the feed entry
 
 
 def feed_document(variants: list[Variant], base_url: str) -> str:
     """The feed body: one entry per variant, URLs matching write_serve_root's
-    layout exactly — init follows download_url, upgrade follows index_url."""
-    entries = [
-        {
+    layout exactly — init follows download_url, upgrade follows index_url.
+    Signed variants carry the init-tarball signature the device verifies."""
+    entries = []
+    for v in variants:
+        entry = {
             "bos_version": v.bos_version,
             "download_url": f"{base_url}/tarballs/{v.tarball.name}",
             "profile_path": v.profile_path,
             "index_url": f"{base_url}/index/{v.bos_version}/{INDEX_NAME}",
         }
-        for v in variants
-    ]
+        if v.signature is not None:
+            entry["signature"] = v.signature
+        entries.append(entry)
     return json.dumps({"version": 1, "entries": entries}, indent=2)
 
 

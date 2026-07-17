@@ -23,6 +23,7 @@
 import json
 import urllib.error
 import urllib.request
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,14 @@ def test_feed_document_links_each_variant(tmp_path: Path) -> None:
             "index_url": f"http://10.0.0.1:8083/index/vb/{rig.INDEX_NAME}",
         },
     ]
+
+
+def test_feed_document_emits_signature_when_variant_is_signed(tmp_path: Path) -> None:
+    unsigned = _variant(tmp_path, "va", ["/nix/store/a"])
+    signed = replace(unsigned, signature="sysupgrade-e2e-1:c2ln")
+    doc = json.loads(rig.feed_document([signed, unsigned], "http://h:1"))
+    assert doc["entries"][0]["signature"] == "sysupgrade-e2e-1:c2ln"
+    assert "signature" not in doc["entries"][1]
 
 
 def test_index_store_paths_and_package_lookup(tmp_path: Path) -> None:
