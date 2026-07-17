@@ -42,6 +42,35 @@ const BOOTLOADER_SYNC_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 ho
 const BOOTLOADER_SYNC_DEBOUNCE: Duration = Duration::from_secs(5);
 const MIN_SCREEN_OFF_TIMEOUT_SECS: u32 = 5;
 
+/// What `run_screen_auto_off` should do for the current state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AutoOffMode {
+    /// Keep the backlight on and wait for a state change.
+    KeepOn,
+    /// Night mode is active with a timeout and nothing is inhibiting: arm the
+    /// auto-off timer for this long.
+    ArmTimer(Duration),
+}
+
+/// Decide screen auto-off behavior for one loop iteration. A ringing alarm
+/// always keeps the screen on, so the firing-alarm UI is never left on a blank
+/// display; otherwise the screen only auto-offs while night mode is active with
+/// a configured timeout.
+fn auto_off_decision(
+    night_mode_active: bool,
+    alarm_ringing: bool,
+    timeout_secs: Option<u32>,
+) -> AutoOffMode {
+    let Some(timeout_secs) = timeout_secs else {
+        return AutoOffMode::KeepOn;
+    };
+    if alarm_ringing || !night_mode_active || timeout_secs == 0 {
+        return AutoOffMode::KeepOn;
+    }
+    let clamped = timeout_secs.max(MIN_SCREEN_OFF_TIMEOUT_SECS);
+    AutoOffMode::ArmTimer(Duration::from_secs(u64::from(clamped)))
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     night_mode_controller: NightModeController,
@@ -66,6 +95,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         led_state_sender: watch::Sender<LedState>,
         manager: Arc<M>,
         screen_activity: Arc<Notify>,
+        alarm_ringing: watch::Receiver<bool>,
     ) -> Self {
         let backlight_controller =
             DisplayBacklightController::new(config_handle.clone(), backlight_driver.clone());
@@ -119,6 +149,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             screen_activity.clone(),
             timeout_changed,
             screen_woken_tx.clone(),
+            alarm_ringing,
         ));
 
         Self {
@@ -268,89 +299,76 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         screen_activity: Arc<Notify>,
         mut timeout_changed: broadcast::Receiver<Option<u32>>,
         screen_woken_tx: broadcast::Sender<()>,
+        mut alarm_ringing: watch::Receiver<bool>,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
 
         loop {
             let night_mode_active = *night_mode_receiver.borrow_and_update();
+            let alarm_ringing_now = *alarm_ringing.borrow_and_update();
+            let timeout_secs = night_mode_controller.config().await.screen_off_timeout_secs;
 
-            // If night mode is not active, ensure screen is on and wait
-            if !night_mode_active {
-                if Self::is_backlight_off(&backlight_controller).await {
-                    Self::wake_screen(
-                        &backlight_controller,
-                        &brightness_modified,
-                        &screen_woken_tx,
-                    )
-                    .await;
-                }
-
-                if night_mode_receiver.changed().await.is_err() {
-                    break;
-                }
-                continue;
-            }
-
-            let config = night_mode_controller.config().await;
-            let timeout_secs = config.screen_off_timeout_secs.unwrap_or(0);
-
-            // No timeout configured — ensure screen is on and wait for state changes
-            if timeout_secs == 0 {
-                if Self::is_backlight_off(&backlight_controller).await {
-                    Self::wake_screen(
-                        &backlight_controller,
-                        &brightness_modified,
-                        &screen_woken_tx,
-                    )
-                    .await;
-                }
-
-                tokio::select! {
-                    biased;
-                    result = night_mode_receiver.changed() => {
-                        if result.is_err() { break; }
-                    },
-                    () = screen_activity.notified() => {},
-                    Ok(_) = timeout_changed.recv() => {},
-                }
-                continue;
-            }
-
-            let clamped = timeout_secs.max(MIN_SCREEN_OFF_TIMEOUT_SECS);
-            let timeout = std::time::Duration::from_secs(u64::from(clamped));
-
-            tokio::select! {
-                biased;
-                result = night_mode_receiver.changed() => {
-                    if result.is_err() { break; }
-                    // Night mode state changed — loop back to handle it
-                },
-                () = screen_activity.notified() => {
-                    // User activity detected — wake screen if off
+            match auto_off_decision(night_mode_active, alarm_ringing_now, timeout_secs) {
+                AutoOffMode::KeepOn => {
+                    // Not in night mode, no timeout set, or an alarm is ringing —
+                    // a firing alarm must never sit on a blank screen, so wake it
+                    // if off and hold here until some state changes.
                     if Self::is_backlight_off(&backlight_controller).await {
-                        Self::wake_screen(&backlight_controller, &brightness_modified, &screen_woken_tx).await;
-                        info!("Screen woken by user activity");
+                        Self::wake_screen(
+                            &backlight_controller,
+                            &brightness_modified,
+                            &screen_woken_tx,
+                        )
+                        .await;
                     }
-                    // Timer restarts on next loop iteration
-                },
-                Ok(_) = timeout_changed.recv() => {
-                    // Config changed — loop back to re-read it
-                },
-                () = tokio::time::sleep(timeout) => {
-                    // Timeout expired — turn off screen.
-                    // Sequence: brightness→0, then power off pin
-                    // to avoid a visible flash from the kernel backlight driver.
-                    if !Self::is_backlight_off(&backlight_controller).await {
-                        if let Err(err) = backlight_controller.set_display_brightness(0).await {
-                            warn!(error = %err, "Failed to zero brightness for auto-off");
-                        }
-                        if let Err(err) = backlight_controller.turn_off().await {
-                            warn!(error = %err, "Failed to turn off backlight for auto-off");
-                        }
-                        info!(timeout_secs = clamped, "Screen auto-off activated");
+
+                    tokio::select! {
+                        biased;
+                        result = night_mode_receiver.changed() => {
+                            if result.is_err() { break; }
+                        },
+                        result = alarm_ringing.changed() => {
+                            if result.is_err() { break; }
+                        },
+                        Ok(_) = timeout_changed.recv() => {},
                     }
-                    // Loop back — will sleep again or wake on activity/config change
-                },
+                }
+                AutoOffMode::ArmTimer(timeout) => {
+                    tokio::select! {
+                        biased;
+                        result = night_mode_receiver.changed() => {
+                            if result.is_err() { break; }
+                        },
+                        // A ring starting mid-countdown pre-empts the blank: the
+                        // next iteration decides `KeepOn` and wakes the screen.
+                        result = alarm_ringing.changed() => {
+                            if result.is_err() { break; }
+                        },
+                        () = screen_activity.notified() => {
+                            // User activity — wake screen if off; timer restarts
+                            // on the next loop iteration.
+                            if Self::is_backlight_off(&backlight_controller).await {
+                                Self::wake_screen(&backlight_controller, &brightness_modified, &screen_woken_tx).await;
+                                info!("Screen woken by user activity");
+                            }
+                        },
+                        Ok(_) = timeout_changed.recv() => {},
+                        () = tokio::time::sleep(timeout) => {
+                            // Timeout expired — turn off screen.
+                            // Sequence: brightness→0, then power off pin
+                            // to avoid a visible flash from the kernel backlight driver.
+                            if !Self::is_backlight_off(&backlight_controller).await {
+                                if let Err(err) = backlight_controller.set_display_brightness(0).await {
+                                    warn!(error = %err, "Failed to zero brightness for auto-off");
+                                }
+                                if let Err(err) = backlight_controller.turn_off().await {
+                                    warn!(error = %err, "Failed to turn off backlight for auto-off");
+                                }
+                                info!(timeout_secs = timeout.as_secs(), "Screen auto-off activated");
+                            }
+                        },
+                    }
+                }
             }
         }
     }
@@ -720,6 +738,43 @@ mod tests {
         fn set_brightness(&self, _value: u8) -> anyhow::Result<()> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn ringing_alarm_keeps_screen_on_even_with_night_mode_timeout() {
+        // The acceptance criterion: an active alarm must never let the screen
+        // auto-off, regardless of night mode or a configured timeout.
+        assert_eq!(
+            auto_off_decision(true, true, Some(60)),
+            AutoOffMode::KeepOn,
+            "ringing alarm must inhibit auto-off"
+        );
+    }
+
+    #[test]
+    fn night_mode_with_timeout_arms_timer_when_not_ringing() {
+        assert_eq!(
+            auto_off_decision(true, false, Some(60)),
+            AutoOffMode::ArmTimer(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn timeout_below_minimum_is_clamped() {
+        assert_eq!(
+            auto_off_decision(true, false, Some(1)),
+            AutoOffMode::ArmTimer(Duration::from_secs(u64::from(MIN_SCREEN_OFF_TIMEOUT_SECS)))
+        );
+    }
+
+    #[test]
+    fn no_night_mode_or_no_timeout_keeps_screen_on() {
+        assert_eq!(
+            auto_off_decision(false, false, Some(60)),
+            AutoOffMode::KeepOn
+        );
+        assert_eq!(auto_off_decision(true, false, Some(0)), AutoOffMode::KeepOn);
+        assert_eq!(auto_off_decision(true, false, None), AutoOffMode::KeepOn);
     }
 
     type TestSystemManager = SystemManager<DummyBacklightDriver>;

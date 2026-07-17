@@ -77,6 +77,32 @@ fn spawn_alarm_overlay_listener(compositor: Arc<dyn Compositor>, alarm_bus: Alar
     });
 }
 
+/// Track the ringing alarm as a `watch<bool>` for the screen auto-off inhibit:
+/// `Started` → true, `Stopped`/`Snoozed` → false. Subscribes synchronously so a
+/// ring fired before the task is scheduled is not missed (cf.
+/// `spawn_alarm_overlay_listener`).
+fn spawn_alarm_ringing_watch(alarm_bus: &AlarmBus) -> watch::Receiver<bool> {
+    let mut events = alarm_bus.subscribe_events();
+    let (tx, rx) = watch::channel(false);
+    tokio::spawn(async move {
+        loop {
+            match events.recv().await {
+                Ok(AlarmEvent::Started { .. }) => {
+                    let _ = tx.send(true);
+                }
+                Ok(AlarmEvent::Stopped { .. } | AlarmEvent::Snoozed) => {
+                    let _ = tx.send(false);
+                }
+                Err(broadcast::error::RecvError::Lagged(n)) => {
+                    tracing::warn!(skipped = n, "alarm ringing watch lagged");
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
+    rx
+}
+
 #[derive(Debug)]
 pub struct App<T, U, V>
 where
@@ -200,6 +226,9 @@ where
         // `subscribe_events()` synchronously, so the receiver exists before the
         // controller can emit a `Started` event a fresh subscriber would miss.
         spawn_alarm_overlay_listener(compositor.clone(), alarm_bus.clone());
+        // Same discipline for the screen auto-off inhibit: subscribe now so a
+        // ring during startup can't be missed.
+        let alarm_ringing = spawn_alarm_ringing_watch(&alarm_bus);
 
         let alarm_controller = AlarmController::init(
             config_handle.clone(),
@@ -243,6 +272,7 @@ where
             led_state_sender,
             manager.clone(),
             screen_activity,
+            alarm_ringing,
         )
         .await;
         let mut screen_woken_rx = system_manager.subscribe_screen_woken();
