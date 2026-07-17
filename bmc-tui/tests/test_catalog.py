@@ -1311,6 +1311,113 @@ def test_cleanup_server_registry_removes_the_runtime_file() -> None:
     assert [argv[-1] for argv in exc.runs] == ["rm -f /etc/nix-upgrade/servers.json"]
 
 
+def test_register_rig_tampered_uses_the_wrong_key_everywhere(tmp_path: Path) -> None:
+    backend = _Exec(_routes({"cat /etc/nix/nix.conf": "substituters ...\nWRONGKEY\n"}))
+    run = _rigged_run(tmp_path)  # populated E2eRig, as register_rig's own tests use
+    catalog.register_rig_tampered(
+        Device("h", backend=backend), run, wrong_public_key="sysupgrade-e2e-1:WRONGKEY"
+    )
+    joined = [" ".join(argv) for argv in backend.runs]
+    registration = next(c for c in joined if "register-server" in c)
+    assert "sysupgrade-e2e-1:WRONGKEY" in registration
+    assert run.rig is not None
+    assert run.rig.cache_public_key not in registration
+
+
+def test_register_rig_tampered_aborts_when_the_good_key_survives(tmp_path: Path) -> None:
+    run = _rigged_run(tmp_path)
+    assert run.rig is not None
+    good = run.rig.cache_public_key
+    backend = _Exec(_routes({"cat /etc/nix/nix.conf": f"trusted keys: {good}\n"}))
+    with pytest.raises(Abort, match="still trusted"):
+        catalog.register_rig_tampered(
+            Device("h", backend=backend), run, wrong_public_key="sysupgrade-e2e-1:WRONGKEY"
+        )
+
+
+def test_witness_and_remnant_stages_round_trip() -> None:
+    backend = _Exec(_routes({}))
+    dev = Device("h", backend=backend)
+    catalog.plant_store_witness(dev)
+    catalog.plant_store_remnants(dev)
+    catalog.delete_store_db(dev)
+    joined = [" ".join(argv) for argv in backend.runs]
+    assert any(".bdk601-witness" in c for c in joined)
+    assert any("nix.tmp" in c and "nix.wiped" in c for c in joined)
+    assert any("db.sqlite" in c for c in joined)
+    gone = Device("h", backend=_Exec(_routes({})))  # empty read = absent
+    catalog.require_witness_gone(gone)
+    catalog.require_remnants_gone(gone)
+    present = Device("h", backend=_Exec(_routes({"witness": "yes", "nix.tmp": "yes"})))
+    with pytest.raises(Abort):
+        catalog.require_witness_gone(present)
+
+
+def test_shm_stages_probe_upload_and_sweep(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_cp)  # placeholder responder; the real one closes over `backend`
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1] if argv and argv[0] == "ssh" else " ".join(argv)
+        # standard Linux: a real /dev/shm dir with its own dedicated tmpfs mount
+        if "readlink -f /dev/shm" in cmd:
+            return _cp(argv, "/dev/shm")
+        if "cat /proc/mounts" in cmd:
+            return _cp(argv, "tmpfs /dev/shm tmpfs rw 0 0")
+        if "sha256sum" in cmd:
+            # stateful: absent before the upload streamed, intact after —
+            # a fake that reports the digest up front would let done_if
+            # skip the push and prove nothing. _remote_sha pipes the
+            # sha256sum line through `cut -d' ' -f1` on the device, so it
+            # returns the bare digest — model that, not the raw two-column line.
+            digest = image.sha256 if backend.streams else "0" * 64
+            return _cp(argv, digest)
+        return _cp(argv)
+
+    backend._respond = respond
+    dev = Device("h", backend=backend)
+    catalog.require_shm_tmpfs(dev)
+    catalog.upload_firmware_shm(dev, image)
+    argv, data = backend.streams[0]
+    assert f"/dev/shm/{image.path.name}" in argv[-1]
+    assert data == image.path.read_bytes()
+    catalog.sweep_shm_upload(dev, image)
+    assert any("rm -f" in " ".join(a) and "/dev/shm/" in " ".join(a) for a in backend.runs)
+
+
+def test_shm_probe_passes_on_openwrt_symlinked_shm() -> None:
+    """OpenWRT reality: /dev/shm is a symlink to /tmp/shm and NO dedicated
+    shm mount exists — the probe must judge the mount containing the
+    RESOLVED path, component-wise: the tmpfs on /tmp contains /tmp/shm,
+    while the /tmp/sh decoy mount is only a string prefix and must not win."""
+    backend = _Exec(
+        _routes(
+            {
+                "readlink -f /dev/shm": "/tmp/shm",
+                "cat /proc/mounts": (
+                    "/dev/root / ext4 rw 0 0\n"
+                    "loop /tmp/sh ext4 rw 0 0\n"
+                    "tmpfs /tmp tmpfs rw,noatime,size=102400k 0 0\n"
+                ),
+            }
+        )
+    )
+    catalog.require_shm_tmpfs(Device("h", backend=backend))
+
+
+def test_shm_probe_fails_when_resolved_path_is_not_tmpfs_backed() -> None:
+    backend = _Exec(
+        _routes(
+            {
+                "readlink -f /dev/shm": "/tmp/shm",
+                "cat /proc/mounts": "/dev/root / ext4 rw 0 0\n/dev/mmcblk0p4 /tmp ext4 rw 0 0\n",
+            }
+        )
+    )
+    with pytest.raises(Abort, match="/tmp/shm"):
+        catalog.require_shm_tmpfs(Device("h", backend=backend))
+
+
 def test_preflight_passes_when_all_urls_yield_bytes(tmp_path: Path) -> None:
     exc = _Exec(_routes({"wget": "64"}))
     catalog.preflight_rig(Device("h", backend=exc), _rigged_run(tmp_path))
@@ -1500,6 +1607,88 @@ def test_quiesce_nix_stops_services_and_unmounts_without_deleting() -> None:
     joined = [argv[-1] for argv in exc.runs]
     assert not any("rm -rf" in c for c in joined)  # quiesce never deletes
     assert any("umount /nix" in c for c in joined)
+
+
+def _preservation_routes(servers_json_present: Callable[[], bool]) -> _Respond:
+    """nix.conf intact; the servers.json existence probe answers per call."""
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "/etc/nix/nix.conf" in cmd:
+            return _cp(argv, "experimental-features = nix-command")
+        if "servers.json ]" in cmd:
+            return _cp(argv, "yes" if servers_json_present() else "")
+        return _cp(argv)
+
+    return respond
+
+
+def test_preservation_policy_observes_a_wiped_servers_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Unfixed BDK-600: the runtime wipe is event-driven inside the bmc
+    daemon, so post-flash servers.json state is nondeterministic in bounded
+    time — preserved=False must OBSERVE, not assert. An absent file is
+    reported as the wipe having landed."""
+    exc = _Exec(_preservation_routes(lambda: False))
+    catalog.require_preservation_policy(Device("h", backend=exc), servers_json_preserved=False)
+    assert "wiped" in capsys.readouterr().out
+
+
+def test_preservation_policy_observes_a_still_present_servers_json(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A still-present file is equally valid under the event-driven wipe
+    (device-verified: still present ≥152 s after one flash, absent two
+    reboots later) — one probe, report, pass. The old hard assert falsely
+    failed this state; the old poll had no terminal state to converge to."""
+    polls = {"n": 0}
+
+    def present() -> bool:
+        polls["n"] += 1
+        return True
+
+    exc = _Exec(_preservation_routes(present))
+    catalog.require_preservation_policy(Device("h", backend=exc), servers_json_preserved=False)
+    assert polls["n"] == 1  # single-shot: with no expected state there is nothing to poll for
+    assert "still present" in capsys.readouterr().out
+
+
+def test_preservation_policy_passes_immediately_when_preserved_and_present() -> None:
+    """preserved=True (the post-fix BDK-600 contract) keeps the hard assert:
+    the file present is the expected synchronous outcome — accepted on the
+    first observation without burning any waiting time."""
+    polls = {"n": 0}
+
+    def present() -> bool:
+        polls["n"] += 1
+        return True
+
+    exc = _Exec(_preservation_routes(present))
+    sleeps: list[float] = []
+    catalog.require_preservation_policy(
+        Device("h", backend=exc),
+        servers_json_preserved=True,
+        sleep=sleeps.append,
+        clock=_ticking_clock(),
+    )
+    assert polls["n"] == 1  # a single probe settled it
+    assert sleeps == []  # no polling wait was consumed
+
+
+def test_preservation_policy_aborts_when_a_preserved_file_never_appears() -> None:
+    """preserved=True with the file genuinely wiped: absent-then-restored is
+    not an expected transition, so the poll ends only via the full timeout,
+    aborting with the 'missing' polarity."""
+    exc = _Exec(_preservation_routes(lambda: False))
+    with pytest.raises(Abort, match=r"still missing \d+s after the flash"):
+        catalog.require_preservation_policy(
+            Device("h", backend=exc),
+            servers_json_preserved=True,
+            timeout=10,
+            sleep=lambda _s: None,
+            clock=_ticking_clock(),
+        )
 
 
 _MOUNTINFO = (

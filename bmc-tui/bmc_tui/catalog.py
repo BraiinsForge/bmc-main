@@ -1714,6 +1714,239 @@ def _wait_reachable(
         sleep(2)
 
 
+# ── tampered registration, store surgery, /dev/shm staging ────────────────────
+
+_WITNESS = f"{_NIX_BACKING}/.bdk601-witness"
+_SHM_DIR = "/dev/shm"
+_STALE_NEXT_MARKER = "next.9999-99-99-0-deadbeef"
+
+
+def shm_path(image: Image) -> str:
+    return f"{_SHM_DIR}/{image.path.name}"
+
+
+@stage("Register rig with wrong cache key (C4)")
+def register_rig_tampered(dev: Device, run: E2eRun, *, wrong_public_key: str) -> str:
+    """register_rig with every key argument replaced by a same-name wrong
+    key: registration replaces a nix.conf key only on a name match, so a
+    differently-named key would leave the good key trusted and the fault
+    would not fire. The good key must be gone afterwards."""
+    r = run.rig
+    if r is None:
+        msg = "BUG: the rig was not assembled before registration"
+        raise RuntimeError(msg)
+    config = json.dumps(
+        {
+            "factory": {
+                "id": "e2e-factory",
+                "base_url": r.base_url,
+                "known_public_key": wrong_public_key,
+                "priority": 0,
+                "enabled": True,
+            },
+            "servers": [],
+        }
+    )
+    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {_SERVERS_JSON}")
+    dev.run(
+        f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
+        f"--feed-url {shlex.quote(r.feed_url)} "
+        f"--index-public-key {shlex.quote(wrong_public_key)} "
+        f"--cache-url {shlex.quote(r.cache_url)} "
+        f"--cache-public-key {shlex.quote(wrong_public_key)}"
+    )
+    if dry_run.get():
+        return "tampered registration logged (dry-run)"
+    conf = dev.read(f"cat {_NIX_CONF} 2>/dev/null || true")
+    require(
+        r.cache_public_key not in conf,
+        "the good cache key is still trusted — same-name replacement failed",
+    )
+    return f"wrong key {console.lit(wrong_public_key)} registered, good key gone"
+
+
+@stage("Plant store witness")
+def plant_store_witness(dev: Device) -> str:
+    """A file inside the promoted store whose disappearance proves the init
+    path wiped rather than reused it (B4/B5)."""
+    dev.run(f"touch {_WITNESS}")
+    return console.lit(_WITNESS)
+
+
+@stage("Witness vanished (wipe proof)")
+def require_witness_gone(dev: Device) -> str:
+    require(
+        not dev.read(f"[ -e {_WITNESS} ] && echo yes || true"),
+        f"{console.lit(_WITNESS)} survived — the store was reused, not wiped",
+    )
+    return f"{console.lit(_WITNESS)} gone"
+
+
+@stage("Plant staging remnants (B3)")
+def plant_store_remnants(dev: Device) -> str:
+    """Leftovers of an interrupted staged extraction: init must clear both."""
+    dev.run(
+        f"mkdir -p {_NIX_BACKING}.tmp/junk && touch {_NIX_BACKING}.tmp/junk/f {_NIX_BACKING}.wiped"
+    )
+    return f"{console.lit(_NIX_BACKING + '.tmp')} + {console.lit(_NIX_BACKING + '.wiped')}"
+
+
+@stage("Staging remnants gone")
+def require_remnants_gone(dev: Device) -> str:
+    leftover = dev.read(f"ls -d {_NIX_BACKING}.tmp {_NIX_BACKING}.wiped 2>/dev/null || true")
+    require(not leftover, f"staging remnants survived init: {leftover}")
+    return "remnants cleared"
+
+
+@stage("Delete store database (B4)")
+def delete_store_db(dev: Device) -> str:
+    db = f"{_NIX_BACKING}/var/nix/db/db.sqlite"
+    dev.run(f"rm -f {shlex.quote(db)}")
+    return f"{console.lit(db)} deleted"
+
+
+# A /proc/mounts line is "source point fstype opts freq passno"; reading the
+# mount point and fstype needs at least this many whitespace-split fields.
+_MOUNTS_MIN_FIELDS = 3
+
+
+def _containing_mount(path: str, mounts: str) -> tuple[str, str] | None:
+    """(mount point, fstype) of the mount holding `path`: the longest
+    /proc/mounts mount point that is a path-component prefix of `path`
+    ("/tmp" contains "/tmp/shm"; a "/tmp/sh" mount does not)."""
+    best: tuple[str, str] | None = None
+    for line in mounts.splitlines():
+        fields = line.split()
+        if len(fields) < _MOUNTS_MIN_FIELDS:
+            continue
+        point, fstype = fields[1], fields[2]
+        contains = path == point or path.startswith(point.rstrip("/") + "/")
+        if contains and (best is None or len(point) > len(best[0])):
+            best = (point, fstype)
+    return best
+
+
+@stage("/dev/shm is tmpfs")
+def require_shm_tmpfs(dev: Device) -> str:
+    """D1's RAM-backing probe. OpenWRT ships /dev/shm as a SYMLINK to
+    /tmp/shm with no dedicated shm mount, so grepping /proc/mounts for a
+    ' /dev/shm ' entry can never pass there; resolve the path and judge the
+    fstype of the mount containing it instead. The device's busybox has no
+    `stat`, so the containment logic runs host-side."""
+    resolved = dev.read(f"readlink -f {_SHM_DIR} || echo {_SHM_DIR}") or _SHM_DIR
+    entry = _containing_mount(resolved, dev.read("cat /proc/mounts"))
+    found = f"containing mount: {entry[0]} ({entry[1]})" if entry else "no containing mount found"
+    require(
+        entry is not None and entry[1] == "tmpfs",
+        f"{console.lit(_SHM_DIR)} (resolves to {console.lit(resolved)}) is not tmpfs-backed"
+        f" — {found}",
+    )
+    return f"{console.lit(resolved)} tmpfs-backed"
+
+
+@stage("Upload firmware to /dev/shm")
+def upload_firmware_shm(dev: Device, image: Image) -> str:
+    """D1: stage the image in RAM-backed /dev/shm and flash from there —
+    the local-file sysupgrade branch. On OpenWRT both flash-window copies
+    (this staging copy and sysupgrade's own /tmp/sysupgrade.img) share
+    /tmp's tmpfs size cap (100 MiB on the Deck) — ensure_memory gates free
+    RAM, not the cap; with ~23 MiB images the ~46 MiB peak fits."""
+    remote = shm_path(image)
+    done_if(_remote_sha(dev, remote) == image.sha256)
+    # mkdir the RESOLVED dir: on OpenWRT /dev/shm is a symlink (to /tmp/shm,
+    # present at boot) — creating the target covers a resolved-target-missing
+    # case, where the push's `cat >` would fail with ENOENT.
+    dev.run(f'mkdir -p "$(readlink -f {shlex.quote(_SHM_DIR)})"')
+    dev.push(image.path, remote)
+    if dry_run.get():
+        return f"→ {console.lit(remote)}"
+    require(
+        _remote_sha(dev, remote) == image.sha256,
+        f"upload corrupted: {console.lit(image.path.name)} checksum mismatch in {_SHM_DIR}",
+    )
+    return f"→ {console.lit(remote)} (sha256 verified)"
+
+
+@stage("Sweep /dev/shm upload")
+def sweep_shm_upload(dev: Device, image: Image) -> str:
+    dev.run(f"rm -f {shlex.quote(shm_path(image))}")
+    return console.lit(shm_path(image))
+
+
+@stage("Plant stale next marker (C5)")
+def plant_stale_next_marker(dev: Device) -> str:
+    """A leftover marker from a hypothetical earlier aborted staging: the
+    incoming flash must sweep it when it consumes its own next.*."""
+    dev.run(f"touch {_PROFILE_DIR}/{_STALE_NEXT_MARKER}")
+    return console.lit(_STALE_NEXT_MARKER)
+
+
+@stage("Stale next marker swept (C5)")
+def require_stale_next_gone(dev: Device) -> str:
+    require(
+        _STALE_NEXT_MARKER not in _next_markers(dev),
+        f"stale {console.lit(_STALE_NEXT_MARKER)} survived activation",
+    )
+    return f"{console.lit(_STALE_NEXT_MARKER)} gone"
+
+
+@stage("Preservation policy (D5)")
+def require_preservation_policy(
+    dev: Device,
+    *,
+    servers_json_preserved: bool,
+    timeout: int = 30,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """First boot into the flashed image: nix.conf is a preserved conffile
+    and must survive — checked single-shot, activation rewrites it before
+    ssh is even reachable (no race observed). The servers.json half depends
+    on the policy:
+    - preserved=False (today's unfixed-BDK-600 images): OBSERVED, never
+      asserted. The runtime wipe is event-driven inside the bmc daemon —
+      the device-verified record for the identical register→flash→check
+      sequence reads: absent almost immediately (C1 retry, C6), absent
+      within ~2 min (first group d run), still present ≥152 s yet absent
+      two reboots later (second group d run). Post-flash state is
+      nondeterministic in bounded time, so no timeout makes a hard assert
+      sound; a single probe reports what it saw and passes either way.
+    - preserved=True (the post-fix contract — the meaningful assertion
+      once images carry the BDK-600 fix): hard assert. Preservation is
+      synchronous with the flash, so a present file passes immediately;
+      an absent one gets a short grace poll (filesystem/boot settling)
+      before the abort."""
+    conf = dev.read(f"cat {_NIX_CONF} 2>/dev/null || true")
+    require("experimental-features" in conf, "nix.conf was not preserved across sysupgrade")
+    if dry_run.get():
+        return "nix.conf preserved; servers.json probe skipped (dry-run)"
+
+    def present() -> bool:
+        return bool(dev.read(f"[ -f {_SERVERS_JSON} ] && echo yes || true"))
+
+    if not servers_json_preserved:
+        observed = (
+            "servers.json still present (BDK-600 wipe is event-driven; may land later)"
+            if present()
+            else "servers.json wiped (BDK-600)"
+        )
+        return f"nix.conf preserved; {observed}"
+    start = clock()
+
+    def missing() -> str | None:
+        if present():
+            return None
+        return (
+            f"servers.json still missing {clock() - start:.0f}s after the flash "
+            f"— contradicts --servers-json-preserved=True"
+        )
+
+    failure = _poll_until(missing, timeout=timeout, sleep=sleep, clock=clock)
+    if failure is not None:
+        raise Abort(failure)
+    return "nix.conf preserved, servers.json preserved"
+
+
 # ── e2e upgrade cycle ─────────────────────────────────────────────────────────
 
 _UPGRADE_SERVER_ID = "dev-upgrade"
