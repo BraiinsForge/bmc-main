@@ -175,8 +175,9 @@ Init scripts in the rootfs overlay ensure the VM recovers automatically on reboo
 WiFi uplink credentials are templated into `/etc/bmc-virt/uplink.conf` at deploy time. The WiFi init script reads them
 on every boot to re-apply the radio1 AP and radio0 STA config that bmc-openwrt's `wifi-detect` overwrites on startup.
 
-A `bos` stub (`/usr/bin/bos`) provides the `factory_reset` subcommand: restores factory-default flags, removes
-`bmc_config.json`, and reboots.
+A `bos` stub (`/usr/bin/bos`) provides the `factory_reset` subcommand: restores factory-default flags, removes the
+config (`/etc/bmc/config.json` plus the kept pre-migration `/etc/bmc_config.json`, so the boot-time relocation cannot
+resurrect it), and reboots.
 
 ## macOS prerequisites
 

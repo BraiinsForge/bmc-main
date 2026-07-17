@@ -18,6 +18,7 @@ _raw: dict[str, str] = tomllib.loads(_PATHS_TOML.read_text())
 BMC_LOG: str = _raw["BMC_LOG"]
 BMC_BIN: str = _raw["BMC_BIN"]
 BMC_CONFIG: str = _raw["BMC_CONFIG"]
+BMC_CONFIG_LEGACY: str = _raw["BMC_CONFIG_LEGACY"]
 BMC_PID_FILE: Path = Path(_raw["BMC_PID_FILE"])
 BMC_RUNTIME_DIR: str = _raw["BMC_RUNTIME_DIR"]
 WASM_DIR: Path = Path(_raw["WASM_DIR"])
@@ -28,6 +29,7 @@ RR_TRACE_DIR: Path = Path(_raw["RR_TRACE_DIR"])
 __all__ = [
     "BMC_BIN",
     "BMC_CONFIG",
+    "BMC_CONFIG_LEGACY",
     "BMC_LOG",
     "BMC_PID_FILE",
     "BMC_RUNTIME_DIR",

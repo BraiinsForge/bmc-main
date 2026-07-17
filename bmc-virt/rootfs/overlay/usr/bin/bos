@@ -14,7 +14,10 @@ factory_reset() {
     # VM equivalent: restore factory state
     touch /etc/factory-default
     touch /etc/setup-pending
-    rm -f "$BMC_CONFIG"
+    # Both the current config and its kept pre-migration copy must go:
+    # the firmware's boot-time relocation would otherwise restore the
+    # stale legacy file into $BMC_CONFIG on the next boot.
+    rm -f "$BMC_CONFIG" "$BMC_CONFIG_LEGACY"
     # Remove uplink.conf so the boot-time WiFi init script doesn't
     # clear factory flags and re-provision on next boot.
     rm -f /etc/bmc-virt/uplink.conf

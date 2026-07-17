@@ -14,7 +14,12 @@
 # bmc-openwrt (the compositor / main Deck app) paths.
 BMC_LOG = "/root/bmc.log"
 BMC_BIN = "/root/bmc-openwrt"
-BMC_CONFIG = "/etc/bmc_config.json"
+BMC_CONFIG = "/etc/bmc/config.json"
+# Pre-migration config path. The firmware's first-boot migration copies it
+# to BMC_CONFIG but deliberately keeps the original for downgrade safety,
+# so a factory reset must remove both — otherwise the next boot's
+# relocation resurrects the stale legacy copy into BMC_CONFIG.
+BMC_CONFIG_LEGACY = "/etc/bmc_config.json"
 BMC_PID_FILE = "/var/run/bmc-openwrt.pid"
 # XDG_RUNTIME_DIR used by the Wayland compositor and the relay.
 BMC_RUNTIME_DIR = "/tmp/bmc-runtime"

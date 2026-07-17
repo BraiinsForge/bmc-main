@@ -82,7 +82,7 @@ just test      # pytest only
 ```sh
 bmc-virt ssh "uci show wireless"
 bmc-virt pull /root/bmc.log ./logs/
-bmc-virt push ./config.json /etc/bmc_config.json
+bmc-virt push ./config.json /etc/bmc/config.json
 bmc-virt events              # pretty-print live events
 bmc-virt events --raw        # JSONL for piping
 bmc-virt wait app.ready

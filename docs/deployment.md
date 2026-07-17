@@ -164,15 +164,20 @@ instance (the image widget writes `image.blob`). Their presence proves write-at-
 
 ### Scene config and the dormancy prerequisite
 
-The active scene set is `/etc/bmc_config.json` — a `scenes` array plus `scene_cycling`, `accounts`, and display
-settings. There is no `jq` on the device, so edit locally and push back, preserving the other top-level fields:
+The active scene set is `/etc/bmc/config.json` — scenes plus `scene_cycling`, `accounts`, and display settings.
+(Firmware from before the config migration reads `/etc/bmc_config.json` instead; the first boot of current firmware
+copies it to the new path and keeps the original for downgrade safety, after which only `/etc/bmc/config.json` matters.)
+There is no `jq` on the device, so edit locally and push back, preserving the other top-level fields:
 
 ```sh
-ssh root@192.168.1.2 'cat /etc/bmc_config.json' > cfg.json
+ssh root@192.168.1.2 'cat /etc/bmc/config.json' > cfg.json
 jq --slurpfile s bmc-virt/data/configs/image-cache.json '.scenes = $s[0].scenes' cfg.json > cfg.new.json
-ssh root@192.168.1.2 'cp /etc/bmc_config.json /etc/bmc_config.json.bak; cat > /etc/bmc_config.json' < cfg.new.json
+ssh root@192.168.1.2 'cp /etc/bmc/config.json /etc/bmc/config.json.bak; cat > /etc/bmc/config.json' < cfg.new.json
 ssh root@192.168.1.2 'killall bmc-openwrt'   # procd respawns, reloads config at startup
 ```
+
+Edit only while the app is down (or restart right after): `bmc-openwrt` holds the config in memory and rewrites the file
+on save, clobbering manual edits made while it runs.
 
 To exercise a widget's dormant/wake path (e.g. the image cache's RAM reclaim), the config needs **≥4 enabled scenes**:
 the compositor keeps the active scene `Visible` and both cycle neighbours `Prepared`, so only a non-neighbour scene
