@@ -66,9 +66,9 @@ label for details (e.g. SSID, error message). States driven from Rust via Slint 
       the bos version and the available versions for factory.
 10. Download tarball — show progress bar (downloaded MB / total MB)
 11. Verify tarball signature against `known_public_key` from `servers.json`. If verification fails, delete the tarball
-    and show a non-retryable error. **Note:** TLS certificate validation is disabled (`danger_accept_invalid_certs`)
-    because NTP is not available on first boot (clock is at epoch). Tarball signature verification is the real integrity
-    guarantee, not TLS.
+    and show a non-retryable error. TLS certificate validation remains enabled: initialization runs during sysupgrade,
+    after the device has already downloaded the firmware over TLS, and therefore relies on the same system-clock and
+    certificate-trust prerequisites. The tarball signature adds content authentication independently of the transport.
 12. Extract tarball to `/nix/store` — show "Installing packages..."
 13. Activate initial profile from tarball's `profile_path`
 14. Exit 0, `bmc` starts normally

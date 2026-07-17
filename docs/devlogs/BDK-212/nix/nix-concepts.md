@@ -807,14 +807,13 @@ knows it's not stuck.
 
 #### Tarball integrity and TLS
 
-On first boot, NTP has not synced yet (the system clock is at epoch until WiFi connects and NTP runs). This means TLS
-certificate validation will fail because server certificates appear to be from the future. The initializer therefore
-disables TLS certificate validation for its HTTP client.
+Store initialization runs during sysupgrade, after the device has already downloaded the firmware over TLS. The
+initializer therefore keeps certificate validation enabled and relies on the same system-clock and certificate-trust
+prerequisites as the firmware download.
 
-To compensate, factory tarballs must be cryptographically signed. After downloading the tarball and before extraction,
-the initializer verifies the signature against the `known_public_key` from `servers.json`. If verification fails, the
-tarball is rejected. This makes tarball signing the primary integrity guarantee — TLS serves only as transport
-encryption.
+Factory tarballs must also be cryptographically signed. After downloading the tarball and before extraction, the
+initializer verifies the signature against the `known_public_key` from `servers.json`. If verification fails, the
+tarball is rejected. The signature provides content authentication independently of the TLS transport.
 
 ## Factory Reset
 
