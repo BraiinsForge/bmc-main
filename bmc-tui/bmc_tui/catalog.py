@@ -72,10 +72,17 @@ _NIX_CLI_ATTR = Attr(".#bmc-nix-cli-armv7-release")
 # Host-native CLI used to sign the rig's init tarballs; the device CLI is
 # cross-compiled for ARM and cannot run on the harness host.
 _HOST_CLI_ATTR = Attr(".#bmc-nix-cli")
+# OpenWRT's e2fsprogs ships e2fsck/mkfs.ext4 but NOT debugfs, which the B2
+# fault surgery needs. Build a statically linked, cross-built debugfs and push
+# it like the CLI; the `.bin` output is the lone out-path holding sbin/debugfs.
+_DEBUGFS_ATTR = Attr(".#pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic.e2fsprogs.bin")
 # Run-unique device paths for the pushed CLI and tarball: Device.push
 # truncates via `cat >`, so a constant name would let concurrent
 # harness runs upload, read, and clean up the same file.
 _REMOTE_CLI = RemotePath(f"/tmp/bmc-nix-cli.deck-init.{os.getpid()}")
+# Same run-uniqueness rationale for the pushed debugfs; /tmp is tmpfs, so a
+# reboot sweeps it, and cleanup_remote_artifacts removes it like the CLI.
+_REMOTE_DEBUGFS = RemotePath(f"/tmp/bmc-debugfs.deck-faults.{os.getpid()}")
 
 
 @stage("Device reachable")
@@ -485,6 +492,7 @@ class Provisioning:
     profile_path: str | None = None  # promoted profile path, from the tarball's metadata.json
     cli: Path | None = None  # host path of the built bmc-nix-cli
     remote_tarball: RemotePath | None = None  # device path of the pushed tarball
+    debugfs: Path | None = None  # host path of the built static debugfs (B2 only)
 
 
 @stage("Build init tarball")
@@ -532,6 +540,32 @@ def push_nix_cli(dev: Device, plan: Provisioning) -> str:
     dev.push(cli, _REMOTE_CLI)
     dev.run(f"chmod +x {shlex.quote(_REMOTE_CLI)}")
     return f"→ {console.lit(_REMOTE_CLI)}"
+
+
+@stage("Build debugfs")
+def build_debugfs(nix: Nix, plan: Provisioning) -> str:
+    """Cross-build the static ARM debugfs the B2 surgery needs; lazy — only
+    scenarios that corrupt ext4 metadata call this, never every invocation."""
+
+    out = Path(nix.build_out(_DEBUGFS_ATTR))
+    debugfs = out / "sbin/debugfs"
+    require(debugfs.is_file(), f"no sbin/debugfs in {console.lit(out)}")
+    plan.debugfs = debugfs
+    return console.lit(debugfs.name)
+
+
+@stage("Push debugfs")
+def push_debugfs(dev: Device, plan: Provisioning) -> str:
+    """Push the cross-built debugfs to a tmpfs /tmp path (a reboot sweeps it;
+    cleanup_remote_artifacts removes it explicitly, like the CLI)."""
+
+    debugfs = plan.debugfs
+    if debugfs is None:
+        msg = "BUG: debugfs was not built before the push stage"
+        raise RuntimeError(msg)
+    dev.push(debugfs, _REMOTE_DEBUGFS)
+    dev.run(f"chmod +x {shlex.quote(_REMOTE_DEBUGFS)}")
+    return f"→ {console.lit(_REMOTE_DEBUGFS)}"
 
 
 @stage("Prepare data partition")
@@ -646,9 +680,10 @@ def activate_profile(dev: Device, plan: Provisioning) -> str:
 
 @stage("Clean up pushed files")
 def cleanup_remote_artifacts(dev: Device, plan: Provisioning) -> str:
-    """Remove the pushed CLI and tarball; runs also after a failed stage."""
+    """Remove the pushed CLI, tarball, and B2 debugfs; runs also after a
+    failed stage."""
 
-    paths = [p for p in (plan.remote_tarball, _REMOTE_CLI) if p]
+    paths = [p for p in (plan.remote_tarball, _REMOTE_CLI, _REMOTE_DEBUGFS) if p]
     dev.run(f"rm -f {' '.join(shlex.quote(p) for p in paths)}")
     return ", ".join(console.lit(p) for p in paths)
 
@@ -1114,15 +1149,20 @@ _B2_DEBUGFS_COMMANDS: tuple[str, str] = ("sif <2> links_count 0", "ssv state 2")
 
 
 @stage("Corrupt ext4 metadata (B2)")
-def corrupt_partition_metadata(dev: Device, state: FaultsState) -> str:
+def corrupt_partition_metadata(
+    dev: Device, state: FaultsState, *, debugfs: str = _REMOTE_DEBUGFS
+) -> str:
     """The pinned repair-branch recipe: zero the root inode's link count and
     set the superblock errors flag. The flag makes plain `e2fsck -p` run
     its full check (exit 4); `e2fsck -y` repairs (exit 1); the UUID must
     survive (repaired, never reformatted). Validated on e2fsprogs 1.47.3
-    and re-proven by the loopback fixture test."""
+    and re-proven by the loopback fixture test.
+
+    `debugfs` is the pushed static binary's device path — OpenWRT's
+    e2fsprogs has no debugfs, so the harness ships its own (push_debugfs)."""
     p = _require_partition(state)
     for command in _B2_DEBUGFS_COMMANDS:
-        dev.run(f"debugfs -w -R '{command}' {shlex.quote(p.device)}")
+        dev.run(f"{shlex.quote(debugfs)} -w -R '{command}' {shlex.quote(p.device)}")
     return f"root links_count zeroed + errors flag set on {console.lit(p.device)}"
 
 

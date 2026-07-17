@@ -867,6 +867,8 @@ def test_cleanup_removes_pushed_files(tmp_path: Path) -> None:
     catalog.cleanup_remote_artifacts(Device("h", backend=exec_), plan)
     joined = [" ".join(argv) for argv in exec_.runs]
     assert any("rm -f" in c and "/mnt/data/nix-x.tar.gz.deck-init.1" in c for c in joined)
+    # the B2 debugfs is swept alongside the CLI and tarball
+    assert any("rm -f" in c and catalog._REMOTE_DEBUGFS in c for c in joined)
 
 
 # ── init procedure ────────────────────────────────────────────────────────────
@@ -1731,14 +1733,40 @@ def test_release_data_partition_aborts_when_a_mount_remains_on_the_device() -> N
         catalog.release_data_partition(Device("h", backend=_Exec(respond)), catalog.FaultsState())
 
 
-def test_corrupt_partition_metadata_runs_the_pinned_debugfs_recipe() -> None:
+def _debugfs_out(tmp_path: Path) -> Path:
+    out = tmp_path / "debugfs-out"
+    (out / "sbin").mkdir(parents=True, exist_ok=True)
+    (out / "sbin" / "debugfs").write_bytes(b"elf")
+    return out
+
+
+def test_build_and_push_debugfs_ships_the_static_binary(tmp_path: Path) -> None:
+    plan = catalog.Provisioning()
+    nix = _FakeNix({catalog._DEBUGFS_ATTR: _debugfs_out(tmp_path)})
+    catalog.build_debugfs(nix, plan)
+    assert plan.debugfs is not None
+    assert plan.debugfs.name == "debugfs"
+
+    backend = _Exec(_routes({}))
+    catalog.push_debugfs(Device("h", backend=backend), plan)
+    # the binary is streamed to the tmpfs path, then made executable there
+    assert any(catalog._REMOTE_DEBUGFS in " ".join(argv) for argv, _ in backend.streams)
+    assert any(
+        "chmod +x" in " ".join(argv) and catalog._REMOTE_DEBUGFS in " ".join(argv)
+        for argv in backend.runs
+    )
+
+
+def test_corrupt_partition_metadata_runs_the_pushed_debugfs_recipe() -> None:
     backend = _Exec(_routes({}))
     state = catalog.FaultsState()
     state.partition = catalog.DataPartition("/dev/mmcblk0p4", "179:4", "1111-2222")
     catalog.corrupt_partition_metadata(Device("h", backend=backend), state)
     joined = [" ".join(argv) for argv in backend.runs]
+    # each recipe command runs through the pushed static binary, not a bare
+    # `debugfs` — OpenWRT ships none, so a literal `debugfs` would fail on device
     for command in catalog._B2_DEBUGFS_COMMANDS:
-        assert any(command in c for c in joined)
+        assert any(command in c and catalog._REMOTE_DEBUGFS in c for c in joined)
 
 
 def test_fs_uuid_assertions_read_blkid() -> None:

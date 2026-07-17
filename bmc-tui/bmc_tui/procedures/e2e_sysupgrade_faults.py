@@ -31,6 +31,7 @@ dry-run tamper seams. The scenario bodies are stubs until Tasks 13-15,
 so the procedure is deliberately kept off the CLI.
 """
 
+import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -41,7 +42,7 @@ from bmc_tui import catalog, console, nix, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix
-from bmc_tui.stage import dry_run, entrypoint
+from bmc_tui.stage import Abort, dry_run, entrypoint, require
 
 # sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk; same
 # headroom rationale as procedures/e2e_sysupgrade.py. Private there, so
@@ -334,6 +335,108 @@ def _group_a(ctx: _Ctx) -> None:
     _flash_good_init(ctx)
 
 
+def _require_b_preconditions(ctx: _Ctx) -> None:
+    """Read-only: running image A's firmware with an initialized store —
+    asserted before any mutation so a mis-sequenced invocation aborts
+    with the device untouched."""
+    catalog.require_lineage(ctx.dev, ctx.run)
+    catalog.require_initialized_store(ctx.dev)
+
+
+def _scenario_blank_data_partition(ctx: _Ctx) -> None:
+    _require_b_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_a)
+    pinned = _pinned(ctx)  # quiesce stops services: mDNS may die — numeric address only
+    catalog.quiesce_nix(pinned)
+    catalog.release_data_partition(pinned, ctx.state)
+    catalog.corrupt_partition_blank(pinned, ctx.state)
+    _flash_and_verify_init(ctx)
+    catalog.require_fs_uuid_changed(ctx.dev, ctx.state)  # post-reboot: mDNS is back
+
+
+def _scenario_corrupt_fs_metadata(ctx: _Ctx) -> None:
+    # OpenWRT's e2fsprogs ships no debugfs, so instead of requiring it on the
+    # device the harness cross-builds a static one (lazy — only here) and
+    # pushes it; the corruption stage runs that pushed binary.
+    _require_b_preconditions(ctx)
+    catalog.build_debugfs(ctx.nix, ctx.prov)
+    _prepare_flash(ctx, ctx.image_a)
+    pinned = _pinned(ctx)
+    catalog.push_debugfs(pinned, ctx.prov)
+    catalog.quiesce_nix(pinned)
+    catalog.release_data_partition(pinned, ctx.state)
+    catalog.corrupt_partition_metadata(pinned, ctx.state)
+    _flash_and_verify_init(ctx)
+    catalog.require_fs_uuid_unchanged(ctx.dev, ctx.state)
+
+
+def _scenario_store_remnants(ctx: _Ctx) -> None:
+    _require_b_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_a)
+    pinned = _pinned(ctx)
+    catalog.quiesce_nix(pinned)
+    catalog.plant_store_remnants(pinned)
+    _flash_and_verify_init(ctx)
+    catalog.require_remnants_gone(ctx.dev)
+
+
+def _scenario_missing_store_db(ctx: _Ctx) -> None:
+    _require_b_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_a)
+    pinned = _pinned(ctx)
+    catalog.quiesce_nix(pinned)
+    catalog.plant_store_witness(pinned)
+    catalog.delete_store_db(pinned)
+    _flash_and_verify_init(ctx)
+    catalog.require_witness_gone(ctx.dev)
+
+
+def _scenario_unmounted_store(ctx: _Ctx) -> None:
+    _require_b_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_a)
+    pinned = _pinned(ctx)
+    catalog.quiesce_nix(pinned)
+    catalog.plant_store_witness(pinned)  # store intact, /nix just unmounted
+    _flash_and_verify_init(ctx)
+    catalog.require_witness_gone(ctx.dev)  # pins the status-3 wipe behavior
+
+
+def _flash_and_verify_init(ctx: _Ctx) -> None:
+    """Flash image A and verify a fresh init — the B-scenario tail. The
+    upload/keys/registration ran in _prepare_flash before the surgery,
+    so this flashes from the already-verified /tmp upload via the pinned
+    address (mDNS is down after the quiesce)."""
+    catalog.flash_e2e(_pinned(ctx), ctx.image_a, assume_yes=ctx.yes, state=ctx.state)
+    catalog.wait_for_device(ctx.dev)
+    catalog.verify_initialized(ctx.dev, ctx.run)
+    catalog.require_staged_once(ctx.state)
+
+
+def _with_b_recovery(ctx: _Ctx, scenario: Callable[[_Ctx], None]) -> None:
+    """The B-group recovery contract: on failure the device is left over
+    ssh with services stopped and a damaged/absent store — attempt one
+    good-rig re-flash of image A, then re-raise the original failure.
+    Covers Abort (assertion failures) AND CalledProcessError (dd,
+    debugfs, umount, or a flash command dying over ssh) — the surgery
+    steps raise the latter, and they must trigger the same one-shot
+    recovery."""
+    try:
+        scenario(ctx)
+    except (Abort, subprocess.CalledProcessError) as failure:
+        hint = failure.hint if isinstance(failure, Abort) else str(failure)
+        console.warn(f"B-scenario failed ({hint}) — attempting the one-shot recovery flash")
+        try:
+            _flash_good_init(ctx)
+        except (Abort, subprocess.CalledProcessError) as recovery:
+            raise Abort(
+                f"scenario failed AND the recovery flash failed ({recovery}); "
+                f"original failure: {hint}. Manual fallback: re-flash image A "
+                "with the good rig, or run `deck init --wipe` semantics via "
+                "bmc-nix-cli init --wipe on the device"
+            ) from failure
+        raise
+
+
 def _group_b(ctx: _Ctx) -> None:
     for sid in (
         "store-remnants",
@@ -342,7 +445,7 @@ def _group_b(ctx: _Ctx) -> None:
         "blank-data-partition",
         "corrupt-fs-metadata",
     ):
-        _DRIVERS[sid](ctx)
+        _with_b_recovery(ctx, _DRIVERS[sid])
 
 
 def _group_c(ctx: _Ctx) -> None:
@@ -377,11 +480,11 @@ _DRIVERS: dict[str, Callable[[_Ctx], None]] = {
     "untrusted-key-name": _scenario_untrusted_key_name,
     "corrupt-tarball": _scenario_corrupt_tarball,
     "download-stall": _scenario_download_stall,
-    "blank-data-partition": _unimplemented,
-    "corrupt-fs-metadata": _unimplemented,
-    "store-remnants": _unimplemented,
-    "missing-store-db": _unimplemented,
-    "unmounted-store": _unimplemented,
+    "blank-data-partition": _scenario_blank_data_partition,
+    "corrupt-fs-metadata": _scenario_corrupt_fs_metadata,
+    "store-remnants": _scenario_store_remnants,
+    "missing-store-db": _scenario_missing_store_db,
+    "unmounted-store": _scenario_unmounted_store,
     "cache-swap-retry": _unimplemented,
     "unreachable-rig": _unimplemented,
     "malformed-index": _unimplemented,

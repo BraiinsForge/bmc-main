@@ -21,14 +21,17 @@
 """Structure tests for the fault-injection suite."""
 
 import json
+import subprocess
 import types
 from pathlib import Path
 from typing import cast
 
+import pytest
+
 from bmc_tui.device import Device
 from bmc_tui.procedures import e2e_sysupgrade_faults as faults
 from bmc_tui.procedures.e2e_sysupgrade_faults import E2eSysupgradeFaults
-from bmc_tui.stage import dry_run
+from bmc_tui.stage import Abort, dry_run
 from tests.test_catalog import _TARGET, _cp, _e2e_image, _e2e_nix, _Exec, _local_server, _Respond
 
 
@@ -111,6 +114,65 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
         "download-stall",
         "finale",
     ]
+
+
+def test_b_group_order_and_recovery_wrapper(monkeypatch) -> None:
+    calls: list[str] = []
+    for sid in (
+        "blank-data-partition",
+        "corrupt-fs-metadata",
+        "store-remnants",
+        "missing-store-db",
+        "unmounted-store",
+    ):
+        monkeypatch.setitem(faults._DRIVERS, sid, lambda _ctx, sid=sid: calls.append(sid))
+    faults._group_b(cast("faults._Ctx", types.SimpleNamespace()))
+    assert calls == [
+        "store-remnants",
+        "missing-store-db",
+        "unmounted-store",
+        "blank-data-partition",
+        "corrupt-fs-metadata",
+    ]
+
+
+def test_b_recovery_attempts_one_reflash_then_reraises(monkeypatch) -> None:
+    recovered: list[str] = []
+    monkeypatch.setattr(faults, "_flash_good_init", lambda _ctx: recovered.append("reflash"))
+
+    def failing(_ctx) -> None:
+        raise Abort("corrupt-fs-metadata did not repair")
+
+    with pytest.raises(Abort, match="did not repair"):
+        faults._with_b_recovery(cast("faults._Ctx", types.SimpleNamespace()), failing)
+    assert recovered == ["reflash"]
+
+
+def test_b_recovery_covers_operational_failures(monkeypatch) -> None:
+    """dd/debugfs/umount/flash failures surface as CalledProcessError,
+    not Abort — they must trigger the same one-shot recovery."""
+    recovered: list[str] = []
+    monkeypatch.setattr(faults, "_flash_good_init", lambda _ctx: recovered.append("reflash"))
+
+    def failing(_ctx) -> None:
+        raise subprocess.CalledProcessError(1, ["dd"])
+
+    with pytest.raises(subprocess.CalledProcessError):
+        faults._with_b_recovery(cast("faults._Ctx", types.SimpleNamespace()), failing)
+    assert recovered == ["reflash"]
+
+
+def test_b_recovery_failure_names_the_manual_fallback(monkeypatch) -> None:
+    def broken_reflash(_ctx) -> None:
+        raise Abort("device gone")
+
+    monkeypatch.setattr(faults, "_flash_good_init", broken_reflash)
+
+    def failing(_ctx) -> None:
+        raise Abort("original")
+
+    with pytest.raises(Abort, match="init --wipe"):
+        faults._with_b_recovery(cast("faults._Ctx", types.SimpleNamespace()), failing)
 
 
 def _dry_routes(sha_a: str) -> _Respond:
