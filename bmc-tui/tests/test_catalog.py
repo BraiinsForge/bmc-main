@@ -111,6 +111,7 @@ def _image(
 
 _TARBALL_ATTR = ".#init-tarball-armv7"
 _CLI_ATTR = ".#bmc-nix-cli-armv7-release"
+_HOST_CLI_ATTR = ".#bmc-nix-cli"
 
 
 class _FakeNix:
@@ -161,6 +162,15 @@ def _cli_out(tmp_path: Path) -> Path:
     out = tmp_path / "cli-out"
     (out / "bin").mkdir(parents=True, exist_ok=True)
     (out / "bin" / "bmc-nix-cli").write_bytes(b"elf")
+    return out
+
+
+def _stub_host_cli(tmp_path: Path) -> Path:
+    out = tmp_path / "host-cli"
+    (out / "bin").mkdir(parents=True)
+    cli = out / "bin" / "bmc-nix-cli"
+    cli.write_text("#!/bin/sh\necho 'sysupgrade-e2e-1:STUBSIG'\n")
+    cli.chmod(0o755)
     return out
 
 
@@ -1167,6 +1177,7 @@ def _e2e_nix(tmp_path: Path, *, version_a: str = "va", version_b: str = "vb") ->
             "index-b": _index_out(tmp_path, version_b, [("bmc-nix-cli", "/nix/store/cli-b")]),
             "tarball-b": _e2e_tarball_out(tmp_path, version_b),
             _CLI_ATTR: _cli_out(tmp_path),
+            _HOST_CLI_ATTR: _stub_host_cli(tmp_path),
         }
     )
 
@@ -1237,6 +1248,23 @@ def test_assemble_rig_records_urls_and_bumped_path(tmp_path: Path) -> None:
         f"http://10.1.1.1:8083/index/vb/{rig.INDEX_NAME}",
         "http://10.1.1.1:8083/cache/fake.narinfo",
     ]
+
+
+def test_assemble_rig_signs_variants_before_writing_the_feed(tmp_path: Path) -> None:
+    run = _e2e_run(tmp_path)
+    nix = _e2e_nix(tmp_path)
+    catalog.build_e2e_artifacts(nix, run)
+    workdir = tmp_path / "work"
+    catalog.assemble_rig(nix, run, workdir=workdir, base_url="http://10.0.0.9:8083")
+    feed = json.loads((workdir / "serve" / rig.FEED_NAME).read_text())
+    assert all(e["signature"] == "sysupgrade-e2e-1:STUBSIG" for e in feed["entries"])
+    assert run.variant_a is not None
+    assert run.variant_a.signature == "sysupgrade-e2e-1:STUBSIG"
+    assert run.rig is not None
+    assert run.rig.secret == workdir / "cache-key.secret"
+    assert run.rig.serve_root == workdir / "serve"
+    assert run.rig.cache == workdir / "serve" / "cache"
+    assert run.rig.host_cli == str(tmp_path / "host-cli")
 
 
 def _rigged_run(tmp_path: Path) -> catalog.E2eRun:

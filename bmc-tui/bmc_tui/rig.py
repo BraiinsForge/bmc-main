@@ -28,7 +28,9 @@ it from a stdlib ThreadingHTTPServer on a daemon thread.
 """
 
 import json
-from dataclasses import dataclass
+import subprocess
+from collections.abc import Callable
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Self
 
@@ -102,13 +104,45 @@ def _relink(link: Path, target: Path) -> None:
     link.symlink_to(target)
 
 
-def make_cache(nix: Nix, secret: Path, cache: Path, variants: list[Variant]) -> str:
-    """Create the signed binary cache under `cache`; returns the public key
-    the device must trust."""
-    public = nix.generate_cache_key("sysupgrade-e2e-1", secret)
+CACHE_KEY_NAME = "sysupgrade-e2e-1"
+
+
+def generate_cache_key(nix: Nix, secret: Path) -> str:
+    """Write the suite's signing secret to `secret`; returns the public key.
+    One key serves both roles: nix-cache NAR signing and the init-tarball
+    trust anchor (production precedent: the downloads key does the same)."""
+    return nix.generate_cache_key(CACHE_KEY_NAME, secret)
+
+
+def sign_variant(
+    host_cli: str,
+    secret: Path,
+    variant: Variant,
+    *,
+    run: Callable[..., "subprocess.CompletedProcess[str]"] = subprocess.run,
+) -> Variant:
+    """A copy of `variant` carrying its tarball's Ed25519 signature, produced
+    by the host-built bmc-nix-cli so the fingerprint format never leaves
+    Rust."""
+    proc = run(
+        [
+            f"{host_cli}/bin/bmc-nix-cli",
+            "sign-init-tarball",
+            "--secret-key",
+            str(secret),
+            str(variant.tarball),
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+        check=True,
+    )
+    return replace(variant, signature=proc.stdout.strip())
+
+
+def populate_cache(nix: Nix, secret: Path, cache: Path, variants: list[Variant]) -> None:
+    """Copy both variants' closures into the signed file:// cache."""
     paths = sorted({p for v in variants for p in index_store_paths(v.index)})
     nix.copy_signed(paths, cache, secret)
-    return public
 
 
 class RigServer:

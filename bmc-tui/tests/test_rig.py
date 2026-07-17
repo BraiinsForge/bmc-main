@@ -21,6 +21,7 @@
 """Unit tests for the e2e package rig."""
 
 import json
+import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import replace
@@ -121,48 +122,56 @@ def test_rig_server_serves_content_added_after_start(tmp_path: Path) -> None:
         assert feed["entries"][0]["bos_version"] == "va"
 
 
-def test_make_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
-    copied: list[tuple[list[StorePath], Path, Path]] = []
+class _FakeCacheNix:
+    def __init__(self) -> None:
+        self.copied: list[tuple[list[StorePath], Path, Path]] = []
 
-    class _Nix:
-        def generate_cache_key(self, name: str, secret: Path) -> str:
-            secret.write_text("sk")
-            return f"{name}:PUB"
+    def generate_cache_key(self, name: str, secret: Path) -> str:
+        secret.write_text("sk")
+        return f"{name}:PUB"
 
-        def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
-            copied.append((store_paths, cache, secret))
+    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
+        self.copied.append((store_paths, cache, secret))
 
-        def discover_widgets(self) -> list[str]:
-            return []
+    def discover_widgets(self) -> list[str]:
+        return []
 
-        def list_packages(self) -> list[str]:
-            return []
+    def list_packages(self) -> list[str]:
+        return []
 
-        def resolve(self, attr: Attr) -> Pkg:
-            raise NotImplementedError
+    def resolve(self, attr: Attr) -> Pkg:
+        raise NotImplementedError
 
-        def build(self, pkgs: list[Pkg]) -> list[Built]:
-            return []
+    def build(self, pkgs: list[Pkg]) -> list[Built]:
+        return []
 
-        def build_out(self, attr: Attr) -> StorePath:
-            raise NotImplementedError
+    def build_out(self, attr: Attr) -> StorePath:
+        raise NotImplementedError
 
-        def out_path(self, attr: Attr) -> StorePath:
-            raise NotImplementedError
+    def out_path(self, attr: Attr) -> StorePath:
+        raise NotImplementedError
 
-        def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
-            raise NotImplementedError
+    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
+        raise NotImplementedError
 
-        def copy(self, store_paths: list[StorePath], dest: str) -> None:
-            return None
+    def copy(self, store_paths: list[StorePath], dest: str) -> None:
+        return None
 
+
+def test_generate_cache_key_pins_the_suite_key_name(tmp_path: Path) -> None:
+    secret = tmp_path / "key.secret"
+    public = rig.generate_cache_key(_FakeCacheNix(), secret)
+    assert public == "sysupgrade-e2e-1:PUB"
+    assert secret.read_text() == "sk"
+
+
+def test_populate_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
+    nix = _FakeCacheNix()
     a = _variant(tmp_path, "va", ["/nix/store/shared", "/nix/store/a-only"])
     b = _variant(tmp_path, "vb", ["/nix/store/shared", "/nix/store/b-only"])
     secret = tmp_path / "key.secret"
-    public = rig.make_cache(_Nix(), secret, tmp_path / "cache", [a, b])
-    assert public == "sysupgrade-e2e-1:PUB"
-    assert secret.read_text() == "sk"
-    assert copied == [
+    rig.populate_cache(nix, secret, tmp_path / "cache", [a, b])
+    assert nix.copied == [
         (
             ["/nix/store/a-only", "/nix/store/b-only", "/nix/store/shared"],
             tmp_path / "cache",
@@ -199,3 +208,26 @@ def test_rig_server_404s_unknown_paths_and_directories(tmp_path: Path) -> None:
 def test_rig_server_port_before_start_is_a_bug(tmp_path: Path) -> None:
     with pytest.raises(RuntimeError, match="before it was started"):
         _ = rig.RigServer(tmp_path, port=0).port
+
+
+def test_sign_variant_shells_out_to_the_host_cli(tmp_path: Path) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(argv, 0, stdout="sysupgrade-e2e-1:SIG\n", stderr="")
+
+    v = _variant(tmp_path, "va", ["/nix/store/a"])
+    secret = tmp_path / "key.secret"
+    signed = rig.sign_variant("/nix/store/cli-out", secret, v, run=fake_run)
+    assert signed.signature == "sysupgrade-e2e-1:SIG"
+    assert signed.tarball == v.tarball  # only the signature changed
+    assert calls == [
+        [
+            "/nix/store/cli-out/bin/bmc-nix-cli",
+            "sign-init-tarball",
+            "--secret-key",
+            str(secret),
+            str(v.tarball),
+        ]
+    ]

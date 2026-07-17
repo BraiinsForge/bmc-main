@@ -68,6 +68,9 @@ _ORCHESTRATOR_TIMEOUT = 30  # seconds; it holds the profile lock for its whole r
 _NIX_BACKING = "/mnt/data/nix"
 _INIT_TARBALL = Attr(".#init-tarball-armv7")
 _NIX_CLI_ATTR = Attr(".#bmc-nix-cli-armv7-release")
+# Host-native CLI used to sign the rig's init tarballs; the device CLI is
+# cross-compiled for ARM and cannot run on the harness host.
+_HOST_CLI_ATTR = Attr(".#bmc-nix-cli")
 # Run-unique device paths for the pushed CLI and tarball: Device.push
 # truncates via `cat >`, so a constant name would let concurrent
 # harness runs upload, read, and clean up the same file.
@@ -668,6 +671,10 @@ class E2eRig:
     cache_url: str
     cache_public_key: str
     preflight_urls: list[str]
+    serve_root: Path
+    cache: Path
+    secret: Path
+    host_cli: str
 
 
 @dataclass
@@ -768,16 +775,25 @@ def _variant(bos_version: str, index_out: str, tarball_out: str) -> rig.Variant:
 
 @stage("Assemble rig")
 def assemble_rig(nix: Nix, run: E2eRun, *, workdir: Path, base_url: str) -> str:
-    """Write the serve tree and the signed cache; record every URL the
-    device must later be able to fetch."""
+    """Generate the signing key, sign each variant's init tarball with the
+    host-built CLI, then write the serve tree and the signed cache — the
+    key must exist before the feed is written, because the feed now
+    carries the tarball signatures the device verifies (BDK-376)."""
 
     a, b = run.variant_a, run.variant_b
     if a is None or b is None:
         msg = "BUG: e2e artifacts were not built before rig assembly"
         raise RuntimeError(msg)
+    workdir.mkdir(parents=True, exist_ok=True)
+    secret = workdir / "cache-key.secret"
+    public = rig.generate_cache_key(nix, secret)
+    host_cli = nix.build_out(_HOST_CLI_ATTR)
+    a = rig.sign_variant(host_cli, secret, a)
+    b = rig.sign_variant(host_cli, secret, b)
+    run.variant_a, run.variant_b = a, b
     serve_root = workdir / "serve"
     rig.write_serve_root(serve_root, [a, b], base_url)
-    public = rig.make_cache(nix, workdir / "cache-key.secret", serve_root / "cache", [a, b])
+    rig.populate_cache(nix, secret, serve_root / "cache", [a, b])
     run.bumped_path = rig.package_store_path(b.index, _BUMPED_PACKAGE)
     require(
         run.bumped_path is not None,
@@ -797,6 +813,10 @@ def assemble_rig(nix: Nix, run: E2eRun, *, workdir: Path, base_url: str) -> str:
             f"{base_url}/index/{b.bos_version}/{rig.INDEX_NAME}",
             f"{base_url}/cache/{narinfos[0].name}",
         ],
+        serve_root=serve_root,
+        cache=serve_root / "cache",
+        secret=secret,
+        host_cli=host_cli,
     )
     return f"{console.lit(base_url)} ({console.lit(len(narinfos))} narinfo(s))"
 
