@@ -116,6 +116,7 @@ pub mod disk_cache;
 pub use disk_cache::DiskCache;
 mod host_api;
 pub mod led_request;
+pub mod network;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;
 mod runtime;
@@ -131,6 +132,7 @@ pub mod unified_fixture;
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope, Rgb};
 pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
+pub use network::NetworkInfo;
 pub use runtime::{
     RenderStatus, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, WasmWidgetRuntime,
 };

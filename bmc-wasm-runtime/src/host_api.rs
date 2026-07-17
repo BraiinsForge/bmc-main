@@ -49,6 +49,7 @@ use bmc_wasm_protocol::{
 };
 
 use crate::audio_registry::AudioRegistry;
+use crate::network::NetworkInfo;
 use crate::runtime::ParamsSnapshot;
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
@@ -715,6 +716,10 @@ pub(crate) struct HostState {
     /// settings change is observable to widgets without any extra plumbing.
     pub system: VersionedSnapshotCache<SystemSnapshot>,
 
+    /// The Deck's own SSID + IP, read on demand by the `host_network_info` getter.
+    /// Set by the embedder; unversioned, since it rarely changes and no hook reads it.
+    pub network_info: NetworkInfo,
+
     /// Per-frame timing breakdown from the last rendered frame.
     pub last_timings: FrameTimings,
 
@@ -857,6 +862,7 @@ impl HostState {
             event_fixtures: None,
             recorded_events: Vec::new(),
             system: VersionedSnapshotCache::new(SystemSnapshot::default()),
+            network_info: NetworkInfo::default(),
             last_timings: FrameTimings::default(),
             profile_sections: BTreeMap::new(),
             taffy: TaffyTree::with_capacity(64),

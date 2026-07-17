@@ -8,6 +8,7 @@ use crate::device::DeviceFamily;
 use crate::screens::dashboard::DashboardViewData;
 use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
+use crate::screens::no_credentials::NoCredentialsData;
 use crate::screens::table::{ModelRow, TableViewData};
 use crate::summary::{DeviceStatus, FleetSummary, GroupSummary};
 use crate::telemetry::DeviceTemp;
@@ -344,4 +345,13 @@ pub fn sample_device_detail_error() -> DeviceDetailData {
         DeviceTemp::Single(Temperature::from_celsius(0.0)),
         DeviceStatus::ApiError,
     )
+}
+
+#[must_use]
+pub fn sample_no_credentials() -> NoCredentialsData {
+    NoCredentialsData {
+        fleet_name: "Dominika's Mining Rig".to_owned(),
+        ssid: "Braiins-Guest".to_owned(),
+        url: "http://192.168.1.42".to_owned(),
+    }
 }

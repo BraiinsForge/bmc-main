@@ -306,6 +306,7 @@ pub mod mesh;
 pub mod modal;
 #[cfg(target_arch = "wasm32")]
 pub mod net;
+pub mod network;
 pub mod notification;
 pub mod number_input;
 pub mod orientation;
@@ -359,6 +360,7 @@ pub use led::LedEffect;
 pub use mesh::*;
 #[cfg(target_arch = "wasm32")]
 pub use net::*;
+pub use network::NetworkInfo;
 pub use number_input::*;
 pub use orientation::Orientation;
 #[cfg(target_arch = "wasm32")]

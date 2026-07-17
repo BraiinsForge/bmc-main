@@ -91,3 +91,14 @@ fn searching(ctx: &mut StoryCtx) {
     // Empty state before the first miner answers: the indeterminate bar animates.
     ctx.ui.div(Full, screens::searching());
 }
+
+#[story(order = 8)]
+fn no_credentials(ctx: &mut StoryCtx) {
+    // Found BOS miners but can't authenticate: scan the QR
+    // (or join the network and open the link)
+    // to add credentials in the Deck web app.
+    ctx.ui.div(
+        Full,
+        screens::no_credentials::no_credentials_view(&screens::fixtures::sample_no_credentials()),
+    );
+}

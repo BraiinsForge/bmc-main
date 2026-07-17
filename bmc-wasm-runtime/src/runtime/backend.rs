@@ -37,6 +37,7 @@ use bmc_render::renderer::Renderer;
 use bmc_render::tree::{self, TouchHit};
 
 use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle};
+use crate::network::NetworkInfo;
 use crate::system::SystemSnapshot;
 
 use super::ParamsSnapshot;
@@ -923,6 +924,13 @@ impl WasmWidgetRuntime {
             "on_system_update",
             Lifecycle::SystemUpdate,
         )
+    }
+
+    /// Set the Deck's network info for the `host_network_info` getter.
+    /// Fires no hook, so the caller drives any re-render
+    /// (the slot marks one on change).
+    pub fn set_network_info(&mut self, info: NetworkInfo) {
+        self.store.data_mut().network_info = info;
     }
 
     /// Whether the widget exported `on_touch`.

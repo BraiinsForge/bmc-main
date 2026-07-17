@@ -428,6 +428,38 @@ fn rebuild_model_detail_rows(
     })
 }
 
+/// The no-credentials fallback for an otherwise-empty fleet.
+/// An enabled BOS family with an empty password can never authenticate,
+/// so its miners go Dormant and vanish from the report.
+/// When that's why the fleet is empty, this builds the credentials scene;
+/// otherwise `None` keeps the generic "Searching…" state.
+#[cfg(target_arch = "wasm32")]
+fn no_credentials(fleet_name: &str) -> Option<screens::no_credentials::NoCredentialsData> {
+    let params = manifest_params::Params::current();
+    if !params.bos_enabled || !params.bos_password.is_empty() {
+        return None;
+    }
+    let seen_bos = DEVICES.with(|d| {
+        d.borrow()
+            .iter()
+            .any(|dev| dev.identity.family == DeviceFamily::Bos)
+    });
+    if !seen_bos {
+        return None;
+    }
+    let net = bmc_wasm_sdk::network::info();
+    let url = if net.ip.is_empty() {
+        String::new()
+    } else {
+        bmc_wasm_sdk::fmt!("http://{}", net.ip)
+    };
+    Some(screens::no_credentials::NoCredentialsData {
+        fleet_name: fleet_name.to_owned(),
+        ssid: net.ssid,
+        url,
+    })
+}
+
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 #[expect(
@@ -562,7 +594,11 @@ pub extern "C" fn render(_delta_ms: u32) {
                     (screens::model_detail::model_detail_view(&data), page_count)
                 }
             } else if derived.summary.groups.is_empty() {
-                (screens::searching(), 1)
+                if let Some(data) = no_credentials(&derived.fleet_name) {
+                    (screens::no_credentials::no_credentials_view(&data), 1)
+                } else {
+                    (screens::searching(), 1)
+                }
             } else {
                 match nav.mode {
                     view::ViewMode::Grid => {

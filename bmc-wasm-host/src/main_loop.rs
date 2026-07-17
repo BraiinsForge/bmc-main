@@ -501,6 +501,7 @@ fn run_loop(
                 to_teardown.push(*id);
                 continue;
             }
+            slot.refresh_network();
             slot.reclaim_retired_render_targets(shared);
             if slot.dispatch_control_socket().is_err() {
                 to_teardown.push(*id);

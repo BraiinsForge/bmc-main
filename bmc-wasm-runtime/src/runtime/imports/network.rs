@@ -30,7 +30,7 @@ use bmc_wasm_protocol::{
     FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId, SocketId,
     SsdpSearchId, UdpBroadcastId, WebsocketId,
 };
-use wasmi::{Caller, Linker};
+use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::{
     ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
@@ -59,6 +59,49 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_udp_broadcast_imports(linker)?;
     register_http_listener_imports(linker)?;
     register_http_response_import(linker)?;
+    register_network_info_import(linker)?;
+    Ok(())
+}
+
+/// `host_network_info(out_ptr: *mut u8, out_cap: u32) -> u32`
+/// — probe-then-allocate fetch of the encoded [`crate::network::NetworkInfo`]
+/// (the Deck's SSID + IP). Same OOB-trap contract as `host_system_snapshot`:
+/// `out_cap == 0` returns the required length;
+/// `out_cap >= required` writes the bytes and returns how many.
+fn register_network_info_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_network_info",
+        |mut caller: Caller<'_, HostState>,
+         out_ptr: u32,
+         out_cap: u32|
+         -> std::result::Result<u32, wasmi::Error> {
+            let bytes = crate::network::encode(&caller.data().network_info);
+            let needed = bytes.len() as u32;
+            if out_cap < needed {
+                return Ok(needed);
+            }
+            let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else {
+                return Err(wasmi::Error::new(
+                    "host import `host_network_info`: guest module has no exported `memory` \
+                     — cannot write the info. ABI requires an exported linear memory.",
+                ));
+            };
+            let data = memory.data_mut(&mut caller);
+            let start = out_ptr as usize;
+            let end = start.saturating_add(bytes.len());
+            if end > data.len() {
+                return Err(wasmi::Error::new(format!(
+                    "host import `host_network_info`: out_ptr range {start:#x}..{end:#x} \
+                     overflows guest memory of {} bytes — size the buffer with the probe \
+                     call (out_cap == 0) first",
+                    data.len(),
+                )));
+            }
+            data[start..end].copy_from_slice(&bytes);
+            Ok(needed)
+        },
+    )?;
     Ok(())
 }
 

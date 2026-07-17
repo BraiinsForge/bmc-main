@@ -30,8 +30,8 @@ use anyhow::{Context, Result};
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
-    DiskCache, LedEffect, LedRequest, LedScope, NextAlarm as RuntimeNextAlarm, RenderStatus,
-    RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+    DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
+    RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
 use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
@@ -170,6 +170,9 @@ pub struct WidgetSlot {
     /// After a drain that touched any setting, the latest snapshot is pushed
     /// to the runtime via `deliver_system_update`.
     pub pending_system: SystemSnapshot,
+    /// Last connectivity snapshot version pushed to the runtime as `NetworkInfo`;
+    /// version-gated so an unchanged network re-polls free.
+    pub snapshot_version: Option<bmc_system_overlay::SnapshotVersion>,
     pub peer_pid: libc::pid_t,
     pub wasm_basename: String,
     /// Asset-cache bucket token, published to the host's GC-root file so the
@@ -275,6 +278,7 @@ impl WidgetSlot {
             frame_count: 0,
             initial_params: initial.params,
             pending_system,
+            snapshot_version: None,
             peer_pid,
             wasm_basename: wasm_path
                 .file_name()
@@ -296,6 +300,28 @@ impl WidgetSlot {
             self.surface.request_action(&action)?;
         }
         Ok(())
+    }
+
+    /// Poll the shared OS connectivity prober, then push the Deck's SSID + IP
+    /// to the runtime as `NetworkInfo` so a widget can show how to reach the Deck.
+    /// Version-gated like the overlays' `refresh_network`; a change re-renders
+    /// so the widget picks it up.
+    pub fn refresh_network(&mut self) {
+        let Some(bmc_system_overlay::VersionedSnapshot { version, snapshot }) =
+            bmc_system_overlay::snapshot_if_changed(self.snapshot_version)
+        else {
+            return;
+        };
+        self.snapshot_version = Some(version);
+        self.runtime.set_network_info(NetworkInfo {
+            ssid: snapshot.station_ssid.unwrap_or_default(),
+            ip: snapshot
+                .ipv4
+                .as_ref()
+                .map(std::net::Ipv4Addr::to_string)
+                .unwrap_or_default(),
+        });
+        self.surface.mark_needs_render();
     }
 
     pub fn dispatch_wayland_events(&mut self) -> Result<()> {
