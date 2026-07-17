@@ -19,10 +19,13 @@ needing an entry-per-file.
 - Scene IDs, scene names, widget positions, and widget sizes are preserved exactly. The grid the user built still looks
   the same.
 - Widgets this firmware knows how to translate keep their settings: the clock, block height, and image widgets, plus the
-  Braiins Forge remote widgets (matched by their URL to a stable widget ID). Their positions and user-configured
-  settings carry over and they work immediately.
-- Any other widget kind is dropped, with a `warn!` line naming the unsupported kind. Dropped widgets are not preserved
-  as empty placeholders — see "Recovering from a bad migration" below.
+  Braiins Forge remote widgets that now have a native equivalent — weather, nameday, ISS position, random facts, and
+  SpaceX launch (matched by their URL to the native widget's ID). Their positions and user-configured settings carry
+  over and they work immediately.
+- Any other widget is dropped, with a `warn!` line naming the unsupported kind or URL. This includes the legacy ticker,
+  Braiins Pool, blockchain-data, and halving-countdown widgets, and the remote exchange-rate, Formula 1, NASA picture of
+  the day, and ticker widgets — none of which have a native counterpart yet. Dropped widgets are not preserved as empty
+  placeholders — see "Recovering from a bad migration" below.
 
 ### Backup before any change
 

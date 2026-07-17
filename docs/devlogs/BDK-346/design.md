@@ -49,83 +49,63 @@ migration.
 
 ## Per-widget upgrade policy
 
-The upgrade is a **total function from known v0 widgets to current widgets**. Every v0 widget either maps to a reserved
-`widget_type_id` (with a real UUID) or drops out of the upgraded config entirely. There is no intermediate "placeholder"
-shape — the review conclusion was that users migrate all their widgets at once, so an unmappable widget is an edge case,
-not a state to preserve.
+The upgrade is a **total function from known v0 widgets to current widgets**. Every v0 widget either maps to the
+`widget_type_id` of a shipped native widget or drops out of the upgraded config entirely. There is no intermediate
+"placeholder" shape — the review conclusion was that users migrate all their widgets at once, so an unmappable widget is
+an edge case, not a state to preserve.
 
-Two flavours of reserved UID:
+Every mapped widget targets the **real `uid` declared in a shipped `widgets-wasm/*/manifest.json`** — there are no
+reserved dummies and no derived UIDs. (Earlier iterations reserved sequential UIDs for not-yet-shipped native kinds and
+derived UUID v5 values for remote-widget slugs; both schemes were dropped once the native widget set stabilised — a
+widget either has a shipped manifest to map to, or it drops.)
 
-- **Sequential UIDs for native widget kinds** (`clock`, `ticker_btc`, `block_height`, …). These continue the
-  `550e8400-e29b-41d4-a716-44665544000N` pattern already used by shipped manifests (digital-clock = `…0001`, flip-clock
-  = `…0002`).
-- **Deterministic UUID v5 for Braiinsforge remote widgets**, derived from the URL slug under a dedicated namespace.
-  Adding a new remote widget to the catalog is one line in `REMOTE_WIDGET_SLUGS`; the UUID falls out of the derivation.
+### Mapping table
 
-### Reserved native UIDs
+Native v0 kinds:
 
-Continuing the manifest numbering convention. Widgets already shipped use the UID from their `manifest.json`; reserved
-dummies are allocated in advance so the eventual manifest can adopt the same value without migrating again.
+| v0 `kind`      | Target manifest            | Param translation                                                                    |
+| -------------- | -------------------------- | ------------------------------------------------------------------------------------ |
+| `clock`        | `widgets-wasm/clock`       | style/booleans pass through, font vocabulary remap, `timezone` → `timezone_override` |
+| `block_height` | `widgets-wasm/blockheight` | `show_timestamp` pass-through, font vocabulary remap                                 |
+| `remote_image` | `widgets-wasm/image`       | `refresh_duration` (humantime) → `refresh_seconds`, `image_scale_mode` → `sizing`    |
 
-| v0 `kind` (+ variant)                | UID suffix | Status                  |
-| ------------------------------------ | ---------- | ----------------------- |
-| `clock` + `clock_style:digital`      | `0001`     | shipped (digital-clock) |
-| flip-clock                           | `0002`     | shipped                 |
-| `clock` + `clock_style:analog_round` | `0003`     | reserved dummy          |
-| `clock` + `clock_style:analog_rect`  | `0004`     | reserved dummy          |
-| `ticker_btc`                         | `0005`     | reserved dummy          |
-| `block_height`                       | `0006`     | reserved dummy          |
-| `braiins_pool`                       | `0007`     | reserved dummy          |
-| `remote_image`                       | `0008`     | reserved dummy          |
-| `blockchain_data`                    | `0009`     | reserved dummy          |
-| `halving_countdown`                  | `000a`     | reserved dummy          |
+Legacy `remote_widget` entries, dispatched by URL slug under `https://widgets.braiinsforge.com/<slug>`:
 
-### Reserved Braiinsforge remote UIDs
+| Slug            | Target manifest              | Param translation                                          |
+| --------------- | ---------------------------- | ---------------------------------------------------------- |
+| `weather`       | `widgets-wasm/weather`       | `location` pass-through, `time_zone` pinned to default     |
+| `nameday`       | `widgets-wasm/nameday`       | `country` enum-guarded, camelCase `showDate` → `show_date` |
+| `iss-position`  | `widgets-wasm/iss-position`  | none (manifest has no params)                              |
+| `random-facts`  | `widgets-wasm/random-facts`  | none (manifest has no params)                              |
+| `spacex-launch` | `widgets-wasm/spacex-launch` | none (legacy `showSeconds` drops with the mapping)         |
 
-URL slug under `https://widgets.braiinsforge.com/<slug>`. UID is
-`Uuid::new_v5(&BRAIINSFORGE_WIDGETS_NS, slug.as_bytes())`.
+Widgets with **no native counterpart drop**: native kinds `ticker_btc`, `braiins_pool`, `blockchain_data`,
+`halving_countdown`; remote slugs `exchange-rate`, `formula-1`, `nasa-picture-of-the-day`, `ticker-list`,
+`ticker-single-candlestick`, `ticker-single-sparkline`. (`braiins_pool` is *not* mapped to `mining-info` — the new
+widget reads a LAN miner device via `miner_url`, a fundamentally different data source than a pool account.)
 
-| Slug                        |
-| --------------------------- |
-| `exchange-rate`             |
-| `formula-1`                 |
-| `iss-position`              |
-| `nameday`                   |
-| `nasa-picture-of-the-day`   |
-| `random-facts`              |
-| `spacex-launch`             |
-| `ticker-list`               |
-| `ticker-single-candlestick` |
-| `ticker-single-sparkline`   |
-| `weather`                   |
+### Required params are always filled
 
-Any remote widget outside this catalog (third-party URL, or a future Braiinsforge slug we haven't added yet) is dropped
-with a `warn!` that includes the URL.
-
-### Deep vs shallow translation
-
-The param translators are split by whether the target manifest is already shipped:
-
-- **Deep** (rewrite param names to the new manifest's schema) — used today only for `clock + clock_style:digital`, which
-  maps to the shipped digital-clock manifest (`show_seconds → showSeconds`, `show_timezone → showTimezone`,
-  `numbers_font_style → fontStyle`, `show_date` dropped with a warning).
-- **Shallow** (pass `params` through unchanged) — used for everything else. The future widget's manifest is
-  authoritative over its own param schema and can migrate internally when it loads; we don't guess at schemas that don't
-  exist yet.
-
-Adding a deep translator = ship a manifest widget + add a match arm next to the reserved UID line. The translator list
-is a living index of what's shipped.
+The boot-load path hands stored params to the widget verbatim — unlike the gRPC add-widget path
+(`validate_widget_params`), it injects **no manifest defaults**. A widget's generated param reader panics on a missing
+required key. The migration therefore emits **every required param of the target manifest**: a present, valid v0 value
+passes through (translated where the schema changed); anything absent or malformed gets the manifest default written
+explicitly. Enum-typed params are guarded against out-of-vocabulary values for the same reason (an out-of-enum string
+also panics the typed read). Optional params (`timezone_override`) are emitted only when the legacy value is valid, and
+stay unset otherwise.
 
 ### Drop policy (no placeholders)
 
 - Unknown top-level `kind` → drop with `warn!`.
-- `clock` with an unknown `clock_style` → drop with `warn!`.
 - `remote_widget` missing `widget_url` → drop with `warn!`.
 - `remote_widget` with a host outside `widgets.braiinsforge.com` → drop with `warn!`.
-- `remote_widget` whose slug is not in `REMOTE_WIDGET_SLUGS` → drop with `warn!`.
+- `remote_widget` whose slug has no native equivalent → drop with `warn!`.
+
+Malformed *param values* on a mappable widget never drop the widget — the value falls back to the manifest default (e.g.
+a `clock_style` outside the enum migrates as `digital`).
 
 Drops are counted in `Report.dropped_widgets`. The scene itself always survives; only the individual widget entry
-disappears.
+disappears (a scene left with zero widgets is dropped and counted in `Report.dropped_scenes`).
 
 ## Safety
 
@@ -157,8 +137,8 @@ On failure the boot path distinguishes two cases:
 
 `Coordinator::spawn_widget` short-circuits with an `info!` log for a widget carrying a nil `widget_type_id`. With
 placeholders gone the migration never emits nil UIDs, so the guard is purely defensive (against a hand-edited or
-malformed config). A reserved UID for a not-yet-shipped widget instead produces a "no registered widget with this UID"
-log until that widget lands.
+malformed config). Every UID the migration emits belongs to a shipped `widgets-wasm` manifest, so a migrated widget
+always resolves to a registered widget.
 
 ## Config path layout
 
@@ -198,9 +178,9 @@ the same code path.
 
 ## Testing
 
-- **Unit:** per-widget upgrade tests (native kinds, every remote slug resolves, deterministic v5 derivation is stable,
-  unknown kinds / URLs / slugs drop), plus header-dispatch edge cases (missing version, current version, unknown future
-  version, empty v0 input).
+- **Unit:** per-widget upgrade tests (native kinds map to their manifest UID with every required param filled, param
+  translations and enum guards, remote slugs with a native equivalent map and the rest drop, unknown kinds / URLs drop),
+  plus header-dispatch edge cases (missing version, current version, unknown future version, empty v0 input).
 - **Integration:** round-trips a captured device config through `migrate_on_disk` and asserts: version header, scene
   count, every post-upgrade widget carries a reserved UID, no placeholder shapes leak, backup file exists, `translated`
   counter matches the on-disk widget count. Plus a test for the pure `LoadedConfig::from_str` path verifying
@@ -216,8 +196,8 @@ the same code path.
 - `bmc/src/config_migration.rs` — `Version`/`Upgrade` traits, `LoadedConfig`, `FromStr`, `load_any_version`,
   `save_with_backup`, `migrate_on_disk`, `peek_version`, `Report`.
 - `bmc/src/config_migration/v0.rs` — deserialize-only v0 types + `impl Version`.
-- `bmc/src/config_migration/upgrade_v0.rs` — reserved UID tables, remote-widget slug dispatch, per-widget translators,
-  and `params_from_value` (legacy JSON params → typed param map).
+- `bmc/src/config_migration/upgrade_v0.rs` — manifest UID constants, remote-widget slug dispatch, per-widget translators
+  (required-param filling, enum guards), and `params_from_value` (legacy JSON params → typed param map).
 - `bmc/src/widget/coordinator.rs` — defensive nil-UID skip (the migration no longer produces nil UIDs; the guard is
   harmless).
 - `bmc/src/bin/migrate_config.rs` — offline CLI.
