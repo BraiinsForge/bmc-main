@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, VersionedSnapshot,
+    Layer, LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, VersionedSnapshot,
 };
 
 /// How long to wait for an IPv4 before showing the connection-failure state.
@@ -182,7 +182,13 @@ fn ssid_text(ssid: Option<&str>, fallback: &str) -> String {
 
 impl SystemOverlay for DeviceInfoOverlay {
     fn layer_config(&self) -> LayerConfig {
-        LayerConfig::fullscreen("bmc-overlay-device-info")
+        // Bottom, not the fullscreen default of Top: the startup screen must
+        // sit below a firing alarm (Top) and the settings tray (Overlay) if
+        // either maps during boot, while still occluding the scene.
+        LayerConfig {
+            layer: Layer::Bottom,
+            ..LayerConfig::fullscreen("bmc-overlay-device-info")
+        }
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {

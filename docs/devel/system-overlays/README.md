@@ -64,12 +64,12 @@ See [`protocols.md`](protocols.md) for all three.
 
 ## The concrete overlays
 
-| Overlay       | Crate                       | Layer     | Placement    | Input | Screen edge | Compositor IPC     |
-| ------------- | --------------------------- | --------- | ------------ | ----- | ----------- | ------------------ |
-| Device info   | `bmc-overlay-device-info`   | `Top`     | full-screen  | full  | no          | no                 |
-| Offline       | `bmc-overlay-offline`       | `Bottom`  | bottom-right | none  | no          | no                 |
-| Settings tray | `bmc-overlay-settings-tray` | `Overlay` | full-screen  | full  | `Top`       | `deck_settings_v1` |
-| Alarm         | `bmc-overlay-alarm`         | `Top`     | full-screen  | full  | no          | `deck_alarm_v1`    |
+| Overlay       | Crate                       | Layer        | Placement    | Input | Screen edge | Compositor IPC     |
+| ------------- | --------------------------- | ------------ | ------------ | ----- | ----------- | ------------------ |
+| Device info   | `bmc-overlay-device-info`   | `Bottom`     | full-screen  | full  | no          | no                 |
+| Offline       | `bmc-overlay-offline`       | `Background` | bottom-right | none  | no          | no                 |
+| Settings tray | `bmc-overlay-settings-tray` | `Overlay`    | full-screen  | full  | `Top`       | `deck_settings_v1` |
+| Alarm         | `bmc-overlay-alarm`         | `Top`        | full-screen  | full  | no          | `deck_alarm_v1`    |
 
 The settings tray also *receives* modal-overlay preemption over `deck_settings_v1` (it retracts when a full-screen modal
 overlay such as the alarm maps below it). Their behavior, data sources, and dismiss rules are in

@@ -10,7 +10,8 @@ A full-screen startup overlay that mirrors the legacy boot-status screen: it map
 shows WiFi/IP connection progress, then a success or failure result, then unmaps for the rest of the session. It is
 purely observational — it watches saved WiFi config and IP state and never drives a connect flow.
 
-`LayerConfig::fullscreen` → `Layer::Top`, full input region. It blocks scene touch while shown.
+`LayerConfig::fullscreen` with the layer lowered to `Layer::Bottom`, full input region. It blocks scene touch while
+shown, but sits below a firing alarm (`Top`) and the settings tray (`Overlay`) if either maps during boot.
 
 Its state is a four-phase machine driven by `tick`, with the IP and SSID read from the connectivity prober's
 `snapshot_if_changed` (see [`framework.md`](framework.md)); ticks wake at `POLL = 1s`. Until the first snapshot is
@@ -31,9 +32,9 @@ anywhere dismisses immediately (jumps to `Done`).
 A passive bottom-right "OFFLINE" indicator, mapped only while the device has no routable IPv4 and unmapped again when
 connectivity returns (and re-mapped if it drops again).
 
-`LayerConfig::bottom_right("bmc-overlay-offline", (160, 48))` → `Layer::Bottom` with **no input region**, so touches in
-its corner fall through to whatever is behind it. The `Bottom` layer means a full-screen `Top` or `Overlay` overlay
-occludes it.
+`LayerConfig::bottom_right("bmc-overlay-offline", (160, 48))` → `Layer::Background` with **no input region**, so touches
+in its corner fall through to whatever is behind it. `Background` is the lowest rank, so every other overlay draws over
+it; it still paints above the scene, so the indicator stays visible over the clock.
 
 `tick` polls the prober's `snapshot_if_changed` on every wake (`POLL` = 2s) and keeps the state derived from the last
 changed snapshot; the overlay is visible exactly when a published snapshot holds no routable IPv4 (before the first

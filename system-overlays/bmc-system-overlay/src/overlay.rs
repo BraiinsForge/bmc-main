@@ -264,11 +264,13 @@ impl LayerConfig {
     }
 
     /// A small overlay pinned to the bottom-right corner with no input region,
-    /// on the `Bottom` layer so a fullscreen `Top`/`Overlay` surface occludes it.
+    /// on the `Background` layer — the lowest rank, so every other overlay draws
+    /// over it. Background surfaces still paint above the scene, so the indicator
+    /// stays visible over the clock; being passive, it never blocks scene input.
     #[must_use]
     pub fn bottom_right(namespace: impl Into<String>, size: (u32, u32)) -> Self {
         Self {
-            layer: Layer::Bottom,
+            layer: Layer::Background,
             anchor: Anchor::Bottom | Anchor::Right,
             size,
             margin_top: 0,

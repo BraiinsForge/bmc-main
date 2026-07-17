@@ -91,9 +91,12 @@ pub fn paint_order(ranks: &[u8]) -> Vec<usize> {
     idx
 }
 
-/// True if a mapped layer surface at `geo` covers the whole output. Any layer
-/// above the background occludes the scene, so suppression is not tied to a
-/// specific layer.
+/// True if a mapped layer surface at `geo` covers the whole output and should
+/// therefore suppress scene interaction (drag/cycling and tray preemption).
+/// `Background` is excluded on purpose: those surfaces render above the scene
+/// like every other layer, but are passive by contract (e.g. the offline
+/// indicator) and must never block scene gestures — so even a fullscreen one is
+/// not treated as a blocker.
 #[must_use]
 pub fn is_fullscreen_blocker(
     layer: Layer,

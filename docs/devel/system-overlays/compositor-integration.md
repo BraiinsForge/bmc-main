@@ -26,13 +26,14 @@ ones.
 
 `layer_rank` (`layer_surface.rs`) maps the ranks `Background → 0`, `Bottom → 1`, `Top → 2`, `Overlay → 3`, and
 `paint_order` is a stable sort by rank so later-registered surfaces of the same rank paint on top. The concrete overlays
-use this: the offline indicator on `Bottom`, the startup overlay on `Top` (opaque, occludes lower layers), and the swipe
-panel on `Overlay`. Stacking is purely by rank, independent of the order overlays start in.
+use this: the offline indicator on `Background`, the startup overlay on `Bottom` (opaque, occludes the scene), the alarm
+on `Top`, and the swipe panel on `Overlay`. Stacking is purely by rank, independent of the order overlays start in.
 
 `is_fullscreen_blocker(layer, geo, output)` returns true when a layer surface is above `Background` *and* its geometry
 covers the whole output. It is the predicate behind three policies (below): suppressing scene-drag, demoting scene
 neighbors, and preempting the settings tray. It keys on *any* full-screen layer surface above background, not a specific
-layer, so the full-screen boot screen on `Top` blocks scene swipes just as an `Overlay` surface would.
+layer, so the full-screen boot screen on `Bottom` blocks scene swipes just as an `Overlay` surface would. `Background`
+surfaces are excluded on purpose: they paint above the scene but are passive and must not block scene gestures.
 
 ## Layer-surface buffer tracking
 
