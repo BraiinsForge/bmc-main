@@ -149,11 +149,9 @@ fn with_poller<R>(f: impl FnOnce(&mut Poller) -> R) -> R {
 }
 
 pub fn family_enabled(family: DeviceFamily) -> bool {
-    let params = params();
     match family {
-        DeviceFamily::Bos => params.bos_enabled,
-        DeviceFamily::Ubos => params.ubos_enabled,
-        DeviceFamily::Bitaxe => params.axeos_enabled,
+        DeviceFamily::Bos | DeviceFamily::Ubos => true,
+        DeviceFamily::Bitaxe => params().axeos_enabled,
     }
 }
 

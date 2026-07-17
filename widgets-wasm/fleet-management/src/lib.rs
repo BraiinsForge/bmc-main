@@ -79,7 +79,6 @@ thread_local! {
     pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
     static DERIVED: RefCell<Option<DerivedView>> = const { RefCell::new(None) };
     static VIEW: RefCell<view::ViewState> = const { RefCell::new(view::ViewState::new()) };
-    static NAMES: RefCell<Option<NamesCache>> = const { RefCell::new(None) };
     static HISTORY: RefCell<history::HashrateHistory> =
         RefCell::new(history::HashrateHistory::default());
     static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
@@ -105,43 +104,8 @@ pub(crate) fn request_display_frame() {
     }
 }
 
-/// The parsed `device_names` mapping, cached per params version. The
-/// model-detail rows rebuild per device event while drilled in, so they must
-/// not re-read the params and re-parse the JSON on the host (or re-warn) each
-/// time — the mapping can only change when the params do.
-#[cfg(target_arch = "wasm32")]
-struct NamesCache {
-    params_version: u64,
-    doc: JsonDoc,
-}
-
-#[cfg(target_arch = "wasm32")]
-fn with_device_names<R>(f: impl FnOnce(&JsonDoc) -> R) -> R {
-    let params_version = bmc_wasm_sdk::params::version();
-    NAMES.with(|cell| {
-        let mut cell = cell.borrow_mut();
-        let stale = cell
-            .as_ref()
-            .is_none_or(|c| c.params_version != params_version);
-        if stale {
-            let params = manifest_params::Params::current();
-            let doc = JsonDoc::parse(params.device_names.as_bytes());
-            if !doc.is_valid() {
-                log_warn!(
-                    "fleet: device_names param is not valid JSON; showing device names unmapped"
-                );
-            }
-            *cell = Some(NamesCache {
-                params_version,
-                doc,
-            });
-        }
-        f(&cell.as_ref().expect("BUG: names cache populated above").doc)
-    })
-}
-
 /// The render-ready fleet summary, cached so the filter → group → fold → sort
-/// pipeline and the model-list parsing run only when the fleet or the params
+/// pipeline runs only when the fleet or the params
 /// actually change — not on every render frame (renders fire per discovery and
 /// per telemetry event, hundreds per pass on a large fleet). The model-detail
 /// rows are cached per selection and cleared on any seq/params rebuild.
@@ -306,80 +270,24 @@ pub extern "C" fn init() {
     request_frame();
 }
 
-/// The manual-host param string for a family.
+/// Hosts pinned at startup, beyond mDNS — a compile-time seam, no runtime config.
+/// Empty in the shipped build; an entry reaches a device the venue's mDNS can't.
 #[cfg(target_arch = "wasm32")]
-fn manual_hosts_param(family: DeviceFamily) -> String {
-    let params = manifest_params::Params::current();
-    match family {
-        DeviceFamily::Bos => params.bos_hosts,
-        DeviceFamily::Ubos => params.ubos_hosts,
-        DeviceFamily::Bitaxe => params.axeos_hosts,
-    }
-}
+const MANUAL_HOSTS: &[(DeviceFamily, &str)] = &[];
 
-/// Parse a JSON array of strings into its entries, or `None` if `raw` is not
-/// valid JSON. A valid non-array (or array whose elements are not strings)
-/// yields an empty `Vec`. Shared by the manual-host and model-list parsers.
-#[cfg(target_arch = "wasm32")]
-fn parse_string_array(raw: &str) -> Option<Vec<String>> {
-    let doc = JsonDoc::parse(raw.as_bytes());
-    if !doc.is_valid() {
-        return None;
-    }
-    let mut out = Vec::new();
-    let mut i = 0usize;
-    while let Some(entry) = doc.str(&fmt!("/{i}")) {
-        out.push(entry);
-        i += 1;
-    }
-    Some(out)
-}
-
-/// True if `raw` is an empty JSON array, tolerating whitespace inside and
-/// around the brackets (`[]`, `[ ]`, `[\n]`). This is the only spelling that
-/// clears a family's manual hosts.
-#[cfg(target_arch = "wasm32")]
-fn is_empty_array(raw: &str) -> bool {
-    raw.trim()
-        .strip_prefix('[')
-        .and_then(|s| s.strip_suffix(']'))
-        .is_some_and(|inner| inner.trim().is_empty())
-}
-
-/// Parse a manual-host param into raw entries. Returns `None` (leave the
-/// family's manual set unchanged) for invalid JSON, or for any valid shape
-/// that yields no entries except an empty array (which clears). This makes the
-/// destructive clear require explicit intent and protects the fleet from a typo.
-#[cfg(target_arch = "wasm32")]
-fn parse_host_list(raw: &str) -> Option<Vec<String>> {
-    let out = parse_string_array(raw)?;
-    if out.is_empty() && !is_empty_array(raw) {
-        return None;
-    }
-    Some(out)
-}
-
-/// Reconcile every family's manual hosts from the current params into `DEVICES`,
-/// then drop tokens for removed devices and (re)start polling where devices
-/// were added. Callable both at `init` and from `on_params_update`.
+/// Reconcile [`MANUAL_HOSTS`] into `DEVICES` for every family: upsert the desired
+/// identities and drop cached tokens for any row no longer wanted.
 #[cfg(target_arch = "wasm32")]
 fn reconcile_manual_hosts() {
     for family in DeviceFamily::ALL {
-        let raw = manual_hosts_param(family);
-        let Some(entries) = parse_host_list(&raw) else {
-            log_warn!(
-                "fleet: {} manual hosts param is not a valid host array; leaving manual hosts unchanged",
-                family_label(family)
-            );
-            continue;
-        };
+        let entries: Vec<String> = MANUAL_HOSTS
+            .iter()
+            .filter(|(f, _)| *f == family)
+            .map(|(_, host)| (*host).to_owned())
+            .collect();
         let adapter = session::adapter_for(family).expect("BUG: every DeviceFamily has an adapter");
-        let default_port = adapter.default_port();
-        let Some(desired) = manual::desired_identities(family, default_port, &entries) else {
-            log_warn!(
-                "fleet: {} manual hosts param has entries but none are valid; leaving manual hosts unchanged",
-                family_label(family)
-            );
+        let Some(desired) = manual::desired_identities(family, adapter.default_port(), &entries)
+        else {
             continue;
         };
         let outcome =
@@ -393,24 +301,6 @@ fn reconcile_manual_hosts() {
     }
 }
 
-/// Parse a JSON-array-of-strings operator param into model-name fragments.
-/// An invalid or non-array value yields an empty list (no filtering).
-#[cfg(target_arch = "wasm32")]
-fn parse_model_list(raw: &str) -> Vec<String> {
-    parse_string_array(raw).unwrap_or_else(|| {
-        log_warn!("fleet: model-list param is not valid JSON; model filtering disabled");
-        Vec::new()
-    })
-}
-
-/// Parse a model-list param and normalize every fragment for matching. Done
-/// once per filter build so `matches_any` compares against pre-normalized
-/// fragments instead of re-normalizing per device.
-#[cfg(target_arch = "wasm32")]
-fn parse_normalized_model_list(raw: &str) -> Vec<String> {
-    filter::normalized_fragments(parse_model_list(raw).iter().map(String::as_str))
-}
-
 /// Fold the per-device rows for the drilled-into group, under the same
 /// filters the cached summary was built with.
 #[cfg(target_arch = "wasm32")]
@@ -418,25 +308,23 @@ fn rebuild_model_detail_rows(
     filters: &filter::Filters,
     sel: &view::ModelDetailSelection,
 ) -> Vec<(DeviceId, summary::GroupSummary, summary::DeviceStatus)> {
-    with_device_names(|doc| {
-        let lookup = |key: &str| doc.str(&fmt!("/{}", naming::escape_pointer(key)));
-        DEVICES.with(|d| {
-            summary::model_detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
-                naming::resolve(&dev.identity.name, &dev.identity.host, lookup)
-            })
+    DEVICES.with(|d| {
+        summary::model_detail_rows(&d.borrow(), filters, sel.family, &sel.label, |dev| {
+            naming::display_name(&dev.identity.name).to_owned()
         })
     })
 }
 
 /// The no-credentials fallback for an otherwise-empty fleet.
-/// An enabled BOS family with an empty password can never authenticate,
-/// so its miners go Dormant and vanish from the report.
-/// When that's why the fleet is empty, this builds the credentials scene;
-/// otherwise `None` keeps the generic "Searching…" state.
+/// Unreachable as written: a fingerprinted BOS is identified
+/// and so reports, which keeps the fleet non-empty and the gate shut.
+///
+/// Kept for the missing-credentials state BDK-434 adds,
+/// to key on instead. `None` keeps the generic "Searching…" state.
 #[cfg(target_arch = "wasm32")]
 fn no_credentials(fleet_name: &str) -> Option<screens::no_credentials::NoCredentialsData> {
     let params = manifest_params::Params::current();
-    if !params.bos_enabled || !params.bos_password.is_empty() {
+    if !params.bos_password.is_empty() {
         return None;
     }
     let seen_bos = DEVICES.with(|d| {
@@ -479,14 +367,9 @@ pub extern "C" fn render(_delta_ms: u32) {
             .is_none_or(|d| d.devices_seq != seq || d.params_version != params_version);
         if stale {
             let params = manifest_params::Params::current();
-            // Normalize the model-list fragments once here, not per device in
-            // `matches_any` — `summarize` runs per telemetry event.
             let filters = filter::Filters {
-                whitelist: parse_normalized_model_list(&params.model_whitelist),
-                blacklist: parse_normalized_model_list(&params.model_blacklist),
-                bos_enabled: params.bos_enabled,
-                ubos_enabled: params.ubos_enabled,
                 axeos_enabled: params.axeos_enabled,
+                ..filter::Filters::default()
             };
             let summary = {
                 let _s = profile::span("summarize");
@@ -693,12 +576,6 @@ pub extern "C" fn on_params_update() {
                 session::stop(family);
             }
         }
-    }
-    if changed.as_ref().is_none_or(|keys| {
-        keys.iter()
-            .any(|k| matches!(*k, "bos_hosts" | "ubos_hosts" | "axeos_hosts"))
-    }) {
-        reconcile_manual_hosts();
     }
     request_frame();
 }

@@ -30,12 +30,6 @@
       "type": "string",
       "default_value": "My Fleet"
     },
-    "device_names": {
-      "name": "Device names",
-      "description": "JSON object mapping a device name or host to a friendly name shown in the per-model device list. Keys are the device's mDNS name before the first \"._\" (e.g. \"miner-a\", \"Bitaxe Gamma 602 (A1B2)\") or the host/IP as entered in manual hosts (a port suffix is not part of the key). Example: {\"miner-a\": \"Rack 3 left\", \"10.0.0.5\": \"Test bench\"}",
-      "type": "string",
-      "default_value": "{}"
-    },
     "bos_password": {
       "name": "BOS password",
       "description": "Root password used to log into every BOS miner on the network. Stored as plain text and sent unencrypted over the local network (the miner APIs are HTTP-only).",
@@ -54,53 +48,11 @@
       "type": "string",
       "default_value": "root"
     },
-    "model_whitelist": {
-      "name": "Shown models",
-      "description": "JSON array of model-name fragments to show; empty shows all (e.g. [\"bmm101\"])",
-      "type": "string",
-      "default_value": "[]"
-    },
-    "model_blacklist": {
-      "name": "Hidden models",
-      "description": "JSON array of model-name fragments to hide",
-      "type": "string",
-      "default_value": "[]"
-    },
-    "bos_enabled": {
-      "name": "Show BOS miners",
-      "description": "Include BOS miners in the fleet view and keep polling them",
-      "type": "boolean",
-      "default_value": true
-    },
-    "ubos_enabled": {
-      "name": "Show uBOS miners",
-      "description": "Include uBOS devices in the fleet view and keep polling them",
-      "type": "boolean",
-      "default_value": true
-    },
     "axeos_enabled": {
       "name": "Show AxeOS miners",
       "description": "Include AxeOS miners in the fleet view and keep polling them",
       "type": "boolean",
       "default_value": true
-    },
-    "bos_hosts": {
-      "name": "BOS hosts",
-      "description": "JSON array of extra BOS hosts to poll, beyond mDNS discovery; each entry is host or host:port (e.g. [\"10.0.0.5\", \"miner.local:8080\"]). IPv6 literals must use bracket notation with an explicit port (e.g. [fe80::1]:80). A host also found via mDNS appears twice.",
-      "type": "string",
-      "default_value": "[]"
-    },
-    "ubos_hosts": {
-      "name": "uBOS hosts",
-      "description": "JSON array of extra uBOS hosts to poll, beyond mDNS discovery; each entry is host or host:port. IPv6 literals must use bracket notation with an explicit port (e.g. [fe80::1]:80). A host also found via mDNS appears twice.",
-      "type": "string",
-      "default_value": "[]"
-    },
-    "axeos_hosts": {
-      "name": "AxeOS hosts",
-      "description": "JSON array of extra AxeOS hosts to poll, beyond mDNS discovery; each entry is host or host:port. IPv6 literals must use bracket notation with an explicit port (e.g. [fe80::1]:80). A host also found via mDNS appears twice.",
-      "type": "string",
-      "default_value": "[]"
     }
   }
 }

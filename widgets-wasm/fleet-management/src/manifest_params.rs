@@ -11,16 +11,8 @@ use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub axeos_enabled: bool,
-    pub axeos_hosts: String,
-    pub bos_enabled: bool,
-    pub bos_hosts: String,
     pub bos_password: String,
-    pub device_names: String,
     pub fleet_name: String,
-    pub model_blacklist: String,
-    pub model_whitelist: String,
-    pub ubos_enabled: bool,
-    pub ubos_hosts: String,
     pub ubos_password: String,
     pub ubos_username: String,
 }
@@ -30,16 +22,8 @@ impl Params {
     pub fn from_snapshot(snap: &snapshot::Params) -> Self {
         Self {
             axeos_enabled: <bool as ParamRead>::read_required(snap, "axeos_enabled"),
-            axeos_hosts: <String as ParamRead>::read_required(snap, "axeos_hosts"),
-            bos_enabled: <bool as ParamRead>::read_required(snap, "bos_enabled"),
-            bos_hosts: <String as ParamRead>::read_required(snap, "bos_hosts"),
             bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
-            device_names: <String as ParamRead>::read_required(snap, "device_names"),
             fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
-            model_blacklist: <String as ParamRead>::read_required(snap, "model_blacklist"),
-            model_whitelist: <String as ParamRead>::read_required(snap, "model_whitelist"),
-            ubos_enabled: <bool as ParamRead>::read_required(snap, "ubos_enabled"),
-            ubos_hosts: <String as ParamRead>::read_required(snap, "ubos_hosts"),
             ubos_password: <String as ParamRead>::read_required(snap, "ubos_password"),
             ubos_username: <String as ParamRead>::read_required(snap, "ubos_username"),
         }
@@ -90,35 +74,11 @@ impl Params {
         if self.axeos_enabled != other.axeos_enabled {
             out.push("axeos_enabled");
         }
-        if self.axeos_hosts != other.axeos_hosts {
-            out.push("axeos_hosts");
-        }
-        if self.bos_enabled != other.bos_enabled {
-            out.push("bos_enabled");
-        }
-        if self.bos_hosts != other.bos_hosts {
-            out.push("bos_hosts");
-        }
         if self.bos_password != other.bos_password {
             out.push("bos_password");
         }
-        if self.device_names != other.device_names {
-            out.push("device_names");
-        }
         if self.fleet_name != other.fleet_name {
             out.push("fleet_name");
-        }
-        if self.model_blacklist != other.model_blacklist {
-            out.push("model_blacklist");
-        }
-        if self.model_whitelist != other.model_whitelist {
-            out.push("model_whitelist");
-        }
-        if self.ubos_enabled != other.ubos_enabled {
-            out.push("ubos_enabled");
-        }
-        if self.ubos_hosts != other.ubos_hosts {
-            out.push("ubos_hosts");
         }
         if self.ubos_password != other.ubos_password {
             out.push("ubos_password");
