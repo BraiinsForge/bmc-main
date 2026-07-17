@@ -2105,10 +2105,14 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         }
         CompositorCommand::RingAlarm {
             time,
+            period,
             label,
             snooze_allowed,
         } => {
-            state.compositor.alarm.ring(&time, &label, snooze_allowed);
+            state
+                .compositor
+                .alarm
+                .ring(&time, &period, &label, snooze_allowed);
             state.arm_alarm_fallback();
         }
         CompositorCommand::StopAlarm => {
@@ -2501,12 +2505,14 @@ impl Compositor for EglCompositor {
     fn broadcast_alarm_ring(
         &self,
         time: String,
+        period: String,
         label: String,
         snooze_allowed: bool,
     ) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::RingAlarm {
                 time,
+                period,
                 label,
                 snooze_allowed,
             })
@@ -2810,7 +2816,7 @@ mod tests {
         let now = Instant::now();
         let mut state = make_app_state();
         // No overlay resources are bound in the test harness.
-        state.compositor.alarm.ring("07:30", "", false);
+        state.compositor.alarm.ring("07:30", "", "", false);
 
         // First poll only records the no-overlay start; still within grace.
         assert!(state.on_alarm_fallback_tick(now));
@@ -2828,7 +2834,7 @@ mod tests {
     #[test]
     fn touch_dismisses_alarm_when_no_overlay() {
         let mut state = make_app_state();
-        state.compositor.alarm.ring("07:30", "", false);
+        state.compositor.alarm.ring("07:30", "", "", false);
 
         state.on_touch_down(&FakeTouchEvent::new(0, 1));
 

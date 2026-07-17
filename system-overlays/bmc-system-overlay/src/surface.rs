@@ -178,9 +178,16 @@ impl State {
     }
 
     /// Record an `alarm_ringing` into the single latest-wins alarm slot.
-    fn note_alarm_ring(&mut self, time: String, label: String, snooze_allowed: bool) {
+    fn note_alarm_ring(
+        &mut self,
+        time: String,
+        period: String,
+        label: String,
+        snooze_allowed: bool,
+    ) {
         self.pending_alarm_event = Some(AlarmEvent::Ring {
             time,
+            period,
             label,
             snooze_allowed,
         });
@@ -872,12 +879,13 @@ impl Dispatch<DeckAlarmV1, ()> for State {
         match event {
             deck_alarm_v1::Event::AlarmRinging {
                 time,
+                period,
                 label,
                 snooze_allowed,
             } => {
                 // Unknown enum values default to no-snooze, the safe fallback.
                 let snooze_allowed = matches!(snooze_allowed, WEnum::Value(Snooze::Allowed));
-                state.note_alarm_ring(time, label, snooze_allowed);
+                state.note_alarm_ring(time, period, label, snooze_allowed);
             }
             deck_alarm_v1::Event::AlarmStopped => {
                 state.note_alarm_stop();
@@ -1108,12 +1116,18 @@ mod tests {
         let mut state = State::default();
 
         state.note_alarm_stop();
-        state.note_alarm_ring("07:30".to_owned(), "Wake up".to_owned(), true);
+        state.note_alarm_ring(
+            "07:30".to_owned(),
+            String::new(),
+            "Wake up".to_owned(),
+            true,
+        );
 
         assert_eq!(
             state.pending_alarm_event,
             Some(AlarmEvent::Ring {
                 time: "07:30".to_owned(),
+                period: String::new(),
                 label: "Wake up".to_owned(),
                 snooze_allowed: true,
             })
@@ -1124,7 +1138,12 @@ mod tests {
     fn ring_then_stop_in_one_round_keeps_the_stop() {
         let mut state = State::default();
 
-        state.note_alarm_ring("07:30".to_owned(), "Wake up".to_owned(), true);
+        state.note_alarm_ring(
+            "07:30".to_owned(),
+            String::new(),
+            "Wake up".to_owned(),
+            true,
+        );
         state.note_alarm_stop();
 
         assert_eq!(state.pending_alarm_event, Some(AlarmEvent::Stop));

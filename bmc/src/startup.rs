@@ -39,7 +39,11 @@ use tracing::info;
 /// compositor over `alarm_receiver`) become `AlarmBus` commands the
 /// `AlarmController` acts on. `AlarmController` itself never learns the
 /// compositor exists — this listener is the only translator between them.
-fn spawn_alarm_overlay_listener(compositor: Arc<dyn Compositor>, alarm_bus: AlarmBus) {
+fn spawn_alarm_overlay_listener(
+    compositor: Arc<dyn Compositor>,
+    alarm_bus: AlarmBus,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+) {
     let mut events = alarm_bus.subscribe_events();
     let mut commands = compositor.alarm_receiver();
     tokio::spawn(async move {
@@ -47,13 +51,31 @@ fn spawn_alarm_overlay_listener(compositor: Arc<dyn Compositor>, alarm_bus: Alar
             tokio::select! {
                 event = events.recv() => match event {
                     Ok(AlarmEvent::Started { alarm }) => {
-                        let time = alarm.data.time.format("%H:%M").to_string();
+                        // Render the time in the user's time system; `TimeSystem`
+                        // serializes to its strftime pattern (`%I:%M`/`%H:%M`),
+                        // same convention as the widget SDK's `format_time`. The
+                        // AM/PM marker travels separately so the overlay can
+                        // typeset it smaller next to the time.
+                        let time_system = config_handle
+                            .read()
+                            .await
+                            .localization_config()
+                            .time_system;
+                        let time = alarm.data.time.format(&time_system.to_string()).to_string();
+                        let period = if time_system.is_24() {
+                            String::new()
+                        } else {
+                            alarm.data.time.format("%p").to_string()
+                        };
                         // Offer snooze only while it is actually available; the
                         // controller enforces the same predicate before snoozing.
                         let snooze_allowed = alarm.snooze_allowed();
-                        if let Err(err) =
-                            compositor.broadcast_alarm_ring(time, alarm.data.name, snooze_allowed)
-                        {
+                        if let Err(err) = compositor.broadcast_alarm_ring(
+                            time,
+                            period,
+                            alarm.data.name,
+                            snooze_allowed,
+                        ) {
                             tracing::warn!(error = %err, "failed to signal alarm ring to overlay");
                         }
                     }
@@ -225,7 +247,7 @@ where
         // Subscribe the overlay listener before the controller inits: it calls
         // `subscribe_events()` synchronously, so the receiver exists before the
         // controller can emit a `Started` event a fresh subscriber would miss.
-        spawn_alarm_overlay_listener(compositor.clone(), alarm_bus.clone());
+        spawn_alarm_overlay_listener(compositor.clone(), alarm_bus.clone(), config_handle.clone());
         // Same discipline for the screen auto-off inhibit: subscribe now so a
         // ring during startup can't be missed.
         let alarm_ringing = spawn_alarm_ringing_watch(&alarm_bus);

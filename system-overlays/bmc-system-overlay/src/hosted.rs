@@ -148,9 +148,12 @@ impl HostedOverlay {
             match self.client.take_alarm_event() {
                 Some(AlarmEvent::Ring {
                     time,
+                    period,
                     label,
                     snooze_allowed,
-                }) => self.overlay.on_alarm_ring(&time, &label, snooze_allowed),
+                }) => self
+                    .overlay
+                    .on_alarm_ring(&time, &period, &label, snooze_allowed),
                 Some(AlarmEvent::Stop) => self.overlay.on_alarm_stop(),
                 None => {}
             }

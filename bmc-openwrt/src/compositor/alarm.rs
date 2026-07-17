@@ -37,6 +37,7 @@ pub enum AlarmAction {
 #[derive(Debug, Clone)]
 struct Ring {
     time: String,
+    period: String,
     label: String,
     snooze_allowed: bool,
 }
@@ -87,16 +88,18 @@ impl AlarmState {
         self.ringing.is_some()
     }
 
-    pub fn ring(&mut self, time: &str, label: &str, snooze_allowed: bool) {
+    pub fn ring(&mut self, time: &str, period: &str, label: &str, snooze_allowed: bool) {
         self.prune();
         self.ringing = Some(Ring {
             time: time.to_owned(),
+            period: period.to_owned(),
             label: label.to_owned(),
             snooze_allowed,
         });
         for r in &self.resources {
             r.alarm_ringing(
                 time.to_owned(),
+                period.to_owned(),
                 label.to_owned(),
                 snooze_flag(snooze_allowed),
             );
@@ -120,6 +123,7 @@ impl AlarmState {
         if let Some(ring) = &self.ringing {
             resource.alarm_ringing(
                 ring.time.clone(),
+                ring.period.clone(),
                 ring.label.clone(),
                 snooze_flag(ring.snooze_allowed),
             );
@@ -214,7 +218,7 @@ mod tests {
     fn ring_and_stop_toggle_ringing() {
         let mut s = AlarmState::default();
         assert!(!s.is_ringing());
-        s.ring("07:30", "Wake up", true);
+        s.ring("07:30", "", "Wake up", true);
         assert!(s.is_ringing());
         s.stop();
         assert!(!s.is_ringing());
@@ -228,11 +232,16 @@ mod tests {
         // fan-out itself needs a live resource and is covered on-device.
         let mut s = AlarmState::default();
         assert!(s.ringing.is_none());
-        s.ring("07:30", "Wake up", true);
+        s.ring("07:30", "AM", "Wake up", true);
         let ring = s.ringing.as_ref().expect("BUG: ringing after ring()");
         assert_eq!(
-            (ring.time.as_str(), ring.label.as_str(), ring.snooze_allowed),
-            ("07:30", "Wake up", true)
+            (
+                ring.time.as_str(),
+                ring.period.as_str(),
+                ring.label.as_str(),
+                ring.snooze_allowed
+            ),
+            ("07:30", "AM", "Wake up", true)
         );
         s.stop();
         assert!(s.ringing.is_none());
@@ -247,7 +256,7 @@ mod tests {
     #[test]
     fn request_dismiss_queues_dismiss_and_clears_ringing() {
         let mut s = AlarmState::default();
-        s.ring("07:30", "", false);
+        s.ring("07:30", "", "", false);
         s.request_dismiss();
         assert!(!s.is_ringing());
         assert_eq!(s.drain_actions(), vec![AlarmAction::Dismiss]);

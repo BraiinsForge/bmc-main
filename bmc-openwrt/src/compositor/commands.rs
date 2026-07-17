@@ -69,6 +69,7 @@ pub enum CompositorCommand {
     Shutdown,
     RingAlarm {
         time: String,
+        period: String,
         label: String,
         snooze_allowed: bool,
     },

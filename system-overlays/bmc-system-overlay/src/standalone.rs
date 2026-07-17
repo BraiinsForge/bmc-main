@@ -214,9 +214,10 @@ fn deliver_alarm_events(client: &mut LayerSurfaceClient, overlay: &mut dyn Syste
     match client.take_alarm_event() {
         Some(AlarmEvent::Ring {
             time,
+            period,
             label,
             snooze_allowed,
-        }) => overlay.on_alarm_ring(&time, &label, snooze_allowed),
+        }) => overlay.on_alarm_ring(&time, &period, &label, snooze_allowed),
         Some(AlarmEvent::Stop) => overlay.on_alarm_stop(),
         None => {}
     }

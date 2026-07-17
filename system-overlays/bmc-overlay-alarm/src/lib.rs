@@ -33,6 +33,8 @@ const SNOOZE_ALARM_KEY: &str = "snooze_alarm_button";
 struct Ring {
     /// Scheduled alarm time, preformatted for display (e.g. `07:30`).
     time: String,
+    /// AM/PM marker for 12-hour time; empty in 24-hour mode.
+    period: String,
     /// Alarm label; empty when the alarm has no name, in which case the screen
     /// falls back to "Alarm" (see `build_alarm_ui_tree`).
     label: String,
@@ -78,6 +80,8 @@ pub struct AlarmOverlay {
 #[derive(Debug, Clone)]
 pub struct AlarmView {
     pub time: String,
+    /// AM/PM marker rendered smaller next to the time; empty in 24-hour mode.
+    pub period: String,
     /// Alarm label; empty falls back to "Alarm" at render (see `build_alarm_ui_tree`).
     pub label: String,
     /// Whether the snooze button is shown; `false` renders stop-only.
@@ -231,7 +235,7 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
         },
     );
 
-    let time_node = text(
+    let mut time_row_children = vec![text(
         view.time.clone(),
         TextStyle {
             size: 200,
@@ -242,6 +246,31 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
             line_height: 1.0,
             ..Default::default()
         },
+    )];
+    if !view.period.is_empty() {
+        // 12-hour mode: the AM/PM marker sits smaller to the right of the
+        // time, bottom-aligned toward its baseline — same arrangement as the
+        // clock widget.
+        time_row_children.push(text(
+            view.period.clone(),
+            TextStyle {
+                size: 64,
+                color: WHITE,
+                weight: FontWeight::REGULAR,
+                align: TextAlign::Center,
+                family: FontFamily::DeckSans,
+                line_height: 1.0,
+                ..Default::default()
+            },
+        ));
+    }
+    let time_node = row(
+        PropsData {
+            gap: 16.0,
+            cross_align: CrossAlign::End,
+            ..Default::default()
+        },
+        time_row_children,
     );
 
     let mut buttons = vec![alarm_button(
@@ -355,9 +384,10 @@ impl SystemOverlay for AlarmOverlay {
         true
     }
 
-    fn on_alarm_ring(&mut self, time: &str, label: &str, snooze_allowed: bool) {
+    fn on_alarm_ring(&mut self, time: &str, period: &str, label: &str, snooze_allowed: bool) {
         self.ringing = Some(Ring {
             time: time.to_owned(),
+            period: period.to_owned(),
             label: label.to_owned(),
             snooze_allowed,
         });
@@ -400,6 +430,7 @@ impl SystemOverlay for AlarmOverlay {
 
         let view: AlarmView = AlarmView {
             time: ring.time.clone(),
+            period: ring.period.clone(),
             label: ring.label.clone(),
             snooze_allowed: ring.snooze_allowed,
         };

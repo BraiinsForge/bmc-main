@@ -164,6 +164,8 @@ thread_local! {
         RefCell::new(AlarmRenderState::new(Instant::now()));
     static ALARM_NO_LABEL_RENDER_STATE: RefCell<AlarmRenderState> =
         RefCell::new(AlarmRenderState::new(Instant::now()));
+    static ALARM_12H_RENDER_STATE: RefCell<AlarmRenderState> =
+        RefCell::new(AlarmRenderState::new(Instant::now()));
 }
 
 #[expect(
@@ -470,6 +472,7 @@ fn alarm(ctx: &mut StoryCtx) {
                 alarm_cell(
                     AlarmView {
                         time: "07:30".to_owned(),
+                        period: String::new(),
                         label: "Wake up".to_owned(),
                         snooze_allowed: true,
                     },
@@ -485,10 +488,27 @@ fn alarm(ctx: &mut StoryCtx) {
                 alarm_cell(
                     AlarmView {
                         time: "06:00".to_owned(),
+                        period: String::new(),
                         label: String::new(),
                         snooze_allowed: false,
                     },
                     &ALARM_NO_LABEL_RENDER_STATE,
+                    checker,
+                ),
+            );
+        });
+        grid.cell(|ui| {
+            ui.header("Alarm", "12-hour time with AM/PM marker");
+            ui.div_custom(
+                (DISPLAY_W, DISPLAY_H),
+                alarm_cell(
+                    AlarmView {
+                        time: "07:30".to_owned(),
+                        period: "PM".to_owned(),
+                        label: "Wake up".to_owned(),
+                        snooze_allowed: true,
+                    },
+                    &ALARM_12H_RENDER_STATE,
                     checker,
                 ),
             );

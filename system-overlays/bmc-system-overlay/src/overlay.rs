@@ -218,6 +218,7 @@ pub enum AlarmRequest {
 pub enum AlarmEvent {
     Ring {
         time: String,
+        period: String,
         label: String,
         snooze_allowed: bool,
     },
@@ -412,9 +413,10 @@ pub trait SystemOverlay {
         false
     }
 
-    /// Active alarm reported by the compositor. `snooze_allowed` is `false` when
-    /// the alarm has no snooze options configured.
-    fn on_alarm_ring(&mut self, _time: &str, _label: &str, _snooze_allowed: bool) {}
+    /// Active alarm reported by the compositor. `period` is the AM/PM marker
+    /// for 12-hour time, empty in 24-hour mode. `snooze_allowed` is `false`
+    /// when the alarm has no snooze options configured.
+    fn on_alarm_ring(&mut self, _time: &str, _period: &str, _label: &str, _snooze_allowed: bool) {}
 
     /// Compositor requested to stop the alarm.
     fn on_alarm_stop(&mut self) {}

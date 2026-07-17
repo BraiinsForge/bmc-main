@@ -236,6 +236,7 @@ pub trait Compositor: Send + Sync {
     fn broadcast_alarm_ring(
         &self,
         _time: String,
+        _period: String,
         _label: String,
         _snooze_allowed: bool,
     ) -> Result<(), CompositorError> {

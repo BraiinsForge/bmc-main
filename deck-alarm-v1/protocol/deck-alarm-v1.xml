@@ -42,7 +42,8 @@
         maps its full-screen surface on this event and unmaps after the user
         dismisses or snoozes.
       </description>
-      <arg name="time" type="string" summary="scheduled alarm time, e.g. 07:30"/>
+      <arg name="time" type="string" summary="scheduled alarm time in the user's time system, e.g. 07:30"/>
+      <arg name="period" type="string" summary="AM/PM marker for 12-hour time, empty in 24-hour mode"/>
       <arg name="label" type="string" summary="alarm label, empty if unset"/>
       <arg name="snooze_allowed" type="uint" enum="snooze" summary="whether the alarm may be snoozed"/>
     </event>
