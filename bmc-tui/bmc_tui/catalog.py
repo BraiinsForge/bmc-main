@@ -1108,6 +1108,11 @@ def corrupt_partition_blank(dev: Device, state: FaultsState) -> str:
     return f"first 64 KiB of {console.lit(p.device)} zeroed"
 
 
+# The pinned B2 recipe, single-sourced: the loopback fixture test proves
+# these exact commands drive the fsck ladder's repair branch.
+_B2_DEBUGFS_COMMANDS: tuple[str, str] = ("sif <2> links_count 0", "ssv state 2")
+
+
 @stage("Corrupt ext4 metadata (B2)")
 def corrupt_partition_metadata(dev: Device, state: FaultsState) -> str:
     """The pinned repair-branch recipe: zero the root inode's link count and
@@ -1116,8 +1121,8 @@ def corrupt_partition_metadata(dev: Device, state: FaultsState) -> str:
     survive (repaired, never reformatted). Validated on e2fsprogs 1.47.3
     and re-proven by the loopback fixture test."""
     p = _require_partition(state)
-    dev.run(f"debugfs -w -R 'sif <2> links_count 0' {shlex.quote(p.device)}")
-    dev.run(f"debugfs -w -R 'ssv state 2' {shlex.quote(p.device)}")
+    for command in _B2_DEBUGFS_COMMANDS:
+        dev.run(f"debugfs -w -R '{command}' {shlex.quote(p.device)}")
     return f"root links_count zeroed + errors flag set on {console.lit(p.device)}"
 
 

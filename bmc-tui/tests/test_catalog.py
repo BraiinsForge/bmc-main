@@ -1737,8 +1737,8 @@ def test_corrupt_partition_metadata_runs_the_pinned_debugfs_recipe() -> None:
     state.partition = catalog.DataPartition("/dev/mmcblk0p4", "179:4", "1111-2222")
     catalog.corrupt_partition_metadata(Device("h", backend=backend), state)
     joined = [" ".join(argv) for argv in backend.runs]
-    assert any("sif <2> links_count 0" in c for c in joined)
-    assert any("ssv state 2" in c for c in joined)
+    for command in catalog._B2_DEBUGFS_COMMANDS:
+        assert any(command in c for c in joined)
 
 
 def test_fs_uuid_assertions_read_blkid() -> None:

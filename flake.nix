@@ -118,12 +118,14 @@
           packages = (commonDeps.frontendDeps pkgs)
             ++ (with pkgs; [
             cargo-watch
+            e2fsprogs
             ffmpeg-headless
             just
             odiff
             python3
             ruff
             ty
+            util-linux
             uv
           ]);
         }).overrideAttrs (prev: {
