@@ -127,6 +127,7 @@ class E2eSysupgrade:
     ) -> None:
         console.header("Scenario A — init path")
         state.device_mutated = True
+        catalog.stop_compositor(dev)
         catalog.push_nix_cli(dev, prov)
         catalog.register_rig(dev, state)
         catalog.ensure_memory(dev, state.image_a.size + state.image_a.rootfs_size + _FLASH_HEADROOM)
@@ -155,6 +156,7 @@ class E2eSysupgrade:
         # must leave the device untouched. On a full run the reboot into
         # image A cleared /tmp, so scenario B pushes again regardless.
         state.device_mutated = True
+        catalog.stop_compositor(dev)
         catalog.push_nix_cli(dev, prov)
         catalog.register_rig(dev, state)
         catalog.drop_e2e_marker(dev)

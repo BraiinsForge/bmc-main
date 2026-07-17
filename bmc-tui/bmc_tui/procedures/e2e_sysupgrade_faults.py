@@ -25,10 +25,9 @@ swapped-away cache) plus device-side surgeries (partition swaps, staged
 /dev/shm uploads), asserting COMMAND aborts cleanly and leaves the store
 recoverable.
 
-This module lands the skeleton: the pinned all-suite order, the scenario
-dispatch registry, the shared preamble/cleanup, and the rig-restore and
-dry-run tamper seams. The scenario bodies are stubs until Tasks 13-15,
-so the procedure is deliberately kept off the CLI.
+This module holds the pinned all-suite order, the scenario dispatch
+registry, the shared preamble/cleanup, the rig-restore and dry-run tamper
+seams, and the full set of A/B/C/D scenario drivers.
 """
 
 import subprocess
@@ -42,6 +41,7 @@ from bmc_tui import catalog, console, nix, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix
+from bmc_tui.server import default_serve_ip
 from bmc_tui.stage import Abort, dry_run, entrypoint, require
 
 # sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk; same
@@ -78,31 +78,36 @@ Scenario = Literal[
     "servers-json",  # D5
 ]
 
-# The pinned `all` order: fault scenarios grouped by init/upgrade family,
-# with cheaper faults first so a common regression surfaces early.
-# cache-swap-retry (C1) fuses stale-next-marker (C5) + servers-json (D5)
-# onto its retry flash; same-version-reflash (C6) fuses shm-local-file
-# (D1); the fused ids therefore have drivers but do not appear here.
-# `good-init` is the clean init flash that closes group A — a flash step,
-# not a scenario driver.
-SUITE_ORDER = (
+# The pinned per-group orders the group runners iterate: fault scenarios
+# grouped by init/upgrade family, with cheaper faults first so a common
+# regression surfaces early. cache-swap-retry (C1) fuses stale-next-marker
+# (C5) + servers-json (D5) onto its retry flash; same-version-reflash (C6)
+# fuses shm-local-file (D1); the fused ids therefore have drivers but do
+# not appear here.
+_GROUP_A_ORDER = (
     "unsigned-feed",
     "untrusted-key-name",
     "wrong-key-signature",
     "corrupt-tarball",
     "download-stall",
-    "good-init",
+)
+_GROUP_B_ORDER = (
     "store-remnants",
     "missing-store-db",
     "unmounted-store",
     "blank-data-partition",
     "corrupt-fs-metadata",
+)
+_GROUP_C_ORDER = (
     "unreachable-rig",
     "malformed-index",
     "wrong-cache-key",
     "cache-swap-retry",  # fuses stale-next-marker + servers-json on retry
     "same-version-reflash",  # fuses shm-local-file (staged via /dev/shm)
 )
+# `good-init` is the clean init flash that closes group A — a flash step,
+# not a scenario driver.
+SUITE_ORDER = (*_GROUP_A_ORDER, "good-init", *_GROUP_B_ORDER, *_GROUP_C_ORDER)
 
 
 def _best_effort(action: Callable[[], object]) -> None:
@@ -136,6 +141,10 @@ class _Ctx:
     make_device: Callable[[str], Device]
     yes: bool
     servers_json_preserved: bool
+    # Set for a quiesced window (group A's up-front cleardown, a B-recovery
+    # re-flash): the mDNS name is dead, so every stage runs on this pre-pinned
+    # numeric handle and nothing re-resolves the name until the next reboot.
+    quiesced_pin: Device | None = None
 
 
 def _pinned(ctx: _Ctx) -> Device:
@@ -169,23 +178,49 @@ def _host_tamper(action: Callable[[], None]) -> None:
     action()
 
 
-def _unimplemented(ctx: _Ctx) -> None:
-    raise NotImplementedError("implemented in a later task")
-
-
-def _prepare_flash(ctx: _Ctx, image: Image) -> None:
+def _prepare_flash(ctx: _Ctx, image: Image, *, memory_need: int | None = None) -> Device:
     """Everything a flash attempt needs, idempotent per attempt: CLI +
-    registration, RAM headroom, pinned address, verified upload, trusted
-    keys. Ordered like the happy path's scenario drivers."""
+    registration, widget teardown, RAM headroom, pinned address, verified
+    upload, trusted keys. Returns the handle to flash through.
+
+    Normally (`quiesced_pin` unset, mDNS alive) this pins the name to a
+    numeric address and prepares via the name, mirroring the happy path.
+    Inside a quiesced window (`quiesced_pin` set — group A's up-front
+    cleardown stopped avahi, or a B-recovery re-flash) the name is dead, so
+    every stage runs on the pre-pinned numeric handle and nothing re-resolves
+    the name."""
     ctx.run.device_mutated = True
-    catalog.push_nix_cli(ctx.dev, ctx.prov)
-    catalog.register_rig(ctx.dev, ctx.run)
-    catalog.ensure_memory(ctx.dev, image.size + image.rootfs_size + _FLASH_HEADROOM)
-    catalog.pin_device_address(ctx.dev, ctx.run)
-    pinned = _pinned(ctx)
-    catalog.upload_firmware(ctx.dev, image)
+    # Sweep stale /tmp uploads from earlier scenarios BEFORE the memory gate:
+    # they are tmpfs residents (RAM), so without the sweep the gate demands a
+    # fresh image-size of headroom on top of an image it is about to overwrite
+    # — double-counting one image size for every scenario after the first
+    # (observed as a spurious abort on the 256 MiB Deck). Re-uploading per
+    # scenario is the accepted cost.
+    need = (
+        memory_need if memory_need is not None else image.size + image.rootfs_size + _FLASH_HEADROOM
+    )
+    if ctx.quiesced_pin is not None:
+        pinned = ctx.quiesced_pin
+        catalog.push_nix_cli(pinned, ctx.prov)
+        catalog.register_rig(pinned, ctx.run)
+        catalog.sweep_uploaded_images(pinned, ctx.run)
+        catalog.ensure_memory(pinned, need)
+        catalog.upload_firmware(pinned, image)
+    else:
+        # Production stops widgets before its tmpfs firmware download. The SSH
+        # path has no widget-lifecycle handle, so stop the owning service; its
+        # graceful shutdown releases bmc-wasm-host while keeping /nix mounted.
+        catalog.stop_compositor(ctx.dev)
+        catalog.push_nix_cli(ctx.dev, ctx.prov)
+        catalog.register_rig(ctx.dev, ctx.run)
+        catalog.sweep_uploaded_images(ctx.dev, ctx.run)
+        catalog.ensure_memory(ctx.dev, need)
+        catalog.pin_device_address(ctx.dev, ctx.run)
+        pinned = _pinned(ctx)
+        catalog.upload_firmware(ctx.dev, image)
     catalog.require_uploaded(pinned, image)
     catalog.trust_image_keys(pinned, image)
+    return pinned
 
 
 def _tarball_a(ctx: _Ctx) -> str:
@@ -209,15 +244,15 @@ def _attempt_init_abort(
     """One tampered init attempt: precondition, tamper, expect-abort flash
     of image A, then the observables: store absent, and (by default) the
     fixed-path download artifact absent. The artifact assertion is
-    device behavior, not cleanup: A2/A3 abort before any bytes are
-    fetched, and A1/A4's downloaded tarball is deleted by bmc-nix
-    itself on signature rejection (store.rs). A5 passes
-    artifact_deleted=False — the stall/download-error paths return
-    WITHOUT deleting the partial file, so only the finally-sweep (which
-    always runs, pass or fail) cleans it there."""
-    catalog.require_store_absent(ctx.dev)
-    _prepare_flash(ctx, ctx.image_a)
-    pinned = _pinned(ctx)
+    device behavior, not cleanup: A2 aborts before any bytes are fetched
+    (missing feed signature), and A1/A3/A4's tarball is deleted by
+    bmc-nix itself on signature rejection — including A3, which downloads
+    the full tarball before the key-name mismatch is caught (store.rs).
+    A5 passes artifact_deleted=False — the stall/download-error paths
+    return WITHOUT deleting the partial file, so only the finally-sweep
+    (which always runs, pass or fail) cleans it there."""
+    catalog.require_store_absent(ctx.quiesced_pin or ctx.dev)
+    pinned = _prepare_flash(ctx, ctx.image_a)
     failed = False
     try:
         _host_tamper(tamper)
@@ -232,7 +267,8 @@ def _attempt_init_abort(
         failed = True
         raise
     finally:
-        catalog.sweep_download_artifact(pinned)
+        # a cleanup error must not replace the real Abort the flash raised
+        _best_effort(lambda: catalog.sweep_download_artifact(pinned))
         _restore_step(failed=failed, action=lambda: _restore_rig(ctx))
 
 
@@ -314,25 +350,32 @@ def _scenario_download_stall(ctx: _Ctx) -> None:
 def _flash_good_init(ctx: _Ctx) -> None:
     """Good-rig flash of image A + full init verification — the A-group
     finale (recovery proof) and the B-group's recovery flash."""
-    _prepare_flash(ctx, ctx.image_a)
-    catalog.flash_e2e(_pinned(ctx), ctx.image_a, assume_yes=ctx.yes, state=ctx.state)
+    pinned = _prepare_flash(ctx, ctx.image_a)
+    catalog.flash_e2e(pinned, ctx.image_a, assume_yes=ctx.yes, state=ctx.state)
+    # the flash reboots: the numeric pin may not survive a new DHCP lease, so
+    # read-backs return to the mDNS name once the device answers again
+    ctx.quiesced_pin = None
     catalog.wait_for_device(ctx.dev)
     catalog.verify_initialized(ctx.dev, ctx.run)
     catalog.require_staged_once(ctx.state)
 
 
 def _group_a(ctx: _Ctx) -> None:
-    catalog.clear_nix_store(ctx.dev, assume_yes=ctx.yes)
+    # Pin BEFORE the cleardown and run it (and the whole group) on the numeric
+    # handle: the cleardown's quiesce stops avahi, so the mDNS name goes dead
+    # for the rest of the group — no reboot restores it until the good-init
+    # finale. device_mutated is set first so a mid-cleardown failure still
+    # runs the outer cleanup. Mirrors the happy path (e2e_sysupgrade.py).
     ctx.run.device_mutated = True
-    for sid in (
-        "unsigned-feed",
-        "untrusted-key-name",
-        "wrong-key-signature",
-        "corrupt-tarball",
-        "download-stall",
-    ):
-        _DRIVERS[sid](ctx)
-    _flash_good_init(ctx)
+    catalog.pin_device_address(ctx.dev, ctx.run)
+    ctx.quiesced_pin = _pinned(ctx)
+    try:
+        catalog.clear_nix_store(ctx.quiesced_pin, assume_yes=ctx.yes)
+        for sid in _GROUP_A_ORDER:
+            _DRIVERS[sid](ctx)
+        _flash_good_init(ctx)  # clears quiesced_pin before its post-reboot wait
+    finally:
+        ctx.quiesced_pin = None
 
 
 def _require_b_preconditions(ctx: _Ctx) -> None:
@@ -425,6 +468,10 @@ def _with_b_recovery(ctx: _Ctx, scenario: Callable[[_Ctx], None]) -> None:
     except (Abort, subprocess.CalledProcessError) as failure:
         hint = failure.hint if isinstance(failure, Abort) else str(failure)
         console.warn(f"B-scenario failed ({hint}) — attempting the one-shot recovery flash")
+        # Recovery fires with the device quiesced (mDNS possibly dead), but the
+        # failed scenario already pinned a numeric handle: reuse it so the
+        # recovery's prepare stages don't re-resolve a dead name.
+        ctx.quiesced_pin = _pinned(ctx)
         try:
             _flash_good_init(ctx)
         except (Abort, subprocess.CalledProcessError) as recovery:
@@ -434,38 +481,263 @@ def _with_b_recovery(ctx: _Ctx, scenario: Callable[[_Ctx], None]) -> None:
                 "with the good rig, or run `deck init --wipe` semantics via "
                 "bmc-nix-cli init --wipe on the device"
             ) from failure
+        finally:
+            ctx.quiesced_pin = None
         raise
 
 
 def _group_b(ctx: _Ctx) -> None:
-    for sid in (
-        "store-remnants",
-        "missing-store-db",
-        "unmounted-store",
-        "blank-data-partition",
-        "corrupt-fs-metadata",
-    ):
+    for sid in _GROUP_B_ORDER:
         _with_b_recovery(ctx, _DRIVERS[sid])
 
 
+def _require_c_preconditions(ctx: _Ctx) -> None:
+    catalog.require_lineage(ctx.dev, ctx.run)  # running image A
+    catalog.require_initialized_store(ctx.dev)
+
+
+def _attempt_upgrade_abort(
+    ctx: _Ctx, *, tamper: Callable[[], None], expect: str | tuple[str, ...]
+) -> None:
+    """One tampered upgrade attempt of image B: record → tamper →
+    expect-abort → untouched-state contract → restore. Post-pin stages
+    use the pinned device (the plan-wide rule; no reboot happens, so
+    the pin stays valid through the whole window)."""
+    _require_c_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_b)
+    pinned = _pinned(ctx)
+    catalog.drop_e2e_marker(pinned)
+    catalog.record_upgrade_state(pinned, ctx.state)
+    failed = False
+    try:
+        _host_tamper(tamper)
+        catalog.flash_expect_abort(
+            pinned, ctx.image_b, expect=expect, state=ctx.state, assume_yes=ctx.yes
+        )
+        catalog.require_upgrade_state_untouched(pinned, ctx.state)
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        _restore_step(failed=failed, action=lambda: _restore_rig(ctx))
+
+
+def _scenario_unreachable_rig(ctx: _Ctx) -> None:
+    _attempt_upgrade_abort(
+        ctx,
+        tamper=lambda: ctx.server.set_fault(rig.FaultMode.REFUSE),
+        expect="package feed fetch for firmware",
+    )
+
+
+def _scenario_malformed_index(ctx: _Ctx) -> None:
+    b = ctx.run.variant_b
+    if b is None:
+        msg = "BUG: variants were not built before the C-group"
+        raise RuntimeError(msg)
+    _attempt_upgrade_abort(
+        ctx,
+        tamper=lambda: rig.corrupt_index(_serve_root(ctx), b.bos_version),
+        expect="invalid index JSON",
+    )
+
+
+def _scenario_wrong_cache_key(ctx: _Ctx) -> None:
+    _require_c_preconditions(ctx)
+    catalog.ensure_bump_absent(ctx.dev, ctx.run)
+    _prepare_flash(ctx, ctx.image_b)
+    pinned = _pinned(ctx)
+    catalog.drop_e2e_marker(pinned)
+    catalog.record_upgrade_state(pinned, ctx.state)
+    r = ctx.run.rig
+    if r is None:
+        msg = "BUG: the rig was not assembled before C4"
+        raise RuntimeError(msg)
+    if dry_run.get():
+        # wrong-key generation is host-side tamper setup: logged, not done
+        wrong_public = f"{rig.CACHE_KEY_NAME}:dry-run"
+    else:
+        wrong_secret = r.secret.with_name("wrong-key.secret")
+        wrong_public = ctx.nix.generate_cache_key(rig.CACHE_KEY_NAME, wrong_secret)
+    failed = False
+    try:
+        catalog.register_rig_tampered(pinned, ctx.run, wrong_public_key=wrong_public)
+        catalog.flash_expect_abort(
+            pinned,
+            ctx.image_b,
+            expect=("no substituter provides", "--realise failed"),
+            state=ctx.state,
+            assume_yes=ctx.yes,
+        )
+        catalog.require_upgrade_state_untouched(pinned, ctx.state)
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        # good-key restore; a re-registration error must not replace the real Abort
+        _restore_step(failed=failed, action=lambda: catalog.register_rig(pinned, ctx.run))
+
+
+def _scenario_cache_swap_retry(ctx: _Ctx) -> None:
+    """C1 + the riders: cache withheld → abort; swap back → retry flashes B
+    with a stale next marker planted (C5); D5's preservation checks and
+    D4's staged-once ride the retry's first boot into image B."""
+    _require_c_preconditions(ctx)
+    catalog.ensure_bump_absent(ctx.dev, ctx.run)
+    r = ctx.run.rig
+    if r is None:
+        msg = "BUG: the rig was not assembled before C1"
+        raise RuntimeError(msg)
+    _prepare_flash(ctx, ctx.image_b)
+    pinned = _pinned(ctx)
+    catalog.drop_e2e_marker(pinned)
+    catalog.record_upgrade_state(pinned, ctx.state)
+    failed = False
+    try:
+        _host_tamper(lambda: rig.swap_cache_away(r.cache))
+        catalog.flash_expect_abort(
+            pinned,
+            ctx.image_b,
+            expect=("no substituter provides", "--realise failed"),
+            state=ctx.state,
+            assume_yes=ctx.yes,
+        )
+        catalog.require_upgrade_state_untouched(pinned, ctx.state)
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        # idempotent: a no-op when the swap was skipped
+        _restore_step(failed=failed, action=lambda: rig.restore_cache(r.cache))
+    # The withheld-cache attempt left a NEGATIVE narinfo entry in the device's
+    # persistent on-disk lookup cache, which would poison the retry for up to
+    # narinfo-cache-negative-ttl (3600 s) — the restored rig cache is never
+    # re-queried. Clearing it models the TTL expiring / a later retry.
+    catalog.clear_nix_narinfo_cache(pinned)
+    # retry with the riders
+    catalog.plant_stale_next_marker(pinned)  # C5
+    catalog.record_generation(pinned, ctx.run)
+    _prepare_flash(ctx, ctx.image_b)
+    catalog.flash_e2e(_pinned(ctx), ctx.image_b, assume_yes=ctx.yes, state=ctx.state)
+    catalog.wait_for_device(ctx.dev)
+    catalog.verify_upgraded(ctx.dev, ctx.run)
+    catalog.require_staged_once(ctx.state)  # D4
+    catalog.require_stale_next_gone(ctx.dev)  # C5
+    catalog.require_preservation_policy(  # D5
+        ctx.dev, servers_json_preserved=ctx.servers_json_preserved
+    )
+
+
+def _scenario_same_version_reflash(ctx: _Ctx) -> None:
+    """C6 + D1: same-version re-flash of image B staged via /dev/shm —
+    empty plan, no next marker, current unchanged, marker survived."""
+    _same_version_reflash(ctx, via_shm=True, expect_image=ctx.image_b)
+
+
+def _matching_image(ctx: _Ctx) -> Image:
+    version = ctx.dev.version
+    for image in (ctx.image_a, ctx.image_b):
+        if image.version == version:
+            return image
+    raise Abort(
+        f"device runs {console.lit(version)} which matches neither supplied image "
+        f"({console.lit(ctx.image_a.version)}, {console.lit(ctx.image_b.version)})"
+    )
+
+
+def _same_version_reflash(ctx: _Ctx, *, via_shm: bool, expect_image: Image | None = None) -> None:
+    """Same-version re-flash of the image matching the running firmware
+    (never 'the other image' — that could be a downgrade, which the
+    platform rejects). `expect_image` replaces the lookup with a hard
+    assert that the device runs exactly that image, instead of
+    re-flashing whatever it happens to run."""
+    catalog.require_initialized_store(ctx.dev)
+    if expect_image is None:
+        image = _matching_image(ctx)
+    else:
+        require(
+            ctx.dev.version == expect_image.version,
+            f"device runs {ctx.dev.version}, not the expected {expect_image.version}",
+        )
+        image = expect_image
+    memory_need: int | None = None
+    if via_shm:
+        catalog.require_shm_tmpfs(ctx.dev)
+        # 2x image: the /tmp upload from _prepare_flash is deleted right after
+        # trust_image_keys, so only the /dev/shm staging copy and sysupgrade's
+        # own /tmp/sysupgrade.img coexist during the flash — all tmpfs (RAM).
+        memory_need = 2 * image.size + image.rootfs_size + _FLASH_HEADROOM
+    _prepare_flash(ctx, image, memory_need=memory_need)
+    pinned = _pinned(ctx)
+    if via_shm:
+        catalog.sweep_uploaded_images(pinned, ctx.run)  # the /tmp upload only fed trust_image_keys
+        catalog.upload_firmware_shm(pinned, image)
+    catalog.drop_e2e_marker(pinned)
+    catalog.record_upgrade_state(pinned, ctx.state)
+    catalog.flash_e2e(
+        pinned,
+        image,
+        assume_yes=ctx.yes,
+        remote_path=catalog.shm_path(image) if via_shm else None,
+        state=ctx.state,
+    )
+    catalog.wait_for_device(ctx.dev)
+    catalog.require_rebooted(ctx.dev, ctx.state)  # a no-op sysupgrade would pass every check below
+    require(ctx.dev.version == image.version, "version changed on a same-version re-flash")
+    catalog.require_upgrade_state_untouched(ctx.dev, ctx.state)
+    catalog.require_staged_once(ctx.state)
+
+
+def _scenario_shm_local_file(ctx: _Ctx) -> None:
+    _same_version_reflash(ctx, via_shm=True)
+
+
+def _scenario_staged_once(ctx: _Ctx) -> None:
+    _same_version_reflash(ctx, via_shm=False)
+
+
+def _scenario_servers_json(ctx: _Ctx) -> None:
+    """Standalone D5: store initialized on image A → one good-rig upgrade
+    flash of image B (the first boot into the target), then the
+    preservation assertions."""
+    _require_c_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_b)
+    pinned = _pinned(ctx)
+    catalog.drop_e2e_marker(pinned)
+    catalog.record_generation(pinned, ctx.run)
+    catalog.flash_e2e(pinned, ctx.image_b, assume_yes=ctx.yes, state=ctx.state)
+    catalog.wait_for_device(ctx.dev)
+    catalog.verify_upgraded(ctx.dev, ctx.run)
+    catalog.require_staged_once(ctx.state)
+    catalog.require_preservation_policy(ctx.dev, servers_json_preserved=ctx.servers_json_preserved)
+
+
+def _scenario_stale_next_marker(ctx: _Ctx) -> None:
+    """Standalone C5: initialized store on A → plant the stale marker, then
+    one good-rig upgrade flash of B with the C5 assertions."""
+    _require_c_preconditions(ctx)
+    _prepare_flash(ctx, ctx.image_b)
+    pinned = _pinned(ctx)
+    catalog.drop_e2e_marker(pinned)
+    catalog.plant_stale_next_marker(pinned)
+    catalog.record_generation(pinned, ctx.run)
+    catalog.flash_e2e(pinned, ctx.image_b, assume_yes=ctx.yes, state=ctx.state)
+    catalog.wait_for_device(ctx.dev)
+    catalog.verify_upgraded(ctx.dev, ctx.run)
+    catalog.require_stale_next_gone(ctx.dev)
+
+
 def _group_c(ctx: _Ctx) -> None:
-    # the fused ids (stale-next-marker, shm-local-file, servers-json) have
-    # drivers but never run standalone here
-    for sid in (
-        "unreachable-rig",
-        "malformed-index",
-        "wrong-cache-key",
-        "cache-swap-retry",
-        "same-version-reflash",
-    ):
+    for sid in _GROUP_C_ORDER:
         _DRIVERS[sid](ctx)
 
 
 def _group_d(ctx: _Ctx) -> None:
-    """The standalone D group — its scenarios are fused into groups A-C on
-    the `all` run, so this only runs when invoked directly. Implemented in
-    a later task."""
-    raise NotImplementedError("implemented in a later task")
+    """Precondition: initialized store on image A. D5 → D4 → D1 in two
+    flashes: the upgrade to B (D4 rides its capture), then the /dev/shm
+    same-version re-flash of B."""
+    _scenario_servers_json(ctx)  # includes the staged-once (D4) assertion
+    _scenario_shm_local_file(ctx)  # now running B: same-version /dev/shm re-flash of B
 
 
 def _all(ctx: _Ctx) -> None:
@@ -485,15 +757,15 @@ _DRIVERS: dict[str, Callable[[_Ctx], None]] = {
     "store-remnants": _scenario_store_remnants,
     "missing-store-db": _scenario_missing_store_db,
     "unmounted-store": _scenario_unmounted_store,
-    "cache-swap-retry": _unimplemented,
-    "unreachable-rig": _unimplemented,
-    "malformed-index": _unimplemented,
-    "wrong-cache-key": _unimplemented,
-    "stale-next-marker": _unimplemented,
-    "same-version-reflash": _unimplemented,
-    "shm-local-file": _unimplemented,
-    "staged-once": _unimplemented,
-    "servers-json": _unimplemented,
+    "cache-swap-retry": _scenario_cache_swap_retry,
+    "unreachable-rig": _scenario_unreachable_rig,
+    "malformed-index": _scenario_malformed_index,
+    "wrong-cache-key": _scenario_wrong_cache_key,
+    "stale-next-marker": _scenario_stale_next_marker,
+    "same-version-reflash": _scenario_same_version_reflash,
+    "shm-local-file": _scenario_shm_local_file,
+    "staged-once": _scenario_staged_once,
+    "servers-json": _scenario_servers_json,
     "a": _group_a,
     "b": _group_b,
     "c": _group_c,
@@ -541,7 +813,7 @@ class E2eSysupgradeFaults:
         catalog.build_e2e_artifacts(backend, run)
         catalog.build_nix_cli(backend, prov)
 
-        serve_ip = self.serve_ip or rig.default_serve_ip(dev.host)
+        serve_ip = self.serve_ip or default_serve_ip(dev.host)
         server_factory = make_server or (lambda root: rig.RigServer(root, port=self.serve_port))
         # The workdir holds the rig cache and the private signing key;
         # neither may outlive the run.

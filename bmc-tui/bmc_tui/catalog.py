@@ -412,6 +412,36 @@ def register_packages(dev: Device, plan: Deployment) -> str:
     return f"{names} → generation {console.lit(generation)}" if generation else names
 
 
+_WASM_HOST = "bmc-wasm-host"
+
+
+@stage("Stop compositor")
+def stop_compositor(
+    dev: Device,
+    *,
+    timeout: int = 60,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> str:
+    """Stop the service so its widget teardown releases bmc-wasm-host.
+
+    The stop itself is synchronous, but the wasm hosts exit on their own
+    after the widget teardown — wait them out, or the memory gate that
+    follows samples RAM they still hold.
+    """
+    dev.run("service bmc-compositor stop")
+    if dry_run.get():
+        return "stop logged (dry-run)"
+    failure = _poll_until(
+        lambda: dev.read(f"pidof {_WASM_HOST} || true").strip() or None,
+        timeout=timeout,
+        sleep=sleep,
+        clock=clock,
+    )
+    require(failure is None, f"bmc-wasm-host still running after stop: pid(s) {failure}")
+    return "stopped"
+
+
 Pid = NewType("Pid", str)
 
 
@@ -1062,6 +1092,7 @@ class UpgradeState:
     current: str
     marker_present: bool
     next_markers: list[str]
+    boot_id: str
 
 
 @dataclass
@@ -1427,14 +1458,39 @@ def require_store_absent(dev: Device) -> str:
     return f"{console.lit(_NIX_BACKING)} absent"
 
 
+_BOOT_ID = "/proc/sys/kernel/random/boot_id"
+
+
 @stage("Record upgrade state")
 def record_upgrade_state(dev: Device, state: FaultsState) -> str:
     state.upgrade_state = UpgradeState(
         current=dev.read(f"readlink -f {_PROFILE_DIR}/current 2>/dev/null || true"),
         marker_present=bool(dev.read(f"[ -f {_E2E_MARKER} ] && echo yes || true")),
         next_markers=_next_markers(dev),
+        boot_id=dev.read(f"cat {_BOOT_ID}"),
     )
     return f"current {console.lit(state.upgrade_state.current)}"
+
+
+@stage("Reboot happened")
+def require_rebooted(dev: Device, state: FaultsState) -> str:
+    """A same-version re-flash proves nothing through the version check,
+    and the untouched-state contract is satisfied by doing nothing at all:
+    a sysupgrade that exits zero without flashing or rebooting would pass
+    C6/D1/D4 green. The kernel boot id is fresh per boot — requiring it to
+    change proves the flash really went through a reboot."""
+    before = state.upgrade_state
+    if before is None:
+        msg = "BUG: upgrade state was not recorded before the flash"
+        raise RuntimeError(msg)
+    if dry_run.get():
+        return "reboot probe skipped (dry-run: the flash was only logged)"
+    boot_id = dev.read(f"cat {_BOOT_ID}")
+    require(
+        boot_id != before.boot_id,
+        f"boot id still {console.lit(boot_id)} — sysupgrade exited without rebooting",
+    )
+    return f"boot id {console.lit(before.boot_id)} → {console.lit(boot_id)}"
 
 
 @stage("Upgrade state untouched")
@@ -1484,6 +1540,10 @@ def require_download_artifact_absent(dev: Device) -> str:
 
 @stage("Staging ran once (D4)")
 def require_staged_once(state: FaultsState) -> str:
+    if dry_run.get():
+        # the flash was logged-and-skipped, so no output was captured — match
+        # verify_initialized/verify_upgraded rather than raise the BUG guard
+        return "staged-once check skipped (dry-run)"
     output = state.flash_output
     if output is None:
         msg = "BUG: no flash output was captured for the staged-once check"
@@ -1766,8 +1826,8 @@ _SHM_DIR = "/dev/shm"
 _STALE_NEXT_MARKER = "next.9999-99-99-0-deadbeef"
 
 
-def shm_path(image: Image) -> str:
-    return f"{_SHM_DIR}/{image.path.name}"
+def shm_path(image: Image) -> RemotePath:
+    return RemotePath(f"{_SHM_DIR}/{image.path.name}")
 
 
 @stage("Register rig with wrong cache key (C4)")
@@ -1918,11 +1978,36 @@ def sweep_shm_upload(dev: Device, image: Image) -> str:
     return console.lit(shm_path(image))
 
 
+# Version-agnostic glob (binary-cache-v7.sqlite today) plus the -wal/-shm
+# sidecars; deliberately NOT the whole /root/.cache.
+_NARINFO_CACHE_GLOB = "/root/.cache/nix/binary-cache-v*.sqlite*"
+
+
+@stage("Clear nix narinfo cache")
+def clear_nix_narinfo_cache(dev: Device) -> str:
+    """Remove the device's on-disk narinfo lookup cache: nix records a failed
+    substituter query as a NEGATIVE entry (present=0) in
+    ~/.cache/nix/binary-cache-v*.sqlite and honors it for
+    narinfo-cache-negative-ttl (3600 s by default) — and /root is persistent
+    overlay on the Deck, so within the TTL a re-realise never re-queries the
+    substituter even after the rig's cache is restored. bmc-nix passes no
+    countermeasure to nix-store --realise (product finding, tracked
+    separately); the harness deletes the cache files instead."""
+    dev.run(f"rm -f {_NARINFO_CACHE_GLOB}")
+    return console.lit(_NARINFO_CACHE_GLOB)
+
+
 @stage("Plant stale next marker (C5)")
 def plant_stale_next_marker(dev: Device) -> str:
     """A leftover marker from a hypothetical earlier aborted staging: the
-    incoming flash must sweep it when it consumes its own next.*."""
-    dev.run(f"touch {_PROFILE_DIR}/{_STALE_NEXT_MARKER}")
+    incoming flash must sweep it when it consumes its own next.*. It MUST be
+    a symlink, like a real staged marker (stage_next_boot symlinks then
+    renames): the device sweep (sweep_next_markers) mirrors the shell
+    activator's `[ -L ]` guard and deliberately skips non-symlinks, so a
+    regular file would survive activation and false-fail require_stale_next_gone.
+    The target (a generation link like `1-link`) may dangle — the sweep
+    removes any non-kept next.* symlink regardless of where it points."""
+    dev.run(f"ln -sfn 1-link {_PROFILE_DIR}/{_STALE_NEXT_MARKER}")
     return console.lit(_STALE_NEXT_MARKER)
 
 

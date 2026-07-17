@@ -22,6 +22,7 @@
 
 from bmc_tui.procedures.deploy import Deploy
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
+from bmc_tui.procedures.e2e_sysupgrade_faults import E2eSysupgradeFaults
 from bmc_tui.procedures.image_formats import ImageFormats
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.install_widget_e2e import InstallWidgetE2e
@@ -38,7 +39,8 @@ def main(
     | UpgradeE2e
     | InstallWidgetE2e
     | E2eSysupgrade
-    | ImageFormats,
+    | ImageFormats
+    | E2eSysupgradeFaults,
 ) -> None:
     command.run()
 

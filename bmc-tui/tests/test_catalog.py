@@ -420,6 +420,19 @@ def test_wait_for_device_times_out() -> None:
         catalog.wait_for_device(Device("h", backend=_Exec(_unreachable)), timeout=0)
 
 
+def test_plant_stale_next_marker_creates_a_symlink() -> None:
+    """The device sweep (sweep_next_markers) mirrors the shell activator's
+    `[ -L ]` guard and deliberately skips non-symlinks, so a real stale marker
+    — and this plant — must be a symlink. A touched regular file would survive
+    activation and false-fail require_stale_next_gone on correct hardware."""
+    exec_ = _Exec(_routes({}))
+    catalog.plant_stale_next_marker(Device("h", backend=exec_))
+    planted = [argv[-1] for argv in exec_.runs if "next.9999" in argv[-1]]
+    assert planted, "the stale marker was never planted"
+    assert all("ln -s" in cmd for cmd in planted), planted
+    assert not any(cmd.startswith("touch ") for cmd in planted)
+
+
 # ── nix package deploy ────────────────────────────────────────────────────────
 
 
@@ -593,6 +606,39 @@ def test_remove_legacy_flip_clock_tolerates_failure() -> None:
     # A device that never had the legacy package makes remove-packages exit
     # non-zero; the deploy must swallow it rather than abort.
     catalog.remove_legacy_flip_clock(Device("h", backend=_Exec(_unreachable)), _flip_clock_plan())
+
+
+def test_stop_compositor_stops_the_profile_service() -> None:
+    backend = _Exec(_routes({}))
+    catalog.stop_compositor(Device("h", backend=backend))
+    assert "service bmc-compositor stop" in backend.runs[0][-1]
+
+
+def test_stop_compositor_waits_for_the_wasm_hosts_to_exit() -> None:
+    """The service stop returns while the wasm hosts are still exiting;
+    reporting stopped before they are gone lets the memory gate sample RAM
+    they still hold and abort with a bogus insufficient-memory failure."""
+    lingering = {"polls_left": 2}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if "pidof bmc-wasm-host" in argv[-1]:
+            lingering["polls_left"] -= 1
+            return _cp(argv, "321" if lingering["polls_left"] > 0 else "")
+        return _cp(argv)
+
+    backend = _Exec(respond)
+    catalog.stop_compositor(
+        Device("h", backend=backend), sleep=lambda _s: None, clock=_ticking_clock()
+    )
+    assert lingering["polls_left"] == 0  # returned only once the hosts were gone
+
+
+def test_stop_compositor_aborts_when_a_wasm_host_lingers() -> None:
+    backend = _Exec(_routes({"pidof bmc-wasm-host": "321"}))
+    with pytest.raises(Abort, match="bmc-wasm-host"):
+        catalog.stop_compositor(
+            Device("h", backend=backend), timeout=4, sleep=lambda _s: None, clock=_ticking_clock()
+        )
 
 
 def _restarted(backend: _Exec) -> bool:
@@ -1869,16 +1915,34 @@ def test_upgrade_state_round_trip_detects_a_new_next_marker() -> None:
         "readlink -f /nix/var/nix/gcroots/profiles/bmc/current": "/nix/store/gen-3",
         ".sysupgrade-e2e-marker": "yes",
         "next.": "",
+        "boot_id": "boot-before",
     }
     state = catalog.FaultsState()
     catalog.record_upgrade_state(Device("h", backend=_Exec(_routes(routes))), state)
     assert state.upgrade_state == catalog.UpgradeState(
-        current="/nix/store/gen-3", marker_present=True, next_markers=[]
+        current="/nix/store/gen-3", marker_present=True, next_markers=[], boot_id="boot-before"
     )
     catalog.require_upgrade_state_untouched(Device("h", backend=_Exec(_routes(routes))), state)
     routes["next."] = "next.2026-07-15-x"
     with pytest.raises(Abort, match="next"):
         catalog.require_upgrade_state_untouched(Device("h", backend=_Exec(_routes(routes))), state)
+
+
+def test_require_rebooted_needs_a_fresh_boot_id() -> None:
+    """The same-version re-flashes (C6/D1/D4) verify an unchanged version
+    and an untouched store — checks a sysupgrade that exits zero WITHOUT
+    flashing or rebooting also satisfies. The boot-id comparison is the
+    only assertion in the chain such a no-op cannot pass."""
+    routes = {
+        "readlink -f /nix/var/nix/gcroots/profiles/bmc/current": "/nix/store/gen-3",
+        "boot_id": "boot-before",
+    }
+    state = catalog.FaultsState()
+    catalog.record_upgrade_state(Device("h", backend=_Exec(_routes(routes))), state)
+    with pytest.raises(Abort, match="without rebooting"):
+        catalog.require_rebooted(Device("h", backend=_Exec(_routes(routes))), state)
+    routes["boot_id"] = "boot-after"
+    catalog.require_rebooted(Device("h", backend=_Exec(_routes(routes))), state)
 
 
 def test_require_staged_once_counts_the_staging_lines() -> None:
@@ -2216,6 +2280,11 @@ def test_e2e_procedure_full_run_orders_the_scenarios(tmp_path: Path) -> None:
     assert len(flashes) == 2
     assert len(registers) == 2, "registration must re-run before EACH flash"
     assert registers[0] < flashes[0] < registers[1] < flashes[1]
+    memory_gates = [i for i, c in enumerate(cmds) if "MemAvailable" in c]
+    compositor_stops = [i for i, c in enumerate(cmds) if c == "service bmc-compositor stop"]
+    assert len(memory_gates) == 2
+    assert compositor_stops[0] < memory_gates[0]
+    assert any(flashes[0] < stop < memory_gates[1] for stop in compositor_stops)
     umount = cmds.index("umount /nix")
     sha_checks_a = [i for i, c in enumerate(cmds) if "sha256sum" in c and "a.tar" in c]
     assert sha_checks_a and min(sha_checks_a) < umount < flashes[0]
