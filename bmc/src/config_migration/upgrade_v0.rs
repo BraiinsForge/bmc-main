@@ -13,15 +13,16 @@
 //!   no `_legacy` / `_legacy_remote` placeholder in the output.
 //! - **Each mapped widget targets a real manifest UID.** Native
 //!   kinds (`clock`, `block_height`, `remote_image`) map to the
-//!   `uid` declared in their `widgets-wasm/*/manifest.json`. The
-//!   legacy `weather` remote widget now has a native equivalent, so
-//!   it maps to the weather manifest UID too; every other legacy
-//!   remote widget drops until it gains a native counterpart.
+//!   `uid` declared in their `widgets-wasm/*/manifest.json`. Legacy
+//!   remote widgets with a native equivalent (`weather`, `nameday`,
+//!   `iss-position`, `random-facts`, `spacex-launch`) map to their
+//!   native manifest UID; every other legacy remote widget drops
+//!   until it gains a native counterpart.
 //! - **Deep translation where param shape changed.** `clock`,
-//!   `block_height`, `remote_image`, and `weather` get value-level
-//!   translation (font-weight vocabulary, humantime → seconds, enum
-//!   renames, location extraction) into their shipped manifest's
-//!   param names.
+//!   `block_height`, `remote_image`, `weather`, and `nameday` get
+//!   value-level translation (font-weight vocabulary, humantime →
+//!   seconds, enum renames, camelCase → snake_case) into their
+//!   shipped manifest's param names.
 //! - **Unknown v0 kinds or unrecognised remote-widget URLs drop.**
 //!   Per review, users migrate all widgets at once; an unmappable
 //!   widget is an edge case, not an inter-state we need to preserve.
@@ -46,15 +47,23 @@ use crate::scene::{
 //
 // Each constant is the real `uid` declared in the corresponding widget's
 // `manifest.json` under `widgets-wasm/`:
-//   CLOCK_UID        -> widgets-wasm/clock
-//   BLOCK_HEIGHT_UID -> widgets-wasm/blockheight
-//   REMOTE_IMAGE_UID -> widgets-wasm/image
-//   WEATHER_UID      -> widgets-wasm/weather
+//   CLOCK_UID         -> widgets-wasm/clock
+//   BLOCK_HEIGHT_UID  -> widgets-wasm/blockheight
+//   REMOTE_IMAGE_UID  -> widgets-wasm/image
+//   WEATHER_UID       -> widgets-wasm/weather
+//   ISS_POSITION_UID  -> widgets-wasm/iss-position
+//   NAMEDAY_UID       -> widgets-wasm/nameday
+//   RANDOM_FACTS_UID  -> widgets-wasm/random-facts
+//   SPACEX_LAUNCH_UID -> widgets-wasm/spacex-launch
 
 const CLOCK_UID: Uuid = Uuid::from_u128(0xfbc8_67c9_b722_4bdb_8738_c15d_20fe_2b88);
 const BLOCK_HEIGHT_UID: Uuid = Uuid::from_u128(0x7cb5_84a8_1f26_42a0_867e_955a_add2_391c);
 const REMOTE_IMAGE_UID: Uuid = Uuid::from_u128(0xf9e4_956c_719d_450c_909d_4fc9_d444_0e15);
 const WEATHER_UID: Uuid = Uuid::from_u128(0x2379_712a_e573_46db_8e9c_94f6_ed75_d92c);
+const ISS_POSITION_UID: Uuid = Uuid::from_u128(0x0a39_73c9_3a97_4bf2_957a_741e_5535_3a19);
+const NAMEDAY_UID: Uuid = Uuid::from_u128(0x5062_553f_31eb_497c_b513_bb82_f41a_2809);
+const RANDOM_FACTS_UID: Uuid = Uuid::from_u128(0xaf91_8b37_9df8_4faa_93c2_1985_563e_b94b);
+const SPACEX_LAUNCH_UID: Uuid = Uuid::from_u128(0xe854_e395_5d90_45ca_b4c9_eb5e_e327_a457);
 
 // --- Braiinsforge remote-widget host ----------------------------------------
 
@@ -414,13 +423,51 @@ fn dispatch_weather_widget_params(params: &Value) -> Value {
     })
 }
 
+/// Translate the inner `params` of a legacy `nameday` remote widget
+/// into the current native Nameday widget ([`NAMEDAY_UID`],
+/// `widgets-wasm/nameday/manifest.json`).
+///
+/// v0 stored `country` (same two-letter vocabulary as the current
+/// manifest's enum) and camelCase `showDate`, which the manifest
+/// renamed to `show_date`. Both current params are required and the
+/// boot-load path injects no manifest defaults, so this fills both:
+/// a `country` outside the manifest enum — the widget's typed read
+/// would panic on it — and an absent or wrong-typed value land on the
+/// manifest default `cz`; `showDate` defaults to `true`.
+fn dispatch_nameday_widget_params(params: &Value) -> Value {
+    /// `country` enum of `widgets-wasm/nameday/manifest.json`.
+    const NAMEDAY_COUNTRIES: &[&str] = &[
+        "at", "cz", "de", "dk", "ee", "es", "fi", "fr", "hr", "hu", "it", "lt", "lv", "pl", "se",
+        "sk", "us",
+    ];
+
+    let country = params
+        .get("country")
+        .and_then(Value::as_str)
+        .filter(|c| NAMEDAY_COUNTRIES.contains(c))
+        .unwrap_or("cz");
+
+    let show_date = params
+        .get("showDate")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+
+    json!({
+        "country": country,
+        "show_date": show_date
+    })
+}
+
 /// Map a legacy `remote_widget` to a native widget via its
-/// `widget_url` slug. Only `weather` has a native equivalent today;
-/// it maps to [`WEATHER_UID`] with its inner `params` translated by
-/// [`dispatch_weather_widget_params`]. URLs outside the Braiinsforge
-/// host, and every other slug, are dropped — the now-redundant
-/// metadata (`name`, `description`, `widget_url`, `icon_url`) goes
-/// with them because the UID itself encodes widget identity.
+/// `widget_url` slug. Slugs with a native equivalent map to that
+/// widget's manifest UID with their inner `params` translated into
+/// the manifest's schema; `iss-position`, `random-facts`, and
+/// `spacex-launch` take no params in their current manifests, so any
+/// legacy params (e.g. spacex `showSeconds`) drop with the mapping.
+/// URLs outside the Braiinsforge host, and slugs without a native
+/// counterpart, are dropped — the now-redundant metadata (`name`,
+/// `description`, `widget_url`, `icon_url`) goes with them because
+/// the UID itself encodes widget identity.
 fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
     let Some(url) = widget.params.get("widget_url").and_then(Value::as_str) else {
         warn!(
@@ -439,19 +486,25 @@ fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
         return None;
     };
 
-    if slug == "weather" {
-        // Inner `params` — what the legacy remote widget actually ran
-        // with — is translated into the native weather widget's schema.
-        let inner_params = widget.params.get("params").cloned().unwrap_or(Value::Null);
-        Some((WEATHER_UID, dispatch_weather_widget_params(&inner_params)))
-    } else {
-        warn!(
-            id = %widget.id,
-            url = %url,
-            slug = %slug,
-            "remote_widget slug has no native equivalent; dropping"
-        );
-        None
+    // Inner `params` — what the legacy remote widget actually ran
+    // with — is translated into the native widget's manifest schema.
+    let inner_params = widget.params.get("params").cloned().unwrap_or(Value::Null);
+
+    match slug {
+        "weather" => Some((WEATHER_UID, dispatch_weather_widget_params(&inner_params))),
+        "nameday" => Some((NAMEDAY_UID, dispatch_nameday_widget_params(&inner_params))),
+        "iss-position" => Some((ISS_POSITION_UID, json!({}))),
+        "random-facts" => Some((RANDOM_FACTS_UID, json!({}))),
+        "spacex-launch" => Some((SPACEX_LAUNCH_UID, json!({}))),
+        _ => {
+            warn!(
+                id = %widget.id,
+                url = %url,
+                slug = %slug,
+                "remote_widget slug has no native equivalent; dropping"
+            );
+            None
+        }
     }
 }
 
@@ -844,17 +897,93 @@ mod tests {
     }
 
     #[test]
-    fn remote_widget_non_weather_braiinsforge_slug_drops() {
-        // Only `weather` has a native equivalent today; other
-        // Braiinsforge-hosted remote widgets drop until they gain one.
+    fn remote_widget_slug_without_native_equivalent_drops() {
+        // Braiinsforge-hosted remote widgets without a native
+        // counterpart drop until they gain one.
+        for slug in ["formula-1", "exchange-rate", "ticker-list"] {
+            let w = mk_widget(
+                "remote_widget",
+                json!({
+                    "widget_url": format!("https://widgets.braiinsforge.com/{slug}"),
+                    "params": {},
+                }),
+            );
+            assert!(
+                upgrade_widget(&w).is_none(),
+                "slug `{slug}` has no native equivalent and must drop"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_widget_nameday_translates_country_and_renames_show_date() {
         let w = mk_widget(
             "remote_widget",
             json!({
-                "widget_url": "https://widgets.braiinsforge.com/iss-position",
-                "params": {},
+                "widget_url": "https://widgets.braiinsforge.com/nameday",
+                "params": { "country": "sk", "showDate": false },
             }),
         );
-        assert!(upgrade_widget(&w).is_none());
+        let upgraded = upgrade_widget(&w).expect("BUG: nameday must survive the upgrade");
+        assert_eq!(upgraded.widget_type_id, NAMEDAY_UID);
+        // `country` carries over; camelCase `showDate` becomes the
+        // manifest's `show_date`.
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("country", str_param("sk")),
+                ("show_date", ParamValue::Boolean(false)),
+            ])
+        );
+    }
+
+    #[test]
+    fn remote_widget_nameday_defaults_on_null_or_unknown_country() {
+        // Real v0 configs carry `params: null` for nameday; an
+        // out-of-enum country must not reach the widget verbatim.
+        for inner in [json!(null), json!({ "country": "xx" })] {
+            let w = mk_widget(
+                "remote_widget",
+                json!({
+                    "widget_url": "https://widgets.braiinsforge.com/nameday",
+                    "params": inner,
+                }),
+            );
+            let upgraded = upgrade_widget(&w).expect("BUG: nameday must survive the upgrade");
+            assert_eq!(upgraded.params["country"], str_param("cz"));
+            assert_eq!(upgraded.params["show_date"], ParamValue::Boolean(true));
+        }
+    }
+
+    #[test]
+    fn remote_widget_paramless_slugs_map_to_native_uids_with_empty_params() {
+        // These widgets take no params in their current manifests, so
+        // any legacy params (e.g. spacex `showSeconds`) drop.
+        for (slug, inner, uid) in [
+            ("iss-position", json!({}), ISS_POSITION_UID),
+            ("random-facts", json!({}), RANDOM_FACTS_UID),
+            (
+                "spacex-launch",
+                json!({ "showSeconds": true }),
+                SPACEX_LAUNCH_UID,
+            ),
+        ] {
+            let w = mk_widget(
+                "remote_widget",
+                json!({
+                    "widget_url": format!("https://widgets.braiinsforge.com/{slug}"),
+                    "params": inner,
+                }),
+            );
+            let upgraded = upgrade_widget(&w)
+                .unwrap_or_else(|| panic!("BUG: {slug} must survive the upgrade"));
+            assert_eq!(upgraded.widget_type_id, uid, "wrong UID for `{slug}`");
+            assert!(
+                upgraded.params.is_empty(),
+                "`{slug}` params must be empty, got {:?}",
+                upgraded.params
+            );
+        }
     }
 
     #[test]
