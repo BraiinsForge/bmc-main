@@ -122,6 +122,11 @@ quick-settings panel) are built as `wlr-layer-shell` clients that stack above th
 layer-shell compositing/buffer-tracking/edge-gesture support, the three vendored protocols (`deck_screen_edge_v1`,
 `deck_settings_v1`, `deck_alarm_v1`), and the concrete overlays.
 
+### [License Headers](license-headers.md)
+
+The copyright and GPLv3 header every first-party source file carries: the exact header format, per-language comment
+styles, how copyright lines are attributed from git authorship, and which third-party or generated files are exempt.
+
 ### WASM Host
 
 Implementation notes for the multi-widget WASM runtime:
