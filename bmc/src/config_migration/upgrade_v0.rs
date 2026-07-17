@@ -13,17 +13,15 @@
 //!   no `_legacy` / `_legacy_remote` placeholder in the output.
 //! - **Each mapped widget targets a real manifest UID.** Native
 //!   kinds (`clock`, `block_height`, `remote_image`) map to the
-//!   `uid` declared in their `widgets-wasm/*/manifest.json`.
-//!   Braiinsforge-hosted remote widgets use deterministic UUID v5
-//!   derived from their URL slug, so adding a new remote widget is
-//!   one line in [`REMOTE_WIDGET_SLUGS`] without any UUID bookkeeping.
+//!   `uid` declared in their `widgets-wasm/*/manifest.json`. The
+//!   legacy `weather` remote widget now has a native equivalent, so
+//!   it maps to the weather manifest UID too; every other legacy
+//!   remote widget drops until it gains a native counterpart.
 //! - **Deep translation where param shape changed.** `clock`,
-//!   `block_height`, and `remote_image` get value-level translation
-//!   (font-weight vocabulary, humantime → seconds, enum renames)
-//!   into their shipped manifest's param names. Remote widgets pass
-//!   their inner `params` through untouched; that widget's manifest
-//!   is authoritative over its own schema and can migrate internally
-//!   when it loads.
+//!   `block_height`, `remote_image`, and `weather` get value-level
+//!   translation (font-weight vocabulary, humantime → seconds, enum
+//!   renames, location extraction) into their shipped manifest's
+//!   param names.
 //! - **Unknown v0 kinds or unrecognised remote-widget URLs drop.**
 //!   Per review, users migrate all widgets at once; an unmappable
 //!   widget is an edge case, not an inter-state we need to preserve.
@@ -31,6 +29,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
+use bmc_shared_time::time::Timezone;
 use bmc_widget_manifest::{ParamKey, ParamValue, ViewportShape};
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
@@ -50,42 +49,19 @@ use crate::scene::{
 //   CLOCK_UID        -> widgets-wasm/clock
 //   BLOCK_HEIGHT_UID -> widgets-wasm/blockheight
 //   REMOTE_IMAGE_UID -> widgets-wasm/image
+//   WEATHER_UID      -> widgets-wasm/weather
 
 const CLOCK_UID: Uuid = Uuid::from_u128(0xfbc8_67c9_b722_4bdb_8738_c15d_20fe_2b88);
 const BLOCK_HEIGHT_UID: Uuid = Uuid::from_u128(0x7cb5_84a8_1f26_42a0_867e_955a_add2_391c);
 const REMOTE_IMAGE_UID: Uuid = Uuid::from_u128(0xf9e4_956c_719d_450c_909d_4fc9_d444_0e15);
+const WEATHER_UID: Uuid = Uuid::from_u128(0x2379_712a_e573_46db_8e9c_94f6_ed75_d92c);
 
-// --- Reserved UIDs for Braiinsforge remote widgets --------------------------
+// --- Braiinsforge remote-widget host ----------------------------------------
 
 /// Prefix that identifies a Braiinsforge-hosted remote widget URL.
 /// We don't use the `url` crate here — the match is a plain prefix
 /// strip, kept deliberately tight so unrelated URLs drop out.
 const BRAIINSFORGE_URL_PREFIX: &str = "https://widgets.braiinsforge.com/";
-
-/// UUID namespace for Braiinsforge remote widget UIDs. Hand-crafted
-/// constant (not derived): this binds `Uuid::new_v5(NS, slug)` to
-/// stable values regardless of what hashing implementation the
-/// `uuid` crate uses internally. Changing this constant changes
-/// every remote-widget UID, so don't.
-const BRAIINSFORGE_WIDGETS_NS: Uuid = Uuid::from_u128(0xb1a1_1f06_4444_4444_8000_0000_0000_0000);
-
-/// The canonical list of Braiinsforge remote-widget slugs. A legacy
-/// `remote_widget` whose `widget_url` matches `<prefix><slug>` is
-/// mapped to `Uuid::new_v5(NS, slug.as_bytes())`; anything else
-/// drops. Adding a widget = one line here.
-const REMOTE_WIDGET_SLUGS: &[&str] = &[
-    "exchange-rate",
-    "formula-1",
-    "iss-position",
-    "nameday",
-    "nasa-picture-of-the-day",
-    "random-facts",
-    "spacex-launch",
-    "ticker-list",
-    "ticker-single-candlestick",
-    "ticker-single-sparkline",
-    "weather",
-];
 
 // --- Upgrade entry points ----------------------------------------------------
 
@@ -244,30 +220,42 @@ fn params_from_value(value: Value) -> BTreeMap<ParamKey, ParamValue> {
 ///
 /// The shipped manifest (`widgets-wasm/clock/manifest.json`) keeps
 /// v0's snake_case param names verbatim, so this is a value-level
-/// migration, not a rename. We rebuild the param object from the
-/// manifest's known keys — dropping any legacy key the manifest does
-/// not declare, and leaving absent params out so the widget applies
-/// its own manifest defaults rather than pinning them here. The one
-/// real transformation is `numbers_font_style`, whose vocabulary
-/// changed from `light`/`medium`/`bold` to `regular`/`semi-bold`/`bold`.
+/// migration, not a rename. Every *required* manifest param is filled:
+/// a present, valid v0 value passes through; anything absent or
+/// malformed falls back to that param's manifest default. This is
+/// deliberate — the boot-load path hands stored params to the widget
+/// without injecting manifest defaults, so a required key left unset
+/// would panic the widget when it reads it. Keys the manifest does not
+/// declare are dropped. Two transformations: `numbers_font_style`'s
+/// vocabulary changed from `light`/`medium`/`bold` to
+/// `regular`/`semi-bold`/`bold`, and the optional v0 `timezone`
+/// (IANA string) was renamed to `timezone_override`.
 fn dispatch_clock(widget: &v0::Widget) -> (Uuid, Value) {
     let mut params = Map::new();
 
     // `clock_style` shares its vocabulary across v0 and the current
-    // manifest (`digital` / `analog_round` / `analog_rect`), so it
-    // passes through unchanged when present.
-    if let Some(style) = widget.params.get("clock_style").and_then(Value::as_str) {
-        params.insert("clock_style".to_owned(), json!(style));
-    }
+    // manifest, so a known value passes through unchanged. An absent
+    // or out-of-enum value lands on the manifest default `digital` —
+    // never pass a value the manifest enum does not accept, or the
+    // widget's typed read would panic.
+    let clock_style = widget
+        .params
+        .get("clock_style")
+        .and_then(Value::as_str)
+        .filter(|s| matches!(*s, "digital" | "analog_round" | "analog_rect"))
+        .unwrap_or("digital");
+    params.insert("clock_style".to_owned(), json!(clock_style));
 
     // Booleans carry identical meaning on both sides; copy the ones
-    // that are present and actually boolean-typed, so a malformed v0
-    // value falls back to the manifest default instead of migrating a
-    // wrong-typed param.
+    // that are present and actually boolean-typed. A missing or
+    // malformed value falls back to the manifest default `true`.
     for key in ["show_date", "show_seconds", "show_timezone"] {
-        if let Some(flag) = widget.params.get(key).and_then(Value::as_bool) {
-            params.insert(key.to_owned(), json!(flag));
-        }
+        let flag = widget
+            .params
+            .get(key)
+            .and_then(Value::as_bool)
+            .unwrap_or(true);
+        params.insert(key.to_owned(), json!(flag));
     }
 
     // Font-weight vocabulary changed, so a raw pass-through could emit
@@ -276,22 +264,40 @@ fn dispatch_clock(widget: &v0::Widget) -> (Uuid, Value) {
     let font_style = migrate_font_style(widget, "semi-bold");
     params.insert("numbers_font_style".to_owned(), json!(font_style));
 
+    // v0's optional `timezone` (IANA string) became the manifest's
+    // optional `timezone_override`. Optional means it may stay unset,
+    // so it is only carried over when the value is a timezone the
+    // current firmware recognises — an unknown string drops rather
+    // than migrating blind.
+    if let Some(tz) = widget
+        .params
+        .get("timezone")
+        .and_then(Value::as_str)
+        .filter(|s| Timezone::list().iter().any(|tz| tz.iana() == *s))
+    {
+        params.insert("timezone_override".to_owned(), json!(tz));
+    }
+
     (CLOCK_UID, Value::Object(params))
 }
 
 /// Translate a legacy `block_height` widget into the current Block
 /// Height widget ([`BLOCK_HEIGHT_UID`]). Like the clock, the shipped
 /// manifest (`widgets-wasm/blockheight/manifest.json`) keeps v0's
-/// param names, so the only real transformation is the
-/// `numbers_font_style` vocabulary remap; `show_timestamp` passes
-/// through when present, and an absent param defers to the manifest
-/// default.
+/// param names. Both required params are always set — the boot-load
+/// path injects no manifest defaults: `show_timestamp` passes through
+/// when present and boolean-typed, else the manifest default `true`;
+/// `numbers_font_style` is remapped to the new vocabulary, defaulting
+/// to `bold`.
 fn dispatch_block_height(widget: &v0::Widget) -> (Uuid, Value) {
     let mut params = Map::new();
 
-    if let Some(flag) = widget.params.get("show_timestamp").and_then(Value::as_bool) {
-        params.insert("show_timestamp".to_owned(), json!(flag));
-    }
+    let show_timestamp = widget
+        .params
+        .get("show_timestamp")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    params.insert("show_timestamp".to_owned(), json!(show_timestamp));
 
     // The block-height manifest defaults this weight to `bold`, unlike
     // the clock's `semi-bold`; only the vocabulary remap is shared.
@@ -338,14 +344,21 @@ fn translate_font_style(font_style: &str) -> Option<&'static str> {
 /// - `image_scale_mode` (`fit` / `fill`) became `sizing`
 ///   (`contain` / `cover`).
 ///
-/// `url` keeps its name and passes through. Absent, wrong-typed, or
-/// unparseable params fall back to the manifest defaults.
+/// `url` keeps its name and passes through. Every required param is
+/// always set — the boot-load path injects no manifest defaults — so
+/// absent, wrong-typed, or unparseable params fall back to the
+/// manifest defaults here.
 fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
     let mut params = Map::new();
 
-    if let Some(url) = widget.params.get("url").and_then(Value::as_str) {
-        params.insert("url".to_owned(), json!(url));
-    }
+    // `url` is a free-form string; the manifest default is empty. Fill
+    // it when absent so the required param is always present.
+    let url = widget
+        .params
+        .get("url")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    params.insert("url".to_owned(), json!(url));
 
     // v0 stored the refresh interval as a humantime string; the
     // current manifest wants integer seconds. Reparse through the same
@@ -375,13 +388,39 @@ fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
     (REMOTE_IMAGE_UID, Value::Object(params))
 }
 
-/// Map a legacy `remote_widget` to a reserved remote-widget UID via
-/// its `widget_url` slug. URLs outside the Braiinsforge host, or
-/// slugs not in [`REMOTE_WIDGET_SLUGS`], are dropped. The inner
-/// `params` field of the legacy `RemoteWidget` becomes the new
-/// widget's params verbatim; the now-redundant metadata (`name`,
-/// `description`, `widget_url`, `icon_url`) is dropped because the
-/// UID itself encodes widget identity.
+/// Translate the inner `params` of a legacy `weather` remote widget
+/// into the current native Weather widget ([`WEATHER_UID`],
+/// `widgets-wasm/weather/manifest.json`).
+///
+/// v0 stored only a `location` string. The current manifest requires
+/// both `location` and `time_zone`; since the widget applies no
+/// defaults of its own on the boot-load path, this fills both. An
+/// absent, non-string, or empty `location` falls back to the manifest
+/// default `Prague`, and `time_zone` — which v0 had no concept of —
+/// is pinned to the manifest default `location`.
+fn dispatch_weather_widget_params(params: &Value) -> Value {
+    const DEFAULT_LOCATION: &str = "Prague";
+    const DEFAULT_TIME_ZONE: &str = "location";
+
+    let location = params
+        .get("location")
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_LOCATION);
+
+    json!({
+        "location": location,
+        "time_zone": DEFAULT_TIME_ZONE
+    })
+}
+
+/// Map a legacy `remote_widget` to a native widget via its
+/// `widget_url` slug. Only `weather` has a native equivalent today;
+/// it maps to [`WEATHER_UID`] with its inner `params` translated by
+/// [`dispatch_weather_widget_params`]. URLs outside the Braiinsforge
+/// host, and every other slug, are dropped — the now-redundant
+/// metadata (`name`, `description`, `widget_url`, `icon_url`) goes
+/// with them because the UID itself encodes widget identity.
 fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
     let Some(url) = widget.params.get("widget_url").and_then(Value::as_str) else {
         warn!(
@@ -400,21 +439,20 @@ fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
         return None;
     };
 
-    let Some(uid) = reserved_remote_widget_uid(slug) else {
+    if slug == "weather" {
+        // Inner `params` — what the legacy remote widget actually ran
+        // with — is translated into the native weather widget's schema.
+        let inner_params = widget.params.get("params").cloned().unwrap_or(Value::Null);
+        Some((WEATHER_UID, dispatch_weather_widget_params(&inner_params)))
+    } else {
         warn!(
             id = %widget.id,
             url = %url,
             slug = %slug,
-            "remote_widget slug not in Braiinsforge catalog; dropping"
+            "remote_widget slug has no native equivalent; dropping"
         );
-        return None;
-    };
-
-    // Inner `params` — what the legacy remote widget actually ran
-    // with — becomes the new widget's params. Future shipped
-    // manifest for this slug is authoritative over the param schema.
-    let inner = widget.params.get("params").cloned().unwrap_or(Value::Null);
-    Some((uid, inner))
+        None
+    }
 }
 
 /// Extract the first path segment after the Braiinsforge widget
@@ -430,15 +468,6 @@ fn remote_widget_slug(widget_url: &str) -> Option<&str> {
         .split(['/', '?', '#'])
         .next()
         .filter(|s| !s.is_empty())
-}
-
-/// UID for a known Braiinsforge remote-widget slug, or `None` if
-/// the slug is not in the catalog.
-fn reserved_remote_widget_uid(slug: &str) -> Option<Uuid> {
-    REMOTE_WIDGET_SLUGS
-        .iter()
-        .find(|s| **s == slug)
-        .map(|s| Uuid::new_v5(&BRAIINSFORGE_WIDGETS_NS, s.as_bytes()))
 }
 
 fn parse_size(size: &str) -> WidgetSize {
@@ -587,8 +616,52 @@ mod tests {
             json!({ "clock_style": "digital", "legacy_junk": "x" }),
         );
         assert!(!upgraded.params.contains_key("legacy_junk"));
-        // Only `clock_style` plus the always-set `numbers_font_style`.
-        assert_eq!(upgraded.params.len(), 2);
+        // The five required manifest params are always set; the
+        // optional `timezone_override` is not, and `legacy_junk` drops.
+        assert_eq!(upgraded.params.len(), 5);
+    }
+
+    #[test]
+    fn clock_fills_required_defaults_when_absent() {
+        // The boot-load path injects no manifest defaults, so an empty
+        // v0 clock must still carry every required param with its
+        // manifest default and no optional param.
+        let upgraded = upgrade("clock", json!({}));
+        assert_eq!(upgraded.params["clock_style"], str_param("digital"));
+        assert_eq!(upgraded.params["show_date"], ParamValue::Boolean(true));
+        assert_eq!(upgraded.params["show_seconds"], ParamValue::Boolean(true));
+        assert_eq!(upgraded.params["show_timezone"], ParamValue::Boolean(true));
+        assert_eq!(
+            upgraded.params["numbers_font_style"],
+            str_param("semi-bold")
+        );
+        assert!(!upgraded.params.contains_key("timezone_override"));
+    }
+
+    #[test]
+    fn clock_invalid_style_defaults_to_digital() {
+        // An out-of-enum style must not reach the widget verbatim — it
+        // would panic the typed read — so it falls back to `digital`.
+        let upgraded = upgrade("clock", json!({ "clock_style": "sundial" }));
+        assert_eq!(upgraded.params["clock_style"], str_param("digital"));
+    }
+
+    #[test]
+    fn clock_renames_timezone_to_timezone_override() {
+        let upgraded = upgrade("clock", json!({ "timezone": "Europe/Prague" }));
+        assert_eq!(
+            upgraded.params["timezone_override"],
+            str_param("Europe/Prague")
+        );
+    }
+
+    #[test]
+    fn clock_unknown_timezone_is_dropped_not_migrated() {
+        // `timezone_override` is optional, so a v0 value outside the
+        // current firmware's timezone list drops instead of migrating
+        // a string the widget cannot resolve.
+        let upgraded = upgrade("clock", json!({ "timezone": "Mars/Olympus_Mons" }));
+        assert!(!upgraded.params.contains_key("timezone_override"));
     }
 
     // --- block height --------------------------------------------------------
@@ -598,6 +671,8 @@ mod tests {
         let upgraded = upgrade("block_height", json!({}));
         assert_eq!(upgraded.widget_type_id, BLOCK_HEIGHT_UID);
         assert_eq!(upgraded.params["numbers_font_style"], str_param("bold"));
+        // `show_timestamp` is required; an empty v0 widget defaults it.
+        assert_eq!(upgraded.params["show_timestamp"], ParamValue::Boolean(true));
     }
 
     #[test]
@@ -678,6 +753,14 @@ mod tests {
     }
 
     #[test]
+    fn remote_image_defaults_url_when_absent() {
+        // `url` is required; an empty v0 widget must still carry it as
+        // the manifest default (empty string) rather than omitting it.
+        let upgraded = upgrade("remote_image", json!({}));
+        assert_eq!(upgraded.params["url"], str_param(""));
+    }
+
+    #[test]
     fn unknown_kind_drops() {
         let w = mk_widget("mystery_widget", json!({}));
         assert!(upgrade_widget(&w).is_none());
@@ -719,8 +802,7 @@ mod tests {
     }
 
     #[test]
-    fn remote_widget_known_slug_is_translated() {
-        let inner = json!({ "city": "Brno", "units": "c" });
+    fn remote_widget_weather_maps_to_native_uid_and_carries_location() {
         let w = mk_widget(
             "remote_widget",
             json!({
@@ -728,41 +810,51 @@ mod tests {
                 "description": "",
                 "widget_url": "https://widgets.braiinsforge.com/weather",
                 "icon_url": "",
-                "params": inner.clone(),
+                "params": { "location": "Helsinki" },
             }),
         );
         let upgraded =
-            upgrade_widget(&w).expect("BUG: weather slug must resolve to a reserved UID");
-        assert_ne!(upgraded.widget_type_id, Uuid::nil());
-        // Inner params survive verbatim; legacy metadata (name, URLs) drops.
+            upgrade_widget(&w).expect("BUG: weather slug must resolve to the native UID");
+        assert_eq!(upgraded.widget_type_id, WEATHER_UID);
+        // Legacy metadata (name, URLs) drops; `location` carries over and
+        // `time_zone` defaults to the manifest's `location` value.
         assert_eq!(
             upgraded.params,
             param_map(&[
-                ("city", ParamValue::String("Brno".to_owned())),
-                ("units", ParamValue::String("c".to_owned())),
+                ("location", str_param("Helsinki")),
+                ("time_zone", str_param("location")),
             ])
         );
     }
 
     #[test]
-    fn remote_widget_uid_is_deterministic_for_weather() {
-        // Pinned literal, computed offline once from
-        // `Uuid::new_v5(BRAIINSFORGE_WIDGETS_NS, b"weather")`.
-        // Deriving "expected" via `new_v5(NS, ...)` inline would
-        // move in lockstep with any accidental change to the
-        // namespace constant, defeating the point of the test.
-        // A literal pins the contract: if either the namespace
-        // constant or the v5 implementation shifts, this test
-        // fails.
-        let expected = Uuid::from_u128(0x1042_a953_d87a_57ca_aba2_0a3b_2f99_af50);
-        assert_eq!(reserved_remote_widget_uid("weather"), Some(expected));
+    fn remote_widget_weather_defaults_location_when_absent_or_empty() {
+        for inner in [json!({}), json!({ "location": "" })] {
+            let w = mk_widget(
+                "remote_widget",
+                json!({
+                    "widget_url": "https://widgets.braiinsforge.com/weather",
+                    "params": inner,
+                }),
+            );
+            let upgraded = upgrade_widget(&w).expect("BUG: weather slug must survive the upgrade");
+            assert_eq!(upgraded.params["location"], str_param("Prague"));
+            assert_eq!(upgraded.params["time_zone"], str_param("location"));
+        }
     }
 
     #[test]
-    fn remote_widget_uid_is_distinct_per_slug() {
-        let weather = reserved_remote_widget_uid("weather").expect("BUG: weather must be known");
-        let iss = reserved_remote_widget_uid("iss-position").expect("BUG: iss must be known");
-        assert_ne!(weather, iss);
+    fn remote_widget_non_weather_braiinsforge_slug_drops() {
+        // Only `weather` has a native equivalent today; other
+        // Braiinsforge-hosted remote widgets drop until they gain one.
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "widget_url": "https://widgets.braiinsforge.com/iss-position",
+                "params": {},
+            }),
+        );
+        assert!(upgrade_widget(&w).is_none());
     }
 
     #[test]
@@ -811,16 +903,6 @@ mod tests {
             assert!(
                 upgrade_widget(&w).is_some(),
                 "URL `{url}` must resolve to the weather slug"
-            );
-        }
-    }
-
-    #[test]
-    fn every_catalog_slug_resolves() {
-        for slug in REMOTE_WIDGET_SLUGS {
-            assert!(
-                reserved_remote_widget_uid(slug).is_some(),
-                "BUG: slug {slug} declared in REMOTE_WIDGET_SLUGS must resolve"
             );
         }
     }
