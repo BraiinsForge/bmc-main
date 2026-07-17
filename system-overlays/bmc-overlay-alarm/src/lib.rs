@@ -12,8 +12,8 @@ use std::time::Instant;
 use bmc_render::colors::{BLACK, Color, GRAY_30, ORANGE_30, ORANGE_40, ORANGE_50, WHITE};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{
-    DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, VerticalAlign, col, row,
-    text,
+    DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, VerticalAlign, col,
+    fixed_height, row, text,
 };
 use bmc_system_overlay::{
     AlarmRequest, Anchor, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TouchEvent,
@@ -157,19 +157,6 @@ fn alarm_button(key: &str, label: &str, fill: Fill, border: Option<Color>) -> Tr
         touch_key: Some(key.to_owned()),
         draws,
     }
-}
-
-/// A fixed vertical gap: an empty column of the given height. The layout
-/// engine has only uniform `padding`/`margin`, so top-only spacing is added as
-/// a sized spacer between siblings.
-fn fixed_height(height: f32) -> TreeNode {
-    col(
-        PropsData {
-            height,
-            ..Default::default()
-        },
-        Vec::new(),
-    )
 }
 
 fn draw_outline_circle(cx: f32, cy: f32, r: f32, color: Color) -> DrawCommand {

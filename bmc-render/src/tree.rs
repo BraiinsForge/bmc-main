@@ -433,6 +433,20 @@ pub fn spacer(flex: f32) -> TreeNode {
     TreeNode::Spacer { flex }
 }
 
+/// A fixed vertical gap: an empty column of the given height. The layout
+/// engine has only uniform `padding`/`margin`, so one-sided vertical spacing
+/// is added as a sized spacer between siblings.
+#[must_use]
+pub fn fixed_height(height: f32) -> TreeNode {
+    col(
+        PropsData {
+            height,
+            ..Default::default()
+        },
+        Vec::new(),
+    )
+}
+
 /// Reader for deserializing tree from bytes
 struct TreeReader<'a> {
     data: &'a [u8],

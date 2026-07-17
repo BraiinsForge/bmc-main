@@ -5,7 +5,9 @@
 //! of host/GL imports so it compiles and unit-tests on the host.
 
 use bmc_platform::DisplayShape;
-use bmc_render::tree::{DrawCommand, PropsData, TextStyle, TreeNode, col, row, spacer, text};
+use bmc_render::tree::{
+    DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
+};
 use bmc_wasm_protocol::colors::{GRAY_50, GREEN_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{
     ArcCap, ArcFill, ArcSegments, Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign,
@@ -361,16 +363,6 @@ fn text_style(size: u32, color: Color) -> TextStyle {
         color,
         ..TextStyle::default()
     }
-}
-
-fn fixed_height(height: f32) -> TreeNode {
-    col(
-        PropsData {
-            height,
-            ..PropsData::default()
-        },
-        Vec::new(),
-    )
 }
 
 fn fixed_width(width: f32) -> TreeNode {
