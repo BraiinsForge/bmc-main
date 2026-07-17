@@ -27,10 +27,13 @@ signed file:// binary cache holding both variants' closures — and serves
 it from a stdlib ThreadingHTTPServer on a daemon thread.
 """
 
+import enum
 import json
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, replace
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from typing import Self
 
@@ -145,6 +148,25 @@ def populate_cache(nix: Nix, secret: Path, cache: Path, variants: list[Variant])
     nix.copy_signed(paths, cache, secret)
 
 
+_STALL_MAX_SECONDS = 900
+_STALL_CLAIMED_LENGTH = 1 << 20
+# STALL is path-selective: the device fetches the package feed first and only
+# then the tarball (store.rs). Stalling the feed would abort init before any
+# tarball bytes exist, so the partial-file lifecycle A5 exercises never runs.
+# Match the tarball URLs write_serve_root lays out under /tarballs/.
+_TARBALL_URL_PREFIX = "/tarballs/"
+
+
+class FaultMode(enum.Enum):
+    """Per-server fault switch consulted on every request — restartable,
+    unlike stopping the server (a shut-down ThreadingHTTPServer cannot
+    come back)."""
+
+    NONE = "none"
+    REFUSE = "refuse"
+    STALL = "stall"
+
+
 class RigServer:
     """Mount `root` at the serve root; use as a context manager.
 
@@ -158,6 +180,35 @@ class RigServer:
         self._port = port
         self._bind_ip = bind_ip
         self._handle: ServerHandle | None = None
+        self._fault = FaultMode.NONE
+
+    def set_fault(self, mode: FaultMode) -> None:
+        """Flip the per-request fault switch (A5/C2); NONE restores serving."""
+        self._fault = mode
+
+    @property
+    def fault(self) -> FaultMode:
+        return self._fault
+
+    def _intercept(self, handler: BaseHTTPRequestHandler) -> bool:
+        """REFUSE drops the connection before any response; STALL sends a
+        tarball's headers and withholds the body until the mode resets or
+        the cap expires — the client sees a stall, then a short read."""
+        mode = self._fault
+        if mode is FaultMode.REFUSE:
+            handler.close_connection = True
+            handler.connection.close()
+            return True
+        if mode is FaultMode.STALL and handler.path.startswith(_TARBALL_URL_PREFIX):
+            handler.send_response(200)
+            handler.send_header("Content-Length", str(_STALL_CLAIMED_LENGTH))
+            handler.end_headers()
+            deadline = time.monotonic() + _STALL_MAX_SECONDS
+            while self._fault is FaultMode.STALL and time.monotonic() < deadline:
+                time.sleep(0.5)
+            handler.close_connection = True
+            return True
+        return False
 
     @property
     def port(self) -> int:
@@ -167,7 +218,12 @@ class RigServer:
         return self._handle.port
 
     def __enter__(self) -> Self:
-        self._handle = server({"/": self._root}, bind_host=self._bind_ip, port=self._port)
+        self._handle = server(
+            {"/": self._root},
+            bind_host=self._bind_ip,
+            port=self._port,
+            intercept=self._intercept,
+        )
         return self
 
     def __exit__(self, *_exc: object) -> None:

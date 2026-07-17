@@ -231,3 +231,59 @@ def test_sign_variant_shells_out_to_the_host_cli(tmp_path: Path) -> None:
             str(v.tarball),
         ]
     ]
+
+
+def test_fault_refuse_drops_connections_and_none_restores(tmp_path: Path) -> None:
+    a = _variant(tmp_path, "va", ["/nix/store/a"])
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [a], "http://placeholder")
+    with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
+        base = f"http://127.0.0.1:{server.port}"
+        server.set_fault(rig.FaultMode.REFUSE)
+        with pytest.raises(OSError):
+            _get(f"{base}/{rig.FEED_NAME}")
+        server.set_fault(rig.FaultMode.NONE)
+        assert json.loads(_get(f"{base}/{rig.FEED_NAME}"))["entries"]
+
+
+def test_fault_stall_sends_headers_but_no_body(tmp_path: Path) -> None:
+    a = _variant(tmp_path, "va", ["/nix/store/a"])
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [a], "http://placeholder")
+    with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
+        server.set_fault(rig.FaultMode.STALL)
+        try:
+            # the tarball download is what A5 stalls (the partial-file path)
+            url = f"http://127.0.0.1:{server.port}/tarballs/nix-va.tar.gz"
+            with (
+                urllib.request.urlopen(url, timeout=1) as response,
+                pytest.raises(TimeoutError),
+            ):
+                response.read()
+        finally:
+            server.set_fault(rig.FaultMode.NONE)  # release the stalled handler
+
+
+def test_fault_stall_is_path_selective_feed_survives(tmp_path: Path) -> None:
+    """STALL must serve the package feed normally and stall only the tarball:
+    the device fetches the feed first (store.rs), so stalling it would abort
+    init before any tarball bytes exist — the partial-file lifecycle A5
+    exercises would never run."""
+    a = _variant(tmp_path, "va", ["/nix/store/a"])
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [a], "http://placeholder")
+    with rig.RigServer(root, port=0, bind_ip="127.0.0.1") as server:
+        base = f"http://127.0.0.1:{server.port}"
+        server.set_fault(rig.FaultMode.STALL)
+        try:
+            # the feed comes back in full despite the armed stall
+            feed = json.loads(_get(f"{base}/{rig.FEED_NAME}"))
+            assert feed["entries"][0]["bos_version"] == "va"
+            # the tarball, in contrast, hangs
+            with (
+                urllib.request.urlopen(f"{base}/tarballs/nix-va.tar.gz", timeout=1) as response,
+                pytest.raises(TimeoutError),
+            ):
+                response.read()
+        finally:
+            server.set_fault(rig.FaultMode.NONE)

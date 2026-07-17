@@ -101,6 +101,11 @@ class View:
 
 ViewConfig = View | Response
 
+# Pre-dispatch hook handed the raw handler; returning True claims the request
+# and no view runs. This is how the package rig injects connection-level
+# faults (refused connections, stalled bodies) a view cannot express.
+Intercept = Callable[[BaseHTTPRequestHandler], bool]
+
 
 def default_serve_ip(device_host: str, *, port: int = 22) -> str:
     """The IPv4 address the device can reach us on: the source address the
@@ -194,8 +199,10 @@ class _Handler(BaseHTTPRequestHandler):
         server: socketserver.BaseServer,
         *,
         views: Mapping[str, View],
+        intercept: Intercept | None = None,
     ) -> None:
         self._views = views
+        self._intercept = intercept
         self._mounts = sorted(
             ((p, v.response) for p, v in views.items() if isinstance(v.response, Path)),
             key=lambda item: len(item[0]),
@@ -299,6 +306,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.wfile.write(handle.read(span[1] - span[0] + 1))
 
     def _handle(self, *, head: bool = False) -> None:
+        if self._intercept is not None and self._intercept(self):
+            return
         request = self._request()
         found = self._lookup(request)
         if found is None:
@@ -442,6 +451,7 @@ def server(
     reachable_from: str | None = None,
     bind_host: str = "0.0.0.0",
     port: int = 0,
+    intercept: Intercept | None = None,
 ) -> ServerHandle:
     """Serve `views` on an ephemeral port until the handle is stopped.
 
@@ -449,7 +459,7 @@ def server(
     that device would reach us on rather than a guess at the default route.
     """
     resolved = {path: _as_view(config) for path, config in views.items()}
-    httpd = _Server((bind_host, port), _handler(resolved))
+    httpd = _Server((bind_host, port), _handler(resolved, intercept))
     # socketserver's _Threads.append drops daemon threads,
     # so ThreadingHTTPServer's daemon_threads=True default leaves nothing
     # for server_close() to join — a request can outlive stop().
@@ -471,12 +481,14 @@ def server(
     )
 
 
-def _handler(views: Mapping[str, View]) -> Callable[..., BaseHTTPRequestHandler]:
+def _handler(
+    views: Mapping[str, View], intercept: Intercept | None = None
+) -> Callable[..., BaseHTTPRequestHandler]:
     def build(
         request: socket.socket,
         client_address: tuple[str, int],
         server: socketserver.BaseServer,
     ) -> BaseHTTPRequestHandler:
-        return _Handler(request, client_address, server, views=views)
+        return _Handler(request, client_address, server, views=views, intercept=intercept)
 
     return build
