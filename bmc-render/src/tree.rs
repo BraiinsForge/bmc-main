@@ -185,6 +185,15 @@ pub enum DrawCommand {
         h: f32,
         bitmap_id: Option<BitmapId>,
     },
+    Qr {
+        x: f32,
+        y: f32,
+        size: f32,
+        dark: Color,
+        light: Color,
+        quiet_zone: u8,
+        text: String,
+    },
     Rotated {
         angle: f32,
         inner: Box<DrawCommand>,
@@ -991,6 +1000,27 @@ impl<'a> TreeReader<'a> {
                     bitmap_id,
                 })
             }
+            DRAW_QR => {
+                let x = self.read_f32()?;
+                let y = self.read_f32()?;
+                let size = self.read_f32()?;
+                let dark = Color::from_raw(self.read_u32()?);
+                let light = Color::from_raw(self.read_u32()?);
+                let quiet_zone = self.read_u8()?;
+                let text_len = self.read_u16()? as usize;
+                let text = std::str::from_utf8(self.read_bytes(text_len)?)
+                    .map_err(|e| anyhow::anyhow!("DRAW_QR text is not valid UTF-8: {e}"))?
+                    .to_owned();
+                Ok(DrawCommand::Qr {
+                    x,
+                    y,
+                    size,
+                    dark,
+                    light,
+                    quiet_zone,
+                    text,
+                })
+            }
             DRAW_CENTERED => {
                 let inner = self.read_draw()?;
                 Ok(DrawCommand::Centered {
@@ -1391,6 +1421,42 @@ mod fill_decode_tests {
                 dash: Some(Dash { on: 6.0, off: 4.0 }),
             }
         );
+    }
+
+    #[test]
+    fn qr_round_trips_geometry_style_and_text() {
+        let mut data = vec![DRAW_QR];
+        data.extend_from_slice(&1.0_f32.to_le_bytes()); // x
+        data.extend_from_slice(&2.0_f32.to_le_bytes()); // y
+        data.extend_from_slice(&40.0_f32.to_le_bytes()); // size
+        data.extend_from_slice(&BLACK.to_u32().to_le_bytes()); // dark
+        data.extend_from_slice(&WHITE.to_u32().to_le_bytes()); // light
+        data.push(3); // quiet_zone
+        data.extend_from_slice(&2_u16.to_le_bytes()); // text len
+        data.extend_from_slice(b"hi");
+
+        let mut de = TreeReader::new(&data);
+        let DrawCommand::Qr {
+            x,
+            y,
+            size,
+            dark,
+            light,
+            quiet_zone,
+            text,
+        } = de
+            .read_draw()
+            .expect("BUG: test buffer encodes a valid DRAW_QR")
+        else {
+            panic!("expected Qr");
+        };
+        assert_eq!((x, y, size), (1.0, 2.0, 40.0));
+        assert_eq!(
+            (dark.to_u32(), light.to_u32()),
+            (BLACK.to_u32(), WHITE.to_u32())
+        );
+        assert_eq!(quiet_zone, 3);
+        assert_eq!(text, "hi");
     }
 
     #[test]

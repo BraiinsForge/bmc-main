@@ -324,6 +324,7 @@ prost = "0.13.5"
 prost-types = "0.13.5"
 pw_hash = "0.1.1"
 qrcode-generator = { version = "5.0.0", default-features = false }
+qrcodegen = "1.8.0"
 quote = "1.0.39"
 rand = "0.9.1"
 raw-window-handle = "0.6"
@@ -335,6 +336,7 @@ rgb = "0.8"
 ring = { version = "0.17.8", default-features = false }
 rodio = { version = "0.20", default-features = false }
 roxmltree = "0.20.0"
+rqrr = "0.10.1"
 rrule = "0.14.0"
 rtnetlink = { git = "https://github.com/rust-netlink/rtnetlink.git", rev = "d6e8b4c" } # FIXME: change to a crates.io version after they update netlink-packet-route
 rustix = { version = "0.38", default-features = false, features = ["fs", "std"] }

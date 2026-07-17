@@ -37,14 +37,15 @@ use std::string::String;
 use std::vec::Vec;
 
 use bmc_wasm_protocol::{
-    AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BitmapId, Color,
-    ColorSpace, DRAW_ARC, DRAW_AUTOFIT_TEXT, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE,
+    AnimProperty, ArcAnchor, ArcCap, ArcFill, ArcSegments, ArcTextFacing, AutoFit, BLACK, BitmapId,
+    Color, ColorSpace, DRAW_ARC, DRAW_AUTOFIT_TEXT, DRAW_BITMAP, DRAW_CENTERED, DRAW_CIRCLE,
     DRAW_CURVED_TEXT, DRAW_ICON, DRAW_MESH, DRAW_MODIFIED, DRAW_NINE_PATCH, DRAW_ORBIT, DRAW_PATH,
-    DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX, Dash,
-    Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN, NODE_MODAL,
-    NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW, NODE_SCROLL,
-    NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat, SvgId,
-    TagIconMode, TagKind, encode_arc_cap, encode_arc_fill, encode_arc_segments, encode_fill,
+    DRAW_QR, DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX,
+    Dash, Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
+    NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW,
+    NODE_SCROLL, NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat,
+    SvgId, TagIconMode, TagKind, WHITE, encode_arc_cap, encode_arc_fill, encode_arc_segments,
+    encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -513,6 +514,27 @@ pub struct DropShadow {
     pub color: Color,
 }
 
+/// Styling for a [`Draw::qr`] code.
+#[derive(Clone, Copy, Debug)]
+pub struct QrStyle {
+    /// Colour of the "on" modules.
+    pub dark: Color,
+    /// Colour of the "off" modules and the quiet-zone margin.
+    pub light: Color,
+    /// Blank margin around the code, in modules (spec minimum is 4).
+    pub quiet_zone: u8,
+}
+
+impl Default for QrStyle {
+    fn default() -> Self {
+        Self {
+            dark: BLACK,
+            light: WHITE,
+            quiet_zone: 2,
+        }
+    }
+}
+
 /// Draw command for canvas children (local coordinates)
 #[derive(Clone, Debug)]
 pub enum Draw {
@@ -583,6 +605,17 @@ pub enum Draw {
         w: f32,
         h: f32,
         bitmap_id: Option<BitmapId>,
+    },
+    /// QR code encoding `text`, rasterised host-side into a `size`×`size`
+    /// square. The wasm side sends only the text + style; the host owns the
+    /// encoding (`qrcodegen`) and the rendering, so no matrix rides the wire.
+    Qr {
+        x: f32,
+        y: f32,
+        /// Full footprint in px, quiet zone included; square.
+        size: f32,
+        style: QrStyle,
+        text: String,
     },
     /// Draw with host-computed animations and/or transitions
     Modified {
@@ -902,6 +935,21 @@ impl Draw {
             w,
             h,
             bitmap_id,
+        }
+    }
+
+    /// QR code encoding `text`, rendered into a `size`×`size` square (quiet
+    /// zone included). The host encodes and rasterises it — the wasm side only
+    /// carries the text, so an over-long `text` that exceeds QR capacity is
+    /// dropped host-side (nothing drawn) rather than failing here.
+    #[must_use]
+    pub fn qr(x: f32, y: f32, size: f32, text: &str, style: QrStyle) -> Self {
+        Self::Qr {
+            x,
+            y,
+            size,
+            style,
+            text: text.to_owned(),
         }
     }
 
@@ -1989,6 +2037,24 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*h);
             buf.write_bitmap_id(*bitmap_id);
         }
+        Draw::Qr {
+            x,
+            y,
+            size,
+            style,
+            text,
+        } => {
+            buf.write_u8(DRAW_QR);
+            buf.write_f32(*x);
+            buf.write_f32(*y);
+            buf.write_f32(*size);
+            buf.write_color(style.dark);
+            buf.write_color(style.light);
+            buf.write_u8(style.quiet_zone);
+            let text_len = u16::try_from(text.len()).expect("BUG: QR text exceeds u16::MAX bytes");
+            buf.write_u16(text_len);
+            buf.write_bytes(text.as_bytes());
+        }
         Draw::Centered { inner } => {
             buf.write_u8(DRAW_CENTERED);
             serialize_draw(buf, inner);
@@ -2577,6 +2643,33 @@ mod fill_wire_tests {
         );
         serialize_draw(&mut buf, &draw);
         assert_eq!(buf.data[0], DRAW_ARC);
+    }
+
+    #[test]
+    fn qr_constructor_keeps_text_and_style() {
+        let draw = Draw::qr(1.0, 2.0, 40.0, "hi", QrStyle::default());
+        let Draw::Qr {
+            x,
+            y,
+            size,
+            style,
+            text,
+        } = draw
+        else {
+            panic!("BUG: Draw::qr must build Draw::Qr");
+        };
+        assert_eq!((x, y, size), (1.0, 2.0, 40.0));
+        assert_eq!(style.quiet_zone, 2);
+        assert_eq!(text, "hi");
+    }
+
+    #[test]
+    fn qr_serializes_opcode_then_geometry_then_text() {
+        let draw = Draw::qr(0.0, 0.0, 40.0, "hi", QrStyle::default());
+        let mut buf = TreeBuffer::new();
+        serialize_draw(&mut buf, &draw);
+        assert_eq!(buf.data[0], DRAW_QR);
+        assert!(buf.data.ends_with(b"hi"), "text rides at the tail");
     }
 
     #[test]

@@ -24,7 +24,10 @@
     clippy::cast_possible_truncation,
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
-    clippy::cast_lossless
+    clippy::cast_lossless,
+    clippy::cast_possible_wrap,
+    reason = "canvas rendering casts freely between f32 coordinates and small, \
+              bounded integer indices (pixel positions, QR module counts)"
 )]
 #![allow(clippy::wildcard_imports)]
 
@@ -207,6 +210,7 @@ pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
         | DrawCommand::Mesh { w, h, .. }
         | DrawCommand::NinePatch { w, h, .. } => (*w, *h),
         DrawCommand::Circle { r, .. } => (*r * 2.0, *r * 2.0),
+        DrawCommand::Qr { size, .. } => (*size, *size),
         DrawCommand::Arc { radius, width, .. } => {
             let d = 2.0 * radius + width;
             (d, d)
@@ -236,6 +240,59 @@ pub(crate) fn get_draw_bounds(draw: &DrawCommand) -> (f32, f32) {
                 }
                 (max_x - min_x, max_y - min_y)
             }
+        }
+    }
+}
+
+/// QR error correction: Medium (~15% recoverable) leaves enough slack to scan a
+/// code photographed off a screen, without the denser modules a higher level
+/// would force into the same footprint. A fixed policy — not a widget knob.
+const QR_ECC: qrcodegen::QrCodeEcc = qrcodegen::QrCodeEcc::Medium;
+
+/// Encode `text` and rasterise it into an `es`×`es` square at `(ox, oy)`, quiet
+/// zone included. Dark modules merge into per-row runs, and every module edge is
+/// snapped to a whole pixel so neighbours abut without anti-aliased seams. Text
+/// too long to encode draws nothing.
+#[expect(clippy::too_many_arguments)]
+fn render_qr(
+    renderer: &mut dyn Renderer,
+    ox: f32,
+    oy: f32,
+    es: f32,
+    dark: Color,
+    light: Color,
+    quiet_zone: u8,
+    text: &str,
+) {
+    let Ok(code) = qrcodegen::QrCode::encode_text(text, QR_ECC) else {
+        return;
+    };
+    let n = code.size() as usize;
+    let qz = usize::from(quiet_zone);
+    let span = n + 2 * qz;
+    let unit = es / span as f32;
+    let edge = |i: usize| (unit * i as f32).round();
+    let module = |row: usize, col: usize| code.get_module(col as i32, row as i32);
+
+    if light.to_u32() != TRANSPARENT.to_u32() {
+        renderer.fill_rect(ox, oy, es, es, light);
+    }
+    for row in 0..n {
+        let top = oy + edge(qz + row);
+        let height = oy + edge(qz + row + 1) - top;
+        let mut col = 0;
+        while col < n {
+            if !module(row, col) {
+                col += 1;
+                continue;
+            }
+            let start = col;
+            while col < n && module(row, col) {
+                col += 1;
+            }
+            let left = ox + edge(qz + start);
+            let width = ox + edge(qz + col) - left;
+            renderer.fill_rect(left, top, width, height, dark);
         }
     }
 }
@@ -348,6 +405,46 @@ fn render_draw_inner(
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
                 renderer.draw_bitmap(rx - pivot_x, ry - pivot_y, ew, eh, bitmap_id);
+                renderer.restore();
+            }
+        }
+        DrawCommand::Qr {
+            x,
+            y,
+            size,
+            dark,
+            light,
+            quiet_zone,
+            text,
+        } => {
+            let es = *size * scale;
+            let sx = *x + offset_x + (*size - es) / 2.0;
+            let sy = *y + offset_y + (*size - es) / 2.0;
+            let rx = cx + sx;
+            let ry = cy + sy;
+            let (dark, light) = if alpha < 1.0 {
+                (dark.scale_alpha(alpha), light.scale_alpha(alpha))
+            } else {
+                (*dark, *light)
+            };
+            if rotation == 0.0 {
+                render_qr(renderer, rx, ry, es, dark, light, *quiet_zone, text);
+            } else {
+                let pivot_x = cx + cw / 2.0;
+                let pivot_y = cy + ch / 2.0;
+                renderer.save();
+                renderer.translate(pivot_x, pivot_y);
+                renderer.rotate(rotation);
+                render_qr(
+                    renderer,
+                    rx - pivot_x,
+                    ry - pivot_y,
+                    es,
+                    dark,
+                    light,
+                    *quiet_zone,
+                    text,
+                );
                 renderer.restore();
             }
         }
@@ -1161,6 +1258,13 @@ fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
                 ..Default::default()
             }
         }
+        DrawCommand::Qr { x, y, size, .. } => PrevDrawValues {
+            x: *x,
+            y: *y,
+            w: *size,
+            h: *size,
+            ..Default::default()
+        },
         DrawCommand::Sphere {
             x,
             y,
@@ -1480,6 +1584,44 @@ mod tests {
         assert_eq!(runs[0], vec![(0.0, 0.0), (10.0, 0.0), (10.0, 5.0)]);
     }
 
+    #[test]
+    fn qr_renders_a_code_that_scans_back_to_its_text() {
+        // Decoded by an independent reader (rqrr), not our own code — so a
+        // packing or transpose bug can't quietly roundtrip through itself.
+        let text = "https://deck.local/setup?x=42";
+        let size = 500.0;
+        let mut rr = RecordingRenderer::default();
+        render_qr(&mut rr, 0.0, 0.0, size, BLACK, WHITE, 4, text);
+
+        // Replay the recorded rects onto a white canvas.
+        let dim = size as u32;
+        let mut img = image::GrayImage::from_pixel(dim, dim, image::Luma([255]));
+        for &(x, y, w, h, color) in &rr.rects {
+            let luma = if color.to_u32() == BLACK.to_u32() {
+                0
+            } else {
+                255
+            };
+            let x0 = x.round().max(0.0) as u32;
+            let y0 = y.round().max(0.0) as u32;
+            let x1 = ((x + w).round() as u32).min(dim);
+            let y1 = ((y + h).round() as u32).min(dim);
+            for py in y0..y1 {
+                for px in x0..x1 {
+                    img.put_pixel(px, py, image::Luma([luma]));
+                }
+            }
+        }
+
+        let mut prepared = rqrr::PreparedImage::prepare(img);
+        let grids = prepared.detect_grids();
+        assert_eq!(grids.len(), 1, "exactly one QR grid must be detected");
+        let (_meta, decoded) = grids[0]
+            .decode()
+            .expect("BUG: the rendered grid must decode");
+        assert_eq!(decoded, text, "scanned text must equal the encoded input");
+    }
+
     #[derive(Debug)]
     enum RenderEvent {
         Save,
@@ -1523,10 +1665,13 @@ mod tests {
     #[derive(Default)]
     struct RecordingRenderer {
         events: Vec<RenderEvent>,
+        rects: Vec<(f32, f32, f32, f32, Color)>,
     }
 
     impl Renderer for RecordingRenderer {
-        fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {}
+        fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
+            self.rects.push((x, y, w, h, color));
+        }
 
         fn fill_rounded_rect(
             &mut self,

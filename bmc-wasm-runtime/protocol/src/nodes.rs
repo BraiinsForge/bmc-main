@@ -230,6 +230,8 @@ pub const DRAW_CURVED_TEXT: u8 = 0x49;
 pub const DRAW_ARC: u8 = 0x4A;
 /// Autofit text: scale text to fit an explicit box. Shapes block (0x40–0x5F).
 pub const DRAW_AUTOFIT_TEXT: u8 = 0x4B;
+/// QR code: a module matrix the host rasterises. Shapes block (0x40–0x5F).
+pub const DRAW_QR: u8 = 0x4C;
 
 // Draw commands — transforms (0x60–0x7F)
 pub const DRAW_CENTERED: u8 = 0x60;
@@ -265,6 +267,7 @@ mod tests {
             DRAW_CURVED_TEXT,
             DRAW_ARC,
             DRAW_AUTOFIT_TEXT,
+            DRAW_QR,
             DRAW_CENTERED,
             DRAW_ORBIT,
             DRAW_ROTATED,
