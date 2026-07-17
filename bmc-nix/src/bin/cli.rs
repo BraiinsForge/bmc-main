@@ -603,6 +603,18 @@ enum Commands {
         #[arg(long, action = clap::ArgAction::SetTrue)]
         optional: bool,
     },
+
+    /// Sign an init tarball for a package-feed entry (nix-style
+    /// `name:base64` Ed25519 signature over the tarball's SHA-256)
+    SignInitTarball {
+        /// Secret key file in `nix key generate-secret` format
+        /// (`name:base64(seed ‖ public key)`).
+        #[arg(long)]
+        secret_key: PathBuf,
+
+        /// Tarball to sign.
+        tarball: PathBuf,
+    },
 }
 
 /// Resolve a `BaseSelector` into the optional `base_manifest` argument
@@ -1330,6 +1342,44 @@ fn cmd_list_packages(profile_dir: Option<PathBuf>, format: OutputFormat) -> anyh
     Ok(())
 }
 
+/// Sign `tarball` with the nix-format secret key at `secret_key`;
+/// returns the `name:base64(signature)` feed-entry line.
+fn sign_init_tarball(secret_key: &Path, tarball: &Path) -> anyhow::Result<String> {
+    let key = std::fs::read_to_string(secret_key)
+        .with_context(|| format!("reading secret key {}", secret_key.display()))?;
+    let digest = sha256_file(tarball)?;
+    Ok(bmc_nix::signature::sign(key.trim(), &digest)?)
+}
+
+/// Streaming SHA-256 of a file — the tarball never fits in memory on
+/// principle, and the digest must match what the device-side verifier
+/// computes over the downloaded bytes.
+fn sha256_file(path: &Path) -> anyhow::Result<[u8; 32]> {
+    use std::io::Read as _;
+
+    let file =
+        std::fs::File::open(path).with_context(|| format!("opening tarball {}", path.display()))?;
+    let mut reader = std::io::BufReader::new(file);
+    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
+    // Heap-allocated so the 64 KiB buffer clears clippy's stack-array
+    // threshold; the tarball is streamed either way.
+    let mut buffer = vec![0_u8; 64 * 1024].into_boxed_slice();
+    loop {
+        let read = reader
+            .read(&mut buffer)
+            .with_context(|| format!("reading tarball {}", path.display()))?;
+        if read == 0 {
+            break;
+        }
+        context.update(&buffer[..read]);
+    }
+    Ok(context
+        .finish()
+        .as_ref()
+        .try_into()
+        .expect("BUG: SHA-256 digests are 32 bytes"))
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
@@ -1608,6 +1658,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 priority,
                 optional,
             )
+        }
+        Commands::SignInitTarball {
+            secret_key,
+            tarball,
+        } => {
+            println!("{}", sign_init_tarball(&secret_key, &tarball)?);
+            Ok(())
         }
     }
 }
@@ -2487,5 +2544,66 @@ mod tests {
                 "{flag} must conflict with --tarball"
             );
         }
+    }
+
+    #[test]
+    fn sign_init_tarball_parses() {
+        let cli = Cli::parse_from([
+            "bmc-nix-cli",
+            "sign-init-tarball",
+            "--secret-key",
+            "/keys/e2e.secret",
+            "/serve/tarballs/nix.tar.gz",
+        ]);
+        let Commands::SignInitTarball {
+            secret_key,
+            tarball,
+        } = cli.command
+        else {
+            panic!("expected SignInitTarball, got {:?}", cli.command);
+        };
+        assert_eq!(secret_key, PathBuf::from("/keys/e2e.secret"));
+        assert_eq!(tarball, PathBuf::from("/serve/tarballs/nix.tar.gz"));
+    }
+
+    #[test]
+    fn sign_init_tarball_round_trips_with_verifier() {
+        use base64::Engine as _;
+        use ring::signature::KeyPair as _;
+
+        let dir = tempfile::tempdir().expect("BUG: tempdir creation cannot fail in tests");
+        let seed = [7_u8; 32];
+        let pair = ring::signature::Ed25519KeyPair::from_seed_unchecked(&seed)
+            .expect("BUG: any 32-byte seed is a valid Ed25519 seed");
+        let public = pair.public_key().as_ref().to_vec();
+        let mut secret_bytes = seed.to_vec();
+        secret_bytes.extend_from_slice(&public);
+        let b64 = base64::engine::general_purpose::STANDARD;
+        let secret_path = dir.path().join("key.secret");
+        std::fs::write(
+            &secret_path,
+            format!("sysupgrade-e2e-1:{}\n", b64.encode(&secret_bytes)),
+        )
+        .expect("BUG: writing to a tempdir cannot fail");
+        let tarball = dir.path().join("nix.tar.gz");
+        std::fs::write(&tarball, b"tarball-bytes").expect("BUG: writing to a tempdir cannot fail");
+
+        let line =
+            sign_init_tarball(&secret_path, &tarball).expect("signing a valid input must work");
+
+        let digest = sha256_file(&tarball).expect("hashing an existing file must work");
+        let public_line = format!("sysupgrade-e2e-1:{}", b64.encode(&public));
+        bmc_nix::signature::verify(&public_line, &digest, line.trim())
+            .expect("the CLI's signature must verify against bmc_nix::signature::verify");
+    }
+
+    #[test]
+    fn sign_init_tarball_rejects_malformed_secret_key() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir creation cannot fail in tests");
+        let secret_path = dir.path().join("key.secret");
+        std::fs::write(&secret_path, "not-a-key").expect("BUG: writing to a tempdir cannot fail");
+        let tarball = dir.path().join("t.tar.gz");
+        std::fs::write(&tarball, b"x").expect("BUG: writing to a tempdir cannot fail");
+        sign_init_tarball(&secret_path, &tarball).expect_err("a malformed key must be rejected");
     }
 }
