@@ -304,10 +304,20 @@ let
 
   frontend = import ./frontend { inherit self pkgs; };
 
+  # UI/alarm sounds baked into bmc-openwrt as BMC_SOUNDS_DIR and overlaid
+  # into the bmc-virt guest image. Filtered to the mp3 payload so the store
+  # path is content-addressed on the sounds alone.
+  sounds = builtins.path {
+    name = "bmc-sounds";
+    path = ./assets/sounds;
+    filter = path: type: type == "directory" || pkgs.lib.hasSuffix ".mp3" path;
+  };
+
   # Runtime deps for dlopen'd libraries, split by widget type.
   # Functions accepting pkgs — resolved at the point of use.
   deps = {
     frontend = frontend.build;
+    inherit sounds;
     widgetRuntimeDeps = {
       # Native GPU widgets: smithay/EGL dlopen's the full GL stack.
       # libgbm is part of mesa's lib/ output, no separate entry needed.
@@ -601,6 +611,7 @@ in
 
     frontend = frontend.build;
     yarnFiles = frontend.yarnFiles;
+    inherit sounds;
   };
   devShells =
     let

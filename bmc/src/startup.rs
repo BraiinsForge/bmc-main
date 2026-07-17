@@ -404,7 +404,10 @@ impl Configuration {
     const DEFAULT_NIGHT_MODE_BRIGHTNESS_PCT: u8 = 25;
     const DEFAULT_VOLUME_PCT: u8 = 60;
     const DEFAULT_NIGHT_MODE_VOLUME_PCT: u8 = 40;
-    const SOUNDS_DIR: &str = "/usr/share/bmc/sounds/";
+    const SOUNDS_DIR: &str = match option_env!("BMC_SOUNDS_DIR") {
+        Some(p) => p,
+        None => "/usr/share/bmc/sounds/",
+    };
     const CRONTAB_PATH: &str = "/etc/crontabs/root";
     const NIX_SERVERS_CONFIG_PATH: &str = "/etc/nix-upgrade/servers.json";
     const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";

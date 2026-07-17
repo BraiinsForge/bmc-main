@@ -8,7 +8,7 @@ let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService mkOpenWrtDaemon;
   inherit (bmc) crates;
-  inherit (deps) compositorRuntimeDeps frontend;
+  inherit (deps) compositorRuntimeDeps frontend sounds;
 
   nixConf = import ../../nix-conf.nix { pkgs = armv7Pkgs; };
   nixConfActivation = import ./nix-conf-activation.nix { pkgs = armv7Pkgs; inherit nixConf; };
@@ -63,6 +63,7 @@ let
   bmc-openwrt = autopatchelfBinaries {
     drv = profile.buildCrate crates.bmc-openwrt {
       env.BMC_WEB_FRONTEND_DIR = "${frontend}";
+      env.BMC_SOUNDS_DIR = "${sounds}";
       features = openwrtFeatures;
     };
     runtimeDeps = compositorRuntimeDeps armv7Pkgs;

@@ -539,6 +539,10 @@
             FRONTEND=$(${pkgs.nix}/bin/nix build -L "$WORKSPACE#frontend" \
               --no-link --print-out-paths)
 
+            header "Building sounds"
+            SOUNDS=$(${pkgs.nix}/bin/nix build -L "$WORKSPACE#sounds" \
+              --no-link --print-out-paths)
+
             if [[ -z "$LED_BINARY" ]]; then
               header "Building LED visualizer"
               LED_BINARY=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.bmc-virt-leds-${guestArch}-debug" \
@@ -859,7 +863,7 @@
 
             # Sounds
             mkdir -p "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds"
-            cp -a ${./data/sounds}/. "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds/"
+            cp -a "$SOUNDS"/. "$TMP_GUEST_OVERLAY/usr/share/bmc/sounds/"
 
             # Prebuilt WASM bytes used by VM configs and harnesses
             # — SDK examples plus production widgets, both flat in WASM_DIR.
