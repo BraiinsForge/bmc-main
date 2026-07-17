@@ -2662,13 +2662,17 @@ mod tests {
                         .expect("BUG: hits lock")
                         .entry(path.clone())
                         .or_insert(0) += 1;
+                    // Connection: close — the stream is dropped after one
+                    // response; letting reqwest pool it for reuse races
+                    // the close and flakes with ConnectionReset.
                     let response = match routes.iter().find(|(p, _)| *p == path) {
                         Some((_, body)) => format!(
-                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                             body.len(),
                             body
                         ),
-                        None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n".to_owned(),
+                        None => "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                            .to_owned(),
                     };
                     let _ = stream.write_all(response.as_bytes()).await;
                 }
@@ -3132,31 +3136,42 @@ mod tests {
             feed_server("flaky", &format!("{base}/feed.json"), 20, false),
         ];
 
-        // Warm-up run: fully register the degrade-warning callsite before
-        // the capture subscriber exists. Parallel tests hit the same
-        // callsite, and a registration racing the subscriber's interest
-        // rebuild would cache the event as disabled.
-        fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
-            .await
-            .expect("BUG: the optional feed failure must degrade, not abort");
-
         let buffer = SharedLogBuffer::default();
         let subscriber = tracing_subscriber::fmt()
             .with_writer(buffer.clone())
             .with_ansi(false)
             .finish();
-        let guard = tracing::subscriber::set_default(subscriber);
+        let dispatch = tracing::Dispatch::new(subscriber);
 
-        let merged = fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
-            .await
-            .expect("BUG: the optional feed failure must degrade, not abort");
-
-        drop(guard);
+        // Parallel tests hit the same warn callsite; a thread caught
+        // mid-registration computes its interest on that thread — no
+        // subscriber there — and can cache the event as disabled AFTER
+        // this dispatch's registration rebuilt it (tracing-core 0.1.33
+        // `Rebuilder::JustOne`). Rebuilding under our subscriber repairs
+        // the cache; retry in case another registration re-clobbers it
+        // mid-fetch.
+        let mut merged = None;
+        let mut log = String::new();
+        for _ in 0..5 {
+            buffer.0.lock().expect("BUG: log buffer lock").clear();
+            let guard = tracing::dispatcher::set_default(&dispatch);
+            tracing::callsite::rebuild_interest_cache();
+            merged = Some(
+                fetch_and_merge_indexes_with_cap(&client, &servers, &[], Some("fw1"), 256)
+                    .await
+                    .expect("BUG: the optional feed failure must degrade, not abort"),
+            );
+            drop(guard);
+            log = String::from_utf8(buffer.0.lock().expect("BUG: log buffer lock").clone())
+                .expect("BUG: utf8 log output");
+            if !log.is_empty() {
+                break;
+            }
+        }
         server.abort();
 
+        let merged = merged.expect("BUG: at least one fetch attempt ran");
         assert_eq!(merged.by_name.get("clock").map(Vec::len), Some(1));
-        let log = String::from_utf8(buffer.0.lock().expect("BUG: log buffer lock").clone())
-            .expect("BUG: utf8 log output");
         assert!(log.contains("flaky"), "warning must name the server: {log}");
         assert!(
             log.contains("fw1"),
