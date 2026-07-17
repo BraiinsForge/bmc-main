@@ -9,7 +9,7 @@
 
 use std::time::Instant;
 
-use bmc_render::colors::{BLACK, Color, GRAY_30, ORANGE_30, ORANGE_50, WHITE};
+use bmc_render::colors::{BLACK, Color, GRAY_30, ORANGE_30, ORANGE_40, ORANGE_50, WHITE};
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::{
     DrawCommand, FontFamily, FontWeight, TextAlign, TextStyle, TreeNode, VerticalAlign, col, row,
@@ -19,7 +19,9 @@ use bmc_system_overlay::{
     AlarmRequest, Anchor, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TouchEvent,
     TreeUi,
 };
-use bmc_wasm_protocol::{CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT};
+use bmc_wasm_protocol::{
+    ArcCap, ArcFill, ArcSegments, CrossAlign, Fill, PathPaint, PropsData, TRANSPARENT,
+};
 
 /// Touch key for the stop-alarm button; shared by its `Canvas` hit region and
 /// the `TreeResult::clicks` lookup so `render` and the click handler agree.
@@ -166,6 +168,47 @@ fn fixed_height(height: f32) -> TreeNode {
     )
 }
 
+fn draw_outline_circle(cx: f32, cy: f32, r: f32, color: Color) -> DrawCommand {
+    DrawCommand::Arc {
+        cx,
+        cy,
+        radius: r,
+        start_angle: 0.0,
+        end_angle: std::f32::consts::TAU,
+        width: 1.0,
+        fill: ArcFill::Solid(color),
+        segments: ArcSegments::Continuous,
+        cap: ArcCap::Butt,
+    }
+}
+
+fn background_rings(background_size: (u32, u32)) -> TreeNode {
+    /// Concentric decorative rings behind the alarm content, outer edge fading out.
+    /// `(opacity, radius_px)` on the 480×1280 firing screen; each ring is larger
+    /// than the 480px width, so only its top and bottom arcs are visible.
+    const RINGS: [(f32, f32); 4] = [(1.0, 350.0), (0.8, 425.0), (0.6, 500.0), (0.4, 575.0)];
+
+    #[expect(clippy::cast_precision_loss)]
+    let (w, h) = (background_size.0 as f32, background_size.1 as f32);
+
+    let draws = RINGS
+        .into_iter()
+        .map(|(opacity, r)| draw_outline_circle(w / 2.0, h / 2.0, r, ORANGE_40.with_alpha(opacity)))
+        .collect();
+
+    TreeNode::Canvas {
+        props: PropsData {
+            inset_left: 0.0,
+            inset_top: 0.0,
+            width: w,
+            height: h,
+            ..Default::default()
+        },
+        touch_key: None,
+        draws,
+    }
+}
+
 #[must_use]
 pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
     // Fall back to a generic name for an unlabelled alarm so the screen never
@@ -232,6 +275,7 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
             ..Default::default()
         },
         [
+            background_rings(size),
             fixed_height(62.0),
             label_node,
             fixed_height(32.0),
@@ -258,7 +302,7 @@ pub fn render_alarm(
         .unwrap_or(u32::MAX);
     state.last_render = now;
 
-    let tree = build_alarm_ui_tree(view);
+    let tree = build_alarm_ui_tree(view, size);
 
     let result = match state.tree.render(&tree, size, delta_ms, r) {
         Ok(result) => result,
