@@ -500,18 +500,22 @@ impl AlarmScheduler {
                         }
                     });
 
-                    self_.alarm_bus.send_event(AlarmEvent::Started {
-                        alarm: active_alarm.clone(),
-                    });
-
+                    // Store the slot before announcing the alarm, and emit
+                    // while still holding the lock: a dismiss/snooze racing in
+                    // after `Started` must find the slot populated (or it
+                    // silently no-ops), and must not be able to take it before
+                    // the emit (listeners would see Stopped before Started).
                     {
                         let mut current_alarm_guard = self_.current_alarm.lock().await;
                         *current_alarm_guard = Some(CurrentRunningAlarm::new(
-                            active_alarm,
+                            active_alarm.clone(),
                             token,
                             sound_join_handle,
                             timeout_join_handle,
                         ));
+                        self_.alarm_bus.send_event(AlarmEvent::Started {
+                            alarm: active_alarm,
+                        });
                     }
 
                     self_.recompute_next_alarm_time().await;
@@ -526,7 +530,18 @@ impl AlarmScheduler {
             let mut rx = self_.alarm_bus.subscribe_commands();
 
             async move {
-                while let Ok(cmd) = rx.recv().await {
+                loop {
+                    let cmd = match rx.recv().await {
+                        Ok(cmd) => cmd,
+                        // Lagging only drops stale commands; the handler must
+                        // survive, or nothing can ever stop/snooze an alarm
+                        // again (a burst of taps overflows the 8-slot buffer).
+                        Err(broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(skipped = n, "alarm command receiver lagged");
+                            continue;
+                        }
+                        Err(broadcast::error::RecvError::Closed) => break,
+                    };
                     match cmd {
                         AlarmCmd::StopCurrent => {
                             info!("Received StopCurrent command");
@@ -875,7 +890,17 @@ impl AlarmController {
         tokio::spawn(async move {
             let mut rx = alarm_bus.subscribe_events();
 
-            while let Ok(event) = rx.recv().await {
+            loop {
+                let event = match rx.recv().await {
+                    Ok(event) => event,
+                    // Skipping stale events must not kill the subscriber; only
+                    // a closed bus ends it.
+                    Err(broadcast::error::RecvError::Lagged(n)) => {
+                        warn!(skipped = n, "alarm event receiver lagged");
+                        continue;
+                    }
+                    Err(broadcast::error::RecvError::Closed) => break,
+                };
                 if let AlarmEvent::Stopped { id } = event {
                     // NOTE: Alarm that is not repeatable needs to be deactivated after it was triggered
                     if let Some(alarm) = self_.alarms().await.iter().find(|alarm| alarm.id == id)

@@ -7,7 +7,7 @@ use tokio::{
     sync::{self, mpsc::Sender, watch},
     time::{Instant, interval},
 };
-use tracing::{debug, error};
+use tracing::{debug, error, warn};
 
 use crate::{
     BmcManager,
@@ -227,7 +227,17 @@ where
         let mut rx_events = self.alarm_bus.subscribe_events();
         tokio::spawn({
             async move {
-                while let Ok(event) = rx_events.recv().await {
+                loop {
+                    let event = match rx_events.recv().await {
+                        Ok(event) => event,
+                        // Skipping stale events must not kill the listener;
+                        // only a closed bus ends it.
+                        Err(sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(skipped = n, "alarm event receiver lagged");
+                            continue;
+                        }
+                        Err(sync::broadcast::error::RecvError::Closed) => break,
+                    };
                     match event {
                         AlarmEvent::Stopped { .. } | AlarmEvent::Snoozed => {
                             if let Err(e) = led_event_tx.try_send(LedEvent::ClockAlarmEnded) {
@@ -250,7 +260,17 @@ where
         let mut rx_events = self.manager.subscribe_wifi_events();
         tokio::spawn({
             async move {
-                while let Ok(event) = rx_events.recv().await {
+                loop {
+                    let event = match rx_events.recv().await {
+                        Ok(event) => event,
+                        // Skipping stale events must not kill the listener;
+                        // only a closed bus ends it.
+                        Err(sync::broadcast::error::RecvError::Lagged(n)) => {
+                            warn!(skipped = n, "wifi event receiver lagged");
+                            continue;
+                        }
+                        Err(sync::broadcast::error::RecvError::Closed) => break,
+                    };
                     let led_event = match event {
                         WifiEvent::ScanStarted => LedEvent::WifiScan,
                         WifiEvent::ScanEnded => LedEvent::WifiScanEnded,
