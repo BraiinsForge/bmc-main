@@ -1502,6 +1502,81 @@ def test_quiesce_nix_stops_services_and_unmounts_without_deleting() -> None:
     assert any("umount /nix" in c for c in joined)
 
 
+_MOUNTINFO = (
+    "21 1 179:4 / /mnt/data rw,relatime shared:10 - ext4 /dev/mmcblk0p4 rw\n"
+    "30 21 179:4 /nix / /nix rw - ext4 /dev/mmcblk0p4 rw\n"
+)
+_MOUNTINFO_RELEASED = "17 1 0:5 / /dev rw - devtmpfs devtmpfs rw\n"
+
+
+def test_release_data_partition_records_identity_and_asserts_by_majmin(tmp_path: Path) -> None:
+    reads = iter([_MOUNTINFO, _MOUNTINFO_RELEASED])
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "mountinfo" in cmd:
+            return _cp(argv, next(reads))
+        if cmd.startswith("blkid"):
+            return _cp(argv, '/dev/mmcblk0p4: UUID="1111-2222" TYPE="ext4"')
+        return _cp(argv)
+
+    backend = _Exec(respond)
+    state = catalog.FaultsState()
+    catalog.release_data_partition(Device("h", backend=backend), state)
+    assert state.partition == catalog.DataPartition(
+        device="/dev/mmcblk0p4", majmin="179:4", uuid="1111-2222"
+    )
+    assert any("umount /mnt/data" in " ".join(a) for a in backend.runs)
+
+
+def test_release_data_partition_aborts_when_a_mount_remains_on_the_device() -> None:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "mountinfo" in cmd:
+            return _cp(argv, _MOUNTINFO)  # never changes: umount "didn't work"
+        if cmd.startswith("blkid"):
+            return _cp(argv, '/dev/mmcblk0p4: UUID="1111-2222" TYPE="ext4"')
+        return _cp(argv)
+
+    with pytest.raises(Abort, match="179:4"):
+        catalog.release_data_partition(Device("h", backend=_Exec(respond)), catalog.FaultsState())
+
+
+def test_corrupt_partition_metadata_runs_the_pinned_debugfs_recipe() -> None:
+    backend = _Exec(_routes({}))
+    state = catalog.FaultsState()
+    state.partition = catalog.DataPartition("/dev/mmcblk0p4", "179:4", "1111-2222")
+    catalog.corrupt_partition_metadata(Device("h", backend=backend), state)
+    joined = [" ".join(argv) for argv in backend.runs]
+    assert any("sif <2> links_count 0" in c for c in joined)
+    assert any("ssv state 2" in c for c in joined)
+
+
+def test_fs_uuid_assertions_read_blkid() -> None:
+    backend = _Exec(_routes({"blkid": '/dev/mmcblk0p4: UUID="3333-4444" TYPE="ext4"'}))
+    state = catalog.FaultsState()
+    state.partition = catalog.DataPartition("/dev/mmcblk0p4", "179:4", "1111-2222")
+    catalog.require_fs_uuid_changed(Device("h", backend=backend), state)
+    with pytest.raises(Abort):
+        catalog.require_fs_uuid_unchanged(Device("h", backend=backend), state)
+
+
+def test_fs_uuid_assertions_skip_under_dry_run() -> None:
+    """Dry-run only logs the mkfs/repair mutations, so the real UUID cannot
+    have changed — probing it would abort every --dry-run B1 with a
+    misleading 'mkfs did not run'. The stages must not even need the
+    partition record: release_data_partition never ran."""
+    backend = _Exec(_routes({}))
+    state = catalog.FaultsState()  # no partition recorded
+    token = dry_run.set(True)
+    try:
+        catalog.require_fs_uuid_changed(Device("h", backend=backend), state)
+        catalog.require_fs_uuid_unchanged(Device("h", backend=backend), state)
+    finally:
+        dry_run.reset(token)
+    assert backend.runs == []  # no blkid probe reached the device
+
+
 def test_flash_e2e_never_skips_on_matching_version(tmp_path: Path) -> None:
     image = _image(tmp_path)
     exc = _Exec(_routes({"bos_version": image.version}))

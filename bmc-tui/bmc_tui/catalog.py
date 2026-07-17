@@ -29,6 +29,7 @@ sysupgrade; this catalog only fails fast on the obvious local problems.
 import difflib
 import json
 import os
+import re
 import shlex
 import shutil
 import socket
@@ -1003,6 +1004,141 @@ def quiesce_nix(
     if dry_run.get():
         return "quiesce logged (dry-run)"
     return f"services stopped, {console.lit(_NIX_STORE)} unmounted"
+
+
+# ── data-partition fault surgery ──────────────────────────────────────────────
+
+_DATA_MOUNT = "/mnt/data"
+
+
+@dataclass
+class DataPartition:
+    """The released block device's identity, recorded before corruption."""
+
+    device: str
+    majmin: str
+    uuid: str
+
+
+@dataclass
+class UpgradeState:
+    """The untouched-state contract the C-group asserts around an abort."""
+
+    current: str
+    marker_present: bool
+    next_markers: list[str]
+
+
+@dataclass
+class FaultsState:
+    """Mutable cross-stage values of one fault scenario — the stage engine
+    returns None, so value-producing stages write here (mirrors E2eRun)."""
+
+    partition: DataPartition | None = None
+    upgrade_state: UpgradeState | None = None
+    flash_output: str | None = None
+
+
+# A mountinfo line needs field 3 (major:minor), field 5 (mount point), and the
+# two fields after the optional-fields '-' separator, so it is only usable with
+# at least this many whitespace-split fields.
+_MOUNTINFO_MIN_FIELDS = 5
+
+
+def _mountinfo_entries(dev: Device) -> list[tuple[str, str, str]]:
+    """(major:minor, mount point, source) triples from /proc/self/mountinfo.
+    The source is the second field after the optional-fields '-' separator;
+    matching by major:minor (field 3) is immune to path aliases and bind
+    mounts — the same identity partition.rs compares."""
+    entries = []
+    for line in dev.read("cat /proc/self/mountinfo").splitlines():
+        fields = line.split()
+        if "-" not in fields or len(fields) < _MOUNTINFO_MIN_FIELDS:
+            continue
+        separator = fields.index("-")
+        entries.append((fields[2], fields[4], fields[separator + 2]))
+    return entries
+
+
+def _blkid_uuid(dev: Device, device: str) -> str:
+    out = dev.read(f"blkid {shlex.quote(device)} || true")
+    match = re.search(r'UUID="([^"]+)"', out)
+    require(match is not None, f"blkid reports no UUID for {console.lit(device)}: {out!r}")
+    assert match is not None  # narrowed by require
+    return match.group(1)
+
+
+@stage("Release data partition")
+def release_data_partition(dev: Device, state: FaultsState) -> str:
+    """Resolve the data partition and its major:minor while still mounted,
+    record its ext4 UUID, unmount, then prove from a mountinfo re-read
+    that no remaining mount is backed by that device — raw writes on a
+    mounted filesystem are never permitted."""
+    entry = next((e for e in _mountinfo_entries(dev) if e[1] == _DATA_MOUNT), None)
+    require(entry is not None, f"{console.lit(_DATA_MOUNT)} is not mounted — nothing to release")
+    assert entry is not None  # narrowed by require
+    majmin, _mount, device = entry
+    uuid = _blkid_uuid(dev, device)
+    dev.run(f"umount {shlex.quote(_DATA_MOUNT)}")
+    state.partition = DataPartition(device=device, majmin=majmin, uuid=uuid)
+    if dry_run.get():
+        return "release logged (dry-run)"
+    still = [e for e in _mountinfo_entries(dev) if e[0] == majmin]
+    require(
+        not still,
+        f"device {console.lit(device)} ({majmin}) still backs mounts: "
+        + ", ".join(m for _, m, _src in still),
+    )
+    return f"{console.lit(device)} ({majmin}) released, UUID {console.lit(uuid)}"
+
+
+def _require_partition(state: FaultsState) -> DataPartition:
+    if state.partition is None:
+        msg = "BUG: the data partition was not released before corruption"
+        raise RuntimeError(msg)
+    return state.partition
+
+
+@stage("Blank ext4 signature (B1)")
+def corrupt_partition_blank(dev: Device, state: FaultsState) -> str:
+    """Zero the superblock region so blkid sees no filesystem — the ladder
+    must take the mkfs branch (observable: a new UUID)."""
+    p = _require_partition(state)
+    dev.run(f"dd if=/dev/zero of={shlex.quote(p.device)} bs=64k count=1 conv=fsync")
+    return f"first 64 KiB of {console.lit(p.device)} zeroed"
+
+
+@stage("Corrupt ext4 metadata (B2)")
+def corrupt_partition_metadata(dev: Device, state: FaultsState) -> str:
+    """The pinned repair-branch recipe: zero the root inode's link count and
+    set the superblock errors flag. The flag makes plain `e2fsck -p` run
+    its full check (exit 4); `e2fsck -y` repairs (exit 1); the UUID must
+    survive (repaired, never reformatted). Validated on e2fsprogs 1.47.3
+    and re-proven by the loopback fixture test."""
+    p = _require_partition(state)
+    dev.run(f"debugfs -w -R 'sif <2> links_count 0' {shlex.quote(p.device)}")
+    dev.run(f"debugfs -w -R 'ssv state 2' {shlex.quote(p.device)}")
+    return f"root links_count zeroed + errors flag set on {console.lit(p.device)}"
+
+
+@stage("Filesystem identity changed (mkfs proof)")
+def require_fs_uuid_changed(dev: Device, state: FaultsState) -> str:
+    if dry_run.get():
+        return "UUID probe skipped (dry-run: mkfs was only logged, the UUID cannot have changed)"
+    p = _require_partition(state)
+    uuid = _blkid_uuid(dev, p.device)
+    require(uuid != p.uuid, f"UUID still {console.lit(uuid)} — mkfs did not run")
+    return f"{console.lit(p.uuid)} → {console.lit(uuid)}"
+
+
+@stage("Filesystem identity unchanged (repair proof)")
+def require_fs_uuid_unchanged(dev: Device, state: FaultsState) -> str:
+    if dry_run.get():
+        return "UUID probe skipped (dry-run: the corruption and repair were only logged)"
+    p = _require_partition(state)
+    uuid = _blkid_uuid(dev, p.device)
+    require(uuid == p.uuid, f"UUID changed to {console.lit(uuid)} — the ladder reformatted")
+    return f"UUID {console.lit(uuid)} preserved"
 
 
 def _clear_orchestrator(
