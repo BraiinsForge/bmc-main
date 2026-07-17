@@ -72,6 +72,16 @@ impl AlarmState {
         std::mem::take(&mut self.pending_actions)
     }
 
+    /// Buffer an overlay request, collapsing a duplicate of the still-pending
+    /// tail. Stop/snooze are idempotent per ring, so two identical requests in
+    /// one drain window (double-reported tap, impatient re-tap) are one intent
+    /// — forwarding both would only flood the bmc command channel.
+    fn push_action(&mut self, action: AlarmAction) {
+        if self.pending_actions.last() != Some(&action) {
+            self.pending_actions.push(action);
+        }
+    }
+
     /// Whether an alarm is currently ringing (between `ring` and `stop`).
     pub fn is_ringing(&self) -> bool {
         self.ringing.is_some()
@@ -127,7 +137,7 @@ impl AlarmState {
     /// Queue a dismiss as if the overlay had requested it; drained by the loop
     /// into `AlarmCommand::Dismiss`. Used by the no-overlay fallback.
     pub fn request_dismiss(&mut self) {
-        self.pending_actions.push(AlarmAction::Dismiss);
+        self.push_action(AlarmAction::Dismiss);
         self.ringing = None;
     }
 }
@@ -161,10 +171,10 @@ impl Dispatch<DeckAlarmV1, ()> for CompositorState {
     ) {
         match request {
             deck_alarm_v1::Request::SnoozeAlarm => {
-                state.alarm.pending_actions.push(AlarmAction::Snooze);
+                state.alarm.push_action(AlarmAction::Snooze);
             }
             deck_alarm_v1::Request::DismissAlarm => {
-                state.alarm.pending_actions.push(AlarmAction::Dismiss);
+                state.alarm.push_action(AlarmAction::Dismiss);
             }
             deck_alarm_v1::Request::Destroy => state.alarm.remove(resource),
             other => tracing::warn!("Unknown deck_alarm_v1 request: {other:?}"),
@@ -187,6 +197,17 @@ mod tests {
         s.pending_actions.push(AlarmAction::Snooze);
         assert_eq!(s.drain_actions(), vec![AlarmAction::Snooze]);
         assert!(s.drain_actions().is_empty());
+    }
+
+    #[test]
+    fn push_action_collapses_same_tick_duplicates() {
+        let mut s = AlarmState::default();
+        s.push_action(AlarmAction::Dismiss);
+        s.push_action(AlarmAction::Dismiss);
+        assert_eq!(s.drain_actions(), vec![AlarmAction::Dismiss]);
+        // A repeat after the drain is a fresh intent and goes through.
+        s.push_action(AlarmAction::Dismiss);
+        assert_eq!(s.drain_actions(), vec![AlarmAction::Dismiss]);
     }
 
     #[test]
