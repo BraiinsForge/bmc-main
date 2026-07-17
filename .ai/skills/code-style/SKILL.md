@@ -1,106 +1,15 @@
 ---
 name: code-style
-description: Use when writing or modifying code in this repository — covers comment prose form (skimmability and balance), what infra-layer comments may and may not say, when a workaround comment is acceptable, picking quantitative defaults (fps, fuel budgets, timeouts) without inventing them, Rust `use`-block consistency, and small cross-language form rules. Triggers when writing a comment, picking a default value, adding a `use` statement, or commenting a feature passthrough in `workspace.nix` / Cargo.
+description: Use when writing or modifying code in this repository — picking quantitative defaults (fps, fuel budgets, timeouts) without inventing them, choosing idioms and libraries over ad-hoc code, Rust `use`-block consistency, and small cross-language form rules (number separators, redundant block-condition parens, `node:` prefixes). For comment hygiene — whether to comment and how — use the `comment-discipline` skill instead. Triggers when picking a default/knob value, adding a `use` block, reaching for an ad-hoc implementation, or writing a numeric literal.
 ---
 
 # Code style in this repository
 
-Form rules that bite during review but aren't loud enough to be caught by the formatter or linter. The repo-root
-`CLAUDE.md` governs *whether* to write a comment; this skill governs *what it should look like* when you do, plus a
-handful of cross-language form rules collected from review feedback.
+Form and choice rules that bite during review but aren't loud enough for the formatter or linter to catch.
 
-## Comments — prose form
-
-Two layered concerns, both judgement calls. The goal: *a coder skimming during a busy day can find the relevant part
-without reassembling paragraphs*.
-
-### Primary — skimmability
-
-Line breaks should help the scanner. Break at **sentence and clause boundaries**, not at arbitrary columns:
-
-- Independent sentences each land on their own line.
-- A long sentence wraps at a comma, semicolon, or conjunction — somewhere the reader can pause naturally.
-- One mid-thought arbitrary wrap forces the reader to reassemble the paragraph. Don't.
-
-### Secondary — balance
-
-Within the semantic breaks above, prefer roughly even line lengths. Avoid 5-char-then-95-char asymmetry — think CSS
-`text-wrap: balance`. Never sacrifice skimmability for balance; this is the second layer, not the first.
-
-### Length — one line by default
-
-Most comments are a single line. Reach for a second only when a distinct, non-obvious fact needs it — never to restate
-the code, the type name, or a doc that already carries the fact (an on-disk format documented where it is defined does
-not get re-documented at every call site). Cut comments that narrate the obvious: a `{}` borrow scope, a widening cast.
-When the same fact would live in two places, keep it in one and point to it.
-
-## Comments — prefer self-documenting code over a comment
-
-Before writing a comment that explains what a line *does*, make the code say it at runtime instead. Descriptive code
-that executes is strictly better than cryptic code plus a comment: it can't drift from the code, and it surfaces when
-things break rather than sitting silent above the line.
-
-- **Assertion messages, not inline comments.** Put the intent in the message so it prints on failure:
-
-  ```rust
-  // don't:
-  assert!(!reg.is_stale(h, 7)); // age 7s is within the 7.5s threshold
-  assert!(reg.is_stale(h, 8));  // age 8s exceeds it
-
-  // do:
-  assert!(!reg.is_stale(h, 7), "age 7 s is within the 7.5 s threshold");
-  assert!(reg.is_stale(h, 8), "age 8 s exceeds the 7.5 s threshold");
-  ```
-
-- **`expect("BUG: …")`, not `unwrap()` + a comment** — the reason rides the panic (already the repo default).
-
-- **Descriptive names, not explanatory comments** — a named binding, `const`, or test name
-  (`not_stale_without_prior_success`) that states the intent removes the comment that would have decoded a bare literal
-  or a terse body.
-
-This doesn't abolish comments — a genuinely non-obvious *why* still earns one (see the workaround rule below). It
-abolishes the comment that exists only because the code was left cryptic.
-
-## Comments — workarounds must cite the cause
-
-Never paper over a mistake with vague rationale:
-
-```rust
-// sometimes the renderer drops a frame here
-// in some cases the tooling can confuse this
-```
-
-If a workaround is genuinely needed, the comment must cite a **specific, checkable cause**:
-
-- A bug URL (upstream issue, internal ticket).
-- A version pin (`librsvg < 2.59 drops the alpha channel`).
-- A reproducer — steps + observed failure mode.
-
-If you can't cite one, the workaround is probably wrong. Fix the underlying issue cleanly instead of inventing
-justification.
-
-## Comments — infra layers name the gate, not the effect
-
-When commenting a feature passthrough in `workspace.nix`, a Cargo `[features]` block, or a build flake, describe **what
-is being wired**, not **what the wired feature happens to enable at one particular call site right now**.
-
-Avoid:
-
-```nix
-# turns on the verbose compositor::frame_callback trace
-features = [ "trace-frame-callbacks" ];
-```
-
-Prefer:
-
-```nix
-# forwards the trace-frame-callbacks Cargo feature so dev profiles can opt into the
-# instrumentation; pattern matches the other trace-* feature forwards in this file
-features = [ "trace-frame-callbacks" ];
-```
-
-The infra file lives forever; the instrumentation comes and goes. If a reader needs to know what a feature actually
-does, they read the crate's docs — not `workspace.nix`.
+> **Comments live elsewhere.** Everything about comments — whether to write one, terseness, self-documenting code over
+> comments, workarounds citing a cause, infra-layer comments, and prose form — is the `comment-discipline` skill. This
+> skill covers the non-comment rules below.
 
 ## Quantitative defaults — cite or expose
 
@@ -146,7 +55,7 @@ Choices that shape the code beyond its form, collected from review feedback:
 - **Don't reinvent the wheel.** Use a library when one exists for the task. More code needs justification — prefer a
   well-tested, well-known third-party crate to an ad-hoc implementation.
 - **Unsafe needs a reason.** Every `unsafe` block needs a justification a reviewer can check — same bar as the
-  workaround-comment rule above.
+  workaround-comment rule in `comment-discipline`.
 - **Use the standard conversion traits.** Reach for `From` / `Into` rather than ad-hoc `from_*` / `to_*` inherent
   methods, so conversions compose and read the same way across types. Prefer traits generally when one fits.
 - **`Option`, not sentinels.** Model absence with `Option<T>`; never encode "none" as `0`, `-1`, or an empty string. The

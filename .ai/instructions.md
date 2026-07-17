@@ -294,6 +294,7 @@ Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
 
   - Run `just validate` (formats, runs clippy and tests)
   - Self-review changes
+  - Invoke the `comment-discipline` skill and run its comment pass over the diff
   - Ensure commit message explains "why"
 
 ### Error Handling
@@ -352,8 +353,11 @@ When multiple valid approaches exist, choose based on:
 - Stop after 3 failed attempts and reassess
 - do not use unwrap() but use expect("BUG: $reason") with description why it is bug
 - prefer self-documenting code that runs over a comment: `assert!(cond, "why")`, `expect("BUG: …")`, and descriptive
-  names/consts beat cryptic code plus an explanatory comment — the intent can't drift and shows on failure. See the
-  `code-style` skill for the fuller rule.
+  names/consts beat cryptic code plus an explanatory comment — the intent can't drift and shows on failure.
+- keep comments minimal: invoke the `comment-discipline` skill any time you finish an implementation, are about to
+  commit code, or do a code review. It is the single source for comment hygiene — whether to comment and how — so
+  comments never restate the code, state the trivial, sprawl, or carry plan/staging or call-graph ("who calls this")
+  notes, and read as a human wrote them.
 - treat `bmc-netsim` profiles and the widget's family adapters (`widgets-wasm/fleet-management/src/families/`) as
   deliberate **subsets** of the upstream device APIs (BOS+ boser REST, uBOS, ESP-Miner) — a field missing from them does
   not mean upstream lacks it; verify against the upstream openapi/firmware before concluding a field is unavailable
