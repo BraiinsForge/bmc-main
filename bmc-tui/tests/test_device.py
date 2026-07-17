@@ -216,6 +216,14 @@ def test_run_swallows_signal_killed_session_when_disconnect_expected() -> None:
     Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
 
 
+def test_run_swallows_raw_negative_signal_death_when_disconnect_expected() -> None:
+    # subprocess.run reports a locally-signalled ssh as a negative returncode
+    # (-N), not 128+N; run must treat that as session death too, matching
+    # run_captured. The old `>= 128`-only predicate re-raised it.
+    backend = _FakeExec(error=subprocess.CalledProcessError(-15, ["ssh"]))
+    Device("h", backend=backend).run("sysupgrade x", expect_disconnect=True)  # no raise
+
+
 def test_run_reraises_remote_failure_even_when_disconnect_expected() -> None:
     backend = _FakeExec(error=subprocess.CalledProcessError(1, ["ssh"]))
     with pytest.raises(subprocess.CalledProcessError):
@@ -281,3 +289,51 @@ def test_run_streamed_reraises_disconnect_when_not_expected() -> None:
 def test_print_shows_host(capsys: pytest.CaptureFixture[str]) -> None:
     Device("192.168.1.183", backend=_FakeExec()).print()
     assert "192.168.1.183" in capsys.readouterr().out
+
+
+# ── run_captured ───────────────────────────────────────────────────────────────
+
+
+def _failing(returncode: int) -> "_FakeExec":
+    err = subprocess.CalledProcessError(returncode, ["ssh"], output="out\n", stderr="err\n")
+    return _FakeExec(error=err)
+
+
+def test_run_captured_clean_exit_preserves_output() -> None:
+    backend = _FakeExec(stdout="staged once\n")
+    outcome = Device("h", backend=backend).run_captured("sysupgrade x")
+    assert outcome is not None
+    assert outcome.status == "clean"
+    assert outcome.returncode == 0
+    assert "staged once" in outcome.output
+
+
+def test_run_captured_remote_failure_preserves_output() -> None:
+    outcome = Device("h", backend=_failing(1)).run_captured("sysupgrade x")
+    assert outcome is not None
+    assert outcome.status == "failed"
+    assert outcome.returncode == 1
+    assert "out" in outcome.output and "err" in outcome.output
+
+
+def test_run_captured_session_death_preserves_output() -> None:
+    outcome = Device("h", backend=_failing(255)).run_captured("sysupgrade x")
+    assert outcome is not None
+    assert outcome.status == "session-death"
+    assert "err" in outcome.output
+
+
+def test_run_captured_signal_death_is_session_death() -> None:
+    outcome = Device("h", backend=_failing(-9)).run_captured("sysupgrade x")
+    assert outcome is not None
+    assert outcome.status == "session-death"
+
+
+def test_run_captured_skips_under_dry_run() -> None:
+    backend = _FakeExec()
+    token = dry_run.set(True)
+    try:
+        assert Device("h", backend=backend).run_captured("sysupgrade x") is None
+    finally:
+        dry_run.reset(token)
+    assert backend.runs == []

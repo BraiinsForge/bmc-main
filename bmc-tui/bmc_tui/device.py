@@ -36,7 +36,7 @@ import uuid
 from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, NewType, Protocol
+from typing import Any, Literal, NewType, Protocol
 
 from bmc_tui import console
 from bmc_tui.stage import dry_run, require
@@ -71,6 +71,33 @@ _WINDOW_MARK = "bmc-tui-log-window"
 # range encodes remote signal death (128+N, or a negative -N wrapped to an
 # unsigned byte) — what a reboot's shutdown does to the live session.
 _SESSION_DEATH_FLOOR = 128
+
+
+def _is_session_death(returncode: int) -> bool:
+    """Whether an ssh exit encodes a killed session rather than a failed
+    command: ssh's own 255 for a dropped connection, remote signal death
+    (128+N), or the negative -N `subprocess.run` reports for local signal
+    death. Shared so `run(expect_disconnect=True)` and `run_captured` agree."""
+    return returncode < 0 or returncode >= _SESSION_DEATH_FLOOR
+
+
+@dataclass(frozen=True)
+class RunOutcome:
+    """What a captured remote command did — including the streams, which
+    the plain `run(expect_disconnect=True)` path discards on session
+    death."""
+
+    status: Literal["clean", "failed", "session-death"]
+    returncode: int
+    output: str  # stdout + stderr
+
+
+def _captured_text(captured: str | bytes | None) -> str:
+    if captured is None:
+        return ""
+    if isinstance(captured, bytes):
+        return captured.decode(errors="replace")
+    return captured
 
 
 class Exec(Protocol):
@@ -164,9 +191,10 @@ class Device:
         """Run a mutating command and return its stripped stdout. Under
         --dry-run, log and skip, returning None.
 
-        ``expect_disconnect`` treats a killed session (exit >= 128: ssh's
-        own 255 for a dropped connection, or a remote session killed by the
-        shutdown's signal) as success — for commands that intentionally
+        ``expect_disconnect`` treats a killed session (see
+        ``_is_session_death``: ssh's own 255 for a dropped connection, a
+        remote session killed by the shutdown's signal, or local signal
+        death) as success — for commands that intentionally
         take the device down (e.g. ``sysupgrade``) — and returns None
         since no output came back. A remote command failing outright
         (small exit code, session alive) still raises.
@@ -177,7 +205,7 @@ class Device:
         try:
             return self._exec.run(self._ssh_argv(command)).stdout.strip()
         except subprocess.CalledProcessError as e:
-            if not (expect_disconnect and e.returncode >= _SESSION_DEATH_FLOOR):
+            if not (expect_disconnect and _is_session_death(e.returncode)):
                 raise
             return None
 
@@ -200,6 +228,27 @@ class Device:
         if code == 0 or (expect_disconnect and code >= _SESSION_DEATH_FLOOR):
             return
         raise subprocess.CalledProcessError(code, argv)
+
+    def run_captured(self, command: str) -> RunOutcome | None:
+        """Execute `command`, preserving outcome + output instead of raising.
+        Session death (ssh exit >= 128, or signal death) is a distinct
+        outcome, not an error — the flash stages decide what it means.
+        Returns None under --dry-run."""
+        if dry_run.get():
+            console.kv("would run", command)
+            return None
+        try:
+            proc = self._exec.run(self._ssh_argv(command))
+        except subprocess.CalledProcessError as e:
+            died = _is_session_death(e.returncode)
+            return RunOutcome(
+                status="session-death" if died else "failed",
+                returncode=e.returncode,
+                output=_captured_text(e.stdout) + _captured_text(e.stderr),
+            )
+        return RunOutcome(
+            status="clean", returncode=proc.returncode, output=proc.stdout + proc.stderr
+        )
 
     def push(self, local: Path, remote: RemotePath) -> None:
         """Upload a file, streamed over ssh with a live progress bar. Under
