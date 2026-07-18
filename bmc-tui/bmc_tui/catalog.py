@@ -933,6 +933,17 @@ def register_rig(dev: Device, run: E2eRun) -> str:
     )
 
 
+def _servers_json_b64(dev: Device) -> str | None:
+    """base64 of the runtime registry's bytes, or None when absent."""
+    out = dev.read(
+        f"if [ -e {_SERVERS_JSON} ]; then echo PRESENT; base64 {_SERVERS_JSON}; "
+        "else echo ABSENT; fi"
+    )
+    marker, _, body = out.partition("\n")
+    require(marker in ("PRESENT", "ABSENT"), f"unexpected capture output: {out[:80]!r}")
+    return "".join(body.split()) if marker == "PRESENT" else None
+
+
 @stage("Capture server registry")
 def capture_server_registry(dev: Device, plan: Provisioning) -> str:
     """Record the pre-run runtime servers.json so the final restore puts
@@ -942,15 +953,9 @@ def capture_server_registry(dev: Device, plan: Provisioning) -> str:
     registration that sysupgrade deliberately preserves (it is a
     registered conffile)."""
 
-    out = dev.read(
-        f"if [ -e {_SERVERS_JSON} ]; then echo PRESENT; base64 {_SERVERS_JSON}; "
-        "else echo ABSENT; fi"
-    )
-    marker, _, body = out.partition("\n")
-    require(marker in ("PRESENT", "ABSENT"), f"unexpected capture output: {out[:80]!r}")
-    plan.original_servers_json = "".join(body.split()) if marker == "PRESENT" else None
+    plan.original_servers_json = _servers_json_b64(dev)
     plan.servers_json_captured = True
-    state = "captured" if marker == "PRESENT" else "absent before the run"
+    state = "captured" if plan.original_servers_json is not None else "absent before the run"
     return f"{console.lit(_SERVERS_JSON)} {state}"
 
 
@@ -1138,6 +1143,7 @@ class FaultsState:
     partition: DataPartition | None = None
     upgrade_state: UpgradeState | None = None
     flash_output: str | None = None
+    servers_json_before: str | None = None  # base64 of the pre-D5-flash registry
 
 
 # A mountinfo line needs field 3 (major:minor), field 5 (mount point), and the
@@ -2055,9 +2061,26 @@ def require_stale_next_gone(dev: Device) -> str:
     return f"{console.lit(_STALE_NEXT_MARKER)} gone"
 
 
+@stage("Record servers.json (D5)")
+def record_servers_json(dev: Device, state: FaultsState) -> str:
+    """Snapshot the registry bytes the D5 flash must carry across: the rig
+    registration just wrote them, so a post-flash byte match is the
+    preservation proof. Existence alone proves nothing — a flash that
+    replaced the file with different defaults would still 'exist'."""
+    state.servers_json_before = _servers_json_b64(dev)
+    if dry_run.get():
+        return "snapshot logged (dry-run: registration was only logged)"
+    require(
+        state.servers_json_before is not None,
+        f"{console.lit(_SERVERS_JSON)} missing before the D5 flash — registration did not write it",
+    )
+    return f"{console.lit(_SERVERS_JSON)} snapshot taken"
+
+
 @stage("Preservation policy (D5)")
-def require_preservation_policy(
+def require_preservation_policy(  # noqa: PLR0913  the policy flag, the snapshot, and the injectable clock must meet here
     dev: Device,
+    state: FaultsState,
     *,
     servers_json_preserved: bool,
     timeout: int = 30,
@@ -2068,19 +2091,16 @@ def require_preservation_policy(
     and must survive — checked single-shot, activation rewrites it before
     ssh is even reachable (no race observed). The servers.json half depends
     on the policy:
-    - preserved=False (today's unfixed-BDK-600 images): OBSERVED, never
-      asserted. The runtime wipe is event-driven inside the bmc daemon —
-      the device-verified record for the identical register→flash→check
-      sequence reads: absent almost immediately (C1 retry, C6), absent
-      within ~2 min (first group d run), still present ≥152 s yet absent
-      two reboots later (second group d run). Post-flash state is
-      nondeterministic in bounded time, so no timeout makes a hard assert
-      sound; a single probe reports what it saw and passes either way.
-    - preserved=True (the post-fix contract — the meaningful assertion
-      once images carry the BDK-600 fix): hard assert. Preservation is
-      synchronous with the flash, so a present file passes immediately;
-      an absent one gets a short grace poll (filesystem/boot settling)
-      before the abort."""
+    - preserved=True (the default): hard assert against the pre-flash
+      snapshot — the file must come back byte-identical. Preservation is
+      a registered-conffile contract (#BDK-358) proven on hardware
+      (BDK-600 dissolved into a harness cleanup bug); it is synchronous
+      with the flash, so a present file settles immediately and an absent
+      one only gets a short grace poll (filesystem/boot settling) before
+      the abort.
+    - preserved=False (legacy escape hatch, images predating the conffile
+      registration): OBSERVED, never asserted — a single probe reports
+      what it saw and passes either way."""
     conf = dev.read(f"cat {_NIX_CONF} 2>/dev/null || true")
     require("experimental-features" in conf, "nix.conf was not preserved across sysupgrade")
     if dry_run.get():
@@ -2091,11 +2111,14 @@ def require_preservation_policy(
 
     if not servers_json_preserved:
         observed = (
-            "servers.json still present (BDK-600 wipe is event-driven; may land later)"
+            "servers.json present (not asserted: --no-servers-json-preserved)"
             if present()
-            else "servers.json wiped (BDK-600)"
+            else "servers.json gone (not asserted: --no-servers-json-preserved)"
         )
         return f"nix.conf preserved; {observed}"
+    if state.servers_json_before is None:
+        msg = "BUG: servers.json was not recorded before the flash"
+        raise RuntimeError(msg)
     start = clock()
 
     def missing() -> str | None:
@@ -2103,13 +2126,17 @@ def require_preservation_policy(
             return None
         return (
             f"servers.json still missing {clock() - start:.0f}s after the flash "
-            f"— contradicts --servers-json-preserved=True"
+            f"— contradicts --servers-json-preserved"
         )
 
     failure = _poll_until(missing, timeout=timeout, sleep=sleep, clock=clock)
     if failure is not None:
         raise Abort(failure)
-    return "nix.conf preserved, servers.json preserved"
+    require(
+        _servers_json_b64(dev) == state.servers_json_before,
+        "servers.json exists but its contents changed across the flash",
+    )
+    return "nix.conf preserved, servers.json preserved byte-identical"
 
 
 # ── e2e upgrade cycle ─────────────────────────────────────────────────────────

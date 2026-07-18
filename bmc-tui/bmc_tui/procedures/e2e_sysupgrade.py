@@ -25,8 +25,8 @@ Scenario A clears the store and flashes image A — COMMAND takes the init
 branch, downloading the factory tarball from the rig. Scenario B drops a
 preservation marker and flashes image B — COMMAND takes the upgrade
 branch, resolving feed → index → rig cache and staging a next generation.
-Registration re-runs before each flash: sysupgrade preserves nix.conf but
-not the runtime servers.json.
+Registration re-runs before each flash: it is idempotent, and keeps the
+rig authoritative regardless of what the previous flash left behind.
 """
 
 import tempfile

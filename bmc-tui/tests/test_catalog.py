@@ -20,6 +20,7 @@
 
 """Unit tests for the deploy stage catalog."""
 
+import base64
 import io
 import json
 import shlex
@@ -1691,85 +1692,139 @@ def test_quiesce_nix_stops_services_and_unmounts_without_deleting() -> None:
     assert any("umount /nix" in c for c in joined)
 
 
-def _preservation_routes(servers_json_present: Callable[[], bool]) -> _Respond:
-    """nix.conf intact; the servers.json existence probe answers per call."""
+def _b64(content: str) -> str:
+    return base64.b64encode(content.encode()).decode()
+
+
+def _preservation_routes(servers_json: Callable[[], str | None]) -> _Respond:
+    """nix.conf intact; the servers.json probes answer per call — None is
+    absent, a str is the file's content (served base64 to the capture)."""
 
     def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
         cmd = argv[-1]
         if "/etc/nix/nix.conf" in cmd:
             return _cp(argv, "experimental-features = nix-command")
+        if "if [ -e" in cmd and "servers.json" in cmd:
+            content = servers_json()
+            return _cp(argv, "ABSENT" if content is None else f"PRESENT\n{_b64(content)}")
         if "servers.json ]" in cmd:
-            return _cp(argv, "yes" if servers_json_present() else "")
+            return _cp(argv, "" if servers_json() is None else "yes")
         return _cp(argv)
 
     return respond
 
 
-def test_preservation_policy_observes_a_wiped_servers_json(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    """Unfixed BDK-600: the runtime wipe is event-driven inside the bmc
-    daemon, so post-flash servers.json state is nondeterministic in bounded
-    time — preserved=False must OBSERVE, not assert. An absent file is
-    reported as the wipe having landed."""
-    exc = _Exec(_preservation_routes(lambda: False))
-    catalog.require_preservation_policy(Device("h", backend=exc), servers_json_preserved=False)
-    assert "wiped" in capsys.readouterr().out
+def _recorded_state(content: str) -> "catalog.FaultsState":
+    state = catalog.FaultsState()
+    state.servers_json_before = _b64(content)
+    return state
 
 
-def test_preservation_policy_observes_a_still_present_servers_json(
+def test_record_servers_json_snapshots_the_registry_bytes() -> None:
+    """The D5 proof is a byte comparison — the record stage must capture
+    the exact pre-flash content, not just note the file exists."""
+    state = catalog.FaultsState()
+    exc = _Exec(_preservation_routes(lambda: '{"servers": "rig"}'))
+    catalog.record_servers_json(Device("h", backend=exc), state)
+    assert state.servers_json_before == _b64('{"servers": "rig"}')
+
+
+def test_record_servers_json_aborts_when_registration_left_nothing() -> None:
+    """An absent registry before the D5 flash means the register stage did
+    not do its job — a preservation verdict on it would be meaningless."""
+    state = catalog.FaultsState()
+    exc = _Exec(_preservation_routes(lambda: None))
+    with pytest.raises(Abort, match="registration did not write it"):
+        catalog.record_servers_json(Device("h", backend=exc), state)
+
+
+def test_preservation_policy_observes_when_not_asserting(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """A still-present file is equally valid under the event-driven wipe
-    (device-verified: still present ≥152 s after one flash, absent two
-    reboots later) — one probe, report, pass. The old hard assert falsely
-    failed this state; the old poll had no terminal state to converge to."""
+    """--no-servers-json-preserved is the legacy escape hatch for images
+    predating the conffile registration: post-flash state is reported,
+    never asserted — either polarity passes on a single probe."""
+    exc = _Exec(_preservation_routes(lambda: None))
+    catalog.require_preservation_policy(
+        Device("h", backend=exc), catalog.FaultsState(), servers_json_preserved=False
+    )
+    assert "gone (not asserted" in capsys.readouterr().out
+
     polls = {"n": 0}
 
-    def present() -> bool:
+    def probed() -> str | None:
         polls["n"] += 1
-        return True
+        return "{}"
 
-    exc = _Exec(_preservation_routes(present))
-    catalog.require_preservation_policy(Device("h", backend=exc), servers_json_preserved=False)
+    exc = _Exec(_preservation_routes(probed))
+    catalog.require_preservation_policy(
+        Device("h", backend=exc), catalog.FaultsState(), servers_json_preserved=False
+    )
     assert polls["n"] == 1  # single-shot: with no expected state there is nothing to poll for
-    assert "still present" in capsys.readouterr().out
+    assert "present (not asserted" in capsys.readouterr().out
 
 
-def test_preservation_policy_passes_immediately_when_preserved_and_present() -> None:
-    """preserved=True (the post-fix BDK-600 contract) keeps the hard assert:
-    the file present is the expected synchronous outcome — accepted on the
-    first observation without burning any waiting time."""
+def test_preservation_policy_passes_immediately_on_identical_bytes() -> None:
+    """The default contract: the post-flash file matches the pre-flash
+    snapshot byte for byte — accepted on the first observation without
+    burning any waiting time."""
     polls = {"n": 0}
 
-    def present() -> bool:
+    def probed() -> str | None:
         polls["n"] += 1
-        return True
+        return '{"servers": "rig"}'
 
-    exc = _Exec(_preservation_routes(present))
+    exc = _Exec(_preservation_routes(probed))
     sleeps: list[float] = []
     catalog.require_preservation_policy(
         Device("h", backend=exc),
+        _recorded_state('{"servers": "rig"}'),
         servers_json_preserved=True,
         sleep=sleeps.append,
         clock=_ticking_clock(),
     )
-    assert polls["n"] == 1  # a single probe settled it
+    assert polls["n"] == 2  # one presence probe, one content capture
     assert sleeps == []  # no polling wait was consumed
+
+
+def test_preservation_policy_aborts_when_the_bytes_changed() -> None:
+    """Existence alone proves nothing — a flash that replaced the registry
+    with different defaults must fail the preservation assert (the review
+    finding: the old stage passed on any present file)."""
+    exc = _Exec(_preservation_routes(lambda: '{"servers": "factory-default"}'))
+    with pytest.raises(Abort, match="contents changed across the flash"):
+        catalog.require_preservation_policy(
+            Device("h", backend=exc),
+            _recorded_state('{"servers": "rig"}'),
+            servers_json_preserved=True,
+            sleep=lambda _s: None,
+            clock=_ticking_clock(),
+        )
 
 
 def test_preservation_policy_aborts_when_a_preserved_file_never_appears() -> None:
     """preserved=True with the file genuinely wiped: absent-then-restored is
     not an expected transition, so the poll ends only via the full timeout,
     aborting with the 'missing' polarity."""
-    exc = _Exec(_preservation_routes(lambda: False))
+    exc = _Exec(_preservation_routes(lambda: None))
     with pytest.raises(Abort, match=r"still missing \d+s after the flash"):
         catalog.require_preservation_policy(
             Device("h", backend=exc),
+            _recorded_state("{}"),
             servers_json_preserved=True,
             timeout=10,
             sleep=lambda _s: None,
             clock=_ticking_clock(),
+        )
+
+
+def test_preservation_policy_refuses_to_assert_without_a_snapshot() -> None:
+    """A driver that skipped the record stage cannot get a preservation
+    verdict — that is a harness wiring bug, not a device failure."""
+    exc = _Exec(_preservation_routes(lambda: "{}"))
+    with pytest.raises(RuntimeError, match=r"BUG: servers\.json was not recorded"):
+        catalog.require_preservation_policy(
+            Device("h", backend=exc), catalog.FaultsState(), servers_json_preserved=True
         )
 
 

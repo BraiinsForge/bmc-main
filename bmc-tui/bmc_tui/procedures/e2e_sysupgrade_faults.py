@@ -620,13 +620,14 @@ def _scenario_cache_swap_retry(ctx: _Ctx) -> None:
     catalog.plant_stale_next_marker(pinned)  # C5
     catalog.record_generation(pinned, ctx.run)
     _prepare_flash(ctx, ctx.image_b)
+    catalog.record_servers_json(_pinned(ctx), ctx.state)  # D5
     catalog.flash_e2e(_pinned(ctx), ctx.image_b, assume_yes=ctx.yes, state=ctx.state)
     catalog.wait_for_device(ctx.dev)
     catalog.verify_upgraded(ctx.dev, ctx.run)
     catalog.require_staged_once(ctx.state)  # D4
     catalog.require_stale_next_gone(ctx.dev)  # C5
     catalog.require_preservation_policy(  # D5
-        ctx.dev, servers_json_preserved=ctx.servers_json_preserved
+        ctx.dev, ctx.state, servers_json_preserved=ctx.servers_json_preserved
     )
 
 
@@ -706,12 +707,15 @@ def _scenario_servers_json(ctx: _Ctx) -> None:
     _prepare_flash(ctx, ctx.image_b)
     pinned = _pinned(ctx)
     catalog.drop_e2e_marker(pinned)
+    catalog.record_servers_json(pinned, ctx.state)
     catalog.record_generation(pinned, ctx.run)
     catalog.flash_e2e(pinned, ctx.image_b, assume_yes=ctx.yes, state=ctx.state)
     catalog.wait_for_device(ctx.dev)
     catalog.verify_upgraded(ctx.dev, ctx.run)
     catalog.require_staged_once(ctx.state)
-    catalog.require_preservation_policy(ctx.dev, servers_json_preserved=ctx.servers_json_preserved)
+    catalog.require_preservation_policy(
+        ctx.dev, ctx.state, servers_json_preserved=ctx.servers_json_preserved
+    )
 
 
 def _scenario_stale_next_marker(ctx: _Ctx) -> None:
@@ -784,7 +788,9 @@ class E2eSysupgradeFaults:
     scenario: Scenario = "all"  # a single id, a group (a/b/c/d), or all
     serve_ip: str | None = None  # device-facing rig address (default: auto-detected)
     serve_port: int = 8083  # rig HTTP port
-    servers_json_preserved: bool = False  # device keeps servers.json across flashes
+    # D5 asserts servers.json survives byte-identical; --no-servers-json-preserved
+    # downgrades to observe-only for images predating the conffile registration
+    servers_json_preserved: bool = True
     yes: bool = False  # skip the confirm prompts (cleardown + each flash)
     dry_run: bool = False  # run read-only checks; log mutations without executing
 
