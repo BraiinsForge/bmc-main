@@ -6,9 +6,9 @@ mod filters;
 pub mod network;
 
 use crate::constants::{
-    BMC_CONFIG, BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION, ETC_DNSMASQ_CONF, ETC_HOSTS,
-    ETC_RESOLV_CONF, FACTORY_DEFAULT, PROC_CPUINFO, PROC_MTD, SETUP_PENDING, SRC_ETC_CONF,
-    SRC_LOGS,
+    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION,
+    ETC_DNSMASQ_CONF, ETC_HOSTS, ETC_RESOLV_CONF, FACTORY_DEFAULT, PROC_CPUINFO, PROC_MTD,
+    SETUP_PENDING, SRC_ETC_CONF, SRC_LOGS,
 };
 use crate::network::PcapError;
 use anyhow::Result;
@@ -57,10 +57,14 @@ const FS_PATHS: &[&str] = &[
     ETC_RESOLV_CONF,
     ETC_DNSMASQ_CONF,
     BOARD,
-    BMC_CONFIG,
+    // Pre-migration config, kept on disk for downgrade safety. The
+    // current config and its timestamped backups come in via the
+    // BMC_CONFIG_DIR directory below.
+    BMC_CONFIG_LEGACY,
     FACTORY_DEFAULT,
     SETUP_PENDING,
     // directories
+    BMC_CONFIG_DIR,
     SRC_LOGS,
     SRC_ETC_CONF,
     "/etc/nix-upgrade",

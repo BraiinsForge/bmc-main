@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-use crate::constants::BMC_CONFIG;
+use crate::constants::{BMC_CONFIG_DIR, BMC_CONFIG_LEGACY};
 use regex::Regex;
 use std::path::Path;
 use tracing::warn;
@@ -8,24 +8,31 @@ use tracing::warn;
 /// Type alias for a credential filter function.
 type FilterFn = fn(&[u8]) -> Vec<u8>;
 
-/// Registry of files that need credential censoring.
-/// Each entry maps an absolute file path to a filter function.
-const CREDENTIAL_FILTERS: &[(&str, FilterFn)] = &[
-    (BMC_CONFIG, censor_bmc_config),
-    ("/etc/config/wireless", censor_uci_wireless),
+/// Type alias for a matcher deciding whether a filter applies to a path.
+type MatchFn = fn(&Path) -> bool;
+
+/// Registry of credential censors. Each entry pairs a matcher over the
+/// file path with the filter to run when it matches. Matching by
+/// predicate rather than one fixed path lets a single censor cover a
+/// whole file family: the BMC config, its relocated legacy copy, and
+/// every timestamped backup all carry the same `api_key` secrets and
+/// must all be censored.
+const CREDENTIAL_FILTERS: &[(MatchFn, FilterFn)] = &[
+    (is_bmc_config, censor_bmc_config),
+    (is_uci_wireless, censor_uci_wireless),
 ];
 
-/// Apply credential censoring to file content if a filter is registered for the path.
+/// Apply credential censoring to file content if a filter matches the path.
 ///
 /// Returns the filtered content, or the original content unchanged if:
-/// - No filter is registered for the path
+/// - No filter matches the path
 /// - The filter fails for any reason
 ///
 /// Filter failures are logged but never prevent archive creation.
 pub fn apply(path: &Path, content: Vec<u8>) -> Vec<u8> {
     let Some(filter_fn) = CREDENTIAL_FILTERS
         .iter()
-        .find_map(|(p, f)| (path == Path::new(p)).then_some(f))
+        .find_map(|(matches, f)| matches(path).then_some(f))
     else {
         return content;
     };
@@ -37,6 +44,18 @@ pub fn apply(path: &Path, content: Vec<u8>) -> Vec<u8> {
         );
         content
     })
+}
+
+/// Match the BMC config and every copy that carries its credentials:
+/// the current `/etc/bmc/config.json` with its backups, plus the
+/// pre-migration `/etc/bmc_config.json`.
+fn is_bmc_config(path: &Path) -> bool {
+    path.parent() == Some(Path::new(BMC_CONFIG_DIR)) || path == Path::new(BMC_CONFIG_LEGACY)
+}
+
+/// Match the OpenWrt UCI wireless config, which holds the Wi-Fi key.
+fn is_uci_wireless(path: &Path) -> bool {
+    path == Path::new("/etc/config/wireless")
 }
 
 /// Censor `"api_key"` values in BMC config JSON.
@@ -89,6 +108,40 @@ mod tests {
             std::str::from_utf8(&result).expect("BUG: result should be UTF-8"),
             r#"{"api_key":"<CENSORED>"}"#
         );
+    }
+
+    #[test]
+    fn apply_filters_legacy_bmc_config() {
+        let content = br#"{"api_key":"secret"}"#.to_vec();
+        let result = apply(Path::new("/etc/bmc_config.json"), content);
+        assert_eq!(
+            std::str::from_utf8(&result).expect("BUG: result should be UTF-8"),
+            r#"{"api_key":"<CENSORED>"}"#
+        );
+    }
+
+    #[test]
+    fn apply_filters_bmc_config_timestamped_backup() {
+        let content = br#"{"api_key":"secret"}"#.to_vec();
+        let result = apply(Path::new("/etc/bmc/config.json.backup.1784028993"), content);
+        assert_eq!(
+            std::str::from_utf8(&result).expect("BUG: result should be UTF-8"),
+            r#"{"api_key":"<CENSORED>"}"#
+        );
+    }
+
+    #[test]
+    fn is_bmc_config_matches_the_config_family_only() {
+        // Current layout: config plus its backups.
+        assert!(is_bmc_config(Path::new("/etc/bmc/config.json")));
+        assert!(is_bmc_config(Path::new("/etc/bmc/config.json.backup.42")));
+        assert!(is_bmc_config(Path::new("/etc/bmc/config.json.bcp")));
+        // Legacy layout.
+        assert!(is_bmc_config(Path::new("/etc/bmc_config.json")));
+        // Unrelated neighbours must not be swept in.
+        assert!(!is_bmc_config(Path::new("/etc/bmc")));
+        assert!(!is_bmc_config(Path::new("/etc/bmc_config.jsonx")));
+        assert!(!is_bmc_config(Path::new("/etc/hosts")));
     }
 
     #[test]

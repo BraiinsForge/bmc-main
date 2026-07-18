@@ -186,6 +186,14 @@ few KB of on-disk redundancy. Aligns with the rest of the migration's "never sil
 The pattern is path-shape based (`<parent>/bmc/<name>` looks for `<parent>/bmc_<name>`) so tests using tmp dirs exercise
 the same code path.
 
+### Support-archive collection
+
+A bad migration is diagnosed from the pre-migration state, so the support archive (`bmc-support`) collects the whole
+`/etc/bmc/` directory (current config plus every `config.json.backup.<ts>`) **and** the deliberately-kept legacy
+`/etc/bmc_config.json`. Credential censoring matches the whole config family — the current config, its backups, and the
+legacy file all carry pool `api_key`s — via a path predicate (`filters::is_bmc_config`) rather than a single fixed path,
+so a newly-created backup is never archived uncensored.
+
 ## Open items / follow-ups
 
 - **Cap kept backups.** Keep at most N (≈10) `config.json.backup.<ts>` files, rotating the oldest out. Filed as
