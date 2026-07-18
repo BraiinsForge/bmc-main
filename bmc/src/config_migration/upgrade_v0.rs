@@ -127,7 +127,12 @@ const _: () = {
 // --- Per-widget dispatch -----------------------------------------------------
 
 fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
-    let widgets: IndexMap<WidgetId, Widget> = scene
+    let kind = match scene.kind {
+        v0::SceneKind::Fullscreen => SceneKind::Fullscreen,
+        v0::SceneKind::Combined => SceneKind::Combined,
+    };
+
+    let mut widgets: IndexMap<WidgetId, Widget> = scene
         .widgets
         .iter()
         .filter_map(|widget| {
@@ -151,10 +156,7 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
         id: SceneId::from(scene.id),
         enabled: scene.enabled,
         cycle_duration: None,
-        kind: match scene.kind {
-            v0::SceneKind::Fullscreen => SceneKind::Fullscreen,
-            v0::SceneKind::Combined => SceneKind::Combined,
-        },
+        kind,
         widgets,
     })
 }
@@ -908,6 +910,53 @@ mod tests {
         assert_eq!(report.dropped_scenes, 0);
         assert_eq!(report.translated_widgets, 1);
     }
+
+    // --- scene parameters migration ------------------------------------------
+    #[test]
+    fn scene_supported_parameters_migrates() {
+        let scene_uuid = Uuid::from_u128(67);
+
+        let scene = v0::Scene {
+            id: scene_uuid,
+            enabled: true,
+            cycle_duration: Some(Duration::from_mins(1)),
+            kind: v0::SceneKind::Fullscreen,
+            widgets: vec![mk_widget("clock", json!({}))],
+        };
+        let (current, _) = upgrade_with_report(v0::Config {
+            scenes: vec![scene.clone()],
+            ..Default::default()
+        });
+        let migrated_scene = current
+            .scenes()
+            .get(&SceneId::from(scene_uuid))
+            .expect("BUG: valid scene must be migrated");
+
+        assert_eq!(
+            scene.id,
+            migrated_scene.id.as_uuid(),
+            "Migrated scene 'ID' parameter must match!"
+        );
+        assert_eq!(
+            scene.enabled, migrated_scene.enabled,
+            "Migrated scene 'enabled' parameter must match!"
+        );
+        assert_eq!(
+            scene.cycle_duration, migrated_scene.cycle_duration,
+            "Migrated scene 'cycle_duration' parameter must match!"
+        );
+        assert_eq!(
+            migrated_scene.kind,
+            SceneKind::Fullscreen,
+            "Migrated scene 'kind' parameter must match!"
+        );
+
+        current
+            .validate()
+            .expect("BUG: migrated valid scene must validate");
+    }
+
+    // --- malformed scenes ----------------------------------------------------
 
     #[test]
     fn remote_widget_weather_maps_to_native_uid_and_carries_location() {

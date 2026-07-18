@@ -311,6 +311,14 @@ pub async fn migrate_on_disk(path: &Path) -> Result<LoadedConfig> {
             dropped_widgets = report.dropped_widgets,
             "upgrading legacy config on disk",
         );
+        // Validate the upgraded config in memory *before* writing it, so
+        // a migration that produces an invalid config never overwrites
+        // the readable original on disk — only a config proven valid is
+        // persisted. The original is then left intact for a fixed
+        // firmware (or manual recovery) rather than replaced.
+        current.validate().context(
+            "migrated config failed validation; leaving the original config on disk untouched",
+        )?;
         save_with_backup(current, path).await?;
     }
     Ok(loaded)

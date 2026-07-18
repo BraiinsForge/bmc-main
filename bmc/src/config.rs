@@ -260,7 +260,7 @@ impl Config {
         map
     }
 
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         self.validate_scenes()?;
         self.validate_scene_cycling()
     }

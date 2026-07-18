@@ -107,6 +107,17 @@ a `clock_style` outside the enum migrates as `digital`).
 Drops are counted in `Report.dropped_widgets`. The scene itself always survives; only the individual widget entry
 disappears (a scene left with zero widgets is dropped and counted in `Report.dropped_scenes`).
 
+### Geometry reconciliation
+
+The v0 schema stored each widget's `size` independently of its scene kind, so it could express layouts the current
+schema forbids — most commonly a `full` (or unknown, hence full-defaulted) size inside a `combined` scene, which would
+become a fullscreen placement that `Config::validate_scenes` rejects for combined scenes. A single such widget would
+otherwise invalidate the whole migrated config and get it replaced with defaults on boot. `reconcile_scene_geometry`
+prevents that by forcing the migrated widgets to satisfy the scene-kind rules: a fullscreen scene keeps its single
+fullscreen widget at the origin (extras are dropped as malformed v0 data); a combined scene clamps any fullscreen
+placement down to the smallest slot, which is valid at any grid position. So a valid v0 layout always migrates into a
+valid current config.
+
 ## Settings and accounts pass-through
 
 The top-level settings kept their shape across the schema change: `scene_cycling`, `localization`, `data_collection`,
@@ -124,6 +135,9 @@ default a field-less current config would use. Accounts go through the same leni
 - **Atomic write** via `crate::utils::replace_file` (tmp + rename).
 - **Total parse failure** surfaces as an explicit `anyhow::Error` from `LoadedConfig::from_str`; the existing file is
   left untouched (no partial rewrite).
+- **Validate before persist.** `migrate_on_disk` validates the upgraded config in memory *before* writing it. A
+  migration that somehow still produces an invalid config is rejected without touching the file, so a readable original
+  is never overwritten by a broken upgrade — it stays on disk for a fixed firmware or manual recovery.
 
 ## Boot integration
 

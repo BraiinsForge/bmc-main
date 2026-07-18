@@ -187,6 +187,58 @@ async fn unknown_future_version_is_rejected() {
 }
 
 #[tokio::test]
+async fn invalid_migration_leaves_the_original_on_disk() {
+    // A migration that produces an invalid config must not overwrite
+    // the readable original. Two widgets sharing a position in a
+    // combined scene overlap, so the migrated config fails validation;
+    // `migrate_on_disk` must reject it *before* writing and leave the
+    // v0 file intact (BDK-346).
+    let tmp = tempdir();
+    let dest = tmp.join("bmc_config.json");
+    let original = r#"{
+        "scenes": [
+            {
+                "id": "a418d38d-a506-489d-9627-0c7909374ef1",
+                "enabled": true,
+                "kind": "combined",
+                "widgets": [
+                    {"id":"3c32f8c7-e678-466d-a331-39b5c8f89153","row":0,"col":0,"size":"medium","kind":"clock","params":{}},
+                    {"id":"8521767f-5659-4b2a-8790-75d5b2f154cf","row":0,"col":0,"size":"medium","kind":"clock","params":{}}
+                ]
+            }
+        ],
+        "accounts": []
+    }"#;
+    fs::write(&dest, original)
+        .await
+        .expect("BUG: seed write should succeed");
+
+    let err = config_migration::migrate_on_disk(&dest)
+        .await
+        .expect_err("an invalid migration must fail rather than persist");
+    assert!(
+        format!("{err:#}").contains("failed validation"),
+        "error should name the validation failure (got: {err:#})"
+    );
+
+    // The original v0 file must still be on disk, byte-for-byte, with
+    // no backup written (nothing was persisted).
+    let on_disk = fs::read_to_string(&dest)
+        .await
+        .expect("BUG: original file should still be readable");
+    assert_eq!(on_disk, original, "the original config must be untouched");
+
+    let parent = dest.parent().expect("BUG: tmp path has a parent");
+    let mut entries = fs::read_dir(parent).await.expect("BUG: readdir");
+    while let Ok(Some(entry)) = entries.next_entry().await {
+        assert!(
+            !entry.file_name().to_string_lossy().contains(".backup."),
+            "a rejected migration must not write a backup",
+        );
+    }
+}
+
+#[tokio::test]
 async fn load_is_pure_without_persist() {
     // `LoadedConfig::from_str` is the pure, in-memory path. No
     // filesystem side effects; the caller is free to inspect the
