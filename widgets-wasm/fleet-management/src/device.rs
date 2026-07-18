@@ -255,6 +255,7 @@ pub struct Census {
 pub struct DeviceList {
     devices: Vec<KnownDevice>,
     seq: u64,
+    telemetry_seq: u64,
 }
 
 impl DeviceList {
@@ -275,6 +276,14 @@ impl DeviceList {
     #[must_use]
     pub fn seq(&self) -> u64 {
         self.seq
+    }
+
+    /// A counter bumped only on a telemetry poll result — a reading or a failed pass.
+    /// Discovery re-announcements and removals leave it untouched, so history samples
+    /// gating on it can't be flooded by a chatty responder.
+    #[must_use]
+    pub fn telemetry_seq(&self) -> u64 {
+        self.telemetry_seq
     }
 
     #[cfg(test)]
@@ -443,6 +452,7 @@ impl DeviceList {
     /// [`Membership::Confirmed`] and clears any recorded failure.
     pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
         self.seq += 1;
+        self.telemetry_seq += 1;
         let seq = self.seq;
         if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
             dev.telemetry = Some(TelemetrySnapshot {
@@ -509,6 +519,7 @@ impl DeviceList {
             return 0;
         }
         self.seq += 1;
+        self.telemetry_seq += 1;
         match self.devices.iter_mut().find(|d| &d.identity.id == id) {
             Some(dev) => {
                 dev.consecutive_failures = dev.consecutive_failures.saturating_add(1);
@@ -920,6 +931,22 @@ mod tests {
             0,
             "a successful pass resets the count to zero"
         );
+    }
+
+    #[test]
+    fn telemetry_seq_bumps_only_on_a_poll_result() {
+        let mut list = DeviceList::new();
+        let id = DeviceId::new("a");
+        list.upsert(identity("a", "10.0.0.1"));
+        assert_eq!(
+            list.telemetry_seq(),
+            0,
+            "discovery does not bump telemetry_seq"
+        );
+        list.record_pass(&id, good_reading(), true);
+        assert_eq!(list.telemetry_seq(), 1, "a reachable pass bumps it");
+        list.record_pass(&id, TelemetryReading::default(), false);
+        assert_eq!(list.telemetry_seq(), 2, "a failed pass bumps it too");
     }
 
     #[test]

@@ -1,10 +1,11 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! Rolling hashrate history for the dashboard chart and per-model sparklines:
-//! one sample per telemetry refold (gated on the devices sequence, so
-//! filter/params-only refolds don't double-count), capped to a recent window.
+//! Rolling hashrate history for the dashboard chart and per-model sparklines.
+//! One sample per telemetry cycle, gated on the telemetry sequence
+//! so re-announcements and filter/params refolds add none. Departed devices
+//! and model groups are pruned; the series caps to a recent window.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use bmc_wasm_sdk::Hashrate;
 
@@ -57,14 +58,20 @@ fn device_hashrate(dev: &KnownDevice) -> f32 {
 }
 
 impl HashrateHistory {
-    /// One sample per new devices sequence;
-    /// empty fleets are skipped so series
-    /// don't fill with zeros before any miner reports.
-    pub(crate) fn record(&mut self, seq: u64, summary: &FleetSummary, devices: &DeviceList) {
-        if self.last_seq == Some(seq) || summary.groups.is_empty() {
+    /// Prune series for departed devices and model groups, then append one sample
+    /// per new telemetry cycle. Empty fleets are skipped so a series doesn't fill
+    /// with zeros before any miner reports.
+    pub(crate) fn record(
+        &mut self,
+        telemetry_seq: u64,
+        summary: &FleetSummary,
+        devices: &DeviceList,
+    ) {
+        self.prune_to(summary, devices);
+        if self.last_seq == Some(telemetry_seq) || summary.groups.is_empty() {
             return;
         }
-        self.last_seq = Some(seq);
+        self.last_seq = Some(telemetry_seq);
         self.total.push(ths(summary.total.hashrate));
         for g in &summary.groups {
             self.models
@@ -78,6 +85,20 @@ impl HashrateHistory {
                 .or_default()
                 .push(device_hashrate(dev));
         }
+    }
+
+    /// Drop series for devices and model groups no longer in the fleet;
+    /// otherwise churning mDNS names grow the maps without bound over long uptime.
+    fn prune_to(&mut self, summary: &FleetSummary, devices: &DeviceList) {
+        let live_devices: HashSet<&DeviceId> = devices.iter().map(|d| &d.identity.id).collect();
+        self.devices.retain(|id, _| live_devices.contains(id));
+        let live_models: HashSet<(Option<usize>, &str)> = summary
+            .groups
+            .iter()
+            .map(|g| (g.family.map(DeviceFamily::index), g.label.as_str()))
+            .collect();
+        self.models
+            .retain(|(fam, label), _| live_models.contains(&(*fam, label.as_str())));
     }
 
     #[must_use]
@@ -235,5 +256,40 @@ mod tests {
     fn an_unknown_device_has_an_empty_series() {
         let h = HashrateHistory::default();
         assert!(h.device_series(&DeviceId::new("bos/nope")).is_empty());
+    }
+
+    #[test]
+    fn a_departed_device_is_pruned_from_history() {
+        let mut h = HashrateHistory::default();
+        h.record(1, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
+        assert_eq!(h.device_series(&DeviceId::new("bos/a")), vec![3.0]);
+        // The next cycle no longer lists bos/a — its series is dropped.
+        h.record(2, &summary(10.0, 4.0), &devices(&[("bos/b", 5.0, true)]));
+        assert!(h.device_series(&DeviceId::new("bos/a")).is_empty());
+        assert_eq!(h.device_series(&DeviceId::new("bos/b")), vec![5.0]);
+    }
+
+    #[test]
+    fn a_vanished_model_group_is_pruned_from_history() {
+        let mut h = HashrateHistory::default();
+        h.record(1, &summary(10.0, 4.0), &DeviceList::new()); // group "BOS BMM"
+        assert_eq!(
+            h.model_series(Some(DeviceFamily::Bos), "BOS BMM"),
+            vec![4.0]
+        );
+        // A later cycle summarizes a different model; the old group drops out.
+        let other = FleetSummary {
+            total: group("Total", 7.0),
+            groups: vec![group("BOS BFM", 7.0)],
+        };
+        h.record(2, &other, &DeviceList::new());
+        assert!(
+            h.model_series(Some(DeviceFamily::Bos), "BOS BMM")
+                .is_empty()
+        );
+        assert_eq!(
+            h.model_series(Some(DeviceFamily::Bos), "BOS BFM"),
+            vec![7.0]
+        );
     }
 }

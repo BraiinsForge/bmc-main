@@ -384,11 +384,16 @@ pub extern "C" fn render(_delta_ms: u32) {
                 let _s = profile::span("summarize");
                 DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
             };
-            // Append one hashrate sample per new devices sequence for the charts.
+            // Append one hashrate sample per telemetry cycle for the charts.
             {
                 let _s = profile::span("history");
-                DEVICES
-                    .with(|d| HISTORY.with(|h| h.borrow_mut().record(seq, &summary, &d.borrow())));
+                DEVICES.with(|d| {
+                    let devices = d.borrow();
+                    HISTORY.with(|h| {
+                        h.borrow_mut()
+                            .record(devices.telemetry_seq(), &summary, &devices);
+                    });
+                });
             }
             *cell = Some(DerivedView {
                 devices_seq: seq,
