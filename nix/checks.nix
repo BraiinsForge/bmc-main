@@ -13,15 +13,17 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# Please, keep in mind that we may also license this program or any part
-# thereof under a proprietary license. For more information on the terms
-# and conditions of such proprietary license or if you have any other
-# questions, please contact us at opensource@braiinsforge.com.
+# Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+# to grant any party a license to this program, or any part thereof,
+# under any terms, and such a grant shall be considered distinct from
+# the grant above.
 
 { pkgs, ty-bin, profiles, capture, wasmWidgets, wasmWidgetCatalog }:
 
 let
   lib = pkgs.lib;
+  licenseHeaderExtensions = lib.filter (extension: extension != "")
+    (lib.splitString "\n" (builtins.readFile ../scripts/license_header_extensions.txt));
 
   # Widgets eligible for visual regression — only those
   # with a populated `capture/config.toml`.
@@ -109,6 +111,25 @@ in
       nativeBuildInputs = lib.attrValues widgetChecks;
     } ''
     mkdir -p $out
+  '';
+
+  # Every first-party source file must carry the GPL license header.
+  # The script's exclusion list mirrors docs/devel/license-headers.md.
+  license-headers = pkgs.runCommand "license-headers"
+    {
+      src = lib.fileset.toSource {
+        root = ../.;
+        fileset = lib.fileset.unions [
+          ../scripts/check_license_headers.sh
+          ../scripts/license_header_extensions.txt
+          (lib.fileset.fileFilter
+            (f: builtins.any f.hasExt licenseHeaderExtensions)
+            ../.)
+        ];
+      };
+    } ''
+    bash $src/scripts/check_license_headers.sh
+    touch $out
   '';
 
   python-lint = pkgs.runCommand "python-lint"

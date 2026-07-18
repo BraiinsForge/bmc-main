@@ -1,0 +1,10 @@
+rs
+ts
+tsx
+js
+scss
+py
+sh
+nix
+c
+proto

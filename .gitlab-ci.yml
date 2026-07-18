@@ -14,10 +14,10 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 #
-# Please, keep in mind that we may also license this program or any part
-# thereof under a proprietary license. For more information on the terms
-# and conditions of such proprietary license or if you have any other
-# questions, please contact us at opensource@braiinsforge.com.
+# Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+# to grant any party a license to this program, or any part thereof,
+# under any terms, and such a grant shall be considered distinct from
+# the grant above.
 
 include:
   - project: "nix/ci-tools"
@@ -96,6 +96,12 @@ content-checks:
   needs: []
   script:
     - nix build -L .#checks.x86_64-linux.content
+
+license-headers:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.license-headers
 
 binary-lfs-check:
   stage: lint
