@@ -114,8 +114,9 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     let mut power_sum = 0.0_f64;
     let mut power_any = false;
 
-    // Efficiency needs BOTH hashrate (zero ok) and power; missing-power devices
-    // are excluded so free hashrate can't flatter the J/TH.
+    // Efficiency counts only devices actually mining, with both readings.
+    // An idle (zero-hashrate) device's power would inflate the group J/TH,
+    // and a missing-power device's free hashrate would flatter it — excluded.
     let mut eff_hashrate = 0.0_f64;
     let mut eff_power = 0.0_f64;
     let mut eff_any = false;
@@ -154,7 +155,9 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
             power_sum += f64::from(p);
             power_any = true;
         }
-        if let (Some(h), Some(p)) = (reading.current_hashrate_ths, reading.power_w) {
+        if let (Some(h), Some(p)) = (reading.current_hashrate_ths, reading.power_w)
+            && h > 0.0
+        {
             eff_hashrate += f64::from(h);
             eff_power += f64::from(p);
             eff_any = true;
@@ -528,31 +531,31 @@ mod tests {
     }
 
     #[test]
-    fn fold_includes_powered_zero_hashrate_device_in_efficiency() {
-        // Device b is idle (0 TH/s) but still drawing power: its 17 W enters
-        // the efficiency numerator so the result matches total power / total hashrate.
+    fn fold_excludes_idle_device_from_efficiency_but_keeps_its_power() {
+        // Idle b (0 TH/s, 17 W): its power stays out of the efficiency (30 J/TH,
+        // the active miner alone) but still shows in the group's total (47 W).
         let a = device(Some("M"), Some(full(1.0, 30.0, 60.0)));
         let b = device(Some("M"), Some(full(0.0, 17.0, 40.0)));
         let group = fold_group("M".to_owned(), &[&a, &b]);
         let eff = raw(group.efficiency).expect("BUG: efficiency available");
-        assert!((eff - 47.0).abs() < 1e-6, "got {eff}");
+        assert!((eff - 30.0).abs() < 1e-6, "got {eff}");
         assert_eq!(raw(group.power), Some(47.0));
     }
 
     #[test]
-    fn fold_efficiency_matches_total_power_over_total_hashrate_with_idle_device() {
+    fn fold_efficiency_ignores_an_idle_devices_power() {
         // Reported case: idle miner (0 TH/s, 8 W) + active miner (1 TH/s, 32 W).
-        // Headline: 40 W total, 1 TH/s total. Efficiency must be 40 J/TH.
+        // The idle 8 W is excluded, so efficiency is the active miner's 32 J/TH,
+        // not the naive total-power / total-hashrate (which would read 40).
         let idle = device(Some("M"), Some(full(0.0, 8.0, 35.0)));
         let active = device(Some("M"), Some(full(1.0, 32.0, 60.0)));
         let group = fold_group("M".to_owned(), &[&idle, &active]);
-        let total_power = raw(group.power).expect("BUG: power available");
-        let total_hashrate = raw(group.hashrate).expect("BUG: hashrate available");
         let eff = raw(group.efficiency).expect("BUG: efficiency available");
-        assert!((eff - 40.0).abs() < 1e-6, "got {eff}");
-        assert!(
-            (eff - total_power / total_hashrate).abs() < 1e-6,
-            "eff must equal total_power/total_hashrate"
+        assert!((eff - 32.0).abs() < 1e-6, "got {eff}");
+        assert_eq!(
+            raw(group.power),
+            Some(40.0),
+            "idle power still shows in the group total"
         );
     }
 
