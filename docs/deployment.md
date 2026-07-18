@@ -179,6 +179,15 @@ ssh root@192.168.1.2 'killall bmc-openwrt'   # procd respawns, reloads config at
 Edit only while the app is down (or restart right after): `bmc-openwrt` holds the config in memory and rewrites the file
 on save, clobbering manual edits made while it runs.
 
+Every config carries a top-level `"version"` field (`1` for the current schema). A config **without** it is read as the
+legacy pre-migration schema; if its widgets are already in the current (`widget_type_id`) shape — as any config written
+by a recent firmware is — the legacy parse fails and the boot path resets to platform defaults. This only bites when
+flashing current firmware onto a device whose config predates the `version` field (a transitional dev situation; the
+`bmc-virt/data/configs/*.json` samples are stamped, so `bmc-virt push` / `just run --config` are fine). The reset is
+**not** destructive — the original is copied to `/etc/bmc/config.json.bcp` first, and the pre-migration
+`/etc/bmc_config.json` is kept untouched — but to keep the config live, add `"version": 1` to the file (any top-level
+position) before flashing or before the reboot that loads the new firmware.
+
 To exercise a widget's dormant/wake path (e.g. the image cache's RAM reclaim), the config needs **≥4 enabled scenes**:
 the compositor keeps the active scene `Visible` and both cycle neighbours `Prepared`, so only a non-neighbour scene
 reaches `Dormant`. With 2–3 enabled scenes nothing ever goes dormant, and the evict/restore path never fires.
