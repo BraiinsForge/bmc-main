@@ -150,9 +150,8 @@ fn register_frame_control(linker: &mut Linker<HostState>) -> Result<()> {
                 return;
             }
             let state = caller.data_mut();
-            state.frame_schedule.widget_delay_ms = Some(delay_ms);
-            state.frame_schedule.deferred_wasm_render_at_ms =
-                Some(state.monotonic_ms + u64::from(delay_ms));
+            let now = state.monotonic_ms;
+            state.frame_schedule.request_frame_after(delay_ms, now);
         },
     )?;
 

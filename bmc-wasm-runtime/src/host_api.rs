@@ -487,6 +487,20 @@ impl FrameScheduleState {
         self.host_frame_delay_ms = None;
     }
 
+    /// Request a full-WASM render after `delay_ms` (monotonic `now`).
+    /// Soonest-wins: a frame already requested sooner is left alone,
+    /// so a later delayed request can't postpone a pending render.
+    pub fn request_frame_after(&mut self, delay_ms: u32, now: u64) {
+        if self
+            .widget_delay_ms
+            .is_some_and(|pending| pending <= delay_ms)
+        {
+            return;
+        }
+        self.widget_delay_ms = Some(delay_ms);
+        self.deferred_wasm_render_at_ms = Some(now + u64::from(delay_ms));
+    }
+
     /// Whether anything wants the host to render a next frame.
     pub fn wants_next_frame(&self) -> bool {
         self.widget_delay_ms.is_some()
@@ -1049,6 +1063,26 @@ mod tests {
         s.widget_delay_ms = Some(16);
         s.has_active_animations = true;
         assert_eq!(s.effective_delay_ms(), Some(16));
+    }
+
+    #[test]
+    fn request_frame_after_is_soonest_wins() {
+        // A tap's pending immediate frame is not downgraded
+        // by a poll's later, delayed request.
+        let mut s = FrameScheduleState::new();
+        s.widget_delay_ms = Some(0);
+        s.request_frame_after(500, 1_000);
+        assert_eq!(s.widget_delay_ms, Some(0));
+
+        let mut s = FrameScheduleState::new();
+        s.request_frame_after(500, 1_000);
+        assert_eq!(s.widget_delay_ms, Some(500));
+        assert_eq!(s.deferred_wasm_render_at_ms, Some(1_500));
+        s.request_frame_after(100, 2_000);
+        assert_eq!(s.widget_delay_ms, Some(100));
+        assert_eq!(s.deferred_wasm_render_at_ms, Some(2_100));
+        s.request_frame_after(900, 3_000);
+        assert_eq!(s.widget_delay_ms, Some(100), "a later request is ignored");
     }
 
     #[test]
