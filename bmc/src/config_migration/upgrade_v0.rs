@@ -384,11 +384,16 @@ fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
     // current manifest wants integer seconds. Reparse through the same
     // `humantime_serde` machinery the rest of the config uses, falling
     // back to the manifest default when it is absent or unparseable.
-    let refresh_seconds = widget
+    let seconds = widget
         .params
         .get("refresh_duration")
         .and_then(|v| humantime_serde::deserialize::<Duration, _>(v).ok())
         .map_or(3600, |d| d.as_secs());
+    // The manifest types `refresh_seconds` as an integer (i32). A
+    // humantime value above i32::MAX seconds would widen to a JSON
+    // double, and the widget's required-i32 read would then panic on
+    // boot, so clamp into the manifest's representable range.
+    let refresh_seconds = i32::try_from(seconds).unwrap_or(i32::MAX);
     params.insert("refresh_seconds".to_owned(), json!(refresh_seconds));
 
     // `image_scale_mode` (`fit` / `fill`) was renamed to `sizing`
@@ -812,6 +817,19 @@ mod tests {
                 ParamValue::Integer(3600)
             );
         }
+    }
+
+    #[test]
+    fn remote_image_huge_refresh_clamps_to_i32_max_and_stays_integer() {
+        // A duration above i32::MAX seconds must not widen to a double
+        // (which would panic the widget's required-i32 read on boot);
+        // it clamps to the manifest's integer range instead.
+        let upgraded = upgrade("remote_image", json!({ "refresh_duration": "100years" }));
+        assert_eq!(
+            upgraded.params["refresh_seconds"],
+            ParamValue::Integer(i32::MAX),
+            "an out-of-range refresh must clamp to i32::MAX, not become a double"
+        );
     }
 
     #[test]
