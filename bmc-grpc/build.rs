@@ -35,16 +35,20 @@ fn main() {
     let build_server = std::env::var("CARGO_FEATURE_SERVER").is_ok();
     let build_client = std::env::var("CARGO_FEATURE_CLIENT").is_ok();
 
+    let descriptor_path = out_dir.join("file-descriptor-set.bin");
+
     tonic_build::configure()
         // this is needed by older protoc compilers like the one in ubuntu 22.04 lts
         .protoc_arg("--experimental_allow_proto3_optional")
-        .file_descriptor_set_path(out_dir.join("file-descriptor-set.bin"))
+        .file_descriptor_set_path(&descriptor_path)
         .out_dir(&out_dir)
         .build_client(build_client)
         .build_server(build_server)
         .emit_rerun_if_changed(true)
         .compile_protos(&proto_files, &["proto/"])
         .expect("BUG: unable to compile proto files");
+
+    strip_source_info(&descriptor_path);
 
     let hash = {
         let mut hasher = Sha256::new();
@@ -58,4 +62,23 @@ fn main() {
     };
 
     println!("cargo:rustc-env=PROTO_HASH={hash}");
+}
+
+// The descriptor is include_bytes!-embedded in the on-device binary and served
+// via gRPC reflection; source info carries every proto comment (license
+// headers included) and none of it is needed by reflection clients.
+fn strip_source_info(descriptor_path: &std::path::Path) {
+    use prost::Message;
+
+    let bytes = fs::read(descriptor_path).expect("BUG: failed to read descriptor set");
+
+    let mut descriptor_set = prost_types::FileDescriptorSet::decode(bytes.as_slice())
+        .expect("BUG: failed to decode descriptor set");
+
+    for file in &mut descriptor_set.file {
+        file.source_code_info = None;
+    }
+
+    fs::write(descriptor_path, descriptor_set.encode_to_vec())
+        .expect("BUG: failed to write stripped descriptor set");
 }
