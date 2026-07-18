@@ -363,31 +363,65 @@ impl Config {
     }
 }
 
+/// Top-level settings recovered from a v0 config. The shapes are
+/// identical on both sides of the migration, so every field is
+/// already the current type; `None` means the legacy file lacked
+/// the field or its value failed the lenient re-parse (dropped
+/// with a warning by the migration).
+#[derive(Debug, Default)]
+pub(crate) struct MigratedSettings {
+    pub scene_cycling: Option<SceneCycling>,
+    pub localization: Option<LocalizationConfig>,
+    pub data_collection: Option<bool>,
+    pub brightness_pct: Option<u8>,
+    pub night_mode: Option<NightModeConfigData>,
+    pub sound_volume_pct: Option<u8>,
+    pub alarms: Option<Vec<AlarmData>>,
+    pub led_enabled: Option<bool>,
+    pub boot_sound_enabled: Option<bool>,
+    pub autoupgrade: Option<AutoUpgradeConfig>,
+}
+
 impl Config {
     /// Assemble a current-schema config from the parts a v0 migration
-    /// can recover: the scene layout and the account list. Everything
-    /// else (localization, night mode, alarms, autoupgrade, …) starts
-    /// empty and falls back to the same defaults a field-less current
-    /// config would use. `version` is pinned to [`CONFIG_VERSION`] so
-    /// the migrated config serialises as the current schema without a
-    /// further save-time fixup.
+    /// recovers: the scene layout, the account list, and the top-level
+    /// settings whose shape survived the schema change unchanged. A
+    /// `None` setting falls back to the same default a field-less
+    /// current config would use. `version` is pinned to
+    /// [`CONFIG_VERSION`] so the migrated config serialises as the
+    /// current schema without a further save-time fixup.
     pub(crate) fn from_migrated_parts(
         scenes: IndexMap<SceneId, Scene>,
         accounts: IndexMap<AccountId, Account>,
+        settings: MigratedSettings,
     ) -> Self {
+        // Destructure so a settings field added later cannot be
+        // silently forgotten here.
+        let MigratedSettings {
+            scene_cycling,
+            localization,
+            data_collection,
+            brightness_pct,
+            night_mode,
+            sound_volume_pct,
+            alarms,
+            led_enabled,
+            boot_sound_enabled,
+            autoupgrade,
+        } = settings;
         Self {
             version: CONFIG_VERSION,
             scenes,
-            scene_cycling: None,
-            localization: None,
-            data_collection: None,
-            brightness_pct: None,
-            night_mode: None,
-            sound_volume_pct: None,
-            alarms: None,
-            led_enabled: None,
-            boot_sound_enabled: None,
-            autoupgrade: None,
+            scene_cycling,
+            localization,
+            data_collection,
+            brightness_pct,
+            night_mode,
+            sound_volume_pct,
+            alarms,
+            led_enabled,
+            boot_sound_enabled,
+            autoupgrade,
             accounts,
         }
     }
@@ -768,7 +802,7 @@ impl AsMut<Config> for ConfigHandle {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]
-struct NightModeConfigData {
+pub(crate) struct NightModeConfigData {
     enabled: bool,
     from: NaiveTime,
     to: NaiveTime,
@@ -1036,7 +1070,15 @@ mod tests {
                     ]
                 }
             ],
-            "accounts": []
+            "accounts": [],
+            "brightness_pct": 30,
+            "alarms": [{
+                "id": "wake-up",
+                "enabled": true,
+                "name": "Wake up",
+                "time": "07:00:00",
+                "repeat": []
+            }]
         }"#;
         fs::write(&path, legacy)
             .await
@@ -1052,6 +1094,9 @@ mod tests {
         let on_disk = fs::read_to_string(&path).await.expect("BUG: read migrated");
         let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
         assert_eq!(v["version"], CONFIG_VERSION);
+        // Top-level settings must survive the migration to disk.
+        assert_eq!(v["brightness_pct"], 30);
+        assert_eq!(v["alarms"][0]["time"], "07:00:00");
 
         let mut saw_backup = false;
         let mut entries = fs::read_dir(dir.path()).await.expect("BUG: readdir");

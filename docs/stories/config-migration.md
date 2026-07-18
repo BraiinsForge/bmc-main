@@ -16,6 +16,8 @@ needing an entry-per-file.
 > As a user, I want my scenes and widget layouts to survive a firmware upgrade without having to re-create them.
 
 - The migration runs once on first boot of the new firmware. No prompt, no manual step.
+- Device settings survive too: alarms, night mode, brightness, sound volume, localization, scene cycling, the LED and
+  boot-sound switches, and auto-upgrade preferences all carry over unchanged.
 - Scene IDs, scene names, widget positions, and widget sizes are preserved exactly. The grid the user built still looks
   the same.
 - Widgets this firmware knows how to translate keep their settings: the clock, block height, and image widgets, plus the

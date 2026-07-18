@@ -38,7 +38,7 @@ use tracing::warn;
 use uuid::Uuid;
 
 use super::{Report, Upgrade, Version, v0};
-use crate::config::Config;
+use crate::config::{Config, MigratedSettings};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
@@ -96,13 +96,24 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
         .filter_map(|scene| upgrade_scene(scene, &mut report).map(|scene| (scene.id, scene)))
         .collect();
 
-    // The current `Config` has more fields than v0 ever knew about
-    // (localization, night mode, alarms, autoupgrade, …). Only the
-    // scene layout and accounts carry over; `from_migrated_parts`
-    // pins the schema version and lets every other field fall back to
-    // the same defaults a field-less current config would use.
+    // Top-level settings (night mode, alarms, brightness, …) kept
+    // their shape across the schema change, so each passes through a
+    // lenient re-parse into its current type. A malformed value drops
+    // that single field — never the migration.
+    let settings = MigratedSettings {
+        scene_cycling: passthrough_setting("scene_cycling", v0.scene_cycling),
+        localization: passthrough_setting("localization", v0.localization),
+        data_collection: passthrough_setting("data_collection", v0.data_collection),
+        brightness_pct: passthrough_setting("brightness_pct", v0.brightness_pct),
+        night_mode: passthrough_setting("night_mode", v0.night_mode),
+        sound_volume_pct: passthrough_setting("sound_volume_pct", v0.sound_volume_pct),
+        alarms: passthrough_setting("alarms", v0.alarms),
+        led_enabled: passthrough_setting("led_enabled", v0.led_enabled),
+        boot_sound_enabled: passthrough_setting("boot_sound_enabled", v0.boot_sound_enabled),
+        autoupgrade: passthrough_setting("autoupgrade", v0.autoupgrade),
+    };
     let accounts = deserialize_accounts_passthrough(v0.accounts);
-    let current = Config::from_migrated_parts(scenes, accounts);
+    let current = Config::from_migrated_parts(scenes, accounts, settings);
     (current, report)
 }
 
@@ -541,6 +552,32 @@ fn parse_size(size: &str) -> WidgetSize {
 
 // --- Accounts pass-through ---------------------------------------------------
 
+/// Re-parse one top-level v0 setting into its current typed form.
+/// The shape is identical on both sides so this is a validate step,
+/// not a transformation; a malformed value is logged and dropped
+/// rather than failing the whole migration. An explicit `null`
+/// counts as absent.
+fn passthrough_setting<T: serde::de::DeserializeOwned>(
+    field: &'static str,
+    raw: Option<Value>,
+) -> Option<T> {
+    let raw = raw?;
+    if raw.is_null() {
+        return None;
+    }
+    match serde_json::from_value(raw) {
+        Ok(value) => Some(value),
+        Err(err) => {
+            warn!(
+                field,
+                error = %err,
+                "legacy setting dropped: failed to parse into current schema"
+            );
+            None
+        }
+    }
+}
+
 /// Re-parse the v0 `accounts` array through the current `Account`
 /// type. The shape is identical on both sides so this is a validate
 /// step, not a transformation; any malformed entry is logged and
@@ -835,7 +872,7 @@ mod tests {
         let scene = scene_with(vec![mk_widget("mystery_widget", json!({}))]);
         let (_current, report) = upgrade_with_report(v0::Config {
             scenes: vec![scene],
-            accounts: vec![],
+            ..Default::default()
         });
         assert_eq!(report.scenes, 0, "the empty scene must not be kept");
         assert_eq!(report.dropped_scenes, 1);
@@ -847,7 +884,7 @@ mod tests {
         let scene = scene_with(vec![mk_widget("clock", json!({}))]);
         let (_current, report) = upgrade_with_report(v0::Config {
             scenes: vec![scene],
-            accounts: vec![],
+            ..Default::default()
         });
         assert_eq!(report.scenes, 1);
         assert_eq!(report.dropped_scenes, 0);
@@ -1038,11 +1075,67 @@ mod tests {
 
     #[test]
     fn upgraded_config_carries_current_version() {
-        let v0 = v0::Config {
-            scenes: vec![],
-            accounts: vec![],
-        };
+        let v0 = v0::Config::default();
         let upgraded = v0.upgrade_to_next_version();
         assert_eq!(upgraded.version, Config::VERSION);
+    }
+
+    #[test]
+    fn settings_pass_through_to_current_config() {
+        let v0: v0::Config = serde_json::from_value(json!({
+            "scenes": [],
+            "brightness_pct": 30,
+            "sound_volume_pct": 45,
+            "led_enabled": false,
+            "boot_sound_enabled": true,
+            "data_collection": false,
+            "night_mode": { "enabled": true, "from": "21:00:00", "to": "06:30:00" },
+            "alarms": [{
+                "id": "wake-up",
+                "enabled": true,
+                "name": "Wake up",
+                "time": "07:00:00",
+                "repeat": []
+            }]
+        }))
+        .expect("BUG: v0 settings fixture must parse");
+        let (current, _) = upgrade_with_report(v0);
+        let out = serde_json::to_value(&current).expect("BUG: config must serialize");
+        assert_eq!(out["brightness_pct"], 30);
+        assert_eq!(out["sound_volume_pct"], 45);
+        assert_eq!(out["led_enabled"], false);
+        assert_eq!(out["boot_sound_enabled"], true);
+        assert_eq!(out["data_collection"], false);
+        assert_eq!(out["night_mode"]["from"], "21:00:00");
+        assert_eq!(out["alarms"][0]["time"], "07:00:00");
+    }
+
+    #[test]
+    fn malformed_setting_drops_only_that_field() {
+        let v0: v0::Config = serde_json::from_value(json!({
+            "scenes": [],
+            "brightness_pct": 30,
+            "night_mode": "not-an-object"
+        }))
+        .expect("BUG: v0 fixture must parse");
+        let (current, _) = upgrade_with_report(v0);
+        let out = serde_json::to_value(&current).expect("BUG: config must serialize");
+        assert_eq!(out["brightness_pct"], 30);
+        assert!(
+            out.get("night_mode").is_none(),
+            "malformed night_mode must be dropped, not fail the migration"
+        );
+    }
+
+    #[test]
+    fn explicit_null_setting_stays_unset() {
+        let v0: v0::Config = serde_json::from_value(json!({
+            "scenes": [],
+            "brightness_pct": null
+        }))
+        .expect("BUG: v0 fixture must parse");
+        let (current, _) = upgrade_with_report(v0);
+        let out = serde_json::to_value(&current).expect("BUG: config must serialize");
+        assert!(out.get("brightness_pct").is_none());
     }
 }

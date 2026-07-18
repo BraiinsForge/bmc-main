@@ -28,7 +28,7 @@ The chain today is short (v0 → current), but the shape pays off in three ways:
    extend the `FromStr` match arm.
 
 `Config` carries a top-level `version: u32` field (`#[serde(default)]`, so v0 configs deserialise as 0). The migration
-builds the upgraded config through `Config::from_migrated_parts(scenes, accounts)`, which pins `version` to
+builds the upgraded config through `Config::from_migrated_parts(scenes, accounts, settings)`, which pins `version` to
 `CONFIG_VERSION` (currently 1); `Config::save` pins it again on every write as a belt-and-braces guard.
 
 ### Dispatch
@@ -106,6 +106,16 @@ a `clock_style` outside the enum migrates as `digital`).
 
 Drops are counted in `Report.dropped_widgets`. The scene itself always survives; only the individual widget entry
 disappears (a scene left with zero widgets is dropped and counted in `Report.dropped_scenes`).
+
+## Settings and accounts pass-through
+
+The top-level settings kept their shape across the schema change: `scene_cycling`, `localization`, `data_collection`,
+`brightness_pct`, `night_mode`, `sound_volume_pct`, `alarms`, `led_enabled`, `boot_sound_enabled`, `autoupgrade`. Each
+is carried as raw JSON in `v0::Config` and re-parsed into its current typed form during the upgrade
+(`passthrough_setting`) — a validate step, not a transformation. A value that fails the re-parse is dropped with a
+`warn!` naming the field; a single bad setting never fails the migration, and the dropped field falls back to the same
+default a field-less current config would use. Accounts go through the same lenient per-entry re-parse
+(`deserialize_accounts_passthrough`).
 
 ## Safety
 

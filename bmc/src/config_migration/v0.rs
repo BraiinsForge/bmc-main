@@ -16,7 +16,7 @@ use super::Version;
 /// Top-level v0 config. Mirrors the on-disk shape written by the
 /// old firmware (legacy path `/etc/bmc_config.json`, now relocated
 /// to `/etc/bmc/config.json` on first boot of the new firmware).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct Config {
     #[serde(default)]
     pub scenes: Vec<Scene>,
@@ -25,6 +25,20 @@ pub struct Config {
     /// unchanged.
     #[serde(default)]
     pub accounts: Vec<serde_json::Value>,
+    /// Top-level settings, also pass-through: their shapes did not
+    /// change with the widget schema. The upgrade re-parses each one
+    /// into its current typed form and drops (with a warning) any
+    /// single field that fails — never the whole migration.
+    pub scene_cycling: Option<serde_json::Value>,
+    pub localization: Option<serde_json::Value>,
+    pub data_collection: Option<serde_json::Value>,
+    pub brightness_pct: Option<serde_json::Value>,
+    pub night_mode: Option<serde_json::Value>,
+    pub sound_volume_pct: Option<serde_json::Value>,
+    pub alarms: Option<serde_json::Value>,
+    pub led_enabled: Option<serde_json::Value>,
+    pub boot_sound_enabled: Option<serde_json::Value>,
+    pub autoupgrade: Option<serde_json::Value>,
 }
 
 impl Version for Config {
