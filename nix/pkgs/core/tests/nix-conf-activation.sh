@@ -41,6 +41,8 @@ grep -F 'extra-experimental-features = nix-command flakes' "$conf" >/dev/null 2>
     || fail "restored nix.conf missing the default experimental-features line"
 grep -F 'fsync-store-paths = true' "$conf" >/dev/null 2>&1 \
     || fail "restored nix.conf missing fsync-store-paths"
+grep -F 'narinfo-cache-negative-ttl = 0' "$conf" >/dev/null 2>&1 \
+    || fail "restored nix.conf missing narinfo-cache-negative-ttl"
 
 # An existing (modified) nix.conf is left byte-for-byte untouched.
 root="$tmp/keep"
