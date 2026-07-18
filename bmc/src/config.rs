@@ -1134,4 +1134,28 @@ mod tests {
             "newer-version config must be left untouched"
         );
     }
+
+    /// On a factory-fresh device the config directory (`/etc/bmc/`)
+    /// does not exist yet and there is no file to migrate. Boot must
+    /// still write a usable default config, creating the parent
+    /// directory on the way — otherwise every later save fails with
+    /// ENOENT and settings never persist across reboots.
+    #[tokio::test]
+    async fn init_on_fresh_install_creates_dir_and_persists_default() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        // Parent directory intentionally absent, like `/etc/bmc/` on a
+        // fresh flash.
+        let path = dir.path().join("bmc").join("config.json");
+        assert!(!path.exists(), "precondition: config must not exist yet");
+
+        let handle =
+            ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+        assert_eq!(handle.config.version, CONFIG_VERSION);
+
+        let on_disk = fs::read_to_string(&path)
+            .await
+            .expect("BUG: default config must be written to a fresh path");
+        let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
+        assert_eq!(v["version"], CONFIG_VERSION);
+    }
 }

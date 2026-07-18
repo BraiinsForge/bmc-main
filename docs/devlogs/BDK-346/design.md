@@ -162,6 +162,11 @@ The runtime config and its timestamped backups live under `/etc/bmc/`:
 This is a directory-based layout so OpenWRT's `sysupgrade` can preserve everything under `/etc/bmc/` with a single
 conffile rule (the sibling change in the bos-main packaging layer adds `/etc/bmc` to the conffile set).
 
+The directory is created lazily by the config-save path itself: `crate::utils::replace_file` runs `create_dir_all` on
+the target's parent before writing. So a factory-fresh device with no `/etc/bmc/` still persists its first default
+config (and every later edit) rather than failing every save with `ENOENT`; nothing outside the binary needs to
+pre-create the directory.
+
 ### Legacy path relocation
 
 On first boot of the new firmware the old file at `/etc/bmc_config.json` is **copied** (not moved) to
