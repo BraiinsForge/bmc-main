@@ -109,6 +109,14 @@ pub fn pass_reachable(outcomes: &[EndpointOutcome]) -> bool {
     outcomes.contains(&EndpointOutcome::Ok)
 }
 
+/// Fail every still-pending (`None`) endpoint, keeping any already-reported one —
+/// so a login that can't be sent doesn't discard the `Ok` readings this pass.
+pub fn fail_pending(outcomes: &mut [Option<EndpointOutcome>]) {
+    for outcome in outcomes {
+        outcome.get_or_insert(EndpointOutcome::Failed);
+    }
+}
+
 #[cfg(target_arch = "wasm32")]
 mod driver;
 
@@ -180,6 +188,29 @@ mod tests {
         assert!(!pass_reachable(&[]));
         assert!(!pass_reachable(&[Failed, AuthFailed]));
         assert!(pass_reachable(&[Failed, Ok, Failed]));
+    }
+
+    #[test]
+    fn fail_pending_only_touches_unreported_endpoints() {
+        use EndpointOutcome::{AuthFailed, Failed, Ok};
+        let mut outcomes = vec![Some(Ok), None, Some(AuthFailed)];
+        fail_pending(&mut outcomes);
+        assert_eq!(
+            outcomes,
+            vec![Some(Ok), Some(Failed), Some(AuthFailed)],
+            "pending becomes Failed; already-reported outcomes stay",
+        );
+    }
+
+    #[test]
+    fn a_surviving_ok_keeps_the_pass_reachable_when_a_relogin_fails() {
+        use EndpointOutcome::Ok;
+        // A reauth's re-login send is rejected after an endpoint already returned
+        // Ok — the pass must stay reachable, not be recorded unreachable.
+        let mut outcomes = vec![Some(Ok), None, None];
+        fail_pending(&mut outcomes);
+        let resolved: Vec<EndpointOutcome> = outcomes.into_iter().flatten().collect();
+        assert!(pass_reachable(&resolved));
     }
 
     #[test]

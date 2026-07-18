@@ -31,7 +31,8 @@ use bmc_wasm_sdk::{
 };
 
 use super::{
-    EndpointOutcome, PassCursor, ReauthDecision, adapter_for, pass_reachable, reauth_decision,
+    EndpointOutcome, PassCursor, ReauthDecision, adapter_for, fail_pending, pass_reachable,
+    reauth_decision,
 };
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId, PollFailure, family_label};
@@ -585,11 +586,7 @@ fn on_login(id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
         // Any other answer (5xx, timeout) is transient, not a credentials problem.
         let is_auth_failure = adapter.is_auth_error(response.status) || response.ok();
         with_poller(|p| {
-            for outcome in &mut p.outcomes {
-                if outcome.is_none() {
-                    *outcome = Some(EndpointOutcome::Failed);
-                }
-            }
+            fail_pending(&mut p.outcomes);
             p.pending = 0;
             if is_auth_failure {
                 p.pass_failure = Some(PollFailure::AuthError);
@@ -795,12 +792,12 @@ fn telemetry_summary(reading: &TelemetryReading) -> String {
     parts.join(", ")
 }
 
-/// Mark every endpoint failed and finalize (used when login cannot be sent).
+/// Fail the still-pending endpoints and finalize — used when a login can't be sent.
+/// An endpoint that already returned `Ok` keeps it, so a rejected re-login
+/// doesn't discard telemetry the device sent earlier this pass.
 fn finalize_failed(id: &DeviceId) {
     with_poller(|p| {
-        for outcome in &mut p.outcomes {
-            *outcome = Some(EndpointOutcome::Failed);
-        }
+        fail_pending(&mut p.outcomes);
         p.pending = 0;
     });
     finalize_device(id);
