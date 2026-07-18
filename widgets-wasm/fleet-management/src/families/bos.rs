@@ -67,6 +67,15 @@ fn ths_from_ghs(ghs: f64) -> f32 {
 /// Browsing the subtype directly means every event on this browse is a BOS device.
 pub const BOS_SERVICE_TYPES: &[&str] = &["_bos._sub._http._tcp"];
 
+/// Whether `GET /api/v1/version` answers like BOS+ — integer `{major, minor,
+/// patch}`. Discovery fingerprints a base-type candidate with this predicate
+/// before sending credentials. Spoofable — a benign-host filter (printers,
+/// NAS), not a boundary against a host impersonating BOS.
+#[must_use]
+pub fn is_version_response(json: &dyn JsonLookup) -> bool {
+    json.i64("/major").is_some() && json.i64("/minor").is_some() && json.i64("/patch").is_some()
+}
+
 pub struct BosAdapter;
 
 impl FamilyAdapter for BosAdapter {

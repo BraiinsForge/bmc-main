@@ -147,7 +147,9 @@ fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
             if txt("/txt/family") || txt("/txt/board") {
                 ingest(&BitaxeAdapter, &doc, true);
             } else {
-                ingest(&BosAdapter, &doc, false);
+                // BOS shares `_http._tcp` with arbitrary hosts; fingerprint the host
+                // before crediting it, so root credentials never reach a non-BOS box.
+                session::probe_bos_candidate(json);
             }
         }
         // A base-type removal carries no family, so drop under both ids.
@@ -254,6 +256,13 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc, identified: bool) {
         session::on_discovered(family, is_new);
         request_frame();
     }
+}
+
+/// Ingest a BOS candidate that cleared the discovery fingerprint.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn ingest_probed_bos(json: &str) {
+    let doc = JsonDoc::parse(json.as_bytes());
+    ingest(&BosAdapter, &doc, false);
 }
 
 #[cfg(target_arch = "wasm32")]

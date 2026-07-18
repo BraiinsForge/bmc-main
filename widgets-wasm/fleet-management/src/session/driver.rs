@@ -19,7 +19,7 @@
 // the grant above.
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -35,6 +35,7 @@ use super::{
 };
 use crate::adapter::FamilyAdapter;
 use crate::device::{DeviceFamily, DeviceId, PollFailure, family_label};
+use crate::families::bos::{self, BosAdapter};
 use crate::manifest_params::Params;
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::TelemetryReading;
@@ -75,6 +76,13 @@ struct InFlight {
     device: DeviceId,
     generation: u64,
     kind: FetchKind,
+}
+
+/// A base-type BOS candidate awaiting its version fingerprint.
+/// `doc` is the original Found payload, re-ingested once the probe confirms BOS.
+struct ProbePending {
+    id: DeviceId,
+    doc: String,
 }
 
 /// The single global poller. `ring` is the current rotation snapshot;
@@ -128,6 +136,8 @@ thread_local! {
     static POLLER: RefCell<Poller> = RefCell::new(Poller::idle());
     static TOKENS: RefCell<HashMap<DeviceId, String>> = RefCell::new(HashMap::new());
     static ROUTES: RefCell<HashMap<FetchRequestId, InFlight>> = RefCell::new(HashMap::new());
+    static PROBES: RefCell<HashMap<FetchRequestId, ProbePending>> = RefCell::new(HashMap::new());
+    static PROBING: RefCell<HashSet<DeviceId>> = RefCell::new(HashSet::new());
     static PARAMS: RefCell<Rc<Params>> = RefCell::new(Rc::new(Params::current()));
 }
 
@@ -212,6 +222,70 @@ fn send(req: FetchRequest<'_>, delay_ms: u32) -> Option<FetchRequestId> {
         req.send(on_fetch)
     } else {
         req.send_after(delay_ms, on_fetch)
+    }
+}
+
+/// The unauthenticated endpoint BOS answers on the shared `_http._tcp` browse,
+/// appended to the API base — so the full probe URL is `…/api/v1/version`.
+const BOS_PROBE_ENDPOINT: &str = "/version";
+
+/// Fingerprint a base-type BOS candidate before it can be sent credentials.
+///
+/// BOS shares `_http._tcp` with arbitrary hosts, so a fresh sighting is probed
+/// over the unauthenticated `/version` endpoint and ingested only if it answers
+/// BOS-shaped; a host already in the fleet just refreshes. The gate filters
+/// benign hosts (printers, NAS) — not proof against deliberate impersonation.
+pub fn probe_bos_candidate(json: &str) {
+    let doc = bmc_wasm_sdk::JsonDoc::parse(json.as_bytes());
+    let Some(found) = BosAdapter.parse_found(&doc) else {
+        return;
+    };
+    let id = found.identity.id;
+    // A device already in the fleet was fingerprinted on first sighting; just refresh.
+    let known = crate::DEVICES.with(|d| d.borrow().iter().any(|dev| dev.identity.id == id));
+    if known {
+        crate::ingest_probed_bos(json);
+        return;
+    }
+    // One probe per candidate at a time, so re-announcements don't pile on.
+    if PROBING.with(|p| !p.borrow_mut().insert(id.clone())) {
+        return;
+    }
+    let url = fmt!(
+        "{}{}",
+        base_url(&BosAdapter, &found.identity.host, found.identity.port),
+        BOS_PROBE_ENDPOINT,
+    );
+    let sent = FetchRequest::get(&url)
+        .timeout(DEVICE_FETCH_TIMEOUT)
+        .send(on_probe);
+    if let Some(req_id) = sent {
+        PROBES.with(|r| {
+            r.borrow_mut().insert(
+                req_id,
+                ProbePending {
+                    id,
+                    doc: json.to_owned(),
+                },
+            );
+        });
+    } else {
+        PROBING.with(|p| p.borrow_mut().remove(&id));
+    }
+}
+
+fn on_probe(response: &bmc_wasm_sdk::FetchResponse) {
+    let Some(pending) = PROBES.with(|r| r.borrow_mut().remove(&response.request_id)) else {
+        return;
+    };
+    PROBING.with(|p| p.borrow_mut().remove(&pending.id));
+    if response.ok() && bos::is_version_response(&response.json()) {
+        crate::ingest_probed_bos(&pending.doc);
+    } else {
+        log_debug!(
+            "fleet: {} failed the BOS fingerprint — not sending credentials",
+            pending.id.as_str()
+        );
     }
 }
 

@@ -98,6 +98,23 @@ fn bos_sim_response_derives_the_intended_device() {
 }
 
 #[test]
+fn bos_version_response_passes_the_discovery_fingerprint() {
+    // Mirrors bos.rs: the public `GET /api/v1/version` body the widget probes.
+    let mut version = MapJson::default();
+    version.ints.insert("/major", 1);
+    version.ints.insert("/minor", 6);
+    version.ints.insert("/patch", 0);
+    assert!(
+        crate::families::bos::is_version_response(&version),
+        "the sim's version body must fingerprint as BOS",
+    );
+    assert!(
+        !crate::families::bos::is_version_response(&MapJson::default()),
+        "a bare _http._tcp responder must not pass the fingerprint",
+    );
+}
+
+#[test]
 fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
     // ubos.rs default: HashNode, 4 TH/s (4e12 H/s), 200 W (200000 mW), 65 °C,
     // uptime 187020, no API nominal.
