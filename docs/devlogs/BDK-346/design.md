@@ -139,6 +139,11 @@ On failure the boot path distinguishes two cases:
 - **Corrupt / missing.** Anything else (unreadable, invalid JSON) is backed up to `<path>.bcp` and replaced with a
   platform default, as before.
 
+The refusal holds for the whole session, not just at boot. The handle is flagged `read_only`, so a later settings change
+takes effect in memory but is not persisted (`ConfigHandle::save` short-circuits). As a backstop the write primitive
+`Config::save` re-checks `peek_version` and refuses to overwrite a newer on-disk config, so any caller — now or future —
+is prevented from clobbering it, not just the boot path.
+
 > Follow-up: the refusal path currently still boots the rest of the device on defaults rather than failing only the
 > display subsystem while keeping the web UI reachable. Splitting boot so the display alone fails on an unreadable
 > config is filed as a follow-up.

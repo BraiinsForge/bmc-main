@@ -348,6 +348,23 @@ impl Config {
     }
 
     async fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
+        let path = path.as_ref();
+
+        // Never clobber a config that declares a newer schema than this
+        // firmware understands — a newer firmware may have written it,
+        // and downgrading must leave it intact to roll forward or
+        // restore. The boot path already refuses such a config (see
+        // `ConfigHandle::read_only`); this guards every other caller and
+        // any future one, keeping the invariant on the write primitive.
+        if let Ok(raw) = fs::read_to_string(path).await
+            && crate::config_migration::peek_version(&raw).is_some_and(|v| v > CONFIG_VERSION)
+        {
+            bail!(
+                "refusing to overwrite on-disk config declaring a newer schema \
+                 (found version > {CONFIG_VERSION})"
+            );
+        }
+
         // Belt-and-braces: every on-disk config carries the current
         // schema version. Constructors already set it, but a caller
         // could mutate `self.version` directly — pin it here.
@@ -464,6 +481,12 @@ pub struct ConfigHandle {
     path: PathBuf,
     config: Config,
     config_notify: ConfigNotify,
+    /// Set when boot refused to overwrite an on-disk config declaring a
+    /// newer schema than this firmware understands. While set, saves
+    /// take effect in memory for the running session but are never
+    /// persisted, so the newer file the user can roll forward to (or
+    /// restore) is left intact. See [`Self::recover_from_failed_load`].
+    read_only: bool,
     localization_dirty: bool,
     night_mode_schedule_dirty: bool,
     led_settings_dirty: bool,
@@ -475,6 +498,17 @@ pub struct ConfigHandle {
     default_night_mode_brightness_pct: u8,
     default_sound_volume_pct: u8,
     default_night_mode_sound_volume_pct: u8,
+}
+
+/// Outcome of [`ConfigHandle::recover_from_failed_load`]: the config to
+/// run with, plus whether the on-disk file must be treated as read-only.
+enum Recovery {
+    /// File was corrupt or missing; replaced with a platform default
+    /// that may be persisted normally.
+    Replaced(Config),
+    /// File declares a newer schema than this firmware understands; run
+    /// on in-memory defaults but never overwrite the file.
+    RefusedNewer(Config),
 }
 
 impl ConfigHandle {
@@ -496,9 +530,10 @@ impl ConfigHandle {
     /// understands must never be overwritten — a newer firmware may
     /// have written it, and the user can roll forward or restore a
     /// backup. In that case keep in-memory defaults but leave the file
-    /// intact. Any other failure means the file is corrupt or missing:
-    /// back it up (if present) and replace it with a platform default.
-    async fn recover_from_failed_load(path: &Path, product: bmc_platform::Product) -> Config {
+    /// intact ([`Recovery::RefusedNewer`]). Any other failure means the
+    /// file is corrupt or missing: back it up (if present) and replace
+    /// it with a platform default ([`Recovery::Replaced`]).
+    async fn recover_from_failed_load(path: &Path, product: bmc_platform::Product) -> Recovery {
         if let Ok(raw) = fs::read_to_string(path).await
             && crate::config_migration::peek_version(&raw).is_some_and(|v| v > CONFIG_VERSION)
         {
@@ -509,7 +544,7 @@ impl ConfigHandle {
                  refusing to overwrite it. Using in-memory defaults — restore a \
                  `.backup.<ts>` copy or update the firmware to recover the saved config."
             );
-            return Config::platform_default(product);
+            return Recovery::RefusedNewer(Config::platform_default(product));
         }
 
         warn!("Replacing unreadable config with default config");
@@ -529,7 +564,7 @@ impl ConfigHandle {
         if let Err(err) = default_config.save(path).await {
             warn!(?err, "Failed to save default config");
         }
-        default_config
+        Recovery::Replaced(default_config)
     }
 
     pub async fn init(
@@ -544,11 +579,14 @@ impl ConfigHandle {
         // `version: 0` config in place (backing it up first) and, from
         // then on, is a cheap no-op for already-current configs. See
         // `crate::config_migration`.
-        let config = match Self::load_migrate_validate(&path).await {
-            Ok(config) => config,
+        let (config, read_only) = match Self::load_migrate_validate(&path).await {
+            Ok(config) => (config, false),
             Err(err) => {
                 warn!(?err, "Failed to load or migrate config");
-                Self::recover_from_failed_load(&path, product).await
+                match Self::recover_from_failed_load(&path, product).await {
+                    Recovery::Replaced(config) => (config, false),
+                    Recovery::RefusedNewer(config) => (config, true),
+                }
             }
         };
 
@@ -556,6 +594,7 @@ impl ConfigHandle {
             path,
             config,
             config_notify: ConfigNotify::new(),
+            read_only,
             localization_dirty: false,
             night_mode_schedule_dirty: false,
             led_settings_dirty: false,
@@ -640,6 +679,17 @@ impl ConfigHandle {
             let timeout = self.night_mode().screen_off_timeout_secs;
             self.config_notify.screen_off_timeout_changed(timeout);
             self.screen_off_timeout_dirty = false;
+        }
+
+        // The in-memory notifications above still fire so the running
+        // session reflects the change, but a config refused at boot (a
+        // newer on-disk schema) must never be persisted over. Skip the
+        // write; `Config::save` would refuse it anyway, but short-
+        // circuiting here keeps this from surfacing as an error to every
+        // settings caller.
+        if self.read_only {
+            warn!("config is read-only (newer on-disk schema); skipping persist");
+            return Ok(());
         }
 
         self.config.save(&self.path).await?;
@@ -1157,5 +1207,60 @@ mod tests {
             .expect("BUG: default config must be written to a fresh path");
         let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
         assert_eq!(v["version"], CONFIG_VERSION);
+    }
+
+    /// The boot-time refusal must survive the first runtime save: a
+    /// handle that fell back to defaults over a newer on-disk config is
+    /// marked read-only, so a later settings change takes effect in
+    /// memory but never persists over the newer file (finding 3, part
+    /// A — the handle flag).
+    #[tokio::test]
+    async fn read_only_handle_does_not_persist_over_newer_config() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let newer = format!(r#"{{"version":{},"scenes":[]}}"#, CONFIG_VERSION + 1);
+        fs::write(&path, &newer)
+            .await
+            .expect("BUG: seed newer file");
+
+        let mut handle =
+            ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+        assert!(handle.read_only, "newer-config boot must be read-only");
+
+        // A normal settings change followed by a save must not touch
+        // the file.
+        handle.set_brightness(80);
+        handle.save().await.expect("BUG: read-only save must be Ok");
+        assert_eq!(
+            handle.brightness_pct(),
+            80,
+            "change still applies in memory"
+        );
+
+        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
+        assert_eq!(on_disk, newer, "newer-version config must stay untouched");
+    }
+
+    /// The write primitive itself refuses to overwrite a newer on-disk
+    /// config, guarding every caller regardless of the handle flag
+    /// (finding 3, part B — the backstop invariant).
+    #[tokio::test]
+    async fn config_save_refuses_to_overwrite_newer_on_disk() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let newer = format!(r#"{{"version":{},"scenes":[]}}"#, CONFIG_VERSION + 1);
+        fs::write(&path, &newer)
+            .await
+            .expect("BUG: seed newer file");
+
+        let mut config = Config::platform_default(bmc_platform::Product::Bmc100);
+        let result = config.save(&path).await;
+        assert!(
+            result.is_err(),
+            "Config::save must refuse a newer on-disk config"
+        );
+
+        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
+        assert_eq!(on_disk, newer, "the newer file must be left intact");
     }
 }
