@@ -31,19 +31,36 @@ pub(crate) fn manual_identity(
     if trimmed.is_empty() {
         return None;
     }
-    let (host, port) = match trimmed.rsplit_once(':') {
-        Some((host, suffix)) => {
+    let (host, port) = if trimmed.starts_with('[') {
+        // A bracketed IPv6 literal: `[addr]` takes the family default port,
+        // `[addr]:port` its own. Unclosed or empty brackets are unusable.
+        let (addr, tail) = trimmed.split_once(']')?;
+        if addr.len() == 1 {
+            return None;
+        }
+        let host = trimmed.split_inclusive(']').next()?;
+        if tail.is_empty() {
+            (host, default_port)
+        } else {
+            let suffix = tail.strip_prefix(':')?;
             let port = suffix.parse::<u16>().ok().filter(|p| *p != 0)?;
             (host, port)
         }
-        None => (trimmed, default_port),
+    } else {
+        match trimmed.rsplit_once(':') {
+            Some((host, suffix)) => {
+                let port = suffix.parse::<u16>().ok().filter(|p| *p != 0)?;
+                (host, port)
+            }
+            None => (trimmed, default_port),
+        }
     };
     if host.is_empty() {
         return None;
     }
     // A colon left in `host` is an ambiguous bare IPv6 literal: `fe80::1` would
     // mis-split into host `fe80:` / port `1` and resolve to a wrong endpoint.
-    // Require bracket notation (`[fe80::1]:80`) rather than accepting that.
+    // Require bracket notation rather than accepting that.
     if host.contains(':') && !host.starts_with('[') {
         return None;
     }
@@ -168,6 +185,11 @@ mod tests {
             "host:",
             ":8080",
             "fe80::1",
+            "[fe80::1",
+            "[]",
+            "[fe80::1]8080",
+            "[fe80::1]:0",
+            "[fe80::1]:",
         ] {
             assert!(bos_manual(bad).is_none(), "must reject {bad:?}");
         }
@@ -179,6 +201,14 @@ mod tests {
             .expect("BUG: a bracketed IPv6 literal with a port must be accepted");
         assert_eq!(id.host, "[fe80::1]");
         assert_eq!(id.port, 8080);
+    }
+
+    #[test]
+    fn accepts_bare_bracketed_ipv6_with_default_port() {
+        let id = bos_manual("[fe80::1]")
+            .expect("BUG: a bare bracketed IPv6 literal must take the default port");
+        assert_eq!(id.host, "[fe80::1]");
+        assert_eq!(id.port, 80);
     }
 
     #[test]
