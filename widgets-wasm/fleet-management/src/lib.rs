@@ -82,17 +82,24 @@ thread_local! {
     static HISTORY: RefCell<history::HashrateHistory> =
         RefCell::new(history::HashrateHistory::default());
     static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
+    static DERIVE_ELAPSED_MS: Cell<u32> = const { Cell::new(0) };
 }
 
 /// Coalescing window for display refreshes.
-/// Each device's poll bumps the devices sequence, so re-deriving per poll
-/// re-folds the whole fleet N times a round; batching updates into one render
-/// per window makes that once a window instead.
+/// Each device's poll bumps the devices sequence, so re-deriving
+/// per poll re-folds the whole fleet N times a round; batching updates
+/// into one render per window makes that once a window instead.
 ///
 /// Aggregates drift slowly (a device is re-polled only once a round),
 /// so the sub-second lag is imperceptible.
 #[cfg(target_arch = "wasm32")]
 const DISPLAY_COALESCE_MS: u32 = 500;
+
+/// Cadence for the fleet fold (summarize + history), decoupled from render
+/// and poll `seq` bumps. The ~90-device fold is costly, so renders between
+/// ticks read a cached snapshot instead of re-folding.
+#[cfg(target_arch = "wasm32")]
+const DERIVE_INTERVAL_MS: u32 = 1_000;
 
 /// Request a coalesced display refresh: a no-op while one
 /// is already scheduled, so a burst of device updates costs
@@ -363,18 +370,32 @@ fn no_credentials(fleet_name: &str) -> Option<screens::no_credentials::NoCredent
     clippy::too_many_lines,
     reason = "the render entry orchestrates derive, view dispatch, and click routing"
 )]
-pub extern "C" fn render(_delta_ms: u32) {
+pub extern "C" fn render(delta_ms: u32) {
     // Any render serves a pending coalesced refresh; re-arm only on the next update.
     DISPLAY_FRAME_PENDING.with(|p| p.set(false));
     let WidgetSize { width, height, .. } = widget_size();
     let seq = DEVICES.with(|d| d.borrow().seq());
     let params_version = bmc_wasm_sdk::params::version();
+    let elapsed = DERIVE_ELAPSED_MS.with(|e| {
+        let acc = e.get().saturating_add(delta_ms);
+        e.set(acc);
+        acc
+    });
     DERIVED.with(|cell| {
         let mut cell = cell.borrow_mut();
-        let stale = cell
-            .as_ref()
-            .is_none_or(|d| d.devices_seq != seq || d.params_version != params_version);
+        // The fold runs on its own interval, not per render,
+        // so poll `seq` churn no longer re-folds the whole fleet every frame.
+        // The first frame and params changes still derive immediately.
+        let stale = match cell.as_ref() {
+            None => true,
+            Some(d) => {
+                d.params_version != params_version
+                    || (d.devices_seq != seq && elapsed >= DERIVE_INTERVAL_MS)
+            }
+        };
+
         if stale {
+            DERIVE_ELAPSED_MS.with(|e| e.set(0));
             let params = manifest_params::Params::current();
             let filters = filter::Filters {
                 axeos_enabled: params.axeos_enabled,

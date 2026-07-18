@@ -3,6 +3,8 @@
 //! mDNS announcement: advertise a resource so widgets discover it.
 
 use std::net::{Ipv4Addr, UdpSocket};
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::Duration;
 
 use anyhow::Result;
 use mdns_sd::{ServiceDaemon, ServiceInfo};
@@ -15,9 +17,29 @@ pub trait Announcer {
     fn announce(&self, name: &str, port: u16, spec: &AnnounceSpec) -> Result<()>;
 }
 
-/// mDNS/DNS-SD announcer backed by a shared `mdns-sd` daemon.
+/// Per-service offset within a re-announcement cycle, so the fleet
+/// re-announces as a drizzle of small packets rather than one burst.
+const REANNOUNCE_STAGGER: Duration = Duration::from_millis(100);
+
+/// The re-announcement period of each service.
+const REANNOUNCE_PERIOD: Duration = Duration::from_secs(50);
+
+/// mDNS/DNS-SD announcer with one `mdns-sd` daemon per announced service.
+///
+/// A shared daemon answers a type query with all matching instances
+/// in one aggregated response; at fleet scale that fragments,
+/// and fragmented multicast rarely survives WiFi
+/// (Deck 2026-07-18: a 90-device fleet was undiscoverable by query,
+/// while per-service announcements got through).
+/// Real devices are independent responders with small answers;
+/// a daemon per service simulates exactly that.
+/// Each service also re-announces periodically,
+/// so a browser that missed a response still hears
+/// each device's own small unsolicited announcements.
 pub struct MdnsAnnouncer {
-    daemon: ServiceDaemon,
+    /// Services announced so far — each one's re-announce schedule offset.
+    /// `u32` for the `Duration` multiplier.
+    announced: AtomicU32,
     /// The one LAN IPv4 to advertise.
     ///
     /// `enable_addr_auto` otherwise lists every interface (docker/veth/loopback),
@@ -35,12 +57,25 @@ impl std::fmt::Debug for MdnsAnnouncer {
 }
 
 impl MdnsAnnouncer {
-    /// Start the background mDNS daemon.
+    /// Create the announcer.
     pub fn new() -> Result<Self> {
         Ok(Self {
-            daemon: ServiceDaemon::new()?,
+            announced: AtomicU32::new(0),
             lan_ip: primary_lan_ipv4(),
         })
+    }
+}
+
+/// Re-register the service each period, staggered by its ordinal;
+/// `register` of an already-registered service re-announces it.
+async fn reannounce(daemon: ServiceDaemon, info: ServiceInfo, ordinal: u32) {
+    tokio::time::sleep(REANNOUNCE_PERIOD + REANNOUNCE_STAGGER * ordinal).await;
+    let mut tick = tokio::time::interval(REANNOUNCE_PERIOD);
+    loop {
+        tick.tick().await;
+        if let Err(err) = daemon.register(info.clone()) {
+            tracing::warn!("mDNS re-announce of {} failed: {err}", info.get_fullname());
+        }
     }
 }
 
@@ -82,7 +117,10 @@ impl Announcer for MdnsAnnouncer {
             None => ServiceInfo::new(&ty_domain, name, &host_name, "", port, &props[..])?
                 .enable_addr_auto(),
         };
-        self.daemon.register(info)?;
+        let daemon = ServiceDaemon::new()?;
+        daemon.register(info.clone())?;
+        let ordinal = self.announced.fetch_add(1, Ordering::Relaxed);
+        tokio::spawn(reannounce(daemon, info, ordinal));
         tracing::debug!(name = %name, ty = %ty_domain, port, "registered mDNS service");
         Ok(())
     }

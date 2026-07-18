@@ -35,6 +35,7 @@ pub(in crate::runtime) fn mdns_browse_thread(
     event_tx: std::sync::mpsc::Sender<MdnsEvent>,
     stop_rx: std::sync::mpsc::Receiver<()>,
 ) {
+    tracing::debug!("mDNS browse requested: {service_types:?}");
     let Some(hub) = mdns_hub() else {
         return;
     };
@@ -61,11 +62,53 @@ struct HubInner {
     daemon: mdns_sd::ServiceDaemon,
     monitor: mdns_sd::Receiver<mdns_sd::DaemonEvent>,
     types: std::collections::HashMap<String, TypeSubscribers>,
+    /// Age of the current daemon and whether it has resolved anything on it yet;
+    /// together they drive the startup watchdog in [`MdnsHub::pump_once`].
+    created: Instant,
+    resolved_any: bool,
+    /// Consecutive watchdog recreates with nothing resolved yet.
+    watchdog_recreates: usize,
+    /// Raw daemon events since the last (re)create, resolved or not.
+    /// Zero in a degraded stretch means multicast never arrives;
+    /// nonzero means packets land but resolution fails — different fixes.
+    events_heard: usize,
 }
 
 struct TypeSubscribers {
     events: mdns_sd::Receiver<mdns_sd::ServiceEvent>,
     subscribers: Vec<(u64, std::sync::mpsc::Sender<MdnsEvent>)>,
+    /// When this type's browse first started; survives daemon recreates
+    /// so the first-resolution latency is measured from the original browse.
+    started: Instant,
+    first_resolved: bool,
+    /// One complaint per boot once the type stays silent past the grace,
+    /// so a per-type deafness shows up even while other types resolve.
+    silent_warned: bool,
+}
+
+/// Grace a freshly (re)created daemon gets to resolve
+/// something before the watchdog recreates it.
+///
+/// A restart onto an already-up network can bind sockets
+/// that never receive multicast, with no `IpAdd` to trigger
+/// a recreate; a fresh daemon past the old process's teardown
+/// rebinds cleanly — the recovery a killall respawn gives
+/// (Deck 2026-07-18: killall recovers, a bare restart does not).
+///
+/// Long enough that a healthy start always resolves well within it.
+const DAEMON_DISCOVERY_GRACE: Duration = Duration::from_secs(8);
+
+/// Ceiling for the watchdog's backed-off grace between recreates.
+const WATCHDOG_GRACE_CAP: Duration = Duration::from_secs(300);
+
+/// The grace before the watchdog's next recreate: [`DAEMON_DISCOVERY_GRACE`]
+/// doubled per fruitless attempt, capped at [`WATCHDOG_GRACE_CAP`] —
+/// so a legitimately empty network settles into one recreate per cap period
+/// instead of churning and warning every few seconds forever.
+fn watchdog_grace(fruitless_attempts: usize) -> Duration {
+    DAEMON_DISCOVERY_GRACE
+        .saturating_mul(1 << fruitless_attempts.min(6))
+        .min(WATCHDOG_GRACE_CAP)
 }
 
 impl MdnsHub {
@@ -79,13 +122,20 @@ impl MdnsHub {
         let inner = &mut *guard;
         for st in service_types {
             match inner.types.entry(st.clone()) {
-                Entry::Occupied(mut e) => e.get_mut().subscribers.push((id, tx.clone())),
+                Entry::Occupied(mut e) => {
+                    e.get_mut().subscribers.push((id, tx.clone()));
+                    tracing::debug!("mDNS: subscriber {id} joined the {st} browse");
+                }
                 Entry::Vacant(e) => match inner.daemon.browse(st) {
                     Ok(events) => {
                         e.insert(TypeSubscribers {
                             events,
                             subscribers: vec![(id, tx.clone())],
+                            started: Instant::now(),
+                            first_resolved: false,
+                            silent_warned: false,
                         });
+                        tracing::info!("mDNS: browse started for {st} (subscriber {id})");
                     }
                     Err(err) => tracing::error!("mDNS browse({st}) failed: {err}"),
                 },
@@ -113,8 +163,11 @@ impl MdnsHub {
     }
 
     /// Drain every type's daemon events and fan each out to its subscribers,
-    /// dropping any whose receiver has hung up and reaping a type once its last
-    /// subscriber is gone. An interface coming up recreates the daemon first.
+    /// dropping any whose receiver has hung up and reaping a type once
+    /// its last subscriber is gone.
+    ///
+    /// Recreate the daemon when an interface comes up, or when a fresh one
+    /// has resolved nothing within [`DAEMON_DISCOVERY_GRACE`].
     fn pump_once(&self) {
         let mut guard = self.inner.lock().expect("BUG: mDNS hub mutex poisoned");
         let inner = &mut *guard;
@@ -129,25 +182,87 @@ impl MdnsHub {
             interface_added |= matches!(event, mdns_sd::DaemonEvent::IpAdd(_));
         }
         if interface_added {
+            // A new interface is a changed network — retry eagerly again.
+            inner.watchdog_recreates = 0;
             inner.recreate_daemon();
+            tracing::info!("mDNS: recreated the daemon after an interface came up");
         }
 
+        let mut resolved = false;
+        let mut events_heard = 0;
         let mut drained = Vec::new();
         for (st, subs) in &mut inner.types {
             while let Ok(event) = subs.events.try_recv() {
+                events_heard += 1;
                 let Some(msg) = to_mdns_event(event) else {
                     continue;
                 };
+                if matches!(msg, MdnsEvent::Found(_)) {
+                    resolved = true;
+                    if !subs.first_resolved {
+                        subs.first_resolved = true;
+                        tracing::info!(
+                            "mDNS: first resolution on {st} {:.1}s after its browse started",
+                            subs.started.elapsed().as_secs_f32()
+                        );
+                    }
+                }
                 subs.subscribers
                     .retain(|(_, tx)| tx.send(msg.clone()).is_ok());
+            }
+            // A type staying silent while others resolve — the daemon watchdog
+            // below can't see it. DEBUG not WARN: in the field an absent family
+            // (no such miners) is silent the same way, so it isn't an alarm.
+            if !subs.first_resolved
+                && !subs.silent_warned
+                && subs.started.elapsed() >= DAEMON_DISCOVERY_GRACE
+            {
+                subs.silent_warned = true;
+                tracing::debug!(
+                    "mDNS: no resolution on {st} within {}s of its browse — deaf to \
+                     this type while others resolve; suspect fragmented responses \
+                     or responder loss",
+                    DAEMON_DISCOVERY_GRACE.as_secs()
+                );
             }
             if subs.subscribers.is_empty() {
                 drained.push(st.clone());
             }
         }
+        inner.events_heard += events_heard;
         for st in drained {
             let _ = inner.daemon.stop_browse(&st);
             inner.types.remove(&st);
+        }
+        inner.resolved_any |= resolved;
+
+        // Log the recovery too, so the degraded stretch has a visible end.
+        if resolved && inner.watchdog_recreates > 0 {
+            tracing::warn!(
+                "mDNS: discovery recovered after {} watchdog recreate(s)",
+                inner.watchdog_recreates
+            );
+            inner.watchdog_recreates = 0;
+        }
+
+        // A restart onto an already-up network draws no `IpAdd`, yet its daemon
+        // can still have bound dead sockets. If nothing resolves while types
+        // are subscribed, recreate once the grace passes; a killall recovers it
+        // too, just coarser. WARN not INFO: a daemon that binds but never hears
+        // is otherwise invisible.
+        let grace = watchdog_grace(inner.watchdog_recreates);
+        if !inner.resolved_any && !inner.types.is_empty() && inner.created.elapsed() >= grace {
+            inner.watchdog_recreates += 1;
+            let attempt = inner.watchdog_recreates;
+            let heard = inner.events_heard;
+            inner.recreate_daemon();
+            tracing::warn!(
+                "mDNS watchdog: nothing resolved in {}s ({heard} raw events heard), \
+                 recreated the daemon (attempt {attempt}, next in {}s); if this \
+                 repeats, discovery is degraded — check the network and the responders",
+                grace.as_secs(),
+                watchdog_grace(attempt).as_secs()
+            );
         }
     }
 }
@@ -183,7 +298,8 @@ impl HubInner {
 
     /// Replace the daemon with a fresh one and re-browse every subscribed type,
     /// so a daemon that bound before the network was up rebinds correctly.
-    /// Subscriber lists are kept; only the daemon-side handles move.
+    /// Subscriber lists are kept; only the daemon-side handles move. The caller
+    /// does the logging: reason and severity differ by path.
     fn recreate_daemon(&mut self) {
         let Some((daemon, monitor)) = Self::spawn_daemon() else {
             return;
@@ -196,8 +312,10 @@ impl HubInner {
         }
         let old = std::mem::replace(&mut self.daemon, daemon);
         self.monitor = monitor;
+        self.created = Instant::now();
+        self.resolved_any = false;
+        self.events_heard = 0;
         let _ = old.shutdown();
-        tracing::info!("mDNS daemon recreated after an interface came up");
     }
 }
 
@@ -255,11 +373,16 @@ fn mdns_hub() -> Option<&'static MdnsHub> {
     let hub = HUB
         .get_or_init(|| {
             let (daemon, monitor) = HubInner::spawn_daemon()?;
+            tracing::info!("mDNS hub created");
             Some(MdnsHub {
                 inner: std::sync::Mutex::new(HubInner {
                     daemon,
                     monitor,
                     types: std::collections::HashMap::new(),
+                    created: Instant::now(),
+                    resolved_any: false,
+                    watchdog_recreates: 0,
+                    events_heard: 0,
                 }),
                 next_id: std::sync::atomic::AtomicU64::new(0),
             })
@@ -594,4 +717,18 @@ fn ssdp_fetch_description(location: &str) -> Option<String> {
     );
 
     Some(json)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn watchdog_grace_doubles_to_the_cap() {
+        assert_eq!(watchdog_grace(0), Duration::from_secs(8));
+        assert_eq!(watchdog_grace(1), Duration::from_secs(16));
+        assert_eq!(watchdog_grace(5), Duration::from_secs(256));
+        assert_eq!(watchdog_grace(6), WATCHDOG_GRACE_CAP);
+        assert_eq!(watchdog_grace(usize::MAX), WATCHDOG_GRACE_CAP);
+    }
 }

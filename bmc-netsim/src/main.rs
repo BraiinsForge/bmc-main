@@ -3,11 +3,14 @@
 //! `bmc-netsim` entry point: run a blueprint of device instances
 //! loaded from disk, or emit the blueprint JSON schema for authoring.
 
+use std::fmt;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use tracing_subscriber::fmt::FormatFields;
+use tracing_subscriber::fmt::format::Writer;
 
 use bmc_netsim::blueprint::Blueprint;
 
@@ -29,10 +32,66 @@ enum Command {
     Schema,
 }
 
+/// Field formatting that tints `key=` so the dense fleet lines scan by eye:
+/// the message prints plain, keys cyan, values unquoted. ANSI only when the
+/// writer supports it (TTY), so piped output stays clean.
+struct KvFields;
+
+struct KvVisitor<'a, 'w> {
+    writer: &'a mut Writer<'w>,
+    result: fmt::Result,
+}
+
+impl KvVisitor<'_, '_> {
+    fn record(&mut self, field: &tracing::field::Field, value: &dyn fmt::Display) {
+        if self.result.is_err() {
+            return;
+        }
+        self.result = if field.name() == "message" {
+            write!(self.writer, "{value}")
+        } else if self.writer.has_ansi_escapes() {
+            write!(
+                self.writer,
+                " \x1b[36m{}=\x1b[92m{value}\x1b[0m",
+                field.name()
+            )
+        } else {
+            write!(self.writer, " {}={value}", field.name())
+        };
+    }
+}
+
+impl tracing::field::Visit for KvVisitor<'_, '_> {
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn fmt::Debug) {
+        self.record(field, &format_args!("{value:?}"));
+    }
+
+    // Bare, not `Debug`-quoted.
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.record(field, &value);
+    }
+}
+
+impl<'w> FormatFields<'w> for KvFields {
+    fn format_fields<R: tracing_subscriber::field::RecordFields>(
+        &self,
+        mut writer: Writer<'w>,
+        fields: R,
+    ) -> fmt::Result {
+        let mut visitor = KvVisitor {
+            writer: &mut writer,
+            result: Ok(()),
+        };
+        fields.record(&mut visitor);
+        visitor.result
+    }
+}
+
 #[tokio::main]
 async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
+        .fmt_fields(KvFields)
         .init();
     match run().await {
         Ok(()) => ExitCode::SUCCESS,
