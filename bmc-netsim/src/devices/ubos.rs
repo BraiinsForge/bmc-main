@@ -1,6 +1,6 @@
 // Copyright (C) 2026  Braiins Systems s.r.o.
 
-//! uBOS profile (HashNode / "Braiins Forge Miner x4"). Announces the full
+//! uBOS profile (Braiins Forge Miner x4). Announces the full
 //! `_ubos._tcp` type and serves `GET /api/info` in uBOS units (raw H/s, mW).
 //!
 //! Shape follows the uBOS `/api/info` response as consumed
@@ -22,7 +22,7 @@ use serde_json::json;
 use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec};
 use crate::build::{celsius, drift, leaf};
 
-/// Tunables for a simulated uBOS HashNode.
+/// Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(default)]
 #[schemars(rename = "UbosParams")]
@@ -44,9 +44,9 @@ pub struct Params {
 impl Default for Params {
     fn default() -> Self {
         Self {
-            model_name: "HashNode".to_owned(),
-            hashrate_ths: 4.0,
-            power_w: 200.0,
+            model_name: "Braiins Forge Miner x4".to_owned(),
+            hashrate_ths: 4.8,
+            power_w: 76.0,
             temp_c: 65.0,
             uptime_s: 187_020,
             status: 200,

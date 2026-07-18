@@ -37,14 +37,14 @@
       "default_value": "root"
     },
     "ubos_username": {
-      "name": "uBOS username",
-      "description": "User name used for HTTP Basic auth against every uBOS device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
+      "name": "Braiins OS Libre username",
+      "description": "User name used for HTTP Basic auth against every Braiins OS Libre device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
       "type": "string",
       "default_value": "root"
     },
     "ubos_password": {
-      "name": "uBOS password",
-      "description": "Password used for HTTP Basic auth against every uBOS device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
+      "name": "Braiins OS Libre password",
+      "description": "Password used for HTTP Basic auth against every Braiins OS Libre device on the network. Stored as plain text and sent unencrypted over the local network (the device APIs are HTTP-only).",
       "type": "string",
       "default_value": "root"
     },

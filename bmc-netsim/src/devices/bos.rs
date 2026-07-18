@@ -56,10 +56,10 @@ pub struct Params {
 impl Default for Params {
     fn default() -> Self {
         Self {
-            model_name: "BMM 101".to_owned(),
-            hashrate_ths: 100.0,
-            nominal_ths: 100.0,
-            power_w: 3_250.0,
+            model_name: "Braiins Mini Miner BMM 101".to_owned(),
+            hashrate_ths: 1.0,
+            nominal_ths: 1.0,
+            power_w: 32.0,
             temp_c: 65.0,
             uptime_s: 187_020,
             status: 200,

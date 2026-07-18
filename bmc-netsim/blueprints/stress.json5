@@ -9,26 +9,26 @@
     {
         count: 30,
         device: "bos",
-        label: "Healthy BMM 101 fleet",
+        label: "Healthy Braiins Mini Miner BMM 101 fleet",
     },
 
     {
         count: 10,
         device: "bos",
         label: "Stragglers mining <20% of nominal → not-okay",
-        params: { model_name: "BMM 101", hashrate_ths: 8 }
+        params: { model_name: "Braiins Mini Miner BMM 101", hashrate_ths: 0.15 }
       },
 
     {
         count: 20,
-        device: "ubos",
+        device: "bos-libre",
         label: "Healthy Braiins Forge Miner x4 fleet",
-        params: { model_name: "Braiins Forge Miner x4", hashrate_ths: 4.2, power_w: 195, temp_c: 62 }
+        params: { model_name: "Braiins Forge Miner x4", hashrate_ths: 4.2, power_w: 70, temp_c: 62 }
     },
 
     {
         count: 10,
-        device: "ubos",
+        device: "bos-libre",
         label: "Present over mDNS but API 503s → identified, API-error status",
         params: { status: 503 }
     },

@@ -3,8 +3,9 @@
 The fleet management widget gives an at-a-glance view of every Bitcoin miner on the local network, and lets the operator
 drill from the whole-fleet overview down to a single miner. It discovers miners over mDNS, polls each one for live
 telemetry, and rolls the readings up into a fleet total, a per-model breakdown, and a per-device detail view. It
-supports three device families — BOS, uBOS, and AxeOS (Bitaxe / NerdQAxe++) — and each family is independently
-discovered, authenticated, polled, and toggled, so one family failing or being disabled never blanks another's numbers.
+supports three device families — BOS, Braiins OS Libre, and AxeOS (Bitaxe / NerdQAxe++) — and each family is
+independently discovered, authenticated, polled, and toggled, so one family failing or being disabled never blanks
+another's numbers.
 
 ## User stories
 
@@ -45,7 +46,8 @@ discovered, authenticated, polled, and toggled, so one family failing or being d
 
 - The list view shows one row per resolved model name, each with that model's hashrate, a hashrate sparkline, power,
   efficiency, average temperature, and its OK/degraded/off counts.
-- Groups are ordered by family — uBOS first, then BOS, then Bitaxe — and alphabetically by model name within a family.
+- Groups are ordered by family — Braiins OS Libre first, then BOS, then Bitaxe — and alphabetically by model name within
+  a family.
 - Miners whose model cannot be resolved collect into a single *Unknown* group, pinned last.
 - The table pages when the model list is longer than the body height.
 
@@ -93,19 +95,21 @@ discovered, authenticated, polled, and toggled, so one family failing or being d
 > that family on the network.
 
 - *BOS password* is the `root` password used to log into every BOS miner; the username is always `root`.
-- *uBOS username* and *uBOS password* are the HTTP Basic credentials used against every uBOS device.
+- *Braiins OS Libre username* and *Braiins OS Libre password* are the HTTP Basic credentials used against every Braiins
+  OS Libre device.
 - AxeOS miners need no credentials.
-- Credentials are shared fleet-wide per family — one BOS password and one uBOS login for the whole network, not a
-  per-device setting.
+- Credentials are shared fleet-wide per family — one BOS password and one Braiins OS Libre login for the whole network,
+  not a per-device setting.
 
 ### Reach miners that mDNS does not find
 
 > As an operator on a segmented or quiet network, I want to name miners by address so the widget polls them even when
 > mDNS discovery does not surface them.
 
-- *BOS hosts*, *uBOS hosts*, and *AxeOS hosts* are each a JSON array of extra hosts to poll, beyond mDNS discovery.
+- *BOS hosts*, *Braiins OS Libre hosts*, and *AxeOS hosts* are each a JSON array of extra hosts to poll, beyond mDNS
+  discovery.
 - Each entry is `host` or `host:port` (e.g. `["10.0.0.5", "miner.local:8080"]`); a bare host uses the family's default
-  port (80 for BOS and AxeOS, 8080 for uBOS). IPv6 literals use bracket notation with an explicit port (e.g.
+  port (80 for BOS and AxeOS, 8080 for Braiins OS Libre). IPv6 literals use bracket notation with an explicit port (e.g.
   `[fe80::1]:80`).
 - A host found both manually and via mDNS appears twice in the fleet.
 - Editing a host param reconciles the manual set live: added hosts start polling, removed hosts stop and drop their
@@ -128,8 +132,8 @@ discovered, authenticated, polled, and toggled, so one family failing or being d
 
 > As an operator, I want to switch a device family off so the widget ignores it entirely.
 
-- *Show BOS miners*, *Show uBOS miners*, and *Show AxeOS miners* each include their family in the view and keep polling
-  it; turning one off hides every device of that family and stops polling them.
+- *Show BOS miners*, *Show Braiins OS Libre miners*, and *Show AxeOS miners* each include their family in the view and
+  keep polling it; turning one off hides every device of that family and stops polling them.
 - mDNS discovery keeps running for a disabled family, so re-enabling it resumes polling the already-discovered devices
   without re-discovery.
 
@@ -160,24 +164,24 @@ discovered, authenticated, polled, and toggled, so one family failing or being d
 
 ## Supported families
 
-| Family | Display label | mDNS browse  | Default port | API base      | Auth                                                   |
-| ------ | ------------- | ------------ | ------------ | ------------- | ------------------------------------------------------ |
-| BOS    | BOS           | `_http._tcp` | 80           | `/api/v1`     | token login at `/auth/login` (`root` + *BOS password*) |
-| uBOS   | uBOS          | `_ubos._tcp` | 8080         | `/api`        | HTTP Basic (*uBOS username* / *uBOS password*)         |
-| AxeOS  | Bitaxe        | `_http._tcp` | 80           | `/api/system` | none                                                   |
+| Family           | Display label    | mDNS browse  | Default port | API base      | Auth                                                                   |
+| ---------------- | ---------------- | ------------ | ------------ | ------------- | ---------------------------------------------------------------------- |
+| BOS              | BOS              | `_http._tcp` | 80           | `/api/v1`     | token login at `/auth/login` (`root` + *BOS password*)                 |
+| Braiins OS Libre | Braiins OS Libre | `_ubos._tcp` | 8080         | `/api`        | HTTP Basic (*Braiins OS Libre username* / *Braiins OS Libre password*) |
+| AxeOS            | Bitaxe           | `_http._tcp` | 80           | `/api/system` | none                                                                   |
 
-- **Discovery.** The widget runs two mDNS browses: the base `_http._tcp` service (BOS and AxeOS share it) and uBOS's own
-  `_ubos._tcp`. On `_http._tcp`, AxeOS is identified up front by its discovery TXT records; a BOS miner carries no
-  distinguishing signal there, so it enters as a *candidate* and is only admitted to the report once it answers a poll —
-  a non-miner web server is probed a few times and then dropped. uBOS is identified directly by its own service type. A
-  miner that advertises neither browsed type, or sits on a network segment mDNS does not reach, is added by address
-  through the *hosts* params.
+- **Discovery.** The widget runs two mDNS browses: the base `_http._tcp` service (BOS and AxeOS share it) and Braiins OS
+  Libre's own `_ubos._tcp`. On `_http._tcp`, AxeOS is identified up front by its discovery TXT records; a BOS miner
+  carries no distinguishing signal there, so it enters as a *candidate* and is only admitted to the report once it
+  answers a poll — a non-miner web server is probed a few times and then dropped. Braiins OS Libre is identified
+  directly by its own service type. A miner that advertises neither browsed type, or sits on a network segment mDNS does
+  not reach, is added by address through the *hosts* params.
 - **BOS** (Braiins OS) miners are polled across three endpoints: `/miner/stats` (hashrate and power),
   `/miner/hw/hashboards` (the hottest chip temperature and the chip type/count), and `/miner/details` (uptime, platform,
   nominal hashrate, and miner model). A `401`/`403` triggers one re-authentication per device per pass.
-- **uBOS** devices expose a single `/info` endpoint carrying hashrate, power, temperature, and uptime. uBOS advertises
-  no platform identifier and no nominal hashrate, so its product name doubles as the model grouping and its nameplate
-  hashrate comes from the built-in model catalog.
+- **Braiins OS Libre** devices expose a single `/info` endpoint carrying hashrate, power, temperature, and uptime.
+  Braiins OS Libre advertises no platform identifier and no nominal hashrate, so its product name doubles as the model
+  grouping and its nameplate hashrate comes from the built-in model catalog.
 - **AxeOS** miners — Bitaxe and NerdQAxe++ running ESP-Miner — expose a single `/info` endpoint carrying hashrate,
   power, temperature, uptime, and nominal hashrate. The model is resolved from `deviceModel` (falling back to the board
   version), with chip type and count from `ASICModel`/`asicCount`; discovery TXT records also seed a provisional model
@@ -187,21 +191,21 @@ discovered, authenticated, polled, and toggled, so one family failing or being d
 
 All parameters are manifest-driven widget settings, configurable from the web UI.
 
-| Key               | Name              | Type    | Default    | Purpose                                                                    |
-| ----------------- | ----------------- | ------- | ---------- | -------------------------------------------------------------------------- |
-| `fleet_name`      | Fleet name        | string  | `My Fleet` | Heading shown above the fleet overview.                                    |
-| `device_names`    | Device names      | string  | `{}`       | JSON object mapping a device mDNS name or manual host to a friendly label. |
-| `bos_password`    | BOS password      | string  | `root`     | Root password used to log into every BOS miner on the network.             |
-| `ubos_username`   | uBOS username     | string  | `root`     | User name for HTTP Basic auth against every uBOS device.                   |
-| `ubos_password`   | uBOS password     | string  | `root`     | Password for HTTP Basic auth against every uBOS device.                    |
-| `model_whitelist` | Shown models      | string  | `[]`       | JSON array of model-name fragments to show; empty shows all.               |
-| `model_blacklist` | Hidden models     | string  | `[]`       | JSON array of model-name fragments to hide.                                |
-| `bos_enabled`     | Show BOS miners   | boolean | `true`     | Include BOS miners in the view and keep polling them.                      |
-| `ubos_enabled`    | Show uBOS miners  | boolean | `true`     | Include uBOS devices in the view and keep polling them.                    |
-| `axeos_enabled`   | Show AxeOS miners | boolean | `true`     | Include AxeOS miners in the view and keep polling them.                    |
-| `bos_hosts`       | BOS hosts         | string  | `[]`       | JSON array of extra BOS hosts to poll beyond mDNS; `host` or `host:port`.  |
-| `ubos_hosts`      | uBOS hosts        | string  | `[]`       | JSON array of extra uBOS hosts to poll beyond mDNS.                        |
-| `axeos_hosts`     | AxeOS hosts       | string  | `[]`       | JSON array of extra AxeOS hosts to poll beyond mDNS.                       |
+| Key               | Name                         | Type    | Default    | Purpose                                                                    |
+| ----------------- | ---------------------------- | ------- | ---------- | -------------------------------------------------------------------------- |
+| `fleet_name`      | Fleet name                   | string  | `My Fleet` | Heading shown above the fleet overview.                                    |
+| `device_names`    | Device names                 | string  | `{}`       | JSON object mapping a device mDNS name or manual host to a friendly label. |
+| `bos_password`    | BOS password                 | string  | `root`     | Root password used to log into every BOS miner on the network.             |
+| `ubos_username`   | Braiins OS Libre username    | string  | `root`     | User name for HTTP Basic auth against every Braiins OS Libre device.       |
+| `ubos_password`   | Braiins OS Libre password    | string  | `root`     | Password for HTTP Basic auth against every Braiins OS Libre device.        |
+| `model_whitelist` | Shown models                 | string  | `[]`       | JSON array of model-name fragments to show; empty shows all.               |
+| `model_blacklist` | Hidden models                | string  | `[]`       | JSON array of model-name fragments to hide.                                |
+| `bos_enabled`     | Show BOS miners              | boolean | `true`     | Include BOS miners in the view and keep polling them.                      |
+| `ubos_enabled`    | Show Braiins OS Libre miners | boolean | `true`     | Include Braiins OS Libre devices in the view and keep polling them.        |
+| `axeos_enabled`   | Show AxeOS miners            | boolean | `true`     | Include AxeOS miners in the view and keep polling them.                    |
+| `bos_hosts`       | BOS hosts                    | string  | `[]`       | JSON array of extra BOS hosts to poll beyond mDNS; `host` or `host:port`.  |
+| `ubos_hosts`      | Braiins OS Libre hosts       | string  | `[]`       | JSON array of extra Braiins OS Libre hosts to poll beyond mDNS.            |
+| `axeos_hosts`     | AxeOS hosts                  | string  | `[]`       | JSON array of extra AxeOS hosts to poll beyond mDNS.                       |
 
 ## Constraints
 
@@ -210,9 +214,9 @@ All parameters are manifest-driven widget settings, configurable from the web UI
 - Every device across all families is polled on a single global round-robin, one device at a time, aiming to refresh the
   whole fleet roughly every 5 seconds — bounded by a floor on the per-device poll rate, so a large fleet's freshness
   degrades gracefully rather than the box drowning in parallel requests.
-- The *BOS password*, *uBOS username*, and *uBOS password* are stored and shown as ordinary widget text (the manifest
-  system has no secret-parameter type yet) and are sent unencrypted over the local network, since the miner APIs are
-  HTTP-only. This is a known limitation.
+- The *BOS password*, *Braiins OS Libre username*, and *Braiins OS Libre password* are stored and shown as ordinary
+  widget text (the manifest system has no secret-parameter type yet) and are sent unencrypted over the local network,
+  since the miner APIs are HTTP-only. This is a known limitation.
 - Credentials are shared fleet-wide per family; the widget cannot use different credentials for individual miners of the
   same family.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.

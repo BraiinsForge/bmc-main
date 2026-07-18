@@ -17,8 +17,8 @@ use bmc_wasm_sdk::Temperature;
 
 #[test]
 fn bos_sim_response_derives_the_intended_device() {
-    // bos.rs default: BMM 101, 100 TH/s, sticker 100 TH/s, 3250 W, 65 °C,
-    // uptime 187020, two BM1370 boards (76 chips) spread, MAC on details.
+    // bos.rs default: Braiins Mini Miner BMM 101, 1 TH/s, sticker 1 TH/s, 32 W,
+    // 65 °C, uptime 187020, two BM1370 boards (76 chips) spread, MAC on details.
     let mut found = MapJson::default();
     found.strings.insert("/service_type", "_http._tcp.local.");
     found.strings.insert("/name", "bos-01._http._tcp.local.");
@@ -33,11 +33,11 @@ fn bos_sim_response_derives_the_intended_device() {
     let mut stats = MapJson::default();
     stats.floats.insert(
         "/miner_stats/real_hashrate/last_1m/gigahash_per_second",
-        100_000.0,
+        1_000.0,
     );
     stats
         .floats
-        .insert("/power_stats/approximated_consumption/watt", 3_250.0);
+        .insert("/power_stats/approximated_consumption/watt", 32.0);
     let mut boards = MapJson::default();
     boards
         .floats
@@ -55,22 +55,18 @@ fn bos_sim_response_derives_the_intended_device() {
     details.strings.insert("/mac_address", "02:AB:CD:EF:01:23");
     details
         .strings
-        .insert("/miner_identity/miner_model", "BMM 101");
+        .insert("/miner_identity/miner_model", "Braiins Mini Miner BMM 101");
     details
         .floats
-        .insert("/sticker_hashrate/gigahash_per_second", 100_000.0);
+        .insert("/sticker_hashrate/gigahash_per_second", 1_000.0);
 
     let mut reading = TelemetryReading::default();
     BosAdapter.parse_telemetry("/miner/stats", &stats, &mut reading);
     BosAdapter.parse_telemetry("/miner/hw/hashboards", &boards, &mut reading);
     BosAdapter.parse_telemetry("/miner/details", &details, &mut reading);
-    assert_eq!(reading.current_hashrate_ths, Some(100.0));
-    assert_eq!(
-        reading.nominal_hashrate_ths,
-        Some(100.0),
-        "sticker_hashrate"
-    );
-    assert_eq!(reading.power_w, Some(3_250.0));
+    assert_eq!(reading.current_hashrate_ths, Some(1.0));
+    assert_eq!(reading.nominal_hashrate_ths, Some(1.0), "sticker_hashrate");
+    assert_eq!(reading.power_w, Some(32.0));
     assert_eq!(
         reading.temperature,
         Some(DeviceTemp::Spread {
@@ -88,7 +84,7 @@ fn bos_sim_response_derives_the_intended_device() {
     BosAdapter.parse_model("/miner/details", &details, &mut acc);
     let model = acc.into_model().expect("BUG: BOS model must materialize");
     assert_eq!(model.id, "stm32mp157c-ii2-bmm1");
-    assert_eq!(model.name, "BMM 101");
+    assert_eq!(model.name, "Braiins Mini Miner BMM 101");
     assert_eq!(model.chip_type.as_deref(), Some("BM1370"));
     assert_eq!(model.chip_count, Some(152));
     assert_eq!(
@@ -116,11 +112,13 @@ fn bos_version_response_passes_the_discovery_fingerprint() {
 
 #[test]
 fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
-    // ubos.rs default: HashNode, 4 TH/s (4e12 H/s), 200 W (200000 mW), 65 °C,
-    // uptime 187020, no API nominal.
+    // ubos.rs default: Braiins Forge Miner x4, 4.8 TH/s (4.8e12 H/s),
+    // 76 W (76000 mW), 65 °C, uptime 187020, no API nominal.
     let mut found = MapJson::default();
     found.strings.insert("/service_type", "_ubos._tcp.local.");
-    found.strings.insert("/name", "ubos-01._ubos._tcp.local.");
+    found
+        .strings
+        .insert("/name", "bos-libre-01._ubos._tcp.local.");
     found.strings.insert("/host", "10.0.0.6");
     found.ints.insert("/port", 8080);
     let discovered = UbosAdapter
@@ -129,20 +127,20 @@ fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
     assert_eq!(discovered.identity.family, DeviceFamily::Ubos);
 
     let mut info = MapJson::default();
-    info.strings.insert("/name", "HashNode");
-    info.floats.insert("/hashrate", 4e12);
-    info.floats.insert("/power_out_mw", 200_000.0);
+    info.strings.insert("/name", "Braiins Forge Miner x4");
+    info.floats.insert("/hashrate", 4.8e12);
+    info.floats.insert("/power_out_mw", 76_000.0);
     info.floats.insert("/temperature", 65.0);
     info.ints.insert("/uptime", 187_020);
 
     let mut reading = TelemetryReading::default();
     UbosAdapter.parse_telemetry("/info", &info, &mut reading);
-    assert_eq!(reading.current_hashrate_ths, Some(4.0));
+    assert_eq!(reading.current_hashrate_ths, Some(4.8));
     assert_eq!(
         reading.nominal_hashrate_ths, None,
         "uBOS API reports no nominal"
     );
-    assert_eq!(reading.power_w, Some(200.0));
+    assert_eq!(reading.power_w, Some(76.0));
     assert_eq!(
         reading.temperature,
         Some(DeviceTemp::Single(Temperature::from_celsius(65.0))),
@@ -154,7 +152,7 @@ fn ubos_sim_response_derives_the_intended_device_with_catalog_nominal() {
     let mut acc = ModelAccumulator::default();
     UbosAdapter.parse_model("/info", &info, &mut acc);
     let model = acc.into_model().expect("BUG: uBOS model must materialize");
-    assert_eq!(model.name, "HashNode");
+    assert_eq!(model.name, "Braiins Forge Miner x4");
     assert_eq!(
         model.nominal_hashrate_ths,
         Some(4.8),

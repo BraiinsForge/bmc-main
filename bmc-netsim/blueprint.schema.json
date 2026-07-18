@@ -82,24 +82,24 @@
           "description": "Current hashrate to hover around, in TH/s (low value = not-okay).",
           "type": "number",
           "format": "double",
-          "default": 100.0
+          "default": 1.0
         },
         "model_name": {
           "description": "Model name reported on `/miner/details`.",
           "type": "string",
-          "default": "BMM 101"
+          "default": "Braiins Mini Miner BMM 101"
         },
         "nominal_ths": {
           "description": "Nameplate (`sticker_hashrate`) hashrate, in TH/s.",
           "type": "number",
           "format": "double",
-          "default": 100.0
+          "default": 1.0
         },
         "power_w": {
           "description": "Power draw to hover around, in W.",
           "type": "number",
           "format": "double",
-          "default": 3250.0
+          "default": 32.0
         },
         "status": {
           "description": "HTTP status the telemetry endpoints return (503 = present, unreadable).",
@@ -167,7 +167,7 @@
             },
             "device": {
               "type": "string",
-              "const": "ubos"
+              "const": "bos-libre"
             },
             "label": {
               "description": "Human label describing this entry's scenario, shown in the readout.",
@@ -217,25 +217,25 @@
       ]
     },
     "UbosParams": {
-      "description": "Tunables for a simulated uBOS HashNode.",
+      "description": "Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).",
       "type": "object",
       "properties": {
         "hashrate_ths": {
           "description": "Current hashrate to hover around, in TH/s.",
           "type": "number",
           "format": "double",
-          "default": 4.0
+          "default": 4.8
         },
         "model_name": {
           "description": "Product name reported on `/api/info`.",
           "type": "string",
-          "default": "HashNode"
+          "default": "Braiins Forge Miner x4"
         },
         "power_w": {
           "description": "Power draw to hover around, in W.",
           "type": "number",
           "format": "double",
-          "default": 200.0
+          "default": 76.0
         },
         "status": {
           "description": "HTTP status the telemetry endpoint returns (503 = present, unreadable).",

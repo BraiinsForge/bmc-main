@@ -45,9 +45,9 @@ A blueprint is JSON5, loaded from disk: a list of device instances. Each names a
 {
   "$schema": "../blueprint.schema.json",
   instances: [
-    { device: "bos", count: 3 },                              // a healthy BMM 101 fleet
-    { device: "bos", count: 1, params: { hashrate_ths: 8 } }, // degraded: under 20% of nominal
-    { device: "ubos", params: { status: 503 } },              // present over mDNS, API fails
+    { device: "bos", count: 3 },                                    // a healthy Braiins Mini Miner BMM 101 fleet
+    { device: "bos", count: 1, params: { hashrate_ths: 0.15 } },    // degraded: under 20% of nominal
+    { device: "bos-libre", params: { status: 503 } },               // present over mDNS, API fails
     { device: "axeos", count: 2 },
   ],
 }
@@ -72,11 +72,11 @@ drifts around `hashrate_ths`.
 
 ## Devices
 
-| `device` | mDNS service                   | endpoints                                                                     |
-| -------- | ------------------------------ | ----------------------------------------------------------------------------- |
-| `bos`    | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details}` |
-| `ubos`   | `_ubos._tcp`                   | `/api/info`                                                                   |
-| `axeos`  | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                            |
+| `device`    | mDNS service                   | endpoints                                                                     |
+| ----------- | ------------------------------ | ----------------------------------------------------------------------------- |
+| `bos`       | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details}` |
+| `bos-libre` | `_ubos._tcp`                   | `/api/info`                                                                   |
+| `axeos`     | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                            |
 
 Each device's params — `model_name`, `hashrate_ths`, `power_w`, `temp_c`, `uptime_s`, `status` — live in its module and
 appear in the schema under `BosParams` / `UbosParams` / `AxeosParams`.

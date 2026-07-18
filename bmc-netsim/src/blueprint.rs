@@ -36,6 +36,8 @@ pub enum Instance {
         #[serde(default = "one")]
         count: usize,
     },
+    // Braiins OS Libre is the product name; only the Rust side keeps uBOS.
+    #[serde(rename = "bos-libre")]
     Ubos {
         /// Human label describing this entry's scenario, shown in the readout.
         #[serde(default)]
@@ -61,12 +63,13 @@ fn one() -> usize {
 }
 
 impl Instance {
-    /// The device key, used for naming and logging.
+    /// The device key, as written in the blueprint. Doubles as the announced
+    /// hostname prefix, so it must stay hostname-safe.
     #[must_use]
     pub fn key(&self) -> &'static str {
         match self {
             Instance::Bos { .. } => "bos",
-            Instance::Ubos { .. } => "ubos",
+            Instance::Ubos { .. } => "bos-libre",
             Instance::Axeos { .. } => "axeos",
         }
     }
