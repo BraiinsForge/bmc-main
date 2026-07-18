@@ -50,6 +50,8 @@ pub enum Knob {
         value: f32,
         min: f32,
         max: f32,
+        /// Snap increment; 0.0 for a continuous slider.
+        step: f32,
     },
     Toggle {
         label: String,
@@ -827,8 +829,25 @@ impl StoryCtx {
         TextKnob { index: idx, value }
     }
 
-    /// Slider knob (f32 value).
+    /// Slider knob (continuous f32 value).
     pub fn slider(&mut self, label: &str, default: f32, min: f32, max: f32) -> SliderKnob {
+        self.slider_with_step(label, default, min, max, 0.0)
+    }
+
+    /// Integer slider knob — snaps to whole numbers,
+    /// so the value and its displayed label stay integral.
+    pub fn int_slider(&mut self, label: &str, default: f32, min: f32, max: f32) -> SliderKnob {
+        self.slider_with_step(label, default, min, max, 1.0)
+    }
+
+    fn slider_with_step(
+        &mut self,
+        label: &str,
+        default: f32,
+        min: f32,
+        max: f32,
+        step: f32,
+    ) -> SliderKnob {
         let idx = self.cursor;
         self.cursor += 1;
         if let Some(Knob::Slider {
@@ -850,6 +869,7 @@ impl StoryCtx {
             value: default,
             min,
             max,
+            step,
         };
         if idx < self.knobs.len() {
             self.knobs[idx] = new_knob;

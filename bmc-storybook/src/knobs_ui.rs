@@ -54,6 +54,31 @@ pub fn render_knobs_ui(ctx: &mut StoryCtx, ui: &mut egui::Ui) -> bool {
     changed
 }
 
+/// Decimal places a step needs for its slider label (`1` → 0, `0.1` → 1,
+/// `0.01` → 2). Iterated, not `ceil(-log10)`: f32 rounding makes `log10(0.01)`
+/// ≈ -2.0000001, so `ceil` would give a wrong 3.
+fn step_decimals(step: f32) -> usize {
+    let mut decimals = 0;
+    let mut scaled = f64::from(step);
+    while decimals < 8 && (scaled - scaled.round()).abs() > 1e-6 {
+        scaled *= 10.0;
+        decimals += 1;
+    }
+    decimals
+}
+
+/// Render a slider (stepped when `step > 0`) and report whether it changed.
+fn slider_ui(ui: &mut egui::Ui, value: &mut f32, min: f32, max: f32, step: f32) -> bool {
+    let mut slider = egui::Slider::new(value, min..=max);
+    if step > 0.0 {
+        // egui shows two decimals by default; match the step so "5" isn't "5.00".
+        slider = slider
+            .step_by(f64::from(step))
+            .max_decimals(step_decimals(step));
+    }
+    ui.add(slider).changed()
+}
+
 /// Render a single knob in the grid. Returns `true` if the value changed.
 fn render_knob(ui: &mut egui::Ui, knob: &mut Knob, first: bool, prev_was_group: bool) -> bool {
     let mut changed = false;
@@ -90,9 +115,10 @@ fn render_knob(ui: &mut egui::Ui, knob: &mut Knob, first: bool, prev_was_group: 
             value,
             min,
             max,
+            step,
         } => {
             ui.label(label.as_str());
-            changed = ui.add(egui::Slider::new(value, *min..=*max)).changed();
+            changed = slider_ui(ui, value, *min, *max, *step);
         }
         Knob::Toggle { label, value } => {
             // Make the label itself clickable so the user can hit either
