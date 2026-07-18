@@ -377,7 +377,7 @@ ufmt = { version = "0.2", features = ["std"] }
 ureq = "3"
 url = { version = "2.5.4", features = ["serde"] }
 usvg = "0.45"
-uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4", "v5"] }
+uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
 walkdir = "2.5.0"
 wasmi = "1.0"
