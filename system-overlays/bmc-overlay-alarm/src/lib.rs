@@ -8,6 +8,7 @@
 //! are sent back over the same protocol.
 
 use std::time::Instant;
+use std::vec;
 
 use bmc_render::colors::{BLACK, Color, GRAY_30, ORANGE_30, ORANGE_40, ORANGE_50, WHITE};
 use bmc_render::renderer::Renderer;
@@ -200,6 +201,74 @@ fn background_rings(background_size: (u32, u32)) -> TreeNode {
     }
 }
 
+/// Build the time row: the large time text with an inline AM/PM marker
+/// vertically centred against it in 12-hour mode. In 24-hour mode
+/// (`view.period` empty) the row is just the time text.
+fn build_time_row(view: &AlarmView) -> TreeNode {
+    let time_font_size: u16 = 200;
+    let time_node = text(
+        view.time.clone(),
+        TextStyle {
+            size: u32::from(time_font_size),
+            color: WHITE,
+            weight: FontWeight::REGULAR,
+            align: TextAlign::Center,
+            family: FontFamily::DeckSans,
+            line_height: 1.0,
+            ..Default::default()
+        },
+    );
+
+    let children = if view.period.is_empty() {
+        vec![time_node]
+    } else {
+        // 12-hour mode: the AM/PM marker sits smaller to the right of the
+        // time, vertically centred against it — same arrangement as the
+        // clock widget.
+        let period_text_size: u16 = 40;
+        let period_slot_w = f32::from(period_text_size) * 2.4;
+        let period_text = text(
+            view.period.clone(),
+            TextStyle {
+                size: u32::from(period_text_size),
+                color: ORANGE_30,
+                weight: FontWeight::REGULAR,
+                align: TextAlign::Center,
+                line_height: 1.0,
+                ..Default::default()
+            },
+        );
+
+        let period_lift = f32::from(period_text_size);
+        let period_slot = col(
+            PropsData {
+                width: period_slot_w,
+                cross_align: CrossAlign::Start,
+                ..Default::default()
+            },
+            [period_text, fixed_height(period_lift)],
+        );
+        let left_padding = col(
+            PropsData {
+                width: period_slot_w,
+                ..Default::default()
+            },
+            [],
+        );
+
+        vec![left_padding, time_node, period_slot]
+    };
+
+    row(
+        PropsData {
+            gap: 16.0,
+            cross_align: CrossAlign::Center,
+            ..Default::default()
+        },
+        children,
+    )
+}
+
 #[must_use]
 pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
     // Fall back to a generic name for an unlabelled alarm so the screen never
@@ -222,43 +291,7 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
         },
     );
 
-    let mut time_row_children = vec![text(
-        view.time.clone(),
-        TextStyle {
-            size: 200,
-            color: WHITE,
-            weight: FontWeight::REGULAR,
-            align: TextAlign::Center,
-            family: FontFamily::DeckSans,
-            line_height: 1.0,
-            ..Default::default()
-        },
-    )];
-    if !view.period.is_empty() {
-        // 12-hour mode: the AM/PM marker sits smaller to the right of the
-        // time, bottom-aligned toward its baseline — same arrangement as the
-        // clock widget.
-        time_row_children.push(text(
-            view.period.clone(),
-            TextStyle {
-                size: 64,
-                color: WHITE,
-                weight: FontWeight::REGULAR,
-                align: TextAlign::Center,
-                family: FontFamily::DeckSans,
-                line_height: 1.0,
-                ..Default::default()
-            },
-        ));
-    }
-    let time_node = row(
-        PropsData {
-            gap: 16.0,
-            cross_align: CrossAlign::End,
-            ..Default::default()
-        },
-        time_row_children,
-    );
+    let time_row = build_time_row(view);
 
     let mut buttons = vec![alarm_button(
         STOP_ALARM_KEY,
@@ -295,7 +328,7 @@ pub fn build_alarm_ui_tree(view: &AlarmView, size: (u32, u32)) -> TreeNode {
             fixed_height(62.0),
             label_node,
             fixed_height(32.0),
-            time_node,
+            time_row,
             buttons_row,
         ],
     )
