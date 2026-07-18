@@ -106,7 +106,13 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
         "download-stall",
     ):
         monkeypatch.setitem(faults._DRIVERS, sid, lambda _ctx, sid=sid: calls.append(sid))
-    monkeypatch.setattr(faults, "_flash_good_init", lambda _ctx: calls.append("finale"))
+    # The fake finale mimics the real contract: _flash_good_init closes the
+    # quiesced window on its way out (after the reboot revives mDNS).
+    monkeypatch.setattr(
+        faults,
+        "_flash_good_init",
+        lambda ctx: (calls.append("finale"), setattr(ctx, "quiesced_pin", None)),
+    )
     # Pin must happen BEFORE the cleardown: the cleardown's quiesce kills the
     # mDNS name, so the whole group runs on the numeric handle pinned first.
     monkeypatch.setattr(faults.catalog, "pin_device_address", lambda *_a, **_k: calls.append("pin"))
@@ -135,6 +141,33 @@ def test_a_group_runs_scenarios_in_pinned_order(monkeypatch) -> None:
         "finale",
     ]
     assert fake_ctx.quiesced_pin is None  # the window is closed after the group
+
+
+def test_a_group_failure_leaves_the_quiesced_pin_for_cleanup(monkeypatch) -> None:
+    """A failure inside the quiesced window (avahi stopped, mDNS dead until
+    the finale's reboot) must leave the numeric pin set: the outer cleanup —
+    the servers.json restore included — runs on it, and against the dead
+    name it would degrade to 'cleanup failed' exactly when it matters."""
+    monkeypatch.setattr(faults.catalog, "pin_device_address", lambda *_a, **_k: None)
+    pinned = object()
+    monkeypatch.setattr(faults, "_pinned", lambda _ctx: pinned)
+
+    def dying_cleardown(*_a, **_k) -> None:
+        raise Abort("cleardown died")
+
+    monkeypatch.setattr(faults.catalog, "clear_nix_store", dying_cleardown)
+    fake_ctx = cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=object(),
+            yes=True,
+            run=types.SimpleNamespace(device_mutated=False),
+            quiesced_pin=None,
+        ),
+    )
+    with pytest.raises(Abort, match="cleardown died"):
+        faults._group_a(fake_ctx)
+    assert fake_ctx.quiesced_pin is pinned  # the outer cleanup can still reach the device
 
 
 def test_b_group_order_and_recovery_wrapper(monkeypatch) -> None:
@@ -192,8 +225,12 @@ def test_b_recovery_failure_names_the_manual_fallback(monkeypatch) -> None:
     def failing(_ctx) -> None:
         raise Abort("original")
 
+    ctx = _b_recovery_ctx()
     with pytest.raises(Abort, match="init --wipe"):
-        faults._with_b_recovery(cast("faults._Ctx", _b_recovery_ctx()), failing)
+        faults._with_b_recovery(cast("faults._Ctx", ctx), failing)
+    # A failed recovery leaves the device quiesced with mDNS dead — the pin
+    # must survive so the outer cleanup can still reach it.
+    assert ctx.quiesced_pin is not None
 
 
 def _b_recovery_ctx() -> types.SimpleNamespace:
@@ -210,11 +247,16 @@ def test_b_recovery_reuses_the_already_pinned_handle(monkeypatch) -> None:
     """Recovery fires with the device quiesced (mDNS possibly dead), so the
     recovery flash must reuse the numeric handle the failed scenario already
     pinned rather than re-resolve the name. _with_b_recovery hands
-    _flash_good_init a live quiesced_pin, then closes the window."""
+    _flash_good_init a live quiesced_pin; the finale closes the window
+    itself once the reboot revives mDNS (mimicked by the fake)."""
     pinned = object()
     seen: list[object] = []
     monkeypatch.setattr(faults, "_pinned", lambda _ctx: pinned)
-    monkeypatch.setattr(faults, "_flash_good_init", lambda ctx: seen.append(ctx.quiesced_pin))
+    monkeypatch.setattr(
+        faults,
+        "_flash_good_init",
+        lambda ctx: (seen.append(ctx.quiesced_pin), setattr(ctx, "quiesced_pin", None)),
+    )
     ctx = types.SimpleNamespace(
         dev=types.SimpleNamespace(host="deck.local"),
         run=types.SimpleNamespace(pinned_host="10.0.0.5"),
@@ -236,6 +278,7 @@ def _dry_routes(sha_a: str) -> _Respond:
     and — via the empty default — an absent store and download artifact."""
     board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
     outputs = {
+        "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
         "ubus call system board": board,
         "MemAvailable": "999999999",
         "dd bs=64": "64",
@@ -288,6 +331,7 @@ def _staged_dry_routes(sha_a: str) -> _Respond:
     require_staged_once (which unsigned-feed never does)."""
     board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
     outputs = {
+        "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
         "ubus call system board": board,
         "MemAvailable": "999999999",
         "dd bs=64": "64",
@@ -339,6 +383,148 @@ def test_staged_once_dry_run_skips_the_capture_check(tmp_path: Path) -> None:
         dry_run.reset(token)
     cmds = [argv[-1] for argv in exc.runs]
     assert not any(c.startswith("sysupgrade ") for c in cmds)  # flash logged, not run
+
+
+def _run_with_cleanup_stubs(
+    monkeypatch,
+    tmp_path: Path,
+    driver,
+    restore,
+    seen: dict[str, tuple],
+) -> None:
+    """Run the procedure with the preamble and cleanup stages stubbed out
+    (recorded in `seen` by name → positional args), a fake scenario driver,
+    and a controllable restore_server_registry."""
+    for fn in (
+        "ensure_device_reachable",
+        "capture_server_registry",
+        "validate_firmware_image",
+        "validate_e2e_inputs",
+        "build_e2e_artifacts",
+        "build_nix_cli",
+        "assemble_rig",
+        "preflight_rig",
+        "cleanup_e2e_marker",
+        "sweep_uploaded_images",
+        "sweep_shm_upload",
+        "cleanup_remote_artifacts",
+        "start_compositor",
+    ):
+        monkeypatch.setattr(faults.catalog, fn, lambda *a, fn=fn, **_k: seen.setdefault(fn, a))
+    monkeypatch.setattr(faults.catalog, "restore_server_registry", restore)
+    monkeypatch.setitem(faults._DRIVERS, "unsigned-feed", driver)
+    image_a = _e2e_image(tmp_path, name="a.tar", version="va")
+    image_b = _e2e_image(tmp_path, name="b.tar", version="vb")
+    board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
+
+    def respond(argv: list[str]):
+        return _cp(argv, board if "ubus call system board" in argv[-1] else "")
+
+    dev = Device("127.0.0.1", backend=_Exec(respond))
+    E2eSysupgradeFaults(
+        device="127.0.0.1",
+        image_a=image_a.path,
+        image_b=image_b.path,
+        scenario="unsigned-feed",
+        serve_ip="127.0.0.1",
+        yes=True,
+    ).run(
+        dev=dev,
+        backend=_e2e_nix(tmp_path),
+        make_device=lambda _h: dev,
+        make_server=_local_server,
+    )
+
+
+def test_cleanup_restore_failure_fails_a_successful_run(monkeypatch, tmp_path: Path) -> None:
+    """On an otherwise-successful run a failed servers.json restore leaves
+    the device registered against the about-to-die rig — best-effort
+    swallowing would report success anyway. With no primary failure to
+    preserve, the restore failure must fail the run."""
+
+    def driver(ctx) -> None:
+        ctx.run.device_mutated = True
+
+    def restore(*_a, **_k) -> None:
+        raise Abort("registry restore failed")
+
+    with pytest.raises(Abort, match="registry restore failed"):
+        _run_with_cleanup_stubs(monkeypatch, tmp_path, driver, restore, {})
+
+
+def test_cleanup_restore_failure_never_masks_the_scenario_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """When the scenario itself failed, that failure is the diagnosis — a
+    restore failure on top must stay best-effort (logged, not raised)."""
+
+    def driver(ctx) -> None:
+        ctx.run.device_mutated = True
+        raise Abort("scenario failed")
+
+    def restore(*_a, **_k) -> None:
+        raise Abort("registry restore failed")
+
+    with pytest.raises(Abort, match="scenario failed"):
+        _run_with_cleanup_stubs(monkeypatch, tmp_path, driver, restore, {})
+
+
+def test_cleanup_stays_strict_inside_a_caller_except_block(monkeypatch, tmp_path: Path) -> None:
+    """The strict-vs-best-effort split keys on the run's own failure, not
+    on sys.exc_info: invoked from inside a caller's except block (a live
+    handled exception), a successful run must still treat a restore
+    failure as fatal rather than degrade to best-effort."""
+
+    def driver(ctx) -> None:
+        ctx.run.device_mutated = True
+
+    def restore(*_a, **_k) -> None:
+        raise Abort("registry restore failed")
+
+    try:
+        raise RuntimeError("caller's handled exception")
+    except RuntimeError:
+        with pytest.raises(Abort, match="registry restore failed"):
+            _run_with_cleanup_stubs(monkeypatch, tmp_path, driver, restore, {})
+
+
+def test_cleanup_runs_on_the_quiesced_pin_after_a_window_failure(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """A failure inside a quiesced window (mDNS dead until a reboot) must
+    route every cleanup stage through the surviving numeric pin, not the
+    dead name the run was invoked with."""
+    pin = Device("10.0.0.99", backend=_Exec(_cp))  # never printed: no board route needed
+    seen: dict[str, tuple] = {}
+    restores: list[object] = []
+
+    def driver(ctx) -> None:
+        ctx.run.device_mutated = True
+        ctx.quiesced_pin = pin
+        raise Abort("mid-window failure")
+
+    with pytest.raises(Abort, match="mid-window failure"):
+        _run_with_cleanup_stubs(
+            monkeypatch, tmp_path, driver, lambda dev, _prov: restores.append(dev), seen
+        )
+    assert seen["cleanup_e2e_marker"][0] is pin
+    assert seen["sweep_uploaded_images"][0] is pin
+    assert restores == [pin]
+
+
+def test_cleanup_restarts_the_compositor(monkeypatch, tmp_path: Path) -> None:
+    """An abort-expecting scenario stops the compositor and never reboots;
+    without a best-effort start in the cleanup the Deck is left with no UI
+    and no hint why."""
+    seen: dict[str, tuple] = {}
+
+    def driver(ctx) -> None:
+        ctx.run.device_mutated = True
+        raise Abort("scenario failed")
+
+    with pytest.raises(Abort, match="scenario failed"):
+        _run_with_cleanup_stubs(monkeypatch, tmp_path, driver, lambda *_a, **_k: None, seen)
+    assert "start_compositor" in seen
 
 
 def _b1_dry_routes(sha_a: str) -> _Respond:

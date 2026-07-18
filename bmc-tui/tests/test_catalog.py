@@ -1353,10 +1353,44 @@ def test_register_rig_writes_factory_then_registers_server(tmp_path: Path) -> No
     )
 
 
-def test_cleanup_server_registry_removes_the_runtime_file() -> None:
+def test_capture_server_registry_records_the_present_file() -> None:
+    exc = _Exec(_routes({"if [ -e /etc/nix-upgrade/servers.json ]": "PRESENT\nQkFTRTY0\nREFUQQ=="}))
+    plan = catalog.Provisioning()
+    catalog.capture_server_registry(Device("h", backend=exc), plan)
+    assert plan.servers_json_captured
+    # busybox base64 wraps its output; the capture must join the lines
+    assert plan.original_servers_json == "QkFTRTY0REFUQQ=="
+
+
+def test_capture_server_registry_records_absence() -> None:
+    exc = _Exec(_routes({"if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT"}))
+    plan = catalog.Provisioning()
+    catalog.capture_server_registry(Device("h", backend=exc), plan)
+    assert plan.servers_json_captured
+    assert plan.original_servers_json is None
+
+
+def test_restore_server_registry_rewrites_the_original_content() -> None:
     exc = _Exec(_routes({}))
-    catalog.cleanup_server_registry(Device("h", backend=exc))
+    plan = catalog.Provisioning(servers_json_captured=True, original_servers_json="QkFTRTY0")
+    catalog.restore_server_registry(Device("h", backend=exc), plan)
+    cmd = exc.runs[-1][-1]
+    assert "echo QkFTRTY0 | base64 -d" in cmd
+    assert "mv /etc/nix-upgrade/servers.json.tmp /etc/nix-upgrade/servers.json" in cmd
+
+
+def test_restore_server_registry_removes_what_was_absent_before() -> None:
+    exc = _Exec(_routes({}))
+    plan = catalog.Provisioning(servers_json_captured=True, original_servers_json=None)
+    catalog.restore_server_registry(Device("h", backend=exc), plan)
     assert [argv[-1] for argv in exc.runs] == ["rm -f /etc/nix-upgrade/servers.json"]
+
+
+def test_restore_server_registry_without_capture_aborts() -> None:
+    with pytest.raises(Abort, match="without a prior capture"):
+        catalog.restore_server_registry(
+            Device("h", backend=_Exec(_routes({}))), catalog.Provisioning()
+        )
 
 
 def test_register_rig_tampered_uses_the_wrong_key_everywhere(tmp_path: Path) -> None:
@@ -2216,6 +2250,7 @@ def _e2e_full_routes(sha_a: str, sha_b: str) -> _Respond:
         if cmd.startswith("ls") and ("rc.d" in cmd or "init.d" in cmd):
             return _cp(argv, "S20bar" if "rc.d" in cmd else "bar")
         outputs = {
+            "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
             "ubus call system board": board,
             "bos_version": ["old", "va", "vb"][state["flashes"]],
             "MemAvailable": "524288",
@@ -2303,6 +2338,30 @@ def test_e2e_procedure_full_run_orders_the_scenarios(tmp_path: Path) -> None:
     assert "rm -f /tmp/a.tar /tmp/b.tar" in sweep
 
 
+def test_e2e_cleanup_restarts_the_compositor_after_a_failure(tmp_path: Path) -> None:
+    """Both scenarios stop the compositor before their flash; a run that
+    dies before rebooting must hand the Deck back with its UI, not dark."""
+    args, a, b = _e2e_args(tmp_path)
+    inner = _e2e_full_routes(a.sha256, b.sha256)
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if "MemAvailable" in argv[-1]:
+            return _cp(argv, "0")
+        return inner(argv)
+
+    exc = _Exec(respond)
+    dev = Device("127.0.0.1", backend=exc)
+    with pytest.raises(Abort, match="free RAM"):
+        args.run(
+            dev=dev,
+            backend=_e2e_nix(tmp_path),
+            make_device=lambda _h: dev,
+            make_server=_local_server,
+        )
+    cmds = [argv[-1] for argv in exc.runs]
+    assert cmds.index("service bmc-compositor start") > cmds.index("service bmc-compositor stop")
+
+
 def test_e2e_procedure_routes_destructive_stages_through_the_pinned_device(
     tmp_path: Path,
 ) -> None:
@@ -2388,7 +2447,13 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_uninitialized_store(tmp_path: P
         )
     cmds = [argv[-1] for argv in exc.runs]
     assert not exc.streams
-    assert not any("register-server" in c or "servers.json" in c or "chmod" in c for c in cmds)
+    # the registry capture probe ("if [ -e …servers.json ]…") is read-only and allowed
+    assert not any(
+        "register-server" in c
+        or "chmod" in c
+        or ("servers.json" in c and not c.startswith("if [ -e "))
+        for c in cmds
+    )
     assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)
     assert not any("rm -f" in c for c in cmds)
 
@@ -2401,6 +2466,8 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -
         cmd = argv[-1]
         if "bos_version" in cmd:
             return _cp(argv, "va")
+        if "if [ -e /etc/nix-upgrade/servers.json ]" in cmd:
+            return base(argv)  # the read-only registry capture, routed normally
         if "[ -e " in cmd:
             return _cp(argv, "yes")
         return base(argv)
@@ -2416,6 +2483,12 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -
         )
     cmds = [argv[-1] for argv in exc.runs]
     assert not exc.streams
-    assert not any("register-server" in c or "servers.json" in c or "chmod" in c for c in cmds)
+    # the registry capture probe ("if [ -e …servers.json ]…") is read-only and allowed
+    assert not any(
+        "register-server" in c
+        or "chmod" in c
+        or ("servers.json" in c and not c.startswith("if [ -e "))
+        for c in cmds
+    )
     assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)
     assert not any("rm -f" in c for c in cmds)

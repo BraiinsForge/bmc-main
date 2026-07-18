@@ -451,6 +451,11 @@ def compositor_pid(dev: Device) -> Pid | None:
     return Pid(found) if found else None
 
 
+def start_compositor(dev: Device) -> None:
+    """Cleanup counterpart of stop_compositor; a no-op when already up."""
+    dev.run("service bmc-compositor start")
+
+
 def _await_orchestrator(dev: Device, timeout: int = _ORCHESTRATOR_TIMEOUT) -> None:
     """Block while the post-activation service reconciliation is still running.
 
@@ -523,6 +528,8 @@ class Provisioning:
     cli: Path | None = None  # host path of the built bmc-nix-cli
     remote_tarball: RemotePath | None = None  # device path of the pushed tarball
     debugfs: Path | None = None  # host path of the built static debugfs (B2 only)
+    servers_json_captured: bool = False  # capture_server_registry ran
+    original_servers_json: str | None = None  # base64 of the pre-run registry; None = absent
 
 
 @stage("Build init tarball")
@@ -926,15 +933,43 @@ def register_rig(dev: Device, run: E2eRun) -> str:
     )
 
 
-@stage("Clean up server registry")
-def cleanup_server_registry(dev: Device) -> str:
-    """Remove the runtime servers.json pointing at the ephemeral rig: left
-    behind by an aborted run it would win over the shipped defaults and
-    send the next real init or upgrade to a dead URL. A completed flash
-    drops it anyway — sysupgrade does not preserve the runtime registry."""
+@stage("Capture server registry")
+def capture_server_registry(dev: Device, plan: Provisioning) -> str:
+    """Record the pre-run runtime servers.json so the final restore puts
+    the device back exactly as found. The run registers the ephemeral rig
+    there; leaving that behind would send the next real init or upgrade
+    to a dead URL, but deleting the file outright would wipe a real
+    registration that sysupgrade deliberately preserves (it is a
+    registered conffile)."""
 
-    dev.run(f"rm -f {_SERVERS_JSON}")
-    return console.lit(_SERVERS_JSON)
+    out = dev.read(
+        f"if [ -e {_SERVERS_JSON} ]; then echo PRESENT; base64 {_SERVERS_JSON}; "
+        "else echo ABSENT; fi"
+    )
+    marker, _, body = out.partition("\n")
+    require(marker in ("PRESENT", "ABSENT"), f"unexpected capture output: {out[:80]!r}")
+    plan.original_servers_json = "".join(body.split()) if marker == "PRESENT" else None
+    plan.servers_json_captured = True
+    state = "captured" if marker == "PRESENT" else "absent before the run"
+    return f"{console.lit(_SERVERS_JSON)} {state}"
+
+
+@stage("Restore server registry")
+def restore_server_registry(dev: Device, plan: Provisioning) -> str:
+    """Put the runtime servers.json back exactly as capture_server_registry
+    found it: restore the original bytes, or remove the file if there was
+    none — so the rig registration never outlives the run and a real
+    pre-run registration survives it."""
+
+    require(plan.servers_json_captured, "BUG: restore without a prior capture")
+    if plan.original_servers_json is None:
+        dev.run(f"rm -f {_SERVERS_JSON}")
+        return f"{console.lit(_SERVERS_JSON)} removed (absent before the run)"
+    dev.run(
+        f"echo {shlex.quote(plan.original_servers_json)} | base64 -d "
+        f"> {_SERVERS_JSON}.tmp && mv {_SERVERS_JSON}.tmp {_SERVERS_JSON} && sync"
+    )
+    return f"{console.lit(_SERVERS_JSON)} restored"
 
 
 @stage("Preflight rig from device")

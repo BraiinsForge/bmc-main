@@ -369,13 +369,14 @@ def _group_a(ctx: _Ctx) -> None:
     ctx.run.device_mutated = True
     catalog.pin_device_address(ctx.dev, ctx.run)
     ctx.quiesced_pin = _pinned(ctx)
-    try:
-        catalog.clear_nix_store(ctx.quiesced_pin, assume_yes=ctx.yes)
-        for sid in _GROUP_A_ORDER:
-            _DRIVERS[sid](ctx)
-        _flash_good_init(ctx)  # clears quiesced_pin before its post-reboot wait
-    finally:
-        ctx.quiesced_pin = None
+    # Deliberately no finally-clear: a failure inside the window must leave
+    # the pin set — the mDNS name stays dead until a reboot, and the outer
+    # cleanup (servers.json restore included) needs the numeric handle to
+    # reach the device at all. _flash_good_init clears it on the way out.
+    catalog.clear_nix_store(ctx.quiesced_pin, assume_yes=ctx.yes)
+    for sid in _GROUP_A_ORDER:
+        _DRIVERS[sid](ctx)
+    _flash_good_init(ctx)  # clears quiesced_pin before its post-reboot wait
 
 
 def _require_b_preconditions(ctx: _Ctx) -> None:
@@ -472,6 +473,9 @@ def _with_b_recovery(ctx: _Ctx, scenario: Callable[[_Ctx], None]) -> None:
         # failed scenario already pinned a numeric handle: reuse it so the
         # recovery's prepare stages don't re-resolve a dead name.
         ctx.quiesced_pin = _pinned(ctx)
+        # No finally-clear: a successful recovery clears the pin inside
+        # _flash_good_init; a failed one must leave it set so the outer
+        # cleanup still reaches the (quiesced, mDNS-dead) device.
         try:
             _flash_good_init(ctx)
         except (Abort, subprocess.CalledProcessError) as recovery:
@@ -481,8 +485,6 @@ def _with_b_recovery(ctx: _Ctx, scenario: Callable[[_Ctx], None]) -> None:
                 "with the good rig, or run `deck init --wipe` semantics via "
                 "bmc-nix-cli init --wipe on the device"
             ) from failure
-        finally:
-            ctx.quiesced_pin = None
         raise
 
 
@@ -807,6 +809,7 @@ class E2eSysupgradeFaults:
         run.image_b.print()
 
         catalog.ensure_device_reachable(dev)
+        catalog.capture_server_registry(dev, prov)
         catalog.validate_firmware_image(run.image_a, device_target=dev.target)
         catalog.validate_firmware_image(run.image_b, device_target=dev.target)
         catalog.validate_e2e_inputs(run)
@@ -839,17 +842,32 @@ class E2eSysupgradeFaults:
                     yes=self.yes,
                     servers_json_preserved=self.servers_json_preserved,
                 )
+                failed = False
                 try:
                     catalog.preflight_rig(dev, run)
                     _DRIVERS[self.scenario](ctx)
+                except BaseException:
+                    failed = True
+                    raise
                 finally:
                     if run.device_mutated:
-                        _best_effort(lambda: catalog.cleanup_e2e_marker(dev))
-                        _best_effort(lambda: catalog.cleanup_server_registry(dev))
-                        _best_effort(lambda: catalog.sweep_uploaded_images(dev, run))
-                        _best_effort(lambda: catalog.sweep_shm_upload(dev, run.image_a))
-                        _best_effort(lambda: catalog.sweep_shm_upload(dev, run.image_b))
-                        _best_effort(lambda: catalog.cleanup_remote_artifacts(dev, prov))
+                        # A failure inside a quiesced window leaves the mDNS
+                        # name dead until a reboot — clean up through the
+                        # numeric handle whenever one exists, or every stage
+                        # below no-ops against a name that cannot resolve.
+                        cleanup = ctx.quiesced_pin or _pinned(ctx)
+                        _best_effort(lambda: catalog.cleanup_e2e_marker(cleanup))
+                        # leaving the rig registration behind must fail the
+                        # run, not degrade to a log line
+                        _restore_step(
+                            failed=failed,
+                            action=lambda: catalog.restore_server_registry(cleanup, prov),
+                        )
+                        _best_effort(lambda: catalog.sweep_uploaded_images(cleanup, run))
+                        _best_effort(lambda: catalog.sweep_shm_upload(cleanup, run.image_a))
+                        _best_effort(lambda: catalog.sweep_shm_upload(cleanup, run.image_b))
+                        _best_effort(lambda: catalog.cleanup_remote_artifacts(cleanup, prov))
+                        _best_effort(lambda: catalog.start_compositor(cleanup))
                         _best_effort(lambda: _restore_rig(ctx))
                         if not dry_run.get():
                             console.kv(

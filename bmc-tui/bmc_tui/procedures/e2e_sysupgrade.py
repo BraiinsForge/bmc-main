@@ -79,6 +79,7 @@ class E2eSysupgrade:
         state.image_b.print()
 
         catalog.ensure_device_reachable(dev)
+        catalog.capture_server_registry(dev, prov)
         catalog.validate_firmware_image(state.image_a, device_target=dev.target)
         catalog.validate_firmware_image(state.image_b, device_target=dev.target)
         catalog.validate_e2e_inputs(state)
@@ -98,18 +99,33 @@ class E2eSysupgrade:
             with server_factory(serve_root) as server:
                 base_url = f"http://{serve_ip}:{server.port}"
                 catalog.assemble_rig(backend, state, workdir=workdir, base_url=base_url)
+                failed = False
                 try:
                     catalog.preflight_rig(dev, state)
                     if self.scenario in ("init", "full"):
                         self._scenario_a(dev, prov, state, make_device)
                     if self.scenario in ("upgrade", "full"):
                         self._scenario_b(dev, prov, state, make_device)
+                except BaseException:
+                    failed = True
+                    raise
                 finally:
                     if state.device_mutated:
-                        best_effort(lambda: catalog.cleanup_e2e_marker(dev))
-                        best_effort(lambda: catalog.cleanup_server_registry(dev))
-                        best_effort(lambda: catalog.sweep_uploaded_images(dev, state))
-                        best_effort(lambda: catalog.cleanup_remote_artifacts(dev, prov))
+                        # A failure between the cleardown's quiesce and the
+                        # reboot leaves the mDNS name dead — clean up through
+                        # the pinned numeric handle whenever one exists.
+                        cleanup = self._pinned(dev, state, make_device)
+                        best_effort(lambda: catalog.cleanup_e2e_marker(cleanup))
+                        if failed:
+                            best_effort(lambda: catalog.restore_server_registry(cleanup, prov))
+                        else:
+                            # No primary failure to preserve: leaving the rig
+                            # registration behind must fail the run, not
+                            # degrade to a log line.
+                            catalog.restore_server_registry(cleanup, prov)
+                        best_effort(lambda: catalog.sweep_uploaded_images(cleanup, state))
+                        best_effort(lambda: catalog.cleanup_remote_artifacts(cleanup, prov))
+                        best_effort(lambda: catalog.start_compositor(cleanup))
                         if not dry_run.get():
                             console.kv(
                                 "note",
