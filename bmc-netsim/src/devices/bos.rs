@@ -75,6 +75,14 @@ impl Params {
         let watt = leaf(drift(self.power_w));
         let base = mix(0, name);
         let endpoints = vec![
+            // The widget fingerprints BOS over this unauthenticated endpoint
+            // before crediting; always 200, independent of the miner's state.
+            EndpointSpec {
+                method: "GET".to_owned(),
+                path: "/api/v1/version".to_owned(),
+                body: Body::Render(json!({ "major": 1, "minor": 6, "patch": 0 })),
+                status: 200,
+            },
             EndpointSpec {
                 method: "POST".to_owned(),
                 path: "/api/v1/auth/login".to_owned(),
