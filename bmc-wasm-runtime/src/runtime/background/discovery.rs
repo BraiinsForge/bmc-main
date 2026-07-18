@@ -51,9 +51,16 @@ pub(in crate::runtime) fn mdns_browse_thread(
 /// subscribers, deferring `stop_browse` to the last one to leave. One daemon
 /// also avoids the 5353-socket contention that drops subtype PTRs.
 struct MdnsHub {
-    daemon: mdns_sd::ServiceDaemon,
-    types: std::sync::Mutex<std::collections::HashMap<String, TypeSubscribers>>,
+    inner: std::sync::Mutex<HubInner>,
     next_id: std::sync::atomic::AtomicU64,
+}
+
+/// The daemon, its `DaemonEvent` monitor, and the per-type subscribers,
+/// grouped so a recreate can swap the daemon and re-browse atomically.
+struct HubInner {
+    daemon: mdns_sd::ServiceDaemon,
+    monitor: mdns_sd::Receiver<mdns_sd::DaemonEvent>,
+    types: std::collections::HashMap<String, TypeSubscribers>,
 }
 
 struct TypeSubscribers {
@@ -68,11 +75,12 @@ impl MdnsHub {
         let id = self
             .next_id
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let mut types = self.types.lock().expect("BUG: mDNS hub mutex poisoned");
+        let mut guard = self.inner.lock().expect("BUG: mDNS hub mutex poisoned");
+        let inner = &mut *guard;
         for st in service_types {
-            match types.entry(st.clone()) {
+            match inner.types.entry(st.clone()) {
                 Entry::Occupied(mut e) => e.get_mut().subscribers.push((id, tx.clone())),
-                Entry::Vacant(e) => match self.daemon.browse(st) {
+                Entry::Vacant(e) => match inner.daemon.browse(st) {
                     Ok(events) => {
                         e.insert(TypeSubscribers {
                             events,
@@ -87,25 +95,45 @@ impl MdnsHub {
     }
 
     fn unsubscribe(&self, service_types: &[String], id: u64) {
-        let mut types = self.types.lock().expect("BUG: mDNS hub mutex poisoned");
+        let mut guard = self.inner.lock().expect("BUG: mDNS hub mutex poisoned");
+        let inner = &mut *guard;
         for st in service_types {
-            if let Some(subs) = types.get_mut(st) {
-                subs.subscribers.retain(|(sid, _)| *sid != id);
-                if subs.subscribers.is_empty() {
-                    let _ = self.daemon.stop_browse(st);
-                    types.remove(st);
+            let empty = match inner.types.get_mut(st) {
+                Some(subs) => {
+                    subs.subscribers.retain(|(sid, _)| *sid != id);
+                    subs.subscribers.is_empty()
                 }
+                None => continue,
+            };
+            if empty {
+                let _ = inner.daemon.stop_browse(st);
+                inner.types.remove(st);
             }
         }
     }
 
     /// Drain every type's daemon events and fan each out to its subscribers,
     /// dropping any whose receiver has hung up and reaping a type once its last
-    /// subscriber is gone.
+    /// subscriber is gone. An interface coming up recreates the daemon first.
     fn pump_once(&self) {
-        let mut types = self.types.lock().expect("BUG: mDNS hub mutex poisoned");
+        let mut guard = self.inner.lock().expect("BUG: mDNS hub mutex poisoned");
+        let inner = &mut *guard;
+
+        // A hard power-cycle can start the daemon before the network is up,
+        // binding its sockets to nothing. mdns-sd's own re-join doesn't recover it
+        // here; a fresh daemon does — the recovery a restart gives. `IpAdd` fires
+        // only for an interface added after startup (the initial set is silent),
+        // so recreating on it never self-triggers.
+        let mut interface_added = false;
+        while let Ok(event) = inner.monitor.try_recv() {
+            interface_added |= matches!(event, mdns_sd::DaemonEvent::IpAdd(_));
+        }
+        if interface_added {
+            inner.recreate_daemon();
+        }
+
         let mut drained = Vec::new();
-        for (st, subs) in types.iter_mut() {
+        for (st, subs) in &mut inner.types {
             while let Ok(event) = subs.events.try_recv() {
                 let Some(msg) = to_mdns_event(event) else {
                     continue;
@@ -118,9 +146,58 @@ impl MdnsHub {
             }
         }
         for st in drained {
-            let _ = self.daemon.stop_browse(&st);
-            types.remove(&st);
+            let _ = inner.daemon.stop_browse(&st);
+            inner.types.remove(&st);
         }
+    }
+}
+
+impl HubInner {
+    /// Spawn a fresh daemon with its `DaemonEvent` monitor. `None` if either fails.
+    fn spawn_daemon() -> Option<(
+        mdns_sd::ServiceDaemon,
+        mdns_sd::Receiver<mdns_sd::DaemonEvent>,
+    )> {
+        let daemon = match mdns_sd::ServiceDaemon::new() {
+            Ok(daemon) => daemon,
+            Err(e) => {
+                tracing::error!("mDNS daemon creation failed: {e}");
+                return None;
+            }
+        };
+        // Learn devices from responders' periodic/startup announcements,
+        // not only from replies to our own queries — over lossy WiFi
+        // multicast every extra broadcast is another chance to hear
+        // a device whose reply was dropped.
+        if let Err(e) = daemon.accept_unsolicited(true) {
+            tracing::warn!("mDNS accept_unsolicited failed: {e}");
+        }
+        match daemon.monitor() {
+            Ok(monitor) => Some((daemon, monitor)),
+            Err(e) => {
+                tracing::error!("mDNS daemon monitor failed: {e}");
+                None
+            }
+        }
+    }
+
+    /// Replace the daemon with a fresh one and re-browse every subscribed type,
+    /// so a daemon that bound before the network was up rebinds correctly.
+    /// Subscriber lists are kept; only the daemon-side handles move.
+    fn recreate_daemon(&mut self) {
+        let Some((daemon, monitor)) = Self::spawn_daemon() else {
+            return;
+        };
+        for (st, subs) in &mut self.types {
+            match daemon.browse(st) {
+                Ok(events) => subs.events = events,
+                Err(e) => tracing::error!("mDNS re-browse({st}) failed: {e}"),
+            }
+        }
+        let old = std::mem::replace(&mut self.daemon, daemon);
+        self.monitor = monitor;
+        let _ = old.shutdown();
+        tracing::info!("mDNS daemon recreated after an interface came up");
     }
 }
 
@@ -176,25 +253,16 @@ fn mdns_hub() -> Option<&'static MdnsHub> {
     static HUB: std::sync::OnceLock<Option<MdnsHub>> = std::sync::OnceLock::new();
     static PUMP: std::sync::Once = std::sync::Once::new();
     let hub = HUB
-        .get_or_init(|| match mdns_sd::ServiceDaemon::new() {
-            Ok(daemon) => {
-                // Learn devices from responders' periodic/startup announcements,
-                // not only from replies to our own queries — over lossy WiFi
-                // multicast every extra broadcast is another chance to hear a
-                // device whose query response was dropped. Off by default.
-                if let Err(e) = daemon.accept_unsolicited(true) {
-                    tracing::warn!("mDNS accept_unsolicited failed: {e}");
-                }
-                Some(MdnsHub {
+        .get_or_init(|| {
+            let (daemon, monitor) = HubInner::spawn_daemon()?;
+            Some(MdnsHub {
+                inner: std::sync::Mutex::new(HubInner {
                     daemon,
-                    types: std::sync::Mutex::new(std::collections::HashMap::new()),
-                    next_id: std::sync::atomic::AtomicU64::new(0),
-                })
-            }
-            Err(e) => {
-                tracing::error!("mDNS daemon creation failed: {e}");
-                None
-            }
+                    monitor,
+                    types: std::collections::HashMap::new(),
+                }),
+                next_id: std::sync::atomic::AtomicU64::new(0),
+            })
         })
         .as_ref()?;
     PUMP.call_once(move || {
