@@ -90,11 +90,26 @@ impl Upgrade for v0::Config {
 pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
     let mut report = Report::default();
 
-    let scenes: IndexMap<SceneId, Scene> = v0
-        .scenes
-        .iter()
-        .filter_map(|scene| upgrade_scene(scene, &mut report).map(|scene| (scene.id, scene)))
-        .collect();
+    // Insert explicitly rather than `collect()` so a duplicate scene
+    // id (hand-edited or corrupt config) is dropped with a `warn!`
+    // instead of silently overwriting an earlier scene. `upgrade_scene`
+    // has already counted the displaced scene and its widgets, so undo
+    // those counts to keep the report matching the on-disk result.
+    let mut scenes: IndexMap<SceneId, Scene> = IndexMap::new();
+    for scene in &v0.scenes {
+        let Some(scene) = upgrade_scene(scene, &mut report) else {
+            continue;
+        };
+        if scenes.contains_key(&scene.id) {
+            warn!(id = %scene.id, "duplicate scene id; dropping the duplicate scene");
+            report.scenes = report.scenes.saturating_sub(1);
+            report.translated_widgets = report
+                .translated_widgets
+                .saturating_sub(scene.widgets.len());
+            continue;
+        }
+        scenes.insert(scene.id, scene);
+    }
 
     // Top-level settings (night mode, alarms, brightness, …) kept
     // their shape across the schema change, so each passes through a
@@ -132,19 +147,25 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
         v0::SceneKind::Combined => SceneKind::Combined,
     };
 
-    let mut widgets: IndexMap<WidgetId, Widget> = scene
-        .widgets
-        .iter()
-        .filter_map(|widget| {
-            if let Some(w) = upgrade_widget(widget) {
-                report.translated_widgets += 1;
-                Some((w.id, w))
-            } else {
-                report.dropped_widgets += 1;
-                None
-            }
-        })
-        .collect();
+    // Insert explicitly rather than `collect()` so a duplicate widget
+    // id (only reachable from a hand-edited or corrupt config) is
+    // dropped with a `warn!` and counted, instead of silently
+    // overwriting an earlier widget and leaving the report overstating
+    // the on-disk result.
+    let mut widgets: IndexMap<WidgetId, Widget> = IndexMap::new();
+    for widget in &scene.widgets {
+        let Some(w) = upgrade_widget(widget) else {
+            report.dropped_widgets += 1;
+            continue;
+        };
+        if widgets.contains_key(&w.id) {
+            warn!(id = %w.id, "duplicate widget id within scene; dropping the duplicate");
+            report.dropped_widgets += 1;
+            continue;
+        }
+        report.translated_widgets += 1;
+        widgets.insert(w.id, w);
+    }
 
     if widgets.is_empty() {
         report.dropped_scenes += 1;
@@ -957,6 +978,72 @@ mod tests {
     }
 
     // --- malformed scenes ----------------------------------------------------
+
+    #[test]
+    fn duplicate_scene_id_drops_one_and_keeps_the_report_accurate() {
+        // Two scenes sharing an id can only come from a hand-edited or
+        // corrupt config. One must drop (not silently overwrite), and
+        // the report must still match the on-disk result.
+        let id = Uuid::from_u128(0x5ce7e);
+        let scene = |kind| v0::Scene {
+            id,
+            enabled: true,
+            kind,
+            widgets: vec![mk_widget("clock", json!({}))],
+        };
+        let (current, report) = upgrade_with_report(v0::Config {
+            scenes: vec![
+                scene(v0::SceneKind::Fullscreen),
+                scene(v0::SceneKind::Fullscreen),
+            ],
+            ..Default::default()
+        });
+        assert_eq!(current.scenes().len(), 1, "the duplicate scene must drop");
+        assert_eq!(report.scenes, 1, "report must count only the survivor");
+        assert_eq!(
+            report.translated_widgets, 1,
+            "report must not count the dropped duplicate's widget"
+        );
+    }
+
+    #[test]
+    fn duplicate_widget_id_within_scene_drops_the_duplicate() {
+        // Two widgets in one scene sharing an id: the duplicate drops
+        // and is counted as dropped, rather than overwriting the first.
+        // A combined scene rejects fullscreen-sized widgets, so use
+        // a slot size to keep the deduplicated scene valid — the point
+        // here is id dedup.
+        let mut first = mk_widget("clock", json!({}));
+        let mut duplicate = mk_widget("clock", json!({}));
+        first.size = "small".into();
+        duplicate.size = "small".into();
+        let scene = v0::Scene {
+            id: Uuid::from_u128(0x5ce7f),
+            enabled: true,
+            kind: v0::SceneKind::Combined,
+            widgets: vec![first, duplicate],
+        };
+        let (current, report) = upgrade_with_report(v0::Config {
+            scenes: vec![scene],
+            ..Default::default()
+        });
+        current
+            .validate()
+            .expect("BUG: deduplicated combined scene must validate");
+        assert_eq!(report.translated_widgets, 1);
+        assert_eq!(report.dropped_widgets, 1);
+        assert_eq!(
+            current
+                .scenes()
+                .values()
+                .next()
+                .expect("BUG: one scene")
+                .widgets
+                .len(),
+            1,
+            "only one widget must survive on disk"
+        );
+    }
 
     #[test]
     fn remote_widget_weather_maps_to_native_uid_and_carries_location() {
