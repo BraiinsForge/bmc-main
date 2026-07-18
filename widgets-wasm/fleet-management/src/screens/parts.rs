@@ -146,8 +146,8 @@ fn toggle(list_active: bool) -> Node {
 }
 
 // Icon, tint, and label for a device's fine status — shared by the device-detail
-// State tile and the model-detail rows so both read identically. Unreachable and
-// API-error share the broken-link glyph, split by colour and label.
+// State tile and the model-detail rows so both read identically.
+// Unreachable and API-error share the broken-link glyph, split by colour and label.
 #[must_use]
 pub fn status_glyph(status: DeviceStatus) -> (&'static Svg, Color, &'static str) {
     match status {
@@ -155,10 +155,12 @@ pub fn status_glyph(status: DeviceStatus) -> (&'static Svg, Color, &'static str)
         DeviceStatus::Degraded => (&icons::PERF_LOW, DEGRADED, "Degraded"),
         DeviceStatus::Unreachable => (&icons::UNLINK, OFF, "Unreachable"),
         DeviceStatus::ApiError => (&icons::UNLINK, ERROR, "API error"),
+        DeviceStatus::AuthError => (&icons::UNLINK, ERROR, "Not authenticating"),
     }
 }
 
-// The three status counts (ok / degraded / off) — always all three, even zeros.
+// The ok / degraded / off counts, always all three (even zeros). Auth failures
+// show on their own line (see `auth_failures`), not a fourth count column.
 #[must_use]
 pub fn status_counts(
     ok: usize,
@@ -183,6 +185,54 @@ pub fn status_counts(
                 weight,
             ),
             status_item(&icons::PERF_OFF, off, OFF, icon_px, font, slot_w, weight),
+        ],
+    )
+}
+
+/// The "N Auth failures" line under the status counts, shown when a miner
+/// rejects its credentials — a distinct prompt, not a fourth count column.
+#[must_use]
+pub fn auth_failures(count: usize) -> Node {
+    row(
+        props!(gap: 6.0, cross_align: CrossAlign::Center),
+        [
+            icon(&icons::UNLINK, 20.0, ERROR),
+            text(
+                fmt!("{count} Auth failures"),
+                style!(size: LABEL_FONT, color: ERROR),
+            ),
+        ],
+    )
+}
+
+/// A device's status as a labelled, tinted chip — the inline tag on the rows
+/// and device detail, catalogued by variant in the storybook.
+#[must_use]
+pub fn status_tag(status: DeviceStatus) -> Node {
+    let (glyph, color, label) = status_glyph(status);
+    row(
+        props!(gap: 8.0, cross_align: CrossAlign::Center),
+        [
+            icon(glyph, 24.0, color),
+            text(
+                label,
+                style!(size: 20, weight: FontWeight::SEMIBOLD, color: color),
+            ),
+        ],
+    )
+}
+
+/// Every status tag stacked for the storybook catalog of inline-status variants.
+#[must_use]
+pub fn status_tag_catalog() -> Node {
+    col(
+        props!(gap: 20.0, padding: 32.0),
+        [
+            status_tag(DeviceStatus::Ok),
+            status_tag(DeviceStatus::Degraded),
+            status_tag(DeviceStatus::Unreachable),
+            status_tag(DeviceStatus::ApiError),
+            status_tag(DeviceStatus::AuthError),
         ],
     )
 }

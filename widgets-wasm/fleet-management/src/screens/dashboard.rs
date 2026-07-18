@@ -15,7 +15,7 @@ use bmc_wasm_sdk::*;
 use crate::screens::icons;
 use crate::screens::parts::{
     BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, VALUE_FONT,
-    header, icon, scaled_area_chart, status_counts,
+    auth_failures, header, icon, scaled_area_chart, status_counts,
 };
 
 const STATUS_ICON: f32 = 32.0;
@@ -31,6 +31,7 @@ pub struct DashboardViewData {
     pub ok: usize,
     pub degraded: usize,
     pub off: usize,
+    pub auth: usize,
     pub hashrate: Hashrate,
     pub hashrate_series: Vec<f32>,
     pub power: ElectricPower,
@@ -88,21 +89,22 @@ fn card(width: f32, children: Vec<Node>) -> Node {
 }
 
 fn fleet_status(data: &DashboardViewData) -> Node {
-    card(
-        STATUS_W,
-        vec![
-            text("Fleet Status", style!(size: LABEL_FONT, color: LABEL)),
-            status_counts(
-                data.ok,
-                data.degraded,
-                data.off,
-                STATUS_ICON,
-                VALUE_FONT,
-                96.0,
-                FontWeight::SEMIBOLD,
-            ),
-        ],
-    )
+    let mut children = vec![
+        text("Fleet Status", style!(size: LABEL_FONT, color: LABEL)),
+        status_counts(
+            data.ok,
+            data.degraded,
+            data.off,
+            STATUS_ICON,
+            VALUE_FONT,
+            96.0,
+            FontWeight::SEMIBOLD,
+        ),
+    ];
+    if data.auth > 0 {
+        children.push(auth_failures(data.auth));
+    }
+    card(STATUS_W, children)
 }
 
 // Hashrate card: the area chart plus the hero value drawn over it on one canvas.

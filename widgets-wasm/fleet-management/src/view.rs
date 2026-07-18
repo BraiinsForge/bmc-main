@@ -393,6 +393,7 @@ mod tests {
             total_count: 1,
             ok_count: 1,
             off_count: 0,
+            auth_error_count: 0,
         }
     }
 

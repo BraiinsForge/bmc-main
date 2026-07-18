@@ -55,6 +55,8 @@ pub enum DeviceStatus {
     Unreachable,
     /// Not delivering telemetry: the API answered with an error (e.g. 503).
     ApiError,
+    /// Present and answering, but the login was rejected — check credentials.
+    AuthError,
 }
 
 /// Derive a device's [`DeviceStatus`] from its liveness and last failure. A
@@ -76,6 +78,7 @@ pub fn device_status(device: &KnownDevice) -> DeviceStatus {
     } else {
         match device.last_failure {
             Some(PollFailure::ApiError) => DeviceStatus::ApiError,
+            Some(PollFailure::AuthError) => DeviceStatus::AuthError,
             Some(PollFailure::Unreachable) | None => DeviceStatus::Unreachable,
         }
     }
@@ -93,8 +96,11 @@ pub struct GroupSummary {
     pub max_temperature: Option<Temperature>,
     pub total_count: usize,
     pub ok_count: usize,
-    /// Unreachable devices; the reachable-but-not-`ok` remainder is degraded.
+    /// Not-reachable devices, excluding auth failures (counted separately).
+    /// The reachable-but-not-`ok` remainder is degraded.
     pub off_count: usize,
+    /// Devices present but rejecting the login — "not authenticating".
+    pub auth_error_count: usize,
 }
 
 fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
@@ -108,6 +114,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     let total_count = devices.len();
     let mut ok_count = 0;
     let mut off_count = 0;
+    let mut auth_error_count = 0;
 
     let mut hashrate_sum = 0.0_f64;
     let mut hashrate_any = false;
@@ -132,7 +139,13 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         // of the temperature range, a no-op on efficiency.
         // Keyed on reachability, so a reachable idle miner keeps its real power.
         if !dev.reachable {
-            off_count += 1;
+            // Count auth failures apart from the offline devices, so they surface
+            // as "not authenticating" — a prompt to check creds, not gone.
+            if dev.last_failure == Some(PollFailure::AuthError) {
+                auth_error_count += 1;
+            } else {
+                off_count += 1;
+            }
             hashrate_any = true;
             power_any = true;
             continue;
@@ -203,6 +216,7 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
         total_count,
         ok_count,
         off_count,
+        auth_error_count,
     }
 }
 

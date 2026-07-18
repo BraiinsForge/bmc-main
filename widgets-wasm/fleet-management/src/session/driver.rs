@@ -506,6 +506,10 @@ fn on_login(id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
         TOKENS.with(|t| t.borrow_mut().insert(id.clone(), token));
         fire_pending(id, dev_family, &host, port, adapter, 0);
     } else {
+        // 401/403, or a 200 with no token, is a rejected login — an auth failure,
+        // so `finalize_device` records `AuthError` rather than retiring the device.
+        // Any other answer (5xx, timeout) is transient, not a credentials problem.
+        let is_auth_failure = adapter.is_auth_error(response.status) || response.ok();
         with_poller(|p| {
             for outcome in &mut p.outcomes {
                 if outcome.is_none() {
@@ -513,6 +517,9 @@ fn on_login(id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
                 }
             }
             p.pending = 0;
+            if is_auth_failure {
+                p.pass_failure = Some(PollFailure::AuthError);
+            }
         });
         finalize_device(id);
     }

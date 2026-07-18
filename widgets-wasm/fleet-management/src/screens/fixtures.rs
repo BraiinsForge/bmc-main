@@ -131,13 +131,14 @@ pub fn sample_table_page(page: usize) -> TableViewData {
 
 /// The Figma "Fleet overview" frame values, for the dashboard story.
 #[must_use]
-pub fn sample_dashboard() -> DashboardViewData {
+pub fn sample_dashboard(auth: usize) -> DashboardViewData {
     DashboardViewData {
         title: "Dominika's Mining Rig".to_owned(),
         device_count: 54,
         ok: 43,
         degraded: 4,
         off: 7,
+        auth,
         hashrate: Hashrate::from_terahashes_per_second(17.08),
         hashrate_series: vec![
             7.0, 9.0, 12.0, 15.5, 17.0, 17.6, 18.0, 18.1, 17.9, 18.0, 18.2, 18.1, 17.9, 18.0, 18.1,
@@ -178,6 +179,7 @@ fn group(
         total_count: total,
         ok_count: ok,
         off_count: total - ok,
+        auth_error_count: 0,
     }
 }
 

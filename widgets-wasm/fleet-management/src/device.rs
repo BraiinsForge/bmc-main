@@ -181,6 +181,9 @@ pub enum PollFailure {
     Unreachable,
     /// The device answered, but with an error status (e.g. 503) not usable data.
     ApiError,
+    /// The device answered its login but rejected the credentials
+    /// (401/403, or 200 without a token) — present, but not authenticating.
+    AuthError,
 }
 
 #[derive(Debug, Clone, PartialEq)]

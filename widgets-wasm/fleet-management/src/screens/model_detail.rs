@@ -142,7 +142,9 @@ fn device_row(r: &DeviceRow) -> Node {
     // its status where the metrics would be, instead of cramming it beside them.
     let body = match r.status {
         DeviceStatus::Ok | DeviceStatus::Degraded => metric_cells(r),
-        DeviceStatus::Unreachable | DeviceStatus::ApiError => vec![status_banner(r.status)],
+        DeviceStatus::Unreachable | DeviceStatus::ApiError | DeviceStatus::AuthError => {
+            vec![status_banner(r.status)]
+        }
     };
     let mut children = vec![host];
     children.extend(body);

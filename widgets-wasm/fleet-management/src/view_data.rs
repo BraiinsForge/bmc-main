@@ -20,11 +20,12 @@ const TABLE_PAGE_SIZE: usize = 4;
 /// Device rows per page in the model-detail view.
 const MODEL_DETAIL_PAGE_SIZE: usize = 4;
 
-/// Reachable-but-not-ok devices: `total - ok - off`.
+/// Reachable-but-not-ok devices: `total - ok - off - auth`.
 fn degraded(g: &GroupSummary) -> usize {
     g.total_count
         .saturating_sub(g.ok_count)
         .saturating_sub(g.off_count)
+        .saturating_sub(g.auth_error_count)
 }
 
 impl DashboardViewData {
@@ -42,6 +43,7 @@ impl DashboardViewData {
             ok: t.ok_count,
             degraded: degraded(t),
             off: t.off_count,
+            auth: t.auth_error_count,
             hashrate: t.hashrate.unwrap_or_default(),
             hashrate_series: history.total_series(),
             power: t.power.unwrap_or_default(),
@@ -197,6 +199,7 @@ mod tests {
             total_count: total,
             ok_count: ok,
             off_count: off,
+            auth_error_count: 0,
         }
     }
 

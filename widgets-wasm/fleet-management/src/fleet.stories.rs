@@ -10,9 +10,11 @@ story_meta! { title: "widgets/fleet" }
 
 #[story(order = 1, default)]
 fn dashboard(ctx: &mut StoryCtx) {
+    // The auth-fail count only surfaces in Fleet Status when non-zero.
+    let auth = ctx.int_slider("Auth fails", 0.0, 0.0, 8.0);
     ctx.ui.div(
         Full,
-        screens::dashboard::dashboard_view(&screens::fixtures::sample_dashboard()),
+        screens::dashboard::dashboard_view(&screens::fixtures::sample_dashboard(auth.get_usize())),
     );
 }
 
@@ -101,4 +103,10 @@ fn no_credentials(ctx: &mut StoryCtx) {
         Full,
         screens::no_credentials::no_credentials_view(&screens::fixtures::sample_no_credentials()),
     );
+}
+
+#[story(order = 9)]
+fn status_tags(ctx: &mut StoryCtx) {
+    // Catalog of the inline device-status tags, one per variant.
+    ctx.ui.div(Auto, screens::parts::status_tag_catalog());
 }
