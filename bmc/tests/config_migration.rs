@@ -316,6 +316,41 @@ async fn legacy_path_ignored_when_new_path_already_exists() {
     );
 }
 
+/// CLI smoke: the offline `bmc-migrate-config <src> <dst>` tool exits
+/// 0, writes the upgraded config to `<dst>`, and prints a counts
+/// report. Exercises the shipped binary end to end so a QA/CI run can
+/// migrate a captured sample without flashing firmware.
+#[tokio::test]
+async fn cli_smoke_migrates_fixture_and_reports_counts() {
+    let tmp = tempdir();
+    let src = tmp.join("src.json");
+    let dst = tmp.join("dst.json");
+    fs::write(&src, FIXTURE)
+        .await
+        .expect("BUG: seed fixture write should succeed");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_bmc-migrate-config"))
+        .arg(&src)
+        .arg(&dst)
+        .output()
+        .expect("BUG: bmc-migrate-config must run");
+
+    assert!(
+        output.status.success(),
+        "CLI must exit 0 (stderr: {})",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).expect("BUG: stdout must be UTF-8");
+    assert!(
+        stdout.contains("was_migrated=true") && stdout.contains("translated_widgets="),
+        "CLI must emit a counts report (got: {stdout})"
+    );
+    assert!(
+        fs::try_exists(&dst).await.unwrap_or(false),
+        "CLI must write the upgraded config to <dst>"
+    );
+}
+
 /// Small helper producing a unique tmp dir for each test.
 fn tempdir() -> PathBuf {
     let base = std::env::temp_dir().join(format!(

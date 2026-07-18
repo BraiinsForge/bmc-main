@@ -70,12 +70,10 @@ struct FormatHeader {
 /// Counts derived from an upgrade run. Zero-valued when the file
 /// was already at the current version.
 ///
-/// Populated inside [`upgrade_v0::upgrade_with_report`] as each v0
-/// widget is dispatched; the distinction between "survived" and
-/// "dropped" is not recoverable from the upgraded [`Config`] alone
-/// (all surviving widgets carry real UIDs indistinguishable from
-/// the `Default::default()` ones), so we build the counts while
-/// the v0 → current mapping is still in scope.
+/// The upgraded [`Config`] records only the widgets that survived,
+/// not how many were dropped, so the counts are built inside
+/// [`upgrade_v0::upgrade_with_report`] while the v0 → current mapping
+/// is still in scope.
 #[derive(Debug, Clone, Default)]
 pub struct Report {
     /// Scenes that survived the upgrade, i.e. kept at least one widget.
@@ -83,14 +81,12 @@ pub struct Report {
     /// Scenes dropped because every widget in them was dropped,
     /// leaving the scene empty.
     pub dropped_scenes: usize,
-    /// Widgets that survived the upgrade with a reserved
-    /// `widget_type_id`. Includes both deep-translated widgets
-    /// (clock, block height, remote image) and pass-through widgets
-    /// whose params are handed unchanged to a future manifest.
+    /// Widgets that survived the upgrade, each mapped to the
+    /// `widget_type_id` of a shipped `widgets-wasm` manifest.
     pub translated_widgets: usize,
-    /// Widgets dropped because their v0 `kind` or `remote_widget`
-    /// URL did not match any reserved UID in the current schema.
-    /// A `warn!` is emitted per drop.
+    /// Widgets dropped because their v0 `kind` or `remote_widget` URL
+    /// had no native equivalent in the current schema. A `warn!` is
+    /// emitted per drop.
     pub dropped_widgets: usize,
 }
 
@@ -206,10 +202,10 @@ pub fn peek_version(raw: &str) -> Option<u32> {
 }
 
 /// Read a config from disk and upgrade it to the current schema in
-/// memory. No disk writes other than the one-time legacy-path move
+/// memory. No disk writes other than the one-time legacy-path copy
 /// from `/etc/bmc_config.json` → `/etc/bmc/config.json` (see
-/// [`relocate_legacy_config_if_present`]). Pair with
-/// [`save_with_backup`] to persist the upgrade.
+/// [`relocate_legacy_config_if_present`]; the legacy file is kept, not
+/// moved). Pair with [`save_with_backup`] to persist the upgrade.
 pub async fn load_any_version(path: &Path) -> Result<LoadedConfig> {
     relocate_legacy_config_if_present(path).await?;
     let raw = tokio::fs::read_to_string(path)

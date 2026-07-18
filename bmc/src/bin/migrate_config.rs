@@ -8,10 +8,10 @@
 //! exercise the upgrade path against captured device samples without
 //! flashing firmware.
 //!
-//! Runtime path on the device is `/etc/bmc/config.json` (moved from
+//! Runtime path on the device is `/etc/bmc/config.json` (copied from
 //! the legacy `/etc/bmc_config.json` on first boot of the new
-//! firmware); this CLI operates on arbitrary paths so captured
-//! samples can live anywhere.
+//! firmware, which keeps the original); this CLI operates on arbitrary
+//! paths so captured samples can live anywhere.
 //!
 //! Usage: `bmc-migrate-config <src> <dst>`
 

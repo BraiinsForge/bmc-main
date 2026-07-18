@@ -224,10 +224,12 @@ so a newly-created backup is never archived uncensored.
   translations and enum guards, remote slugs with a native equivalent map and the rest drop, unknown kinds / URLs drop),
   plus header-dispatch edge cases (missing version, current version, unknown future version, empty v0 input).
 - **Integration:** round-trips a captured device config through `migrate_on_disk` and asserts: version header, scene
-  count, every post-upgrade widget carries a reserved UID, no placeholder shapes leak, backup file exists, `translated`
-  counter matches the on-disk widget count. Plus a test for the pure `LoadedConfig::from_str` path verifying
-  `original_v0()` survives the upgrade.
-- **CLI smoke:** `bmc-migrate-config <src> <dst>` exits 0 and emits a counts report.
+  count, every post-upgrade widget carries a non-nil manifest `widget_type_id`, no retired placeholder param shape
+  (`_legacy` / `_legacy_remote`) leaks, backup file exists, `translated` counter matches the on-disk widget count. Plus
+  an invalid-migration test asserting the original file is left intact when validation fails, and a test for the pure
+  `LoadedConfig::from_str` path verifying `original_v0()` survives the upgrade.
+- **CLI smoke:** `bmc-migrate-config <src> <dst>` exits 0, writes `<dst>`, and emits a counts report
+  (`cli_smoke_migrates_fixture_and_reports_counts`).
 - **Boot path:** `ConfigHandle::init` migrating a seeded legacy config in place (version bumped, scenes preserved,
   backup written), and refusing to overwrite a newer-than-known config.
 

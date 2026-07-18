@@ -8,9 +8,9 @@
 //! Policy — aligned with review feedback:
 //!
 //! - **No intermediate format for unsupported widgets.** Every v0
-//!   widget either maps to a reserved `widget_type_id` in the
-//!   current schema or is dropped outright with a `warn!`. There is
-//!   no `_legacy` / `_legacy_remote` placeholder in the output.
+//!   widget either maps to a shipped manifest's `widget_type_id` in
+//!   the current schema or is dropped outright with a `warn!`. There
+//!   is no `_legacy` / `_legacy_remote` placeholder in the output.
 //! - **Each mapped widget targets a real manifest UID.** Native
 //!   kinds (`clock`, `block_height`, `remote_image`) map to the
 //!   `uid` declared in their `widgets-wasm/*/manifest.json`. Legacy
@@ -43,7 +43,7 @@ use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
 
-// --- Reserved UIDs for native v0 widget kinds -------------------------------
+// --- Manifest UIDs for native v0 widget kinds -------------------------------
 //
 // Each constant is the real `uid` declared in the corresponding widget's
 // `manifest.json` under `widgets-wasm/`:

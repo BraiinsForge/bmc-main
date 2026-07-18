@@ -18,15 +18,14 @@ needing an entry-per-file.
 - The migration runs once on first boot of the new firmware. No prompt, no manual step.
 - Device settings survive too: alarms, night mode, brightness, sound volume, localization, scene cycling, the LED and
   boot-sound switches, and auto-upgrade preferences all carry over unchanged.
-- Scene IDs, scene names, widget positions, and widget sizes are preserved exactly. The grid the user built still looks
-  the same.
-- Widgets this firmware knows how to translate keep their settings: the clock, block height, and image widgets, plus the
-  Braiins Forge remote widgets that now have a native equivalent — weather, nameday, ISS position, random facts, and
-  SpaceX launch (matched by their URL to the native widget's ID). Their positions and user-configured settings carry
-  over and they work immediately.
+- Scene IDs, widget positions, and widget sizes are preserved. The grid the user built still looks the same.
+- Widgets this version of BMC application knows how to translate keep their settings: the clock, block height, and image
+  widgets, plus the Braiins Forge remote widgets that now have a WASM equivalent — weather, nameday, ISS position,
+  random facts, and SpaceX launch (matched by their URL to the WASM widget's ID). Their positions and user-configured
+  settings carry over and they work immediately.
 - Any other widget is dropped, with a `warn!` line naming the unsupported kind or URL. This includes the legacy ticker,
   Braiins Pool, blockchain-data, and halving-countdown widgets, and the remote exchange-rate, Formula 1, NASA picture of
-  the day, and ticker widgets — none of which have a native counterpart yet. Dropped widgets are not preserved as empty
+  the day, and ticker widgets — none of which have a WASM counterpart yet. Dropped widgets are not preserved as empty
   placeholders — see "Recovering from a bad migration" below.
 
 ### Backup before any change
@@ -35,16 +34,19 @@ needing an entry-per-file.
 
 - The original config is copied to `/etc/bmc/config.json.backup.<timestamp>` before any change. The backup is never
   overwritten or deleted by the migration.
-- If a migration pass produces an unreadable result, the original is still on disk next to the rewritten file.
+- The upgraded config is validated in memory before it is written, so a migration that would produce an invalid config
+  is rejected without touching the file — the readable original is left in place rather than replaced by a broken
+  result.
 
 ### Safe downgrade refusal
 
 > As a user, I want to be told when something is wrong rather than have my config silently overwritten.
 
 - If the on-disk config carries a schema version the firmware doesn't know how to read (e.g. accidentally booted older
-  firmware on top of a newer config), the migration refuses to touch the file and the display subsystem fails to start
-  with a clear log message. Other device subsystems (web UI, network) stay reachable so the user can recover over the
-  network.
+  firmware on top of a newer config), the firmware refuses to touch the file. It boots on default settings and logs how
+  to recover, and the newer config on disk is never overwritten — not at boot, and not when a setting is changed
+  afterwards (those changes apply for the session but are not written back). Roll the firmware forward, or restore a
+  backup, to get the saved config back.
 
 ### Recovering from a bad migration
 
