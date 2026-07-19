@@ -28,6 +28,7 @@ sysupgrade; this catalog only fails fast on the obvious local problems.
 
 import base64
 import difflib
+import enum
 import hashlib
 import json
 import os
@@ -44,7 +45,7 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, NewType
+from typing import Any, NewType, Protocol
 
 from bmc_tui import console, nix_progress, rig
 from bmc_tui.bos_version import BosVersion, parse_bos_version
@@ -2318,7 +2319,7 @@ def restrict_package_servers(dev: Device) -> str:
 
 
 @stage("Authenticate")
-def grpc_login(dev: Device, cycle: UpgradeCycle) -> str:
+def grpc_login(dev: Device, cycle: "GrpcSession") -> str:
     response = _grpcurl(dev, "AuthenticationService/Login", data={"password": cycle.password})
     token = response.get("token")
     require(
@@ -2715,6 +2716,19 @@ class FirmwareCycle:
     started_upgrade: bool = False
 
 
+class GrpcSession(Protocol):
+    """What grpc_login needs: both UpgradeCycle and FirmwareCycle satisfy it."""
+
+    password: str
+    cookie: str | None
+
+
+class FirmwareIndex(Protocol):
+    """Index-server capability needed while checking the firmware offer."""
+
+    def completed(self, path: str) -> bool: ...
+
+
 @dataclass(frozen=True)
 class FileSnapshot:
     remote_path: str
@@ -3063,3 +3077,275 @@ def await_bmc_ready(dev: Device, cycle: FirmwareCycle) -> str:
                 f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
             )
             time.sleep(min(1, max(0, deadline - time.monotonic())))
+
+
+_FIRMWARE_PHASE_PREFIX = "FIRMWARE_UPGRADE_PHASE_"
+
+
+@stage("Require auto-upgrade disabled")
+def require_auto_upgrade_disabled(dev: Device, session: GrpcSession) -> str:
+    response = _grpcurl(dev, "UpgradeService/GetAutoUpgrade", cookie=session.cookie)
+    # grpcurl omits proto3 default-valued fields, so a disabled schedule
+    # arrives without any "enabled" key at all.
+    require(
+        not response.get("enabled"),
+        "auto-upgrade is enabled — disable it via SetAutoUpgrade or the web UI first",
+    )
+    return "auto-upgrade disabled"
+
+
+@stage("Check for firmware upgrade")
+def check_for_firmware_upgrade(
+    dev: Device,
+    image: Image,
+    cycle: FirmwareCycle,
+    index: FirmwareIndex,
+) -> str:
+    running_version = cycle.running_version
+    image_version = cycle.image_version
+    if running_version is None or image_version is None:
+        msg = "BUG: firmware versions were not resolved before CheckForUpgrade"
+        raise RuntimeError(msg)
+
+    response = _grpcurl(dev, "UpgradeService/CheckForUpgrade", cookie=cycle.cookie)
+    firmware = response.get("firmware")
+    if not isinstance(firmware, dict):
+        raise Abort(
+            f"no firmware upgrade offered for running release {running_version.version} "
+            f"and image release {image_version.version}; response: {json.dumps(response)}"
+        )
+
+    require(
+        firmware.get("version") == image_version.canonical,
+        f"firmware version does not match image: {firmware.get('version')}",
+    )
+    offered_hash = firmware.get("hash")
+    require(
+        isinstance(offered_hash, str) and offered_hash.lower() == image.sha256.lower(),
+        f"firmware hash does not match image: {offered_hash}",
+    )
+    try:
+        offered_size = int(firmware.get("fileSizeBytes"))
+    except (TypeError, ValueError):
+        raise Abort(f"firmware size is invalid: {firmware.get('fileSizeBytes')}") from None
+    require(offered_size == image.size, f"firmware size does not match image: {offered_size}")
+    require(
+        response.get("disruption") == "UPGRADE_DISRUPTION_REBOOT",
+        f"expected a REBOOT disruption, got {response.get('disruption')}",
+    )
+    upgrade_id = response.get("upgradeId")
+    require(
+        isinstance(upgrade_id, str) and bool(upgrade_id),
+        "firmware offer returned no upgrade id",
+    )
+    require(
+        index.completed("/index.v1.json"),
+        "firmware offer was returned without a completed /index.v1.json fetch",
+    )
+    cycle.upgrade_id = upgrade_id
+    return f"{console.lit(image_version.canonical)} ({console.human_size(image.size)})"
+
+
+class StreamOutcome(enum.Enum):
+    PROVISIONAL_SUCCESS = enum.auto()
+    REJECTED = enum.auto()
+    TERMINAL_FAILURE = enum.auto()
+    POSSIBLY_ACCEPTED = enum.auto()
+
+
+@dataclass(frozen=True)
+class StreamResult:
+    events: list[dict[str, Any]]
+    exit_code: int
+    status_code: str | None
+    status_message: str | None
+    stderr: str
+
+
+_GRPC_STATUS_NAMES = {
+    0: "Ok",
+    1: "Cancelled",
+    2: "Unknown",
+    3: "InvalidArgument",
+    4: "DeadlineExceeded",
+    5: "NotFound",
+    6: "AlreadyExists",
+    7: "PermissionDenied",
+    8: "ResourceExhausted",
+    9: "FailedPrecondition",
+    10: "Aborted",
+    11: "OutOfRange",
+    12: "Unimplemented",
+    13: "Internal",
+    14: "Unavailable",
+    15: "DataLoss",
+    16: "Unauthenticated",
+}
+
+
+def run_firmware_stream(dev: Device, cycle: FirmwareCycle) -> StreamResult:
+    upgrade_id = cycle.upgrade_id
+    if upgrade_id is None:
+        msg = "BUG: CheckForUpgrade did not run before StartUpgrade"
+        raise RuntimeError(msg)
+    argv = _grpcurl_argv(
+        dev,
+        "UpgradeService/StartUpgrade",
+        data={"upgradeId": upgrade_id},
+        cookie=cycle.cookie,
+        max_time=None,
+    )
+    argv[2:2] = ["-format-error", "-max-time", str(cycle.stream_deadline)]
+
+    cycle.started_upgrade = True
+    try:
+        proc = subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    except OSError:
+        cycle.started_upgrade = False
+        raise
+
+    stdout = proc.stdout
+    if stdout is None:
+        msg = "BUG: Popen(stdout=PIPE) produced no stdout"
+        raise RuntimeError(msg)
+    stderr_pipe = proc.stderr
+    stderr_chunks: list[str] = []
+    stderr_thread: threading.Thread | None = None
+    if stderr_pipe is not None:
+        stderr_thread = threading.Thread(
+            target=lambda: stderr_chunks.append(stderr_pipe.read()),
+            daemon=True,
+        )
+        stderr_thread.start()
+
+    decoder = json.JSONDecoder()
+    events: list[dict[str, Any]] = []
+    remainder = ""
+    for line in stdout:
+        remainder = _drain_events(decoder, remainder + line, events)
+    exit_code = proc.wait()
+    if stderr_thread is not None:
+        stderr_thread.join()
+    stderr = "".join(stderr_chunks)
+
+    status_code = None
+    status_message = None
+    stream_events: list[dict[str, Any]] = []
+    for event in events:
+        status = _grpc_status(event)
+        if status is None:
+            stream_events.append(event)
+        else:
+            status_code, status_message = status
+    if exit_code != 0 and status_code is None:
+        status_code, status_message = _grpc_status_from_text(stderr)
+    if remainder:
+        stderr = f"{stderr.rstrip()}\nincomplete stdout JSON: {remainder}".lstrip()
+
+    return StreamResult(stream_events, exit_code, status_code, status_message, stderr)
+
+
+def _grpc_status_from_text(text: str) -> tuple[str | None, str | None]:
+    decoder = json.JSONDecoder()
+    for offset, char in enumerate(text):
+        if char != "{":
+            continue
+        try:
+            value, _ = decoder.raw_decode(text[offset:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict) and (status := _grpc_status(value)) is not None:
+            return status
+    return None, None
+
+
+def _grpc_status(value: dict[str, Any]) -> tuple[str, str | None] | None:
+    candidate = value.get("error", value)
+    if not isinstance(candidate, dict) or "code" not in candidate:
+        return None
+    raw_code = candidate["code"]
+    if isinstance(raw_code, int):
+        code = _GRPC_STATUS_NAMES.get(raw_code)
+    elif isinstance(raw_code, str):
+        code = _normalize_grpc_status(raw_code)
+    else:
+        code = None
+    if code is None:
+        return None
+    message = candidate.get("message")
+    return code, message if isinstance(message, str) else None
+
+
+def _normalize_grpc_status(code: str) -> str:
+    words = code.removeprefix("CODE_").lower().split("_")
+    return "".join(word.capitalize() for word in words)
+
+
+def classify_stream(result: StreamResult) -> StreamOutcome:
+    firmware_events = [
+        event
+        for event in result.events
+        if isinstance(event.get("firmwarePhase"), str)
+        and event["firmwarePhase"].startswith(_FIRMWARE_PHASE_PREFIX)
+    ]
+    if any("finished" in event for event in result.events) or result.status_code in {
+        "Internal",
+        "FailedPrecondition",
+    }:
+        outcome = StreamOutcome.TERMINAL_FAILURE
+    elif result.status_code == "Unavailable" and not firmware_events:
+        outcome = StreamOutcome.REJECTED
+    elif result.status_code in {"DeadlineExceeded", "Cancelled"}:
+        outcome = StreamOutcome.POSSIBLY_ACCEPTED
+    else:
+        download_index = next(
+            (
+                index
+                for index, event in enumerate(result.events)
+                if event.get("firmwarePhase") == f"{_FIRMWARE_PHASE_PREFIX}DOWNLOADING"
+            ),
+            -1,
+        )
+        progress_index = (
+            next(
+                (
+                    index
+                    for index, event in enumerate(result.events)
+                    if index > download_index and isinstance(event.get("download"), dict)
+                ),
+                -1,
+            )
+            if download_index >= 0
+            else -1
+        )
+        verifying_index = (
+            next(
+                (
+                    index
+                    for index, event in enumerate(result.events)
+                    if index > progress_index
+                    and event.get("firmwarePhase") == f"{_FIRMWARE_PHASE_PREFIX}VERIFYING"
+                ),
+                -1,
+            )
+            if progress_index >= 0
+            else -1
+        )
+        download_evidence = verifying_index >= 0
+        applying_after_verify = any(
+            index > verifying_index
+            and event.get("firmwarePhase") == f"{_FIRMWARE_PHASE_PREFIX}APPLYING"
+            for index, event in enumerate(result.events)
+        )
+        clean_success = result.exit_code == 0 and download_evidence and applying_after_verify
+        severed_success = (
+            result.exit_code != 0
+            and download_evidence
+            and result.status_code in {None, "Unavailable"}
+        )
+        outcome = (
+            StreamOutcome.PROVISIONAL_SUCCESS
+            if clean_success or severed_success
+            else StreamOutcome.POSSIBLY_ACCEPTED
+        )
+    return outcome

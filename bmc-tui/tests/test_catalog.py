@@ -2982,3 +2982,290 @@ def test_await_bmc_ready_reports_log_tail_on_timeout(
     backend = _Exec(_routes({"tail -c +8 /var/log/bmc/bmc.log": "new diagnostic"}))
     with pytest.raises(Abort, match="new diagnostic"):
         catalog.await_bmc_ready(Device("h", backend=backend), cycle)
+
+
+class _IndexState:
+    def __init__(self, fetched: bool = True) -> None:
+        self.fetched = fetched
+
+    def completed(self, path: str) -> bool:
+        assert path == "/index.v1.json"
+        return self.fetched
+
+
+def _checked_firmware_cycle(tmp_path: Path) -> tuple[Image, catalog.FirmwareCycle]:
+    image = _image(tmp_path, version="2025-07-01-0-0badc0de-25.07")
+    cycle = _firmware_cycle(tmp_path)
+    cycle.running_version = catalog.parse_bos_version("2025-06-15-0-acde0123-25.06")
+    cycle.image_version = catalog.parse_bos_version(image.version)
+    cycle.cookie = "session_id=test"
+    return image, cycle
+
+
+def _firmware_offer(image: Image, cycle: catalog.FirmwareCycle) -> dict[str, object]:
+    assert cycle.image_version is not None
+    return {
+        "upgradeId": "offer-1",
+        "firmware": {
+            "version": cycle.image_version.canonical,
+            "hash": image.sha256.upper(),
+            "fileSizeBytes": str(image.size),
+        },
+        "disruption": "UPGRADE_DISRUPTION_REBOOT",
+    }
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"enabled": False},
+        # grpcurl omits proto3 default-valued fields: a disabled schedule
+        # arrives without any "enabled" key.
+        {"frequency": "AUTO_UPGRADE_FREQUENCY_WEEKLY"},
+    ],
+)
+def test_require_auto_upgrade_disabled_uses_stock_session(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, response: dict[str, object]
+) -> None:
+    _, cycle = _checked_firmware_cycle(tmp_path)
+    calls: list[tuple[str, str | None]] = []
+
+    def grpcurl(_dev: Device, method: str, **kwargs: object) -> dict[str, object]:
+        cookie = kwargs.get("cookie")
+        calls.append((method, cookie if isinstance(cookie, str) else None))
+        return response
+
+    monkeypatch.setattr(catalog, "_grpcurl", grpcurl)
+    catalog.require_auto_upgrade_disabled(Device("h", backend=_Exec(_routes({}))), cycle)
+    assert calls == [("UpgradeService/GetAutoUpgrade", "session_id=test")]
+
+
+def test_require_auto_upgrade_disabled_rejects_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, cycle = _checked_firmware_cycle(tmp_path)
+    monkeypatch.setattr(catalog, "_grpcurl", lambda *_args, **_kwargs: {"enabled": True})
+    with pytest.raises(Abort, match="SetAutoUpgrade"):
+        catalog.require_auto_upgrade_disabled(Device("h", backend=_Exec(_routes({}))), cycle)
+
+
+def test_check_for_firmware_upgrade_accepts_canonical_offer(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image, cycle = _checked_firmware_cycle(tmp_path)
+    monkeypatch.setattr(
+        catalog, "_grpcurl", lambda *_args, **_kwargs: _firmware_offer(image, cycle)
+    )
+    catalog.check_for_firmware_upgrade(
+        Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState()
+    )
+    assert cycle.upgrade_id == "offer-1"
+
+
+@pytest.mark.parametrize(
+    ("change", "hint"),
+    [
+        (lambda response: response.pop("firmware"), "no firmware"),
+        (lambda response: response["firmware"].update(version="wrong"), "version"),
+        (lambda response: response["firmware"].update(hash="0" * 64), "hash"),
+        (lambda response: response["firmware"].update(fileSizeBytes="1"), "size"),
+        (lambda response: response.update(disruption="UPGRADE_DISRUPTION_APP_RESTART"), "REBOOT"),
+        (lambda response: response.pop("upgradeId"), "upgrade id"),
+    ],
+)
+def test_check_for_firmware_upgrade_rejects_invalid_offer(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    change: Callable[[dict[str, object]], object],
+    hint: str,
+) -> None:
+    image, cycle = _checked_firmware_cycle(tmp_path)
+    response = _firmware_offer(image, cycle)
+    change(response)
+    monkeypatch.setattr(catalog, "_grpcurl", lambda *_args, **_kwargs: response)
+    with pytest.raises(Abort, match=hint):
+        catalog.check_for_firmware_upgrade(
+            Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState()
+        )
+
+
+def test_check_for_firmware_upgrade_missing_offer_names_versions_and_response(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image, cycle = _checked_firmware_cycle(tmp_path)
+    monkeypatch.setattr(catalog, "_grpcurl", lambda *_args, **_kwargs: {"disruption": "x"})
+    assert cycle.running_version is not None
+    assert cycle.image_version is not None
+    with pytest.raises(Abort) as error:
+        catalog.check_for_firmware_upgrade(
+            Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState()
+        )
+    for expected in (
+        str(cycle.running_version.version),
+        str(cycle.image_version.version),
+        "disruption",
+    ):
+        assert expected in error.value.hint
+
+
+def test_check_for_firmware_upgrade_requires_completed_index_fetch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    image, cycle = _checked_firmware_cycle(tmp_path)
+    monkeypatch.setattr(
+        catalog, "_grpcurl", lambda *_args, **_kwargs: _firmware_offer(image, cycle)
+    )
+    with pytest.raises(Abort, match=r"index\.v1\.json"):
+        catalog.check_for_firmware_upgrade(
+            Device("h", backend=_Exec(_routes({}))), image, cycle, _IndexState(False)
+        )
+
+
+class _StreamProcess:
+    def __init__(self, stdout: str, stderr: str = "", returncode: int = 0) -> None:
+        self.stdout = io.StringIO(stdout)
+        self.stderr = io.StringIO(stderr)
+        self.returncode = returncode
+
+    def wait(self) -> int:
+        return self.returncode
+
+
+def test_run_firmware_stream_sets_flag_before_spawn_and_preserves_partial_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, cycle = _checked_firmware_cycle(tmp_path)
+    cycle.upgrade_id = "offer-1"
+
+    def popen(argv: list[str], **kwargs: object) -> _StreamProcess:
+        assert cycle.started_upgrade is True
+        assert argv[argv.index("-d") + 1] == json.dumps({"upgradeId": "offer-1"})
+        assert argv[argv.index("-max-time") + 1] == "600"
+        assert "-format-error" in argv
+        assert kwargs["text"] is True
+        return _StreamProcess(
+            '{"firmwarePhase":"FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}\n{"download":'
+        )
+
+    monkeypatch.setattr(catalog.subprocess, "Popen", popen)
+    result = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
+    assert result.events == [{"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}]
+    assert '{"download":' in result.stderr
+
+
+def test_run_firmware_stream_resets_flag_when_spawn_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, cycle = _checked_firmware_cycle(tmp_path)
+    cycle.upgrade_id = "offer-1"
+
+    def popen(*_args: object, **_kwargs: object) -> None:
+        assert cycle.started_upgrade is True
+        raise OSError("missing grpcurl")
+
+    monkeypatch.setattr(catalog.subprocess, "Popen", popen)
+    with pytest.raises(OSError, match="missing grpcurl"):
+        catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
+    assert cycle.started_upgrade is False
+
+
+def test_run_firmware_stream_decodes_formatted_error_status(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _, cycle = _checked_firmware_cycle(tmp_path)
+    cycle.upgrade_id = "offer-1"
+    monkeypatch.setattr(
+        catalog.subprocess,
+        "Popen",
+        lambda *_args, **_kwargs: _StreamProcess(
+            "", '{"code":13,"message":"failed verification"}', 1
+        ),
+    )
+    result = catalog.run_firmware_stream(Device("h", backend=_Exec(_routes({}))), cycle)
+    assert result.status_code == "Internal"
+    assert result.status_message == "failed verification"
+
+
+def _stream_result(
+    events: list[dict[str, object]], *, exit_code: int = 1, status: str | None = None
+) -> catalog.StreamResult:
+    return catalog.StreamResult(events, exit_code, status, None, "")
+
+
+_DOWNLOADED: list[dict[str, object]] = [
+    {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"},
+    {"download": {"downloadedBytes": "1", "totalBytes": "2"}},
+    {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},
+]
+
+
+@pytest.mark.parametrize(
+    ("result", "outcome"),
+    [
+        (
+            _stream_result(
+                [*_DOWNLOADED, {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_APPLYING"}], exit_code=0
+            ),
+            catalog.StreamOutcome.PROVISIONAL_SUCCESS,
+        ),
+        (
+            _stream_result(_DOWNLOADED, status="Unavailable"),
+            catalog.StreamOutcome.PROVISIONAL_SUCCESS,
+        ),
+        (_stream_result(_DOWNLOADED), catalog.StreamOutcome.PROVISIONAL_SUCCESS),
+        (_stream_result([], status="Unavailable"), catalog.StreamOutcome.REJECTED),
+        (
+            _stream_result(
+                [{"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"}], status="Internal"
+            ),
+            catalog.StreamOutcome.TERMINAL_FAILURE,
+        ),
+        (
+            _stream_result(_DOWNLOADED, status="FailedPrecondition"),
+            catalog.StreamOutcome.TERMINAL_FAILURE,
+        ),
+        (_stream_result([{"finished": {}}], exit_code=0), catalog.StreamOutcome.TERMINAL_FAILURE),
+        (_stream_result([], status="DeadlineExceeded"), catalog.StreamOutcome.POSSIBLY_ACCEPTED),
+        (
+            _stream_result(_DOWNLOADED[:1], status="Cancelled"),
+            catalog.StreamOutcome.POSSIBLY_ACCEPTED,
+        ),
+        (_stream_result([], status=None), catalog.StreamOutcome.POSSIBLY_ACCEPTED),
+        (
+            _stream_result([{"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_APPLYING"}], exit_code=0),
+            catalog.StreamOutcome.POSSIBLY_ACCEPTED,
+        ),
+        (
+            _stream_result(_DOWNLOADED[:2], status="Unavailable"),
+            catalog.StreamOutcome.POSSIBLY_ACCEPTED,
+        ),
+        (
+            _stream_result(
+                [
+                    {"download": {"downloadedBytes": "1"}},
+                    {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},
+                ],
+                status="Unavailable",
+            ),
+            catalog.StreamOutcome.POSSIBLY_ACCEPTED,
+        ),
+        (
+            _stream_result(
+                [
+                    {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_DOWNLOADING"},
+                    {"firmwarePhase": "FIRMWARE_UPGRADE_PHASE_VERIFYING"},
+                ],
+                status="Unavailable",
+            ),
+            catalog.StreamOutcome.POSSIBLY_ACCEPTED,
+        ),
+        (
+            _stream_result([*_DOWNLOADED, {"finished": {}}], exit_code=0),
+            catalog.StreamOutcome.TERMINAL_FAILURE,
+        ),
+    ],
+)
+def test_classify_firmware_stream(
+    result: catalog.StreamResult, outcome: catalog.StreamOutcome
+) -> None:
+    assert catalog.classify_stream(result) is outcome

@@ -10,6 +10,7 @@ members = [
 # Shared dev tooling for the whole Python workspace, run via `uv run` (one venv covers both members).
 [dependency-groups]
 dev = [
+    "grpcio>=1.60",
     "pytest>=8",
     "pytest-cov>=5",
 ]

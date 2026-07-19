@@ -120,6 +120,7 @@
             cargo-watch
             e2fsprogs
             ffmpeg-headless
+            grpcurl
             just
             odiff
             python3
