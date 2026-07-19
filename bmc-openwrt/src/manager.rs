@@ -164,32 +164,7 @@ impl Manager {
             .inspect_err(|err| error!(error = %err, "Upgrade process wait failed"))
             .map_err(|e| UpgradeError::Failed(format!("upgrade process wait failed: {e}")))?;
 
-        match status.code() {
-            Some(0) => {
-                info!("System upgrade completed successfully");
-                Ok(())
-            }
-            // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
-            Some(1) => {
-                error!(exit_code = 1, "Upgrade failed: invalid firmware image");
-                Err(UpgradeError::InvalidImage)
-            }
-            // procd rejections propagate through `ubus call system
-            // sysupgrade` as ubus status exit codes (2, 8, 9, ...); a
-            // successful flash never returns at all.
-            Some(code) => {
-                error!(exit_code = code, "Upgrade failed");
-                Err(UpgradeError::Failed(format!(
-                    "upgrade failed with exit code {code}"
-                )))
-            }
-            None => {
-                error!("Upgrade process terminated without exit code");
-                Err(UpgradeError::Failed(
-                    "upgrade process terminated without exit code".to_owned(),
-                ))
-            }
-        }
+        interpret_sysupgrade_exit(status.code())
     }
 
     async fn restart_system_service(&self) -> anyhow::Result<()> {
@@ -868,6 +843,48 @@ impl BmcManager for Manager {
     }
 }
 
+/// `-UBUS_STATUS_CONNECTION_FAILED` (-10) as a shell exit code. sysupgrade's
+/// last command is `ubus call system sysupgrade`; procd accepts the upgrade
+/// without answering the call, so the connection drops and sysupgrade exits
+/// 246 on the success path.
+const SYSUPGRADE_EXIT_UBUS_CONNECTION_FAILED: i32 = 246;
+
+/// Map sysupgrade's exit status to the upgrade outcome.
+fn interpret_sysupgrade_exit(exit_code: Option<i32>) -> Result<(), UpgradeError> {
+    match exit_code {
+        Some(0) => {
+            info!("System upgrade completed successfully");
+            Ok(())
+        }
+        Some(SYSUPGRADE_EXIT_UBUS_CONNECTION_FAILED) => {
+            info!(
+                exit_code = SYSUPGRADE_EXIT_UBUS_CONNECTION_FAILED,
+                "System upgrade accepted; reboot follows"
+            );
+            Ok(())
+        }
+        // Error code "1" is returned on BCB when using incompatible image, unsigned image or wrong signature keys
+        Some(1) => {
+            error!(exit_code = 1, "Upgrade failed: invalid firmware image");
+            Err(UpgradeError::InvalidImage)
+        }
+        // procd answers genuine rejections; they surface as other ubus
+        // status exit codes (2, 8, 9, ...).
+        Some(code) => {
+            error!(exit_code = code, "Upgrade failed");
+            Err(UpgradeError::Failed(format!(
+                "upgrade failed with exit code {code}"
+            )))
+        }
+        None => {
+            error!("Upgrade process terminated without exit code");
+            Err(UpgradeError::Failed(
+                "upgrade process terminated without exit code".to_owned(),
+            ))
+        }
+    }
+}
+
 /// Drain `reader` line-by-line, feeding each line to `on_line`.
 ///
 /// Reads raw bytes and converts lossily: sysupgrade output is not
@@ -944,7 +961,7 @@ pub enum Error {
 
 #[cfg(test)]
 mod tests {
-    use super::drain_lines;
+    use super::{UpgradeError, drain_lines, interpret_sysupgrade_exit};
 
     #[tokio::test]
     async fn drain_lines_survives_non_utf8_output() {
@@ -962,5 +979,57 @@ mod tests {
             ],
             "a non-UTF-8 byte must not stop the drain"
         );
+    }
+
+    #[test]
+    fn sysupgrade_exit_zero_is_success() {
+        assert!(interpret_sysupgrade_exit(Some(0)).is_ok());
+    }
+
+    #[test]
+    fn sysupgrade_exit_246_is_the_accepted_handoff_not_a_failure() {
+        // procd accepts the upgrade without answering the ubus call, so a
+        // successful flash exits with -UBUS_STATUS_CONNECTION_FAILED (246).
+        // Reporting it as a failure showed "Upgrade failed" on every
+        // successful upgrade.
+        assert!(
+            interpret_sysupgrade_exit(Some(246)).is_ok(),
+            "exit 246 is the success path: the ubus call is never answered"
+        );
+    }
+
+    #[test]
+    fn sysupgrade_exit_one_is_an_invalid_image() {
+        assert!(
+            matches!(
+                interpret_sysupgrade_exit(Some(1)),
+                Err(UpgradeError::InvalidImage)
+            ),
+            "exit 1 is the image-check rejection and must stay a distinct error"
+        );
+    }
+
+    #[test]
+    fn sysupgrade_ubus_rejection_codes_are_failures() {
+        // procd answers genuine rejections, so ubus exits with the real
+        // status code (2, 8, 9, ...) — those must not ride the 246
+        // acceptance path.
+        for code in [2, 8, 9] {
+            assert!(
+                matches!(
+                    interpret_sysupgrade_exit(Some(code)),
+                    Err(UpgradeError::Failed(_))
+                ),
+                "exit {code} is a procd rejection, not an accepted handoff"
+            );
+        }
+    }
+
+    #[test]
+    fn sysupgrade_death_by_signal_is_a_failure() {
+        assert!(matches!(
+            interpret_sysupgrade_exit(None),
+            Err(UpgradeError::Failed(_))
+        ));
     }
 }
