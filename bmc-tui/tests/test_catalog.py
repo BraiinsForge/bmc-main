@@ -2608,7 +2608,11 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -
 
 def _firmware_cycle(tmp_path: Path) -> catalog.FirmwareCycle:
     return catalog.FirmwareCycle(
-        password="", index_port=8082, stream_deadline=600, snapshot_dir=tmp_path
+        password="",
+        index_port=8082,
+        stream_deadline=600,
+        snapshot_dir=tmp_path,
+        device_identity="003900183133510b34323634",
     )
 
 
@@ -3269,3 +3273,243 @@ def test_classify_firmware_stream(
     result: catalog.StreamResult, outcome: catalog.StreamOutcome
 ) -> None:
     assert catalog.classify_stream(result) is outcome
+
+
+def _boot_id_routes(responses: list[str | OSError | None]) -> _Respond:
+    remaining = iter(responses)
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if argv and argv[0] == "ssh" and argv[-1] == "cat /proc/device-tree/serial-number":
+            return _cp(argv, "003900183133510B34323634\0")
+        if argv and argv[0] == "ssh" and argv[-1] == "cat /proc/sys/kernel/random/boot_id":
+            response = next(remaining)
+            if response is None:
+                raise subprocess.CalledProcessError(255, argv)
+            if isinstance(response, OSError):
+                raise response
+            return _cp(argv, response)
+        return _cp(argv)
+
+    return respond
+
+
+def _poll_time() -> tuple[Callable[[float], None], Callable[[], float]]:
+    now = 0.0
+
+    def sleep(seconds: float) -> None:
+        nonlocal now
+        now += seconds
+
+    return sleep, lambda: now
+
+
+def test_snapshot_boot_id_records_the_current_boot(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    catalog.snapshot_boot_id(
+        Device("h", backend=_Exec(_routes({"cat /proc/sys/kernel/random/boot_id": "boot-a"}))),
+        cycle,
+    )
+    assert cycle.boot_id_before == "boot-a"
+    assert catalog.BOOT_POLL_TIMEOUT == 180.0
+
+
+def test_snapshot_and_verify_board_serial(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    snapshot_dev = Device(
+        "h",
+        backend=_Exec(
+            _routes({"cat /proc/device-tree/serial-number": " \t003900183133510B34323634\0\n"})
+        ),
+    )
+    verify_dev = Device(
+        "h",
+        backend=_Exec(
+            _routes({"cat /proc/device-tree/serial-number": "003900183133510b34323634\0"})
+        ),
+    )
+    catalog.snapshot_device_identity(snapshot_dev, cycle)
+    assert cycle.device_identity == "003900183133510b34323634"
+    assert catalog.verify_device_identity(verify_dev, cycle) == "003900183133510b34323634"
+
+
+def test_verify_device_identity_rejects_a_different_device(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.device_identity = "003900183133510b34323634"
+    dev = Device(
+        "h",
+        backend=_Exec(
+            _routes({"cat /proc/device-tree/serial-number": "004000293244620C45434745\0"})
+        ),
+    )
+    with pytest.raises(Abort, match="device identity changed"):
+        catalog.verify_device_identity(dev, cycle)
+
+
+def test_poll_boot_id_change_tolerates_ssh_failure_until_new_boot(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.boot_id_before = "boot-a"
+    sleep, clock = _poll_time()
+    backend = _Exec(_boot_id_routes(["boot-a", None, "boot-a", "boot-b"]))
+    assert catalog.poll_boot_id_change(
+        Device("h", backend=backend), cycle, timeout=4.0, sleep=sleep, clock=clock
+    )
+
+
+def test_poll_boot_id_change_tolerates_os_error(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.boot_id_before = "boot-a"
+    sleep, clock = _poll_time()
+    backend = _Exec(_boot_id_routes([OSError("ssh missing"), "boot-b"]))
+    assert catalog.poll_boot_id_change(
+        Device("h", backend=backend), cycle, timeout=2.0, sleep=sleep, clock=clock
+    )
+
+
+def test_poll_boot_id_change_times_out_when_boot_never_changes(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.boot_id_before = "boot-a"
+    sleep, clock = _poll_time()
+    assert not catalog.poll_boot_id_change(
+        Device(
+            "h",
+            backend=_Exec(
+                _routes(
+                    {
+                        "cat /proc/device-tree/serial-number": "003900183133510B34323634\0",
+                        "cat /proc/sys/kernel/random/boot_id": "boot-a",
+                    }
+                )
+            ),
+        ),
+        cycle,
+        timeout=3.0,
+        sleep=sleep,
+        clock=clock,
+    )
+
+
+def test_poll_boot_id_change_rejects_plain_reachability(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.boot_id_before = "boot-a"
+    sleep, clock = _poll_time()
+    backend = _Exec(
+        _routes(
+            {
+                "cat /proc/device-tree/serial-number": "003900183133510B34323634\0",
+                "cat /proc/sys/kernel/random/boot_id": "boot-a",
+            }
+        )
+    )
+    assert not catalog.poll_boot_id_change(
+        Device("h", backend=backend), cycle, timeout=1.0, sleep=sleep, clock=clock
+    )
+    assert backend.runs
+
+
+def test_read_flashed_version_parses_raw_version_canonically() -> None:
+    dev = Device(
+        "h",
+        backend=_Exec(_routes({"cat /etc/bos_version": "2025-07-01-007-0BADC0DE-25.7"})),
+    )
+    assert catalog.read_flashed_version(dev).canonical == "2025-07-01-7-0badc0de-25.07"
+
+
+def test_read_flashed_version_propagates_parse_error() -> None:
+    dev = Device("h", backend=_Exec(_routes({"cat /etc/bos_version": "garbage"})))
+    with pytest.raises(ValueError):
+        catalog.read_flashed_version(dev)
+
+
+def test_verify_stock_service_accepts_running_and_rejects_stopped() -> None:
+    running = _routes({"service bmc-compositor status": "running"})
+    catalog.verify_stock_service(Device("h", backend=_Exec(running)))
+
+    with pytest.raises(Abort, match="bmc-compositor"):
+        catalog.verify_stock_service(Device("h", backend=_Exec(_routes({}))))
+
+
+class _OrderedExec(_Exec):
+    def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
+        self.runs.append(argv)
+        super().stream(argv, chunks)
+
+
+def _restorable_cycle(tmp_path: Path) -> catalog.FirmwareCycle:
+    cycle = _firmware_cycle(tmp_path)
+    servers = tmp_path / "servers.json"
+    nix_conf = tmp_path / "nix.conf"
+    opkg_keys = tmp_path / "opkg-keys.tar"
+    servers.write_text("servers")
+    nix_conf.write_text("nix-conf")
+    opkg_keys.write_text("keys")
+    cycle.servers_snapshot = catalog.FileSnapshot(catalog._SERVERS_JSON, servers)
+    cycle.nix_conf_snapshot = catalog.FileSnapshot(catalog._NIX_CONF, nix_conf)
+    cycle.opkg_keys_snapshot = catalog.DirSnapshot("/etc/opkg/keys", opkg_keys)
+    return cycle
+
+
+def test_restore_after_success_quiesces_before_restores_and_start(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(catalog, "_BMC_KILL_WAIT", 0.0)
+    stale = "77\t/nix/store/stale/bin/bmc-openwrt"
+    backend = _OrderedExec(
+        _scan_routes(
+            [stale, stale, "", ""],
+            {"service bmc-compositor status": "running"},
+        )
+    )
+    cycle = _restorable_cycle(tmp_path)
+    catalog.restore_after_success(Device("h", backend=backend), cycle)
+    commands = [argv[-1] for argv in backend.runs]
+    server_push = commands.index(f"cat > {catalog._SERVERS_JSON}")
+    nix_push = commands.index(f"cat > {catalog._NIX_CONF}")
+    scan_indices = [
+        index for index, command in enumerate(commands) if "for exe in /proc/[0-9]*/exe" in command
+    ]
+    assert commands.index("service bmc-compositor stop") < commands.index("kill -TERM 77")
+    assert commands.index("kill -KILL 77") < max(scan_indices) < server_push < nix_push
+    assert nix_push < commands.index("service bmc-compositor start")
+    assert not any("/etc/opkg/keys" in command for command in commands)
+    assert cycle.opkg_keys_snapshot is None
+
+
+def test_restore_after_success_strips_surviving_index_override(tmp_path: Path) -> None:
+    # keep.d preserves the init script across sysupgrade, so the injected
+    # env var rides the flash and must be stripped on the new system.
+    cycle = _restorable_cycle(tmp_path)
+    cycle.host = "192.0.2.5"
+    injected = _INIT_SCRIPT_BODY.replace(
+        "procd_set_param env ",
+        'procd_set_param env "BMC_INDEX_URL=http://192.0.2.5:8082" ',
+        1,
+    )
+    backend = _OrderedExec(
+        _scan_routes(
+            ["", ""],
+            {
+                "service bmc-compositor status": "running",
+                "cat /etc/init.d/bmc-compositor": injected,
+            },
+        )
+    )
+    catalog.restore_after_success(Device("h", backend=backend), cycle)
+    commands = [argv[-1] for argv in backend.runs]
+    push = next(command for command in commands if command.startswith("printf"))
+    assert shlex.split(push)[2] == _INIT_SCRIPT_BODY
+    assert commands.index(push) < commands.index("service bmc-compositor start")
+
+
+def test_restore_after_success_aborts_if_stock_service_does_not_start(
+    tmp_path: Path,
+) -> None:
+    backend = _OrderedExec(_scan_routes(["", ""]))
+    with pytest.raises(Abort, match="bmc-compositor"):
+        catalog.restore_after_success(Device("h", backend=backend), _restorable_cycle(tmp_path))
+    commands = [argv[-1] for argv in backend.runs]
+    assert commands.index(f"cat > {catalog._SERVERS_JSON}") < commands.index(
+        "service bmc-compositor start"
+    )
+    assert commands.index(f"cat > {catalog._NIX_CONF}") < commands.index(
+        "service bmc-compositor start"
+    )

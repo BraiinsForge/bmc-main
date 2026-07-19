@@ -1013,9 +1013,13 @@ def _first_bytes(dev: Device, url: str) -> int:
         return 0
 
 
+class _Pinnable(Protocol):
+    pinned_host: str | None
+
+
 @stage("Pin device address")
 def pin_device_address(
-    dev: Device, run: E2eRun, *, resolve: Callable[[str], str] = socket.gethostbyname
+    dev: Device, run: _Pinnable, *, resolve: Callable[[str], str] = socket.gethostbyname
 ) -> str:
     """Resolve --device to a numeric address for the cleardown/flash window:
     the cleardown stops avahi with the generation's other services, so an
@@ -2710,6 +2714,8 @@ class FirmwareCycle:
     bcp_before: frozenset[str] = frozenset()
     init_script_snapshot: "FileSnapshot | None" = None
     bmc_log_offset: int = 0
+    pinned_host: str | None = None
+    device_identity: str | None = None
     boot_id_before: str | None = None
     cookie: str | None = None
     upgrade_id: str | None = None
@@ -3349,3 +3355,109 @@ def classify_stream(result: StreamResult) -> StreamOutcome:
             else StreamOutcome.POSSIBLY_ACCEPTED
         )
     return outcome
+
+
+BOOT_POLL_TIMEOUT = 180.0
+
+_BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
+_DEVICE_ID_PATH = "/proc/device-tree/serial-number"
+
+
+class DeviceIdentityError(Abort):
+    """The reconnect reached a different physical Deck."""
+
+
+def _read_device_identity(dev: Device) -> str:
+    return dev.read(f"cat {_DEVICE_ID_PATH}").strip("\0 \t\n\r\v\f").casefold()
+
+
+@stage("Snapshot device identity")
+def snapshot_device_identity(dev: Device, cycle: FirmwareCycle) -> str:
+    identity = _read_device_identity(dev)
+    require(bool(identity), "device identity is empty")
+    cycle.device_identity = identity
+    return console.lit(identity)
+
+
+def verify_device_identity(dev: Device, cycle: FirmwareCycle) -> str:
+    expected = cycle.device_identity
+    if expected is None:
+        msg = "BUG: device identity was not snapshotted before reconnect"
+        raise RuntimeError(msg)
+    identity = _read_device_identity(dev)
+    if identity != expected:
+        raise DeviceIdentityError(
+            f"device identity changed: expected {console.lit(expected)}, "
+            f"got {console.lit(identity)}"
+        )
+    return identity
+
+
+@stage("Snapshot boot id")
+def snapshot_boot_id(dev: Device, cycle: FirmwareCycle) -> str:
+    boot_id = dev.read(f"cat {_BOOT_ID_PATH}")
+    cycle.boot_id_before = boot_id
+    return console.lit(boot_id)
+
+
+def poll_boot_id_change(
+    dev: Device,
+    cycle: FirmwareCycle,
+    *,
+    timeout: float,
+    sleep: Callable[[float], None] = time.sleep,
+    clock: Callable[[], float] = time.monotonic,
+) -> bool:
+    boot_id_before = cycle.boot_id_before
+    if boot_id_before is None:
+        msg = "BUG: boot id was not snapshotted before the reboot poll"
+        raise RuntimeError(msg)
+
+    deadline = clock() + timeout
+    while clock() < deadline:
+        try:
+            verify_device_identity(dev, cycle)
+            boot_id = dev.read(f"cat {_BOOT_ID_PATH}")
+        except (subprocess.CalledProcessError, OSError):
+            pass
+        else:
+            if boot_id != boot_id_before:
+                return True
+
+        remaining = deadline - clock()
+        if remaining <= 0:
+            break
+        sleep(min(1.0, remaining))
+    return False
+
+
+def read_flashed_version(dev: Device) -> BosVersion:
+    return parse_bos_version(dev.read("cat /etc/bos_version"))
+
+
+@stage("Verify stock service")
+def verify_stock_service(dev: Device) -> str:
+    running = dev.read("service bmc-compositor status >/dev/null 2>&1 && echo running || true")
+    require(
+        running == "running",
+        "bmc-compositor is not running as the stock procd service",
+    )
+    return "bmc-compositor running"
+
+
+@stage("Restore config on fresh boot")
+def restore_after_success(dev: Device, cycle: FirmwareCycle) -> str:
+    nix_conf_snapshot = cycle.nix_conf_snapshot
+    if nix_conf_snapshot is None:
+        msg = "BUG: nix.conf was not snapshotted before restoration"
+        raise RuntimeError(msg)
+
+    quiesce_bmc(dev)
+    restore_servers_config(dev, cycle)
+    restore_remote_file(dev, nix_conf_snapshot)
+    cycle.opkg_keys_snapshot = None
+    stripped = strip_index_override(dev, cycle)
+    dev.run("service bmc-compositor start")
+    verify_stock_service(dev)
+    suffix = ", index override stripped" if stripped else ""
+    return f"servers.json and nix.conf restored{suffix}"
