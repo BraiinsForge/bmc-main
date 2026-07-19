@@ -21,6 +21,7 @@
 """Single `deck` entry point: dispatch to a procedure subcommand."""
 
 from bmc_tui.procedures.deploy import Deploy
+from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.e2e_sysupgrade_faults import E2eSysupgradeFaults
 from bmc_tui.procedures.image_formats import ImageFormats
@@ -39,6 +40,7 @@ def main(
     | UpgradeE2e
     | InstallWidgetE2e
     | E2eSysupgrade
+    | E2eGrpcSysupgrade
     | ImageFormats
     | E2eSysupgradeFaults,
 ) -> None:

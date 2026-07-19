@@ -25,6 +25,7 @@ from pathlib import Path
 import tyro
 
 from bmc_tui.procedures.deploy import Deploy
+from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
@@ -61,3 +62,17 @@ def test_sysupgrade_parses_args() -> None:
     assert cmd.image == Path("fw.tar")
     assert cmd.force is False
     assert cmd.yes is False
+
+
+def test_e2e_grpc_sysupgrade_parses_args() -> None:
+    cmd = tyro.cli(
+        E2eGrpcSysupgrade,
+        args=["--device", "h", "--image", "firmware.tar"],
+    )
+    assert cmd.device == "h"
+    assert cmd.image == Path("firmware.tar")
+    assert cmd.password == ""
+    assert cmd.index_port == 8082
+    assert cmd.packages_port == 8080
+    assert cmd.packages_index_port == 8081
+    assert cmd.stream_deadline == 900.0

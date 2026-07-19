@@ -35,6 +35,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -43,6 +44,7 @@ import threading
 import time
 import urllib.request
 from collections.abc import Callable
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NewType, Protocol
@@ -87,6 +89,9 @@ _REMOTE_CLI = RemotePath(f"/tmp/bmc-nix-cli.deck-init.{os.getpid()}")
 # Same run-uniqueness rationale for the pushed debugfs; /tmp is tmpfs, so a
 # reboot sweeps it, and cleanup_remote_artifacts removes it like the CLI.
 _REMOTE_DEBUGFS = RemotePath(f"/tmp/bmc-debugfs.deck-faults.{os.getpid()}")
+
+# Sysupgrade stages the tar in /tmp and extracts rootfs.img before pivoting.
+FLASH_HEADROOM = 20 * 1024 * 1024
 
 
 @stage("Device reachable")
@@ -2243,7 +2248,12 @@ def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> 
         built=plan.built,
     )
     with cycle.log_path.open("wb") as log:
-        cycle.server = subprocess.Popen(argv, stdout=log, stderr=subprocess.STDOUT)
+        cycle.server = subprocess.Popen(
+            argv,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
     _await_upgrade_server(cycle)
     cycle.cache_public_key = (cycle.key_dir / "public").read_text().strip()
     return f"index {console.lit(cycle.index_url)}, cache {console.lit(cycle.cache_url)}"
@@ -2264,6 +2274,56 @@ def stop_upgrade_server(cycle: UpgradeCycle) -> None:
     except subprocess.TimeoutExpired:
         server.kill()
         server.wait()
+
+
+def _upgrade_server_port_released(host: str, port: int) -> bool:
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+    except OSError:
+        return False
+    return True
+
+
+def _upgrade_server_ports_released(cycle: UpgradeCycle, *, timeout: float = 10) -> bool:
+    deadline = time.monotonic() + timeout
+    host = cycle.host or "0.0.0.0"
+    while True:
+        if _upgrade_server_port_released(host, cycle.port) and _upgrade_server_port_released(
+            host, cycle.index_port
+        ):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.1)
+
+
+def stop_upgrade_server_group(cycle: UpgradeCycle) -> None:
+    """Stop the e2e firmware package server and all of its children."""
+    server = cycle.server
+    if server is None:
+        return
+
+    with suppress(ProcessLookupError):
+        os.killpg(server.pid, signal.SIGTERM)
+    leader_timed_out = False
+    if server.poll() is None:
+        try:
+            server.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            leader_timed_out = True
+    ports_released = not leader_timed_out and _upgrade_server_ports_released(cycle)
+    if not ports_released:
+        with suppress(ProcessLookupError):
+            os.killpg(server.pid, signal.SIGKILL)
+        if server.poll() is None:
+            server.wait(timeout=10)
+
+    require(
+        _upgrade_server_ports_released(cycle),
+        f"upgrade-server ports {cycle.port} and {cycle.index_port} are still occupied",
+    )
 
 
 @stage("Register server on device")

@@ -42,11 +42,6 @@ from bmc_tui.nix import Nix
 from bmc_tui.server import default_serve_ip
 from bmc_tui.stage import best_effort, dry_run, entrypoint
 
-# sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk; same
-# headroom rationale as procedures/sysupgrade.py. The memory ask also
-# covers the key-trust stage's transient rootfs.img extraction.
-_FLASH_HEADROOM = 20 * 1024 * 1024
-
 
 @dataclass
 class E2eSysupgrade:
@@ -146,7 +141,9 @@ class E2eSysupgrade:
         catalog.stop_compositor(dev)
         catalog.push_nix_cli(dev, prov)
         catalog.register_rig(dev, state)
-        catalog.ensure_memory(dev, state.image_a.size + state.image_a.rootfs_size + _FLASH_HEADROOM)
+        catalog.ensure_memory(
+            dev, state.image_a.size + state.image_a.rootfs_size + catalog.FLASH_HEADROOM
+        )
         catalog.pin_device_address(dev, state)
         pinned = self._pinned(dev, state, make_device)
         catalog.upload_firmware(dev, state.image_a)
@@ -177,7 +174,9 @@ class E2eSysupgrade:
         catalog.register_rig(dev, state)
         catalog.drop_e2e_marker(dev)
         catalog.record_generation(dev, state)
-        catalog.ensure_memory(dev, state.image_b.size + state.image_b.rootfs_size + _FLASH_HEADROOM)
+        catalog.ensure_memory(
+            dev, state.image_b.size + state.image_b.rootfs_size + catalog.FLASH_HEADROOM
+        )
         catalog.pin_device_address(dev, state)
         pinned = self._pinned(dev, state, make_device)
         catalog.upload_firmware(dev, state.image_b)
