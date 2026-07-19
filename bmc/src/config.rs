@@ -542,8 +542,9 @@ impl ConfigHandle {
                 path = %path.display(),
                 current = CONFIG_VERSION,
                 "config on disk declares a newer schema than this firmware understands; \
-                 refusing to overwrite it. Using in-memory defaults — restore a \
-                 `.backup.<ts>` copy or update the firmware to recover the saved config."
+                 refusing to overwrite it. Running on in-memory defaults, but the on-disk \
+                 config is left intact — update the firmware to read it, or restore an \
+                 older `.backup.<ts>` copy."
             );
             return Recovery::RefusedNewer(Config::platform_default(product));
         }

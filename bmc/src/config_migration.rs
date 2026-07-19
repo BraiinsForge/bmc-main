@@ -147,8 +147,9 @@ impl FromStr for LoadedConfig {
                 Ok(Self::MigratedFromV0 { current, report })
             }
             other => bail!(
-                "unsupported config version: {other}. Refusing to read; a newer firmware may \
-                 have written this file. Restore a `.backup.<ts>` copy or update the firmware."
+                "unsupported config version: {other}. Refusing to read; a newer BMC application may \
+                 have written this file. The file is left untouched — update the BMC application to \
+                 read it, or restore an older `.backup.<ts>` copy."
             ),
         }
     }
