@@ -2678,6 +2678,7 @@ class FirmwareCycle:
     upload_present: bool = False
     mutation_started: bool = False
     bcp_before: frozenset[str] = frozenset()
+    init_script_snapshot: "FileSnapshot | None" = None
     bmc_log_offset: int = 0
     boot_id_before: str | None = None
     cookie: str | None = None
@@ -2865,3 +2866,171 @@ def remove_uploaded_image(dev: Device, image: Image, cycle: FirmwareCycle) -> st
     dev.run(f"rm -f {shlex.quote(image.remote_path)}")
     cycle.upload_present = False
     return console.lit(image.remote_path)
+
+
+_BMC_KILL_WAIT = 10.0
+_BMC_READY_TIMEOUT = 60.0
+
+_BMC_EXE_SUFFIX = "/bin/bmc-openwrt"
+_BMC_LOG = "/var/log/bmc/bmc.log"
+_INIT_SCRIPT = "/etc/init.d/bmc-compositor"
+_ENV_PARAM = "procd_set_param env "
+_BMC_RESTART_TIMEOUT = 30.0  # s for procd to replace the service process on restart
+
+
+def scan_bmc_pids(dev: Device) -> list[int]:
+    output = dev.read(
+        'for exe in /proc/[0-9]*/exe; do path=$(readlink "$exe") || continue; '
+        'case "$path" in */bin/bmc-openwrt) pid=${exe#/proc/}; pid=${pid%/exe}; '
+        'printf \'%s\\t%s\\n\' "$pid" "$path";; esac; done'
+    )
+    pids: list[int] = []
+    for line in output.splitlines():
+        pid, separator, exe = line.partition("\t")
+        if separator and pid.isdigit() and exe.endswith(_BMC_EXE_SUFFIX):
+            pids.append(int(pid))
+    return pids
+
+
+def kill_bmc_pids(dev: Device, pids: list[int]) -> None:
+    for pid in pids:
+        dev.run(f"kill -TERM {pid}")
+
+    deadline = time.monotonic() + _BMC_KILL_WAIT
+    remaining = scan_bmc_pids(dev)
+    while remaining and time.monotonic() < deadline:
+        time.sleep(1)
+        remaining = scan_bmc_pids(dev)
+
+    if remaining:
+        for pid in remaining:
+            dev.run(f"kill -KILL {pid}")
+        remaining = scan_bmc_pids(dev)
+    require(not remaining, f"bmc-openwrt is still running after KILL: {remaining}")
+
+
+def quiesce_bmc(dev: Device) -> None:
+    dev.run("service bmc-compositor stop")
+    pids = scan_bmc_pids(dev)
+    if pids:
+        kill_bmc_pids(dev, pids)
+    require(not scan_bmc_pids(dev), "bmc-openwrt is still running after cleanup")
+
+
+@stage("Snapshot bmc service script")
+def snapshot_service_script(dev: Device, cycle: FirmwareCycle) -> str:
+    snap = snapshot_remote_file(dev, _INIT_SCRIPT, cycle.snapshot_dir / "bmc-compositor.init")
+    require(snap.local is not None, f"{_INIT_SCRIPT} is missing on the device")
+    cycle.init_script_snapshot = snap
+    return f"snapshot → {console.lit(str(cycle.snapshot_dir))}"
+
+
+def _index_env_token(cycle: FirmwareCycle) -> str:
+    return f'"BMC_INDEX_URL=http://{cycle.host}:{cycle.index_port}"'
+
+
+@stage("Restart bmc with index override")
+def point_bmc_at_index(dev: Device, cycle: FirmwareCycle) -> str:
+    """Inject BMC_INDEX_URL into the procd service env and restart it.
+
+    bmc must stay procd-supervised through the upgrade: an unsupervised bmc
+    outlives procd's sysupgrade teardown and observes the sysupgrade child's
+    nonzero exit on the success path, turning a completed flash into a
+    spurious `Internal: Upgrade failed` on the StartUpgrade stream.
+    """
+    require(cycle.host is not None, "BUG: index host was not resolved before bmc restart")
+    snap = cycle.init_script_snapshot
+    if snap is None or snap.local is None:
+        msg = "BUG: the service script was not snapshotted before injection"
+        raise RuntimeError(msg)
+    script = snap.local.read_text()
+    require(
+        "BMC_INDEX_URL" not in script,
+        f"{_INIT_SCRIPT} already carries BMC_INDEX_URL — restore the device first",
+    )
+    env_lines = [line for line in script.splitlines() if _ENV_PARAM in line]
+    require(
+        len(env_lines) == 1,
+        f"expected exactly one '{_ENV_PARAM.rstrip()}' line in {_INIT_SCRIPT}, "
+        f"found {len(env_lines)}",
+    )
+    edited = script.replace(_ENV_PARAM, f"{_ENV_PARAM}{_index_env_token(cycle)} ", 1)
+    cycle.bmc_log_offset = int(dev.read(f"wc -c < {_BMC_LOG} 2>/dev/null || echo 0"))
+    dev.run(f"printf '%s' {shlex.quote(edited)} > {_INIT_SCRIPT}")
+    dev.run("service bmc-compositor restart")
+    expected = _index_env_token(cycle).strip('"')
+    deadline = time.monotonic() + _BMC_RESTART_TIMEOUT
+    while True:
+        pids = scan_bmc_pids(dev)
+        if len(pids) == 1:
+            environ = dev.read(
+                f"tr '\\0' '\\n' < /proc/{pids[0]}/environ 2>/dev/null "
+                "| grep '^BMC_INDEX_URL=' || true"
+            )
+            if environ == expected:
+                return f"pid {pids[0]} with {expected}"
+        require(
+            time.monotonic() < deadline,
+            f"restarted bmc did not come up with {expected} within "
+            f"{_BMC_RESTART_TIMEOUT:.0f}s; last scan: {pids}",
+        )
+        time.sleep(0.5)
+
+
+def strip_index_override(dev: Device, cycle: FirmwareCycle) -> bool:
+    """Remove the injected BMC_INDEX_URL token from the on-device service script.
+
+    keep.d preserves /etc/init.d/bmc-compositor across sysupgrade, so the
+    injected env var rides the flash onto the new system; the snapshot
+    cannot be byte-restored there because it names the old system's store
+    path. Returns True when a token was found and removed.
+    """
+    script = dev.read(f"cat {_INIT_SCRIPT}")
+    injected = f"{_ENV_PARAM}{_index_env_token(cycle)} "
+    if injected not in script:
+        require(
+            "BMC_INDEX_URL" not in script,
+            f"{_INIT_SCRIPT} carries an unexpected BMC_INDEX_URL entry",
+        )
+        return False
+    dev.run(f"printf '%s' {shlex.quote(script.replace(injected, _ENV_PARAM, 1))} > {_INIT_SCRIPT}")
+    return True
+
+
+def bmc_log_tail(dev: Device, cycle: FirmwareCycle) -> str:
+    first_byte = cycle.bmc_log_offset + 1
+    return dev.read(f"tail -c +{first_byte} {_BMC_LOG} 2>/dev/null || true")
+
+
+@stage("Wait for bmc gRPC")
+def await_bmc_ready(dev: Device, cycle: FirmwareCycle) -> str:
+    deadline = time.monotonic() + _BMC_READY_TIMEOUT
+    while True:
+        try:
+            remaining = deadline - time.monotonic()
+            require(
+                remaining > 0,
+                f"bmc gRPC did not answer within {_BMC_READY_TIMEOUT:.0f}s; "
+                f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
+            )
+            subprocess.run(
+                _grpcurl_argv(
+                    dev,
+                    "AuthenticationService/Login",
+                    data={"password": cycle.password},
+                    cookie=None,
+                    max_time=max(1, int(remaining)),
+                ),
+                capture_output=True,
+                text=True,
+                check=True,
+                timeout=remaining,
+            )
+            return "gRPC ready"
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            require(
+                time.monotonic() < deadline,
+                f"bmc gRPC did not answer within {_BMC_READY_TIMEOUT:.0f}s; "
+                f"new bmc log:\n{bmc_log_tail(dev, cycle) or '(no new log output)'}",
+            )
+            time.sleep(min(1, max(0, deadline - time.monotonic())))

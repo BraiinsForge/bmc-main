@@ -2748,3 +2748,198 @@ def test_preflight_device_rejects_missing_or_invalid_prerequisites(
 ) -> None:
     with pytest.raises(Abort, match=hint):
         catalog.preflight_device(Device("h", backend=_Exec(_routes(routes))))
+
+
+def _scan_routes(scans: list[str], routes: dict[str, str] | None = None) -> _Respond:
+    remaining = iter(scans)
+    fallback = _routes(routes or {})
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        if argv and argv[0] == "ssh" and "for exe in /proc/[0-9]*/exe" in argv[-1]:
+            return _cp(argv, next(remaining))
+        return fallback(argv)
+
+    return respond
+
+
+_ENV_LINE = '\tprocd_set_param env "PATH=/usr/sbin:/bin" "XDG_RUNTIME_DIR=/tmp/runtime"'
+_INIT_SCRIPT_BODY = "\n".join(
+    (
+        "#!/bin/sh /etc/rc.common",
+        "start_service() {",
+        "\tprocd_set_param command /bin/ash -c 'exec \"/nix/store/a/bin/bmc-openwrt\"'",
+        _ENV_LINE,
+        "\tprocd_set_param respawn 3600 5 0",
+        "}",
+    )
+)
+
+
+def _pointed_cycle(tmp_path: Path, script: str) -> catalog.FirmwareCycle:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.host = "192.0.2.5"
+    local = tmp_path / "bmc-compositor.init"
+    local.write_text(script)
+    cycle.init_script_snapshot = catalog.FileSnapshot("/etc/init.d/bmc-compositor", local)
+    return cycle
+
+
+def test_snapshot_service_script_records_contents_and_rejects_missing(tmp_path: Path) -> None:
+    content = _INIT_SCRIPT_BODY.encode()
+    backend = _Exec(
+        _routes(
+            {
+                "test -f /etc/init.d/bmc-compositor": "present",
+                "base64 < /etc/init.d/bmc-compositor": base64.b64encode(content).decode(),
+                "wc -c < /etc/init.d/bmc-compositor": str(len(content)),
+                "sha256sum /etc/init.d/bmc-compositor": hashlib.sha256(content).hexdigest(),
+            }
+        )
+    )
+    cycle = _firmware_cycle(tmp_path)
+    catalog.snapshot_service_script(Device("h", backend=backend), cycle)
+    assert cycle.init_script_snapshot is not None
+    assert cycle.init_script_snapshot.local is not None
+    assert cycle.init_script_snapshot.local.read_bytes() == content
+
+    with pytest.raises(Abort, match="missing"):
+        catalog.snapshot_service_script(
+            Device("h", backend=_Exec(_routes({}))), _firmware_cycle(tmp_path)
+        )
+
+
+def test_scan_bmc_pids_matches_every_store_generation() -> None:
+    sweep = "\n".join(
+        (
+            "101\t/nix/store/old-bmc/bin/bmc-openwrt",
+            "202\t/nix/store/new-bmc/bin/bmc-openwrt",
+            "303\t/usr/bin/grpcurl",
+        )
+    )
+    dev = Device("h", backend=_Exec(_scan_routes([sweep])))
+    assert catalog.scan_bmc_pids(dev) == [101, 202]
+
+
+def test_quiesce_kills_stale_pid_after_service_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(catalog, "_BMC_KILL_WAIT", 0.0)
+    stale = "77\t/nix/store/stale/bin/bmc-openwrt"
+    backend = _Exec(_scan_routes([stale, stale, "", ""]))
+    catalog.quiesce_bmc(Device("h", backend=backend))
+    commands = [argv[-1] for argv in backend.runs]
+    assert commands[0] == "service bmc-compositor stop"
+    assert "kill -TERM 77" in commands
+    assert "kill -KILL 77" in commands
+
+
+def test_quiesce_raises_when_pid_survives_kill(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(catalog, "_BMC_KILL_WAIT", 0.0)
+    stale = "77\t/nix/store/stale/bin/bmc-openwrt"
+    with pytest.raises(Abort, match="still running"):
+        catalog.quiesce_bmc(Device("h", backend=_Exec(_scan_routes([stale, stale, stale]))))
+
+
+def test_point_bmc_at_index_injects_env_and_verifies_environ(tmp_path: Path) -> None:
+    cycle = _pointed_cycle(tmp_path, _INIT_SCRIPT_BODY)
+    backend = _Exec(
+        _scan_routes(
+            ["222\t/nix/store/a/bin/bmc-openwrt"],
+            {
+                "wc -c < /var/log/bmc/bmc.log": "12",
+                "/proc/222/environ": "BMC_INDEX_URL=http://192.0.2.5:8082",
+            },
+        )
+    )
+    catalog.point_bmc_at_index(Device("h", backend=backend), cycle)
+    push = next(argv[-1] for argv in backend.runs if argv[-1].startswith("printf"))
+    pushed = shlex.split(push)[2]
+    assert 'procd_set_param env "BMC_INDEX_URL=http://192.0.2.5:8082" "PATH=' in pushed
+    assert pushed.replace('"BMC_INDEX_URL=http://192.0.2.5:8082" ', "", 1) == _INIT_SCRIPT_BODY
+    assert push.endswith("> /etc/init.d/bmc-compositor")
+    assert any(argv[-1] == "service bmc-compositor restart" for argv in backend.runs)
+    assert cycle.bmc_log_offset == 12
+
+
+def test_point_bmc_at_index_aborts_when_override_already_present(tmp_path: Path) -> None:
+    script = _INIT_SCRIPT_BODY.replace('"PATH=', '"BMC_INDEX_URL=http://x" "PATH=')
+    cycle = _pointed_cycle(tmp_path, script)
+    with pytest.raises(Abort, match="restore the device first"):
+        catalog.point_bmc_at_index(Device("h", backend=_Exec(_routes({}))), cycle)
+
+
+@pytest.mark.parametrize(
+    "script",
+    [
+        _INIT_SCRIPT_BODY.replace(f"{_ENV_LINE}\n", ""),
+        _INIT_SCRIPT_BODY.replace(_ENV_LINE, f"{_ENV_LINE}\n{_ENV_LINE}"),
+    ],
+)
+def test_point_bmc_at_index_aborts_without_single_env_line(tmp_path: Path, script: str) -> None:
+    cycle = _pointed_cycle(tmp_path, script)
+    with pytest.raises(Abort, match="exactly one"):
+        catalog.point_bmc_at_index(Device("h", backend=_Exec(_routes({}))), cycle)
+
+
+def test_point_bmc_at_index_aborts_when_environ_never_matches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(catalog, "_BMC_RESTART_TIMEOUT", 0.0)
+    cycle = _pointed_cycle(tmp_path, _INIT_SCRIPT_BODY)
+    backend = _Exec(
+        _scan_routes(
+            ["222\t/nix/store/a/bin/bmc-openwrt"],
+            {"wc -c < /var/log/bmc/bmc.log": "12", "/proc/222/environ": ""},
+        )
+    )
+    with pytest.raises(Abort, match="did not come up"):
+        catalog.point_bmc_at_index(Device("h", backend=backend), cycle)
+
+
+def test_strip_index_override_removes_token_and_flags_foreign(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.host = "192.0.2.5"
+    injected = _INIT_SCRIPT_BODY.replace(
+        "procd_set_param env ",
+        'procd_set_param env "BMC_INDEX_URL=http://192.0.2.5:8082" ',
+        1,
+    )
+    backend = _Exec(_routes({"cat /etc/init.d/bmc-compositor": injected}))
+    assert catalog.strip_index_override(Device("h", backend=backend), cycle) is True
+    push = next(argv[-1] for argv in backend.runs if argv[-1].startswith("printf"))
+    assert shlex.split(push)[2] == _INIT_SCRIPT_BODY
+
+    clean = _Exec(_routes({"cat /etc/init.d/bmc-compositor": _INIT_SCRIPT_BODY}))
+    assert catalog.strip_index_override(Device("h", backend=clean), cycle) is False
+    assert not any(argv[-1].startswith("printf") for argv in clean.runs)
+
+    foreign = _INIT_SCRIPT_BODY.replace('"PATH=', '"BMC_INDEX_URL=http://other" "PATH=')
+    with pytest.raises(Abort, match="unexpected BMC_INDEX_URL"):
+        catalog.strip_index_override(
+            Device("h", backend=_Exec(_routes({"cat /etc/init.d/bmc-compositor": foreign}))),
+            cycle,
+        )
+
+
+def test_kill_bmc_pids_stops_after_term_or_escalates(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(catalog, "_BMC_KILL_WAIT", 0.0)
+    stopped = _Exec(_scan_routes([""]))
+    catalog.kill_bmc_pids(Device("h", backend=stopped), [10])
+    assert [argv[-1] for argv in stopped.runs if "kill -" in argv[-1]] == ["kill -TERM 10"]
+
+    stale = "10\t/nix/store/a/bin/bmc-openwrt"
+    escalated = _Exec(_scan_routes([stale, ""]))
+    catalog.kill_bmc_pids(Device("h", backend=escalated), [10])
+    assert [argv[-1] for argv in escalated.runs if "kill -" in argv[-1]] == [
+        "kill -TERM 10",
+        "kill -KILL 10",
+    ]
+
+
+def test_await_bmc_ready_reports_log_tail_on_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(catalog, "_BMC_READY_TIMEOUT", 0.0)
+    cycle = _firmware_cycle(tmp_path)
+    cycle.bmc_log_offset = 7
+    backend = _Exec(_routes({"tail -c +8 /var/log/bmc/bmc.log": "new diagnostic"}))
+    with pytest.raises(Abort, match="new diagnostic"):
+        catalog.await_bmc_ready(Device("h", backend=backend), cycle)
