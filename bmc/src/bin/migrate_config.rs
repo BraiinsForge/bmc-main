@@ -56,6 +56,11 @@ async fn run() -> Result<()> {
         .await
         .with_context(|| format!("read {}", src.display()))?;
     let loaded: LoadedConfig = raw.parse()?;
+    // Validate before writing, mirroring the boot path: never bless a
+    // config the device would reject and wipe on next boot.
+    loaded
+        .validate()
+        .context("migrated config failed validation; refusing to write it to <dst>")?;
     config_migration::save_with_backup(loaded.current(), &dst).await?;
 
     if let Some(report) = loaded.report() {

@@ -131,6 +131,16 @@ impl LoadedConfig {
             Self::MigratedFromV0 { report, .. } => Some(report),
         }
     }
+
+    /// Validate the effective current config against the same rules the
+    /// boot path enforces before persisting (see [`migrate_on_disk`]).
+    ///
+    /// Exposed so the offline `bmc-migrate-config` tool refuses to write
+    /// a config the device would reject and wipe on next boot, rather
+    /// than silently blessing it.
+    pub fn validate(&self) -> Result<()> {
+        self.current().validate()
+    }
 }
 
 impl FromStr for LoadedConfig {

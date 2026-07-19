@@ -338,6 +338,66 @@ async fn cli_smoke_migrates_fixture_and_reports_counts() {
     );
 }
 
+/// The offline tool must refuse to write a config the device would
+/// reject and wipe on next boot: it validates the (migrated) config
+/// with the same rules as the boot path before persisting, exits
+/// non-zero on failure, and leaves `<dst>` untouched. Regression guard
+/// for the gap where the CLI could bless an invalid config the device
+/// then throws away.
+#[tokio::test]
+async fn cli_refuses_to_write_a_config_that_would_fail_validation() {
+    let tmp = tempdir();
+
+    // Start from a valid current-schema config (migrate the fixture in
+    // place), then tamper one field so it fails `validate` while still
+    // parsing as the current schema.
+    let valid = tmp.join("valid.json");
+    fs::write(&valid, FIXTURE)
+        .await
+        .expect("BUG: seed fixture write should succeed");
+    config_migration::migrate_on_disk(&valid)
+        .await
+        .expect("BUG: fixture must migrate to a valid current config");
+
+    let raw = fs::read_to_string(&valid)
+        .await
+        .expect("BUG: migrated config must be readable");
+    let mut value: serde_json::Value =
+        serde_json::from_str(&raw).expect("BUG: migrated config must be valid JSON");
+    // A global cycle duration below the 1s minimum is rejected by
+    // `validate_scene_cycling` yet deserializes fine as the current
+    // schema.
+    value["scene_cycling"] = serde_json::json!({
+        "automatic_cycling_enabled": true,
+        "automatic_cycling_default_duration": "0s",
+        "transition": "slide",
+    });
+
+    let src = tmp.join("invalid_src.json");
+    let dst = tmp.join("invalid_dst.json");
+    fs::write(
+        &src,
+        serde_json::to_vec(&value).expect("BUG: reserialize must succeed"),
+    )
+    .await
+    .expect("BUG: invalid config write should succeed");
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_bmc-migrate-config"))
+        .arg(&src)
+        .arg(&dst)
+        .output()
+        .expect("BUG: bmc-migrate-config must run");
+
+    assert!(
+        !output.status.success(),
+        "CLI must exit non-zero on a config that fails validation"
+    );
+    assert!(
+        !fs::try_exists(&dst).await.unwrap_or(false),
+        "CLI must not write <dst> when validation fails"
+    );
+}
+
 /// Small helper producing a unique tmp dir for each test.
 fn tempdir() -> PathBuf {
     let base = std::env::temp_dir().join(format!(
