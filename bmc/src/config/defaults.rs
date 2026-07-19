@@ -7,17 +7,13 @@ use bmc_widget_manifest::{ParamKey, ParamValue, ViewportShape};
 use indexmap::{IndexMap, indexmap};
 use uuid::Uuid;
 
+use super::params_map;
+use super::widget_uuids::{
+    BLOCK_HEIGHT_UID, CLOCK_UID, MINING_CLOCK_UID, MINING_INFO_UID, WEATHER_UID,
+};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
-
-use super::params_map;
-
-const CLOCK: &str = "fbc867c9-b722-4bdb-8738-c15d20fe2b88";
-const WEATHER: &str = "2379712a-e573-46db-8e9c-94f6ed75d92c";
-const BLOCKHEIGHT: &str = "7cb584a8-1f26-42a0-867e-955aadd2391c";
-const MINING_INFO: &str = "6d0c6a2d-24d0-4384-8f8b-6f4ac2c9675a";
-const MINING_CLOCK: &str = "0f0b7df0-f6d5-4d21-9ddc-7755e5030503";
 
 pub(super) fn scenes_for(product: Product) -> IndexMap<SceneId, Scene> {
     match product {
@@ -25,10 +21,6 @@ pub(super) fn scenes_for(product: Product) -> IndexMap<SceneId, Scene> {
         Product::Bfm100 => bfm100_scenes(),
         Product::Bmm100 | Product::Bmm101 => bmm_scenes(),
     }
-}
-
-fn uid(value: &str) -> Uuid {
-    Uuid::parse_str(value).expect("BUG: invalid built-in widget UID")
 }
 
 fn params(entries: &[(&str, ParamValue)]) -> BTreeMap<ParamKey, ParamValue> {
@@ -126,27 +118,27 @@ fn fullscreen(
 fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
-    let digital = fullscreen(uid(CLOCK), rect, clock_params("digital"));
+    let digital = fullscreen(CLOCK_UID, rect, clock_params("digital"));
 
-    let weather = fullscreen(uid(WEATHER), rect, weather_params("Prague"));
+    let weather = fullscreen(WEATHER_UID, rect, weather_params("Prague"));
 
     let combined = {
         let clock_w = widget(
-            uid(CLOCK),
+            CLOCK_UID,
             rect,
             WidgetPosition { row: 0, col: 0 },
             WidgetPlacement::from(WidgetSize::Medium),
             clock_params("analog_rect"),
         );
         let block_w = widget(
-            uid(BLOCKHEIGHT),
+            BLOCK_HEIGHT_UID,
             rect,
             WidgetPosition { row: 1, col: 0 },
             WidgetPlacement::from(WidgetSize::Medium),
             blockheight_params(),
         );
         let weather_w = widget(
-            uid(WEATHER),
+            WEATHER_UID,
             rect,
             WidgetPosition { row: 0, col: 2 },
             WidgetPlacement::from(WidgetSize::Large),
@@ -175,8 +167,8 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
 fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
     let round = ViewportShape::Round;
 
-    let geek = fullscreen(uid(MINING_INFO), round, mining_info_params("geek"));
-    let clock = fullscreen(uid(MINING_CLOCK), round, mining_clock_params());
+    let geek = fullscreen(MINING_INFO_UID, round, mining_info_params("geek"));
+    let clock = fullscreen(MINING_CLOCK_UID, round, mining_clock_params());
 
     indexmap! {
         geek.id => geek,
@@ -187,12 +179,12 @@ fn bfm100_scenes() -> IndexMap<SceneId, Scene> {
 fn bmm_scenes() -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
-    let clock = fullscreen(uid(CLOCK), rect, clock_params("analog_rect"));
-    let weather = fullscreen(uid(WEATHER), rect, weather_params("Prague"));
-    let mining = fullscreen(uid(MINING_INFO), rect, mining_info_params("mining"));
-    let geek = fullscreen(uid(MINING_INFO), rect, mining_info_params("geek"));
-    let network = fullscreen(uid(MINING_INFO), rect, mining_info_params("network"));
-    let overload = fullscreen(uid(MINING_INFO), rect, mining_info_params("info_overload"));
+    let clock = fullscreen(CLOCK_UID, rect, clock_params("analog_rect"));
+    let weather = fullscreen(WEATHER_UID, rect, weather_params("Prague"));
+    let mining = fullscreen(MINING_INFO_UID, rect, mining_info_params("mining"));
+    let geek = fullscreen(MINING_INFO_UID, rect, mining_info_params("geek"));
+    let network = fullscreen(MINING_INFO_UID, rect, mining_info_params("network"));
+    let overload = fullscreen(MINING_INFO_UID, rect, mining_info_params("info_overload"));
 
     indexmap! {
         clock.id => clock,

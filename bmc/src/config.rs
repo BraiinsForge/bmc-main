@@ -25,6 +25,7 @@ use tokio::sync::broadcast;
 use tracing::warn;
 
 mod defaults;
+pub(crate) mod widget_uuids;
 
 const CHANNEL_CAPACITY: usize = 8;
 

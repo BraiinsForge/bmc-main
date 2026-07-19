@@ -38,32 +38,14 @@ use tracing::warn;
 use uuid::Uuid;
 
 use super::{Report, Upgrade, Version, v0};
+use crate::config::widget_uuids::{
+    BLOCK_HEIGHT_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
+    SPACEX_LAUNCH_UID, WEATHER_UID,
+};
 use crate::config::{Config, MigratedSettings};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
-
-// --- Manifest UIDs for native v0 widget kinds -------------------------------
-//
-// Each constant is the real `uid` declared in the corresponding widget's
-// `manifest.json` under `widgets-wasm/`:
-//   CLOCK_UID         -> widgets-wasm/clock
-//   BLOCK_HEIGHT_UID  -> widgets-wasm/blockheight
-//   REMOTE_IMAGE_UID  -> widgets-wasm/image
-//   WEATHER_UID       -> widgets-wasm/weather
-//   ISS_POSITION_UID  -> widgets-wasm/iss-position
-//   NAMEDAY_UID       -> widgets-wasm/nameday
-//   RANDOM_FACTS_UID  -> widgets-wasm/random-facts
-//   SPACEX_LAUNCH_UID -> widgets-wasm/spacex-launch
-
-const CLOCK_UID: Uuid = Uuid::from_u128(0xfbc8_67c9_b722_4bdb_8738_c15d_20fe_2b88);
-const BLOCK_HEIGHT_UID: Uuid = Uuid::from_u128(0x7cb5_84a8_1f26_42a0_867e_955a_add2_391c);
-const REMOTE_IMAGE_UID: Uuid = Uuid::from_u128(0xf9e4_956c_719d_450c_909d_4fc9_d444_0e15);
-const WEATHER_UID: Uuid = Uuid::from_u128(0x2379_712a_e573_46db_8e9c_94f6_ed75_d92c);
-const ISS_POSITION_UID: Uuid = Uuid::from_u128(0x0a39_73c9_3a97_4bf2_957a_741e_5535_3a19);
-const NAMEDAY_UID: Uuid = Uuid::from_u128(0x5062_553f_31eb_497c_b513_bb82_f41a_2809);
-const RANDOM_FACTS_UID: Uuid = Uuid::from_u128(0xaf91_8b37_9df8_4faa_93c2_1985_563e_b94b);
-const SPACEX_LAUNCH_UID: Uuid = Uuid::from_u128(0xe854_e395_5d90_45ca_b4c9_eb5e_e327_a457);
 
 // --- Braiinsforge remote-widget host ----------------------------------------
 
