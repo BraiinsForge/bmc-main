@@ -3,10 +3,12 @@
 //! Config migration, typed-per-version style.
 //!
 //! Adapted from `bos-main/open/bosminer/bosminer-config`, which
-//! handled four major schema versions by representing each as its
-//! own Rust type linked through an `Upgrade` trait chain. Parsing
-//! any version and walking to the latest becomes a sequence of
-//! trait method calls the compiler enforces.
+//! represents each on-disk schema version as its own Rust type.
+//! [`LoadedConfig::from_str`] reads the `version` header, dispatches
+//! to the matching parser, and upgrades to the current schema in
+//! memory. The chain today is a single hop (v0 → current) handled by
+//! [`upgrade_v0::upgrade_with_report`]; a second hop would add another
+//! parse arm and upgrade step here.
 //!
 //! Key properties:
 //!
@@ -33,25 +35,6 @@ use serde::Deserialize;
 use tracing::info;
 
 use crate::config::{CONFIG_VERSION, Config};
-
-/// Tag a schema type with its numeric version.
-pub trait Version {
-    const VERSION: u32;
-}
-
-/// Total, in-memory upgrade from one schema version to the next.
-///
-/// The chain is linear: each older type points to exactly one
-/// newer type via the `NextVersion` associated type. The latest
-/// type does not implement [`Upgrade`].
-pub trait Upgrade: Version + Sized {
-    type NextVersion: Version;
-    fn upgrade_to_next_version(self) -> Self::NextVersion;
-}
-
-impl Version for Config {
-    const VERSION: u32 = CONFIG_VERSION;
-}
 
 /// Minimal view of an on-disk config used to dispatch to the
 /// matching parse arm. Deserializes fast and tolerates unknown
@@ -150,7 +133,7 @@ impl FromStr for LoadedConfig {
         let header: FormatHeader = serde_json::from_str(raw)
             .context("config header could not be parsed; file is not valid JSON")?;
         match header.version {
-            v if v == Config::VERSION => {
+            v if v == CONFIG_VERSION => {
                 let current: Config = serde_json::from_str(raw).context(
                     "config header names current schema but body failed to parse as current",
                 )?;
@@ -318,10 +301,7 @@ mod tests {
         // Scenes and accounts serialize as JSON arrays; see
         // `crate::scene::deserialize_scenes` and
         // `bmc_display::data::deserialize_accounts`.
-        let raw = format!(
-            r#"{{"version":{},"scenes":[],"accounts":[]}}"#,
-            Config::VERSION
-        );
+        let raw = format!(r#"{{"version":{CONFIG_VERSION},"scenes":[],"accounts":[]}}"#);
         let loaded: LoadedConfig = raw
             .parse()
             .expect("BUG: current-version parse must succeed");
@@ -346,7 +326,7 @@ mod tests {
         let raw = r#"{"scenes":[],"accounts":[]}"#;
         let loaded: LoadedConfig = raw.parse().expect("BUG: legacy parse must succeed");
         assert!(loaded.was_migrated());
-        assert_eq!(loaded.current().version, Config::VERSION);
+        assert_eq!(loaded.current().version, CONFIG_VERSION);
         let report = loaded
             .report()
             .expect("BUG: migrated load must carry a report");

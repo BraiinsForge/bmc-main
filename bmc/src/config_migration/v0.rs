@@ -5,13 +5,11 @@
 //! move; see [`super::relocate_legacy_config_if_present`]).
 //!
 //! Deserialize-only: we never write this shape back out. A parsed
-//! v0 config is fed into the [`Upgrade`](super::Upgrade) chain that
-//! produces the current schema.
+//! v0 config is fed into [`upgrade_v0::upgrade_with_report`](super::upgrade_v0)
+//! to produce the current schema.
 
 use serde::Deserialize;
 use uuid::Uuid;
-
-use super::Version;
 
 /// Top-level v0 config. Mirrors the on-disk shape written by the
 /// old firmware (legacy path `/etc/bmc_config.json`, now relocated
@@ -39,10 +37,6 @@ pub struct Config {
     pub led_enabled: Option<serde_json::Value>,
     pub boot_sound_enabled: Option<serde_json::Value>,
     pub autoupgrade: Option<serde_json::Value>,
-}
-
-impl Version for Config {
-    const VERSION: u32 = 0;
 }
 
 #[derive(Debug, Clone, Deserialize)]

@@ -13,19 +13,18 @@ captures the design decisions.
 ## Versioning
 
 Typed-per-version, borrowed from `bos-main/open/bosminer/bosminer-config`. Each on-disk schema version is a distinct
-Rust type that implements a \[`Version`\] trait. Older versions implement \[`Upgrade`\] with a concrete `NextVersion`
-associated type, so parsing any version and walking to the latest becomes a chain of trait method calls the compiler
-enforces.
+Rust type. `LoadedConfig::from_str` reads the `version` header, dispatches to the matching parser, and upgrades to the
+current schema in memory.
 
-The chain today is short (v0 → current), but the shape pays off in three ways:
+The chain today is a single hop (v0 → current), handled directly by `upgrade_v0::upgrade_with_report`, which returns the
+upgraded `Config` together with a `Report` of what was translated and dropped. The shape pays off in two ways:
 
-1. **In-memory upgrades.** `LoadedConfig::from_str` never touches the filesystem. Parsing any version produces both the
-   upgraded `Config` and the preserved pre-upgrade struct; the caller decides whether, when, and how to persist.
-2. **The original parse survives.** `LoadedConfig::original_v0()` gives callers (debug endpoints, rollback UIs, CI
-   snapshot tests) the parsed `v0::Config` without re-reading disk. After persistence the on-disk file is already
-   rewritten; boser-style keeps the original value live in memory.
-3. **Adding v2 is mechanical.** Define `ConfigV2`, `impl Upgrade for ConfigV1 { type NextVersion = ConfigV2; … }`,
-   extend the `FromStr` match arm.
+1. **In-memory upgrades.** `LoadedConfig::from_str` never touches the filesystem. Parsing any version produces the
+   upgraded `Config` (and, for a legacy file, its migration `Report`); the caller decides whether, when, and how to
+   persist.
+2. **Adding v2 is localized.** Define `ConfigV2`, add a `from_str` match arm for its version, and a `v1 → v2` upgrade
+   step alongside `upgrade_v0`. (No trait chain is imposed up front — with only one hop it would be speculative
+   scaffolding; the shape for walking multiple hops is best designed once a second real hop exists.)
 
 `Config` carries a top-level `version: u32` field (`#[serde(default)]`, so v0 configs deserialise as 0). The migration
 builds the upgraded config through `Config::from_migrated_parts(scenes, accounts, settings)`, which pins `version` to
@@ -37,8 +36,8 @@ builds the upgraded config through `Config::from_migrated_parts(scenes, accounts
 read raw JSON
 parse FormatHeader (version only)
 match version:
-  0 (or missing) → parse as v0::Config → v0.upgrade_to_next_version()
-                   → preserve v0 inside LoadedConfig::MigratedFromV0
+  0 (or missing) → parse as v0::Config → upgrade_v0::upgrade_with_report(v0)
+                   → LoadedConfig::MigratedFromV0 { current, report }
   1 (current)    → parse as Config → LoadedConfig::AlreadyCurrent
   other          → bail with explicit error, do not read as config
 ```
@@ -227,9 +226,11 @@ so a newly-created backup is never archived uncensored.
   count, every post-upgrade widget carries a non-nil manifest `widget_type_id`, no retired placeholder param shape
   (`_legacy` / `_legacy_remote`) leaks, backup file exists, `translated` counter matches the on-disk widget count. Plus
   an invalid-migration test asserting the original file is left intact when validation fails, and a test for the pure
-  `LoadedConfig::from_str` path verifying `original_v0()` survives the upgrade.
-- **CLI smoke:** `bmc-migrate-config <src> <dst>` exits 0, writes `<dst>`, and emits a counts report
-  (`cli_smoke_migrates_fixture_and_reports_counts`).
+  `LoadedConfig::from_str` path (`load_is_pure_without_persist`) verifying it upgrades in memory without touching disk.
+- **CLI:** `bmc-migrate-config <src> <dst>` exits 0, writes `<dst>`, and emits a counts report
+  (`cli_smoke_migrates_fixture_and_reports_counts`); and refuses — non-zero exit, no `<dst>` written — a config that
+  fails validation (`cli_refuses_to_write_a_config_that_would_fail_validation`), matching the boot path's
+  validate-before-persist rule.
 - **Boot path:** `ConfigHandle::init` migrating a seeded legacy config in place (version bumped, scenes preserved,
   backup written), and refusing to overwrite a newer-than-known config.
 
@@ -237,9 +238,9 @@ so a newly-created backup is never archived uncensored.
 
 - `bmc/src/config.rs` — `version` field, `CONFIG_VERSION` constant, `Config::from_migrated_parts`, and the
   `ConfigHandle::init` boot wiring (`load_migrate_validate` / `recover_from_failed_load`).
-- `bmc/src/config_migration.rs` — `Version`/`Upgrade` traits, `LoadedConfig`, `FromStr`, `load_any_version`,
-  `save_with_backup`, `migrate_on_disk`, `peek_version`, `Report`.
-- `bmc/src/config_migration/v0.rs` — deserialize-only v0 types + `impl Version`.
+- `bmc/src/config_migration.rs` — `LoadedConfig`, `FromStr` version dispatch, `load_any_version`, `save_with_backup`,
+  `migrate_on_disk`, `peek_version`, `Report`.
+- `bmc/src/config_migration/v0.rs` — deserialize-only v0 types.
 - `bmc/src/config_migration/upgrade_v0.rs` — manifest UID constants, remote-widget slug dispatch, per-widget translators
   (required-param filling, enum guards), and `params_from_value` (legacy JSON params → typed param map).
 - `bmc/src/widget/coordinator.rs` — defensive nil-UID skip (the migration no longer produces nil UIDs; the guard is

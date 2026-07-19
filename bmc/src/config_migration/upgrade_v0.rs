@@ -2,8 +2,9 @@
 
 //! v0 → current schema upgrade.
 //!
-//! Implements [`Upgrade`] for [`v0::Config`], producing a typed
-//! [`crate::config::Config`] directly.
+//! [`upgrade_with_report`] takes a parsed [`v0::Config`] and produces a
+//! typed [`crate::config::Config`] directly, along with a [`Report`] of
+//! what was translated and dropped.
 //!
 //! Policy — aligned with review feedback:
 //!
@@ -37,12 +38,12 @@ use serde_json::{Map, Value, json};
 use tracing::warn;
 use uuid::Uuid;
 
-use super::{Report, Upgrade, Version, v0};
+use super::{Report, v0};
 use crate::config::widget_uuids::{
     BLOCK_HEIGHT_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
     SPACEX_LAUNCH_UID, WEATHER_UID,
 };
-use crate::config::{Config, MigratedSettings};
+use crate::config::{CONFIG_VERSION, Config, MigratedSettings};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
@@ -83,21 +84,11 @@ const NAMEDAY_COUNTRIES: &[&str] = &[
     "us",
 ];
 
-// --- Upgrade entry points ----------------------------------------------------
-
-impl Upgrade for v0::Config {
-    type NextVersion = Config;
-
-    fn upgrade_to_next_version(self) -> Config {
-        upgrade_with_report(self).0
-    }
-}
+// --- Upgrade entry point -----------------------------------------------------
 
 /// Core upgrade. Returns both the upgraded [`Config`] and the
-/// [`Report`] counts. [`Upgrade::upgrade_to_next_version`] delegates
-/// here so the trait conforms to the boser-style shape while the
-/// caller that wants counts (`LoadedConfig::from_str`) can get them
-/// without re-walking the result.
+/// [`Report`] counts. The single entry point for the v0 → current
+/// migration; `LoadedConfig::from_str` dispatches straight here.
 pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
     let mut report = Report::default();
 
@@ -143,12 +134,12 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
     (current, report)
 }
 
-/// Sanity assertions — the chain terminates at the current schema,
-/// and version numbers are adjacent.
-const _: () = {
-    const _V0_IS_ZERO: () = assert!(v0::Config::VERSION == 0);
-    const _CURRENT_IS_ONE_ABOVE_V0: () = assert!(Config::VERSION == v0::Config::VERSION + 1);
-};
+// This module upgrades a version-0 config directly to the current
+// schema in a single hop, which is only correct while the current
+// version sits exactly one above the legacy baseline of 0. A bump past
+// 1 means an intermediate hop is needed and this direct upgrade must be
+// revisited.
+const _: () = assert!(CONFIG_VERSION == 1);
 
 // --- Per-widget dispatch -----------------------------------------------------
 
@@ -1337,8 +1328,8 @@ mod tests {
     #[test]
     fn upgraded_config_carries_current_version() {
         let v0 = v0::Config::default();
-        let upgraded = v0.upgrade_to_next_version();
-        assert_eq!(upgraded.version, Config::VERSION);
+        let (upgraded, _) = upgrade_with_report(v0);
+        assert_eq!(upgraded.version, CONFIG_VERSION);
     }
 
     #[test]
