@@ -1065,6 +1065,45 @@ def test_register_upgrade_server_registers_index_document_url() -> None:
     ) in cmd
 
 
+def _servers_json(*server_ids: str) -> str:
+    return json.dumps(
+        {
+            "factory": {"id": "factory", "base_url": "https://example.com/bmc"},
+            "servers": [
+                {"id": sid, "feed_url": f"https://{sid}.example.com"} for sid in server_ids
+            ],
+        }
+    )
+
+
+def test_restrict_package_servers_keeps_only_harness_entry() -> None:
+    # Regression: register-server seeds a missing runtime servers.json from
+    # the shipped default, whose production entries (forge) may not serve a
+    # package feed — one unusable server fails the whole package probe.
+    raw = _servers_json("forge", catalog._UPGRADE_SERVER_ID)
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON}": raw}))
+    catalog.restrict_package_servers(Device("h", backend=backend))
+    push = next(argv[-1] for argv in backend.runs if "printf" in argv[-1])
+    tokens = shlex.split(push)
+    assert tokens[0] == "printf"
+    assert tokens[-1] == catalog._SERVERS_JSON
+    written = json.loads(tokens[2])
+    assert written["factory"]["id"] == "factory"
+    assert [entry["id"] for entry in written["servers"]] == [catalog._UPGRADE_SERVER_ID]
+
+
+def test_restrict_package_servers_aborts_without_harness_entry() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON}": _servers_json("forge")}))
+    with pytest.raises(Abort, match="expected exactly one dev-upgrade entry"):
+        catalog.restrict_package_servers(Device("h", backend=backend))
+
+
+def test_restrict_package_servers_aborts_on_malformed_json() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON}": "not json"}))
+    with pytest.raises(Abort, match="not valid JSON after registration"):
+        catalog.restrict_package_servers(Device("h", backend=backend))
+
+
 def _manifest(**paths: str) -> str:
     return json.dumps({"packages": {name: {"store_path": p} for name, p in paths.items()}})
 

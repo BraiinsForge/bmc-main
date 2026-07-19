@@ -2288,6 +2288,35 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
     return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.index_url)}"
 
 
+@stage("Restrict package servers")
+def restrict_package_servers(dev: Device) -> str:
+    """Keep only the harness server in the runtime registry: registration
+    seeds a missing runtime servers.json from the shipped default, whose
+    production entries (e.g. forge) may not serve a package feed at all —
+    and one unusable server fails the whole CheckForUpgrade package probe."""
+
+    raw = dev.read(f"cat {_SERVERS_JSON}")
+    try:
+        config = json.loads(raw)
+    except json.JSONDecodeError as e:
+        raise Abort(f"{_SERVERS_JSON} is not valid JSON after registration: {e}") from None
+    servers = config.get("servers")
+    require(isinstance(servers, list), f"{_SERVERS_JSON} has no servers list")
+    kept = [
+        entry
+        for entry in servers
+        if isinstance(entry, dict) and entry.get("id") == _UPGRADE_SERVER_ID
+    ]
+    require(
+        len(kept) == 1,
+        f"expected exactly one {_UPGRADE_SERVER_ID} entry in {_SERVERS_JSON}, found {len(kept)}",
+    )
+    config["servers"] = kept
+    payload = json.dumps(config, indent=2)
+    dev.run(f"printf '%s' {shlex.quote(payload)} > {_SERVERS_JSON}")
+    return f"{console.lit(_SERVERS_JSON)} → {console.lit(_UPGRADE_SERVER_ID)} only"
+
+
 @stage("Authenticate")
 def grpc_login(dev: Device, cycle: UpgradeCycle) -> str:
     response = _grpcurl(dev, "AuthenticationService/Login", data={"password": cycle.password})
