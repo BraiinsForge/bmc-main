@@ -2630,29 +2630,91 @@ def test_preflight_versions_accepts_strictly_newer_image(tmp_path: Path) -> None
 
 
 @pytest.mark.parametrize(
-    ("running", "image", "hint"),
+    ("running", "image"),
     [
-        (
-            "2025-06-15-0-acde0123-25.06",
-            "2025-07-01-0-0badc0de-25.06",
-            "duplicate",
-        ),
-        (
-            "2025-06-15-0-acde0123-25.06",
-            "2025-05-01-0-0badc0de-25.05",
-            "deck sysupgrade",
-        ),
+        ("2025-06-15-0-acde0123-25.06", "2025-07-01-0-0badc0de-25.06"),
+        ("2025-06-15-0-acde0123-25.06", "2025-05-01-0-0badc0de-25.05"),
     ],
 )
-def test_preflight_versions_rejects_non_newer_image(
-    tmp_path: Path, running: str, image: str, hint: str
+def test_preflight_versions_accepts_equal_and_older_release(
+    tmp_path: Path, running: str, image: str
 ) -> None:
-    with pytest.raises(Abort, match=hint):
-        catalog.preflight_versions(
-            Device("h", backend=_Exec(_routes({"cat /etc/bos_version": running}))),
-            _image(tmp_path, version=image),
-            _firmware_cycle(tmp_path),
+    cycle = _firmware_cycle(tmp_path)
+    catalog.preflight_versions(
+        Device("h", backend=_Exec(_routes({"cat /etc/bos_version": running}))),
+        _image(tmp_path, version=image),
+        cycle,
+    )
+    assert cycle.running_version is not None
+    assert cycle.running_version.canonical == running
+    assert cycle.image_version is not None
+    assert cycle.image_version.canonical == image
+
+
+def test_anchored_version_decrements_image_release() -> None:
+    running = catalog.parse_bos_version("2026-07-15-3-8a7eb005-26.08-plus-nightly")
+
+    anchored = catalog.anchored_version(
+        running, catalog.parse_bos_version("2026-08-01-0-00000001-26.08")
+    )
+    assert anchored.canonical == "2026-07-15-3-8a7eb005-26.07-plus-nightly"
+
+    borrowed = catalog.anchored_version(
+        running, catalog.parse_bos_version("2027-01-05-0-00000002-27.01")
+    )
+    assert borrowed.version == catalog.VersionName(26, 12, None)
+
+    patched = catalog.anchored_version(
+        running, catalog.parse_bos_version("2026-08-01-0-00000001-26.08.2")
+    )
+    assert patched.version == catalog.VersionName(26, 7, None)
+
+    with pytest.raises(ValueError, match=r"0\.01"):
+        catalog.anchored_version(running, replace(running, version=catalog.VersionName(0, 1, None)))
+
+
+def test_ensure_anchor_version_noop_when_running_is_older(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.running_version = catalog.parse_bos_version("2025-06-15-0-acde0123-25.06")
+    cycle.image_version = catalog.parse_bos_version("2025-07-01-0-0badc0de-25.07")
+    backend = _Exec(_routes({}))
+    catalog.ensure_anchor_version(Device("h", backend=backend), cycle)
+    assert not any("printf" in argv[-1] for argv in backend.runs)
+    assert cycle.running_version.canonical == "2025-06-15-0-acde0123-25.06"
+
+
+@pytest.mark.parametrize("running", ["2025-06-20-0-acde0123-25.07", "2025-09-01-0-acde0123-25.09"])
+def test_ensure_anchor_version_rewrites_equal_or_newer_running(
+    tmp_path: Path, running: str
+) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.running_version = catalog.parse_bos_version(running)
+    cycle.image_version = catalog.parse_bos_version("2025-07-01-0-0badc0de-25.07")
+    backend = _Exec(_routes({}))
+    catalog.ensure_anchor_version(Device("h", backend=backend), cycle)
+    anchored = running.replace(running.rsplit("-", 1)[-1], "25.06")
+    push = next(argv[-1] for argv in backend.runs if "printf" in argv[-1])
+    assert push == f"printf '%s\\n' {anchored} > /etc/bos_version"
+    assert cycle.running_version.canonical == anchored
+
+
+def test_snapshot_bos_version_records_contents(tmp_path: Path) -> None:
+    content = b"2025-06-20-0-acde0123-25.07\n"
+    backend = _Exec(
+        _routes(
+            {
+                "test -f /etc/bos_version": "present",
+                "base64 < /etc/bos_version": base64.b64encode(content).decode(),
+                "wc -c < /etc/bos_version": str(len(content)),
+                "sha256sum /etc/bos_version": hashlib.sha256(content).hexdigest(),
+            }
         )
+    )
+    cycle = _firmware_cycle(tmp_path)
+    catalog.snapshot_bos_version(Device("h", backend=backend), cycle)
+    assert cycle.bos_version_snapshot is not None
+    assert cycle.bos_version_snapshot.local is not None
+    assert cycle.bos_version_snapshot.local.read_bytes() == content
 
 
 def test_preflight_versions_rejects_malformed_device_version(tmp_path: Path) -> None:

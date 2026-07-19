@@ -76,9 +76,12 @@ class _Server:
         self.port = 8082
         self.provenance = provenance
         self.stopped = False
+        self.index_text: str | None = None
         self.transfers = 0
 
     def __enter__(self) -> "_Server":
+        index_path = next(self.root.rglob("index.v1.json"), None)
+        self.index_text = index_path.read_text() if index_path is not None else None
         return self
 
     def __exit__(self, *_exc: object) -> None:
@@ -148,8 +151,14 @@ def harness(  # noqa: PLR0915
         cycle.opkg_keys_snapshot = catalog.DirSnapshot("/etc/opkg/keys", None)
         events.append("snapshot keys")
 
+    def snapshot_bos(_dev: object, cycle: catalog.FirmwareCycle) -> None:
+        cycle.bos_version_snapshot = catalog.FileSnapshot(catalog._BOS_VERSION, None)
+        events.append("snapshot bos_version")
+
     monkeypatch.setattr(catalog, "snapshot_upgrade_config", snapshot_upgrade)
     monkeypatch.setattr(catalog, "snapshot_opkg_keys", snapshot_keys)
+    monkeypatch.setattr(catalog, "snapshot_bos_version", snapshot_bos)
+    monkeypatch.setattr(catalog, "ensure_anchor_version", lambda *_args: events.append("anchor"))
     monkeypatch.setattr(catalog, "ensure_memory", lambda *_args: events.append("memory"))
     monkeypatch.setattr(catalog, "upload_firmware", lambda *_args: events.append("upload"))
     monkeypatch.setattr(catalog, "trust_image_keys", lambda *_args: events.append("trust"))
@@ -231,6 +240,8 @@ def harness(  # noqa: PLR0915
     def restore_file(_dev: object, snap: catalog.FileSnapshot) -> None:
         if snap.remote_path == catalog._NIX_CONF:
             events.append("restore nix")
+        elif snap.remote_path == catalog._BOS_VERSION:
+            events.append("restore bos_version")
         elif snap.remote_path == catalog._INIT_SCRIPT:
             events.append("restore service script")
         else:
@@ -286,6 +297,7 @@ def test_registration_failure_restores_in_mandated_order_and_never_streams(
     assert not streamed
     assert harness.events.index("quiesce") < harness.events.index("restore servers")
     assert harness.events.index("restore keys") < harness.events.index("start stock")
+    assert "restore bos_version" in harness.events
 
 
 def test_package_server_start_failure_stops_stored_process(
@@ -379,7 +391,31 @@ def test_pre_verifying_error_includes_bmc_log(harness: SimpleNamespace) -> None:
 def test_provisional_success_matching_reboot_succeeds(harness: SimpleNamespace) -> None:
     _run(harness)
     assert "restore success" in harness.events
+    assert "restore bos_version" not in harness.events
     assert not harness.snapshot.exists()
+    ordered = ("snapshot bos_version", "memory", "anchor", "upload")
+    indices = [harness.events.index(event) for event in ordered]
+    assert indices == sorted(indices)
+
+
+def test_index_anchor_entry_uses_rewritten_running_version(
+    harness: SimpleNamespace, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def versions(_dev: object, image: Image, cycle: catalog.FirmwareCycle) -> None:
+        harness.state.cycle = cycle
+        cycle.running_version = parse_bos_version("2025-06-20-0-acde0123-25.07")
+        cycle.image_version = parse_bos_version(image.version)
+
+    def anchor(_dev: object, cycle: catalog.FirmwareCycle) -> None:
+        assert cycle.running_version is not None and cycle.image_version is not None
+        cycle.running_version = catalog.anchored_version(cycle.running_version, cycle.image_version)
+
+    monkeypatch.setattr(catalog, "preflight_versions", versions)
+    monkeypatch.setattr(catalog, "ensure_anchor_version", anchor)
+    _run(harness)
+    assert harness.server.index_text is not None
+    assert "2025-06-20-0-acde0123-25.06" in harness.server.index_text
+    assert "2025-06-20-0-acde0123-25.07" not in harness.server.index_text
 
 
 def test_resolution_error_retries_until_boot_resolves(
@@ -593,6 +629,7 @@ def test_wrong_version_reboot_restores_then_aborts(
     with pytest.raises(Abort, match=r"25\.08"):
         _run(harness)
     assert "restore success" in harness.events
+    assert "restore bos_version" not in harness.events
     assert "restore keys" not in harness.events
     assert "restore service script" not in harness.events
 
@@ -747,6 +784,7 @@ def test_terminal_failure_same_boot_restores_and_aborts(harness: SimpleNamespace
     with pytest.raises(Abort, match="stream diagnostic"):
         _run(harness)
     assert harness.events.index("quiesce") < harness.events.index("restore servers")
+    assert "restore bos_version" in harness.events
     assert "stop host" in harness.events
 
 

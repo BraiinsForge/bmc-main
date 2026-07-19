@@ -45,12 +45,12 @@ import time
 import urllib.request
 from collections.abc import Callable
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, NewType, Protocol
 
 from bmc_tui import console, nix_progress, rig
-from bmc_tui.bos_version import BosVersion, parse_bos_version
+from bmc_tui.bos_version import BosVersion, VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import Attr, Built, Nix, Pkg, StorePath
@@ -2769,6 +2769,7 @@ class FirmwareCycle:
     servers_snapshot: "FileSnapshot | None" = None
     nix_conf_snapshot: "FileSnapshot | None" = None
     opkg_keys_snapshot: "DirSnapshot | None" = None
+    bos_version_snapshot: "FileSnapshot | None" = None
     upload_present: bool = False
     mutation_started: bool = False
     bcp_before: frozenset[str] = frozenset()
@@ -2921,15 +2922,38 @@ def preflight_versions(dev: Device, image: Image, cycle: FirmwareCycle) -> str:
         raise Abort(f"malformed image version {image_raw!r}: {e}") from None
     cycle.running_version = running
     cycle.image_version = offered
-    if offered.version == running.version:
-        raise Abort(
-            "image and running release versions are equal, causing a resolver duplicate error"
-        )
-    require(
-        offered.version > running.version,
-        "image release is older than the running release — deck sysupgrade an older image first",
-    )
     return f"{console.lit(running.canonical)} → {console.lit(offered.canonical)}"
+
+
+_BOS_VERSION = "/etc/bos_version"
+
+
+def anchored_version(running: BosVersion, image: BosVersion) -> BosVersion:
+    """Release name strictly below the image's; everything else from `running`."""
+    year, month = image.version.year, image.version.month
+    if month > 1:
+        name = VersionName(year, month - 1, None)
+    else:
+        if year == 0:
+            msg = "cannot decrement release 0.01"
+            raise ValueError(msg)
+        name = VersionName(year - 1, 12, None)
+    return replace(running, version=name)
+
+
+@stage("Ensure anchor version")
+def ensure_anchor_version(dev: Device, cycle: FirmwareCycle) -> str:
+    running = cycle.running_version
+    offered = cycle.image_version
+    if running is None or offered is None:
+        msg = "BUG: versions were not resolved before anchoring"
+        raise RuntimeError(msg)
+    if running.version < offered.version:
+        return f"{console.lit(running.canonical)} is already older than the image release"
+    anchored = anchored_version(running, offered)
+    dev.run(f"printf '%s\\n' {shlex.quote(anchored.canonical)} > {_BOS_VERSION}")
+    cycle.running_version = anchored
+    return f"{console.lit(running.canonical)} → {console.lit(anchored.canonical)}"
 
 
 @stage("Preflight device prerequisites")
@@ -2960,6 +2984,14 @@ def snapshot_upgrade_config(dev: Device, cycle: FirmwareCycle) -> str:
     )
     cycle.nix_conf_snapshot = snapshot_remote_file(dev, _NIX_CONF, cycle.snapshot_dir / "nix.conf")
     return f"snapshots → {console.lit(cycle.snapshot_dir)}"
+
+
+@stage("Snapshot bos_version")
+def snapshot_bos_version(dev: Device, cycle: FirmwareCycle) -> str:
+    cycle.bos_version_snapshot = snapshot_remote_file(
+        dev, _BOS_VERSION, cycle.snapshot_dir / "bos_version"
+    )
+    return f"snapshot → {console.lit(cycle.snapshot_dir)}"
 
 
 @stage("Snapshot opkg keys")

@@ -21,8 +21,8 @@
 """Drive a firmware upgrade through the Deck's production gRPC API.
 
 Re-run recipe: a successful run leaves the device on the image's version;
-re-running requires `deck sysupgrade` back to an older release version first
-(or a newer image).
+re-running the same image needs no manual prep — the anchor-ensure stage
+rewrites /etc/bos_version below the image's release again.
 """
 
 import shutil
@@ -319,11 +319,8 @@ def _restore_failure(
 
     before = len(cleanup.failures)
     cleanup.run("restore servers.json", lambda: catalog.restore_servers_config(dev, cycle))
-    nix_conf = cycle.nix_conf_snapshot
-    if nix_conf is None:
-        cleanup.failures.append("restore nix.conf: snapshot is missing")
-    else:
-        cleanup.run("restore nix.conf", lambda: catalog.restore_remote_file(dev, nix_conf))
+    restore_file("restore nix.conf", cycle.nix_conf_snapshot)
+    restore_file("restore bos_version", cycle.bos_version_snapshot)
     opkg_keys = cycle.opkg_keys_snapshot
     if opkg_keys is None:
         cleanup.failures.append("restore opkg keys: snapshot is missing")
@@ -442,12 +439,14 @@ class E2eGrpcSysupgrade:
             catalog.verify_device_identity(mutation_dev, cycle)
             catalog.snapshot_upgrade_config(mutation_dev, cycle)
             catalog.snapshot_opkg_keys(mutation_dev, cycle)
+            catalog.snapshot_bos_version(mutation_dev, cycle)
             catalog.snapshot_service_script(mutation_dev, cycle)
             catalog.ensure_memory(
                 mutation_dev,
                 image.size + image.rootfs_size + catalog.FLASH_HEADROOM,
             )
             cycle.mutation_started = True
+            catalog.ensure_anchor_version(mutation_dev, cycle)
             cycle.upload_present = True
             catalog.upload_firmware(mutation_dev, image)
             catalog.trust_image_keys(mutation_dev, image)
