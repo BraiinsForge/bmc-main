@@ -7,10 +7,10 @@
 //! The fixture lives at `bmc/tests/fixtures/legacy_config_sample.json`
 //! and must only be modified when we capture a new device snapshot.
 
-use std::path::PathBuf;
 use std::str::FromStr;
 
 use bmc::config_migration::{self, LoadedConfig};
+use tempfile::TempDir;
 use tokio::fs;
 
 const FIXTURE: &str = include_str!("fixtures/legacy_config_sample.json");
@@ -18,7 +18,7 @@ const FIXTURE: &str = include_str!("fixtures/legacy_config_sample.json");
 #[tokio::test]
 async fn migrates_device_sample_without_losing_scenes() {
     let tmp = tempdir();
-    let dest = tmp.join("bmc_config.json");
+    let dest = tmp.path().join("bmc_config.json");
     fs::write(&dest, FIXTURE)
         .await
         .expect("BUG: seed fixture write should succeed");
@@ -117,7 +117,7 @@ async fn migrates_device_sample_without_losing_scenes() {
 #[tokio::test]
 async fn current_version_config_is_a_noop() {
     let tmp = tempdir();
-    let dest = tmp.join("bmc_config.json");
+    let dest = tmp.path().join("bmc_config.json");
     fs::write(&dest, r#"{"version":1,"scenes":[],"accounts":[]}"#)
         .await
         .expect("BUG: seed write should succeed");
@@ -151,7 +151,7 @@ async fn current_version_config_is_a_noop() {
 #[tokio::test]
 async fn unknown_future_version_is_rejected() {
     let tmp = tempdir();
-    let dest = tmp.join("bmc_config.json");
+    let dest = tmp.path().join("bmc_config.json");
     fs::write(&dest, r#"{"version":999,"scenes":[]}"#)
         .await
         .expect("BUG: seed write should succeed");
@@ -180,7 +180,7 @@ async fn invalid_migration_leaves_the_original_on_disk() {
     // `migrate_on_disk` must reject it *before* writing and leave the
     // v0 file intact (BDK-346).
     let tmp = tempdir();
-    let dest = tmp.join("bmc_config.json");
+    let dest = tmp.path().join("bmc_config.json");
     let original = r#"{
         "scenes": [
             {
@@ -249,9 +249,9 @@ async fn legacy_path_is_relocated_on_first_load() {
     // legacy sibling present. The legacy file stays around so a
     // forced boot into old firmware still finds its config.
     let tmp = tempdir();
-    let new_dir = tmp.join("bmc");
+    let new_dir = tmp.path().join("bmc");
     let new_path = new_dir.join("config.json");
-    let legacy_path = tmp.join("bmc_config.json");
+    let legacy_path = tmp.path().join("bmc_config.json");
 
     // Seed the legacy path, current schema body.
     fs::write(&legacy_path, r#"{"version":1,"scenes":[],"accounts":[]}"#)
@@ -279,12 +279,12 @@ async fn legacy_path_ignored_when_new_path_already_exists() {
     // the legacy file is left alone — relocation must never overwrite
     // a real config.
     let tmp = tempdir();
-    let new_dir = tmp.join("bmc");
+    let new_dir = tmp.path().join("bmc");
     fs::create_dir_all(&new_dir)
         .await
         .expect("BUG: mkdir new dir");
     let new_path = new_dir.join("config.json");
-    let legacy_path = tmp.join("bmc_config.json");
+    let legacy_path = tmp.path().join("bmc_config.json");
 
     fs::write(&new_path, r#"{"version":1,"scenes":[],"accounts":[]}"#)
         .await
@@ -310,8 +310,8 @@ async fn legacy_path_ignored_when_new_path_already_exists() {
 #[tokio::test]
 async fn cli_smoke_migrates_fixture_and_reports_counts() {
     let tmp = tempdir();
-    let src = tmp.join("src.json");
-    let dst = tmp.join("dst.json");
+    let src = tmp.path().join("src.json");
+    let dst = tmp.path().join("dst.json");
     fs::write(&src, FIXTURE)
         .await
         .expect("BUG: seed fixture write should succeed");
@@ -351,7 +351,7 @@ async fn cli_refuses_to_write_a_config_that_would_fail_validation() {
     // Start from a valid current-schema config (migrate the fixture in
     // place), then tamper one field so it fails `validate` while still
     // parsing as the current schema.
-    let valid = tmp.join("valid.json");
+    let valid = tmp.path().join("valid.json");
     fs::write(&valid, FIXTURE)
         .await
         .expect("BUG: seed fixture write should succeed");
@@ -373,8 +373,8 @@ async fn cli_refuses_to_write_a_config_that_would_fail_validation() {
         "transition": "slide",
     });
 
-    let src = tmp.join("invalid_src.json");
-    let dst = tmp.join("invalid_dst.json");
+    let src = tmp.path().join("invalid_src.json");
+    let dst = tmp.path().join("invalid_dst.json");
     fs::write(
         &src,
         serde_json::to_vec(&value).expect("BUG: reserialize must succeed"),
@@ -398,16 +398,8 @@ async fn cli_refuses_to_write_a_config_that_would_fail_validation() {
     );
 }
 
-/// Small helper producing a unique tmp dir for each test.
-fn tempdir() -> PathBuf {
-    let base = std::env::temp_dir().join(format!(
-        "bmc-migration-test-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0),
-    ));
-    std::fs::create_dir_all(&base).expect("BUG: tmp dir creation should succeed");
-    base
+/// Unique temp dir for each test, auto-removed when the returned
+/// `TempDir` drops at the end of the test.
+fn tempdir() -> TempDir {
+    tempfile::tempdir().expect("BUG: tmp dir creation should succeed")
 }

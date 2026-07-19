@@ -318,7 +318,7 @@ fn dispatch_clock(widget: &v0::Widget) -> (Uuid, Value) {
         .params
         .get("timezone")
         .and_then(Value::as_str)
-        .filter(|s| Timezone::list().iter().any(|tz| tz.iana() == *s))
+        .filter(|s| Timezone::lookup(s).is_some())
     {
         params.insert("timezone_override".to_owned(), json!(tz));
     }
@@ -557,19 +557,15 @@ fn remote_widget_slug(widget_url: &str) -> Option<&str> {
 }
 
 fn parse_size(size: &str) -> WidgetSize {
-    match size {
-        "small" => WidgetSize::Small,
-        "medium" => WidgetSize::Medium,
-        "large" => WidgetSize::Large,
-        "full" => WidgetSize::Full,
-        other => {
-            warn!(
-                size = %other,
-                "legacy widget carried an unknown size; defaulting to full"
-            );
-            WidgetSize::Full
-        }
-    }
+    // Reuse `WidgetSize`'s own serde vocabulary rather than re-listing
+    // the size strings here; an unknown size falls back to full.
+    serde_json::from_value(Value::String(size.to_owned())).unwrap_or_else(|_| {
+        warn!(
+            size = %size,
+            "legacy widget carried an unknown size; defaulting to full"
+        );
+        WidgetSize::Full
+    })
 }
 
 // --- Accounts pass-through ---------------------------------------------------

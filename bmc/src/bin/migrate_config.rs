@@ -21,7 +21,9 @@ use std::process::ExitCode;
 use anyhow::{Context, Result, bail};
 use bmc::config_migration::{self, LoadedConfig};
 
-#[tokio::main]
+// One-shot CLI doing sequential async file I/O — a single-threaded
+// runtime is enough; no worker pool needed.
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(
