@@ -54,6 +54,35 @@ use crate::scene::{
 /// strip, kept deliberately tight so unrelated URLs drop out.
 const BRAIINSFORGE_URL_PREFIX: &str = "https://widgets.braiinsforge.com/";
 
+// --- Manifest-default fallbacks ---------------------------------------------
+//
+// The boot-load path hands stored params to the widget without injecting
+// manifest defaults, so the migration must fill every required param with
+// a value the widget accepts. Each constant below re-states the
+// `default_value` (or `enum_values`) its widget's own `manifest.json`
+// already declares; they are the source of truth. The
+// `migration_fallbacks_match_the_shipped_manifests` test pins every one
+// to its manifest so a firmware change to a widget's default can't leave
+// the migration filling a stale value.
+
+/// Clock `numbers_font_style` fallback — clock manifest `default_value`.
+const CLOCK_FONT_DEFAULT: &str = "semi-bold";
+/// Block-height `numbers_font_style` fallback — blockheight manifest default.
+const BLOCK_HEIGHT_FONT_DEFAULT: &str = "bold";
+/// Weather `location` fallback — weather manifest `default_value`.
+const DEFAULT_WEATHER_LOCATION: &str = "Prague";
+/// Weather `time_zone` fallback — weather manifest `default_value`.
+const DEFAULT_WEATHER_TIME_ZONE: &str = "location";
+/// Image `refresh_seconds` fallback — image manifest `default_value`.
+const DEFAULT_REFRESH_SECONDS: i32 = 3600;
+/// Nameday `country` fallback — nameday manifest `default_value`.
+const DEFAULT_NAMEDAY_COUNTRY: &str = "cz";
+/// Nameday `country` vocabulary — nameday manifest `enum_values`.
+const NAMEDAY_COUNTRIES: &[&str] = &[
+    "at", "cz", "de", "dk", "ee", "es", "fi", "fr", "hr", "hu", "it", "lt", "lv", "pl", "se", "sk",
+    "us",
+];
+
 // --- Upgrade entry points ----------------------------------------------------
 
 impl Upgrade for v0::Config {
@@ -286,7 +315,7 @@ fn dispatch_clock(widget: &v0::Widget) -> (Uuid, Value) {
     // Font-weight vocabulary changed, so a raw pass-through could emit
     // an enum value the manifest no longer accepts. Always remap,
     // falling back to the clock manifest's own default weight.
-    let font_style = migrate_font_style(widget, "semi-bold");
+    let font_style = migrate_font_style(widget, CLOCK_FONT_DEFAULT);
     params.insert("numbers_font_style".to_owned(), json!(font_style));
 
     // v0's optional `timezone` (IANA string) became the manifest's
@@ -326,7 +355,7 @@ fn dispatch_block_height(widget: &v0::Widget) -> (Uuid, Value) {
 
     // The block-height manifest defaults this weight to `bold`, unlike
     // the clock's `semi-bold`; only the vocabulary remap is shared.
-    let font_style = migrate_font_style(widget, "bold");
+    let font_style = migrate_font_style(widget, BLOCK_HEIGHT_FONT_DEFAULT);
     params.insert("numbers_font_style".to_owned(), json!(font_style));
 
     (BLOCK_HEIGHT_UID, Value::Object(params))
@@ -387,18 +416,19 @@ fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
 
     // v0 stored the refresh interval as a humantime string; the
     // current manifest wants integer seconds. Reparse through the same
-    // `humantime_serde` machinery the rest of the config uses, falling
-    // back to the manifest default when it is absent or unparseable.
-    let seconds = widget
+    // `humantime_serde` machinery the rest of the config uses. The
+    // manifest types `refresh_seconds` as an integer (i32); a humantime
+    // value above i32::MAX seconds would widen to a JSON double and the
+    // widget's required-i32 read would then panic on boot, so clamp into
+    // the manifest's representable range. Absent or unparseable input
+    // falls back to the manifest default.
+    let refresh_seconds = widget
         .params
         .get("refresh_duration")
         .and_then(|v| humantime_serde::deserialize::<Duration, _>(v).ok())
-        .map_or(3600, |d| d.as_secs());
-    // The manifest types `refresh_seconds` as an integer (i32). A
-    // humantime value above i32::MAX seconds would widen to a JSON
-    // double, and the widget's required-i32 read would then panic on
-    // boot, so clamp into the manifest's representable range.
-    let refresh_seconds = i32::try_from(seconds).unwrap_or(i32::MAX);
+        .map_or(DEFAULT_REFRESH_SECONDS, |d| {
+            i32::try_from(d.as_secs()).unwrap_or(i32::MAX)
+        });
     params.insert("refresh_seconds".to_owned(), json!(refresh_seconds));
 
     // `image_scale_mode` (`fit` / `fill`) was renamed to `sizing`
@@ -429,18 +459,15 @@ fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
 /// default `Prague`, and `time_zone` — which v0 had no concept of —
 /// is pinned to the manifest default `location`.
 fn dispatch_weather_widget_params(params: &Value) -> Value {
-    const DEFAULT_LOCATION: &str = "Prague";
-    const DEFAULT_TIME_ZONE: &str = "location";
-
     let location = params
         .get("location")
         .and_then(Value::as_str)
         .filter(|s| !s.is_empty())
-        .unwrap_or(DEFAULT_LOCATION);
+        .unwrap_or(DEFAULT_WEATHER_LOCATION);
 
     json!({
         "location": location,
-        "time_zone": DEFAULT_TIME_ZONE
+        "time_zone": DEFAULT_WEATHER_TIME_ZONE
     })
 }
 
@@ -456,17 +483,11 @@ fn dispatch_weather_widget_params(params: &Value) -> Value {
 /// would panic on it — and an absent or wrong-typed value land on the
 /// manifest default `cz`; `showDate` defaults to `true`.
 fn dispatch_nameday_widget_params(params: &Value) -> Value {
-    /// `country` enum of `widgets-wasm/nameday/manifest.json`.
-    const NAMEDAY_COUNTRIES: &[&str] = &[
-        "at", "cz", "de", "dk", "ee", "es", "fi", "fr", "hr", "hu", "it", "lt", "lv", "pl", "se",
-        "sk", "us",
-    ];
-
     let country = params
         .get("country")
         .and_then(Value::as_str)
         .filter(|c| NAMEDAY_COUNTRIES.contains(c))
-        .unwrap_or("cz");
+        .unwrap_or(DEFAULT_NAMEDAY_COUNTRY);
 
     let show_date = params
         .get("showDate")
@@ -656,6 +677,110 @@ mod tests {
     /// Shorthand for a `ParamValue::String`.
     fn str_param(value: &str) -> ParamValue {
         ParamValue::String(value.to_owned())
+    }
+
+    // --- manifest cross-check ------------------------------------------------
+
+    /// Every migration fallback must equal the `default_value` (or, for
+    /// the country list, the `enum_values`) that the target widget's own
+    /// `manifest.json` declares, and every value `translate_font_style`
+    /// emits must be a real member of the shared font enum. This is the
+    /// guard the review asked for: the fallbacks live here rather than
+    /// being read from the manifest at runtime, so this test is what
+    /// keeps them from drifting out of sync with the shipped widgets.
+    #[test]
+    fn migration_fallbacks_match_the_shipped_manifests() {
+        use std::collections::BTreeSet;
+        use std::str::FromStr;
+
+        use bmc_widget_manifest::{Manifest, ParamKind};
+
+        fn manifest(json: &str) -> Manifest {
+            Manifest::from_str(json).expect("BUG: in-tree manifest must parse")
+        }
+
+        fn kind<'m>(manifest: &'m Manifest, key: &str) -> &'m ParamKind {
+            &manifest
+                .params
+                .get(key)
+                .unwrap_or_else(|| panic!("BUG: manifest has no param {key:?}"))
+                .kind
+        }
+
+        fn string_default(manifest: &Manifest, key: &str) -> String {
+            let ParamKind::String { default_value, .. } = kind(manifest, key) else {
+                panic!("BUG: manifest param {key:?} is not a string");
+            };
+            default_value
+                .clone()
+                .unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
+        }
+
+        fn integer_default(manifest: &Manifest, key: &str) -> i32 {
+            let ParamKind::Integer { default_value, .. } = kind(manifest, key) else {
+                panic!("BUG: manifest param {key:?} is not an integer");
+            };
+            default_value.unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
+        }
+
+        fn string_enum(manifest: &Manifest, key: &str) -> BTreeSet<String> {
+            let ParamKind::String { enum_values, .. } = kind(manifest, key) else {
+                panic!("BUG: manifest param {key:?} is not a string");
+            };
+            enum_values.iter().map(|o| o.value.clone()).collect()
+        }
+
+        let clock = manifest(include_str!("../../../widgets-wasm/clock/manifest.json"));
+        let block_height = manifest(include_str!(
+            "../../../widgets-wasm/blockheight/manifest.json"
+        ));
+        let weather = manifest(include_str!("../../../widgets-wasm/weather/manifest.json"));
+        let image = manifest(include_str!("../../../widgets-wasm/image/manifest.json"));
+        let nameday = manifest(include_str!("../../../widgets-wasm/nameday/manifest.json"));
+
+        assert_eq!(
+            string_default(&clock, "numbers_font_style"),
+            CLOCK_FONT_DEFAULT
+        );
+        assert_eq!(
+            string_default(&block_height, "numbers_font_style"),
+            BLOCK_HEIGHT_FONT_DEFAULT
+        );
+        assert_eq!(
+            string_default(&weather, "location"),
+            DEFAULT_WEATHER_LOCATION
+        );
+        assert_eq!(
+            string_default(&weather, "time_zone"),
+            DEFAULT_WEATHER_TIME_ZONE
+        );
+        assert_eq!(
+            integer_default(&image, "refresh_seconds"),
+            DEFAULT_REFRESH_SECONDS
+        );
+        assert_eq!(string_default(&nameday, "country"), DEFAULT_NAMEDAY_COUNTRY);
+
+        // The migration's country whitelist must be exactly the manifest
+        // enum — an entry the manifest dropped would let a stale country
+        // through into a value the widget's typed read rejects.
+        let manifest_countries = string_enum(&nameday, "country");
+        let migration_countries: BTreeSet<String> =
+            NAMEDAY_COUNTRIES.iter().map(|c| (*c).to_owned()).collect();
+        assert_eq!(migration_countries, manifest_countries);
+
+        // Every weight the v0 remap can emit must be a valid font-enum
+        // value, or a migrated clock/block-height widget would carry a
+        // value its typed read rejects.
+        let font_enum = string_enum(&clock, "numbers_font_style");
+        for v0_weight in ["light", "medium", "bold"] {
+            let mapped = translate_font_style(v0_weight)
+                .expect("BUG: v0 font weight must remap")
+                .to_owned();
+            assert!(
+                font_enum.contains(&mapped),
+                "remapped weight {mapped:?} is not in the manifest font enum"
+            );
+        }
     }
 
     // --- clock ---------------------------------------------------------------
