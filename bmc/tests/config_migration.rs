@@ -49,19 +49,6 @@ async fn migrates_device_sample_without_losing_scenes() {
         "both ticker_btc widgets must drop",
     );
 
-    // The preserved v0 struct must still be available after the
-    // upgrade. This is the core "in-memory migration" property —
-    // nothing else needs to touch the disk to see what the config
-    // looked like before the rewrite.
-    let original = loaded
-        .original_v0()
-        .expect("BUG: migrated load must preserve the v0 struct");
-    assert_eq!(
-        original.scenes.len(),
-        3,
-        "the preserved v0 struct keeps all scenes, dropped or not"
-    );
-
     // The number of widgets on disk equals translated (dropped
     // widgets do not appear in the output).
     let migrated = fs::read_to_string(&dest)
@@ -143,7 +130,6 @@ async fn current_version_config_is_a_noop() {
         !loaded.was_migrated(),
         "already-versioned config must be a no-op"
     );
-    assert!(loaded.original_v0().is_none());
     assert!(loaded.report().is_none());
 
     // Backup must NOT be written on a no-op.
@@ -246,9 +232,10 @@ async fn load_is_pure_without_persist() {
     let loaded =
         LoadedConfig::from_str(FIXTURE).expect("BUG: fixture must parse via the pure FromStr path");
     assert!(loaded.was_migrated());
-    assert!(
-        loaded.original_v0().is_some(),
-        "FromStr path must also preserve the v0 original"
+    assert_eq!(
+        loaded.current().version,
+        1,
+        "FromStr path must upgrade to the current schema"
     );
 }
 

@@ -13,11 +13,6 @@
 //! - **Pure, in-memory upgrades.** `LoadedConfig::from_str` never
 //!   touches the filesystem. The caller decides whether and when
 //!   to persist the result.
-//! - **The original parse survives.** When a load walks through
-//!   [`v0::Config`], the parsed v0 struct is preserved inside
-//!   [`LoadedConfig::MigratedFromV0`] — callers can inspect it for
-//!   debug views, rollback UIs, or CI snapshot checks without
-//!   re-reading the disk (which by then may have been rewritten).
 //! - **Downgrade-safe.** A config that names a schema version this
 //!   binary does not understand is refused rather than rewritten,
 //!   so an accidental firmware downgrade cannot silently clobber a
@@ -93,21 +88,15 @@ pub struct Report {
 /// Result of parsing a raw config of unknown version.
 ///
 /// Either the file was already at the current schema, or it was a
-/// v0 config whose parse and upgrade both succeeded — in which
-/// case both the pre-upgrade `v0::Config` and the upgraded
-/// `Config` remain in memory.
+/// v0 config whose parse and upgrade both succeeded — in which case
+/// the upgraded `Config` and its migration [`Report`] remain in
+/// memory.
 #[derive(Debug)]
 pub enum LoadedConfig {
     /// File already carried `version = CONFIG_VERSION`.
     AlreadyCurrent(Config),
     /// File was a v0 (legacy) config; the upgrade has been applied.
-    MigratedFromV0 {
-        current: Config,
-        /// The original v0 struct, preserved for debug views,
-        /// rollback, or CI snapshot checks without disk re-reads.
-        original: Box<v0::Config>,
-        report: Report,
-    },
+    MigratedFromV0 { current: Config, report: Report },
 }
 
 impl LoadedConfig {
@@ -120,24 +109,13 @@ impl LoadedConfig {
         }
     }
 
-    /// Take ownership of the current config, dropping the
-    /// preserved original if any.
+    /// Take ownership of the current config, discarding the
+    /// migration report if any.
     #[must_use]
     pub fn into_current(self) -> Config {
         match self {
             Self::AlreadyCurrent(c) => c,
             Self::MigratedFromV0 { current, .. } => current,
-        }
-    }
-
-    /// The pre-upgrade v0 struct, available iff the load walked
-    /// through a v0 parse. `None` when the file was already
-    /// current.
-    #[must_use]
-    pub fn original_v0(&self) -> Option<&v0::Config> {
-        match self {
-            Self::AlreadyCurrent(_) => None,
-            Self::MigratedFromV0 { original, .. } => Some(original),
         }
     }
 
@@ -172,13 +150,8 @@ impl FromStr for LoadedConfig {
                 let legacy: v0::Config = serde_json::from_str(raw).context(
                     "config parses as neither the current schema nor a recognized legacy schema",
                 )?;
-                let original = Box::new(legacy.clone());
                 let (current, report) = upgrade_v0::upgrade_with_report(legacy);
-                Ok(Self::MigratedFromV0 {
-                    current,
-                    original,
-                    report,
-                })
+                Ok(Self::MigratedFromV0 { current, report })
             }
             other => bail!(
                 "unsupported config version: {other}. Refusing to read; a newer firmware may \
@@ -291,15 +264,11 @@ pub async fn save_with_backup(config: &Config, path: &Path) -> Result<()> {
 /// Convenience: load, upgrade if needed, persist if upgraded.
 ///
 /// Used by the boot sequence and by `bmc-migrate-config`. The
-/// returned [`LoadedConfig`] lets the caller inspect the original
-/// parse after persistence has happened; nothing else re-reads the
-/// file.
+/// returned [`LoadedConfig`] lets the caller inspect the migration
+/// [`Report`] after persistence has happened.
 pub async fn migrate_on_disk(path: &Path) -> Result<LoadedConfig> {
     let loaded = load_any_version(path).await?;
-    if let LoadedConfig::MigratedFromV0 {
-        current, report, ..
-    } = &loaded
-    {
+    if let LoadedConfig::MigratedFromV0 { current, report } = &loaded {
         info!(
             scenes = report.scenes,
             dropped_scenes = report.dropped_scenes,
@@ -347,7 +316,6 @@ mod tests {
             .parse()
             .expect("BUG: current-version parse must succeed");
         assert!(!loaded.was_migrated());
-        assert!(loaded.original_v0().is_none());
         assert!(loaded.report().is_none());
     }
 
@@ -369,7 +337,6 @@ mod tests {
         let loaded: LoadedConfig = raw.parse().expect("BUG: legacy parse must succeed");
         assert!(loaded.was_migrated());
         assert_eq!(loaded.current().version, Config::VERSION);
-        assert!(loaded.original_v0().is_some());
         let report = loaded
             .report()
             .expect("BUG: migrated load must carry a report");
