@@ -26,7 +26,9 @@ run. The authoritative firmware compatibility check runs on the device during
 sysupgrade; this catalog only fails fast on the obvious local problems.
 """
 
+import base64
 import difflib
+import hashlib
 import json
 import os
 import re
@@ -45,6 +47,7 @@ from pathlib import Path
 from typing import Any, NewType
 
 from bmc_tui import console, nix_progress, rig
+from bmc_tui.bos_version import BosVersion, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import Attr, Built, Nix, Pkg, StorePath
@@ -775,11 +778,12 @@ def validate_e2e_inputs(run: E2eRun) -> str:
     a, b = run.image_a.version, run.image_b.version
     require(a != b, f"images A and B carry the same firmware version {console.lit(a)}")
     for image in (run.image_a, run.image_b):
-        _require_nix_era(image)
+        require_nix_era(image)
     return f"A {console.lit(a)}, B {console.lit(b)}"
 
 
-def _require_nix_era(image: Image) -> None:
+@stage("Validate firmware image (nix-era)")
+def require_nix_era(image: Image) -> None:
     """COMMAND only enters the Nix flow when it finds its two payload
     members in the tar."""
 
@@ -2652,3 +2656,212 @@ def _grpc_mb(value: Any) -> float | None:
     if value is None:
         return None
     return int(value) / 1_000_000
+
+
+# ── e2e firmware upgrade ─────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class FirmwareCycle:
+    """Mutable carrier threaded through the e2e firmware upgrade stages."""
+
+    password: str
+    index_port: int
+    stream_deadline: float
+    snapshot_dir: Path
+    host: str | None = None
+    running_version: "BosVersion | None" = None
+    image_version: "BosVersion | None" = None
+    servers_snapshot: "FileSnapshot | None" = None
+    nix_conf_snapshot: "FileSnapshot | None" = None
+    opkg_keys_snapshot: "DirSnapshot | None" = None
+    upload_present: bool = False
+    mutation_started: bool = False
+    bcp_before: frozenset[str] = frozenset()
+    bmc_log_offset: int = 0
+    boot_id_before: str | None = None
+    cookie: str | None = None
+    upgrade_id: str | None = None
+    started_upgrade: bool = False
+
+
+@dataclass(frozen=True)
+class FileSnapshot:
+    remote_path: str
+    local: Path | None
+
+
+@dataclass(frozen=True)
+class DirSnapshot:
+    remote_path: str
+    archive: Path | None
+
+
+def _remote_size(dev: Device, remote_path: str) -> int:
+    return int(dev.read(f"wc -c < {shlex.quote(remote_path)}"))
+
+
+def _snapshot_bytes(dev: Device, remote_path: str) -> bytes:
+    encoded = dev.read(f"base64 < {shlex.quote(remote_path)}")
+    return base64.b64decode(encoded)
+
+
+def _verify_snapshot(dev: Device, remote_path: str, data: bytes) -> None:
+    require(
+        len(data) == _remote_size(dev, remote_path)
+        and hashlib.sha256(data).hexdigest() == _remote_sha(dev, remote_path).lower(),
+        f"snapshot of {console.lit(remote_path)} was incomplete or corrupt",
+    )
+
+
+def snapshot_remote_file(dev: Device, remote_path: str, into: Path) -> FileSnapshot:
+    quoted = shlex.quote(remote_path)
+    if dev.read(f"test -f {quoted} && echo present || true") != "present":
+        return FileSnapshot(remote_path, None)
+    data = _snapshot_bytes(dev, remote_path)
+    into.write_bytes(data)
+    _verify_snapshot(dev, remote_path, data)
+    return FileSnapshot(remote_path, into)
+
+
+def restore_remote_file(dev: Device, snap: FileSnapshot) -> None:
+    if snap.local is None:
+        dev.run(f"rm -f {shlex.quote(snap.remote_path)}")
+    else:
+        dev.push(snap.local, RemotePath(snap.remote_path))
+
+
+def _remote_dir_parts(remote_path: str) -> tuple[str, str]:
+    parent, _, name = remote_path.rstrip("/").rpartition("/")
+    return parent or "/", name
+
+
+def _remote_keys_archive() -> str:
+    return f"/tmp/bmc-e2e-opkg-keys.{os.getpid()}.tar"
+
+
+def snapshot_remote_dir(dev: Device, remote_path: str, into: Path) -> DirSnapshot:
+    quoted = shlex.quote(remote_path)
+    if dev.read(f"test -d {quoted} && echo present || true") != "present":
+        return DirSnapshot(remote_path, None)
+    parent, name = _remote_dir_parts(remote_path)
+    remote_archive = _remote_keys_archive()
+    try:
+        dev.run(
+            f"tar -C {shlex.quote(parent)} -cf {shlex.quote(remote_archive)} {shlex.quote(name)}"
+        )
+        expected_size = _remote_size(dev, remote_archive)
+        expected_sha = _remote_sha(dev, remote_archive).lower()
+        data = _snapshot_bytes(dev, remote_archive)
+        into.write_bytes(data)
+        require(
+            len(data) == expected_size and hashlib.sha256(data).hexdigest() == expected_sha,
+            f"snapshot of {console.lit(remote_path)} was incomplete or corrupt",
+        )
+        return DirSnapshot(remote_path, into)
+    finally:
+        dev.run(f"rm -f {shlex.quote(remote_archive)}")
+
+
+def restore_remote_dir(dev: Device, snap: DirSnapshot) -> None:
+    dev.run(f"rm -rf {shlex.quote(snap.remote_path)}")
+    if snap.archive is None:
+        return
+    parent, _ = _remote_dir_parts(snap.remote_path)
+    remote_archive = _remote_keys_archive()
+    try:
+        dev.push(snap.archive, RemotePath(remote_archive))
+        dev.run(f"tar -C {shlex.quote(parent)} -xf {shlex.quote(remote_archive)}")
+    finally:
+        dev.run(f"rm -f {shlex.quote(remote_archive)}")
+
+
+def _bcp_siblings(dev: Device) -> frozenset[str]:
+    pattern = f"{_SERVERS_JSON}.bcp*"
+    # With no match the glob stays literal and the trailing `[ -e ]` would
+    # otherwise make the loop (and ssh) exit 1.
+    output = dev.read(
+        f'for path in {pattern}; do if [ -e "$path" ]; then basename "$path"; fi; done'
+    )
+    return frozenset(output.splitlines())
+
+
+def restore_servers_config(dev: Device, cycle: FirmwareCycle) -> None:
+    snapshot = cycle.servers_snapshot
+    if snapshot is None:
+        msg = "BUG: servers.json was not snapshotted before restoration"
+        raise RuntimeError(msg)
+    restore_remote_file(dev, snapshot)
+    directory = _SERVERS_JSON.rpartition("/")[0]
+    for name in sorted(_bcp_siblings(dev) - cycle.bcp_before):
+        dev.run(f"rm -f {shlex.quote(f'{directory}/{name}')}")
+
+
+@stage("Preflight versions")
+def preflight_versions(dev: Device, image: Image, cycle: FirmwareCycle) -> str:
+    running_raw = dev.version
+    image_raw = image.version
+    try:
+        running = parse_bos_version(running_raw)
+    except ValueError as e:
+        raise Abort(f"malformed device version {running_raw!r}: {e}") from None
+    try:
+        offered = parse_bos_version(image_raw)
+    except ValueError as e:
+        raise Abort(f"malformed image version {image_raw!r}: {e}") from None
+    cycle.running_version = running
+    cycle.image_version = offered
+    if offered.version == running.version:
+        raise Abort(
+            "image and running release versions are equal, causing a resolver duplicate error"
+        )
+    require(
+        offered.version > running.version,
+        "image release is older than the running release — deck sysupgrade an older image first",
+    )
+    return f"{console.lit(running.canonical)} → {console.lit(offered.canonical)}"
+
+
+@stage("Preflight device prerequisites")
+def preflight_device(dev: Device) -> str:
+    require(
+        dev.read("command -v base64 >/dev/null && echo ok || true") == "ok",
+        "base64 is required on the device",
+    )
+    require(
+        dev.read(f"test -x {shlex.quote(_NIX_CLI)} && echo ok || true") == "ok",
+        f"{_NIX_CLI} is missing — prepare the device with deck deploy",
+    )
+    servers = shlex.quote(_SERVERS_JSON)
+    if dev.read(f"test -f {servers} && echo present || true") == "present":
+        raw = dev.read(f"cat {servers}")
+        try:
+            json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise Abort(f"{_SERVERS_JSON} is not valid JSON: {e}") from None
+    return "base64, nix CLI, and servers config verified"
+
+
+@stage("Snapshot upgrade config")
+def snapshot_upgrade_config(dev: Device, cycle: FirmwareCycle) -> str:
+    cycle.bcp_before = _bcp_siblings(dev)
+    cycle.servers_snapshot = snapshot_remote_file(
+        dev, _SERVERS_JSON, cycle.snapshot_dir / "servers.json"
+    )
+    cycle.nix_conf_snapshot = snapshot_remote_file(dev, _NIX_CONF, cycle.snapshot_dir / "nix.conf")
+    return f"snapshots → {console.lit(cycle.snapshot_dir)}"
+
+
+@stage("Snapshot opkg keys")
+def snapshot_opkg_keys(dev: Device, cycle: FirmwareCycle) -> str:
+    cycle.opkg_keys_snapshot = snapshot_remote_dir(
+        dev, "/etc/opkg/keys", cycle.snapshot_dir / "opkg-keys.tar"
+    )
+    return f"snapshot → {console.lit(cycle.snapshot_dir)}"
+
+
+@stage("Remove uploaded firmware")
+def remove_uploaded_image(dev: Device, image: Image, cycle: FirmwareCycle) -> str:
+    dev.run(f"rm -f {shlex.quote(image.remote_path)}")
+    cycle.upload_present = False
+    return console.lit(image.remote_path)

@@ -21,6 +21,7 @@
 """Unit tests for the deploy stage catalog."""
 
 import base64
+import hashlib
 import io
 import json
 import shlex
@@ -2561,3 +2562,189 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -
     )
     assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)
     assert not any("rm -f" in c for c in cmds)
+
+
+# ── e2e firmware upgrade ─────────────────────────────────────────────────────────────────
+
+
+def _firmware_cycle(tmp_path: Path) -> catalog.FirmwareCycle:
+    return catalog.FirmwareCycle(
+        password="", index_port=8082, stream_deadline=600, snapshot_dir=tmp_path
+    )
+
+
+def test_preflight_versions_accepts_strictly_newer_image(tmp_path: Path) -> None:
+    running = "2025-06-15-0-acde0123-25.06"
+    image = _image(tmp_path, version="2025-07-01-0-0badc0de-25.07")
+    cycle = _firmware_cycle(tmp_path)
+    catalog.preflight_versions(
+        Device("h", backend=_Exec(_routes({"cat /etc/bos_version": running}))), image, cycle
+    )
+    assert cycle.running_version is not None
+    assert cycle.running_version.canonical == running
+    assert cycle.image_version is not None
+    assert cycle.image_version.canonical == image.version
+
+
+@pytest.mark.parametrize(
+    ("running", "image", "hint"),
+    [
+        (
+            "2025-06-15-0-acde0123-25.06",
+            "2025-07-01-0-0badc0de-25.06",
+            "duplicate",
+        ),
+        (
+            "2025-06-15-0-acde0123-25.06",
+            "2025-05-01-0-0badc0de-25.05",
+            "deck sysupgrade",
+        ),
+    ],
+)
+def test_preflight_versions_rejects_non_newer_image(
+    tmp_path: Path, running: str, image: str, hint: str
+) -> None:
+    with pytest.raises(Abort, match=hint):
+        catalog.preflight_versions(
+            Device("h", backend=_Exec(_routes({"cat /etc/bos_version": running}))),
+            _image(tmp_path, version=image),
+            _firmware_cycle(tmp_path),
+        )
+
+
+def test_preflight_versions_rejects_malformed_device_version(tmp_path: Path) -> None:
+    with pytest.raises(Abort, match="garbage"):
+        catalog.preflight_versions(
+            Device("h", backend=_Exec(_routes({"cat /etc/bos_version": "garbage"}))),
+            _image(tmp_path, version="2025-07-01-0-0badc0de-25.07"),
+            _firmware_cycle(tmp_path),
+        )
+
+
+def test_snapshot_remote_file_records_absence_and_restores_by_removal(tmp_path: Path) -> None:
+    backend = _Exec(_routes({}))
+    dev = Device("h", backend=backend)
+    snap = catalog.snapshot_remote_file(dev, "/missing", tmp_path / "missing")
+    assert snap.local is None
+    catalog.restore_remote_file(dev, snap)
+    assert any(argv[-1] == "rm -f /missing" for argv in backend.runs)
+
+
+def test_snapshot_remote_file_is_byte_exact_and_restores_by_push(tmp_path: Path) -> None:
+    content = b"preserve trailing newline\n"
+    digest = hashlib.sha256(content).hexdigest()
+    backend = _Exec(
+        _routes(
+            {
+                "test -f /config": "present",
+                "base64 < /config": base64.b64encode(content).decode(),
+                "wc -c < /config": str(len(content)),
+                "sha256sum /config": digest,
+            }
+        )
+    )
+    dev = Device("h", backend=backend)
+    snap = catalog.snapshot_remote_file(dev, "/config", tmp_path / "config.snapshot")
+    assert snap.local is not None
+    assert snap.local.read_bytes() == content
+    catalog.restore_remote_file(dev, snap)
+    assert backend.streams[-1][1] == content
+
+
+def test_restore_servers_config_removes_only_new_quarantine_siblings(tmp_path: Path) -> None:
+    cycle = _firmware_cycle(tmp_path)
+    cycle.servers_snapshot = catalog.FileSnapshot(catalog._SERVERS_JSON, None)
+    cycle.bcp_before = frozenset({"servers.json.bcp"})
+    backend = _Exec(_routes({"servers.json.bcp*": "servers.json.bcp\nservers.json.bcp.1"}))
+    catalog.restore_servers_config(Device("h", backend=backend), cycle)
+    commands = [argv[-1] for argv in backend.runs]
+    assert "rm -f /etc/nix-upgrade/servers.json.bcp.1" in commands
+    assert "rm -f /etc/nix-upgrade/servers.json.bcp" not in commands
+
+
+def _dir_snapshot_backend(payload: bytes, *, reported: bytes | None = None) -> _Exec:
+    checked = payload if reported is None else reported
+    return _Exec(
+        _routes(
+            {
+                "test -d /etc/opkg/keys": "present",
+                "base64 < /tmp/bmc-e2e-opkg-keys": base64.b64encode(payload).decode(),
+                "wc -c < /tmp/bmc-e2e-opkg-keys": str(len(checked)),
+                "sha256sum /tmp/bmc-e2e-opkg-keys": hashlib.sha256(checked).hexdigest(),
+            }
+        )
+    )
+
+
+def test_snapshot_remote_dir_is_byte_exact_and_removes_temp(tmp_path: Path) -> None:
+    payload = b"tar\x00bytes\n"
+    backend = _dir_snapshot_backend(payload)
+    snap = catalog.snapshot_remote_dir(
+        Device("h", backend=backend), "/etc/opkg/keys", tmp_path / "keys.tar"
+    )
+    assert snap.archive is not None
+    assert snap.archive.read_bytes() == payload
+    assert any(argv[-1].startswith("rm -f /tmp/bmc-e2e-opkg-keys") for argv in backend.runs)
+
+
+def test_snapshot_remote_dir_truncation_aborts_and_removes_temp(tmp_path: Path) -> None:
+    backend = _dir_snapshot_backend(b"short", reported=b"expected complete tar")
+    with pytest.raises(Abort, match="snapshot"):
+        catalog.snapshot_remote_dir(
+            Device("h", backend=backend), "/etc/opkg/keys", tmp_path / "keys.tar"
+        )
+    assert any(argv[-1].startswith("rm -f /tmp/bmc-e2e-opkg-keys") for argv in backend.runs)
+
+
+def test_restore_remote_dir_deletes_then_recreates_or_leaves_absent(tmp_path: Path) -> None:
+    archive = tmp_path / "keys.tar"
+    archive.write_bytes(b"archive")
+    backend = _Exec(_routes({}))
+    dev = Device("h", backend=backend)
+    catalog.restore_remote_dir(dev, catalog.DirSnapshot("/etc/opkg/keys", archive))
+    commands = [argv[-1] for argv in backend.runs]
+    delete_index = commands.index("rm -rf /etc/opkg/keys")
+    extract_index = next(
+        i for i, cmd in enumerate(commands) if cmd.startswith("tar -C /etc/opkg -xf")
+    )
+    assert delete_index < extract_index
+    assert backend.streams[-1][1] == b"archive"
+
+    absent_backend = _Exec(_routes({}))
+    catalog.restore_remote_dir(
+        Device("h", backend=absent_backend), catalog.DirSnapshot("/etc/opkg/keys", None)
+    )
+    assert [argv[-1] for argv in absent_backend.runs] == ["rm -rf /etc/opkg/keys"]
+
+
+def test_require_nix_era_accepts_complete_payload_and_rejects_missing(tmp_path: Path) -> None:
+    catalog.require_nix_era(
+        _image(tmp_path, extra=("rootfs.img", "bmc-nix-cli", "servers.json.default"))
+    )
+    with pytest.raises(Abort, match=r"servers\.json\.default"):
+        catalog.require_nix_era(
+            _image(tmp_path, extra=("rootfs.img", "bmc-nix-cli"), name="missing.tar")
+        )
+
+
+@pytest.mark.parametrize(
+    ("routes", "hint"),
+    [
+        ({}, "base64"),
+        ({"command -v base64": "ok"}, "bmc-nix-cli"),
+        (
+            {
+                "command -v base64": "ok",
+                f"test -x {catalog._NIX_CLI}": "ok",
+                f"test -f {catalog._SERVERS_JSON}": "present",
+                f"cat {catalog._SERVERS_JSON}": "not-json",
+            },
+            "JSON",
+        ),
+    ],
+)
+def test_preflight_device_rejects_missing_or_invalid_prerequisites(
+    routes: dict[str, str], hint: str
+) -> None:
+    with pytest.raises(Abort, match=hint):
+        catalog.preflight_device(Device("h", backend=_Exec(_routes(routes))))
