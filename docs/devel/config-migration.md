@@ -42,9 +42,11 @@ match version:
   other          → bail with explicit error, do not read as config
 ```
 
-Persistence is orthogonal: `save_with_backup(&Config, path)` writes the current shape and creates a timestamped
-`.backup.<ts>` of the previous file. `migrate_on_disk(path)` composes the two — load, and persist if the load was a
-migration.
+Persistence is orthogonal and deferred: `save_with_backup(&Config, path)` writes the current shape and creates a
+timestamped `.backup.<ts>` of the previous file, but the boot path does **not** call it. Boot loads and validates in
+memory (`load_any_version`) and leaves the on-disk file untouched; a migrated config is written back only when the user
+first changes a setting (see [Boot integration](#boot-integration)). The offline `bmc-migrate-config` tool is the one
+caller that loads, validates, and persists in a single step.
 
 ## Per-widget upgrade policy
 
@@ -133,32 +135,32 @@ default a field-less current config would use. Accounts go through the same leni
 - **Atomic write** via `crate::utils::replace_file` (tmp + rename).
 - **Total parse failure** surfaces as an explicit `anyhow::Error` from `LoadedConfig::from_str`; the existing file is
   left untouched (no partial rewrite).
-- **Validate before persist.** `migrate_on_disk` validates the upgraded config in memory *before* writing it. A
-  migration that somehow still produces an invalid config is rejected without touching the file, so a readable original
-  is never overwritten by a broken upgrade — it stays on disk for a fixed firmware or manual recovery.
+- **Validate before persist.** The boot path validates the upgraded config in memory and, because it never writes at
+  boot, a bad migration cannot overwrite the on-disk original at all — the original stays in place and the device
+  recovers onto a default (backing the unreadable file up to `<path>.bcp`). The offline `bmc-migrate-config` tool
+  applies the same validate-before-write rule to `<dst>`.
 
 ## Boot integration
 
-`ConfigHandle::init` runs `migrate_on_disk` on the runtime config path before anything else reads it, so the upgrade
-happens once on first boot with no user action. Success (whether an already-current no-op or an applied v0 upgrade)
-yields the current `Config`, which is then validated.
+`ConfigHandle::init` runs `load_and_validate` on the runtime config path before anything else reads it, so the upgrade
+happens once on first boot with no user action. Loading upgrades a legacy config **in memory** and validates it; the
+on-disk file is **not** rewritten. An already-current config is a plain no-op.
 
-On failure the boot path distinguishes two cases:
+**Migration is committed on the first genuine change, not at boot.** The handle carries a `migrated` flag; the first
+`ConfigHandle::save` from a real settings change writes one timestamped backup of the pre-migration file and then
+persists the upgraded config, clearing the flag. Until then the on-disk file keeps its original version. This is what
+keeps a would-be downgrade safe: if the user upgrades the BMC application and rolls back before changing anything, the
+older application still finds its own config on disk.
 
-- **Newer-than-known version.** If the on-disk file declares a schema version greater than `CONFIG_VERSION` (a
-  `peek_version` check), it is left untouched — the firmware boots on in-memory defaults and logs how to recover. This
-  is the "safe downgrade refusal" story: never clobber a config a newer firmware wrote.
-- **Corrupt / missing.** Anything else (unreadable, invalid JSON) is backed up to `<path>.bcp` and replaced with a
-  platform default, as before.
+On a load failure the file is backed up to `<path>.bcp` and replaced with a platform default. **Downgrades are not
+supported**, so a config whose version is newer than this application understands is treated the same as any other
+unreadable file — backed up and replaced, not preserved in place. There is deliberately no read-only mode and no
+newer-version write guard: the review concluded the precaution wasn't warranted, since the on-disk-stays-old property
+above already covers the benign downgrade case and an unsupported downgrade landing on defaults is acceptable.
 
-The refusal holds for the whole session, not just at boot. The handle is flagged `read_only`, so a later settings change
-takes effect in memory but is not persisted (`ConfigHandle::save` short-circuits). As a backstop the write primitive
-`Config::save` re-checks `peek_version` and refuses to overwrite a newer on-disk config, so any caller — now or future —
-is prevented from clobbering it, not just the boot path.
-
-> Follow-up: the refusal path currently still boots the rest of the device on defaults rather than failing only the
-> display subsystem while keeping the web UI reachable. Splitting boot so the display alone fails on an unreadable
-> config is filed as a follow-up.
+> Follow-up: an unreadable config currently boots the rest of the device on defaults rather than failing only the
+> display subsystem while keeping the web UI reachable. Splitting boot so the display alone fails is filed as a
+> follow-up.
 
 ## Compositor coordination
 
@@ -221,24 +223,27 @@ so a newly-created backup is never archived uncensored.
 - **Unit:** per-widget upgrade tests (native kinds map to their manifest UID with every required param filled, param
   translations and enum guards, remote slugs with a native equivalent map and the rest drop, unknown kinds / URLs drop),
   plus header-dispatch edge cases (missing version, current version, unknown future version, empty v0 input).
-- **Integration:** round-trips a captured device config through `migrate_on_disk` and asserts: version header, scene
-  count, every post-upgrade widget carries a non-nil manifest `widget_type_id`, no retired placeholder param shape
-  (`_legacy` / `_legacy_remote`) leaks, backup file exists, `translated` counter matches the on-disk widget count. Plus
-  an invalid-migration test asserting the original file is left intact when validation fails, and a test for the pure
-  `LoadedConfig::from_str` path (`load_is_pure_without_persist`) verifying it upgrades in memory without touching disk.
+- **Integration:** round-trips a captured device config through the load→validate→persist chain and asserts: version
+  header, scene count, every post-upgrade widget carries a non-nil manifest `widget_type_id`, no retired placeholder
+  param shape (`_legacy` / `_legacy_remote`) leaks, backup file exists, `translated` counter matches the on-disk widget
+  count. Plus an invalid-migration test asserting the original file is left intact when validation fails, and a test for
+  the pure `LoadedConfig::from_str` path (`load_is_pure_without_persist`) verifying it upgrades in memory without
+  touching disk.
 - **CLI:** `bmc-migrate-config <src> <dst>` exits 0, writes `<dst>`, and emits a counts report
   (`cli_smoke_migrates_fixture_and_reports_counts`); and refuses — non-zero exit, no `<dst>` written — a config that
   fails validation (`cli_refuses_to_write_a_config_that_would_fail_validation`), matching the boot path's
   validate-before-persist rule.
-- **Boot path:** `ConfigHandle::init` migrating a seeded legacy config in place (version bumped, scenes preserved,
-  backup written), and refusing to overwrite a newer-than-known config.
+- **Boot path:** `ConfigHandle::init` migrating a seeded legacy config in memory (on-disk file left at its old version,
+  then committed with one backup on the first save), and treating a newer-than-known config as unreadable (backed up to
+  `.bcp` and replaced with a default).
 
 ## Files
 
 - `bmc/src/config.rs` — `version` field, `CONFIG_VERSION` constant, `Config::from_migrated_parts`, and the
-  `ConfigHandle::init` boot wiring (`load_migrate_validate` / `recover_from_failed_load`).
-- `bmc/src/config_migration.rs` — `LoadedConfig`, `FromStr` version dispatch, `load_any_version`, `save_with_backup`,
-  `migrate_on_disk`, `peek_version`, `Report`.
+  `ConfigHandle::init` boot wiring (`load_and_validate` / `recover_from_failed_load`) plus the `migrated`-flag
+  commit-on-first-save.
+- `bmc/src/config_migration.rs` — `LoadedConfig`, `FromStr` version dispatch, `load_any_version`, `save_with_backup` /
+  `backup_existing`, `Report`.
 - `bmc/src/config_migration/v0.rs` — deserialize-only v0 types.
 - `bmc/src/config_migration/upgrade_v0.rs` — manifest UID constants, remote-widget slug dispatch, per-widget translators
   (required-param filling, enum guards), and `params_from_value` (legacy JSON params → typed param map).

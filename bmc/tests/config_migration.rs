@@ -7,13 +7,31 @@
 //! The fixture lives at `bmc/tests/fixtures/legacy_config_sample.json`
 //! and must only be modified when we capture a new device snapshot.
 
+use std::path::Path;
 use std::str::FromStr;
 
+use anyhow::{Context, Result};
 use bmc::config_migration::{self, LoadedConfig};
 use tempfile::TempDir;
 use tokio::fs;
 
 const FIXTURE: &str = include_str!("fixtures/legacy_config_sample.json");
+
+/// Load, upgrade if needed, validate, and persist in place. Mirrors the
+/// offline `bmc-migrate-config` chain (load → validate → `save_with_backup`);
+/// the boot path deliberately does *not* persist (migration is in-memory,
+/// committed only on the first genuine change). Kept here to exercise the
+/// persist chain against captured samples.
+async fn migrate_and_persist(path: &Path) -> Result<LoadedConfig> {
+    let loaded = config_migration::load_any_version(path).await?;
+    if loaded.was_migrated() {
+        loaded
+            .validate()
+            .context("migrated config failed validation")?;
+        config_migration::save_with_backup(loaded.current(), path).await?;
+    }
+    Ok(loaded)
+}
 
 #[tokio::test]
 async fn migrates_device_sample_without_losing_scenes() {
@@ -23,7 +41,7 @@ async fn migrates_device_sample_without_losing_scenes() {
         .await
         .expect("BUG: seed fixture write should succeed");
 
-    let loaded = config_migration::migrate_on_disk(&dest)
+    let loaded = migrate_and_persist(&dest)
         .await
         .expect("BUG: migration of captured device sample should succeed");
 
@@ -122,7 +140,7 @@ async fn current_version_config_is_a_noop() {
         .await
         .expect("BUG: seed write should succeed");
 
-    let loaded = config_migration::migrate_on_disk(&dest)
+    let loaded = migrate_and_persist(&dest)
         .await
         .expect("BUG: no-op migration should succeed");
 
@@ -156,7 +174,7 @@ async fn unknown_future_version_is_rejected() {
         .await
         .expect("BUG: seed write should succeed");
 
-    let err = config_migration::migrate_on_disk(&dest)
+    let err = migrate_and_persist(&dest)
         .await
         .expect_err("future version must be refused rather than overwritten");
     let msg = format!("{err:#}");
@@ -177,8 +195,8 @@ async fn invalid_migration_leaves_the_original_on_disk() {
     // A migration that produces an invalid config must not overwrite
     // the readable original. Two widgets sharing a position in a
     // combined scene overlap, so the migrated config fails validation;
-    // `migrate_on_disk` must reject it *before* writing and leave the
-    // v0 file intact (BDK-346).
+    // the load→validate→persist chain must reject it *before* writing
+    // and leave the v0 file intact (BDK-346).
     let tmp = tempdir();
     let dest = tmp.path().join("bmc_config.json");
     let original = r#"{
@@ -199,7 +217,7 @@ async fn invalid_migration_leaves_the_original_on_disk() {
         .await
         .expect("BUG: seed write should succeed");
 
-    let err = config_migration::migrate_on_disk(&dest)
+    let err = migrate_and_persist(&dest)
         .await
         .expect_err("an invalid migration must fail rather than persist");
     assert!(
@@ -355,7 +373,7 @@ async fn cli_refuses_to_write_a_config_that_would_fail_validation() {
     fs::write(&valid, FIXTURE)
         .await
         .expect("BUG: seed fixture write should succeed");
-    config_migration::migrate_on_disk(&valid)
+    migrate_and_persist(&valid)
         .await
         .expect("BUG: fixture must migrate to a valid current config");
 

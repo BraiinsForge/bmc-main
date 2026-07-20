@@ -13,12 +13,14 @@
 //! Key properties:
 //!
 //! - **Pure, in-memory upgrades.** `LoadedConfig::from_str` never
-//!   touches the filesystem. The caller decides whether and when
-//!   to persist the result.
-//! - **Downgrade-safe.** A config that names a schema version this
-//!   binary does not understand is refused rather than rewritten,
-//!   so an accidental firmware downgrade cannot silently clobber a
-//!   newer config.
+//!   touches the filesystem. The caller decides whether and when to
+//!   persist the result; the boot path keeps the migrated config in
+//!   memory and writes it back only on the first genuine change.
+//! - **No boot-time rewrite.** Because the boot path does not persist,
+//!   the on-disk file keeps its version until a genuine change is
+//!   saved. Downgrades are not supported, so a config a newer BMC
+//!   application wrote is treated as unreadable (backed up and replaced
+//!   with defaults) rather than preserved in place.
 //!
 //! See `docs/stories/config-migration.md` for user-facing behaviour
 //! and `docs/devlogs/BDK-346/design.md` for design notes.
@@ -116,7 +118,7 @@ impl LoadedConfig {
     }
 
     /// Validate the effective current config against the same rules the
-    /// boot path enforces before persisting (see [`migrate_on_disk`]).
+    /// boot path enforces.
     ///
     /// Exposed so the offline `bmc-migrate-config` tool refuses to write
     /// a config the device would reject and wipe on next boot, rather
@@ -147,25 +149,11 @@ impl FromStr for LoadedConfig {
                 Ok(Self::MigratedFromV0 { current, report })
             }
             other => bail!(
-                "unsupported config version: {other}. Refusing to read; a newer BMC application may \
-                 have written this file. The file is left untouched — update the BMC application to \
-                 read it, or restore an older `.backup.<ts>` copy."
+                "unsupported config version: {other}; refusing to read a config written by a \
+                 newer BMC application"
             ),
         }
     }
-}
-
-/// Best-effort read of the `version` field from a raw config without
-/// committing to a full parse. `None` if the text is not even valid
-/// JSON. The boot path uses this to tell a genuinely corrupt config
-/// (safe to replace after backing it up) apart from a readable config
-/// whose version is newer than this firmware understands (which must
-/// be preserved, never clobbered — see the downgrade-refusal story).
-#[must_use]
-pub fn peek_version(raw: &str) -> Option<u32> {
-    serde_json::from_str::<FormatHeader>(raw)
-        .ok()
-        .map(|header| header.version)
 }
 
 /// Read a config from disk and upgrade it to the current schema in
@@ -236,10 +224,9 @@ fn legacy_sibling_for(path: &Path) -> Option<PathBuf> {
     Some(grandparent.join(format!("bmc_{file_name}")))
 }
 
-/// Write `config` to `path`, first copying any existing file at
-/// that path to a timestamped backup. Safe to call on every save:
-/// the backup is only written when there is a file to back up.
-pub async fn save_with_backup(config: &Config, path: &Path) -> Result<()> {
+/// Copy the file at `path` to a timestamped `.backup.<unix_secs>`
+/// sibling, if one exists. No-op when there is nothing to back up.
+pub(crate) async fn backup_existing(path: &Path) -> Result<()> {
     if tokio::fs::try_exists(path).await.unwrap_or(false) {
         let backup = backup_path_for(path);
         tokio::fs::copy(path, &backup)
@@ -247,40 +234,19 @@ pub async fn save_with_backup(config: &Config, path: &Path) -> Result<()> {
             .with_context(|| format!("backup to {}", backup.display()))?;
         info!(backup = %backup.display(), "backed up existing config before save");
     }
+    Ok(())
+}
 
+/// Write `config` to `path`, first backing up any existing file to a
+/// timestamped copy. Safe to call on every save: the backup is only
+/// written when there is a file to back up.
+pub async fn save_with_backup(config: &Config, path: &Path) -> Result<()> {
+    backup_existing(path).await?;
     let bytes = serde_json::to_vec_pretty(config).context("serialize config")?;
     crate::utils::replace_file(path, &bytes)
         .await
         .with_context(|| format!("write config to {}", path.display()))?;
     Ok(())
-}
-
-/// Convenience: load, upgrade if needed, persist if upgraded.
-///
-/// Used by the boot sequence and by `bmc-migrate-config`. The
-/// returned [`LoadedConfig`] lets the caller inspect the migration
-/// [`Report`] after persistence has happened.
-pub async fn migrate_on_disk(path: &Path) -> Result<LoadedConfig> {
-    let loaded = load_any_version(path).await?;
-    if let LoadedConfig::MigratedFromV0 { current, report } = &loaded {
-        info!(
-            scenes = report.scenes,
-            dropped_scenes = report.dropped_scenes,
-            translated_widgets = report.translated_widgets,
-            dropped_widgets = report.dropped_widgets,
-            "upgrading legacy config on disk",
-        );
-        // Validate the upgraded config in memory *before* writing it, so
-        // a migration that produces an invalid config never overwrites
-        // the readable original on disk — only a config proven valid is
-        // persisted. The original is then left intact for a fixed
-        // firmware (or manual recovery) rather than replaced.
-        current.validate().context(
-            "migrated config failed validation; leaving the original config on disk untouched",
-        )?;
-        save_with_backup(current, path).await?;
-    }
-    Ok(loaded)
 }
 
 fn backup_path_for(path: &Path) -> PathBuf {

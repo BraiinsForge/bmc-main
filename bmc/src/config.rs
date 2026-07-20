@@ -22,7 +22,7 @@ use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::sync::broadcast;
-use tracing::warn;
+use tracing::{info, warn};
 
 mod defaults;
 pub(crate) mod widget_uuids;
@@ -134,8 +134,8 @@ pub const CONFIG_VERSION: u32 = 1;
 pub struct Config {
     /// Schema version of the on-disk config. `0` (or missing) means a
     /// legacy slint-monolith config that needs migration; `1` is the
-    /// current manifest-driven format. Unknown values abort boot —
-    /// see `crate::config_migration::migrate_on_disk`.
+    /// current manifest-driven format. Unknown values abort the load —
+    /// see `crate::config_migration::LoadedConfig`.
     #[serde(default)]
     pub version: u32,
     #[serde(
@@ -351,21 +351,6 @@ impl Config {
     async fn save(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
-        // Never clobber a config that declares a newer schema than this
-        // firmware understands — a newer firmware may have written it,
-        // and downgrading must leave it intact to roll forward or
-        // restore. The boot path already refuses such a config (see
-        // `ConfigHandle::read_only`); this guards every other caller and
-        // any future one, keeping the invariant on the write primitive.
-        if let Ok(raw) = fs::read_to_string(path).await
-            && crate::config_migration::peek_version(&raw).is_some_and(|v| v > CONFIG_VERSION)
-        {
-            bail!(
-                "refusing to overwrite on-disk config declaring a newer schema \
-                 (found version > {CONFIG_VERSION})"
-            );
-        }
-
         // Belt-and-braces: every on-disk config carries the current
         // schema version. Constructors already set it, but a caller
         // could mutate `self.version` directly — pin it here.
@@ -482,12 +467,12 @@ pub struct ConfigHandle {
     path: PathBuf,
     config: Config,
     config_notify: ConfigNotify,
-    /// Set when boot refused to overwrite an on-disk config declaring a
-    /// newer schema than this firmware understands. While set, saves
-    /// take effect in memory for the running session but are never
-    /// persisted, so the newer file the user can roll forward to (or
-    /// restore) is left intact. See [`Self::recover_from_failed_load`].
-    read_only: bool,
+    /// Set when boot migrated a legacy config in memory but has not yet
+    /// written it back. The migrated config is persisted only on the
+    /// first genuine change, so the on-disk file keeps its original
+    /// version until then (leaving it readable by an older BMC
+    /// application). Cleared once that first save commits the upgrade.
+    migrated: bool,
     localization_dirty: bool,
     night_mode_schedule_dirty: bool,
     led_settings_dirty: bool,
@@ -501,54 +486,39 @@ pub struct ConfigHandle {
     default_night_mode_sound_volume_pct: u8,
 }
 
-/// Outcome of [`ConfigHandle::recover_from_failed_load`]: the config to
-/// run with, plus whether the on-disk file must be treated as read-only.
-enum Recovery {
-    /// File was corrupt or missing; replaced with a platform default
-    /// that may be persisted normally.
-    Replaced(Config),
-    /// File declares a newer schema than this firmware understands; run
-    /// on in-memory defaults but never overwrite the file.
-    RefusedNewer(Config),
-}
-
 impl ConfigHandle {
-    /// Load the config, migrating a legacy schema to the current one
-    /// in place if needed, and validate the result. A migration
-    /// rewrites the on-disk file (after a timestamped backup); an
-    /// already-current config is loaded untouched.
-    async fn load_migrate_validate(path: &Path) -> Result<Config> {
-        let loaded = crate::config_migration::migrate_on_disk(path).await?;
+    /// Load the config and validate it, migrating a legacy schema to the
+    /// current one *in memory* if needed. The on-disk file is **not**
+    /// rewritten here — a migrated config is persisted only on the first
+    /// genuine change (see [`Self::save`]). Returns the config and
+    /// whether it was migrated.
+    async fn load_and_validate(path: &Path) -> Result<(Config, bool)> {
+        let loaded = crate::config_migration::load_any_version(path).await?;
+        if let Some(report) = loaded.report() {
+            info!(
+                scenes = report.scenes,
+                dropped_scenes = report.dropped_scenes,
+                translated_widgets = report.translated_widgets,
+                dropped_widgets = report.dropped_widgets,
+                "migrated legacy config in memory; will persist on next config change",
+            );
+        }
+        let migrated = loaded.was_migrated();
         let config = loaded.into_current();
         config
             .validate()
             .context("loaded config failed validation")?;
-        Ok(config)
+        Ok((config, migrated))
     }
 
-    /// Fallback when [`Self::load_migrate_validate`] fails. A config on
-    /// disk whose declared version is newer than this firmware
-    /// understands must never be overwritten — a newer firmware may
-    /// have written it, and the user can roll forward or restore a
-    /// backup. In that case keep in-memory defaults but leave the file
-    /// intact ([`Recovery::RefusedNewer`]). Any other failure means the
-    /// file is corrupt or missing: back it up (if present) and replace
-    /// it with a platform default ([`Recovery::Replaced`]).
-    async fn recover_from_failed_load(path: &Path, product: bmc_platform::Product) -> Recovery {
-        if let Ok(raw) = fs::read_to_string(path).await
-            && crate::config_migration::peek_version(&raw).is_some_and(|v| v > CONFIG_VERSION)
-        {
-            warn!(
-                path = %path.display(),
-                current = CONFIG_VERSION,
-                "config on disk declares a newer schema than this firmware understands; \
-                 refusing to overwrite it. Running on in-memory defaults, but the on-disk \
-                 config is left intact — update the firmware to read it, or restore an \
-                 older `.backup.<ts>` copy."
-            );
-            return Recovery::RefusedNewer(Config::platform_default(product));
-        }
-
+    /// Fallback when [`Self::load_and_validate`] fails: the on-disk file
+    /// is unreadable, corrupt, or declares a schema this BMC application
+    /// cannot read (e.g. after an unsupported downgrade). Back it up next
+    /// to the original and replace it with a platform default. Downgrades
+    /// are not supported, so a config newer than this application
+    /// understands is treated like any other unreadable file rather than
+    /// preserved in place.
+    async fn recover_from_failed_load(path: &Path, product: bmc_platform::Product) -> Config {
         warn!("Replacing unreadable config with default config");
         if path.exists() {
             let backup_path = path.with_extension("json.bcp");
@@ -566,7 +536,7 @@ impl ConfigHandle {
         if let Err(err) = default_config.save(path).await {
             warn!(?err, "Failed to save default config");
         }
-        Recovery::Replaced(default_config)
+        default_config
     }
 
     pub async fn init(
@@ -577,18 +547,15 @@ impl ConfigHandle {
         default_night_mode_sound_volume_pct: u8,
         product: bmc_platform::Product,
     ) -> Self {
-        // On first boot of the new firmware this migrates a legacy
-        // `version: 0` config in place (backing it up first) and, from
-        // then on, is a cheap no-op for already-current configs. See
-        // `crate::config_migration`.
-        let (config, read_only) = match Self::load_migrate_validate(&path).await {
-            Ok(config) => (config, false),
+        // On first boot after an upgrade this migrates a legacy
+        // `version: 0` config *in memory* (it is persisted on the first
+        // genuine change, not here) and, for an already-current config,
+        // is a cheap no-op. See `crate::config_migration`.
+        let (config, migrated) = match Self::load_and_validate(&path).await {
+            Ok((config, migrated)) => (config, migrated),
             Err(err) => {
                 warn!(?err, "Failed to load or migrate config");
-                match Self::recover_from_failed_load(&path, product).await {
-                    Recovery::Replaced(config) => (config, false),
-                    Recovery::RefusedNewer(config) => (config, true),
-                }
+                (Self::recover_from_failed_load(&path, product).await, false)
             }
         };
 
@@ -596,7 +563,7 @@ impl ConfigHandle {
             path,
             config,
             config_notify: ConfigNotify::new(),
-            read_only,
+            migrated,
             localization_dirty: false,
             night_mode_schedule_dirty: false,
             led_settings_dirty: false,
@@ -683,15 +650,12 @@ impl ConfigHandle {
             self.screen_off_timeout_dirty = false;
         }
 
-        // The in-memory notifications above still fire so the running
-        // session reflects the change, but a config refused at boot (a
-        // newer on-disk schema) must never be persisted over. Skip the
-        // write; `Config::save` would refuse it anyway, but short-
-        // circuiting here keeps this from surfacing as an error to every
-        // settings caller.
-        if self.read_only {
-            warn!("config is read-only (newer on-disk schema); skipping persist");
-            return Ok(());
+        // First persist after an in-memory migration commits the upgrade:
+        // keep one timestamped backup of the pre-migration file, then fall
+        // through to the normal write. Later saves take the plain path.
+        if self.migrated {
+            crate::config_migration::backup_existing(&self.path).await?;
+            self.migrated = false;
         }
 
         self.config.save(&self.path).await?;
@@ -1099,12 +1063,29 @@ mod tests {
         );
     }
 
-    /// A legacy (`version: 0`) config on disk must be migrated in
-    /// place when `ConfigHandle::init` loads it: the on-disk file is
-    /// rewritten to the current schema and a timestamped backup of the
-    /// original is left next to it.
+    /// Count `config.json.backup.<ts>` siblings in `dir`.
+    async fn backup_count(dir: &std::path::Path) -> usize {
+        let mut count = 0;
+        let mut entries = fs::read_dir(dir).await.expect("BUG: readdir");
+        while let Ok(Some(entry)) = entries.next_entry().await {
+            if entry
+                .file_name()
+                .to_string_lossy()
+                .contains("config.json.backup.")
+            {
+                count += 1;
+            }
+        }
+        count
+    }
+
+    /// A legacy (`version: 0`) config on disk is migrated *in memory*
+    /// when `ConfigHandle::init` loads it — the on-disk file is left at
+    /// its old version. The upgrade is committed to disk only on the
+    /// first genuine change, which also leaves one timestamped backup of
+    /// the pre-migration file.
     #[tokio::test]
-    async fn init_migrates_legacy_config_in_place() {
+    async fn init_migrates_legacy_config_in_memory_and_commits_on_save() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = dir.path().join("config.json");
         let legacy = r#"{
@@ -1136,40 +1117,58 @@ mod tests {
             .await
             .expect("BUG: seed legacy file");
 
-        let handle =
+        let mut handle =
             ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+        // Migrated in memory: the running config is the current schema.
         assert_eq!(handle.config.version, CONFIG_VERSION);
         assert_eq!(handle.config.scenes().len(), 1);
 
-        // The file on disk must now be the current schema, not the
-        // legacy shape we seeded.
+        // But the on-disk file is untouched — still the legacy shape with
+        // no version field, and no backup written yet.
+        let on_disk = fs::read_to_string(&path).await.expect("BUG: read");
+        let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
+        assert!(
+            v.get("version").is_none(),
+            "boot must not rewrite the on-disk config"
+        );
+        assert_eq!(
+            backup_count(dir.path()).await,
+            0,
+            "no backup before first save"
+        );
+
+        // A genuine change commits the upgrade: the file becomes the
+        // current schema, settings survive, and exactly one timestamped
+        // backup of the original is left.
+        handle.set_brightness(80);
+        handle.save().await.expect("BUG: save");
         let on_disk = fs::read_to_string(&path).await.expect("BUG: read migrated");
         let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
         assert_eq!(v["version"], CONFIG_VERSION);
-        // Top-level settings must survive the migration to disk.
-        assert_eq!(v["brightness_pct"], 30);
+        assert_eq!(v["brightness_pct"], 80);
         assert_eq!(v["alarms"][0]["time"], "07:00:00");
+        assert_eq!(
+            backup_count(dir.path()).await,
+            1,
+            "first save leaves one backup"
+        );
 
-        let mut saw_backup = false;
-        let mut entries = fs::read_dir(dir.path()).await.expect("BUG: readdir");
-        while let Ok(Some(entry)) = entries.next_entry().await {
-            if entry
-                .file_name()
-                .to_string_lossy()
-                .contains("config.json.backup.")
-            {
-                saw_backup = true;
-            }
-        }
-        assert!(saw_backup, "migration must leave a timestamped backup");
+        // A later save must not create another backup.
+        handle.set_brightness(70);
+        handle.save().await.expect("BUG: save again");
+        assert_eq!(
+            backup_count(dir.path()).await,
+            1,
+            "later saves do not back up"
+        );
     }
 
-    /// A config whose declared schema version is newer than this
-    /// firmware understands must never be overwritten — the boot path
-    /// falls back to in-memory defaults but leaves the file intact so
-    /// the user can restore a backup or roll the firmware forward.
+    /// Downgrades are not supported: a config whose version is newer
+    /// than this BMC application understands is treated like any other
+    /// unreadable file — backed up to `<name>.json.bcp` and replaced
+    /// with a platform default, rather than preserved in place.
     #[tokio::test]
-    async fn init_refuses_to_overwrite_newer_config() {
+    async fn init_backs_up_and_replaces_unreadable_newer_config() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let path = dir.path().join("config.json");
         let newer = format!(r#"{{"version":{},"scenes":[]}}"#, CONFIG_VERSION + 1);
@@ -1177,13 +1176,23 @@ mod tests {
             .await
             .expect("BUG: seed newer file");
 
-        let _handle =
+        let handle =
             ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
-
-        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
         assert_eq!(
-            on_disk, newer,
-            "newer-version config must be left untouched"
+            handle.config.version, CONFIG_VERSION,
+            "runs on a current-schema default"
+        );
+
+        // Canonical path now holds a default; the unreadable newer config
+        // survives only in the `.bcp` backup.
+        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
+        let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
+        assert_eq!(v["version"], CONFIG_VERSION);
+        let bcp = path.with_extension("json.bcp");
+        assert_eq!(
+            fs::read_to_string(&bcp).await.expect("BUG: read bcp"),
+            newer,
+            "the newer config is preserved in the .bcp backup"
         );
     }
 
@@ -1209,60 +1218,5 @@ mod tests {
             .expect("BUG: default config must be written to a fresh path");
         let v: serde_json::Value = serde_json::from_str(&on_disk).expect("BUG: valid JSON");
         assert_eq!(v["version"], CONFIG_VERSION);
-    }
-
-    /// The boot-time refusal must survive the first runtime save: a
-    /// handle that fell back to defaults over a newer on-disk config is
-    /// marked read-only, so a later settings change takes effect in
-    /// memory but never persists over the newer file (finding 3, part
-    /// A — the handle flag).
-    #[tokio::test]
-    async fn read_only_handle_does_not_persist_over_newer_config() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let path = dir.path().join("config.json");
-        let newer = format!(r#"{{"version":{},"scenes":[]}}"#, CONFIG_VERSION + 1);
-        fs::write(&path, &newer)
-            .await
-            .expect("BUG: seed newer file");
-
-        let mut handle =
-            ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
-        assert!(handle.read_only, "newer-config boot must be read-only");
-
-        // A normal settings change followed by a save must not touch
-        // the file.
-        handle.set_brightness(80);
-        handle.save().await.expect("BUG: read-only save must be Ok");
-        assert_eq!(
-            handle.brightness_pct(),
-            80,
-            "change still applies in memory"
-        );
-
-        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
-        assert_eq!(on_disk, newer, "newer-version config must stay untouched");
-    }
-
-    /// The write primitive itself refuses to overwrite a newer on-disk
-    /// config, guarding every caller regardless of the handle flag
-    /// (finding 3, part B — the backstop invariant).
-    #[tokio::test]
-    async fn config_save_refuses_to_overwrite_newer_on_disk() {
-        let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let path = dir.path().join("config.json");
-        let newer = format!(r#"{{"version":{},"scenes":[]}}"#, CONFIG_VERSION + 1);
-        fs::write(&path, &newer)
-            .await
-            .expect("BUG: seed newer file");
-
-        let mut config = Config::platform_default(bmc_platform::Product::Bmc100);
-        let result = config.save(&path).await;
-        assert!(
-            result.is_err(),
-            "Config::save must refuse a newer on-disk config"
-        );
-
-        let on_disk = fs::read_to_string(&path).await.expect("BUG: read file");
-        assert_eq!(on_disk, newer, "the newer file must be left intact");
     }
 }
