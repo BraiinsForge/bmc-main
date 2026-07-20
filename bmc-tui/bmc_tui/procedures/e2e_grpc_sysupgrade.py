@@ -441,10 +441,12 @@ class E2eGrpcSysupgrade:
             catalog.snapshot_opkg_keys(mutation_dev, cycle)
             catalog.snapshot_bos_version(mutation_dev, cycle)
             catalog.snapshot_service_script(mutation_dev, cycle)
-            catalog.ensure_memory(
-                mutation_dev,
-                image.size + image.rootfs_size + catalog.FLASH_HEADROOM,
-            )
+            # No memory-headroom gate here: unlike the SSH path (which flashes
+            # with the full UI resident), StartUpgrade is driven by the bmc
+            # application, which tears down the widgets — freeing bmc-wasm-host's
+            # resident runtime — before it flashes. A pre-flight check measured
+            # while the widgets are still up gates on RAM that is no longer
+            # committed by flash time.
             cycle.mutation_started = True
             catalog.ensure_anchor_version(mutation_dev, cycle)
             cycle.upload_present = True

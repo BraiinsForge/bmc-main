@@ -159,7 +159,6 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "snapshot_opkg_keys", snapshot_keys)
     monkeypatch.setattr(catalog, "snapshot_bos_version", snapshot_bos)
     monkeypatch.setattr(catalog, "ensure_anchor_version", lambda *_args: events.append("anchor"))
-    monkeypatch.setattr(catalog, "ensure_memory", lambda *_args: events.append("memory"))
     monkeypatch.setattr(catalog, "upload_firmware", lambda *_args: events.append("upload"))
     monkeypatch.setattr(catalog, "trust_image_keys", lambda *_args: events.append("trust"))
 
@@ -393,7 +392,7 @@ def test_provisional_success_matching_reboot_succeeds(harness: SimpleNamespace) 
     assert "restore success" in harness.events
     assert "restore bos_version" not in harness.events
     assert not harness.snapshot.exists()
-    ordered = ("snapshot bos_version", "memory", "anchor", "upload")
+    ordered = ("snapshot bos_version", "anchor", "upload")
     indices = [harness.events.index(event) for event in ordered]
     assert indices == sorted(indices)
 
