@@ -1,32 +1,147 @@
 # bmc-main
 
-## Setting up repository
+## Getting started
 
-Install git-lfs through package manager of your choice and run
+Software in this repository can be used on the [Braiins Deck](https://braiinsforge.com/hardware/braiins-deck). It will
+be used on all Decks starting from the upcoming release. The latest released firmware (26.02.1) can't run this software;
+the manual firmware upgrade described below is required.
 
+### Current status
+
+This project is still being prepared for external use. Some features and supporting components are not yet available or
+complete, and the setup may change as the public release matures.
+
+The following widgets are currently supported:
+
+- Image
+- Block Height
+- Clock
+- Weather
+- Random Facts
+- Nameday
+- ISS Position
+- SpaceX Launch
+
+Not yet supported widgets:
+
+- Financial Ticker — single (including BTC Ticker widget)
+- Financial Ticker — list
+- NASA Picture of the Day
+- Formula 1
+- Braiins Pool
+- Bitcoin Mining Data
+
+Major user-facing gaps also remain:
+
+- The first-boot and device initialization flow is not yet presented on the device display.
+- Firmware upgrade progress and completion are not yet shown on the device display.
+- Centralized account management is not yet available.
+- Configuration forms do not yet support all controls needed by widgets with complex settings.
+
+#### Runtime limitations
+
+Current memory constraints mean that fewer widgets can remain active simultaneously than on release 26.02.1. This does
+not change which widget types are supported. The rendering pipeline has improved since 26.02.1, but it is still being
+optimized to reach higher frame rates.
+
+Running the software on a physical Braiins Deck currently requires a compatible custom firmware image. The current
+firmware image is available here:
+
+```text
+https://feeds.braiins-os.com/stm32mp157c-ii3-bmc1/firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
 ```
-git lfs install
-```
 
-to initialize the binary files with proper contents.
+Only manual upgrades to this firmware are possible at the moment. See [Deploy to a Deck](#deploy-to-a-deck) for the
+upgrade instructions.
 
-## Development Environment
+### Architecture
 
-Enter the dev shell for local development (Rust, frontend, GUI):
+The display stack is built around a Wayland compositor, with widgets running as independent Wayland clients. Official
+widgets are WASM modules executed by the [`bmc-wasm-runtime`](bmc-wasm-runtime/README.md).
+
+### Prerequisites
+
+Install the following host tools:
+
+- Git and Git LFS
+- Nix with flakes enabled
+- `mprocs` for the hot-reloading WASM testbed workflow (`cargo install mprocs` from the development shell)
+
+The `nix develop` shell provides the Rust toolchain, Protobuf compiler, `pkg-config`, Node.js, and Yarn. GPU libraries
+from Nix are currently not supported, so running the widget testbed requires the native development libraries from your
+system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL/EGL, ALSA, libinput, seatd, udev, and
+libdrm. Package names differ between distributions. Building for and deploying to the device via
+`nix run .#deck -- deploy` does not need these libraries.
+
+Deploying to a physical device additionally requires root SSH access and a `/mnt/data` partition on the device.
+
+### Set up the repository
+
+After cloning the repository, initialize Git LFS and enter the development shell:
 
 ```shell
+git lfs install
+git lfs pull
 nix develop
 ```
 
-This provides:
+Run commands in the remaining sections from this shell unless they invoke Nix directly.
 
-- Rust toolchain (from rust-toolchain.toml)
-- Protobuf compiler
-- Node.js + Yarn for frontend
-- GUI libraries for Slint/display development (X11, Wayland, OpenGL)
-- FHS-compatible environment for node_modules binaries
+### Run a widget in the testbed
 
-For ARM cross-compilation:
+The WASM widget testbed provides a device-free development loop. Start a hot-reloading preview of an example widget:
+
+```shell
+just wasm::dev hello-widget
+```
+
+To build the widget in release mode and preview it once:
+
+```shell
+just wasm::run hello-widget
+```
+
+Both commands build the widget for `wasm32-unknown-unknown` and launch the desktop testbed. See the
+[`bmc-wasm-runtime` README](bmc-wasm-runtime/README.md) for the other widget development and regression-testing
+commands.
+
+### Deploy to a Deck
+
+Flash the custom firmware image from the URL above to the device. Without Nix, SSH into the device and run the upgrade
+there directly. To find the IP address of the Deck, open the settings tray. On 26.02 firmware, swipe up from the bottom
+of the screen; on the newer firmware offered here, swipe down from the top instead.
+
+```shell
+ssh root@192.168.1.2
+cd /tmp
+wget https://feeds.braiins-os.com/stm32mp157c-ii3-bmc1/firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
+sysupgrade ./firmware_2026-07-20-0-886e4b51-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
+```
+
+With Nix, download the image to your host and flash it with the `deck` harness, which validates the image and asks for
+confirmation before flashing:
+
+```shell
+nix run .#deck -- sysupgrade \
+  --device 192.168.1.2 \
+  --image './firmware_2026-07-20-0-886e4b51-26.07-rc_arm_cortex-a7_neon-vfpv4.tar'
+```
+
+Either way, allow approximately 10 minutes for the upgrade: during `sysupgrade`, the firmware downloads an
+initialization tarball and uses it to populate `/nix/store` on the device. Do not interrupt the upgrade while this is in
+progress. Once the device is back online, deploy the packages built from your checkout:
+
+```shell
+nix run .#deck -- deploy --device 192.168.1.2
+```
+
+Subsequent iterations also use `deck deploy`; see [`docs/deployment.md`](docs/deployment.md) for package selection,
+debug profiles, and faster native-binary iteration. Note that if you make changes to the bmc-wasm-runtime, you should
+redeploy all widgets, not just the one you have changed.
+
+## Cross-compilation
+
+For ARM cross-compilation, use one of the target-specific development shells:
 
 ```shell
 nix develop .#armv7-glibc-release  # release builds
