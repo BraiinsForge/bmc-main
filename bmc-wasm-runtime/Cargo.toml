@@ -78,6 +78,7 @@ flate2 = { workspace = true, optional = true }
 askama = { workspace = true, optional = true }
 base64 = { workspace = true, optional = true }
 clap = { workspace = true, optional = true }
+console = { workspace = true, optional = true }
 khronos-egl = { workspace = true, optional = true }
 libc = { workspace = true, optional = true }
 owo-colors = { workspace = true, optional = true }
@@ -96,7 +97,7 @@ audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete"]
-capture = ["host", "askama", "base64", "clap", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
+capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 
 [[bin]]
 name = "testbed"

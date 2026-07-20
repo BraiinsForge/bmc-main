@@ -420,16 +420,38 @@ fn capture_widget(
             if variant != "_default" {
                 cmd.arg(format!("--variant={variant}"));
             }
+            // Give a failing run's replay.log the widget's own diagnostics —
+            // per-poll telemetry and the click/capture trace, not the frame trail.
+            // Respect an explicit RUST_LOG; the terminal stays clean
+            // because `distill_capture_error` drops these timeline lines.
+            if std::env::var_os("RUST_LOG").is_none() {
+                cmd.env("RUST_LOG", "bmc_wasm_runtime=info,capture=debug");
+            }
 
             let result = cmd
                 .output()
                 .with_context(|| format!("failed to spawn capture for {example} {size_label}"))?;
 
             if !result.status.success() {
-                let stderr = String::from_utf8_lossy(&result.stderr);
+                // Strip terminal colouring once: the child paints for a TTY,
+                // but the captured stderr feeds a file and a line filter here,
+                // both of which want plain text.
+                let stderr = console::strip_ansi_codes(&String::from_utf8_lossy(&result.stderr))
+                    .into_owned();
+                // Leave a trail a human or a follow-up agent can inspect:
+                // the frames the run captured plus the child's full stderr,
+                // not only the one-line distilled error. RUST_LOG=debug turns
+                // that log into a frame-by-frame replay trace.
+                let log_path = output.join("replay.log");
+                let _ = std::fs::create_dir_all(&output);
+                let _ = std::fs::write(&log_path, &stderr);
                 bail!(
-                    "capture failed for {example} {size_label}\n{}",
-                    distill_capture_error(&stderr)
+                    "capture failed for {example} {size_label}\n{}\n\
+                     frames captured: {}\n\
+                     replay log:      {}",
+                    distill_capture_error(&stderr),
+                    output.display(),
+                    log_path.display(),
                 );
             }
         }
@@ -439,7 +461,8 @@ fn capture_widget(
 }
 
 /// Strip a failed capture's stderr to the error — drop the GL stack's
-/// `pci id …` chatter, per-frame progress, replay headers, and blanks.
+/// `pci id …` chatter, per-frame progress, replay headers, timestamped
+/// tracing timeline lines (kept in full in `replay.log`), and blanks.
 fn distill_capture_error(stderr: &str) -> String {
     let kept = stderr
         .lines()
@@ -451,6 +474,7 @@ fn distill_capture_error(stderr: &str) -> String {
                 && !l.starts_with("Captured frame ")
                 && !l.starts_with("Unified replay:")
                 && !l.starts_with("Capturing ")
+                && !is_tracing_line(l)
         })
         .collect::<Vec<_>>()
         .join("\n");
@@ -461,6 +485,14 @@ fn distill_capture_error(stderr: &str) -> String {
     } else {
         kept
     }
+}
+
+/// A `tracing` fmt event line, recognised by its leading RFC 3339 timestamp
+/// (`2026-…T…Z  LEVEL …`). Dropped from the terminal error, kept in full in
+/// `replay.log`.
+fn is_tracing_line(line: &str) -> bool {
+    let b = line.as_bytes();
+    b.len() > 4 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-'
 }
 
 fn capture_sequential(binary: &Path, output_dir: &Path, widgets: &[WidgetEntry]) -> Result<()> {

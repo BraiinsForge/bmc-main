@@ -204,6 +204,7 @@ chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }
 cognos = "1.0.1"
+console = { version = "0.15.11", default-features = false, features = ["ansi-parsing"] }
 cosmic-text = { version = "0.18", default-features = false, features = ["std", "swash"] }
 croner = "3.0.0"
 data-encoding = "2.6.0"
@@ -394,7 +395,7 @@ tower = { version = "0.5.2", default-features = false }
 tower-cookies = "0.11.0"
 tower-http = "0.6.2"
 tracing = { version = "0.1.41", default-features = false }
-tracing-subscriber = "0.3.19"
+tracing-subscriber = { version = "0.3.19", features = ["env-filter"] }
 tungstenite = "0.24.0"
 udev = "0.9"
 ufmt = { version = "0.2", features = ["std"] }

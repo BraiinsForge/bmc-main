@@ -250,7 +250,18 @@ fn dispatch() -> Result<()> {
             online,
             all_sizes,
         } => {
-            tracing_subscriber::fmt::init();
+            // Honour targeted RUST_LOG directives (e.g. `bmc_wasm_runtime=info`
+            // from the justfile / run-all) so a failing replay.log carries
+            // the widget's own diagnostics; default to `info` when unset.
+            tracing_subscriber::fmt()
+                .with_env_filter(
+                    tracing_subscriber::EnvFilter::try_from_default_env()
+                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+                )
+                // Logs to stderr — stdout is data (`--list-variants`), and
+                // run-all reads the child's stderr for the replay.log.
+                .with_writer(std::io::stderr)
+                .init();
             run::execute(run::RunArgs {
                 wasm_path: wasm,
                 size,

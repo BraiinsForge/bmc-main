@@ -175,7 +175,14 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
     })?;
     let fixture = load_unified_fixture(&fixture_path)
         .with_context(|| format!("failed to load fixture {}", fixture_path.display()))?;
-    run_unified_capture(ctx, config, &fixture, &fixture_path.display().to_string())
+    run_unified_capture(ctx, config, &fixture, &fixture_path.display().to_string()).with_context(
+        || {
+            format!(
+                "replay failed — frames captured so far are in {}",
+                ctx.output_dir.display()
+            )
+        },
+    )
 }
 
 /// A fixture with no recorded I/O: the widget starts at the current instant
