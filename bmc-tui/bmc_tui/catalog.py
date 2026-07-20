@@ -3452,7 +3452,10 @@ def classify_stream(result: StreamResult) -> StreamOutcome:
 BOOT_POLL_TIMEOUT = 180.0
 
 _BOOT_ID_PATH = "/proc/sys/kernel/random/boot_id"
-_DEVICE_ID_PATH = "/proc/device-tree/serial-number"
+# Populated at boot from OTP/NVMEM (bos-defaults.sh WIFI_MAC_PATH). Present on
+# production boards, where the device-tree `serial-number` node is not, and
+# stable across a reflash since it derives from fused silicon.
+_DEVICE_ID_PATH = "/tmp/wifi_mac"
 
 
 class DeviceIdentityError(Abort):

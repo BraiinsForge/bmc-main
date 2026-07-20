@@ -2612,7 +2612,7 @@ def _firmware_cycle(tmp_path: Path) -> catalog.FirmwareCycle:
         index_port=8082,
         stream_deadline=600,
         snapshot_dir=tmp_path,
-        device_identity="003900183133510b34323634",
+        device_identity="88:a6:ef:d1:17:6e",
     )
 
 
@@ -3341,8 +3341,8 @@ def _boot_id_routes(responses: list[str | OSError | None]) -> _Respond:
     remaining = iter(responses)
 
     def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
-        if argv and argv[0] == "ssh" and argv[-1] == "cat /proc/device-tree/serial-number":
-            return _cp(argv, "003900183133510B34323634\0")
+        if argv and argv[0] == "ssh" and argv[-1] == "cat /tmp/wifi_mac":
+            return _cp(argv, "88:a6:ef:d1:17:6e\n")
         if argv and argv[0] == "ssh" and argv[-1] == "cat /proc/sys/kernel/random/boot_id":
             response = next(remaining)
             if response is None:
@@ -3375,33 +3375,27 @@ def test_snapshot_boot_id_records_the_current_boot(tmp_path: Path) -> None:
     assert catalog.BOOT_POLL_TIMEOUT == 180.0
 
 
-def test_snapshot_and_verify_board_serial(tmp_path: Path) -> None:
+def test_snapshot_and_verify_device_identity(tmp_path: Path) -> None:
     cycle = _firmware_cycle(tmp_path)
     snapshot_dev = Device(
         "h",
-        backend=_Exec(
-            _routes({"cat /proc/device-tree/serial-number": " \t003900183133510B34323634\0\n"})
-        ),
+        backend=_Exec(_routes({"cat /tmp/wifi_mac": " \t88:A6:EF:D1:17:6E\0\n"})),
     )
     verify_dev = Device(
         "h",
-        backend=_Exec(
-            _routes({"cat /proc/device-tree/serial-number": "003900183133510b34323634\0"})
-        ),
+        backend=_Exec(_routes({"cat /tmp/wifi_mac": "88:a6:ef:d1:17:6e\n"})),
     )
     catalog.snapshot_device_identity(snapshot_dev, cycle)
-    assert cycle.device_identity == "003900183133510b34323634"
-    assert catalog.verify_device_identity(verify_dev, cycle) == "003900183133510b34323634"
+    assert cycle.device_identity == "88:a6:ef:d1:17:6e"
+    assert catalog.verify_device_identity(verify_dev, cycle) == "88:a6:ef:d1:17:6e"
 
 
 def test_verify_device_identity_rejects_a_different_device(tmp_path: Path) -> None:
     cycle = _firmware_cycle(tmp_path)
-    cycle.device_identity = "003900183133510b34323634"
+    cycle.device_identity = "88:a6:ef:d1:17:6e"
     dev = Device(
         "h",
-        backend=_Exec(
-            _routes({"cat /proc/device-tree/serial-number": "004000293244620C45434745\0"})
-        ),
+        backend=_Exec(_routes({"cat /tmp/wifi_mac": "aa:bb:cc:dd:ee:ff\n"})),
     )
     with pytest.raises(Abort, match="device identity changed"):
         catalog.verify_device_identity(dev, cycle)
@@ -3437,7 +3431,7 @@ def test_poll_boot_id_change_times_out_when_boot_never_changes(tmp_path: Path) -
             backend=_Exec(
                 _routes(
                     {
-                        "cat /proc/device-tree/serial-number": "003900183133510B34323634\0",
+                        "cat /tmp/wifi_mac": "88:a6:ef:d1:17:6e\n",
                         "cat /proc/sys/kernel/random/boot_id": "boot-a",
                     }
                 )
@@ -3457,7 +3451,7 @@ def test_poll_boot_id_change_rejects_plain_reachability(tmp_path: Path) -> None:
     backend = _Exec(
         _routes(
             {
-                "cat /proc/device-tree/serial-number": "003900183133510B34323634\0",
+                "cat /tmp/wifi_mac": "88:a6:ef:d1:17:6e\n",
                 "cat /proc/sys/kernel/random/boot_id": "boot-a",
             }
         )
