@@ -13,8 +13,8 @@ use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
-    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, area_chart, back_button, breadcrumb,
-    icon, pager, status_glyph,
+    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, area_chart, back_button,
+    breadcrumb, icon, pager, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::view::{CrumbTarget, PagerScope, crumb_click_id};
@@ -105,7 +105,7 @@ fn table_card(data: &ModelDetailViewData) -> Node {
         rows.push(device_row(r));
     }
     col(
-        props!(background: BORDER, flex: 1.0, padding: 1.0),
+        props!(background: BORDER, flex: 1.0, padding: 1.0, max_width: TABLE_MAX_W),
         [col(
             props!(background: CARD_BG, flex: 1.0, cross_align: CrossAlign::Stretch),
             rows,

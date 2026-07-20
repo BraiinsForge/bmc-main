@@ -16,7 +16,7 @@ use crate::device::DeviceFamily;
 use crate::layout::truncate_label;
 use crate::screens::parts::{
     BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
-    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, area_chart, header, pager, status_counts,
+    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, area_chart, header, pager, status_counts,
 };
 use crate::view::{PagerScope, model_detail_click_id};
 
@@ -87,7 +87,7 @@ fn table_card(data: &TableViewData) -> Node {
     }
     // border-sim card wrapping the header + data rows.
     col(
-        props!(background: BORDER, flex: 1.0, padding: 1.0),
+        props!(background: BORDER, flex: 1.0, padding: 1.0, max_width: TABLE_MAX_W),
         [col(
             props!(background: CARD_BG, flex: 1.0, cross_align: CrossAlign::Stretch),
             rows,

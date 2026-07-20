@@ -36,6 +36,8 @@ pub const ROW_FONT: u32 = 20;
 pub const LABEL_FONT: u32 = 20;
 pub const METRIC_ICON: f32 = 20.0;
 const AXIS_FONT: u32 = 16;
+// Page count is a secondary control, sized below the row text.
+const PAGER_FONT: u32 = 16;
 // keeps a flat/zero run's stroke off the clipped canvas edge
 const BASELINE_INSET: f32 = 3.0;
 
@@ -46,8 +48,13 @@ pub const PAD: f32 = 24.0;
 pub const GAP: f32 = 8.0;
 pub const DETAIL_BUTTON_WIDTH: f32 = 96.0;
 pub const BACK_CHIP: f32 = 40.0;
-// Wide enough for a two-digit "N / NN" count, so the page text never wraps.
+// Fixed width of the pager strip on the table's right. Roomy for the font-16
+// count with the 40px chevrons, and small enough to leave the table its columns.
 const PAGER_W: f32 = 72.0;
+
+// Cap the table so the pager keeps a fixed strip; otherwise the pager absorbs
+// all flex-shrink and collapses onto its own label (no min-width prop to pin it).
+pub const TABLE_MAX_W: f32 = FRAME_W - 2.0 * PAD - PAGER_W - GAP;
 
 // Table-card row geometry, shared by the list and model-detail screens.
 pub const ROW_PAD: f32 = 20.0;
@@ -456,7 +463,9 @@ pub fn pager(scope: PagerScope, page: usize, page_count: usize) -> Node {
             ),
             text(
                 fmt!("{} / {}", page + 1, page_count.max(1)),
-                style!(size: LABEL_FONT, color: LABEL),
+                // Clip keeps the count single-line (vs the default Wrap) so it
+                // can't be split into two lines when the column is tight.
+                style!(size: PAGER_FONT, color: LABEL, text_overflow: TextOverflow::Clip),
             ),
             pager_button(
                 &icons::PAGER_DOWN,
