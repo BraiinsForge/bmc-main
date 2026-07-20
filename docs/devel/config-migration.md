@@ -1,4 +1,4 @@
-# BDK-346: Config Migration
+# Config Migration on BMC Application Update
 
 ## Goal
 
@@ -106,16 +106,15 @@ a `clock_style` outside the enum migrates as `digital`).
 Drops are counted in `Report.dropped_widgets`. The scene itself always survives; only the individual widget entry
 disappears (a scene left with zero widgets is dropped and counted in `Report.dropped_scenes`).
 
-### Geometry reconciliation
+### Malformed scene geometry
 
 The v0 schema stored each widget's `size` independently of its scene kind, so it could express layouts the current
-schema forbids — most commonly a `full` (or unknown, hence full-defaulted) size inside a `combined` scene, which would
-become a fullscreen placement that `Config::validate_scenes` rejects for combined scenes. A single such widget would
-otherwise invalidate the whole migrated config and get it replaced with defaults on boot. `reconcile_scene_geometry`
-prevents that by forcing the migrated widgets to satisfy the scene-kind rules: a fullscreen scene keeps its single
-fullscreen widget at the origin (extras are dropped as malformed v0 data); a combined scene clamps any fullscreen
-placement down to the smallest slot, which is valid at any grid position. So a valid v0 layout always migrates into a
-valid current config.
+schema forbids — most commonly a `full` (or unknown, hence full-defaulted) size inside a `combined` scene, which becomes
+a fullscreen placement that `Config::validate_scenes` rejects. Such geometry is migrated as-is, not salvaged: the
+resulting config fails validation, so the migration is never persisted and the boot path drops the whole config (backing
+the original up and replacing it with the platform default). This is only reachable from a hand-edited or corrupt v0
+file — a config written by an older BMC app is always internally consistent — so dropping the whole config is preferred
+over the added complexity of per-scene geometry salvage.
 
 ## Settings and accounts pass-through
 
