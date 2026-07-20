@@ -44,6 +44,13 @@ How `deck e2e-sysupgrade` flashes two full firmware images against a real Deck t
 init path (clear the store, flash image A) and the in-place upgrade path (flash image B), served from a local package
 rig — including how to build the two differing-version images through the bos-main CI.
 
+### [End-to-End gRPC Sysupgrade Harness](grpc-sysupgrade-e2e-harness.md)
+
+How `deck e2e-grpc-sysupgrade` upgrades a real Deck through the production `CheckForUpgrade` / `StartUpgrade` gRPC path
+served from a host firmware index: anchoring the device version so the offer appears, pointing bmc at the index via
+`BMC_INDEX_URL` while keeping it procd-supervised, and proving the flash by a boot-id change — the gRPC counterpart of
+`e2e-sysupgrade`.
+
 ### [Mock Upgrade Scenarios](mock/upgrade-scenarios.md)
 
 How `bmc-mock` simulates every upgrade state offline: the runtime-editable `upgrade-scenario.json` state selector, the
