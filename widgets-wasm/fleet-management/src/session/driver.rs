@@ -19,7 +19,7 @@
 // the grant above.
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -138,7 +138,7 @@ thread_local! {
     static TOKENS: RefCell<HashMap<DeviceId, String>> = RefCell::new(HashMap::new());
     static ROUTES: RefCell<HashMap<FetchRequestId, InFlight>> = RefCell::new(HashMap::new());
     static PROBES: RefCell<HashMap<FetchRequestId, ProbePending>> = RefCell::new(HashMap::new());
-    static PROBING: RefCell<HashSet<DeviceId>> = RefCell::new(HashSet::new());
+    static PROBING: RefCell<HashMap<DeviceId, i64>> = RefCell::new(HashMap::new());
     static PARAMS: RefCell<Rc<Params>> = RefCell::new(Rc::new(Params::current()));
 }
 
@@ -230,6 +230,26 @@ fn send(req: FetchRequest<'_>, delay_ms: u32) -> Option<FetchRequestId> {
 /// appended to the API base — so the full probe URL is `…/api/v1/version`.
 const BOS_PROBE_ENDPOINT: &str = "/version";
 
+/// How long a candidate holds the single probe slot before a re-announcement
+/// may re-probe it. A probe resolves (an answer, or `DEVICE_FETCH_TIMEOUT`)
+/// within ~1s, so past this a lost response is assumed — otherwise a probe
+/// whose `on_probe` never fires would wedge the candidate out of the fleet for good.
+/// Well under the re-announce interval, so recovery is the very next announcement.
+const PROBE_STALE_SECS: i64 = 5;
+
+/// Claim the single probe slot for `id`: `true` when a probe should be sent
+/// (slot free, or its prior probe went stale — now stamped `now`),
+/// `false` when a fresh probe is still in flight.
+fn claim_probe_slot(probing: &mut HashMap<DeviceId, i64>, id: &DeviceId, now: i64) -> bool {
+    match probing.get(id) {
+        Some(&started) if now - started < PROBE_STALE_SECS => false,
+        _ => {
+            probing.insert(id.clone(), now);
+            true
+        }
+    }
+}
+
 /// Fingerprint a base-type BOS candidate before it can be sent credentials.
 ///
 /// BOS shares `_http._tcp` with arbitrary hosts, so a fresh sighting is probed
@@ -248,8 +268,15 @@ pub fn probe_bos_candidate(json: &str) {
         crate::ingest_probed_bos(json);
         return;
     }
-    // One probe per candidate at a time, so re-announcements don't pile on.
-    if PROBING.with(|p| !p.borrow_mut().insert(id.clone())) {
+    // One probe per candidate at a time, so re-announcements don't pile on
+    // — but a stale slot (a probe whose response was lost) is reclaimed,
+    // so a dropped response can't wedge the candidate out of the fleet.
+    let now = SystemTime::now().unix_secs;
+    if !PROBING.with(|p| claim_probe_slot(&mut p.borrow_mut(), &id, now)) {
+        log_debug!(
+            "fleet: BOS {} re-sighted, a probe is already in flight",
+            id.as_str()
+        );
         return;
     }
     let url = fmt!(
@@ -261,6 +288,10 @@ pub fn probe_bos_candidate(json: &str) {
         .timeout(DEVICE_FETCH_TIMEOUT)
         .send(on_probe);
     if let Some(req_id) = sent {
+        log_debug!(
+            "fleet: BOS {} probing the fingerprint endpoint",
+            id.as_str()
+        );
         PROBES.with(|r| {
             r.borrow_mut().insert(
                 req_id,
@@ -271,6 +302,7 @@ pub fn probe_bos_candidate(json: &str) {
             );
         });
     } else {
+        log_debug!("fleet: BOS {} probe send failed", id.as_str());
         PROBING.with(|p| p.borrow_mut().remove(&id));
     }
 }
@@ -281,11 +313,16 @@ fn on_probe(response: &bmc_wasm_sdk::FetchResponse) {
     };
     PROBING.with(|p| p.borrow_mut().remove(&pending.id));
     if response.ok() && bos::is_version_response(&response.json()) {
+        log_debug!(
+            "fleet: BOS {} answered the fingerprint, ingesting",
+            pending.id.as_str()
+        );
         crate::ingest_probed_bos(&pending.doc);
     } else {
         log_debug!(
-            "fleet: {} failed the BOS fingerprint — not sending credentials",
-            pending.id.as_str()
+            "fleet: BOS {} failed the fingerprint (status {}) — not sending credentials",
+            pending.id.as_str(),
+            response.status
         );
     }
 }
@@ -826,4 +863,27 @@ fn advance() {
         tick_ms(p.ring_len)
     });
     begin_device(tick);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn claim_probe_slot_reclaims_a_stale_slot() {
+        let mut probing = HashMap::new();
+        let id = DeviceId::for_family(DeviceFamily::Bos, "bos-1._http._tcp.local.");
+        assert!(
+            claim_probe_slot(&mut probing, &id, 100),
+            "an empty slot sends the first probe"
+        );
+        assert!(
+            !claim_probe_slot(&mut probing, &id, 100 + PROBE_STALE_SECS - 1),
+            "a fresh probe still in flight blocks a re-probe"
+        );
+        assert!(
+            claim_probe_slot(&mut probing, &id, 100 + PROBE_STALE_SECS),
+            "a slot whose probe went stale is reclaimed so a lost response re-probes"
+        );
+    }
 }
