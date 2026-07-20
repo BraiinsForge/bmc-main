@@ -9,6 +9,7 @@
 //! to produce the current schema.
 
 use serde::Deserialize;
+use std::time::Duration;
 use uuid::Uuid;
 
 /// Top-level v0 config. Mirrors the on-disk shape written by the
@@ -43,6 +44,12 @@ pub struct Config {
 pub struct Scene {
     pub id: Uuid,
     pub enabled: bool,
+    #[serde(
+        default,
+        with = "humantime_serde",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub cycle_duration: Option<Duration>,
     pub kind: SceneKind,
     #[serde(default)]
     pub widgets: Vec<Widget>,

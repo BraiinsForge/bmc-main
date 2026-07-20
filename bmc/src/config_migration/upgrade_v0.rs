@@ -178,7 +178,7 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
     Some(Scene {
         id: SceneId::from(scene.id),
         enabled: scene.enabled,
-        cycle_duration: None,
+        cycle_duration: scene.cycle_duration,
         kind,
         widgets,
     })
@@ -997,6 +997,7 @@ mod tests {
         v0::Scene {
             id: Uuid::nil(),
             enabled: true,
+            cycle_duration: None,
             kind: v0::SceneKind::Fullscreen,
             widgets,
         }
@@ -1082,6 +1083,7 @@ mod tests {
         let scene = |kind| v0::Scene {
             id,
             enabled: true,
+            cycle_duration: None,
             kind,
             widgets: vec![mk_widget("clock", json!({}))],
         };
@@ -1114,6 +1116,7 @@ mod tests {
         let scene = v0::Scene {
             id: Uuid::from_u128(0x5ce7f),
             enabled: true,
+            cycle_duration: None,
             kind: v0::SceneKind::Combined,
             widgets: vec![first, duplicate],
         };
