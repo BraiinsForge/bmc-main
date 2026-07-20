@@ -4,6 +4,7 @@ Replicates the credentials and options from bmc-virt/scripts/_.sh but without
 any dependency on those shell scripts.
 """
 
+import shlex
 import subprocess
 from pathlib import Path
 
@@ -94,6 +95,8 @@ class Ssh:
 
     def push(self, *, local: str | Path, remote: str) -> None:
         """Copy a file or directory from the host to the VM."""
+        # scp cannot create the remote parent directory; ensure it exists first
+        self.run(f'mkdir -p "$(dirname {shlex.quote(remote)})"')
         dst = f"{self._user}@{self._host}:{remote}"
         subprocess.run(
             self._scp_cmd(str(local), dst, recursive=True),

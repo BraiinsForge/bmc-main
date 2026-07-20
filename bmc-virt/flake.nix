@@ -763,6 +763,7 @@
 
             if [[ -n "$CONFIG" ]]; then
               header "Deploying config"
+              ssh_vm root@localhost 'mkdir -p /etc/bmc'
               scp_vm "$CONFIG" "root@localhost:${guestPaths.BMC_CONFIG}"
 
               header "Applying provisioned device state"
