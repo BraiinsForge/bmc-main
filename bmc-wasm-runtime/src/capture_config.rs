@@ -94,6 +94,16 @@ pub const RECORD_WALL_CAP_SECS: f64 = 120.0;
 #[derive(Debug, Default)]
 pub struct CaptureConfig {
     pub settle_delay: u32,
+    /// Replay at the widget's own frame cadence (`request_frame_after`)
+    /// instead of force-rendering every virtual frame.
+    ///
+    /// A widget that decouples its data fold from the render loop folds
+    /// on the coalesced schedule the device host uses, so replay samples
+    /// the state hardware would — needed for the fleet widget, whose fold
+    /// is gated on a ~1s interval.
+    ///
+    /// Off by default, so every other widget keeps its per-frame baselines.
+    pub honor_frame_schedule: bool,
     /// Explicit list of sizes to capture (empty = all sizes).
     pub sizes: Vec<String>,
     pub timeout: u32,
@@ -170,6 +180,7 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
 /// All known top-level keys in capture/config.toml.
 const KNOWN_CONFIG_KEYS: &[&str] = &[
     "settle_delay",
+    "honor_frame_schedule",
     "timeout",
     "record_timeout",
     "sizes",
@@ -199,6 +210,8 @@ pub fn parse_capture_config(content: &str) -> Result<CaptureConfig> {
     }
 
     let settle_delay = parse_optional_u32(&table, "settle_delay")?.unwrap_or(0);
+    let honor_frame_schedule =
+        parse_optional_bool(&table, "honor_frame_schedule")?.unwrap_or(false);
     let timeout = parse_optional_u32(&table, "timeout")?.unwrap_or(DEFAULT_TIMEOUT);
 
     let record_timeout = match table.get("record_timeout") {
@@ -222,6 +235,7 @@ pub fn parse_capture_config(content: &str) -> Result<CaptureConfig> {
 
     Ok(CaptureConfig {
         settle_delay,
+        honor_frame_schedule,
         sizes,
         timeout,
         record_timeout,
@@ -267,6 +281,14 @@ fn parse_optional_u32(table: &toml::Table, key: &str) -> Result<Option<u32>> {
                 .with_context(|| format!("'{key}' must be a non-negative integer, got {n}"))
         }
         Some(_) => bail!("'{key}' must be an integer"),
+        None => Ok(None),
+    }
+}
+
+fn parse_optional_bool(table: &toml::Table, key: &str) -> Result<Option<bool>> {
+    match table.get(key) {
+        Some(toml::Value::Boolean(b)) => Ok(Some(*b)),
+        Some(_) => bail!("'{key}' must be a boolean"),
         None => Ok(None),
     }
 }
@@ -388,6 +410,24 @@ mod tests {
         let cfg = parse_capture_config("").expect("BUG: empty config should be valid");
         assert_eq!(cfg.settle_delay, 0);
         assert!(cfg.fixtures.is_empty());
+        assert!(!cfg.honor_frame_schedule);
+    }
+
+    #[test]
+    fn config_honor_frame_schedule_parsed() {
+        let cfg = parse_capture_config("honor_frame_schedule = true")
+            .expect("BUG: honor_frame_schedule config should parse");
+        assert!(cfg.honor_frame_schedule);
+    }
+
+    #[test]
+    fn config_honor_frame_schedule_rejects_non_bool() {
+        let err = parse_capture_config("honor_frame_schedule = 1")
+            .expect_err("BUG: non-boolean honor_frame_schedule must fail to parse");
+        assert!(
+            format!("{err:#}").contains("honor_frame_schedule"),
+            "should name the bad key: {err:#}"
+        );
     }
 
     #[test]

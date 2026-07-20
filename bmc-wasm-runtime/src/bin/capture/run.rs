@@ -415,6 +415,9 @@ fn run_unified_capture(
     let mut frame_count: u32 = 0;
     let mut captured_count: u32 = 0;
     let mut event_cursor: usize = 0;
+    // Coalesced-render gate for the advance loop;
+    // inert unless the widget's config opts in via `honor_frame_schedule`.
+    let mut gate = FrameGate::default();
 
     // Process all user events by advancing time to each one
     while event_cursor < user_events.len() {
@@ -422,15 +425,20 @@ fn run_unified_capture(
         // Convert to monotonic time: monotonic = recorded + (monotonic - fixture).
         let target_ms = user_events[event_cursor].at_ms + (monotonic_ms - fixture_ms);
 
-        // Advance time frame-by-frame until we reach the event's timestamp
+        // Advance to the event's timestamp. I/O is delivered every tick;
+        // the render is gated on the widget's cadence when opted in
+        // (see `FrameGate`), otherwise every tick force-renders as before.
         while monotonic_ms < target_ms {
             runtime.set_time(system_time, monotonic_ms);
             runtime.inject_fixture_events(fixture_ms);
             deliver_all_io(&mut runtime, &mut renderer);
-            if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                bail!("widget died at frame {frame_count}");
+            if !config.honor_frame_schedule || gate.due(&runtime, monotonic_ms) {
+                if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
+                    bail!("widget died at frame {frame_count}");
+                }
+                unsafe { gl.flush() };
+                gate.rendered(&runtime, monotonic_ms);
             }
-            unsafe { gl.flush() };
 
             monotonic_ms += u64::from(DELTA_MS);
             fixture_ms += u64::from(DELTA_MS);
@@ -820,6 +828,49 @@ fn tick_one_frame(
     *system_time += chrono::Duration::milliseconds(i64::from(DELTA_MS));
     *frame_count += 1;
     Ok(())
+}
+
+/// Faithful-cadence render gate for the inter-event advance loop.
+///
+/// The device host coalesces renders onto the cadence the widget requests
+/// with `request_frame_after`, so a fold decoupled from the render loop runs
+/// only at those coalesced wakes. Force-rendering every virtual frame instead
+/// folds on a different schedule and samples a different device set. A group
+/// transiently present on hardware can then vanish on replay,
+/// and an interaction recorded against it misses its target.
+/// Under `honor_frame_schedule` the replay renders on the widget's schedule,
+/// reproducing the hardware cadence on the synthetic clock.
+///
+/// Mirrors the testbed's on-demand drive (`render_tiles`).
+#[derive(Default)]
+struct FrameGate {
+    ever_rendered: bool,
+    next_render_at_ms: Option<u64>,
+}
+
+impl FrameGate {
+    /// Whether a render is due at `monotonic_ms`. Call it once the tick has
+    /// delivered its I/O, so a just-made frame request is seen.
+    /// Arms the next deadline when a want was raised but nothing is due yet.
+    fn due(&mut self, runtime: &WasmWidgetRuntime, monotonic_ms: u64) -> bool {
+        let due = !self.ever_rendered
+            || self.next_render_at_ms.is_some_and(|at| monotonic_ms >= at)
+            || runtime.next_frame_delay() == Some(0);
+        if !due && self.next_render_at_ms.is_none() && runtime.wants_next_frame() {
+            self.next_render_at_ms =
+                Some(monotonic_ms + u64::from(runtime.next_frame_delay().unwrap_or(0)));
+        }
+        due
+    }
+
+    /// Record a render at `monotonic_ms`, arming the next deadline from what
+    /// the widget asked for during it (`None` = idle until the next delivery).
+    fn rendered(&mut self, runtime: &WasmWidgetRuntime, monotonic_ms: u64) {
+        self.ever_rendered = true;
+        self.next_render_at_ms = runtime
+            .wants_next_frame()
+            .then(|| monotonic_ms + u64::from(runtime.next_frame_delay().unwrap_or(0)));
+    }
 }
 
 /// Render one frame. Returns false if the widget died or errored (caller should break).
