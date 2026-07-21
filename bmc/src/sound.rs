@@ -97,24 +97,18 @@ pub(crate) enum Sounds {
 impl Sounds {
     pub(crate) fn file_name(&self) -> &'static str {
         match self {
-            Sounds::GreenCandleMorning => "just-sound-effects-smartphone-ui-synth-clock-alarm.mp3",
-            Sounds::KeepCalmAndDca => "ni-sound-emotion-loops-puzzle-solving-music-mysterious.mp3",
-            Sounds::KeepCalmAndDcaV2 => {
-                "just-sound-effects-smartphone-ui-strings-and-pops-clock-alarm.mp3"
-            }
-            Sounds::HashrateMelody => "just-sound-effects-smartphone-ui-plucks-ringtone.mp3",
-            Sounds::TickTockNextBlock => "federico-soler-clock-suspenseful-creepy-distorted.mp3",
-            Sounds::OgStyleWakingUp => {
-                "just-sound-effects-smartphone-ui-common-alert-clock-alarm.mp3"
-            }
-            Sounds::SonarPriceAlert => "ni-sound-cute-interface-synth-bleep-notification.mp3",
-            Sounds::SubtlePriceAlert => {
-                "airborne-sound-app-and-menu-alert-or-notification-subtle-panning-clean-tone.mp3"
-            }
-            Sounds::PriceUp => "bmc-price-up-sound.mp3",
-            Sounds::PriceDown => "bmc-price-down-sound.mp3",
-            Sounds::Confirmation => "stuart-duffield-menu-select-reverberant-beep.mp3",
-            Sounds::ErrorSound => "stuart-duffield-menu-error-synth-bass-double-note.mp3",
+            Sounds::GreenCandleMorning => "green_candle_morning.mp3",
+            Sounds::KeepCalmAndDca => "keep_calm_and_dca.mp3",
+            Sounds::KeepCalmAndDcaV2 => "keep_calm_and_dca_v2.mp3",
+            Sounds::HashrateMelody => "hashrate_melody.mp3",
+            Sounds::TickTockNextBlock => "tick_tock_next_block.mp3",
+            Sounds::OgStyleWakingUp => "og_style_waking_up.mp3",
+            Sounds::SonarPriceAlert => "sonar_price_alert.mp3",
+            Sounds::SubtlePriceAlert => "subtle_price_alert.mp3",
+            Sounds::PriceUp => "price_up.mp3",
+            Sounds::PriceDown => "price_down.mp3",
+            Sounds::Confirmation => "confirmation.mp3",
+            Sounds::ErrorSound => "error_sound.mp3",
         }
     }
 
