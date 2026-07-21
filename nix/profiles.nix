@@ -19,7 +19,7 @@
 # the grant above.
 
 # profiles: Build profile definitions for all target platforms.
-{ rustflags, workspaces, pkgs, armv7Pkgs, x86Pkgs, aarch64Pkgs, ciPkgs }:
+{ rustflags, workspaces, pkgs, armv7Pkgs, armv7MuslPkgs, x86Pkgs, aarch64Pkgs, ciPkgs }:
 let
   # `fast` builds against upstream `pkgs` (no mesaOverlay),
   # so libgbm comes in as a separate package.
@@ -116,12 +116,12 @@ in
   armv7-musl-release = workspaces.minimal.mkBuildProfile {
     minimalDeps = true;
     rustProfile = "release";
-    pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+    pkgs = armv7MuslPkgs;
   };
   armv7-musl-debug = workspaces.minimal.mkBuildProfile {
     minimalDeps = false;
     rustProfile = "dev";
-    pkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsStatic;
+    pkgs = armv7MuslPkgs;
   };
   # glibc profiles for widgets/compositor (dynamically linked)
   armv7-glibc-release = workspaces.full.mkBuildProfile {

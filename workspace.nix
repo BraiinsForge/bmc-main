@@ -142,6 +142,17 @@ let
       // applianceOverlay final prev
     ));
 
+  # musl set for the minimal workspace. Needs applianceOverlay so
+  # compositorUdev resolves to libudev-zero; without it the raw set falls
+  # back to pkgs.udev, which on pkgsMusl is systemd — whose closure does
+  # not build for armv7-musl. No mesaOverlay: the minimal targetDeps
+  # carry no mesa.
+  armv7MuslPkgs = pkgs.pkgsCross.armv7l-hf-multiplatform.pkgsMusl.extend
+    (final: prev:
+      # Same cross-splicing guard as armv7Pkgs.
+      lib.optionalAttrs (prev.stdenv.hostPlatform != prev.stdenv.buildPlatform)
+        (applianceOverlay final prev));
+
   # Shared deps used by both package builds and devShells.
   # Single source of truth to keep build derivations and dev environments in sync.
   commonDeps = {
@@ -174,6 +185,9 @@ let
       wayland
       libxkbcommon
       libinput
+      # TODO: disable systemdSupport like the minimal workspace does — no
+      # logind on the device. Changes the closure, so batch it with the
+      # next nixpkgs bump to avoid an extra Deck redownload.
       seatd
       (compositorUdev pkgs)
       libdrm
@@ -185,7 +199,7 @@ let
     frontendDeps = pkgs: with pkgs; [ nodejs yarn ];
   };
 
-  # Minimal workspace config for musl profiles (bmc-openwrt, statically linked)
+  # Minimal workspace config for musl profiles (bmc-nix-cli, statically linked)
   workspaceMinimal = pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
     # No cargo-timings charts in $out: crate outputs become deck packages,
@@ -195,12 +209,14 @@ let
     # Workspace-deps step compiles ALL Cargo.lock entries, including
     # crates from glibc-only binaries (compositor, widgets). Provide
     # the system libraries their build.rs scripts need via pkg-config.
-    # libinput is excluded — it refuses to build for static platforms
-    # and its crate uses dlopen at runtime, not link-time pkg-config.
+    # libinput is excluded — its crate loads it via dlopen at runtime,
+    # not link-time pkg-config, so the deps step builds without it.
     targetDeps = pkgs: with pkgs; [
       wayland
       libxkbcommon
-      seatd
+      # No logind on the device (OpenWRT); avoids the systemd closure,
+      # whose libbpf does not compile for armv7-musl.
+      (seatd.override { systemdSupport = false; })
       (compositorUdev pkgs)
       libdrm
       alsa-lib
@@ -319,7 +335,7 @@ let
     };
     profiles = import ./nix/profiles.nix {
       inherit (bmc) workspaces;
-      inherit rustflags pkgs armv7Pkgs x86Pkgs aarch64Pkgs ciPkgs;
+      inherit rustflags pkgs armv7Pkgs armv7MuslPkgs x86Pkgs aarch64Pkgs ciPkgs;
     };
   };
 
