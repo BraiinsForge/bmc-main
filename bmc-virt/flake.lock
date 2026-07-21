@@ -273,16 +273,16 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1783970216,
-        "narHash": "sha256-Ohu4MfkV8fXm0hExnJjG826eEUaHRd6cW6HF3fceqO0=",
+        "lastModified": 1784107415,
+        "narHash": "sha256-AboR0IesDmNtok5b765cGI51SqbIK5cf562AdqiRGuw=",
         "owner": "BraiinsForge",
         "repo": "nix-lib",
-        "rev": "922cf05b7089f5955608c5e31cd890f6fc6ef93b",
+        "rev": "d8bc512e37e441f2e0b34c7948452ea691b482c0",
         "type": "github"
       },
       "original": {
         "owner": "BraiinsForge",
-        "ref": "fbo/fix-cross-buildscript-static",
+        "ref": "master",
         "repo": "nix-lib",
         "type": "github"
       }

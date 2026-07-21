@@ -28,8 +28,7 @@
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-source-info.url = "github:BraiinsForge/nix-source-info";
-    # TODO(#BDK-567): back to github:BraiinsForge/nix-lib/master once nix/lib!68 (build-script cc role fix) merges
-    nixlib.url = "github:BraiinsForge/nix-lib?ref=fbo/fix-cross-buildscript-static";
+    nixlib.url = "github:BraiinsForge/nix-lib/master";
     nixlib.inputs.nix-source-info.follows = "nix-source-info";
 
     # uv2nix stack — builds the in-repo Python uv workspace (bmc-tui +
