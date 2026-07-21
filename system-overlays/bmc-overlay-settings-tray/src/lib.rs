@@ -710,6 +710,55 @@ impl SettingsTrayOverlay {
         }
     }
 
+    /// [`SystemOverlay::on_touch`] with an explicit `now`, so tests drive the
+    /// inactivity timer on one injected timeline.
+    fn on_touch_at(&mut self, event: TouchEvent, now: Instant) {
+        if !self.slide.accepts_input() {
+            return;
+        }
+        if matches!(event, TouchEvent::Up { .. })
+            && self
+                .touch_track
+                .is_some_and(|track| dismiss::classify(track.start, track.latest))
+        {
+            self.begin_dismiss();
+            return;
+        }
+        self.render_state.tree.push_touch(event);
+        self.last_interaction = now;
+        // Force a render so the interaction state processes the queued event and
+        // runs its hit-test; without a paint frame the controls never see
+        // the touch (the dismiss path below works off raw deltas, not hit-tests).
+        self.content_dirty = true;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "surface-local logical coordinates fit f32 comfortably"
+        )]
+        match event {
+            TouchEvent::Down { x, y, .. } => {
+                let pt = Pt {
+                    x: x as f32,
+                    y: y as f32,
+                };
+                self.touch_track = Some(TouchTrack {
+                    start: pt,
+                    latest: pt,
+                });
+            }
+            TouchEvent::Motion { x, y, .. } => {
+                if let Some(track) = self.touch_track.as_mut() {
+                    track.latest = Pt {
+                        x: x as f32,
+                        y: y as f32,
+                    };
+                }
+            }
+            TouchEvent::Up { .. } | TouchEvent::Cancel => {
+                self.touch_track = None;
+            }
+        }
+    }
+
     /// Apply a frame's interaction read-back to overlay state and queue the
     /// resulting requests.
     fn apply_render_output(&mut self, output: SettingsTrayRenderOutput, now: Instant) {
@@ -851,50 +900,7 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 
     fn on_touch(&mut self, event: TouchEvent) {
-        if !self.slide.accepts_input() {
-            return;
-        }
-        if matches!(event, TouchEvent::Up { .. })
-            && self
-                .touch_track
-                .is_some_and(|track| dismiss::classify(track.start, track.latest))
-        {
-            self.begin_dismiss();
-            return;
-        }
-        self.render_state.tree.push_touch(event);
-        self.last_interaction = Instant::now();
-        // Force a render so the interaction state processes the queued event and
-        // runs its hit-test; without a paint frame the controls never see
-        // the touch (the dismiss path below works off raw deltas, not hit-tests).
-        self.content_dirty = true;
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "surface-local logical coordinates fit f32 comfortably"
-        )]
-        match event {
-            TouchEvent::Down { x, y, .. } => {
-                let pt = Pt {
-                    x: x as f32,
-                    y: y as f32,
-                };
-                self.touch_track = Some(TouchTrack {
-                    start: pt,
-                    latest: pt,
-                });
-            }
-            TouchEvent::Motion { x, y, .. } => {
-                if let Some(track) = self.touch_track.as_mut() {
-                    track.latest = Pt {
-                        x: x as f32,
-                        y: y as f32,
-                    };
-                }
-            }
-            TouchEvent::Up { .. } | TouchEvent::Cancel => {
-                self.touch_track = None;
-            }
-        }
+        self.on_touch_at(event, Instant::now());
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
@@ -910,7 +916,13 @@ impl SystemOverlay for SettingsTrayOverlay {
             self.advance_buttons(now);
         }
 
-        if now.duration_since(self.last_interaction) >= INACTIVITY_TIMEOUT {
+        // A stationary finger emits no wl_touch events, so on_touch cannot
+        // refresh the activity timer; treat any in-progress touch as activity
+        // so the tray never dismisses out from under a held finger. The
+        // timeout counts from finger-up.
+        if self.touch_track.is_some() {
+            self.last_interaction = now;
+        } else if now.duration_since(self.last_interaction) >= INACTIVITY_TIMEOUT {
             self.begin_dismiss();
         }
         // Report not-visible only once the panel has fully slid off, keeping
@@ -1592,6 +1604,74 @@ mod step_tests {
         assert!(
             outcome.visible,
             "the surface stays mapped while sliding out"
+        );
+    }
+
+    #[test]
+    fn held_finger_defers_inactivity_dismiss_until_release() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+
+        // Finger down, then held perfectly still: libinput emits no further
+        // touch events, so on_touch never runs again to refresh the timer.
+        overlay.on_touch_at(
+            TouchEvent::Down {
+                id: 0,
+                x: 120.0,
+                y: 300.0,
+            },
+            t0,
+        );
+
+        // A tick well past the inactivity timeout must not dismiss while the
+        // finger is still down — the in-progress touch counts as activity.
+        let _ = overlay.tick(t0 + INACTIVITY_TIMEOUT + Duration::from_secs(5));
+        assert!(
+            !overlay.slide.is_dismissing(),
+            "the tray must not dismiss out from under a held finger"
+        );
+
+        // Release in place (no swipe): the touch ends and the timeout starts
+        // counting fresh from finger-up.
+        let released = t0 + INACTIVITY_TIMEOUT + Duration::from_secs(5);
+        overlay.on_touch_at(TouchEvent::Up { id: 0 }, released);
+        let _ = overlay.tick(released + Duration::from_millis(1));
+        assert!(
+            !overlay.slide.is_dismissing(),
+            "the inactivity window restarts from finger-up"
+        );
+
+        // Once the window elapses after release, the tray dismisses as before.
+        let _ = overlay.tick(released + INACTIVITY_TIMEOUT + Duration::from_millis(1));
+        assert!(
+            overlay.slide.is_dismissing(),
+            "the tray still auto-dismisses once idle after the touch ends"
+        );
+    }
+
+    #[test]
+    fn cancelled_touch_still_auto_dismisses() {
+        let t0 = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, t0);
+
+        // Finger down, then the compositor cancels the sequence (no Up): the
+        // Cancel arm must clear touch_track, otherwise the leaked Some would
+        // refresh last_interaction every tick and the tray never dismisses.
+        overlay.on_touch_at(
+            TouchEvent::Down {
+                id: 0,
+                x: 120.0,
+                y: 300.0,
+            },
+            t0,
+        );
+        overlay.on_touch_at(TouchEvent::Cancel, t0 + Duration::from_millis(1));
+
+        // With the track cleared, the inactivity window elapses and dismisses.
+        let _ = overlay.tick(t0 + INACTIVITY_TIMEOUT + Duration::from_millis(1));
+        assert!(
+            overlay.slide.is_dismissing(),
+            "a cancelled touch must not wedge the inactivity timer open"
         );
     }
 
