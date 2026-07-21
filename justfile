@@ -38,6 +38,10 @@ format:
     nix run .#fmt-svg
     {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness
 
+# Stamp the `.license.tpl` GPL header onto any first-party source missing it.
+license-fix:
+    scripts/check_license_headers.sh --fix
+
 # Cargo clippy with the workspace's pedantic lints (mem-box caps memory).
 clippy:
     scripts/mem-box.sh cargo clippy \

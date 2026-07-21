@@ -27,6 +27,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
+# --fix stamps the header from .license.tpl onto every
+# flagged file instead of just reporting it.
+# Attribution years come from each file's git history.
+fix=0
+[[ ${1:-} == "--fix" ]] && fix=1
+
 # Patterns matched against repository-relative paths with bash's ==.
 excludes=(
     "bmc-shared/ii-net/*"
@@ -65,6 +71,78 @@ list_files() {
     fi
 }
 
+# Line-comment prefix per extension; nonzero for one we can't stamp, so a new
+# source type added to the check without a prefix here fails loudly.
+comment_prefix() {
+    case "${1##*.}" in
+    rs | ts | tsx | js | scss | c | proto) printf '//' ;;
+    py | sh | nix) printf '#' ;;
+    *) return 1 ;;
+    esac
+}
+
+# Ascending, comma-space-separated year list (`2025, 2026`).
+join_years() {
+    local IFS=,
+    local joined="$*"
+    printf '%s' "${joined//,/, }"
+}
+
+# Copyright line(s) for a file, split by the 2026 Systems→Forge boundary
+# (see docs/devel/license-headers.md). An untracked/new file gets this year.
+copyright_lines() {
+    local file=$1 prefix=$2 year
+    local -a years systems=() forge=()
+    mapfile -t years < <(git log --format=%ad --date=format:%Y --follow -- "$file" 2>/dev/null | sort -u)
+    [[ ${#years[@]} -eq 0 ]] && years=("$(date +%Y)")
+    for year in "${years[@]}"; do
+        if ((year <= 2025)); then systems+=("$year"); else forge+=("$year"); fi
+    done
+    ((${#systems[@]})) && printf '%s Copyright (C) %s  Braiins Systems s.r.o.\n' "$prefix" "$(join_years "${systems[@]}")"
+    ((${#forge[@]})) && printf '%s Copyright (C) %s  Braiins Forge s.r.o.\n' "$prefix" "$(join_years "${forge[@]}")"
+}
+
+# The full header block: computed copyright line(s), then the boilerplate
+# and reservation from .license.tpl verbatim — everything after its templated
+# copyright line and the blank below it — so .license.tpl stays the one source.
+header_block() {
+    local file=$1 prefix=$2 line
+    copyright_lines "$file" "$prefix"
+    printf '%s\n' "$prefix"
+    local -a body
+    mapfile -t body < <(awk 'body {print} /^$/ {body = 1}' .license.tpl)
+    while ((${#body[@]})) && [[ -z ${body[-1]} ]]; do unset 'body[-1]'; done
+    for line in "${body[@]}"; do
+        [[ -z $line ]] && printf '%s\n' "$prefix" || printf '%s %s\n' "$prefix" "$line"
+    done
+}
+
+# Prepend the header, below any shebang, replacing a lone stale copyright line.
+stamp_file() {
+    local file=$1 prefix i=0
+    prefix=$(comment_prefix "$file") || {
+        echo "no comment style for: $file" >&2
+        return 1
+    }
+    local -a lines
+    mapfile -t lines <"$file"
+    local tmp
+    tmp=$(mktemp)
+    while [[ ${lines[i]:-} == '#!'* ]]; do
+        printf '%s\n' "${lines[i]}" >>"$tmp"
+        i=$((i + 1))
+    done
+    if [[ ${lines[i]:-} == "$prefix Copyright (C)"* ]]; then
+        i=$((i + 1))
+        [[ -z ${lines[i]:-} ]] && i=$((i + 1))
+    fi
+    header_block "$file" "$prefix" >>"$tmp"
+    printf '\n' >>"$tmp"
+    local n=${#lines[@]}
+    for (( ; i < n; i++)); do printf '%s\n' "${lines[i]}" >>"$tmp"; done
+    mv "$tmp" "$file"
+}
+
 # Matches both the current boilerplate ("This program is free software...")
 # and the upstream BOSI notices kept verbatim in bmc-shared crates
 # ("BOSI is free software...").
@@ -84,8 +162,12 @@ while IFS= read -r -d '' file; do
 
     header=$(head -n 30 "$file")
     if [[ $header != *"$marker"* ]]; then
-        echo "missing license header: $file"
-        fail=1
+        if ((fix)); then
+            stamp_file "$file" && echo "stamped: $file"
+        else
+            echo "missing license header: $file"
+            fail=1
+        fi
     fi
 done < <(list_files)
 
