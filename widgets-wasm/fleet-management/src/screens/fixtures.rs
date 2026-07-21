@@ -5,6 +5,7 @@
 use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
 use crate::device::DeviceFamily;
+use crate::history::{ChartWindow, HistoryDatum};
 use crate::screens::dashboard::DashboardViewData;
 use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
@@ -15,6 +16,18 @@ use crate::telemetry::DeviceTemp;
 use crate::view::device_click_id;
 
 const TABLE_PAGE_SIZE: usize = 4;
+
+/// Wrap raw hashrate values into evenly-spaced, present samples for a story.
+fn samples(values: &[f32]) -> Vec<HistoryDatum> {
+    values
+        .iter()
+        .enumerate()
+        .map(|(i, &v)| HistoryDatum {
+            at: i64::try_from(i).unwrap_or(0) * 60,
+            value: Some(v),
+        })
+        .collect()
+}
 
 fn family_of(name: &str) -> Option<DeviceFamily> {
     if name.starts_with("uBOS") {
@@ -51,7 +64,7 @@ fn model(
         degraded,
         off,
         hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate_ths)),
-        series: vec![
+        series: samples(&[
             spark_lo,
             spark_lo + 1.0,
             spark_hi,
@@ -61,7 +74,7 @@ fn model(
             spark_hi,
             spark_hi + 0.2,
             spark_hi,
-        ],
+        ]),
         power: ElectricPower::from_watts(f64::from(power_w)),
         efficiency: MiningEfficiency::from_joules_per_terahash(f64::from(efficiency_jth)),
         avg_temp: Temperature::from_celsius(f64::from(avg_temp_c)),
@@ -115,23 +128,35 @@ pub fn sample_table_page(page: usize) -> TableViewData {
     let device_count: usize = all.iter().map(|m| m.ok + m.degraded + m.off).sum();
     let page_count = all.len().div_ceil(TABLE_PAGE_SIZE).max(1);
     let page = page.min(page_count - 1);
-    let rows = all
+    let rows: Vec<ModelRow> = all
         .into_iter()
         .skip(page * TABLE_PAGE_SIZE)
         .take(TABLE_PAGE_SIZE)
         .collect();
+    let window = story_window(rows.first().map(|r| r.series.as_slice()));
     TableViewData {
         title: "Dominika's Mining Rig".to_owned(),
         device_count,
         rows,
+        window,
         page,
         page_count,
     }
 }
 
+/// The window a story's baked series should fill — the whole width.
+fn story_window(series: Option<&[HistoryDatum]>) -> ChartWindow {
+    ChartWindow::covering(series.unwrap_or(&[]))
+}
+
 /// The Figma "Fleet overview" frame values, for the dashboard story.
 #[must_use]
 pub fn sample_dashboard(auth: usize) -> DashboardViewData {
+    let hashrate_series = samples(&[
+        7.0, 9.0, 12.0, 15.5, 17.0, 17.6, 18.0, 18.1, 17.9, 18.0, 18.2, 18.1, 17.9, 18.0, 18.1,
+        18.0, 17.8, 18.0, 18.1, 16.8, 16.4, 16.9, 17.1, 17.08,
+    ]);
+    let window = story_window(Some(&hashrate_series));
     DashboardViewData {
         title: "Dominika's Mining Rig".to_owned(),
         device_count: 54,
@@ -140,10 +165,8 @@ pub fn sample_dashboard(auth: usize) -> DashboardViewData {
         off: 7,
         auth,
         hashrate: Hashrate::from_terahashes_per_second(17.08),
-        hashrate_series: vec![
-            7.0, 9.0, 12.0, 15.5, 17.0, 17.6, 18.0, 18.1, 17.9, 18.0, 18.2, 18.1, 17.9, 18.0, 18.1,
-            18.0, 17.8, 18.0, 18.1, 16.8, 16.4, 16.9, 17.1, 17.08,
-        ],
+        hashrate_series,
+        window,
         power: ElectricPower::from_watts(60.0),
         efficiency: MiningEfficiency::from_joules_per_terahash(10.01),
         temp_min: Temperature::from_celsius(54.0),
@@ -239,7 +262,7 @@ fn model_detail_devices() -> Vec<DeviceRow> {
         click_id: device_click_id(name),
         status,
         hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate)),
-        series: vec![
+        series: samples(&[
             hashrate * 0.95,
             hashrate,
             hashrate * 1.03,
@@ -248,7 +271,7 @@ fn model_detail_devices() -> Vec<DeviceRow> {
             hashrate * 0.98,
             hashrate * 1.02,
             hashrate,
-        ],
+        ]),
         power: ElectricPower::from_watts(2.05),
         efficiency: MiningEfficiency::from_joules_per_terahash(3.3),
         avg_temp: Temperature::from_celsius(f64::from(temp)),
@@ -277,16 +300,18 @@ pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
     let device_count = all.len();
     let page_count = device_count.div_ceil(TABLE_PAGE_SIZE).max(1);
     let page = page.min(page_count - 1);
-    let rows = all
+    let rows: Vec<DeviceRow> = all
         .into_iter()
         .skip(page * TABLE_PAGE_SIZE)
         .take(TABLE_PAGE_SIZE)
         .collect();
+    let window = story_window(rows.first().map(|r| r.series.as_slice()));
     ModelDetailViewData {
         fleet_name: "Dominika's Mining Rig".to_owned(),
         title: "BOS BMM".to_owned(),
         device_count,
         rows,
+        window,
         page,
         page_count,
     }
@@ -297,6 +322,8 @@ fn device_detail_fixture(
     temperature: DeviceTemp,
     state: DeviceStatus,
 ) -> DeviceDetailData {
+    let hashrate_series = samples(&[1.9, 2.0, 2.1, 2.05, 2.08, 2.0, 2.1, 2.08]);
+    let window = story_window(Some(&hashrate_series));
     DeviceDetailData {
         fleet_name: "Dominika's Mining Rig".to_owned(),
         model: "Mini Miner".to_owned(),
@@ -305,7 +332,8 @@ fn device_detail_fixture(
         mac: mac.map(str::to_owned),
         state,
         hashrate: Hashrate::from_terahashes_per_second(2.08),
-        hashrate_series: vec![1.9, 2.0, 2.1, 2.05, 2.08, 2.0, 2.1, 2.08],
+        hashrate_series,
+        window,
         nominal_hashrate: Hashrate::from_terahashes_per_second(16.52),
         power: ElectricPower::from_watts(60.0),
         efficiency: MiningEfficiency::from_joules_per_terahash(2.01),

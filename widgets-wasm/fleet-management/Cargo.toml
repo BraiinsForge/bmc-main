@@ -16,6 +16,7 @@ crate-type = ["cdylib", "lib"]
 
 [dependencies]
 base64 = { workspace = true }
+bincode = { workspace = true, features = ["derive"] }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 mining = { path = "../lib/mining" }
 units = { path = "../lib/units" }

@@ -275,6 +275,7 @@ pub(crate) fn ingest_probed_bos(json: &str) {
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
+    restore_history();
     reconcile_manual_hosts();
     // One base-type browse for BOS + AxeOS (reliable co-located), plus uBOS's own type.
     if mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event).is_none() {
@@ -284,6 +285,26 @@ pub extern "C" fn init() {
         log_warn!("fleet: uBOS mDNS browse rejected by host runtime limits");
     }
     request_frame();
+}
+
+/// Restore the persisted hashrate charts (fleet-total + per-model) so a restart
+/// doesn't blank them. A corrupt entry — unparseable blob or out-of-range timestamp —
+/// is evicted and the charts refill live, never surfacing as data.
+#[cfg(target_arch = "wasm32")]
+#[expect(clippy::integer_division, reason = "cache saved_at is epoch ms → s")]
+fn restore_history() {
+    let Some(entry) = cache::read_bytes(history::CACHE_TAG) else {
+        return;
+    };
+    let Ok(saved_at) = i64::try_from(entry.saved_at / 1000) else {
+        cache::evict(history::CACHE_TAG);
+        return;
+    };
+    let now = SystemTime::now().unix_secs;
+    let restored = HISTORY.with(|h| h.borrow_mut().restore(&entry.bytes, saved_at, now));
+    if !restored {
+        cache::evict(history::CACHE_TAG);
+    }
 }
 
 /// Hosts pinned at startup, beyond mDNS — a compile-time seam, no runtime config.
@@ -405,14 +426,19 @@ pub extern "C" fn render(delta_ms: u32) {
                 let _s = profile::span("summarize");
                 DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
             };
-            // Feed the fold into every chart tier; each samples at its own rate.
+            // Feed the fold into every chart tier; each samples at its own rate,
+            // then persist the aggregate tiers so the charts survive a restart.
             {
                 let _s = profile::span("history");
                 let now = SystemTime::now().unix_secs;
                 DEVICES.with(|d| {
                     let devices = d.borrow();
                     HISTORY.with(|h| {
-                        h.borrow_mut().record(now, &summary, &devices);
+                        let mut h = h.borrow_mut();
+                        h.record(now, &summary, &devices);
+                        if let Some(blob) = h.take_snapshot(now) {
+                            cache::put(history::CACHE_TAG, &[], &blob);
+                        }
                     });
                 });
             }
@@ -429,6 +455,13 @@ pub extern "C" fn render(delta_ms: u32) {
         let span_minutes = manifest_params::Params::current()
             .chart_span_minutes
             .as_manifest_value();
+
+        // The chart's time axis: render now back one range, so points
+        // place by timestamp with the newest at the right edge.
+        let chart_window = history::ChartWindow {
+            end: SystemTime::now().unix_secs,
+            span_secs: i64::from(span_minutes) * 60,
+        };
         VIEW.with(|view_state| {
             let mut nav = view_state.borrow_mut();
             let selected = nav
@@ -483,6 +516,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                             group,
                                             dev,
                                             series,
+                                            chart_window,
                                         )
                                     })
                             })
@@ -497,6 +531,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 rows,
                                 sel.page,
                                 &h.borrow().view(span_minutes),
+                                chart_window,
                             )
                         });
                         let page_count = data.page_count;
@@ -510,6 +545,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             rows,
                             sel.page,
                             &h.borrow().view(span_minutes),
+                            chart_window,
                         )
                     });
                     let page_count = data.page_count;
@@ -529,6 +565,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &derived.summary,
                                 &derived.fleet_name,
                                 &h.borrow().view(span_minutes),
+                                chart_window,
                             )
                         });
                         (screens::dashboard::dashboard_view(&data), 1)
@@ -540,6 +577,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &derived.fleet_name,
                                 nav.fleet_page,
                                 &h.borrow().view(span_minutes),
+                                chart_window,
                             )
                         });
                         let page_count = table.page_count;

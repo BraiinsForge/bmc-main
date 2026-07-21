@@ -13,6 +13,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::history::{ChartWindow, HistoryDatum};
 use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::summary::DeviceStatus;
@@ -267,67 +268,71 @@ fn status_item(
 }
 
 // The filled area chart + trend line for a hashrate series, mapped into `w`x`h`.
-// `top_frac` leaves headroom above the chart (for the dashboard's hero text).
+// Points sit by timestamp within `window`; a `None` value or a downtime gap
+// breaks the fill and stroke into separate runs, so the chart never draws a
+// false line across missing data. `top_frac` leaves headroom above the chart
+// (hero text).
 #[must_use]
-pub fn area_chart(series: &[f32], w: f32, h: f32, top_frac: f32) -> Vec<Draw> {
-    let (min, max) = series
-        .iter()
-        .fold((f32::MAX, f32::MIN), |(lo, hi), &v| (lo.min(v), hi.max(v)));
+pub fn area_chart(
+    series: &[HistoryDatum],
+    window: ChartWindow,
+    w: f32,
+    h: f32,
+    top_frac: f32,
+) -> Vec<Draw> {
+    let (min, max) = value_range(series);
     let span = (max - min).max(1e-3);
     let top = h * top_frac;
     let usable = h - top - BASELINE_INSET;
-    let last = idx_f32(series.len().max(2) - 1);
-    let trend: Vec<(f32, f32)> = series
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| {
-            (
-                idx_f32(i) / last * w,
-                top + (1.0 - (v - min) / span) * usable,
-            )
-        })
-        .collect();
-    // Fill and stroke share one pre-smoothed top edge drawn as straight segments.
-    // A smoothed fill instead bends toward its baseline corners and peels off the stroke.
-    let curve = smooth_curve(&trend);
-    let mut area = curve.clone();
-    area.push((w, h));
-    area.push((0.0, h));
-    vec![
-        fill!(area, linear: (CHART.with_alpha(0.55), CHART.with_alpha(0.05))),
-        path!(curve, stroke: 3.0, color: CHART),
-    ]
+    let y_of = move |v: f32| top + (1.0 - (v - min) / span) * usable;
+    draw_runs(series, window, w, h, &y_of)
 }
 
-// Large charts: 0-anchored to `nice(max(nominal, window max))` with dashed
-// gridlines and optional right-edge tick labels. Sparklines stay bare.
+// Large charts: 0-anchored with dashed gridlines and optional right-edge tick
+// labels. A `nominal` anchors the axis to the nameplate (device detail reads as
+// "vs capacity"); without one (the fleet total) the axis fits the drawn data, so
+// it tracks the peak instead of snapping the ceiling to round numbers the data
+// never reaches. Sparklines stay bare.
 #[must_use]
 pub fn scaled_area_chart(
-    series: &[f32],
+    series: &[HistoryDatum],
+    window: ChartWindow,
     w: f32,
     h: f32,
     top_frac: f32,
     nominal: Option<f32>,
     ticks: bool,
 ) -> Vec<Draw> {
-    let local_max = series.iter().copied().fold(0.0_f32, f32::max);
-    let ceiling_hint = nominal.unwrap_or(0.0).max(local_max);
-    let Some((ceiling, step)) = nice_scale(ceiling_hint) else {
-        return area_chart(series, w, h, top_frac);
+    let anchored = matches!(nominal, Some(n) if n > 0.0);
+    // A lone point is the still-forming open bucket, its value refreshed with the
+    // live reading every tick — a data-fit axis would chase it. There's no
+    // settled value to scale against yet, so draw nothing until a second point
+    // commits and the scale settles. A nameplate axis is stable regardless.
+    if !anchored && series.len() < 2 {
+        return Vec::new();
+    }
+    // Scale from the settled points — exclude the still-forming last bucket, so
+    // the axis re-fits only when a bucket commits, not as the open one refreshes.
+    let settled = if series.len() > 1 {
+        &series[..series.len() - 1]
+    } else {
+        series
+    };
+    let local_max = settled
+        .iter()
+        .filter_map(|s| s.value)
+        .fold(0.0_f32, f32::max);
+    let scale = if anchored {
+        nice_scale(local_max.max(nominal.unwrap_or(0.0)))
+    } else {
+        data_fit_scale(local_max)
+    };
+    let Some((ceiling, step)) = scale else {
+        return area_chart(series, window, w, h, top_frac);
     };
     let top = h * top_frac;
     let plot_h = (h - top - BASELINE_INSET).max(1.0);
-    let last = idx_f32(series.len().max(2) - 1);
-    let y_of = |v: f32| top + (1.0 - (v / ceiling).clamp(0.0, 1.0)) * plot_h;
-    let trend: Vec<(f32, f32)> = series
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| (idx_f32(i) / last * w, y_of(v)))
-        .collect();
-    let curve = smooth_curve(&trend);
-    let mut area = curve.clone();
-    area.push((w, h));
-    area.push((0.0, h));
+    let y_of = move |v: f32| top + (1.0 - (v / ceiling).clamp(0.0, 1.0)) * plot_h;
 
     // gridlines behind the fill, so they never darken the data line
     let grid = WHITE.with_alpha(0.14);
@@ -348,10 +353,151 @@ pub fn scaled_area_chart(
         }
         level += step;
     }
-    draws.push(fill!(area, linear: (CHART.with_alpha(0.55), CHART.with_alpha(0.05))));
-    draws.push(path!(curve, stroke: 3.0, color: CHART));
+    draws.extend(draw_runs(series, window, w, h, &y_of));
     draws.extend(labels);
     draws
+}
+
+// ── Series → drawable runs (time-placed, gap-broken) ─────────────────
+
+// Min and max of the present values, ignoring gaps; `(0, 0)` when none present.
+fn value_range(series: &[HistoryDatum]) -> (f32, f32) {
+    series
+        .iter()
+        .filter_map(|s| s.value)
+        .fold(None, |acc: Option<(f32, f32)>, v| {
+            Some(acc.map_or((v, v), |(lo, hi)| (lo.min(v), hi.max(v))))
+        })
+        .unwrap_or((0.0, 0.0))
+}
+
+// Fill, trend line, and sample markers for each contiguous run of present,
+// gap-free samples; `y_of` maps a value to a y pixel and x is placed by
+// timestamp within `window`.
+fn draw_runs(
+    series: &[HistoryDatum],
+    window: ChartWindow,
+    w: f32,
+    h: f32,
+    y_of: &impl Fn(f32) -> f32,
+) -> Vec<Draw> {
+    let x_of = time_x(window, w);
+    let r = marker_radius(h);
+    let mut draws = Vec::new();
+    for run in runs(series) {
+        let pts: Vec<(f32, f32)> = run.iter().map(|&(at, v)| (x_of(at), y_of(v))).collect();
+        // Two-plus points form the interpolated curve and its fill; a lone point
+        // is just its marker below.
+        if pts.len() >= 2 {
+            let curve = smooth_curve(&pts);
+            let x_start = curve.first().map_or(0.0, |p| p.0);
+            let x_end = curve.last().map_or(w, |p| p.0);
+            let mut area = curve.clone();
+            area.push((x_end, h));
+            area.push((x_start, h));
+            draws.push(fill!(area, linear: (CHART.with_alpha(0.55), CHART.with_alpha(0.05))));
+            draws.push(path!(curve, stroke: 3.0, color: CHART));
+        }
+        // Mark the real samples so a reader tells them from the interpolated
+        // curve — dropped only where points pack tighter than a marker, where
+        // the curve already coincides with them.
+        if markers_fit(&pts, r) {
+            for &(x, y) in &pts {
+                draws.extend(sample_marker(x, y, r));
+            }
+        }
+    }
+    draws
+}
+
+// A data-point marker: a filled dot with a punched-out centre, so a real sample
+// reads as a marker on the curve it sits on rather than a bulge in the line.
+fn sample_marker(x: f32, y: f32, r: f32) -> [Draw; 2] {
+    [
+        Draw::circle(x, y, r, CHART),
+        Draw::circle(x, y, r * 0.42, CARD_BG),
+    ]
+}
+
+// Marker radius scaled to the chart: bold on the hero/detail charts, tiny on a
+// row sparkline.
+fn marker_radius(h: f32) -> f32 {
+    (h * 0.06).clamp(1.5, 3.5)
+}
+
+// Markers fit when the samples are typically at least a marker apart — judged by
+// the median gap, so one unusually tight pair (the short first interval before
+// the clock reaches an interval boundary) can't strip markers off an otherwise
+// well-spread run. A lone point (no pair) always fits.
+fn markers_fit(pts: &[(f32, f32)], r: f32) -> bool {
+    let mut gaps: Vec<f32> = pts.windows(2).map(|p| (p[1].0 - p[0].0).abs()).collect();
+    if gaps.is_empty() {
+        return true;
+    }
+    gaps.sort_unstable_by(f32::total_cmp);
+    #[expect(
+        clippy::integer_division,
+        reason = "median index; which of the two middle gaps is irrelevant to the fit test"
+    )]
+    let mid = gaps.len() / 2;
+    gaps[mid] >= r * 2.5
+}
+
+// A closure placing a timestamp on the x axis: the window's right edge at `w`,
+// back `span_secs` to `0`, so partial history hugs the right and a stale tail
+// leaves a gap there.
+fn time_x(window: ChartWindow, w: f32) -> impl Fn(i64) -> f32 {
+    let start = window.end - window.span_secs;
+    let span = window.span_secs.max(1);
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "chart pixel coordinates tolerate f32"
+    )]
+    move |at: i64| (at - start) as f32 / span as f32 * w
+}
+
+// Split into runs of present, gap-free samples: a `None` value or a jump larger
+// than `gap_threshold` (a downtime) ends the current run.
+fn runs(series: &[HistoryDatum]) -> Vec<Vec<(i64, f32)>> {
+    let gap = gap_threshold(series);
+    let mut out: Vec<Vec<(i64, f32)>> = Vec::new();
+    let mut cur: Vec<(i64, f32)> = Vec::new();
+    let mut prev_at: Option<i64> = None;
+    for s in series {
+        if prev_at.is_some_and(|p| s.at - p > gap) && !cur.is_empty() {
+            out.push(std::mem::take(&mut cur));
+        }
+        match s.value {
+            Some(v) => cur.push((s.at, v)),
+            None if !cur.is_empty() => out.push(std::mem::take(&mut cur)),
+            None => {}
+        }
+        prev_at = Some(s.at);
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
+// A time delta beyond which two samples read as a break — 1.5x the median
+// spacing, so one big jump (a restart) is an outlier, not the norm.
+#[expect(
+    clippy::integer_division,
+    reason = "the median index is exact enough for a whole-second spacing heuristic"
+)]
+fn gap_threshold(series: &[HistoryDatum]) -> i64 {
+    let mut deltas: Vec<i64> = series
+        .windows(2)
+        .map(|w| w[1].at - w[0].at)
+        .filter(|&d| d > 0)
+        .collect();
+    if deltas.is_empty() {
+        return i64::MAX;
+    }
+    deltas.sort_unstable();
+    let median = deltas[deltas.len() / 2];
+    (median + (median >> 1)).max(median + 1)
 }
 
 // Round axis ceiling ≥ `raw` and gridline step (1/2/5 × 10ⁿ); `None` if raw <= 0.
@@ -362,6 +508,20 @@ fn nice_scale(raw: f32) -> Option<(f32, f32)> {
     let step = nice_step(raw / 3.0);
     let ceiling = (raw / step).ceil() * step;
     Some((ceiling, step))
+}
+
+// Axis fitted to the plotted peak: a hair of headroom above it (so the peak
+// marker isn't clipped at the top edge) with nice, readable gridline steps
+// within. The ceiling is continuous in the peak, so it tracks the data instead
+// of snapping between round numbers as the value ramps. `None` if `max` <= 0.
+fn data_fit_scale(max: f32) -> Option<(f32, f32)> {
+    const HEADROOM: f32 = 1.08;
+    const GRIDLINES: f32 = 4.0;
+    if max <= 0.0 {
+        return None;
+    }
+    let ceiling = max * HEADROOM;
+    Some((ceiling, nice_step(ceiling / GRIDLINES)))
 }
 
 fn nice_step(rough: f32) -> f32 {

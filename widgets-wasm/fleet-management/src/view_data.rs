@@ -6,7 +6,7 @@
 use bmc_wasm_sdk::{Hashrate, Temperature};
 
 use crate::device::{DeviceId, KnownDevice};
-use crate::history::HistoryView;
+use crate::history::{ChartWindow, HistoryDatum, HistoryView};
 use crate::screens::dashboard::DashboardViewData;
 use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
@@ -31,7 +31,12 @@ fn degraded(g: &GroupSummary) -> usize {
 impl DashboardViewData {
     /// The grid overview, from the fleet total and its recorded history.
     #[must_use]
-    pub fn from_summary(summary: &FleetSummary, fleet_name: &str, history: &HistoryView<'_>) -> Self {
+    pub fn from_summary(
+        summary: &FleetSummary,
+        fleet_name: &str,
+        history: &HistoryView<'_>,
+        window: ChartWindow,
+    ) -> Self {
         let t = &summary.total;
         Self {
             title: fleet_name.to_owned(),
@@ -42,6 +47,7 @@ impl DashboardViewData {
             auth: t.auth_error_count,
             hashrate: t.hashrate.unwrap_or_default(),
             hashrate_series: history.total_series(),
+            window,
             power: t.power.unwrap_or_default(),
             efficiency: t.efficiency.unwrap_or_default(),
             temp_min: t.min_temperature.unwrap_or_default(),
@@ -59,6 +65,7 @@ impl TableViewData {
         fleet_name: &str,
         page: usize,
         history: &HistoryView<'_>,
+        window: ChartWindow,
     ) -> Self {
         let groups = &summary.groups;
         let page_count = groups.len().div_ceil(TABLE_PAGE_SIZE).max(1);
@@ -84,6 +91,7 @@ impl TableViewData {
             title: fleet_name.to_owned(),
             device_count: summary.total.total_count,
             rows,
+            window,
             page,
             page_count,
         }
@@ -100,6 +108,7 @@ impl ModelDetailViewData {
         rows: &[(DeviceId, GroupSummary, DeviceStatus)],
         page: usize,
         history: &HistoryView<'_>,
+        window: ChartWindow,
     ) -> Self {
         let page_count = rows.len().div_ceil(MODEL_DETAIL_PAGE_SIZE).max(1);
         let page = page.min(page_count - 1);
@@ -125,6 +134,7 @@ impl ModelDetailViewData {
             title: title.to_owned(),
             device_count: rows.len(),
             rows: devices,
+            window,
             page,
             page_count,
         }
@@ -146,7 +156,8 @@ impl DeviceDetailData {
         model: &str,
         group: &GroupSummary,
         device: &KnownDevice,
-        hashrate_series: Vec<f32>,
+        hashrate_series: Vec<HistoryDatum>,
+        window: ChartWindow,
     ) -> Self {
         let reading = device.telemetry.as_ref().map(|s| &s.reading);
         let nominal_ths = reading
@@ -162,6 +173,7 @@ impl DeviceDetailData {
             state,
             hashrate: group.hashrate.unwrap_or_default(),
             hashrate_series,
+            window,
             nominal_hashrate: nominal_ths.map_or_else(Hashrate::default, |n| {
                 Hashrate::from_terahashes_per_second(f64::from(n))
             }),
@@ -222,10 +234,11 @@ mod tests {
         };
         let history = HashrateHistory::default();
         let view = history.view(60);
-        let first = TableViewData::from_summary(&summary, "Rig", 0, &view);
+        let win = ChartWindow::covering(&[]);
+        let first = TableViewData::from_summary(&summary, "Rig", 0, &view, win);
         assert_eq!(first.page_count, 3, "9 groups, 4 per page");
         assert_eq!(first.rows.len(), TABLE_PAGE_SIZE);
-        let last = TableViewData::from_summary(&summary, "Rig", 99, &view);
+        let last = TableViewData::from_summary(&summary, "Rig", 99, &view, win);
         assert_eq!(last.page, 2, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 1);
     }
@@ -245,12 +258,13 @@ mod tests {
             .collect();
         let history = HashrateHistory::default();
         let view = history.view(60);
-        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &view);
+        let win = ChartWindow::covering(&[]);
+        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &view, win);
         assert_eq!(first.device_count, 6);
         assert_eq!(first.page_count, 2, "6 devices, 4 per page");
         assert_eq!(first.rows.len(), MODEL_DETAIL_PAGE_SIZE);
         assert_eq!(first.rows[0].click_id, "device:dev-0");
-        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &view);
+        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &view, win);
         assert_eq!(last.page, 1, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 2);
     }
@@ -302,6 +316,7 @@ mod tests {
             &grp("John's Miner", 1, 1, 0),
             &device(None, Some(reading)),
             vec![],
+            ChartWindow::covering(&[]),
         );
         assert_eq!(data.hostname, "John's Miner");
         assert_eq!(data.ip, "10.0.0.9");
@@ -338,8 +353,14 @@ mod tests {
         // Unreachable with no telemetry: state comes from the device, not the group.
         let mut dev = device(Some(model), None);
         dev.reachable = false;
-        let data =
-            DeviceDetailData::from_device("Rig", "HashNode", &grp("bmm", 1, 0, 1), &dev, vec![]);
+        let data = DeviceDetailData::from_device(
+            "Rig",
+            "HashNode",
+            &grp("bmm", 1, 0, 1),
+            &dev,
+            vec![],
+            ChartWindow::covering(&[]),
+        );
         assert_eq!(data.state, DeviceStatus::Unreachable);
         assert_eq!(data.mac, None);
         assert_eq!(data.uptime_hours, 0);

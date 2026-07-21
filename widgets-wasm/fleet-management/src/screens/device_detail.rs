@@ -12,6 +12,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::history::{ChartWindow, HistoryDatum};
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
@@ -40,7 +41,8 @@ pub struct DeviceDetailData {
     pub mac: Option<String>,
     pub state: DeviceStatus,
     pub hashrate: Hashrate,
-    pub hashrate_series: Vec<f32>,
+    pub hashrate_series: Vec<HistoryDatum>,
+    pub window: ChartWindow,
     pub nominal_hashrate: Hashrate,
     pub power: ElectricPower,
     pub efficiency: MiningEfficiency,
@@ -67,6 +69,7 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
                                 &d.hashrate.format_si(3),
                                 scaled_area_chart(
                                     &d.hashrate_series,
+                                    d.window,
                                     CHART_W,
                                     CHART_H,
                                     0.42,

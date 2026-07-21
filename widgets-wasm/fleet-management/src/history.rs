@@ -3,8 +3,13 @@
 //! Rolling hashrate history for the dashboard chart and per-model sparklines.
 //! Each chart range (15 min … 24 h) is a consolidation tier: [`POINTS`] samples
 //! taken at range/POINTS, all filled continuously. Picking a range just reads
-//! the matching tier through [`HistoryView`] — nothing rebuilds. Departed
-//! devices and model groups are pruned.
+//! the matching tier through [`HistoryView`] — nothing rebuilds. Each sample
+//! carries its timestamp and a nullable value, so a restart gap or an
+//! unreachable device draws as a break, not a false line to zero.
+//!
+//! The fleet-total and per-model tiers persist to the flash cache so the charts
+//! survive a restart; per-device series are RAM-only, so a reused hostname can't
+//! attribute one miner's past to another. A corrupt blob is dropped, not shown.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -33,19 +38,65 @@ fn interval_secs(span_minutes: i32) -> i64 {
     (i64::from(span_minutes) * 60 / points).max(1)
 }
 
+/// One hashrate point: when it was taken (unix seconds) and its value, or `None`
+/// for no data — an unreachable device, or the gap a restart leaves behind.
+#[derive(Debug, Clone, Copy, PartialEq, bincode::Encode, bincode::Decode)]
+pub struct HistoryDatum {
+    pub at: i64,
+    pub value: Option<f32>,
+}
+
+/// The time span a chart draws: the right edge (`end`, render now in unix
+/// seconds) back `span_secs`. Points place by timestamp within it, so a
+/// still-filling history hugs the right edge rather than stretching to fill the
+/// width, and a stale series leaves an honest gap on the right.
+#[derive(Debug, Clone, Copy)]
+pub struct ChartWindow {
+    pub end: i64,
+    pub span_secs: i64,
+}
+
+impl ChartWindow {
+    /// The window that exactly spans a series — for fixtures and stories, whose
+    /// baked points should fill the whole width.
+    #[must_use]
+    pub fn covering(series: &[HistoryDatum]) -> Self {
+        let start = series.first().map_or(0, |s| s.at);
+        let end = series.last().map_or(0, |s| s.at);
+        Self {
+            end,
+            span_secs: (end - start).max(1),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
-struct Ring(VecDeque<f32>);
+struct Ring(VecDeque<HistoryDatum>);
 
 impl Ring {
-    fn push(&mut self, value: f32) {
+    fn push(&mut self, sample: HistoryDatum) {
         if self.0.len() == POINTS {
             self.0.pop_front();
         }
-        self.0.push_back(value);
+        self.0.push_back(sample);
     }
 
-    fn to_vec(&self) -> Vec<f32> {
+    /// Start a new bucket at a slot boundary, else refresh the current bucket's
+    /// value in place (keeping its timestamp) so the newest point tracks the
+    /// live reading without over-sampling the ring.
+    fn upsert(&mut self, at: i64, value: Option<f32>, new_slot: bool) {
+        match self.0.back_mut() {
+            Some(last) if !new_slot => last.value = value,
+            _ => self.push(HistoryDatum { at, value }),
+        }
+    }
+
+    fn to_vec(&self) -> Vec<HistoryDatum> {
         self.0.iter().copied().collect()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
@@ -57,15 +108,19 @@ fn ths(value: Option<Hashrate>) -> f32 {
     value.map_or(0.0, |h| h.as_terahashes_per_second() as f32)
 }
 
-/// A device's current hashrate; unreachable folds to zero, like the summary.
-fn device_hashrate(dev: &KnownDevice) -> f32 {
+/// A device's current hashrate, or `None` when it is unreachable — the chart
+/// then breaks rather than dropping a line to a hashrate the device isn't
+/// actually reporting.
+fn device_hashrate(dev: &KnownDevice) -> Option<f32> {
     if !dev.reachable {
-        return 0.0;
+        return None;
     }
-    dev.telemetry
-        .as_ref()
-        .and_then(|s| s.reading.current_hashrate_ths)
-        .unwrap_or(0.0)
+    Some(
+        dev.telemetry
+            .as_ref()
+            .and_then(|s| s.reading.current_hashrate_ths)
+            .unwrap_or(0.0),
+    )
 }
 
 /// One consolidation tier: every series sampled at this tier's interval.
@@ -74,16 +129,17 @@ fn device_hashrate(dev: &KnownDevice) -> f32 {
 #[derive(Debug, Default)]
 struct Tier {
     interval_secs: i64,
-    last_sample_at: Option<i64>,
+    current_slot: Option<i64>,
     total: Ring,
     models: HashMap<(Option<usize>, String), Ring>,
     devices: HashMap<DeviceId, Ring>,
 }
 
 impl Tier {
-    /// Prune departed series, then append one sample once this tier's interval
-    /// has elapsed since the last (`now` is unix seconds). Empty fleets are
-    /// skipped so a series doesn't fill with zeros before any miner reports.
+    /// Prune departed series, then fold the reading into this tier: a new
+    /// interval slot starts a fresh bucket, an ongoing one refreshes its value
+    /// in place (`now` is unix seconds). Empty fleets are skipped so a series
+    /// doesn't fill with zeros before any miner reports.
     fn record(
         &mut self,
         now: i64,
@@ -98,24 +154,26 @@ impl Tier {
         if summary.groups.is_empty() {
             return;
         }
-        if let Some(last) = self.last_sample_at
-            && now - last < self.interval_secs
-        {
-            return;
-        }
-        self.last_sample_at = Some(now);
-        self.total.push(ths(summary.total.hashrate));
+        #[expect(
+            clippy::integer_division,
+            reason = "the slot index buckets whole seconds into this tier's interval"
+        )]
+        let slot = now / self.interval_secs;
+        let new_slot = self.current_slot != Some(slot);
+        self.current_slot = Some(slot);
+        self.total
+            .upsert(now, Some(ths(summary.total.hashrate)), new_slot);
         for g in &summary.groups {
             self.models
                 .entry((g.family.map(DeviceFamily::index), g.label.clone()))
                 .or_default()
-                .push(ths(g.hashrate));
+                .upsert(now, Some(ths(g.hashrate)), new_slot);
         }
         for dev in devices.iter() {
             self.devices
                 .entry(dev.identity.id.clone())
                 .or_default()
-                .push(device_hashrate(dev));
+                .upsert(now, device_hashrate(dev), new_slot);
         }
     }
 }
@@ -125,6 +183,7 @@ impl Tier {
 #[derive(Debug)]
 pub struct HashrateHistory {
     tiers: [Tier; TIER_MINUTES.len()],
+    last_snapshot_at: Option<i64>,
 }
 
 impl Default for HashrateHistory {
@@ -134,6 +193,7 @@ impl Default for HashrateHistory {
                 interval_secs: interval_secs(TIER_MINUTES[i]),
                 ..Tier::default()
             }),
+            last_snapshot_at: None,
         }
     }
 }
@@ -176,12 +236,16 @@ pub struct HistoryView<'a> {
 
 impl HistoryView<'_> {
     #[must_use]
-    pub(crate) fn total_series(&self) -> Vec<f32> {
+    pub(crate) fn total_series(&self) -> Vec<HistoryDatum> {
         self.tier.total.to_vec()
     }
 
     #[must_use]
-    pub(crate) fn model_series(&self, family: Option<DeviceFamily>, label: &str) -> Vec<f32> {
+    pub(crate) fn model_series(
+        &self,
+        family: Option<DeviceFamily>,
+        label: &str,
+    ) -> Vec<HistoryDatum> {
         self.tier
             .models
             .get(&(family.map(DeviceFamily::index), label.to_owned()))
@@ -189,7 +253,7 @@ impl HistoryView<'_> {
     }
 
     #[must_use]
-    pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<f32> {
+    pub(crate) fn device_series(&self, id: &DeviceId) -> Vec<HistoryDatum> {
         self.tier
             .devices
             .get(id)
@@ -197,10 +261,125 @@ impl HistoryView<'_> {
     }
 }
 
+// ── Flash persistence (aggregate tiers only) ─────────────────────────
+
+/// Persist at most this often (seconds); a crash loses at most this much.
+const SNAPSHOT_INTERVAL_SECS: i64 = 300;
+
+/// Blob header: a magic byte and a format version. A mismatch on read means a
+/// stale or foreign blob, so it's dropped rather than decoded.
+const SNAPSHOT_MAGIC: u8 = 0xF1;
+const SNAPSHOT_VERSION: u8 = 2;
+
+/// Flash cache tag for the persisted history blob. Only the wasm build reads or
+/// writes the cache; the snapshot codec itself is exercised natively in tests.
+#[cfg(target_arch = "wasm32")]
+pub(crate) const CACHE_TAG: &str = "hashrate_history";
+
+/// The persisted shape of the total + per-model tiers (per-device is RAM-only).
+#[derive(bincode::Encode, bincode::Decode)]
+struct TierSnapshot {
+    total: Vec<HistoryDatum>,
+    /// `(family index, model label, series)` — a `Vec`, not a map, to stay
+    /// `alloc`-only for bincode.
+    models: Vec<(Option<u32>, String, Vec<HistoryDatum>)>,
+}
+
+impl HashrateHistory {
+    /// A blob of the total + per-model tiers for the flash cache, if the
+    /// snapshot interval has elapsed since the last — otherwise `None`. `now`
+    /// is unix seconds.
+    pub(crate) fn take_snapshot(&mut self, now: i64) -> Option<Vec<u8>> {
+        // Nothing recorded yet — don't spend the first-snapshot slot on an empty
+        // history (which would then rate-limit real data out for a whole
+        // interval); the first blob written should carry the first samples.
+        if self.tiers.iter().all(|t| t.total.is_empty()) {
+            return None;
+        }
+        if let Some(last) = self.last_snapshot_at
+            && now - last < SNAPSHOT_INTERVAL_SECS
+        {
+            return None;
+        }
+        self.last_snapshot_at = Some(now);
+        let tiers: Vec<TierSnapshot> = self.tiers.iter().map(Tier::to_snapshot).collect();
+        // Encoding failure here would be a logic bug, not bad input, so no
+        // snapshot is the safe fallback.
+        let Ok(mut body) = bincode::encode_to_vec(&tiers, bincode::config::standard()) else {
+            return None;
+        };
+        let mut blob = vec![SNAPSHOT_MAGIC, SNAPSHOT_VERSION];
+        blob.append(&mut body);
+        Some(blob)
+    }
+
+    /// Restore the total + per-model tiers from a `saved_at`-stamped blob,
+    /// dropping any tier whose downtime already covers its whole range (its
+    /// points would all be off-screen). Returns `false` on a malformed blob so
+    /// the caller can evict it; per-device series are never restored.
+    pub(crate) fn restore(&mut self, bytes: &[u8], saved_at: i64, now: i64) -> bool {
+        let Some(payload) = bytes.strip_prefix(&[SNAPSHOT_MAGIC, SNAPSHOT_VERSION]) else {
+            return false;
+        };
+        let Ok((tiers, _)) = bincode::decode_from_slice::<Vec<TierSnapshot>, _>(
+            payload,
+            bincode::config::standard(),
+        ) else {
+            return false;
+        };
+        if tiers.len() != self.tiers.len() {
+            return false;
+        }
+        for (i, (tier, snap)) in self.tiers.iter_mut().zip(tiers).enumerate() {
+            let range_secs = i64::from(TIER_MINUTES[i]) * 60;
+            if now.saturating_sub(saved_at) >= range_secs {
+                continue; // fully stale — leave empty, refills live
+            }
+            tier.restore(snap);
+        }
+        true
+    }
+}
+
+impl Tier {
+    fn to_snapshot(&self) -> TierSnapshot {
+        TierSnapshot {
+            total: self.total.to_vec(),
+            models: self
+                .models
+                .iter()
+                .map(|((fam, label), ring)| {
+                    let fam = fam.and_then(|i| u32::try_from(i).ok());
+                    (fam, label.clone(), ring.to_vec())
+                })
+                .collect(),
+        }
+    }
+
+    fn restore(&mut self, snap: TierSnapshot) {
+        // `current_slot` stays unset, so the first live fold after a restore
+        // opens a fresh bucket instead of refreshing a restored one.
+        self.total = Ring(snap.total.into_iter().collect());
+        self.models = snap
+            .models
+            .into_iter()
+            .map(|(fam, label, series)| {
+                let fam = fam.map(|i| i as usize);
+                ((fam, label), Ring(series.into_iter().collect()))
+            })
+            .collect();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use bmc_wasm_sdk::{ElectricPower, MiningEfficiency, Temperature};
+
+    /// The `value`s of a series, for terse assertions.
+    fn vals(series: &[HistoryDatum]) -> Vec<Option<f32>> {
+        series.iter().map(|s| s.value).collect()
+    }
 
     fn group(label: &str, hashrate: f64) -> crate::summary::GroupSummary {
         crate::summary::GroupSummary {
@@ -227,17 +406,46 @@ mod tests {
     }
 
     #[test]
-    fn records_one_sample_per_tier_interval() {
-        // The 15-minute tier samples once every 15 s.
+    fn records_one_bucket_per_tier_interval() {
+        // The 15-min tier holds one bucket per 15 s; a second reading inside the
+        // same interval refreshes that bucket in place, a new interval opens one.
         let mut h = HashrateHistory::default();
         h.record(0, &summary(10.0, 4.0), &DeviceList::new());
-        h.record(14, &summary(99.0, 99.0), &DeviceList::new()); // < 15 s — ignored
+        h.record(14, &summary(99.0, 99.0), &DeviceList::new()); // same bucket — refreshes
         h.record(15, &summary(12.0, 5.0), &DeviceList::new());
-        assert_eq!(h.view(15).total_series(), vec![10.0, 12.0]);
         assert_eq!(
-            h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM"),
-            vec![4.0, 5.0]
+            vals(&h.view(15).total_series()),
+            vec![Some(99.0), Some(12.0)]
         );
+        assert_eq!(
+            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM")),
+            vec![Some(99.0), Some(5.0)]
+        );
+    }
+
+    #[test]
+    fn the_open_bucket_keeps_its_timestamp_while_its_value_refreshes() {
+        // A within-interval refresh updates the value but not the bucket's
+        // timestamp, so points stay evenly spaced at the tier interval.
+        let mut h = HashrateHistory::default();
+        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        h.record(14, &summary(99.0, 4.0), &DeviceList::new());
+        let series = h.view(15).total_series();
+        assert_eq!(series.len(), 1, "still one bucket");
+        assert_eq!(
+            series[0].at, 0,
+            "timestamp is the bucket's, not the refresh's"
+        );
+        assert_eq!(series[0].value, Some(99.0), "value is the latest reading");
+    }
+
+    #[test]
+    fn samples_carry_their_timestamp() {
+        let mut h = HashrateHistory::default();
+        h.record(100, &summary(10.0, 4.0), &DeviceList::new());
+        h.record(115, &summary(12.0, 5.0), &DeviceList::new());
+        let ats: Vec<i64> = h.view(15).total_series().iter().map(|s| s.at).collect();
+        assert_eq!(ats, vec![100, 115]);
     }
 
     #[test]
@@ -279,10 +487,7 @@ mod tests {
         }
         let series = h.view(15).total_series();
         assert_eq!(series.len(), POINTS);
-        assert!(
-            (series[0] - 5.0).abs() < 1e-6,
-            "the oldest five samples were dropped"
-        );
+        assert_eq!(series[0].value, Some(5.0), "the oldest five were dropped");
     }
 
     #[test]
@@ -327,11 +532,14 @@ mod tests {
         let a = DeviceId::new("bos/a");
         h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
         h.record(15, &summary(12.0, 5.0), &devices(&[("bos/a", 4.0, true)]));
-        assert_eq!(h.view(15).device_series(&a), vec![3.0, 4.0]);
+        assert_eq!(
+            vals(&h.view(15).device_series(&a)),
+            vec![Some(3.0), Some(4.0)]
+        );
     }
 
     #[test]
-    fn per_device_series_zeros_an_unreachable_device() {
+    fn an_unreachable_device_samples_a_gap_not_zero() {
         let mut h = HashrateHistory::default();
         let down = DeviceId::new("bos/b");
         h.record(
@@ -340,9 +548,9 @@ mod tests {
             &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]),
         );
         assert_eq!(
-            h.view(15).device_series(&down),
-            vec![0.0],
-            "unreachable folds to zero"
+            vals(&h.view(15).device_series(&down)),
+            vec![None],
+            "unreachable is a gap, not a false zero"
         );
     }
 
@@ -360,11 +568,17 @@ mod tests {
     fn a_departed_device_is_pruned_from_history() {
         let mut h = HashrateHistory::default();
         h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
-        assert_eq!(h.view(15).device_series(&DeviceId::new("bos/a")), vec![3.0]);
+        assert_eq!(
+            vals(&h.view(15).device_series(&DeviceId::new("bos/a"))),
+            vec![Some(3.0)]
+        );
         // The next cycle no longer lists bos/a — its series is dropped.
         h.record(15, &summary(10.0, 4.0), &devices(&[("bos/b", 5.0, true)]));
         assert!(h.view(15).device_series(&DeviceId::new("bos/a")).is_empty());
-        assert_eq!(h.view(15).device_series(&DeviceId::new("bos/b")), vec![5.0]);
+        assert_eq!(
+            vals(&h.view(15).device_series(&DeviceId::new("bos/b"))),
+            vec![Some(5.0)]
+        );
     }
 
     #[test]
@@ -372,10 +586,9 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record(0, &summary(10.0, 4.0), &DeviceList::new()); // group "BOS BMM"
         assert_eq!(
-            h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM"),
-            vec![4.0]
+            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM")),
+            vec![Some(4.0)]
         );
-        // A later cycle summarizes a different model; the old group drops out.
         let other = FleetSummary {
             total: group("Total", 7.0),
             groups: vec![group("BOS BFM", 7.0)],
@@ -387,8 +600,108 @@ mod tests {
                 .is_empty()
         );
         assert_eq!(
-            h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BFM"),
-            vec![7.0]
+            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BFM")),
+            vec![Some(7.0)]
+        );
+    }
+
+    // ── Persistence ──────────────────────────────────────────────────
+
+    #[test]
+    fn snapshot_round_trips_total_and_model_series() {
+        let mut h = HashrateHistory::default();
+        h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
+        h.record(15, &summary(12.0, 5.0), &devices(&[("bos/a", 4.0, true)]));
+        let blob = h
+            .take_snapshot(0)
+            .expect("BUG: first snapshot always fires");
+
+        let mut restored = HashrateHistory::default();
+        assert!(restored.restore(&blob, 15, 20), "fresh blob restores");
+        assert_eq!(
+            vals(&restored.view(15).total_series()),
+            vec![Some(10.0), Some(12.0)]
+        );
+        assert_eq!(
+            vals(
+                &restored
+                    .view(15)
+                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
+            ),
+            vec![Some(4.0), Some(5.0)]
+        );
+        // Per-device series are RAM-only: never persisted.
+        assert!(
+            restored
+                .view(15)
+                .device_series(&DeviceId::new("bos/a"))
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn a_stale_tier_is_dropped_on_restore() {
+        let mut h = HashrateHistory::default();
+        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
+        let mut restored = HashrateHistory::default();
+        // Downtime of 20 min: exceeds the 15-min tier's range (dropped) but not
+        // the 1-h tier's (kept).
+        let saved_at = 0;
+        let now = 20 * 60;
+        restored.restore(&blob, saved_at, now);
+        assert!(
+            restored.view(15).total_series().is_empty(),
+            "15-min tier fully stale"
+        );
+        assert_eq!(
+            vals(&restored.view(60).total_series()),
+            vec![Some(10.0)],
+            "1-h tier still in range"
+        );
+    }
+
+    #[test]
+    fn a_corrupt_blob_is_rejected() {
+        let mut h = HashrateHistory::default();
+        assert!(!h.restore(b"", 0, 0), "empty blob");
+        assert!(
+            !h.restore(&[SNAPSHOT_MAGIC, 0xEE, 1, 2, 3], 0, 0),
+            "bad version"
+        );
+        assert!(
+            !h.restore(&[SNAPSHOT_MAGIC, SNAPSHOT_VERSION, 0xFF, 0xFF], 0, 0),
+            "garbage payload"
+        );
+        assert!(h.view(15).total_series().is_empty(), "nothing restored");
+    }
+
+    #[test]
+    fn an_empty_history_is_not_snapshotted() {
+        let mut h = HashrateHistory::default();
+        assert!(
+            h.take_snapshot(0).is_none(),
+            "nothing recorded — no blob, and the first-snapshot slot is kept"
+        );
+        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        assert!(
+            h.take_snapshot(0).is_some(),
+            "the first data-bearing snapshot fires"
+        );
+    }
+
+    #[test]
+    fn snapshot_is_rate_limited() {
+        let mut h = HashrateHistory::default();
+        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        assert!(h.take_snapshot(0).is_some(), "first snapshot fires");
+        assert!(
+            h.take_snapshot(SNAPSHOT_INTERVAL_SECS - 1).is_none(),
+            "within the interval — skipped"
+        );
+        assert!(
+            h.take_snapshot(SNAPSHOT_INTERVAL_SECS).is_some(),
+            "after the interval — fires"
         );
     }
 }

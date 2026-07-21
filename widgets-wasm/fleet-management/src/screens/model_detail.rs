@@ -9,6 +9,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::history::{ChartWindow, HistoryDatum};
 use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::screens::parts::{
@@ -39,7 +40,7 @@ pub struct DeviceRow {
     pub click_id: String,
     pub status: DeviceStatus,
     pub hashrate: Hashrate,
-    pub series: Vec<f32>,
+    pub series: Vec<HistoryDatum>,
     pub power: ElectricPower,
     pub efficiency: MiningEfficiency,
     pub avg_temp: Temperature,
@@ -54,6 +55,7 @@ pub struct ModelDetailViewData {
     pub title: String,
     pub device_count: usize,
     pub rows: Vec<DeviceRow>,
+    pub window: ChartWindow,
     pub page: usize,
     pub page_count: usize,
 }
@@ -102,7 +104,7 @@ fn table_card(data: &ModelDetailViewData) -> Node {
     let mut rows: Vec<Node> = vec![header_row()];
     for r in &data.rows {
         rows.push(separator());
-        rows.push(device_row(r));
+        rows.push(device_row(r, data.window));
     }
     col(
         props!(background: BORDER, flex: 1.0, padding: 1.0, max_width: TABLE_MAX_W),
@@ -130,7 +132,7 @@ fn header_row() -> Node {
     )
 }
 
-fn device_row(r: &DeviceRow) -> Node {
+fn device_row(r: &DeviceRow, window: ChartWindow) -> Node {
     let host = cell(
         COL_HOST,
         text(
@@ -141,7 +143,7 @@ fn device_row(r: &DeviceRow) -> Node {
     // A device with no live telemetry would be a row of meaningless zeros; show
     // its status where the metrics would be, instead of cramming it beside them.
     let body = match r.status {
-        DeviceStatus::Ok | DeviceStatus::Degraded => metric_cells(r),
+        DeviceStatus::Ok | DeviceStatus::Degraded => metric_cells(r, window),
         DeviceStatus::Unreachable | DeviceStatus::ApiError | DeviceStatus::AuthError => {
             vec![status_banner(r.status)]
         }
@@ -157,7 +159,7 @@ fn device_row(r: &DeviceRow) -> Node {
 
 // The metric cells for a delivering device, ending in the flex slack that pushes
 // the Detail button to the right edge.
-fn metric_cells(r: &DeviceRow) -> Vec<Node> {
+fn metric_cells(r: &DeviceRow, window: ChartWindow) -> Vec<Node> {
     vec![
         cell(COL_HASHRATE, {
             let (v, u) = r.hashrate.format_si_parts(3);
@@ -167,7 +169,7 @@ fn metric_cells(r: &DeviceRow) -> Vec<Node> {
             COL_SPARK,
             canvas(
                 props!(width: SPARK_W, height: 32.0),
-                area_chart(&r.series, SPARK_W, 32.0, 0.15),
+                area_chart(&r.series, window, SPARK_W, 32.0, 0.15),
             ),
         ),
         cell(COL_POWER, {

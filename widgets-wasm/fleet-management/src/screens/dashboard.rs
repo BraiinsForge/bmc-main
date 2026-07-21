@@ -12,6 +12,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::history::{ChartWindow, HistoryDatum};
 use crate::screens::icons;
 use crate::screens::parts::{
     BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, VALUE_FONT,
@@ -33,7 +34,8 @@ pub struct DashboardViewData {
     pub off: usize,
     pub auth: usize,
     pub hashrate: Hashrate,
-    pub hashrate_series: Vec<f32>,
+    pub hashrate_series: Vec<HistoryDatum>,
+    pub window: ChartWindow,
     pub power: ElectricPower,
     pub efficiency: MiningEfficiency,
     pub temp_min: Temperature,
@@ -109,7 +111,15 @@ fn fleet_status(data: &DashboardViewData) -> Node {
 
 // Hashrate card: the area chart plus the hero value drawn over it on one canvas.
 fn hashrate(data: &DashboardViewData) -> Node {
-    let mut draws = scaled_area_chart(&data.hashrate_series, CHART_W, ROW_H, 0.42, None, true);
+    let mut draws = scaled_area_chart(
+        &data.hashrate_series,
+        data.window,
+        CHART_W,
+        ROW_H,
+        0.42,
+        None,
+        true,
+    );
     draws.push(Draw::text(
         CHART_W / 2.0,
         ROW_H / 2.0 - 24.0,

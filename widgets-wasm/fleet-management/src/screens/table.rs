@@ -13,6 +13,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::device::DeviceFamily;
+use crate::history::{ChartWindow, HistoryDatum};
 use crate::layout::truncate_label;
 use crate::screens::parts::{
     BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
@@ -47,7 +48,7 @@ pub struct ModelRow {
     pub degraded: usize,
     pub off: usize,
     pub hashrate: Hashrate,
-    pub series: Vec<f32>,
+    pub series: Vec<HistoryDatum>,
     pub power: ElectricPower,
     pub efficiency: MiningEfficiency,
     pub avg_temp: Temperature,
@@ -58,6 +59,7 @@ pub struct TableViewData {
     pub title: String,
     pub device_count: usize,
     pub rows: Vec<ModelRow>,
+    pub window: ChartWindow,
     pub page: usize,
     pub page_count: usize,
 }
@@ -83,7 +85,7 @@ fn table_card(data: &TableViewData) -> Node {
     let mut rows: Vec<Node> = vec![header_row()];
     for r in &data.rows {
         rows.push(separator());
-        rows.push(model_row(r));
+        rows.push(model_row(r, data.window));
     }
     // border-sim card wrapping the header + data rows.
     col(
@@ -111,7 +113,7 @@ fn header_row() -> Node {
     )
 }
 
-fn model_row(r: &ModelRow) -> Node {
+fn model_row(r: &ModelRow, window: ChartWindow) -> Node {
     row(
         props!(height: DATA_H, padding: ROW_PAD, cross_align: CrossAlign::Center),
         [
@@ -142,7 +144,7 @@ fn model_row(r: &ModelRow) -> Node {
                 COL_SPARK,
                 canvas(
                     props!(width: SPARK_W, height: 32.0),
-                    area_chart(&r.series, SPARK_W, 32.0, 0.15),
+                    area_chart(&r.series, window, SPARK_W, 32.0, 0.15),
                 ),
             ),
             cell(COL_POWER, {
