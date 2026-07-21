@@ -405,14 +405,14 @@ pub extern "C" fn render(delta_ms: u32) {
                 let _s = profile::span("summarize");
                 DEVICES.with(|d| summary::summarize(&d.borrow(), &filters))
             };
-            // Append one hashrate sample per telemetry cycle for the charts.
+            // Feed the fold into every chart tier; each samples at its own rate.
             {
                 let _s = profile::span("history");
+                let now = SystemTime::now().unix_secs;
                 DEVICES.with(|d| {
                     let devices = d.borrow();
                     HISTORY.with(|h| {
-                        h.borrow_mut()
-                            .record(devices.telemetry_seq(), &summary, &devices);
+                        h.borrow_mut().record(now, &summary, &devices);
                     });
                 });
             }
@@ -426,6 +426,9 @@ pub extern "C" fn render(delta_ms: u32) {
             });
         }
         let derived = cell.as_mut().expect("BUG: derived view populated above");
+        let span_minutes = manifest_params::Params::current()
+            .chart_span_minutes
+            .as_manifest_value();
         VIEW.with(|view_state| {
             let mut nav = view_state.borrow_mut();
             let selected = nav
@@ -467,7 +470,8 @@ pub extern "C" fn render(delta_ms: u32) {
                         .iter()
                         .find(|(id, _, _)| id.as_str() == device_id)
                         .and_then(|(id, group, _)| {
-                            let series = HISTORY.with(|h| h.borrow().device_series(id));
+                            let series =
+                                HISTORY.with(|h| h.borrow().view(span_minutes).device_series(id));
                             DEVICES.with(|devs| {
                                 devs.borrow()
                                     .iter()
@@ -492,7 +496,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &sel.label,
                                 rows,
                                 sel.page,
-                                &h.borrow(),
+                                &h.borrow().view(span_minutes),
                             )
                         });
                         let page_count = data.page_count;
@@ -505,7 +509,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             &sel.label,
                             rows,
                             sel.page,
-                            &h.borrow(),
+                            &h.borrow().view(span_minutes),
                         )
                     });
                     let page_count = data.page_count;
@@ -524,7 +528,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             DashboardViewData::from_summary(
                                 &derived.summary,
                                 &derived.fleet_name,
-                                &h.borrow(),
+                                &h.borrow().view(span_minutes),
                             )
                         });
                         (screens::dashboard::dashboard_view(&data), 1)
@@ -535,7 +539,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &derived.summary,
                                 &derived.fleet_name,
                                 nav.fleet_page,
-                                &h.borrow(),
+                                &h.borrow().view(span_minutes),
                             )
                         });
                         let page_count = table.page_count;

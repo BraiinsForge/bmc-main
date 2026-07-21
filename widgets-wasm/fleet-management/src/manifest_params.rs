@@ -8,10 +8,59 @@
 
 use bmc_wasm_sdk::params as snapshot;
 use bmc_wasm_sdk::params::typed::ParamRead;
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChartSpanMinutes {
+    _15Minutes,
+    _1Hour,
+    _6Hours,
+    _24Hours,
+}
+impl ChartSpanMinutes {
+    /// Every variant, in manifest-declaration order. Useful when a widget
+    /// wants to render a "pick one" UI or audit the enum exhaustively.
+    pub const ALL: &'static [Self] = &[
+        Self::_15Minutes,
+        Self::_1Hour,
+        Self::_6Hours,
+        Self::_24Hours,
+    ];
+    /// Manifest wire value for this variant.
+    #[must_use]
+    pub fn as_manifest_value(self) -> i32 {
+        match self {
+            Self::_15Minutes => 15,
+            Self::_1Hour => 60,
+            Self::_6Hours => 360,
+            Self::_24Hours => 1440,
+        }
+    }
+    /// Human-readable label declared in the manifest's `enum_values`.
+    #[must_use]
+    pub fn as_manifest_label(self) -> &'static str {
+        match self {
+            Self::_15Minutes => "15 minutes",
+            Self::_1Hour => "1 hour",
+            Self::_6Hours => "6 hours",
+            Self::_24Hours => "24 hours",
+        }
+    }
+    #[must_use]
+    pub fn from_manifest_value(v: i32) -> Option<Self> {
+        match v {
+            15 => Some(Self::_15Minutes),
+            60 => Some(Self::_1Hour),
+            360 => Some(Self::_6Hours),
+            1440 => Some(Self::_24Hours),
+            _ => None,
+        }
+    }
+}
+bmc_wasm_sdk::impl_manifest_i32_enum!(ChartSpanMinutes);
 #[derive(Clone, Debug, PartialEq)]
 pub struct Params {
     pub axeos_enabled: bool,
     pub bos_password: String,
+    pub chart_span_minutes: ChartSpanMinutes,
     pub fleet_name: String,
     pub ubos_password: String,
     pub ubos_username: String,
@@ -23,6 +72,10 @@ impl Params {
         Self {
             axeos_enabled: <bool as ParamRead>::read_required(snap, "axeos_enabled"),
             bos_password: <String as ParamRead>::read_required(snap, "bos_password"),
+            chart_span_minutes: <ChartSpanMinutes as ParamRead>::read_required(
+                snap,
+                "chart_span_minutes",
+            ),
             fleet_name: <String as ParamRead>::read_required(snap, "fleet_name"),
             ubos_password: <String as ParamRead>::read_required(snap, "ubos_password"),
             ubos_username: <String as ParamRead>::read_required(snap, "ubos_username"),
@@ -76,6 +129,9 @@ impl Params {
         }
         if self.bos_password != other.bos_password {
             out.push("bos_password");
+        }
+        if self.chart_span_minutes != other.chart_span_minutes {
+            out.push("chart_span_minutes");
         }
         if self.fleet_name != other.fleet_name {
             out.push("fleet_name");

@@ -53,6 +53,30 @@
       "description": "Include AxeOS miners in the fleet view and keep polling them",
       "type": "boolean",
       "default_value": true
+    },
+    "chart_span_minutes": {
+      "name": "Chart time range",
+      "description": "Time range covered by the hashrate charts. A fixed number of points spans the range, so a longer range samples less often.",
+      "type": "integer",
+      "default_value": 60,
+      "enum_values": [
+        {
+          "value": 15,
+          "label": "15 minutes"
+        },
+        {
+          "value": 60,
+          "label": "1 hour"
+        },
+        {
+          "value": 360,
+          "label": "6 hours"
+        },
+        {
+          "value": 1440,
+          "label": "24 hours"
+        }
+      ]
     }
   }
 }

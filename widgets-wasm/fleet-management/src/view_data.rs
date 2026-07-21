@@ -6,7 +6,7 @@
 use bmc_wasm_sdk::{Hashrate, Temperature};
 
 use crate::device::{DeviceId, KnownDevice};
-use crate::history::HashrateHistory;
+use crate::history::HistoryView;
 use crate::screens::dashboard::DashboardViewData;
 use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
@@ -31,11 +31,7 @@ fn degraded(g: &GroupSummary) -> usize {
 impl DashboardViewData {
     /// The grid overview, from the fleet total and its recorded history.
     #[must_use]
-    pub fn from_summary(
-        summary: &FleetSummary,
-        fleet_name: &str,
-        history: &HashrateHistory,
-    ) -> Self {
+    pub fn from_summary(summary: &FleetSummary, fleet_name: &str, history: &HistoryView<'_>) -> Self {
         let t = &summary.total;
         Self {
             title: fleet_name.to_owned(),
@@ -62,7 +58,7 @@ impl TableViewData {
         summary: &FleetSummary,
         fleet_name: &str,
         page: usize,
-        history: &HashrateHistory,
+        history: &HistoryView<'_>,
     ) -> Self {
         let groups = &summary.groups;
         let page_count = groups.len().div_ceil(TABLE_PAGE_SIZE).max(1);
@@ -103,7 +99,7 @@ impl ModelDetailViewData {
         title: &str,
         rows: &[(DeviceId, GroupSummary, DeviceStatus)],
         page: usize,
-        history: &HashrateHistory,
+        history: &HistoryView<'_>,
     ) -> Self {
         let page_count = rows.len().div_ceil(MODEL_DETAIL_PAGE_SIZE).max(1);
         let page = page.min(page_count - 1);
@@ -183,6 +179,7 @@ impl DeviceDetailData {
 mod tests {
     use super::*;
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, Membership};
+    use crate::history::HashrateHistory;
     use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
@@ -224,10 +221,11 @@ mod tests {
             groups,
         };
         let history = HashrateHistory::default();
-        let first = TableViewData::from_summary(&summary, "Rig", 0, &history);
+        let view = history.view(60);
+        let first = TableViewData::from_summary(&summary, "Rig", 0, &view);
         assert_eq!(first.page_count, 3, "9 groups, 4 per page");
         assert_eq!(first.rows.len(), TABLE_PAGE_SIZE);
-        let last = TableViewData::from_summary(&summary, "Rig", 99, &history);
+        let last = TableViewData::from_summary(&summary, "Rig", 99, &view);
         assert_eq!(last.page, 2, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 1);
     }
@@ -246,12 +244,13 @@ mod tests {
             })
             .collect();
         let history = HashrateHistory::default();
-        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &history);
+        let view = history.view(60);
+        let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &view);
         assert_eq!(first.device_count, 6);
         assert_eq!(first.page_count, 2, "6 devices, 4 per page");
         assert_eq!(first.rows.len(), MODEL_DETAIL_PAGE_SIZE);
         assert_eq!(first.rows[0].click_id, "device:dev-0");
-        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &history);
+        let last = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 9, &view);
         assert_eq!(last.page, 1, "an out-of-range page clamps to the last");
         assert_eq!(last.rows.len(), 2);
     }
