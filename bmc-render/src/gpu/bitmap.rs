@@ -295,24 +295,12 @@ impl BitmapRegistry {
 }
 
 /// Decode image bytes to RGBA, upload to the GPU, and return the pixel data.
-///
-/// The decode step is wrapped in `catch_unwind` because third-party JPEG decoders
-/// (zune-jpeg AVX2/NEON paths) can panic on certain image dimensions.
 fn decode_and_upload(
     data: &[u8],
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     flags: ImageFlags,
 ) -> anyhow::Result<(ImageId, Vec<u8>, u32, u32)> {
-    // Decode on a owned copy so the closure is UnwindSafe (no &mut references).
-    let rgba = panic::catch_unwind(|| {
-        image::ImageReader::new(Cursor::new(&data))
-            .with_guessed_format()
-            .map_err(image::ImageError::IoError)
-            .and_then(image::ImageReader::decode)
-    })
-    .map_err(|_| anyhow::anyhow!("image decoder panicked"))?
-    .map_err(|e| anyhow::anyhow!("{e}"))?
-    .to_rgba8();
+    let rgba = decode_full_to_dynamic(data)?.to_rgba8();
 
     let (w, h) = (rgba.width(), rgba.height());
     let pixels_rgba: &[RGBA8] = rgba.as_raw().as_rgba();
@@ -384,6 +372,9 @@ fn decode_jpeg_to_dynamic(
 /// memory is the full source (within budget), not the target. A streaming
 /// row-wise PNG decode was deferred: it only helps non-interlaced PNGs and is
 /// messy for that narrow gain; large sources lean on server-side `{{width}}`.
+///
+/// The decode runs under `catch_unwind` — third-party decoders
+/// (zune-jpeg's AVX2/NEON paths) can panic on certain image dimensions.
 fn decode_full_to_dynamic(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
     panic::catch_unwind(|| {
         // Reject oversized sources before the full decode allocates (pixel budget).
@@ -680,12 +671,64 @@ mod tests {
         assert_eq!((w, h), (100, 80));
     }
 
+    /// Solid-color RGBA WebP of the given size, encoded each call.
+    fn solid_webp(w: u32, h: u32) -> Vec<u8> {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use std::io::Cursor;
+
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(w, h, Rgba([20, 120, 200, 255]));
+        let mut buf = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, ImageFormat::WebP)
+            .expect("BUG: WebP encode should succeed");
+        buf.into_inner()
+    }
+
     #[test]
     fn non_jpeg_decodes_within_bounds() {
         let png = minimal_png();
         let (rgba, w, h) = decode_scaled_to_fit(&png, 640, 480).expect("BUG: PNG decode");
         assert!(w <= 640 && h <= 480);
         assert_eq!(rgba.len(), (w * h * 4) as usize);
+    }
+
+    /// WebP has no scale-on-load, so it full-decodes first
+    /// and only the resize afterwards bounds it.
+    #[test]
+    fn webp_larger_than_viewport_bounds_to_it() {
+        let webp = solid_webp(1200, 900);
+        let (rgba, w, h) = decode_scaled_to_fit(&webp, 640, 480).expect("BUG: WebP decode");
+        assert!(w <= 640 && h <= 480, "not bounded: {w}x{h}");
+        assert_eq!(rgba.len(), (w * h * 4) as usize);
+    }
+
+    /// Solid-color RGBA PNG of the given size, encoded each call.
+    fn solid_png(w: u32, h: u32) -> Vec<u8> {
+        use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+        use std::io::Cursor;
+
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> =
+            ImageBuffer::from_pixel(w, h, Rgba([20, 120, 200, 255]));
+        let mut buf = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(img)
+            .write_to(&mut buf, ImageFormat::Png)
+            .expect("BUG: PNG encode should succeed");
+        buf.into_inner()
+    }
+
+    #[test]
+    fn register_refuses_source_past_pixel_budget() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        // 2049x2049 is one row/col past the 2048x2048 (MAX_DECODE_IMAGE_PIXELS) cap.
+        let png = solid_png(2049, 2049);
+        assert!(
+            reg.register("crate::over_budget", &png, &mut canvas, ImageFlags::empty())
+                .is_none(),
+            "a source past the pixel budget must be refused, not decoded"
+        );
     }
 
     #[test]

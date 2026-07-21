@@ -35,7 +35,7 @@ wasmi.workspace = true
 # Rendering
 femtovg.workspace = true
 glow.workspace = true
-image = { workspace = true, features = ["jpeg", "png"] }
+image.workspace = true
 
 # Layout
 taffy.workspace = true

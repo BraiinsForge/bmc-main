@@ -495,7 +495,7 @@ mod tests {
 
     use super::{
         MAX_DECODE_IMAGE_PIXELS, decode_image_rgba_limited, decode_target_within_budget,
-        rgba_byte_len_limited,
+        probe_image_dimensions, rgba_byte_len_limited,
     };
 
     #[test]
@@ -540,5 +540,90 @@ mod tests {
             .expect("BUG: test PNG encoding should succeed");
 
         assert!(decode_image_rgba_limited(&encoded.into_inner()).is_err());
+    }
+
+    const PIXEL: Rgba<u8> = Rgba([0x12, 0x34, 0x56, 0xFF]);
+
+    /// Enabled formats whose encoder reproduces `PIXEL` exactly.
+    ///
+    /// Farbfeld is absent because it cannot encode the fixture —
+    /// image 0.25.10 answers "does not support the color type `Rgba8`".
+    /// Its decoder is covered by the `deck image-formats` corpus instead.
+    const LOSSLESS_FORMATS: &[ImageFormat] = &[
+        ImageFormat::Bmp,
+        ImageFormat::Gif,
+        ImageFormat::Png,
+        ImageFormat::Pnm,
+        ImageFormat::Qoi,
+        ImageFormat::Tiff,
+        ImageFormat::WebP,
+    ];
+
+    fn encode(format: ImageFormat) -> Vec<u8> {
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgba8(RgbaImage::from_pixel(2, 2, PIXEL))
+            .write_to(&mut encoded, format)
+            .unwrap_or_else(|e| panic!("BUG: encoding {format:?} for the fixture failed: {e}"));
+        encoded.into_inner()
+    }
+
+    #[test]
+    fn decode_image_limited_round_trips_every_lossless_format() {
+        for &format in LOSSLESS_FORMATS {
+            let rgba = decode_image_rgba_limited(&encode(format))
+                .unwrap_or_else(|e| panic!("BUG: {format:?} should decode within budget: {e}"));
+
+            assert_eq!(
+                (rgba.width(), rgba.height()),
+                (2, 2),
+                "{format:?} dimensions"
+            );
+            assert!(
+                rgba.pixels().all(|p| *p == PIXEL),
+                "{format:?} did not preserve pixels losslessly"
+            );
+        }
+    }
+
+    #[test]
+    fn decode_image_limited_accepts_lossy_jpeg() {
+        let rgba = decode_image_rgba_limited(&encode(ImageFormat::Jpeg))
+            .expect("BUG: JPEG should decode within budget");
+
+        assert_eq!((rgba.width(), rgba.height()), (2, 2));
+    }
+
+    /// `host_decode_image` probes or decodes depending on a null output
+    /// pointer, so WebP has to survive both branches.
+    #[test]
+    fn webp_probes_and_decodes_through_host_decode_image() {
+        let encoded = encode(ImageFormat::WebP);
+
+        assert_eq!(
+            probe_image_dimensions(&encoded).expect("BUG: WebP dimensions should probe"),
+            (2, 2)
+        );
+        assert!(decode_image_rgba_limited(&encoded).is_ok());
+    }
+
+    /// HDR decodes to `Rgb32F`, so the binding limit is `Limits::reserve`
+    /// rather than `MAX_DECODE_IMAGE_PIXELS`.
+    #[test]
+    fn decode_image_limited_rejects_hdr_over_alloc_budget() {
+        let img = ImageBuffer::from_pixel(2048, 2048, image::Rgb([0.5_f32, 0.25, 0.125]));
+        let mut encoded = Cursor::new(Vec::new());
+        DynamicImage::ImageRgb32F(img)
+            .write_to(&mut encoded, ImageFormat::Hdr)
+            .expect("BUG: test HDR encoding should succeed");
+
+        let encoded = encoded.into_inner();
+
+        // Probe first, so the rejection below is attributable to the budget
+        // rather than to HDR simply not being recognised.
+        assert_eq!(
+            probe_image_dimensions(&encoded).expect("BUG: HDR dimensions should probe"),
+            (2048, 2048)
+        );
+        assert!(decode_image_rgba_limited(&encoded).is_err());
     }
 }

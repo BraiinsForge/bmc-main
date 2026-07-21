@@ -11,7 +11,8 @@ screen while a refresh is in flight or the network is down.
 > As an operator, I want the Deck to display an image from a URL I choose, so I can show artwork, branding, or a
 > dashboard snapshot.
 
-- The URL points at a **PNG or JPEG**; the image is drawn fitted to the widget.
+- The URL points at a common image format — **PNG, JPEG, WebP, GIF, BMP, TIFF, or ICO** among others; the image is drawn
+  fitted to the widget.
 - The URL may contain `{{width}}` and `{{height}}` placeholders, substituted with the widget's pixel size so a
   cooperative server can return an already-sized image instead of a giant one.
 - A *Refresh interval* (seconds) controls how often the image is re-fetched.
@@ -38,8 +39,12 @@ screen while a refresh is in flight or the network is down.
 
 ## Constraints
 
-- Inputs are limited to **PNG and JPEG**; other formats or oversized sources the server won't shrink are rejected to a
-  placeholder/error state.
+- Inputs are **PNG, JPEG, WebP, GIF, BMP, ICO, TIFF, QOI, PNM, HDR, and farbfeld**, detected from the file contents
+  rather than the URL or content type. AVIF, OpenEXR, and TGA are not supported, and oversized sources the server won't
+  shrink are rejected to a placeholder/error state.
+- Animated sources such as GIF and WebP render their **first frame** only; this is a static-image widget.
+- High-precision formats (HDR, farbfeld) decode into wider pixels, so they hit the size ceiling sooner than the 8-bit
+  formats do.
 - URL, refresh interval, and sizing are manifest-driven widget parameters, configurable from the web UI.
 - `{{width}}`/`{{height}}` templating is the primary strategy for large sources — the device avoids decoding a full-size
   image when the server honours the size hint.

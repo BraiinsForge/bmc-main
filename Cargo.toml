@@ -257,7 +257,26 @@ humantime-serde = "1.1.1"
 hyper = "1.6.0"
 iana-time-zone = "0.1.63"
 ii-stopwatch = { path = "bmc-shared/stopwatch" }
-image = { version = "0.25.10", default-features = false }
+# `default-formats` minus
+#  - avif (pulls the heavy ravif/rav1e stack)
+#  - exr (large, and re-enables rayon through its `exr?/rayon`)
+#  - tga (no leading magic bytes, so `guess_format` can never select it)
+#  - dds (a DirectX texture container no URL serves; decode-only in `image`,
+#    so the round-trip test could never cover it)
+#  - ico (a Windows icon container rather than an image format,
+#    same call as dds; `image` also decodes it only from an RGBA PNG payload)
+image = { version = "0.25.10", default-features = false, features = [
+    "bmp",
+    "ff",
+    "gif",
+    "hdr",
+    "jpeg",
+    "png",
+    "pnm",
+    "qoi",
+    "tiff",
+    "webp",
+] }
 imgref = "1.12.0"
 index-bmc = { path = "tooling/index-bmc" }
 index-common = { path = "tooling/index-common" }
