@@ -65,8 +65,10 @@ use bmc_wasm_runtime::fixtures::{
 };
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{
-    LedEffect, LedRequest, RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+    DiskCache, LedEffect, LedRequest, RenderStatus, RuntimeConfig, SystemSnapshot,
+    WasmWidgetRuntime,
 };
+use clap::Parser;
 
 use paint::{
     GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
@@ -396,16 +398,40 @@ pub(crate) const PARAM_PANEL_W: u32 = 320;
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
+#[derive(Parser)]
+#[command(name = "testbed", about = "WASM widget testbed")]
 struct CliArgs {
+    /// The widget `.wasm` to load.
     wasm_path: PathBuf,
+    /// Widget manifest, when it isn't found next to the wasm.
+    #[arg(long = "manifest")]
     manifest_path: Option<PathBuf>,
+    /// Widget source root, for KV seeding and fixtures.
+    #[arg(long)]
     widget_root: Option<PathBuf>,
+    /// Write a perf report here after `--perf-frames` frames.
+    #[arg(long = "perf-report")]
     perf_report_path: Option<PathBuf>,
+    /// Frames to run before the perf report is written.
+    #[arg(long, default_value_t = 600)]
     perf_frames: u32,
+    /// Record a capture fixture for this viewport size (e.g. `small`).
+    #[arg(long = "record")]
     record_size: Option<String>,
+    /// Platform catalog JSON; the built-in catalog otherwise.
+    #[arg(long = "platform-catalog")]
     platform_catalog_path: Option<PathBuf>,
+    /// Platform id to select from the catalog.
+    #[arg(long = "platform")]
     platform_id: Option<String>,
+    /// Directory backing the widget blob cache, so history survives a rebuild;
+    /// the device wires its own, this brings the same to live `wasm::dev`.
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
 }
+
+/// Per-tag bucket cap for the dev blob cache, matching the device's flash cap.
+const DEV_CACHE_MAX_BYTES: u64 = 16 * 1_024 * 1_024;
 
 impl CliArgs {
     fn resolved_widget_root(&self) -> Option<PathBuf> {
@@ -413,112 +439,18 @@ impl CliArgs {
             .clone()
             .or_else(|| find_widget_root(&self.wasm_path))
     }
-}
 
-fn parse_args() -> Result<CliArgs> {
-    parse_args_from(std::env::args())
-}
-
-fn usage() -> &'static str {
-    "WASM Widget Testbed\n\
-     Usage: testbed <wasm_file> [--manifest=<path>] [--perf-report=<path>] \
-     [--perf-frames=<N>] [--record=<size>] [--platform-catalog=<path>] \
-     [--platform-catalog <path>] [--platform=<id>] [--platform <id>] \
-     [--widget-root=<path>] [--widget-root <path>]"
-}
-
-fn split_option_value<I>(
-    args: &mut std::iter::Peekable<I>,
-    option: &str,
-    value_name: &str,
-) -> Result<String>
-where
-    I: Iterator<Item = String>,
-{
-    let Some(value) = args.peek() else {
-        anyhow::bail!("{option} requires {value_name}\n{}", usage());
-    };
-    if value.starts_with("--") {
-        anyhow::bail!("{option} requires {value_name}\n{}", usage());
-    }
-    args.next()
-        .context("BUG: peeked split option value must still be present")
-}
-
-fn parse_args_from(args: impl IntoIterator<Item = String>) -> Result<CliArgs> {
-    let mut args = args.into_iter();
-    let _program = args.next();
-    let Some(wasm_arg) = args.next() else {
-        anyhow::bail!("{}", usage());
-    };
-
-    let wasm_path = PathBuf::from(wasm_arg);
-    let mut perf_report_path = None;
-    let mut perf_frames: u32 = 600;
-    let mut record_size = None;
-    let mut manifest_path = None;
-    let mut widget_root = None;
-    let mut platform_catalog_path = None;
-    let mut platform_id = None;
-    let mut args = args.peekable();
-    while let Some(arg) = args.next() {
-        if let Some(path) = arg.strip_prefix("--manifest=") {
-            manifest_path = Some(PathBuf::from(path));
-        } else if arg == "--manifest" {
-            manifest_path = Some(PathBuf::from(split_option_value(
-                &mut args,
-                "--manifest",
-                "a path",
-            )?));
-        } else if let Some(path) = arg.strip_prefix("--widget-root=") {
-            widget_root = Some(PathBuf::from(path));
-        } else if arg == "--widget-root" {
-            widget_root = Some(PathBuf::from(split_option_value(
-                &mut args,
-                "--widget-root",
-                "a path",
-            )?));
-        } else if let Some(path) = arg.strip_prefix("--perf-report=") {
-            perf_report_path = Some(PathBuf::from(path));
-        } else if arg == "--perf-report" {
-            perf_report_path = Some(PathBuf::from(split_option_value(
-                &mut args,
-                "--perf-report",
-                "a path",
-            )?));
-        } else if let Some(n) = arg.strip_prefix("--perf-frames=") {
-            perf_frames = n.parse().unwrap_or(600);
-        } else if arg == "--perf-frames" {
-            let n = split_option_value(&mut args, "--perf-frames", "a frame count")?;
-            perf_frames = n.parse().unwrap_or(600);
-        } else if let Some(s) = arg.strip_prefix("--record=") {
-            record_size = Some(s.to_owned());
-        } else if arg == "--record" {
-            record_size = Some(split_option_value(&mut args, "--record", "a size")?);
-        } else if let Some(path) = arg.strip_prefix("--platform-catalog=") {
-            platform_catalog_path = Some(PathBuf::from(path));
-        } else if arg == "--platform-catalog" {
-            platform_catalog_path = Some(PathBuf::from(split_option_value(
-                &mut args,
-                "--platform-catalog",
-                "a path",
-            )?));
-        } else if let Some(id) = arg.strip_prefix("--platform=") {
-            platform_id = Some(id.to_owned());
-        } else if arg == "--platform" {
-            platform_id = Some(split_option_value(&mut args, "--platform", "an id")?);
+    /// The disk-backed blob cache for `--cache-dir`, creating the directory
+    /// first; `None` when unset (the default) or uncreatable, so a hot loop
+    /// stays hermetic unless a cache is asked for.
+    fn asset_cache(&self) -> Option<DiskCache> {
+        let dir = self.cache_dir.clone()?;
+        if let Err(e) = std::fs::create_dir_all(&dir) {
+            tracing::warn!(dir = %dir.display(), %e, "cache dir create failed; blob cache off");
+            return None;
         }
+        Some(DiskCache::new(dir, DEV_CACHE_MAX_BYTES))
     }
-    Ok(CliArgs {
-        wasm_path,
-        manifest_path,
-        widget_root,
-        perf_report_path,
-        perf_frames,
-        record_size,
-        platform_catalog_path,
-        platform_id,
-    })
 }
 
 #[cfg(test)]
@@ -526,7 +458,7 @@ mod platforms_startup_tests {
     use super::*;
 
     fn parse_test_args(args: &[&str]) -> Result<CliArgs> {
-        parse_args_from(args.iter().map(|arg| (*arg).to_owned()))
+        CliArgs::try_parse_from(args.iter().copied()).map_err(anyhow::Error::from)
     }
 
     fn write_test_catalog() -> PathBuf {
@@ -603,6 +535,20 @@ mod platforms_startup_tests {
             Some(PathBuf::from("catalog.json"))
         );
         assert_eq!(cli.platform_id.as_deref(), Some("BMM101"));
+    }
+
+    #[test]
+    fn parse_args_accepts_cache_dir_forms() {
+        let equals = parse_test_args(&["testbed", "widget.wasm", "--cache-dir=/tmp/hist"])
+            .expect("BUG: --cache-dir= must parse");
+        assert_eq!(equals.cache_dir, Some(PathBuf::from("/tmp/hist")));
+
+        let split = parse_test_args(&["testbed", "widget.wasm", "--cache-dir", "/tmp/hist"])
+            .expect("BUG: --cache-dir <path> must parse");
+        assert_eq!(split.cache_dir, Some(PathBuf::from("/tmp/hist")));
+
+        let absent = parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: bare args parse");
+        assert_eq!(absent.cache_dir, None, "no cache without the flag");
     }
 
     #[test]
@@ -683,11 +629,14 @@ mod platforms_startup_tests {
             "--perf-report=out.json",
         ]);
         let Err(err) = result else {
-            panic!("BUG: split option must reject a following flag token");
+            panic!("BUG: a following flag token must not be swallowed as the value");
         };
 
         let err = err.to_string();
-        assert!(err.contains("--platform requires an id"), "{err}");
+        assert!(
+            err.contains("--platform"),
+            "rejection names the flag: {err}"
+        );
     }
 
     #[test]
@@ -833,7 +782,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
     bmc_render::tree::init_debug_flags();
 
-    let cli = parse_args()?;
+    let cli = CliArgs::parse();
     let (manifest_path, manifest) = load_manifest(
         &cli.wasm_path,
         cli.manifest_path.clone(),
@@ -1408,6 +1357,7 @@ impl TestbedApp {
                 params: params.clone(),
                 system: system.clone(),
                 led_request_sender: led_tx,
+                asset_cache: self.cli.asset_cache(),
                 ..RuntimeConfig::default()
             };
             tile.renderer.drop_all();
@@ -1553,6 +1503,7 @@ impl TestbedApp {
             } else {
                 RuntimeConfig {
                     kv_store_path: Some(kv_path.clone()),
+                    asset_cache: self.cli.asset_cache(),
                     ..RuntimeConfig::default()
                 }
             };

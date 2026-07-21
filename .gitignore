@@ -10,6 +10,10 @@ result**
 .claude/*.local.*
 .agents/*.local.*
 
+# Scratch areas
+.ai/scratch/
+.cache/
+
 # IDE
 .idea
 .direnv/

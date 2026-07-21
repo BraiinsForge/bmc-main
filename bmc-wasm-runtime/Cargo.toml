@@ -96,7 +96,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
-testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete", "clap"]
 capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
 
 [[bin]]
