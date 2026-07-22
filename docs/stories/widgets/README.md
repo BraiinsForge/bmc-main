@@ -7,8 +7,9 @@ for a single widget.
 
 ### [Block Height Widget](blockheight.md)
 
-A widget that displays the latest Bitcoin block height with an optional block date and time, a configurable numeral
-weight, and an automatic refresh against the Braiins public API. Renders at all four widget sizes.
+A widget that displays the latest Bitcoin block height with an optional *found at* date and time, a configurable numeral
+weight, and an automatic refresh against the Braiins Forge Nexus. Renders at all four widget sizes and on the round
+BFM100 face.
 
 ### [Clock Widget](clock.md)
 

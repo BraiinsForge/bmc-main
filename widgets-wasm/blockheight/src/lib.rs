@@ -35,10 +35,12 @@ mod wasm_glue {
     )]
     use bmc_wasm_sdk::*;
 
-    // `currency=usd` is required by the API; without it the endpoint returns 400.
     const BLOCK_HEIGHT_API_URL: &str =
-        "https://public-api.braiins.com/v2/blocks?limit=1&currency=usd";
+        "https://nexus.braiinsforge.com/api/v1/data/bitcoin/block/latest";
     const REFRESH_MS: u32 = 60_000;
+
+    /// Bitcoin genesis block time (2009-01-03).
+    const BITCOIN_GENESIS_UNIX: i64 = 1_231_006_505;
 
     const NOT_AVAILABLE: &str = "--";
 
@@ -46,38 +48,44 @@ mod wasm_glue {
     struct SizeParams {
         number_font_size: u32,
         timestamp_font_size: u32,
+        caption_font_size: u32,
         padding_left: f32,
         padding_top: f32,
-        padding_bottom: f32,
+        /// Gap between the height numeral and the "Found at" block.
+        stack_gap: f32,
     }
 
     const SMALL: SizeParams = SizeParams {
         number_font_size: 64,
         timestamp_font_size: 24,
+        caption_font_size: 18,
         padding_left: 16.0,
         padding_top: 8.0,
-        padding_bottom: 16.0,
+        stack_gap: 8.0,
     };
     const MEDIUM: SizeParams = SizeParams {
         number_font_size: 96,
         timestamp_font_size: 24,
+        caption_font_size: 18,
         padding_left: 16.0,
         padding_top: 8.0,
-        padding_bottom: 16.0,
+        stack_gap: 8.0,
     };
     const LARGE: SizeParams = SizeParams {
         number_font_size: 120,
         timestamp_font_size: 32,
+        caption_font_size: 22,
         padding_left: 16.0,
         padding_top: 8.0,
-        padding_bottom: 16.0,
+        stack_gap: 12.0,
     };
     const FULL: SizeParams = SizeParams {
         number_font_size: 200,
         timestamp_font_size: 48,
+        caption_font_size: 32,
         padding_left: 24.0,
         padding_top: 16.0,
-        padding_bottom: 60.0,
+        stack_gap: 16.0,
     };
 
     fn size_params(variant: SizeVariant) -> &'static SizeParams {
@@ -96,6 +104,32 @@ mod wasm_glue {
     const HEADER_COLOR: Color = GRAY_60;
     const HEIGHT_COLOR: Color = WHITE;
     const TIMESTAMP_COLOR: Color = GRAY_60;
+    const FOUND_AT_CAPTION: &str = "Found at";
+    const CAPTION_GAP_PX: f32 = 4.0;
+
+    // Round sizes stay conservative so a grouped 7-digit height
+    // ("9 999 999") clears the circular cutout when centered.
+    const ROUND_NUMBER_PX: u32 = 80;
+    const ROUND_TIMESTAMP_PX: u32 = 24;
+    const ROUND_CAPTION_PX: u32 = 18;
+    const ROUND_STACK_GAP_PX: f32 = 16.0;
+
+    /// The "Found at" caption stacked over the formatted block time.
+    fn timestamp_block(caption_size: u32, timestamp_size: u32, gap: f32) -> Node {
+        col(
+            props!(gap: gap, cross_align: CrossAlign::Center),
+            [
+                text(
+                    FOUND_AT_CAPTION,
+                    style!(size: caption_size, weight: FontWeight::REGULAR, color: TIMESTAMP_COLOR),
+                ),
+                text(
+                    format_timestamp(),
+                    style!(size: timestamp_size, weight: FontWeight::REGULAR, color: TIMESTAMP_COLOR),
+                ),
+            ],
+        )
+    }
 
     fn font_weight(style: manifest_params::NumbersFontStyle) -> FontWeight {
         use manifest_params::NumbersFontStyle;
@@ -108,7 +142,8 @@ mod wasm_glue {
 
     struct BlockData {
         height: u32,
-        timestamp_utc: String,
+        /// Block header time, unix seconds (nexus normalizes it server-side).
+        timestamp_unix: i64,
         /// `format_date + ", " + format_time` against the current host
         /// snapshot. `None` until first computed in `render`, and cleared by
         /// `on_system_update` when the snapshot may have changed.
@@ -149,23 +184,27 @@ mod wasm_glue {
     fn on_block_data(handle: PollHandle, response: &FetchResponse) {
         let outcome = if response.ok() {
             let json = response.json();
-            let raw_height = json.i64("/0/height");
-            let timestamp = json.str("/0/timestamp");
-            match (raw_height, timestamp) {
+            let raw_height = json.i64("/data/height");
+            let timestamp_unix = json.i64("/data/time");
+            match (raw_height, timestamp_unix) {
                 (None, _) | (_, None) => {
-                    log_warn!("blockheight: payload missing height or timestamp");
+                    log_warn!("blockheight: payload missing height or time");
                     None
                 }
                 (Some(raw), _) if u32::try_from(raw).is_err() => {
                     log_warn!("blockheight: height {raw} out of u32 range; ignoring payload");
                     None
                 }
-                (Some(raw), Some(timestamp_utc)) => {
+                (_, Some(time)) if time < BITCOIN_GENESIS_UNIX => {
+                    log_warn!("blockheight: block time {time} precedes genesis; ignoring payload");
+                    None
+                }
+                (Some(raw), Some(timestamp_unix)) => {
                     let height = u32::try_from(raw)
                         .expect("BUG: u32::try_from re-checked after explicit Err branch above");
                     Some(BlockData {
                         height,
-                        timestamp_utc,
+                        timestamp_unix,
                         formatted_timestamp: None,
                     })
                 }
@@ -196,14 +235,19 @@ mod wasm_glue {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
-        let WidgetSize {
-            width,
-            height,
-            variant,
-        } = widget_size();
-        let size = size_params(variant);
+        let ws = widget_size();
         let params = manifest_params::Params::current();
+        let root = if matches!(widget_viewport().shape, ViewportShape::Round) {
+            view_round(ws, &params)
+        } else {
+            view_rect(size_params(ws.variant), &params)
+        };
+        let _ = render_ui(ws.width, ws.height, root);
+    }
 
+    /// Rectangular layout: header pinned top-left; the height and its "Found at"
+    /// timestamp stack as one vertically-centered group.
+    fn view_rect(size: &SizeParams, params: &manifest_params::Params) -> Node {
         let header_overlay = row(
             props!(
                 inset_top: size.padding_top,
@@ -225,8 +269,73 @@ mod wasm_glue {
                 ),
                 text(
                     "Block Height",
+                    style!(size: HEADER_FONT_PX, weight: FontWeight::REGULAR, color: HEADER_COLOR),
+                ),
+            ],
+        );
+
+        let number = text(
+            format_height(),
+            style!(
+                size: size.number_font_size,
+                weight: font_weight(params.numbers_font_style),
+                color: HEIGHT_COLOR,
+                family: FontFamily::DeckSans,
+                // Tight line box: the numerals have no descenders, so the default
+                // 1.4 multiplier would pad the group with empty space.
+                line_height: 0.8,
+            ),
+        );
+
+        // Stack the height over its "Found at" timestamp with a gap so a tall
+        // numeral can't overlap the caption, and center the group as a whole.
+        let content = if params.show_timestamp {
+            col(
+                props!(gap: size.stack_gap, cross_align: CrossAlign::Center),
+                [
+                    number,
+                    timestamp_block(
+                        size.caption_font_size,
+                        size.timestamp_font_size,
+                        CAPTION_GAP_PX,
+                    ),
+                ],
+            )
+        } else {
+            number
+        };
+
+        col(
+            props!(background: BLACK),
+            [header_overlay, center(props!(flex: 1.0), [content])],
+        )
+    }
+
+    /// Round layout: a vertically-centered header · height · timestamp stack.
+    /// The rectangular layout's edge-pinned rows would spill past the circular
+    /// cutout, so the round face centers everything and scales it to fit.
+    fn view_round(ws: WidgetSize, params: &manifest_params::Params) -> Node {
+        let scale = ws.round_scale();
+        let icon_px = CUBE_PX * scale;
+
+        let header = row(
+            props!(gap: HEADER_GAP_PX * scale, cross_align: CrossAlign::Center),
+            [
+                canvas(
+                    props!(width: icon_px, height: icon_px),
+                    vec![Draw::svg(
+                        0.0,
+                        0.0,
+                        icon_px,
+                        icon_px,
+                        &CUBE_ICON,
+                        HEADER_COLOR,
+                    )],
+                ),
+                text(
+                    "Block Height",
                     style!(
-                        size: HEADER_FONT_PX,
+                        size: scale_font(HEADER_FONT_PX, scale),
                         weight: FontWeight::REGULAR,
                         color: HEADER_COLOR,
                     ),
@@ -234,42 +343,35 @@ mod wasm_glue {
             ],
         );
 
-        let height_node = center(
-            props!(flex: 1.0),
-            [text(
-                format_height(),
-                style!(
-                    size: size.number_font_size,
-                    weight: font_weight(params.numbers_font_style),
-                    color: HEIGHT_COLOR,
-                    family: FontFamily::DeckSans,
-                ),
-            )],
+        let height_node = text(
+            format_height(),
+            style!(
+                size: scale_font(ROUND_NUMBER_PX, scale),
+                weight: font_weight(params.numbers_font_style),
+                color: HEIGHT_COLOR,
+                family: FontFamily::DeckSans,
+            ),
         );
 
-        let mut root_children: Vec<Node> = vec![header_overlay, height_node];
-
+        let mut stack: Vec<Node> = vec![header, height_node];
         if params.show_timestamp {
-            root_children.push(center(
-                props!(
-                    inset_bottom: size.padding_bottom,
-                    inset_left: 0.0,
-                    inset_right: 0.0,
-                ),
-                [text(
-                    format_timestamp(),
-                    style!(
-                        size: size.timestamp_font_size,
-                        weight: FontWeight::REGULAR,
-                        color: TIMESTAMP_COLOR,
-                    ),
-                )],
+            stack.push(timestamp_block(
+                scale_font(ROUND_CAPTION_PX, scale),
+                scale_font(ROUND_TIMESTAMP_PX, scale),
+                CAPTION_GAP_PX * scale,
             ));
         }
 
-        let root = col(props!(background: BLACK), root_children);
-
-        let _ = render_ui(width, height, root);
+        col(
+            props!(background: BLACK),
+            [center(
+                props!(flex: 1.0),
+                [col(
+                    props!(gap: ROUND_STACK_GAP_PX * scale, cross_align: CrossAlign::Center),
+                    stack,
+                )],
+            )],
+        )
     }
 
     fn format_height() -> String {
@@ -288,20 +390,13 @@ mod wasm_glue {
             if let Some(cached) = &data.formatted_timestamp {
                 return cached.clone();
             }
-            let formatted = format_timestamp_str(&data.timestamp_utc);
+            let formatted = format_timestamp_str(data.timestamp_unix);
             data.formatted_timestamp = Some(formatted.clone());
             formatted
         })
     }
 
-    fn format_timestamp_str(raw_utc: &str) -> String {
-        let mut rfc3339 = String::with_capacity(raw_utc.len() + 1);
-        rfc3339.push_str(raw_utc);
-        rfc3339.push('Z');
-
-        let Some(unix_secs) = parse_date(&rfc3339) else {
-            return NOT_AVAILABLE.to_string();
-        };
+    fn format_timestamp_str(unix_secs: i64) -> String {
         let now = SystemTime { unix_secs };
 
         let tz = system::current().timezone().map(Tz::from_runtime);

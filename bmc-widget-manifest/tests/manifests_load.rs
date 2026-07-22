@@ -128,7 +128,7 @@ fn shipping_manifests_support_bmm_rectangular_fullscreen_viewports() {
 }
 
 #[test]
-fn round_viewport_support_is_limited_to_clock_widgets_and_mining_info() {
+fn round_viewport_support_is_limited_to_the_expected_widgets() {
     let mut round_manifest_paths: Vec<_> = manifest_paths()
         .into_iter()
         .filter(|path| {
@@ -154,6 +154,7 @@ fn round_viewport_support_is_limited_to_clock_widgets_and_mining_info() {
     assert_eq!(
         round_manifest_paths,
         vec![
+            std::path::PathBuf::from("widgets-wasm/blockheight/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/clock/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/mining-clock/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/mining-info/manifest.json"),
