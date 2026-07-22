@@ -115,7 +115,7 @@ of the screen; on the newer firmware offered here, swipe down from the top inste
 ssh root@192.168.1.2
 cd /tmp
 wget https://feeds.braiins-os.com/stm32mp157c-ii3-bmc1/firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
-sysupgrade ./firmware_2026-07-20-0-886e4b51-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
+sysupgrade ./firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar
 ```
 
 With Nix, download the image to your host and flash it with the `deck` harness, which validates the image and asks for
@@ -124,7 +124,7 @@ confirmation before flashing:
 ```shell
 nix run .#deck -- sysupgrade \
   --device 192.168.1.2 \
-  --image './firmware_2026-07-20-0-886e4b51-26.07-rc_arm_cortex-a7_neon-vfpv4.tar'
+  --image './firmware_2026-07-21-0-34648a21-26.07-rc_arm_cortex-a7_neon-vfpv4.tar'
 ```
 
 Either way, allow approximately 10 minutes for the upgrade: during `sysupgrade`, the firmware downloads an
