@@ -1421,9 +1421,10 @@ impl AppState {
         // per-slot wl_touch lifecycle tracking here rather than
         // papering over the state machine downstream.
         if !sequence_was_idle {
-            tracing::debug!(
+            tracing::warn!(
                 ?slot,
                 primary_slot = ?self.gesture_slot,
+                active_slots = ?self.active_touch_slots,
                 "ignoring non-primary touch slot: single-touch policy"
             );
             return;
