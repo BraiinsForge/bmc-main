@@ -54,6 +54,12 @@ let
     # anymore.
       assert lib.assertMsg (stop == null || stop < 90)
         "mkOpenWrtService(${name}): stop must be lower than 90, got ${toString stop}";
+      # NOTE: Production firmware mounts /nix through its ROM nix-activator at
+      # START=62. Developer-only transitional firmware uses S91, so services in
+      # slots 63..91 are unsupported there; keeping the production bound is
+      # deliberate because that firmware is being discontinued.
+      assert lib.assertMsg (start > 62)
+        "mkOpenWrtService(${name}): start must be greater than 62, got ${toString start}";
       let
         allVariables = { START = toString start; }
           // lib.optionalAttrs (stop != null) { STOP = toString stop; }
@@ -163,6 +169,11 @@ let
       functions = generatedFunctions ++ extraFunctions;
     };
 in
+# Eval-time self-test: forcing a rejected start slot must throw, so the
+  # bound cannot be lost in a refactor without every firmware eval failing.
+assert lib.assertMsg
+  (!(builtins.tryEval (mkOpenWrtService { name = "self-test"; start = 62; }).name).success)
+  "mkOpenWrtService must reject start <= 62";
 {
   inherit mkOpenWrtService mkOpenWrtDaemon;
 }
