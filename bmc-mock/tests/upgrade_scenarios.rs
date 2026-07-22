@@ -30,7 +30,7 @@ use bmc_grpc::web::scene_management_service_client::SceneManagementServiceClient
 use bmc_grpc::web::upgrade_service_client::UpgradeServiceClient;
 use bmc_grpc::web::{
     CheckForUpgradeRequest, FirmwareUpgradePhase, PackageUpgradePhase, StartUpgradeRequest,
-    UpgradeDisruption, UpgradeProgress, WidgetCategory, upgrade_progress,
+    UpgradeDisruption, UpgradeProgress, WidgetCategory, WidgetSize, upgrade_progress,
 };
 use tonic::Request;
 use tonic::metadata::MetadataValue;
@@ -827,8 +827,8 @@ async fn scenario_flip_changes_next_check() {
 const SHADOWED_SCENARIO: &str = r#"{"firmware": "up-to-date", "packages": "available", "shadowed_packages": ["widget-flip-clock"]}"#;
 
 #[tokio::test]
-async fn lists_shadowed_widget_as_installable_over_grpc() {
-    let mut mock = spawn_mock(SHADOWED_SCENARIO);
+async fn lists_shadowed_widgets_with_supported_sizes_over_grpc() {
+    let mut mock = spawn_mock(MULTI_SHADOWED_SCENARIO);
     let mut client = upgrade_client(&mut mock).await;
     let response = client
         .get_installable_widgets(())
@@ -843,6 +843,16 @@ async fn lists_shadowed_widget_as_installable_over_grpc() {
     assert!(!widget.uid.is_empty());
     assert!(!widget.display_name.is_empty());
     assert!(widget.icon.is_some());
+    assert_eq!(
+        widget.supported_sizes,
+        vec![
+            WidgetSize::Small as i32,
+            WidgetSize::Medium as i32,
+            WidgetSize::Large as i32,
+            WidgetSize::Full as i32,
+        ],
+        "manifest constraints must become BMC100 sizes over gRPC"
+    );
     // The preview set crosses the wire intact: each entry carries a scene
     // size and a renderable image.
     assert!(!widget.previews.is_empty(), "previews must cross the wire");
@@ -853,6 +863,21 @@ async fn lists_shadowed_widget_as_installable_over_grpc() {
             .all(|p| !p.size.is_empty() && !p.image.is_empty()),
         "each preview needs a size and image: {:?}",
         widget.previews
+    );
+
+    let weather = response
+        .widgets
+        .iter()
+        .find(|w| w.package_name == "widget-weather")
+        .expect("BUG: weather not offered as installable");
+    assert_eq!(
+        weather.supported_sizes,
+        vec![
+            WidgetSize::Medium as i32,
+            WidgetSize::Large as i32,
+            WidgetSize::Full as i32,
+        ],
+        "weather manifest constraints must exclude the BMC100 small size"
     );
 }
 
@@ -886,6 +911,10 @@ async fn serves_real_package_index_over_grpc() {
     assert_eq!(widget.display_name, "Real Flip Clock");
     assert_eq!(widget.category, i32::from(WidgetCategory::Clock));
     assert!(widget.icon.is_none());
+    assert!(
+        widget.supported_sizes.is_empty(),
+        "legacy index metadata without viewport constraints must fit nowhere"
+    );
 }
 
 const UNKNOWN_CATEGORY_INDEX_JSON: &str = r#"{

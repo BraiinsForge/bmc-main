@@ -528,6 +528,8 @@ mod tests {
         for name in names {
             let widget_dir = root.join(name);
             std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
+            // The viewport bounds bracket the BMC100 slot descriptors
+            // (317x238 small up to 1280x480 fullscreen).
             std::fs::write(
                 widget_dir.join("manifest.json"),
                 format!(

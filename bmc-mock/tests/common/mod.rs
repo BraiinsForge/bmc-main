@@ -118,13 +118,16 @@ pub fn spawn_mock_inner(
     std::fs::write(&binary, "#!/bin/sh\n").expect("BUG: write binary");
     std::fs::set_permissions(&binary, std::os::unix::fs::PermissionsExt::from_mode(0o755))
         .expect("BUG: chmod binary");
+    // The viewport bounds bracket the BMC100 slot descriptors (317x238 small
+    // up to 1280x480 fullscreen) so gRPC tests can assert concrete supported
+    // sizes; weather's higher min_width excludes the small slot.
     std::fs::write(
         widget_dir.join("manifest.json"),
         r#"{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
            "name":"Flip Clock","description":"A retro split-flap clock face.",
            "binary":"bin/flip-clock","icon":"icon.svg","category":"clock",
-           "supported_viewports":[{"type":"rectangular","min_width":100,
-           "max_width":200,"min_height":100,"max_height":200}]}"#,
+           "supported_viewports":[{"type":"rectangular","min_width":317,
+           "max_width":1280,"min_height":238,"max_height":480}]}"#,
     )
     .expect("BUG: write manifest");
     let weather_dir = dir.path().join("widgets/weather");
@@ -144,8 +147,8 @@ pub fn spawn_mock_inner(
         r#"{"uid":"2b1e7a6c-9d84-4f11-bb0e-3c7a1e6f92da","version":"1.0.0",
            "name":"Weather","description":"A local weather widget.",
            "binary":"bin/weather","icon":"icon.svg","category":"clock",
-           "supported_viewports":[{"type":"rectangular","min_width":100,
-           "max_width":200,"min_height":100,"max_height":200}]}"#,
+           "supported_viewports":[{"type":"rectangular","min_width":638,
+           "max_width":1280,"min_height":238,"max_height":480}]}"#,
     )
     .expect("BUG: write weather manifest");
     let mockfs = dir.path().join("mockfs");
