@@ -550,10 +550,34 @@ fn run_loop(
                     peer_pid = slot.peer_pid, wasm = %slot.wasm_basename,
                     "widget exceeded fuel budget"
                 ),
-                Ok(Ok(bmc_wasm_runtime::RenderStatus::Dead) | Err(_)) | Err(_) => {
+                Ok(Ok(bmc_wasm_runtime::RenderStatus::Dead)) => {
                     if shared.is_context_lost() {
                         return Err(FatalError::EglContextLost);
                     }
+                    tracing::error!(
+                        peer_pid = slot.peer_pid, wasm = %slot.wasm_basename,
+                        "widget runtime dead; tearing down slot"
+                    );
+                    to_teardown.push(*id);
+                }
+                Ok(Err(e)) => {
+                    if shared.is_context_lost() {
+                        return Err(FatalError::EglContextLost);
+                    }
+                    tracing::error!(
+                        peer_pid = slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
+                        "widget render failed; tearing down slot"
+                    );
+                    to_teardown.push(*id);
+                }
+                Err(_) => {
+                    if shared.is_context_lost() {
+                        return Err(FatalError::EglContextLost);
+                    }
+                    tracing::error!(
+                        peer_pid = slot.peer_pid, wasm = %slot.wasm_basename,
+                        "widget render panicked; tearing down slot"
+                    );
                     to_teardown.push(*id);
                 }
             }
