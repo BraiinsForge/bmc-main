@@ -254,6 +254,8 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             let saved_at = u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
             std::thread::spawn(move || {
                 let started = std::time::Instant::now();
+                #[cfg(feature = "profiling")]
+                let probe = bmc_render::profile::MemProbe::start();
                 // catch_unwind so a decode panic still reports a failed job and
                 // releases the in-flight slot instead of leaking it forever.
                 let result = std::panic::catch_unwind(|| {
@@ -266,6 +268,10 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 })
                 .unwrap_or_else(|_| Err("image decode panicked".to_owned()));
                 let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                #[cfg(feature = "profiling")]
+                if let Ok((_, w, h)) = &result {
+                    log_host_decode_image(*w, *h, data_len, &probe);
+                }
                 // Write-at-decode, off the render thread; wake restores from it.
                 if let (Ok((rgba, w, h)), Some(cache)) = (&result, &cache) {
                     let mut meta = Vec::with_capacity(8 + identity.len());
@@ -368,6 +374,34 @@ fn log_host_register_mesh(id: u32, data_len: u32, probe: &bmc_render::profile::M
     );
 }
 
+/// The guest applies its own pixel budget and drops oversized images silently,
+/// so this is the only record that one arrived, and of what it measured.
+#[cfg(feature = "profiling")]
+fn log_host_image_probe(w: u32, h: u32, data_len: u32) {
+    tracing::info!(
+        target: bmc_render::profile::TARGET,
+        "host_image_probe {w}x{h} px={px} data_len={data_len}",
+        px = u64::from(w) * u64::from(h),
+    );
+}
+
+/// `vmrss_delta_kb` is a process-wide RSS difference sampled either side
+/// of the decode: an order-of-magnitude hint, not a peak, and not attributable
+/// to the decode alone.
+#[cfg(feature = "profiling")]
+fn log_host_decode_image(w: u32, h: u32, data_len: u32, probe: &bmc_render::profile::MemProbe) {
+    let s = probe.snapshot();
+    tracing::info!(
+        target: bmc_render::profile::TARGET,
+        "host_decode_image {w}x{h} data_len={data_len} decode_us={decode_us} \
+         vmrss_delta_kb={vmrss:+} rss_shmem_delta_kb={shmem:+} mem_free_kb={mem_free}",
+        decode_us = s.elapsed_us,
+        vmrss = s.vmrss_delta_kb,
+        shmem = s.rss_shmem_delta_kb,
+        mem_free = s.mem_free_kb,
+    );
+}
+
 fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -387,7 +421,11 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
             // report their real size. The budget gates only the actual decode.
             if rgba_out_ptr == 0 {
                 return match probe_image_dimensions(&image_data) {
-                    Ok((w, h)) => (i64::from(w) << 32) | i64::from(h),
+                    Ok((w, h)) => {
+                        #[cfg(feature = "profiling")]
+                        log_host_image_probe(w, h, data_len);
+                        (i64::from(w) << 32) | i64::from(h)
+                    }
                     Err(e) => {
                         tracing::error!("host_decode_image probe: {e}");
                         -1
@@ -395,6 +433,8 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
                 };
             }
 
+            #[cfg(feature = "profiling")]
+            let probe = bmc_render::profile::MemProbe::start();
             let rgba = match decode_image_rgba_limited(&image_data) {
                 Ok(rgba) => rgba,
                 Err(e) => {
@@ -402,6 +442,8 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
                     return -1;
                 }
             };
+            #[cfg(feature = "profiling")]
+            log_host_decode_image(rgba.width(), rgba.height(), data_len, &probe);
             let (w, h) = (rgba.width(), rgba.height());
             let pixels = rgba.as_raw();
             let needed = pixels.len() as u32;
