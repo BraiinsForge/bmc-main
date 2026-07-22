@@ -2886,6 +2886,7 @@ mod tests {
         SceneLayout {
             scene_id: None,
             cycle_duration: None,
+            combined: false,
             widgets: vec![WidgetPlacement {
                 instance_id: instance_id.to_owned(),
                 position: Position { x: 0, y: 0 },
@@ -3498,6 +3499,7 @@ mod tests {
         let scene = SceneLayout {
             scene_id: None,
             cycle_duration: None,
+            combined: false,
             widgets: vec![
                 WidgetPlacement {
                     instance_id: String::from("visible"),

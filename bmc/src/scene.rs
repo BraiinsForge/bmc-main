@@ -115,6 +115,50 @@ pub struct WidgetPosition {
 impl WidgetPosition {
     pub const MAX_ROWS: usize = 2;
     pub const MAX_COLS: usize = 4;
+
+    /// Separator gap between combined-scene widgets, in logical px.
+    pub const SEPARATOR_PX: u32 = 4;
+
+    /// Logical-pixel column pitch: a widget viewport plus one separator gap,
+    /// derived from the panel's logical width so the grid sits flush with
+    /// uniform gaps: `pitch = (logical + gap) / columns`. On the Braiins Deck
+    /// (1280 wide, 4 columns) this is `(1280 + 4) / 4 = 321`, and the implied
+    /// viewport `pitch - gap = 317` matches
+    /// [`crate::widget::registry::slot_span_descriptor`].
+    ///
+    /// Combined scenes are Deck-only today (the other products have no slot
+    /// grid). Only the pitch adapts to the panel size: the widget viewports
+    /// in [`crate::widget::registry::slot_span_descriptor`] and the
+    /// `MAX_COLS`/`MAX_ROWS` grid shape are BMC100 constants, so a future
+    /// gridded product must update them together with this math — the
+    /// `slot_span_descriptors_match_deck_panel_pitch` test ties them.
+    #[must_use]
+    #[expect(
+        clippy::integer_division,
+        reason = "panel widths are chosen so columns tile evenly; the floor is intended"
+    )]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "grid dimensions are single digits"
+    )]
+    pub fn col_pitch(logical_width: u32) -> u32 {
+        (logical_width + Self::SEPARATOR_PX) / Self::MAX_COLS as u32
+    }
+
+    /// Logical-pixel row pitch; see [`Self::col_pitch`]. On the Deck (480 tall,
+    /// 2 rows) this is `(480 + 4) / 2 = 242`.
+    #[must_use]
+    #[expect(
+        clippy::integer_division,
+        reason = "panel heights are chosen so rows tile evenly; the floor is intended"
+    )]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "grid dimensions are single digits"
+    )]
+    pub fn row_pitch(logical_height: u32) -> u32 {
+        (logical_height + Self::SEPARATOR_PX) / Self::MAX_ROWS as u32
+    }
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, Hash)]

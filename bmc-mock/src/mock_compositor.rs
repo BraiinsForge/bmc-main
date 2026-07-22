@@ -370,6 +370,7 @@ mod tests {
         SceneLayout {
             scene_id: Some(id),
             cycle_duration: None,
+            combined: false,
             widgets: widgets
                 .iter()
                 .map(|(instance_id, visible)| WidgetPlacement {

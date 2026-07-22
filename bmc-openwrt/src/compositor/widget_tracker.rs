@@ -675,6 +675,7 @@ mod tests {
         SceneLayout {
             scene_id: None,
             cycle_duration: None,
+            combined: false,
             widgets: vec![WidgetPlacement {
                 instance_id: id.to_owned(),
                 position: Position { x: 0, y: 0 },
@@ -886,6 +887,7 @@ mod tests {
         SceneLayout {
             scene_id: Some(id),
             cycle_duration: None,
+            combined: false,
             widgets: vec![],
         }
     }
@@ -894,6 +896,7 @@ mod tests {
         SceneLayout {
             scene_id: Some(id),
             cycle_duration: None,
+            combined: false,
             widgets: widgets
                 .iter()
                 .map(|(instance_id, visible)| WidgetPlacement {

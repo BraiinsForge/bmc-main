@@ -36,7 +36,7 @@ use crate::compositor::{
 };
 use crate::config::ConfigHandle;
 use crate::config::LocalizationConfig;
-use crate::scene::{Scene, SceneId, Widget};
+use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 
 use super::{WidgetManager, WidgetRegistry};
 
@@ -533,7 +533,7 @@ impl Coordinator {
             return;
         }
 
-        let position = Self::widget_to_position(widget);
+        let position = self.widget_to_position(widget);
         let fullscreen_descriptor =
             fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
         let Some(viewport) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
@@ -750,7 +750,7 @@ impl Coordinator {
                 };
                 Some(WidgetPlacement {
                     instance_id: widget.id.as_uuid().to_string(),
-                    position: Self::widget_to_position(widget),
+                    position: self.widget_to_position(widget),
                     size,
                     visible: true,
                 })
@@ -760,19 +760,20 @@ impl Coordinator {
         SceneLayout {
             scene_id: Some(scene.id),
             cycle_duration: scene.cycle_duration,
+            combined: scene.kind == crate::scene::SceneKind::Combined,
             widgets,
         }
     }
 
-    fn widget_to_position(widget: &Widget) -> Position {
-        // Convert grid position to pixel position
-        // Grid is 4x2, each cell is 320x240
-        const CELL_WIDTH: u32 = 320;
-        const CELL_HEIGHT: u32 = 240;
-
+    fn widget_to_position(&self, widget: &Widget) -> Position {
+        // Snap the grid cell to its logical-pixel origin. The pitch bakes in a
+        // 4px separator gap (see `WidgetPosition::col_pitch`) and is derived
+        // from this product's logical panel size, so widgets sit flush with
+        // uniform gaps between them.
+        let display = &self.hardware_capabilities.display;
         Position {
-            x: u32::from(widget.position.col) * CELL_WIDTH,
-            y: u32::from(widget.position.row) * CELL_HEIGHT,
+            x: u32::from(widget.position.col) * WidgetPosition::col_pitch(display.width),
+            y: u32::from(widget.position.row) * WidgetPosition::row_pitch(display.height),
         }
     }
 

@@ -512,6 +512,49 @@ mod tests {
         );
     }
 
+    // Guards the invariant the renderer's separator grid and the coordinator's
+    // widget positions both rely on: a span's viewport is exactly its cells'
+    // pitch minus one separator gap, and the full grid tiles the panel. If the
+    // gap, panel size, grid shape, or this table change without the others,
+    // widgets drift against the separator grid — this test turns that silent
+    // misrender into a failure.
+    #[test]
+    fn slot_span_descriptors_match_deck_panel_pitch() {
+        use crate::scene::WidgetPosition;
+
+        let (panel_w, panel_h) = (1_280, 480);
+        let col_pitch = WidgetPosition::col_pitch(panel_w);
+        let row_pitch = WidgetPosition::row_pitch(panel_h);
+        let cols = u32::try_from(WidgetPosition::MAX_COLS).expect("BUG: MAX_COLS fits u32");
+        let rows = u32::try_from(WidgetPosition::MAX_ROWS).expect("BUG: MAX_ROWS fits u32");
+
+        assert_eq!(
+            cols * col_pitch - WidgetPosition::SEPARATOR_PX,
+            panel_w,
+            "columns must tile the panel width exactly"
+        );
+        assert_eq!(
+            rows * row_pitch - WidgetPosition::SEPARATOR_PX,
+            panel_h,
+            "rows must tile the panel height exactly"
+        );
+
+        for (span_cols, span_rows) in [(1, 1), (2, 1), (2, 2)] {
+            let desc =
+                slot_span_descriptor(span_cols, span_rows).expect("BUG: span is in the allow-list");
+            assert_eq!(
+                span_cols * col_pitch - WidgetPosition::SEPARATOR_PX,
+                desc.width,
+                "{span_cols}x{span_rows} viewport width must be its cells minus one gap"
+            );
+            assert_eq!(
+                span_rows * row_pitch - WidgetPosition::SEPARATOR_PX,
+                desc.height,
+                "{span_cols}x{span_rows} viewport height must be its cells minus one gap"
+            );
+        }
+    }
+
     #[test]
     fn disallowed_slot_spans_are_rejected() {
         assert_eq!(slot_span_descriptor(1, 2), None);

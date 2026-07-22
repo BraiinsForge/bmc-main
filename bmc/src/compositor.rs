@@ -66,6 +66,9 @@ pub struct SceneLayout {
     /// Per-scene automatic cycling duration override. `None` uses the
     /// global scene-cycling default.
     pub cycle_duration: Option<std::time::Duration>,
+    /// Combined scenes are drawn with a separator grid between grid cells;
+    /// fullscreen scenes are not. See the renderer's grid drawing.
+    pub combined: bool,
     pub widgets: Vec<WidgetPlacement>,
 }
 

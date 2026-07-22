@@ -23,11 +23,13 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use bmc::scene::WidgetPosition;
 use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_platform::{DisplayPixelFormat, DisplayTransform};
 use smithay::{
     backend::renderer::{
         Bind, Color32F, Frame as RendererFrame, ImportDma, ImportMemWl, Renderer, Texture,
+        gles::GlesFrame,
         gles::{GlesRenderer, GlesTexture, ffi},
     },
     reexports::wayland_server::{Resource, backend::ObjectId, protocol::wl_buffer::WlBuffer},
@@ -43,7 +45,8 @@ use super::render::{BufferPool, DrmOutput, EglContext, ScanoutFormat, ScanoutSwi
 use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
 
-const BACKGROUND_COLOR: Color32F = Color32F::new(0.05, 0.05, 0.1, 1.0);
+const BACKGROUND_COLOR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
+const SEPARATOR_COLOR: Color32F = Color32F::new(0.15, 0.15, 0.15, 1.0);
 
 #[must_use]
 pub fn scanout_transform(profile: DisplayTransform) -> Transform {
@@ -100,6 +103,94 @@ pub fn touch_to_logical(
         bmc_platform::TouchTransform::Deg0 => (x, y),
         bmc_platform::TouchTransform::Deg90 => (y, logical_width - x),
         bmc_platform::TouchTransform::Deg270 => (logical_height - y, x),
+    }
+}
+
+fn draw_rect_on_frame(
+    frame: &mut GlesFrame<'_, '_>,
+    logical: Rectangle<i32, Logical>,
+    output_w: i32,
+    output_h: i32,
+    transform: DisplayTransform,
+    color: Color32F,
+) {
+    let dst = place_widget(
+        logical.loc.x,
+        logical.loc.y,
+        logical.size.w,
+        logical.size.h,
+        output_w,
+        output_h,
+        transform,
+    );
+    if let Err(e) = frame.draw_solid(dst, &[texture_damage_rect(dst)], color) {
+        tracing::warn!("Failed to draw separator rect {:?}: {:?}", dst, e);
+    }
+}
+
+/// Draw the combined-scene separator grid once per entry in `x_offsets`, so it
+/// slides with its scene during swipes and transitions. Widgets snap to
+/// `WidgetPosition::{COL,ROW}_PITCH` (viewport + a uniform 4px gap), so a strip
+/// drawn in the gap just before each internal boundary shows as the separator,
+/// and is covered or trimmed by the widgets blitted on top: a spanning widget
+/// hides its internal boundary line, an occupied cell trims its strips to the
+/// 4px gap, and an empty cell keeps a black interior framed by the lines.
+/// Geometry is sourced from `WidgetPosition` + `DrmOutput::logical_size`.
+fn draw_separator_grids(
+    frame: &mut GlesFrame<'_, '_>,
+    output: &DrmOutput,
+    transform: DisplayTransform,
+    x_offsets: &[i32],
+) {
+    if x_offsets.is_empty() {
+        return;
+    }
+    let (lw, lh) = output.logical_size();
+    // All panel/grid geometry is small and non-negative; narrow the
+    // u32/usize sources to the i32 space the signed x-offsets live in.
+    let [
+        output_w,
+        output_h,
+        logical_w,
+        logical_h,
+        gap,
+        col_pitch,
+        row_pitch,
+    ] = [
+        output.width(),
+        output.height(),
+        lw,
+        lh,
+        WidgetPosition::SEPARATOR_PX,
+        WidgetPosition::col_pitch(lw),
+        WidgetPosition::row_pitch(lh),
+    ]
+    .map(|v| i32::try_from(v).expect("BUG: panel/grid geometry fits i32"));
+    let [cols, rows] = [WidgetPosition::MAX_COLS, WidgetPosition::MAX_ROWS]
+        .map(|v| i32::try_from(v).expect("BUG: grid dimension fits i32"));
+    for x_offset in x_offsets {
+        for col in 1..cols {
+            let x = col * col_pitch - gap + x_offset;
+            draw_rect_on_frame(
+                frame,
+                Rectangle::from_loc_and_size((x, 0), (gap, logical_h)),
+                output_w,
+                output_h,
+                transform,
+                SEPARATOR_COLOR,
+            );
+        }
+        for row in 1..rows {
+            let y = row * row_pitch - gap;
+            draw_rect_on_frame(
+                frame,
+                Rectangle::from_loc_and_size((*x_offset, y), (logical_w, gap)),
+                output_w,
+                output_h,
+                transform,
+                SEPARATOR_COLOR,
+            );
+        }
     }
 }
 
@@ -329,9 +420,15 @@ impl SceneRenderer {
 
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
+        // x-offsets of combined scenes in view; each gets a separator grid,
+        // sliding with the scene during swipes and transitions.
+        let mut combined_scene_offsets = Vec::new();
 
         for rendered in widgets.rendered_scenes(transition_offset, self.seam_overlap_px) {
             collect_scene_widgets(rendered.scene, buffers, rendered.x_offset, &mut to_render);
+            if rendered.scene.combined {
+                combined_scene_offsets.push(rendered.x_offset);
+            }
         }
 
         let buffer = self.buffers.back_buffer(&self.output)?;
@@ -407,6 +504,15 @@ impl SceneRenderer {
                 .clear(BACKGROUND_COLOR, &clear_regions)
                 .context("Failed to clear uncovered output regions")?;
         }
+
+        // Drawn over the cleared background and before the widgets, for the
+        // same reason as the clear above.
+        draw_separator_grids(
+            &mut frame,
+            &self.output,
+            self.scanout_transform,
+            &combined_scene_offsets,
+        );
 
         for (buffer_id, instance_id, dst) in &renderable_items {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
