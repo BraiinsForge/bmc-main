@@ -99,6 +99,7 @@ message InstallableWidget {
   optional string description = 7;
   optional string icon = 8;
   repeated InstallablePreview previews = 9;
+  repeated WidgetSize supported_sizes = 10;
 }
 
 message GetInstallableWidgetsResponse {

@@ -45,7 +45,7 @@ use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
 use crate::widget::{Coordinator, WidgetRegistry};
 
-struct PlatformDescriptor {
+pub(crate) struct PlatformDescriptor {
     fullscreen: crate::widget::ViewportDescriptor,
     slot_sizes: &'static [(web::WidgetSize, crate::widget::ViewportDescriptor)],
 }
@@ -198,7 +198,7 @@ fn stamp_widget_viewport_shape_from_caps(widget: &mut scene::Widget, caps: &Hard
     widget.viewport_shape = widget_viewport_shape_from_caps(caps);
 }
 
-fn supported_sizes_for_constraints(
+pub(crate) fn supported_sizes_for_constraints(
     platform: &PlatformDescriptor,
     constraints: &[bmc_widget_manifest::WidgetViewportConstraint],
 ) -> Vec<web::WidgetSize> {

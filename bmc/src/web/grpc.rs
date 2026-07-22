@@ -163,6 +163,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 self.manager.clone(),
                 self.system_upgrade_service,
                 self.config_handle.clone(),
+                &self.hardware_capabilities,
             ),
         );
 

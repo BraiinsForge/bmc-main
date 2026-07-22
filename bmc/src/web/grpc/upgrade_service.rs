@@ -27,6 +27,7 @@ use bmc_grpc::web::{
     UpgradeDisruption, UpgradeDownloadProgress, UpgradeProgress, upgrade_progress,
     upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
+use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail};
 use chrono::{NaiveTime, TimeDelta, Timelike};
 use futures::stream::{BoxStream, StreamExt};
@@ -37,6 +38,7 @@ use tokio::sync::RwLock;
 use tonic::{Request, Status};
 
 use super::SystemUpgradeService;
+use super::scene_management::{PlatformDescriptor, supported_sizes_for_constraints};
 use crate::config::ConfigHandle;
 use crate::{
     BmcManager,
@@ -55,6 +57,7 @@ where
     manager: Arc<T>,
     system_upgrade: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    platform: PlatformDescriptor,
 }
 
 impl<T, U> UpgradeService<T, U>
@@ -66,11 +69,13 @@ where
         manager: Arc<T>,
         system_upgrade: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        hardware_capabilities: &HardwareCapabilities,
     ) -> Self {
         Self {
             manager,
             system_upgrade,
             config_handle,
+            platform: PlatformDescriptor::from(hardware_capabilities),
         }
     }
 }
@@ -107,7 +112,10 @@ where
             .await
             .map_err(Into::<tonic::Status>::into)?;
         Ok(tonic::Response::new(GetInstallableWidgetsResponse {
-            widgets: widgets.into_iter().map(map_installable_widget).collect(),
+            widgets: widgets
+                .into_iter()
+                .map(|widget| map_installable_widget(&self.platform, widget))
+                .collect(),
         }))
     }
 
@@ -242,7 +250,14 @@ fn installable_category_to_proto(c: bmc_upgrade::packages::InstallableCategory) 
     proto as i32
 }
 
-fn map_installable_widget(w: bmc_upgrade::packages::InstallableWidget) -> InstallableWidget {
+fn map_installable_widget(
+    platform: &PlatformDescriptor,
+    w: bmc_upgrade::packages::InstallableWidget,
+) -> InstallableWidget {
+    let supported_sizes = supported_sizes_for_constraints(platform, &w.supported_viewports)
+        .into_iter()
+        .map(Into::into)
+        .collect();
     InstallableWidget {
         package_name: w.package_name,
         uid: w.uid,
@@ -260,6 +275,7 @@ fn map_installable_widget(w: bmc_upgrade::packages::InstallableWidget) -> Instal
                 size: p.size,
             })
             .collect(),
+        supported_sizes,
     }
 }
 
@@ -364,6 +380,41 @@ fn map_datetime_to_hour_minute(value: chrono::DateTime<chrono::Utc>) -> (Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn installable_supported_sizes_are_calculated_from_constraints() {
+        let capabilities =
+            bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                .capabilities();
+        let platform = super::super::scene_management::PlatformDescriptor::from(&capabilities);
+        let widget = bmc_upgrade::packages::InstallableWidget {
+            package_name: "widget-fullscreen".to_owned(),
+            uid: "uid-fullscreen".to_owned(),
+            version: "1.0.0".to_owned(),
+            display_name: "Fullscreen".to_owned(),
+            subname: None,
+            category: bmc_upgrade::packages::InstallableCategory::Unknown,
+            description: None,
+            icon: None,
+            previews: Vec::new(),
+            supported_viewports: vec![bmc_widget_manifest::WidgetViewportConstraint {
+                viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
+                min_width: Some(1280),
+                max_width: Some(1280),
+                min_height: Some(480),
+                max_height: Some(480),
+                min_dpi: None,
+                max_dpi: None,
+            }],
+        };
+
+        let mapped = map_installable_widget(&platform, widget);
+
+        assert_eq!(
+            mapped.supported_sizes,
+            vec![bmc_grpc::web::WidgetSize::Full as i32]
+        );
+    }
 
     #[test]
     fn run_state_maps_to_wire_events() {
