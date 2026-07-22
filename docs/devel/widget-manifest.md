@@ -103,11 +103,6 @@ Viewport constraints are also validated after parsing:
 - Min/max width, height, and DPI bounds must be nonzero when present.
 - Min bounds must not exceed max bounds.
 - Duplicate constraints are rejected.
-- A manifest cannot provide both legacy `sizes` and `supported_viewports`.
-
-The parser still accepts legacy `sizes` in old manifests, but only as a compatibility path. Those values are normalized
-to exact BMC100 viewport constraints (`small` -> `317x238`, `medium` -> `638x238`, `large` -> `638x480`, `full` ->
-`1280x480`). New manifests should declare `supported_viewports` directly.
 
 The split lets editor-side tooling catch the structural errors as the operator types (red-squiggle on
 `default_value: 3.14` for a boolean) while leaving the cross-field semantics where the load-time error message can name
