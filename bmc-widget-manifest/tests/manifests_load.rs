@@ -156,6 +156,7 @@ fn round_viewport_support_is_limited_to_the_expected_widgets() {
         vec![
             std::path::PathBuf::from("widgets-wasm/blockheight/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/clock/manifest.json"),
+            std::path::PathBuf::from("widgets-wasm/halving-countdown/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/mining-clock/manifest.json"),
             std::path::PathBuf::from("widgets-wasm/mining-info/manifest.json"),
         ],

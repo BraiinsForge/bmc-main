@@ -15,6 +15,7 @@ The following widgets are currently supported:
 
 - Image
 - Block Height
+- Halving Countdown
 - Clock
 - Weather
 - Random Facts

@@ -16,6 +16,7 @@ members = [
     "blockheight",
     "clock",
     "fleet-management",
+    "halving-countdown",
     "image",
     "iss-position",
     "lib/mining",

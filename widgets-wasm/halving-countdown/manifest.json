@@ -1,0 +1,56 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "8a87742d-192d-4c80-bda2-d446e9b9aeae",
+  "version": "0.1.0",
+  "name": "Halving Countdown",
+  "description": "Countdown to the next Bitcoin halving, with predicted date and blocks remaining",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/halving-countdown",
+  "icon": "assets/icon.svg",
+  "category": "mining",
+  "settings": [
+    "localization",
+    "timezone"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    },
+    {
+      "type": "round",
+      "min_width": 480,
+      "max_width": 480,
+      "min_height": 480,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "numbers_font_style": {
+      "name": "Numbers font style",
+      "description": "Font weight of the countdown numerals",
+      "type": "string",
+      "default_value": "bold",
+      "enum_values": [
+        {
+          "value": "regular",
+          "label": "Regular"
+        },
+        {
+          "value": "semi-bold",
+          "label": "Semi-bold"
+        },
+        {
+          "value": "bold",
+          "label": "Bold"
+        }
+      ]
+    }
+  }
+}

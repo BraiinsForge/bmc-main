@@ -1,0 +1,18 @@
+[package]
+name = "halving-countdown"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+# Ship the manifest icon — nix's source filter drops non-rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/**"]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+
+[lints]
+workspace = true
