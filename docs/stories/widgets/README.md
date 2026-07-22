@@ -23,6 +23,13 @@ miners over mDNS, polls each for live telemetry, and rolls them up into a fleet 
 per-family credentials, manual-host fallback, and model/family filtering. Falls back to a summary-only screen on smaller
 viewports.
 
+### [Halving Countdown Widget](halving-countdown.md)
+
+A widget that counts down to the next Bitcoin halving — days, hours, and minutes remaining — and, on the larger sizes,
+shows the predicted halving date and the blocks remaining with the target block height. Reads a server-computed
+prediction from the Braiins Forge Nexus, follows device localization and timezone, and offers a configurable numeral
+weight. Renders at all four widget sizes and on the round BFM100 face.
+
 ### [ISS Position Widget](iss-position.md)
 
 A live tracker for the International Space Station — at full size a 3D globe with the station marker, its orbital ground
