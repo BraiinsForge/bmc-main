@@ -32,6 +32,7 @@ use crate::egl::EglState;
 use crate::layout::ClockLayout;
 use crate::renderer::{Mat4, Renderer};
 use anyhow::Result;
+use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_widget::surface::{
     DeckWidgetSurfaceClient, LifecycleState, PollOutcome, SettingUpdate, WidgetEvent,
     WidgetSurface, XdgSurfaceClient,
@@ -313,6 +314,7 @@ fn run_render_loop(
     system_timezone: String,
     timezone_override: Option<String>,
 ) -> Result<()> {
+    let gpu_lock = GpuRenderLock::from_env()?;
     let mut egl = EglState::new(surface.width(), surface.height())?;
     tracing::info!("GBM-based EGL initialized, starting render loop");
 
@@ -401,6 +403,7 @@ fn run_render_loop(
         state.flip_state.update(hours, minutes, seconds);
         let layout = ClockLayout::for_viewport(surface.width(), surface.height());
 
+        let lock = gpu_lock.lock("flip_clock")?;
         egl.begin_frame()?;
         egl.clear(0.0, 0.0, 0.0, 1.0);
         let gl = egl.gl();
@@ -421,7 +424,9 @@ fn run_render_loop(
         );
 
         let animating = state.flip_state.is_animating();
-        let (dmabuf_info, slot) = egl.end_frame()?;
+        egl.wait_for_gpu();
+        drop(lock);
+        let (dmabuf_info, slot) = egl.export_frame()?;
         surface.submit_buffer(&dmabuf_info, slot, animating)?;
 
         state.phase = if animating {

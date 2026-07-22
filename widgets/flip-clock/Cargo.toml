@@ -14,6 +14,7 @@ standalone = []
 
 [dependencies]
 # Widget SDK (gpu feature provides EGL/GBM/Wayland surface clients)
+bmc-gpu-render-lock = { workspace = true }
 bmc-log = { workspace = true }
 bmc-widget = { workspace = true, features = ["gpu"] }
 serde = { workspace = true, features = ["derive"] }

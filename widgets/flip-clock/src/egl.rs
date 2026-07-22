@@ -23,7 +23,7 @@
 //!
 //! Thin wrapper around [`bmc_widget::egl`] that provides the flip-clock's
 //! direct-FBO pipeline: render straight to an EGLImage-backed export buffer,
-//! `glFinish()`, then export as DMA-BUF.
+//! wait for GPU completion, then export as DMA-BUF.
 
 use anyhow::Result;
 use glow::HasContext;
@@ -34,8 +34,8 @@ use bmc_widget::egl::{Depth, DoubleBufferedEglState, SlotReleaseState};
 /// EGL state for the flip-clock's direct-FBO rendering pipeline.
 ///
 /// Double-buffers two export buffers via [`DoubleBufferedEglState`]. Each
-/// frame:
-/// bind the back buffer's FBO, render, `glFinish()`, export DMA-BUF, swap.
+/// frame: bind the back buffer's FBO, render, wait for GPU completion,
+/// export DMA-BUF, swap.
 pub struct EglState {
     egl: DoubleBufferedEglState,
     release_state: SlotReleaseState,
@@ -96,13 +96,30 @@ impl EglState {
         }
     }
 
-    /// End frame -- `glFinish()`, export DMA-BUF, swap buffers.
+    /// Wait for GPU completion of the current frame.
+    ///
+    /// Waits with an EGL fence, falling back to `glFinish` if the fence
+    /// fails. On etnaviv the fence is load-bearing: `glFinish` returns
+    /// before the hardware job completes, so the caller holding the GPU
+    /// render lock would release it too early. Mirrors `bmc-wasm-host`'s
+    /// private `Host::wait_for_egl_fence`; keep the fallback policy in
+    /// sync with it.
+    pub fn wait_for_gpu(&self) {
+        if let Err(e) = self.egl.ctx().wait_for_egl_fence() {
+            tracing::warn!(?e, "EGL fence wait failed; falling back to glFinish");
+            unsafe {
+                self.egl.gl().finish();
+            }
+        }
+    }
+
+    /// Export the rendered frame as DMA-BUF and swap buffers.
+    ///
+    /// CPU-side only -- submits no GPU work, so callers drop the GPU render
+    /// lock after [`Self::wait_for_gpu`] and export outside it.
     ///
     /// Returns the DMA-BUF info and the slot index of the exported buffer.
-    pub fn end_frame(&mut self) -> Result<(DmaBufInfo, usize)> {
-        unsafe {
-            self.egl.gl().finish();
-        }
+    pub fn export_frame(&mut self) -> Result<(DmaBufInfo, usize)> {
         let (info, slot) = self.egl.export_and_swap()?;
         self.release_state.mark_presented(slot);
         Ok((info, slot))

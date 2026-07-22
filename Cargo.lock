@@ -1513,6 +1513,7 @@ version = "0.1.0"
 dependencies = [
  "ab_glyph",
  "anyhow",
+ "bmc-gpu-render-lock",
  "bmc-log",
  "bmc-widget",
  "bytemuck",
