@@ -233,6 +233,7 @@ fn widget_from_manifest(manifest_path: &Path) -> Option<InstallableWidget> {
         description: Some(manifest.description),
         icon,
         previews: Vec::new(),
+        supported_viewports: manifest.supported_viewports,
     }))
 }
 
@@ -533,7 +534,7 @@ mod tests {
                     r#"{{"uid":"7cb584a8-1f26-42a0-867e-955aadd2391c","version":"1.0.0",
                         "name":"{name}","description":"A {name} widget.","binary":"bin/{name}",
                         "category":"clock","supported_viewports":[{{"type":"rectangular",
-                        "min_width":100,"max_width":200,"min_height":100,"max_height":200}}]}}"#
+                        "min_width":317,"max_width":1280,"min_height":238,"max_height":480}}]}}"#
                 ),
             )
             .expect("BUG: write manifest");
@@ -708,6 +709,7 @@ mod tests {
         assert_eq!(widgets.len(), 1);
         assert_eq!(widgets[0].package_name, "widget-flip-clock");
         assert!(!widgets[0].uid.is_empty());
+        assert_eq!(widgets[0].supported_viewports.len(), 1);
         // Manifests carry no preview art, so the mock stands in its shared
         // placeholder set — the frontend preview panel always has an image.
         assert!(!widgets[0].previews.is_empty());

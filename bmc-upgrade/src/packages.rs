@@ -111,6 +111,7 @@ pub struct InstallableWidget {
     pub description: Option<String>,
     pub icon: Option<String>,
     pub previews: Vec<InstallablePreview>,
+    pub supported_viewports: Vec<bmc_widget_manifest::WidgetViewportConstraint>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -543,6 +544,15 @@ pub fn installable_widgets_from(
                             .collect()
                     })
                     .unwrap_or_default(),
+                supported_viewports: resolved
+                    .metadata
+                    .get("widget")
+                    .and_then(|widget| widget.get("supported_viewports"))
+                    .and_then(|value| {
+                        Vec::<bmc_widget_manifest::WidgetViewportConstraint>::deserialize(value)
+                            .ok()
+                    })
+                    .unwrap_or_default(),
                 package_name: resolved.name,
                 version: resolved.version,
                 description: resolved.description,
@@ -886,6 +896,69 @@ mod tests {
         );
         // No `assets.previews` in the index, so the preview list defaults empty.
         assert!(w.previews.is_empty());
+    }
+
+    #[test]
+    fn installable_widgets_read_supported_viewports_from_index() {
+        let merged = merged_with(&[(
+            "widget-fullscreen",
+            "widget",
+            Some(serde_json::json!({
+                "widget": {
+                    "uid": "uid-fullscreen",
+                    "supported_viewports": [{
+                        "type": "rectangular",
+                        "min_width": 1280,
+                        "max_width": 1280,
+                        "min_height": 480,
+                        "max_height": 480
+                    }]
+                }
+            })),
+        )]);
+
+        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
+
+        assert_eq!(
+            widgets[0].supported_viewports,
+            vec![bmc_widget_manifest::WidgetViewportConstraint {
+                viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
+                min_width: Some(1280),
+                max_width: Some(1280),
+                min_height: Some(480),
+                max_height: Some(480),
+                min_dpi: None,
+                max_dpi: None,
+            }]
+        );
+    }
+
+    #[test]
+    fn installable_widgets_default_missing_supported_viewports_to_empty() {
+        let merged = merged_with(&[(
+            "widget-legacy",
+            "widget",
+            Some(serde_json::json!({"widget": {"uid": "uid-legacy"}})),
+        )]);
+
+        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
+
+        assert!(widgets[0].supported_viewports.is_empty());
+    }
+
+    #[test]
+    fn installable_widgets_default_invalid_supported_viewports_to_empty() {
+        let merged = merged_with(&[(
+            "widget-invalid",
+            "widget",
+            Some(serde_json::json!({
+                "widget": {"uid": "uid-invalid", "supported_viewports": "full"}
+            })),
+        )]);
+
+        let widgets = installable_widgets_from(&merged, &std::collections::BTreeSet::new());
+
+        assert!(widgets[0].supported_viewports.is_empty());
     }
 
     #[test]
