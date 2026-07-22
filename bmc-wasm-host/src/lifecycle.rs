@@ -210,7 +210,7 @@ impl LifecycleStateMachine {
                     self.current = self.target;
                     self.blocked = false;
                     self.retry_at = None;
-                    tracing::info!(
+                    tracing::debug!(
                         state = ?self.current,
                         w = ctx.width,
                         h = ctx.height,
@@ -250,7 +250,7 @@ impl LifecycleStateMachine {
             self.current = self.target;
             self.blocked = false;
             self.retry_at = None;
-            tracing::info!(state = ?self.current, "render target released");
+            tracing::debug!(state = ?self.current, "render target released");
         } else {
             self.current = self.target;
             // If we were blocked while owing an allocation but the compositor has since

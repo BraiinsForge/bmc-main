@@ -624,7 +624,7 @@ impl WidgetSlot {
         self.lifecycle.apply(&mut ctx, now);
         let current = self.lifecycle.current();
         if previous != current {
-            tracing::info!(
+            tracing::debug!(
                 peer_pid = self.peer_pid,
                 wasm = %self.wasm_basename,
                 ?previous,
@@ -817,7 +817,7 @@ impl WidgetSlot {
                 if effect.request_render {
                     self.surface.mark_needs_render();
                 }
-                tracing::info!(
+                tracing::debug!(
                     peer_pid = self.peer_pid,
                     wasm = %self.wasm_basename,
                     ?previous_target,
@@ -832,7 +832,7 @@ impl WidgetSlot {
                 if request_render {
                     self.surface.mark_needs_render();
                 }
-                tracing::info!(
+                tracing::debug!(
                     peer_pid = self.peer_pid,
                     wasm = %self.wasm_basename,
                     ?current,
