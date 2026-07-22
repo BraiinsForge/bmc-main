@@ -58,6 +58,7 @@ let
           uid = m.uid;
           display_name = m.name;
           category = m.category or "misc";
+          supported_viewports = m.supported_viewports or [ ];
         } // lib.optionalAttrs (m ? subname && m.subname != null) {
           subname = m.subname;
         };
