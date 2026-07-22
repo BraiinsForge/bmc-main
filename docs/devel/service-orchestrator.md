@@ -75,7 +75,7 @@ Per-service actions come from `ServiceConfig` (`bmc-nix/src/service_orchestrator
 
 | Field               | Default                 | Runs for                                                                                           |
 | ------------------- | ----------------------- | -------------------------------------------------------------------------------------------------- |
-| `init`              | `["boot", "start"]`     | new services                                                                                       |
+| `init`              | `["boot", "start"]`     | new services, and services whose live start registration is missing                                |
 | `removed`           | `["stop", "disable"]`   | removed services                                                                                   |
 | `upgrade`           | `["disable", "reload"]` | upgraded services, gated by `upgrade_if_status`                                                    |
 | `always`            | `["enable"]`            | every service in the new generation, every activation                                              |
@@ -90,6 +90,50 @@ generation's init script path (the script may no longer exist in the live root);
 `rc.d` symlinks for unchanged services on every activation.
 
 Execution is best-effort per action: a failed action is logged and counted, but does not stop the remaining plan.
+
+## Reconciling Against Live State
+
+The generation diff alone cannot see rootfs damage. A soft factory reset (`bos factory_reset`) wipes the overlay —
+including the `/etc/init.d/<name>` scripts and `/etc/rc.d` links — while leaving the Nix store and profile intact. The
+next boot re-runs the current generation's activation entrypoint with old == new, so every service classifies as
+unchanged: the copy-files step restores the init scripts and `always = ["enable"]` restores the `rc.d` links, but
+nothing issues a start — rc had already scanned `/etc/rc.d` before the links existed, so every Nix-managed service stays
+down until yet another reboot.
+
+The plan therefore also keys on live state. Before planning, the orchestrator checks each new-generation service's start
+registration: an `S<prio><name>` link in the live `/etc/rc.d` — at any priority — that canonicalizes to the live
+`/etc/init.d/<name>`. Dangling links, links naming another script, and `K` links do not count; rc starts nothing through
+them. A service whose registration is missing runs its `init` actions in addition to `always`, regardless of its diff
+classification; an upgraded service hits the same hole, because its `upgrade_if_status: running` gate observes it
+stopped and skips the upgrade actions. The registration check is captured before any planned `enable` runs.
+
+A manual `/etc/init.d/<name> disable` creates the same missing-registration state without rootfs damage. Because the
+generation remains authoritative, any subsequent activation immediately runs `init` and `always`, starting and
+re-enabling the service; persistent disablement must be expressed in the generation (`enabled = false`).
+
+Promotion is additive: gated upgrade actions run first (their `upgrade_if_status` gating is untouched), then the
+promoted `init` actions, then `always`. When a gate-passing upgrade action already started the service, the following
+`start` is a procd no-op — custom init scripts must tolerate `start` on a running service, the same idempotency
+rc.common already assumes.
+
+Promotion also requires the new generation to ship an `S` link for the service (membership in its start order): a
+service the generation itself does not enable is never promoted, no matter its live registration or how its action lists
+are configured. Services configured with empty action lists (`enabled = false`) additionally remain untouched, as their
+`init` and `always` are empty.
+
+The promotion is deliberately keyed on registration, not on runtime status ("enabled but not running"). The orchestrator
+runs concurrently with the remainder of the rc sequence, so on a healthy boot a status poll could observe a service as
+"not running" merely because rc has not reached its START slot yet; starting it from the orchestrator would race rc's
+own start and reorder services nondeterministically on every boot. With registration as the key, a healthy boot (links
+present) is a no-op, and the orchestrator only starts services on a boot where rc could not have started them — their
+links were missing when rc scanned. Restarting a registered service that died is procd respawn's job, not the
+orchestrator's.
+
+On the reset-recovery boot the ordering degrades in both directions: the orchestrator runs concurrently with the
+remaining rc slots, so a promoted service can start before a lower-numbered system service it depends on, and vice
+versa. This is the same ordering a genuinely new service gets when a post-boot activation installs it, so no new
+ordering class appears. `mkOpenWrtService` asserts `START > 62`, keeping every Nix service behind the firmware's ROM
+nix-activator slot that mounts `/nix`; healthy boots are unaffected because promotion never fires when the links exist.
 
 ## Cleanup and Logging
 
