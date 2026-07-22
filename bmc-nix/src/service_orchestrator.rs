@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub mod config;
@@ -115,6 +115,7 @@ fn order_priority(order: &ServicePriorityMap, service: &str) -> Option<u16> {
 pub fn build_action_plan(
     changes: &ServiceChanges,
     upgrade_statuses: &BTreeMap<String, ServiceStatus>,
+    live_registered: &BTreeSet<String>,
     old_stop_order: &ServicePriorityMap,
     new_start_order: &ServicePriorityMap,
 ) -> Vec<PlannedAction> {
@@ -169,6 +170,32 @@ pub fn build_action_plan(
         }
     }
 
+    // Live-state reconciliation: a service the new generation enables
+    // (has a start link for) but whose live rc.d registration is missing
+    // was never started by rc — e.g. a soft factory reset wiped the
+    // overlay links. Run its init actions as if it were new. Emitted
+    // after the upgrade actions and before `always` so the stable sort
+    // keeps upgrade → init → always within a priority bucket.
+    for change in changes.upgraded.iter().chain(&changes.unchanged) {
+        if live_registered.contains(&change.name) {
+            continue;
+        }
+        let Some(start_priority) = order_priority(new_start_order, &change.name) else {
+            continue;
+        };
+        let service = effective_service_config(change);
+        let command_path = active_root_command_path(&change.name);
+        let priority = 100 + start_priority;
+        for action in &service.init {
+            plan.push(PlannedAction {
+                priority,
+                service: change.name.clone(),
+                action: action.clone(),
+                command_path: command_path.clone(),
+            });
+        }
+    }
+
     // `always` actions (default `["enable"]`) run for every service present
     // in the new generation on every activation, regardless of change kind.
     // Emitted LAST in source order so the stable sort-by-priority puts them
@@ -202,6 +229,7 @@ pub fn build_action_plan(
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::collections::BTreeSet;
     use std::path::{Path, PathBuf};
 
     use super::*;
@@ -260,6 +288,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "exhaustive fixture asserting the full interleaved action plan"
+    )]
     fn builds_action_plan_with_removed_and_priority_interleaving_for_upgraded_and_new_services() {
         let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
         let old_root = tempdir.path().join("old");
@@ -311,7 +343,13 @@ mod tests {
             ("late-upgrade".to_owned(), ServiceStatus::Stopped),
         ]);
 
-        let actions = build_action_plan(&changes, &statuses, &old.stop_order, &new.start_order);
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::from(["gated".to_owned(), "late-upgrade".to_owned()]),
+            &old.stop_order,
+            &new.start_order,
+        );
 
         assert_eq!(
             action_summary(&actions),
@@ -394,6 +432,7 @@ mod tests {
         let actions = build_action_plan(
             &changes,
             &BTreeMap::new(),
+            &BTreeSet::from(["kept".to_owned()]),
             &old.stop_order,
             &new.start_order,
         );
@@ -434,7 +473,13 @@ mod tests {
         );
 
         let statuses = BTreeMap::from([("moved".to_owned(), ServiceStatus::Running)]);
-        let actions = build_action_plan(&changes, &statuses, &old.stop_order, &new.start_order);
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::from(["moved".to_owned()]),
+            &old.stop_order,
+            &new.start_order,
+        );
 
         assert_eq!(
             action_summary(&actions),
@@ -479,6 +524,7 @@ mod tests {
         let actions = build_action_plan(
             &changes,
             &BTreeMap::new(),
+            &BTreeSet::new(),
             &old.stop_order,
             &new.start_order,
         );
@@ -509,6 +555,7 @@ mod tests {
         let actions = build_action_plan(
             &changes,
             &BTreeMap::new(),
+            &BTreeSet::new(),
             &old.stop_order,
             &new.start_order,
         );
@@ -529,6 +576,238 @@ mod tests {
                     old_root.join("etc/init.d/removed"),
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn promotes_unregistered_unchanged_service_with_init_actions() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&new_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&old_root.join("etc/rc.d/S15kept"), "");
+        write_file(&new_root.join("etc/rc.d/S15kept"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let actions = build_action_plan(
+            &changes,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert_eq!(
+            action_summary(&actions),
+            vec![
+                (
+                    115,
+                    "kept".to_owned(),
+                    "boot".to_owned(),
+                    PathBuf::from("/etc/init.d/kept"),
+                ),
+                (
+                    115,
+                    "kept".to_owned(),
+                    "start".to_owned(),
+                    PathBuf::from("/etc/init.d/kept"),
+                ),
+                (
+                    115,
+                    "kept".to_owned(),
+                    "enable".to_owned(),
+                    PathBuf::from("/etc/init.d/kept"),
+                ),
+            ],
+            "an unchanged service without a live start registration must run \
+             its init actions (a factory reset wiped the links rc would have \
+             started it from) and still get the always=[enable] reconcile"
+        );
+    }
+
+    #[test]
+    fn does_not_promote_registered_unchanged_service() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&new_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&old_root.join("etc/rc.d/S15kept"), "");
+        write_file(&new_root.join("etc/rc.d/S15kept"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let actions = build_action_plan(
+            &changes,
+            &BTreeMap::new(),
+            &BTreeSet::from(["kept".to_owned()]),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert_eq!(
+            action_summary(&actions),
+            vec![(
+                115,
+                "kept".to_owned(),
+                "enable".to_owned(),
+                PathBuf::from("/etc/init.d/kept"),
+            )],
+            "a registered service is rc's to start: a healthy boot must stay \
+             a no-op apart from the always=[enable] reconcile"
+        );
+    }
+
+    #[test]
+    fn does_not_promote_service_without_generation_start_link() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        // No etc/rc.d S link in either generation: the generation itself
+        // says "not enabled", so a missing live link is the desired state.
+        write_file(&old_root.join("etc/init.d/optout"), "optout-service");
+        write_file(&new_root.join("etc/init.d/optout"), "optout-service");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let actions = build_action_plan(
+            &changes,
+            &BTreeMap::new(),
+            &BTreeSet::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert!(
+            !actions
+                .iter()
+                .any(|a| a.action == "boot" || a.action == "start"),
+            "a service the generation ships no S link for must never be \
+             promoted, regardless of its live registration: {:?}",
+            action_summary(&actions)
+        );
+    }
+
+    #[test]
+    fn promoted_upgraded_service_with_always_gate_orders_upgrade_init_always() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/mig"), "old-mig");
+        write_file(&new_root.join("etc/init.d/mig"), "new-mig");
+        write_file(&old_root.join("etc/rc.d/S30mig"), "");
+        write_file(&new_root.join("etc/rc.d/S30mig"), "");
+        write_file(
+            &new_root.join("etc/init.d.conf/mig.json"),
+            r#"{"upgrade":["disable","reload"],"upgrade_if_status":"always"}"#,
+        );
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let statuses = BTreeMap::from([("mig".to_owned(), ServiceStatus::Stopped)]);
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        let sequence: Vec<&str> = actions.iter().map(|a| a.action.as_str()).collect();
+        assert_eq!(
+            sequence,
+            vec!["disable", "reload", "boot", "start", "enable"],
+            "an upgrade staged across a factory reset must keep its gated \
+             upgrade (migration) actions, then the promoted init actions, \
+             then the always reconcile"
+        );
+    }
+
+    #[test]
+    fn promoted_upgraded_service_default_gate_runs_init_without_upgrade_actions() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/gated"), "old-gated");
+        write_file(&new_root.join("etc/init.d/gated"), "new-gated");
+        write_file(&old_root.join("etc/rc.d/S30gated"), "");
+        write_file(&new_root.join("etc/rc.d/S30gated"), "");
+        write_file(
+            &new_root.join("etc/init.d.conf/gated.json"),
+            r#"{"upgrade":["reload"]}"#,
+        );
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let statuses = BTreeMap::from([("gated".to_owned(), ServiceStatus::Stopped)]);
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        let sequence: Vec<&str> = actions.iter().map(|a| a.action.as_str()).collect();
+        assert_eq!(
+            sequence,
+            vec!["boot", "start", "enable"],
+            "the default running gate skips upgrade actions for a stopped \
+             service, but the missing registration must still promote it"
+        );
+    }
+
+    #[test]
+    fn promoted_upgraded_service_with_stopped_gate_orders_upgrade_init_always() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/mig"), "old-mig");
+        write_file(&new_root.join("etc/init.d/mig"), "new-mig");
+        write_file(&old_root.join("etc/rc.d/S30mig"), "");
+        write_file(&new_root.join("etc/rc.d/S30mig"), "");
+        write_file(
+            &new_root.join("etc/init.d.conf/mig.json"),
+            r#"{"upgrade":["reload"],"upgrade_if_status":"stopped"}"#,
+        );
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let statuses = BTreeMap::from([("mig".to_owned(), ServiceStatus::Stopped)]);
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::new(),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        let sequence: Vec<&str> = actions.iter().map(|a| a.action.as_str()).collect();
+        assert_eq!(
+            sequence,
+            vec!["reload", "boot", "start", "enable"],
+            "a stopped-gated upgrade action runs before the promoted init \
+             actions within the same priority bucket"
         );
     }
 }

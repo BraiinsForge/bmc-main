@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Mutex;
@@ -38,7 +38,7 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 use bmc_nix::profile;
 use bmc_nix::service_orchestrator::{
     ActivationCompletion, ServiceStatus, build_action_plan, compare_generation_services,
-    discover_generation, evaluate_activation_completion,
+    discover_generation, evaluate_activation_completion, parse_rcd_link_name,
 };
 
 const LOG_FILE: &str = "/var/log/nix-orchestrator/nix-orchestrator.log";
@@ -181,7 +181,19 @@ async fn run(args: Args) -> anyhow::Result<()> {
         verify_current_generation(&args.current_link, &args.new_generation)?;
 
         let statuses = collect_upgrade_statuses(&changes)?;
-        let actions = build_action_plan(&changes, &statuses, &old.stop_order, &new.start_order);
+        let registered =
+            collect_live_registrations(Path::new("/etc/rc.d"), Path::new("/etc/init.d"));
+        info!(
+            count = registered.len(),
+            "collected live start registrations"
+        );
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &registered,
+            &old.stop_order,
+            &new.start_order,
+        );
         log_action_plan(&actions);
         execute_action_plan(&actions);
         Ok(())
@@ -310,6 +322,46 @@ fn collect_upgrade_statuses(
     Ok(statuses)
 }
 
+/// Services rc could have started at boot: live `S` links that resolve
+/// to the live init script. `K` links, dangling links, and links naming
+/// another script do not count — rc starts nothing through them.
+fn collect_live_registrations(rcd_dir: &Path, init_d_dir: &Path) -> BTreeSet<String> {
+    let mut registered = BTreeSet::new();
+    let entries = match std::fs::read_dir(rcd_dir) {
+        Ok(entries) => entries,
+        Err(error) => {
+            warn!(
+                rcd_dir = %rcd_dir.display(),
+                %error,
+                "cannot read live rc.d, treating every service as unregistered"
+            );
+            return registered;
+        }
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(link_name) = file_name.to_str() else {
+            continue;
+        };
+        if !link_name.starts_with('S') {
+            continue;
+        }
+        let Some((service, _priority)) = parse_rcd_link_name(link_name) else {
+            continue;
+        };
+        let Ok(link_target) = std::fs::canonicalize(entry.path()) else {
+            continue;
+        };
+        let Ok(expected_target) = std::fs::canonicalize(init_d_dir.join(&service)) else {
+            continue;
+        };
+        if link_target == expected_target {
+            registered.insert(service);
+        }
+    }
+    registered
+}
+
 fn read_active_service_status(service: &str) -> anyhow::Result<ServiceStatus> {
     let command_path = PathBuf::from("/etc/init.d").join(service);
     let status = Command::new(&command_path)
@@ -407,6 +459,7 @@ fn delete_transient_service(instance_name: &str) -> anyhow::Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeSet;
     use std::ffi::OsString;
     use std::fs;
     use std::os::unix::fs::PermissionsExt as _;
@@ -740,5 +793,115 @@ mod tests {
     fn test_env_lock() -> &'static Mutex<()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    fn registration_roots(tmp: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        let rcd = tmp.join("rc.d");
+        let init_d = tmp.join("init.d");
+        fs::create_dir_all(&rcd).expect("BUG: should create rc.d");
+        fs::create_dir_all(&init_d).expect("BUG: should create init.d");
+        (rcd, init_d)
+    }
+
+    #[test]
+    fn registers_valid_start_link_at_any_priority() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (rcd, init_d) = registration_roots(tmp.path());
+        fs::write(init_d.join("svc"), "#!/bin/sh\n").expect("BUG: should write script");
+        // Production links are relative (../init.d/<name>); the priority
+        // deliberately differs from anything a generation would ship.
+        symlink(Path::new("../init.d/svc"), rcd.join("S42svc")).expect("BUG: should create link");
+
+        assert_eq!(
+            super::collect_live_registrations(&rcd, &init_d),
+            BTreeSet::from(["svc".to_owned()]),
+            "any-priority S link resolving to the live script counts: rc \
+             started the service through it regardless of the slot number"
+        );
+    }
+
+    #[test]
+    fn kill_only_link_is_not_a_start_registration() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (rcd, init_d) = registration_roots(tmp.path());
+        fs::write(init_d.join("svc"), "#!/bin/sh\n").expect("BUG: should write script");
+        symlink(Path::new("../init.d/svc"), rcd.join("K80svc")).expect("BUG: should create link");
+
+        assert!(
+            super::collect_live_registrations(&rcd, &init_d).is_empty(),
+            "parse_rcd_link_name accepts K links too, so the collector must \
+             filter on the S prefix itself"
+        );
+    }
+
+    #[test]
+    fn dangling_link_is_not_a_registration() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (rcd, init_d) = registration_roots(tmp.path());
+        symlink(Path::new("../init.d/svc"), rcd.join("S95svc")).expect("BUG: should create link");
+
+        assert!(
+            super::collect_live_registrations(&rcd, &init_d).is_empty(),
+            "rc cannot start a service through a dangling link"
+        );
+    }
+
+    #[test]
+    fn link_to_another_script_is_not_a_registration() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (rcd, init_d) = registration_roots(tmp.path());
+        fs::write(init_d.join("svc"), "#!/bin/sh\n").expect("BUG: should write script");
+        fs::write(init_d.join("other"), "#!/bin/sh\n").expect("BUG: should write script");
+        symlink(Path::new("../init.d/other"), rcd.join("S95svc")).expect("BUG: should create link");
+
+        assert!(
+            super::collect_live_registrations(&rcd, &init_d).is_empty(),
+            "an S link named for svc but resolving to another script would \
+             have started the wrong service"
+        );
+    }
+
+    #[test]
+    fn one_valid_candidate_among_stale_links_registers() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (rcd, init_d) = registration_roots(tmp.path());
+        fs::write(init_d.join("svc"), "#!/bin/sh\n").expect("BUG: should write script");
+        symlink(Path::new("../init.d/gone"), rcd.join("S10svc")).expect("BUG: should create link");
+        symlink(Path::new("../init.d/svc"), rcd.join("S95svc")).expect("BUG: should create link");
+
+        assert_eq!(
+            super::collect_live_registrations(&rcd, &init_d),
+            BTreeSet::from(["svc".to_owned()]),
+            "one resolving link is enough; stale siblings do not cancel it"
+        );
+    }
+
+    #[test]
+    fn missing_rcd_directory_means_everything_unregistered() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (_rcd, init_d) = registration_roots(tmp.path());
+
+        assert!(
+            super::collect_live_registrations(&tmp.path().join("no-such-dir"), &init_d).is_empty(),
+            "a wiped rc.d directory is the factory-reset case, not an error"
+        );
+    }
+
+    #[test]
+    fn digit_leading_service_name_stays_unregistered() {
+        let tmp = tempdir().expect("BUG: should create tempdir");
+        let (rcd, init_d) = registration_roots(tmp.path());
+        fs::write(init_d.join("9to5"), "#!/bin/sh\n").expect("BUG: should write script");
+        symlink(Path::new("../init.d/9to5"), rcd.join("S159to5")).expect("BUG: should create link");
+
+        // Pins the pre-existing parser behavior: the greedy digit scan
+        // reads "S159to5" as priority 159 + name "to5", so the name never
+        // resolves. Discovery mis-parses the generation link the same way,
+        // so such a service is also never promoted — consistent, if wrong.
+        assert!(
+            super::collect_live_registrations(&rcd, &init_d).is_empty(),
+            "digit-leading service names are unresolvable by the shared \
+             rc.d parser (its digit scan is greedy)"
+        );
     }
 }
