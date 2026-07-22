@@ -235,7 +235,7 @@ mod tests {
                 "name": "{name}",
                 "description": "Test widget",
                 "binary": "widget",
-                "sizes": ["small"]
+                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
             }}"#
         );
 
@@ -262,7 +262,7 @@ mod tests {
                 "description": "Test widget",
                 "binary": "widget",
                 "icon": "{icon}",
-                "sizes": ["small"]
+                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
             }}"#
         );
         std_fs::write(widget_dir.join("manifest.json"), manifest)
@@ -576,7 +576,7 @@ mod tests {
                 "name": "no-binary-widget",
                 "description": "Test",
                 "binary": "widget",
-                "sizes": ["small"]
+                "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]
             }"#,
         )
         .expect("BUG: failed to write manifest");
@@ -601,7 +601,7 @@ mod tests {
                 "name": "non-exec-widget",
                 "description": "Test",
                 "binary": "widget",
-                "sizes": ["small"]
+                "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]
             }"#,
         )
         .expect("BUG: failed to write manifest");

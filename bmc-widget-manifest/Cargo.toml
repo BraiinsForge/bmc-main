@@ -18,7 +18,6 @@ include = [
 ]
 
 [dependencies]
-bmc-ipc = { workspace = true }
 indexmap = { workspace = true }
 schemars = { workspace = true, features = ["indexmap2", "semver1"] }
 semver = { workspace = true }

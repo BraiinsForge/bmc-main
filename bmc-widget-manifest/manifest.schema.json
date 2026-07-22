@@ -75,7 +75,7 @@
       "maxLength": 30
     },
     "supported_viewports": {
-      "description": "Viewport families this widget supports. Must be non-empty after\ncompatibility normalization of any legacy `sizes`.",
+      "description": "Viewport families this widget supports. Must be non-empty.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/WidgetViewportConstraint"

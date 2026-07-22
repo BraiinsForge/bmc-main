@@ -731,7 +731,7 @@ mod tests {
             "name": "T",
             "description": "T",
             "binary": "t.wasm",
-            "sizes": ["small", "medium", "large", "full"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
             "params": {
                 "theme": {
                     "name": "Theme",

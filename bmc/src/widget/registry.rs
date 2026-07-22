@@ -548,7 +548,7 @@ mod tests {
         let widget_dir = base_dir.join(name);
         std::fs::create_dir_all(&widget_dir).expect("BUG: create widget dir");
         let manifest = format!(
-            r#"{{"uid":"{uid}","version":"1.0.0","name":"{name}","description":"t","binary":"widget","sizes":["small"]}}"#
+            r#"{{"uid":"{uid}","version":"1.0.0","name":"{name}","description":"t","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]}}"#
         );
         std::fs::write(widget_dir.join("manifest.json"), manifest).expect("BUG: write manifest");
         let binary_path = widget_dir.join("widget");

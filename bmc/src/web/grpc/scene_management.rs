@@ -3507,7 +3507,7 @@ mod tests {
                 "name": "T",
                 "description": "T",
                 "binary": "bin/test",
-                "sizes": ["small"]
+                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
             }}"#
         );
         let manifest = bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest");
@@ -3542,7 +3542,7 @@ mod tests {
                 "subname": "Analog",
                 "description": "T",
                 "binary": "bin/test",
-                "sizes": ["small"]
+                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
             }}"#,
             uuid::Uuid::new_v4()
         );
@@ -3569,7 +3569,7 @@ mod tests {
                     "description": "T",
                     "binary": "bin/test",
                     {category_line}
-                    "sizes": ["small"]
+                    "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
                 }}"#,
                 uuid::Uuid::new_v4()
             );

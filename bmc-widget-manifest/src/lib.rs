@@ -43,7 +43,6 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use bmc_ipc::SizeType;
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::de::{Error as _, MapAccess, Visitor};
@@ -123,10 +122,6 @@ pub enum ManifestError {
     /// Two viewport constraints had identical display type and all six bounds.
     #[error("duplicate viewport constraint")]
     DuplicateViewport,
-
-    /// A manifest provided both legacy `sizes` and new `supported_viewports`.
-    #[error("manifest must not provide both `sizes` and `supported_viewports`")]
-    MixedSizesAndViewports,
 
     /// A `settings` entry was not a recognised [`SettingKey`] variant.
     #[error("invalid setting key: {0}")]
@@ -422,9 +417,7 @@ struct RawManifest {
     #[serde(default)]
     settings: Vec<SettingKey>,
     #[serde(default)]
-    sizes: Option<Vec<SizeType>>,
-    #[serde(default)]
-    supported_viewports: Option<Vec<WidgetViewportConstraint>>,
+    supported_viewports: Vec<WidgetViewportConstraint>,
     #[serde(default, deserialize_with = "deserialize_unique_params")]
     params: IndexMap<ParamKey, ParamDefinition>,
 }
@@ -514,8 +507,7 @@ pub struct Manifest {
     /// Order is preserved.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub settings: Vec<SettingKey>,
-    /// Viewport families this widget supports. Must be non-empty after
-    /// compatibility normalization of any legacy `sizes`.
+    /// Viewport families this widget supports. Must be non-empty.
     #[schemars(length(min = 1))]
     pub supported_viewports: Vec<WidgetViewportConstraint>,
     /// Per-instance parameter declarations, keyed by [`ParamKey`].
@@ -559,16 +551,6 @@ impl Manifest {
                 source: e,
             })?;
 
-        let supported_viewports = match (raw.sizes, raw.supported_viewports) {
-            (Some(_), Some(_)) => return Err(ManifestError::MixedSizesAndViewports),
-            (Some(sizes), None) => sizes
-                .into_iter()
-                .map(WidgetViewportConstraint::from)
-                .collect(),
-            (None, Some(viewports)) => viewports,
-            (None, None) => Vec::new(),
-        };
-
         let manifest = Self {
             uid: raw.uid,
             version,
@@ -581,7 +563,7 @@ impl Manifest {
             icon: raw.icon,
             category: raw.category,
             settings: raw.settings,
-            supported_viewports,
+            supported_viewports: raw.supported_viewports,
             params: raw.params,
         };
 
@@ -730,26 +712,6 @@ pub struct WidgetViewportConstraint {
     pub min_dpi: Option<u32>,
     /// Inclusive maximum dpi, or unbounded.
     pub max_dpi: Option<u32>,
-}
-
-impl From<SizeType> for WidgetViewportConstraint {
-    fn from(size: SizeType) -> Self {
-        let (w, h) = match size {
-            SizeType::Small => (317, 238),
-            SizeType::Medium => (638, 238),
-            SizeType::Large => (638, 480),
-            SizeType::Full => (1280, 480),
-        };
-        Self {
-            viewport_shape: ViewportShape::Rectangular,
-            min_width: Some(w),
-            max_width: Some(w),
-            min_height: Some(h),
-            max_height: Some(h),
-            min_dpi: None,
-            max_dpi: None,
-        }
-    }
 }
 
 /// Per-instance parameter declaration inside a manifest's `params` map.
@@ -1149,7 +1111,16 @@ mod tests {
             },
             "binary": "bin/clock",
             "settings": ["localization", "timezone", "nightMode"],
-            "sizes": ["small", "medium", "large", "full"],
+            "supported_viewports": [
+                {"type":"rectangular","min_width":317,"max_width":317,
+                 "min_height":238,"max_height":238},
+                {"type":"rectangular","min_width":638,"max_width":638,
+                 "min_height":238,"max_height":238},
+                {"type":"rectangular","min_width":638,"max_width":638,
+                 "min_height":480,"max_height":480},
+                {"type":"rectangular","min_width":1280,"max_width":1280,
+                 "min_height":480,"max_height":480}
+            ],
             "params": {
                 "style": {
                     "name": "Clock Style",
@@ -1432,7 +1403,7 @@ mod tests {
             "name": "Test",
             "description": "Test",
             "binary": "bin/test",
-            "sizes": ["small"]
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]
         }"#;
         let result = Manifest::from_str(json);
         assert!(matches!(result, Err(ManifestError::InvalidUuidVersion(1))));
@@ -1446,7 +1417,7 @@ mod tests {
             "name": "Test",
             "description": "Test",
             "binary": "bin/test",
-            "sizes": ["small"]
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]
         }"#;
         let result = Manifest::from_str(json);
         assert!(matches!(result, Err(ManifestError::InvalidVersion { .. })));
@@ -1462,7 +1433,7 @@ mod tests {
                 "name": "{long_name}",
                 "description": "Test",
                 "binary": "bin/test",
-                "sizes": ["small"]
+                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
             }}"#
         );
         let result = Manifest::from_str(&json);
@@ -1477,7 +1448,7 @@ mod tests {
             "name": "Test",
             "description": "Test",
             "binary": "bin/test",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
             "params": {
                 "flag": {
                     "name": "Flag",
@@ -1498,7 +1469,7 @@ mod tests {
             "name": "Test",
             "description": "Test",
             "binary": "bin/test",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
             "params": {
                 "brightness": {
                     "name": "Brightness",
@@ -1729,7 +1700,7 @@ mod tests {
             "name":"Test",
             "description":"Test",
             "binary":"bin/test",
-            "sizes":["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
             "params":{"123":{"name":"Bad","type":"string","default_value":"x"}}
         }"#;
         let res = Manifest::from_str(manifest_json);
@@ -1895,7 +1866,7 @@ mod tests {
             "name": "Test",
             "description": "Test",
             "binary": "bin/test",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
             "params": {
                 "foo": {"name": "Foo", "type": "string", "default_value": "a"},
                 "foo": {"name": "Foo2", "type": "string", "default_value": "b"}
@@ -1917,7 +1888,7 @@ mod tests {
             "name": "Test",
             "description": "Test",
             "binary": "bin/test",
-            "sizes": ["small"],
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
             "params": {
                 "zebra": {"name": "Z", "type": "string", "default_value": "z"},
                 "alpha": {"name": "A", "type": "string", "default_value": "a"},
@@ -1989,45 +1960,6 @@ mod tests {
         assert_eq!(vp.max_height, Some(480));
         assert_eq!(vp.min_dpi, None);
         assert_eq!(vp.max_dpi, None);
-    }
-
-    #[test]
-    fn legacy_sizes_normalize_to_exact_constraints() {
-        let json = r#"{
-            "uid": "550e8400-e29b-41d4-a716-446655440000",
-            "version": "1.0.0",
-            "name": "Test",
-            "description": "Test",
-            "binary": "bin/test",
-            "sizes": ["small", "medium", "large", "full"]
-        }"#;
-        let manifest = Manifest::from_str(json).expect("BUG: legacy sizes must normalize");
-        #[expect(
-            clippy::type_complexity,
-            reason = "test-only tuple for compact assertion"
-        )]
-        let got: Vec<(Option<u32>, Option<u32>, Option<u32>, Option<u32>)> = manifest
-            .supported_viewports
-            .iter()
-            .map(|c| (c.min_width, c.max_width, c.min_height, c.max_height))
-            .collect();
-        assert_eq!(
-            got,
-            vec![
-                (Some(317), Some(317), Some(238), Some(238)),
-                (Some(638), Some(638), Some(238), Some(238)),
-                (Some(638), Some(638), Some(480), Some(480)),
-                (Some(1280), Some(1280), Some(480), Some(480)),
-            ]
-        );
-        assert!(
-            manifest
-                .supported_viewports
-                .iter()
-                .all(|c| c.viewport_shape == ViewportShape::Rectangular
-                    && c.min_dpi.is_none()
-                    && c.max_dpi.is_none())
-        );
     }
 
     #[test]
@@ -2122,27 +2054,7 @@ mod tests {
     }
 
     #[test]
-    fn reject_both_sizes_and_supported_viewports() {
-        let json = r#"{
-            "uid": "550e8400-e29b-41d4-a716-446655440000",
-            "version": "1.0.0",
-            "name": "Test",
-            "description": "Test",
-            "binary": "bin/test",
-            "sizes": ["small"],
-            "supported_viewports": [
-                {"type":"rectangular","min_width":317,"max_width":317,
-                 "min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}
-            ]
-        }"#;
-        assert!(matches!(
-            Manifest::from_str(json),
-            Err(ManifestError::MixedSizesAndViewports)
-        ));
-    }
-
-    #[test]
-    fn reject_neither_sizes_nor_supported_viewports() {
+    fn reject_missing_supported_viewports() {
         let json = r#"{
             "uid": "550e8400-e29b-41d4-a716-446655440000",
             "version": "1.0.0",
@@ -2154,18 +2066,5 @@ mod tests {
             Manifest::from_str(json),
             Err(ManifestError::EmptyViewports)
         ));
-    }
-
-    #[test]
-    fn reject_unrecognized_legacy_size() {
-        let json = r#"{
-            "uid": "550e8400-e29b-41d4-a716-446655440000",
-            "version": "1.0.0",
-            "name": "Test",
-            "description": "Test",
-            "binary": "bin/test",
-            "sizes": ["enormous"]
-        }"#;
-        assert!(Manifest::from_str(json).is_err());
     }
 }
