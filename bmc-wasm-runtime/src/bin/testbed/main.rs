@@ -794,24 +794,6 @@ fn load_catalog_and_platform(cli: &CliArgs) -> Result<(platforms::PlatformCatalo
     Ok((catalog, selected_id))
 }
 
-/// Initial params snapshot from the manifest: every declared key bound to its
-/// `ParamValue::from_param_kind_default`. Mirrors what the compositor delivers on-device
-/// when no operator overrides are set.
-fn manifest_default_params(
-    manifest: &bmc_widget_manifest::Manifest,
-) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
-    manifest
-        .params
-        .iter()
-        .map(|(key, def)| {
-            (
-                key.clone(),
-                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
-            )
-        })
-        .collect()
-}
-
 // ── Memory stats (Linux only) ───────────────────────────────────────
 
 fn current_rss_kb() -> Option<u64> {
@@ -857,7 +839,7 @@ fn main() -> Result<()> {
         cli.manifest_path.clone(),
         cli.resolved_widget_root(),
     )?;
-    let params = manifest_default_params(&manifest);
+    let params = bmc_wasm_runtime::manifest_default_params(&manifest);
     let (catalog, active_platform_id) = load_catalog_and_platform(&cli)?;
     let selected_platform = catalog
         .select(Some(&active_platform_id))

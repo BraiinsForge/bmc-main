@@ -48,10 +48,11 @@ use bmc_render::renderer::Renderer;
 use bmc_wasm_protocol::{MdnsBrowseId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId};
 use bmc_wasm_runtime::capture_config::CaptureConfig;
 use bmc_wasm_runtime::unified_fixture::{
-    TimelineEvent, UnifiedEvent, UnifiedFixture, load_unified_fixture, validate_fixture,
+    FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture, load_unified_fixture,
+    validate_fixture,
 };
 use bmc_wasm_runtime::{
-    FixtureEvent, FixtureEventKind, RenderStatus, RuntimeConfig, WasmWidgetRuntime,
+    FixtureEvent, FixtureEventKind, RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 
 /// Fixed timestep per frame (ms).
@@ -71,7 +72,14 @@ pub struct RunArgs {
     pub variant: Option<String>,
     pub list_variants: bool,
     /// Path to the `capture/` directory containing `config.toml` and fixtures.
-    pub capture_dir: PathBuf,
+    /// Optional in `--online` mode.
+    pub capture_dir: Option<PathBuf>,
+    /// Preview against live data: run non-hermetic so the widget fetches its
+    /// own data source, and wait for the response before the shot.
+    pub online: bool,
+    /// Render every `CAPTURE_SIZES` viewport the widget's manifest supports,
+    /// each into `<output>/<size>/`. Ignores `--size`.
+    pub all_sizes: bool,
 }
 
 /// Parsed capture parameters (size string → width/height/name).
@@ -83,10 +91,14 @@ struct CaptureCtx {
     output_dir: PathBuf,
     fixture: Option<PathBuf>,
     variant: Option<String>,
+    online: bool,
 }
 
 pub fn execute(args: RunArgs) -> Result<()> {
-    let config = bmc_wasm_runtime::capture_config::load_from_capture_dir(&args.capture_dir)?;
+    let config = match &args.capture_dir {
+        Some(dir) => bmc_wasm_runtime::capture_config::load_from_capture_dir(dir)?,
+        None => CaptureConfig::default(),
+    };
 
     // --list-variants: print variant names and exit
     if args.list_variants {
@@ -98,6 +110,10 @@ pub fn execute(args: RunArgs) -> Result<()> {
             }
         }
         return Ok(());
+    }
+
+    if args.all_sizes {
+        return run_all_supported_sizes(&args, &config);
     }
 
     // Parse size string (required for actual capture)
@@ -126,6 +142,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         output_dir,
         fixture: args.fixture,
         variant: args.variant,
+        online: args.online,
     };
 
     run_capture(&ctx, &config)
@@ -133,23 +150,128 @@ pub fn execute(args: RunArgs) -> Result<()> {
 
 // ── Capture entry point ─────────────────────────────────────────────
 
-fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
-    // Look up fixture path from CLI or config
-    let fixture_path = ctx
-        .fixture
+/// Resolve the offline replay fixture for a size: an explicit `--fixture`
+/// wins, else the size's `config.toml` entry. `None` = no fixture recorded.
+fn offline_fixture_path(ctx: &CaptureCtx, config: &CaptureConfig) -> Option<PathBuf> {
+    ctx.fixture
         .clone()
         .or_else(|| config.fixtures.get(&ctx.size_name).cloned())
-        .with_context(|| {
-            // Try to extract the example name from the WASM path for a helpful hint.
-            let example_name = bmc_wasm_runtime::fixtures::find_widget_root(&ctx.wasm_path)
-                .and_then(|r| r.file_name().map(|n| n.to_string_lossy().into_owned()))
-                .unwrap_or_else(|| "<name>".into());
-            format!(
-                "no unified fixture for size '{}' — record one with: make record EXAMPLE={} SIZE={}",
-                ctx.size_name, example_name, ctx.size_name
-            )
-        })?;
-    run_unified_capture(ctx, config, &fixture_path)
+}
+
+fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
+    if ctx.online {
+        return run_unified_capture(ctx, config, &synth_online_fixture(), "online (live data)");
+    }
+
+    let fixture_path = offline_fixture_path(ctx, config).with_context(|| {
+        // Try to extract the example name from the WASM path for a helpful hint.
+        let example_name = bmc_wasm_runtime::fixtures::find_widget_root(&ctx.wasm_path)
+            .and_then(|r| r.file_name().map(|n| n.to_string_lossy().into_owned()))
+            .unwrap_or_else(|| "<name>".into());
+        format!(
+            "no unified fixture for size '{}' — record one with: make record EXAMPLE={} SIZE={}",
+            ctx.size_name, example_name, ctx.size_name
+        )
+    })?;
+    let fixture = load_unified_fixture(&fixture_path)
+        .with_context(|| format!("failed to load fixture {}", fixture_path.display()))?;
+    run_unified_capture(ctx, config, &fixture, &fixture_path.display().to_string())
+}
+
+/// A fixture with no recorded I/O: the widget starts at the current instant
+/// and a single capture fires at 500 ms — enough for its poll to dispatch
+/// and (in `--online` mode) the live fetch to be drained before the shot.
+fn synth_online_fixture() -> UnifiedFixture {
+    // Online previews reflect the host: seed the deck timezone
+    // from the machine's IANA zone so date/time captions render
+    // in the local zone rather than the empty default.
+    let mut initial_system = SystemSnapshot::default();
+    if let Ok(tz) = iana_time_zone::get_timezone() {
+        initial_system.settings.timezone = tz;
+    }
+    UnifiedFixture {
+        header: FixtureHeader {
+            time: chrono::Utc::now().to_rfc3339(),
+            kv: HashMap::new(),
+            initial_params: serde_json::Map::new(),
+            initial_system,
+        },
+        events: vec![TimelineEvent {
+            at_ms: 500,
+            event: UnifiedEvent::Capture {
+                duration_ms: None,
+                fps: None,
+            },
+        }],
+    }
+}
+
+/// Load the widget's `manifest.json` sitting next to its wasm binary.
+fn load_widget_manifest(wasm_path: &Path) -> Result<bmc_widget_manifest::Manifest> {
+    let root = bmc_wasm_runtime::fixtures::find_widget_root(wasm_path)
+        .context("cannot locate the widget's manifest.json from the wasm path")?;
+    let manifest_path = root.join("manifest.json");
+    let text = std::fs::read_to_string(&manifest_path)
+        .with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    text.parse()
+        .map_err(|e| anyhow::anyhow!("failed to parse {}: {e}", manifest_path.display()))
+}
+
+/// Manifest default params for an `--online` preview.
+fn online_default_params(
+    wasm_path: &Path,
+) -> Result<
+    std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+> {
+    Ok(bmc_wasm_runtime::manifest_default_params(
+        &load_widget_manifest(wasm_path)?,
+    ))
+}
+
+/// Render every `CAPTURE_SIZES` viewport the widget's manifest supports, each
+/// into `<output>/<size>/`. The size list lives in one place (`CAPTURE_SIZES`);
+/// this only renders the subset the manifest declares.
+fn run_all_supported_sizes(args: &RunArgs, config: &CaptureConfig) -> Result<()> {
+    let output_base = args
+        .output_dir
+        .clone()
+        .context("--output=<dir> is required")?;
+    let manifest = load_widget_manifest(&args.wasm_path)?;
+
+    let mut rendered = 0_usize;
+    let mut skipped = 0_usize;
+    for &(name, width, height) in bmc_wasm_runtime::capture_config::CAPTURE_SIZES {
+        if !manifest.supports_viewport(manifest_shape_for_size(name), width, height) {
+            continue;
+        }
+        let ctx = CaptureCtx {
+            wasm_path: args.wasm_path.clone(),
+            width,
+            height,
+            size_name: name.to_owned(),
+            output_dir: output_base.join(name),
+            fixture: args.fixture.clone(),
+            variant: args.variant.clone(),
+            online: args.online,
+        };
+        // Offline replay needs a recorded fixture; skip sizes without one so
+        // partial coverage (e.g. only `full`) renders what it can.
+        if !ctx.online && offline_fixture_path(&ctx, config).is_none() {
+            eprintln!("→ {name} ({width}x{height}): no fixture, skipping");
+            skipped += 1;
+            continue;
+        }
+        eprintln!("→ {name} ({width}x{height})");
+        run_capture(&ctx, config)?;
+        rendered += 1;
+    }
+    if rendered == 0 {
+        if skipped > 0 {
+            bail!("no fixture recorded for any supported viewport — record one or use --online");
+        }
+        bail!("the widget's manifest declares no capturable viewports");
+    }
+    Ok(())
 }
 
 // ── Unified fixture replay ──────────────────────────────────────────
@@ -170,19 +292,17 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
 fn run_unified_capture(
     ctx: &CaptureCtx,
     config: &CaptureConfig,
-    fixture_path: &Path,
+    fixture: &UnifiedFixture,
+    source_label: &str,
 ) -> Result<()> {
-    let fixture = load_unified_fixture(fixture_path)
-        .with_context(|| format!("failed to load fixture {}", fixture_path.display()))?;
-    validate_fixture(&fixture)?;
+    validate_fixture(fixture)?;
 
     let widget_name = ctx
         .wasm_path
         .file_stem()
         .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
     eprintln!(
-        "Unified replay: {} ({} events) for {widget_name} at {}x{}",
-        fixture_path.display(),
+        "Unified replay: {source_label} ({} events) for {widget_name} at {}x{}",
         fixture.events.len(),
         ctx.width,
         ctx.height
@@ -201,18 +321,20 @@ fn run_unified_capture(
         })?;
 
     // Prepare KV directory — seed from fixture header KV, not secrets.ini
-    let kv_dir = prepare_unified_kv_dir(ctx, config, &widget_name, &fixture);
+    let kv_dir = prepare_unified_kv_dir(ctx, config, &widget_name, fixture);
 
     // Extract fetch interceptors and network events from the unified timeline
-    let (fetch_interceptor, network_events) = split_unified_events(&fixture);
+    let (fetch_interceptor, network_events) = split_unified_events(fixture);
 
     // Initial params snapshot — baked into the fixture header so replay
-    // is fully self-contained (no `manifest.json` lookup at replay time,
-    // which used to walk up from the wasm binary and silently returned
-    // an empty map in CI's nix-build sandbox where the wasm artifact
-    // is divorced from its source tree).
-    let initial_params = bmc_wasm_runtime::parse_params_json(&fixture.header.initial_params)
-        .expect("BUG: capture fixture initial_params must be valid");
+    // is fully  self-contained (no `manifest.json` lookup at replay time).
+    // Online previews have no fixture params, so seed the manifest defaults.
+    let initial_params = if ctx.online {
+        online_default_params(&ctx.wasm_path)?
+    } else {
+        bmc_wasm_runtime::parse_params_json(&fixture.header.initial_params)
+            .expect("BUG: capture fixture initial_params must be valid")
+    };
 
     // Initial system snapshot — serde-deserialised at fixture load;
     // `#[serde(default)]` on each field lets older fixtures fall back
@@ -224,8 +346,9 @@ fn run_unified_capture(
         kv_store_path: Some(kv_dir),
         mesh_msaa_samples: 4,
         rng_seed: Some(42),
-        // Captures are hermetic: unmatched live I/O fails the run (breach check below).
-        hermetic: true,
+        // Captures are hermetic (unmatched live I/O fails the run) except in
+        // `--online` preview mode, where the widget fetches its own data.
+        hermetic: !ctx.online,
         params: initial_params,
         system: initial_system,
         ..RuntimeConfig::default()
@@ -333,19 +456,27 @@ fn run_unified_capture(
                         frame_count += 1;
                     }
 
-                    // Async image decodes finish on a real OS thread;
-                    // the instant virtual settle frames don't wait.
-                    // Drain in real time but WITHOUT advancing the fixture clock,
-                    // so the timeline — and the captured frame sequence
-                    // — stays deterministic across machines.
+                    // Async image decodes finish on a real OS thread; the instant virtual settle frames don't wait.
+                    // Drain in real time but WITHOUT advancing the fixture clock, so the timeline — and the captured
+                    // frame sequence — stays deterministic across machines.
+                    // Online previews additionally wait for the live fetch (all pending I/O)
+                    // and allow longer for the network round-trip.
                     let drain_start = std::time::Instant::now();
-                    while runtime.has_pending_image_decodes()
-                        && drain_start.elapsed() < std::time::Duration::from_secs(5)
-                    {
+                    let io_timeout =
+                        std::time::Duration::from_secs(if ctx.online { 15 } else { 5 });
+                    loop {
+                        let pending = if ctx.online {
+                            runtime.has_pending_io()
+                        } else {
+                            runtime.has_pending_image_decodes()
+                        };
+                        if !pending || drain_start.elapsed() >= io_timeout {
+                            break;
+                        }
                         std::thread::sleep(std::time::Duration::from_millis(2));
                         deliver_all_io(&mut runtime, &mut renderer);
                         if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                            bail!("widget died draining decodes at frame {frame_count}");
+                            bail!("widget died draining I/O at frame {frame_count}");
                         }
                         unsafe { gl.flush() };
                     }
@@ -412,7 +543,15 @@ fn run_unified_capture(
                             .output_dir
                             .join(format!("frame_{captured_count:04}.png"));
                         let pixels = read_fbo_pixels(&gl, fbo, ctx.width, ctx.height);
-                        save_screenshot(&pixels, ctx.width, ctx.height, &path)?;
+                        // Mask the round disc only for previews; regression
+                        // captures stay square so existing baselines (pixel-exact)
+                        // don't shift.
+                        let round = ctx.online
+                            && matches!(
+                                display_shape_for_size(&ctx.size_name),
+                                bmc_wasm_protocol::DisplayShape::Round
+                            );
+                        save_screenshot(&pixels, ctx.width, ctx.height, round, &path)?;
                         if !is_tty {
                             eprintln!("Captured frame {captured_count} → {}", path.display());
                         }
@@ -946,6 +1085,14 @@ fn split_unified_events(
 
 // ── Shape helpers ────────────────────────────────────────────────────
 
+fn manifest_shape_for_size(size_name: &str) -> bmc_widget_manifest::ViewportShape {
+    if size_name == "round" {
+        bmc_widget_manifest::ViewportShape::Round
+    } else {
+        bmc_widget_manifest::ViewportShape::Rectangular
+    }
+}
+
 fn viewport_shape_for_size(size_name: &str) -> bmc_wasm_protocol::ViewportShape {
     if size_name == "round" {
         bmc_wasm_protocol::ViewportShape::Round
@@ -1061,7 +1208,7 @@ fn read_fbo_pixels(gl: &glow::Context, fbo: glow::Framebuffer, w: u32, h: u32) -
     }
 }
 
-fn save_screenshot(pixels: &[u8], w: u32, h: u32, path: &Path) -> Result<()> {
+fn save_screenshot(pixels: &[u8], w: u32, h: u32, round: bool, path: &Path) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -1074,8 +1221,35 @@ fn save_screenshot(pixels: &[u8], w: u32, h: u32, path: &Path) -> Result<()> {
         flipped[dst_row..dst_row + row_bytes]
             .copy_from_slice(&pixels[src_row..src_row + row_bytes]);
     }
+    if round {
+        mask_round(&mut flipped, w, h);
+    }
     image::save_buffer(path, &flipped, w, h, image::ColorType::Rgba8)?;
     Ok(())
+}
+
+/// Fade pixels outside the inscribed circle to transparent, so a round
+/// display's screenshot shows its visible disc rather than the square
+/// framebuffer. A 1px feather at the rim keeps the edge from aliasing.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_sign_loss,
+    reason = "viewport coords are <= 1280 (exact in f32); coverage and alpha are \
+              non-negative, so the u8 cast cannot lose a sign"
+)]
+fn mask_round(rgba: &mut [u8], w: u32, h: u32) {
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let radius = w.min(h) as f32 / 2.0;
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let dist = ((x as f32 + 0.5 - cx).powi(2) + (y as f32 + 0.5 - cy).powi(2)).sqrt();
+            let coverage = (radius + 0.5 - dist).clamp(0.0, 1.0);
+            if coverage < 1.0 {
+                let alpha = &mut rgba[(y * w as usize + x) * 4 + 3];
+                *alpha = (f32::from(*alpha) * coverage) as u8;
+            }
+        }
+    }
 }
 
 // ── Headless GL setup ────────────────────────────────────────────────

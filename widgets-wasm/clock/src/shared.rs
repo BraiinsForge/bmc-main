@@ -23,6 +23,7 @@
 //! the alarm-row drawer, numeric utilities,
 //! and the typography-knob mapping.
 
+pub(crate) use bmc_wasm_sdk::format::{TzLabel, push_utc_offset, resolve_tz_for_label};
 use bmc_wasm_sdk::system::TimeFormat;
 #[expect(
     clippy::wildcard_imports,
@@ -136,21 +137,6 @@ pub(crate) fn f32_from_u32(value: u32) -> f32 {
 
 pub(crate) fn f32_from_usize(value: usize) -> f32 {
     f32::from(u16::try_from(value).expect("BUG: short widget labels fit in u16"))
-}
-
-/// `+H` for whole-hour offsets, `+H:MM` for fractional.
-/// Sign always emitted; hours unpadded; minutes zero-padded.
-pub(crate) fn push_utc_offset(s: &mut String, offset_secs: i32) {
-    let sign = if offset_secs < 0 { '-' } else { '+' };
-    let abs = offset_secs.unsigned_abs();
-    let hours = i64::from(abs / 3_600);
-    let mins = i64::from((abs % 3_600) / 60);
-    s.push(sign);
-    bmc_wasm_sdk::format::push_int(s, hours);
-    if mins != 0 {
-        s.push(':');
-        bmc_wasm_sdk::format::push_pad2(s, mins);
-    }
 }
 
 // ── Typography ─────────────────────────────────────────────────────────
@@ -273,12 +259,11 @@ pub(crate) fn format_alarm_time(
     is_12h: bool,
 ) -> String {
     let secs = alarm.fire_at_utc_ms / 1000;
-    // Alarms are a system-wide construct (the deck wakes at the
-    // operator-set time); the per-widget `timezone_override` does
-    // not shift the alarm row. Shift the UTC timestamp by the system
-    // tz offset before strftime — `host_format_date` formats through
-    // DateTime::<Utc>, so without the shift an alarm set for
-    // 06:00 CEST would render as 04:00.
+    // Alarms are a system-wide construct (the deck wakes at the operator-set time);
+    // the per-widget `timezone_override` does not shift the alarm row.
+    // Shift the UTC timestamp by the system tz offset before strftime
+    // — `host_format_date` formats through DateTime::<Utc>,
+    // so without the shift an alarm set for 06:00 CEST would render as 04:00.
     let offset_secs = system::current()
         .timezone()
         .and_then(|name| format::resolve_tz_offset(&Tz::from_runtime(name), secs))
@@ -286,56 +271,4 @@ pub(crate) fn format_alarm_time(
     let shifted = secs + i64::from(offset_secs);
     let pattern = if is_12h { "%I:%M %p" } else { "%H:%M" };
     strftime(shifted, pattern)
-}
-
-// ── TzLabel — single resolver for the per-renderer label row ──────────
-
-/// Result of the override → system → UTC tz-resolution chain, ready for
-/// both the label text and downstream `now.unix_secs` shifts.
-pub(crate) enum TzLabel {
-    /// Override (or system tz, when no override) resolved cleanly.
-    Resolved { city: String, offset_secs: i32 },
-    /// Override unresolvable; the label flips to red and `system_offset_secs`
-    /// carries the system-tz fallback so time projection still runs in local.
-    /// When the system tz also fails to resolve, `system_offset_secs` is 0.
-    Unknown {
-        city: String,
-        system_offset_secs: i32,
-    },
-}
-
-/// Resolve `override_tz` → system tz → UTC into a `TzLabel`.
-/// `now_secs` is the moment whose tz offset to look up (DST varies by date).
-pub(crate) fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel {
-    if let Some(t) = override_tz {
-        if let Some(offset_secs) = resolve_tz_offset(t, now_secs) {
-            return TzLabel::Resolved {
-                city: t.city(),
-                offset_secs,
-            };
-        }
-        let system_offset_secs = system::current()
-            .timezone()
-            .and_then(|name| resolve_tz_offset(&Tz::from_runtime(name), now_secs))
-            .unwrap_or(0);
-        return TzLabel::Unknown {
-            city: t.city(),
-            system_offset_secs,
-        };
-    }
-    if let Some(name) = system::current().timezone() {
-        let tz = Tz::from_runtime(name);
-        let city = tz.city();
-        return match resolve_tz_offset(&tz, now_secs) {
-            Some(offset_secs) => TzLabel::Resolved { city, offset_secs },
-            None => TzLabel::Unknown {
-                city,
-                system_offset_secs: 0,
-            },
-        };
-    }
-    TzLabel::Unknown {
-        city: "UTC".to_string(),
-        system_offset_secs: 0,
-    }
 }

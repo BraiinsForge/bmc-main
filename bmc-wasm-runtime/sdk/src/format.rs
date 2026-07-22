@@ -330,6 +330,89 @@ pub fn resolve_tz_offset(tz: &Tz, unix_secs: i64) -> Option<i32> {
     }
 }
 
+/// Append a UTC offset as `+H` for whole hours or `+H:MM` when it has minutes.
+/// Sign is always emitted; hours are unpadded, minutes zero-padded.
+pub fn push_utc_offset(s: &mut String, offset_secs: i32) {
+    let sign = if offset_secs < 0 { '-' } else { '+' };
+    let abs = offset_secs.unsigned_abs();
+    s.push(sign);
+    push_int(s, i64::from(abs / 3_600));
+    let mins = i64::from((abs % 3_600) / 60);
+    if mins != 0 {
+        s.push(':');
+        push_pad2(s, mins);
+    }
+}
+
+/// Outcome of resolving a timezone for a caption.
+#[derive(Debug)]
+pub enum TzLabel {
+    /// Resolved cleanly: `city` is the display name, `offset_secs` its UTC offset.
+    Resolved { city: String, offset_secs: i32 },
+    /// The requested zone didn't resolve; `system_offset_secs` carries the
+    /// system-timezone fallback (`0` when that also failed) so time projection
+    /// still has an offset. Callers typically flag this state visually.
+    Unknown {
+        city: String,
+        system_offset_secs: i32,
+    },
+}
+
+/// Resolve `override_tz` → system timezone → UTC into a [`TzLabel`] at
+/// `now_secs` (the offset is date-dependent through DST). Pass `None` to
+/// caption the system timezone directly.
+#[must_use]
+pub fn resolve_tz_for_label(override_tz: Option<&Tz>, now_secs: i64) -> TzLabel {
+    if let Some(t) = override_tz {
+        if let Some(offset_secs) = resolve_tz_offset(t, now_secs) {
+            return TzLabel::Resolved {
+                city: t.city(),
+                offset_secs,
+            };
+        }
+        let system_offset_secs = system::current()
+            .timezone()
+            .and_then(|name| resolve_tz_offset(&Tz::from_runtime(name), now_secs))
+            .unwrap_or(0);
+        return TzLabel::Unknown {
+            city: t.city(),
+            system_offset_secs,
+        };
+    }
+    if let Some(name) = system::current().timezone() {
+        let tz = Tz::from_runtime(name);
+        let city = tz.city();
+        return match resolve_tz_offset(&tz, now_secs) {
+            Some(offset_secs) => TzLabel::Resolved { city, offset_secs },
+            None => TzLabel::Unknown {
+                city,
+                system_offset_secs: 0,
+            },
+        };
+    }
+    TzLabel::Unknown {
+        city: "UTC".to_string(),
+        system_offset_secs: 0,
+    }
+}
+
+/// Append a [`TzLabel`]'s caption: `City (±H)` / `City (±H:MM)` when resolved
+/// (see [`push_utc_offset`]), `City (unknown)` otherwise.
+pub fn push_tz_caption(s: &mut String, label: &TzLabel) {
+    match label {
+        TzLabel::Resolved { city, offset_secs } => {
+            s.push_str(city);
+            s.push_str(" (");
+            push_utc_offset(s, *offset_secs);
+            s.push(')');
+        }
+        TzLabel::Unknown { city, .. } => {
+            s.push_str(city);
+            s.push_str(" (unknown)");
+        }
+    }
+}
+
 /// Format a number with user-preferred grouping and decimal separators.
 ///
 /// # Example
@@ -572,6 +655,44 @@ mod tests {
     fn duration_large() {
         // 365 days
         assert_eq!(format_duration(365 * 86_400, false), "365d 00h 00m");
+    }
+
+    fn caption(label: &TzLabel) -> String {
+        let mut s = String::new();
+        push_tz_caption(&mut s, label);
+        s
+    }
+
+    #[test]
+    fn tz_caption_resolved_whole_and_half_hour() {
+        let whole = TzLabel::Resolved {
+            city: "Prague".to_owned(),
+            offset_secs: 7_200,
+        };
+        assert_eq!(caption(&whole), "Prague (+2)");
+        let half = TzLabel::Resolved {
+            city: "Kolkata".to_owned(),
+            offset_secs: 19_800,
+        };
+        assert_eq!(caption(&half), "Kolkata (+5:30)");
+    }
+
+    #[test]
+    fn tz_caption_resolved_negative_offset() {
+        let label = TzLabel::Resolved {
+            city: "New York".to_owned(),
+            offset_secs: -18_000,
+        };
+        assert_eq!(caption(&label), "New York (-5)");
+    }
+
+    #[test]
+    fn tz_caption_unknown_reads_unknown() {
+        let label = TzLabel::Unknown {
+            city: "Prague".to_owned(),
+            system_offset_secs: 3_600,
+        };
+        assert_eq!(caption(&label), "Prague (unknown)");
     }
 
     #[test]

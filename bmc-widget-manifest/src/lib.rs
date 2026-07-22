@@ -534,6 +534,19 @@ impl FromStr for Manifest {
 }
 
 impl Manifest {
+    /// Whether any declared viewport accepts a `shape` surface of
+    /// `width`×`height` pixels.
+    #[must_use]
+    pub fn supports_viewport(&self, shape: ViewportShape, width: u32, height: u32) -> bool {
+        self.supported_viewports.iter().any(|v| {
+            v.viewport_shape == shape
+                && v.min_width.is_none_or(|min| width >= min)
+                && v.max_width.is_none_or(|max| width <= max)
+                && v.min_height.is_none_or(|min| height >= min)
+                && v.max_height.is_none_or(|max| height <= max)
+        })
+    }
+
     pub fn from_reader<R: Read>(reader: R) -> Result<Self, ManifestError> {
         let raw: RawManifest = serde_json::from_reader(reader)?;
         Self::from_raw(raw)

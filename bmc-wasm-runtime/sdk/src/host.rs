@@ -581,6 +581,9 @@ impl SizeVariant {
     }
 }
 
+/// Diameter of the round BFM100 face, in pixels.
+const ROUND_FACE_PX: f32 = 480.0;
+
 /// Widget viewport dimensions and size variant.
 ///
 /// Created from the raw `(width, height)` the host passes to `init()`.
@@ -610,8 +613,8 @@ impl WidgetSize {
     /// keeps a larger-than-canonical viewport at authored sizes instead of
     /// inflating. This is the scale for *per-variant-layout* widgets (e.g. the
     /// digital and rectangular clock faces). A widget whose artwork is a single
-    /// asset fit to one axis (e.g. the round clock dial) computes its own
-    /// asset-relative scale and ignores this.
+    /// asset fit to one axis (e.g. the round clock dial) uses
+    /// [`round_scale`](Self::round_scale) instead.
     #[must_use]
     #[expect(
         clippy::cast_precision_loss,
@@ -621,6 +624,15 @@ impl WidgetSize {
         let w_ratio = self.width as f32 / self.variant.width() as f32;
         let h_ratio = self.height as f32 / self.variant.height() as f32;
         w_ratio.min(h_ratio).min(1.0)
+    }
+
+    /// Asset-relative scale for the round face: `min(width, height) / 480`.
+    /// Round widgets author their layout for the reference circle and multiply
+    /// sizes by this, rather than [`fit`](Self::fit) (the rectangular downscale).
+    #[must_use]
+    pub fn round_scale(self) -> f32 {
+        let diameter = u16::try_from(self.width.min(self.height)).unwrap_or(480);
+        f32::from(diameter) / ROUND_FACE_PX
     }
 }
 

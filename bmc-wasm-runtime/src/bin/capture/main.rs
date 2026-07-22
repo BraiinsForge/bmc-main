@@ -83,10 +83,19 @@ enum Command {
         /// List available KV variants and exit.
         #[arg(long)]
         list_variants: bool,
-        /// Path to the `capture/` directory containing `config.toml` and
-        /// fixtures.
+        /// Path to the `capture/` directory containing `config.toml` and fixtures.
+        /// Optional in `--online` mode.
         #[arg(long)]
-        capture_dir: PathBuf,
+        capture_dir: Option<PathBuf>,
+        /// Preview against live data instead of a fixture: the widget fetches
+        /// its own data source (non-hermetic) and the capture waits for the
+        /// response before the shot. Needs no fixture.
+        #[arg(long)]
+        online: bool,
+        /// Render every viewport the widget's manifest supports (ignores
+        /// `--size`), each into `<output>/<size>/`.
+        #[arg(long)]
+        all_sizes: bool,
     },
     /// Build and capture every widget across the given workspaces (or one widget).
     RunAll {
@@ -238,6 +247,8 @@ fn dispatch() -> Result<()> {
             variant,
             list_variants,
             capture_dir,
+            online,
+            all_sizes,
         } => {
             tracing_subscriber::fmt::init();
             run::execute(run::RunArgs {
@@ -248,6 +259,8 @@ fn dispatch() -> Result<()> {
                 variant,
                 list_variants,
                 capture_dir,
+                online,
+                all_sizes,
             })
         }
         Command::RunAll {

@@ -194,3 +194,22 @@ pub fn parse_params_json(
     }
     Ok(out)
 }
+
+/// Initial params snapshot from a manifest: every declared key
+/// bound to its `default_value`. Mirrors what the compositor
+/// delivers on-device when no operator overrides are set.
+#[must_use]
+pub fn manifest_default_params(
+    manifest: &bmc_widget_manifest::Manifest,
+) -> std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue> {
+    manifest
+        .params
+        .iter()
+        .map(|(key, def)| {
+            (
+                key.clone(),
+                bmc_widget_manifest::ParamValue::from_param_kind_default(&def.kind),
+            )
+        })
+        .collect()
+}
