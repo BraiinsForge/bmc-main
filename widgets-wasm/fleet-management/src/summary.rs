@@ -134,10 +134,12 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
     let mut temp_max = f64::MIN;
 
     for dev in devices {
-        // Unreachable folds as a zero producer: in the hashrate/power sums
-        // (group reads 0 TH/s / 0 W, not N/A) but never mining, out
-        // of the temperature range, a no-op on efficiency.
-        // Keyed on reachability, so a reachable idle miner keeps its real power.
+        // An unreachable device is unknown, not zero: we have no reading,
+        // so it contributes to no sum — a group that is entirely down
+        // reads N/A across hashrate, power, efficiency, and temperature
+        // alike, never a false 0.
+        //
+        // A mixed group is unchanged (the down ones only ever added +0).
         if !dev.reachable {
             // Count auth failures apart from the offline devices, so they surface
             // as "not authenticating" — a prompt to check creds, not gone.
@@ -146,8 +148,6 @@ fn fold_group(label: String, devices: &[&KnownDevice]) -> GroupSummary {
             } else {
                 off_count += 1;
             }
-            hashrate_any = true;
-            power_any = true;
             continue;
         }
         let Some(reading) = dev.telemetry.as_ref().map(|s| &s.reading) else {
@@ -250,7 +250,7 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
     // Only positively identified devices enter the report: AxeOS/uBOS/manual are
     // confirmed at discovery, a base-type BOS only once it answers a poll — so a
     // non-miner `_http._tcp` responder never counts. A confirmed device then folds
-    // regardless of reachability (an unreachable one as a zero producer, see
+    // regardless of reachability (an unreachable one contributes no reading, see
     // `fold_group`); operator model/family filters hide it further.
     let visible: Vec<&KnownDevice> = devices
         .iter()
@@ -835,10 +835,10 @@ mod tests {
     }
 
     #[test]
-    fn unreachable_device_counts_in_total_as_a_zero_producer() {
-        // The unreachable device still carries a (stale) full reading, but it
-        // must fold as hashrate 0 / power 0 / temp None: it counts toward the
-        // group total, is not mining, and adds nothing to hashrate or power.
+    fn unreachable_device_is_counted_but_excluded_from_the_sums() {
+        // The unreachable device carries a (stale) reading but contributes to no
+        // sum: the group total still counts it, yet hashrate/power/temp reflect
+        // only the reachable miner — never the down one folded in as a zero.
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
             ("b", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false),
@@ -849,8 +849,8 @@ mod tests {
         assert_eq!(g.total_count, 2, "both devices are known and counted");
         assert_eq!(g.ok_count, 1, "only the reachable miner is mining");
         assert_eq!(g.off_count, 1, "the unreachable device is off");
-        assert_eq!(raw(g.hashrate), Some(1.0), "unreachable adds 0 hashrate");
-        assert_eq!(raw(g.power), Some(30.0), "unreachable adds 0 power");
+        assert_eq!(raw(g.hashrate), Some(1.0), "only the reachable miner's");
+        assert_eq!(raw(g.power), Some(30.0), "only the reachable miner's");
         assert_eq!(
             raw(g.max_temperature),
             Some(60.0),
@@ -859,9 +859,9 @@ mod tests {
     }
 
     #[test]
-    fn group_of_only_unreachable_devices_reads_zero_not_unavailable() {
-        // An all-down group shows 0.00 TH/s / 0 W (present zeros, so the red
-        // status count is meaningful) and an unavailable temperature.
+    fn group_of_only_unreachable_devices_reads_unavailable_not_zero() {
+        // An all-down group has no reading to fold, so every metric is N/A — a
+        // false 0 would read as "mining at zero" rather than "we can't see them".
         let l = list(&[
             ("a", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false),
             ("b", Some("BMM 101"), Some(full(8.0, 80.0, 70.0)), false),
@@ -871,8 +871,8 @@ mod tests {
         assert_eq!(g.total_count, 2);
         assert_eq!(g.ok_count, 0, "all not mining");
         assert_eq!(g.off_count, 2, "both devices are off");
-        assert_eq!(raw(g.hashrate), Some(0.0), "present zero, not N/A");
-        assert_eq!(raw(g.power), Some(0.0), "present zero, not N/A");
+        assert_eq!(g.hashrate, None, "no reading, not a false 0");
+        assert_eq!(g.power, None, "no reading, not a false 0");
         assert_eq!(g.max_temperature, None);
     }
 
@@ -1139,7 +1139,7 @@ mod tests {
     }
 
     #[test]
-    fn model_detail_row_of_an_unreachable_device_reads_zero() {
+    fn model_detail_row_of_an_unreachable_device_reads_unavailable() {
         let l = list(&[("a", Some("BMM 101"), Some(full(9.0, 90.0, 80.0)), false)]);
         let rows = model_detail_rows(
             &l,
@@ -1149,8 +1149,8 @@ mod tests {
             |d| d.identity.name.clone(),
         );
         assert_eq!(rows.len(), 1);
-        assert_eq!(raw(rows[0].1.hashrate), Some(0.0));
-        assert_eq!(raw(rows[0].1.power), Some(0.0));
+        assert_eq!(rows[0].1.hashrate, None, "no reading, not a false 0");
+        assert_eq!(rows[0].1.power, None, "no reading, not a false 0");
         assert_eq!(rows[0].1.ok_count, 0);
         assert_eq!(rows[0].1.max_temperature, None);
     }

@@ -122,23 +122,20 @@ impl Ring {
     clippy::cast_possible_truncation,
     reason = "chart display values are fine at f32 precision"
 )]
-fn ths(value: Option<Hashrate>) -> f32 {
-    value.map_or(0.0, |h| h.as_terahashes_per_second() as f32)
+fn ths(h: Hashrate) -> f32 {
+    h.as_terahashes_per_second() as f32
 }
 
-/// A device's current hashrate, or `None` when it is unreachable — the chart
-/// then breaks rather than dropping a line to a hashrate the device isn't
-/// actually reporting.
+/// A device's current hashrate, or `None` when it is unreachable or its reading
+/// carries no hashrate field — the chart then breaks rather than dropping a line
+/// to a hashrate the device isn't actually reporting.
 fn device_hashrate(dev: &KnownDevice) -> Option<f32> {
     if !dev.reachable {
         return None;
     }
-    Some(
-        dev.telemetry
-            .as_ref()
-            .and_then(|s| s.reading.current_hashrate_ths)
-            .unwrap_or(0.0),
-    )
+    dev.telemetry
+        .as_ref()
+        .and_then(|s| s.reading.current_hashrate_ths)
 }
 
 /// One consolidation tier: every series sampled at this tier's interval.
@@ -180,12 +177,12 @@ impl Tier {
         let new_slot = self.current_slot != Some(slot);
         self.current_slot = Some(slot);
         self.total
-            .upsert(now, Some(ths(summary.total.hashrate)), new_slot);
+            .upsert(now, summary.total.hashrate.map(ths), new_slot);
         for g in &summary.groups {
             self.models
                 .entry((g.family.map(DeviceFamily::index), g.label.clone()))
                 .or_default()
-                .upsert(now, Some(ths(g.hashrate)), new_slot);
+                .upsert(now, g.hashrate.map(ths), new_slot);
         }
         for dev in devices.iter() {
             self.devices
@@ -553,6 +550,24 @@ mod tests {
         assert_eq!(
             vals(&h.view(15).device_series(&a)),
             vec![Some(3.0), Some(4.0)]
+        );
+    }
+
+    #[test]
+    fn a_none_total_samples_a_gap_not_zero() {
+        let mut h = HashrateHistory::default();
+        let mut s = summary(10.0, 4.0);
+        s.total.hashrate = None;
+        s.groups[0].hashrate = None;
+        h.record(0, &s, &DeviceList::new());
+        assert_eq!(
+            vals(&h.view(15).total_series()),
+            vec![None],
+            "a summary with no hashrate is a gap, matching the device-series policy"
+        );
+        assert_eq!(
+            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM")),
+            vec![None]
         );
     }
 

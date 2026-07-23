@@ -33,8 +33,8 @@ use bmc_wasm_sdk::*;
 use crate::history::{ChartWindow, HistoryDatum};
 use crate::screens::icons;
 use crate::screens::parts::{
-    BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, VALUE_FONT,
-    auth_failures, header, icon, scaled_area_chart, status_counts,
+    BORDER, CARD_BG, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD, UNAVAILABLE,
+    VALUE_FONT, auth_failures, header, icon, scaled_area_chart, si_parts_or_dash, status_counts,
 };
 
 const STATUS_ICON: f32 = 32.0;
@@ -51,14 +51,14 @@ pub struct DashboardViewData {
     pub degraded: usize,
     pub off: usize,
     pub auth: usize,
-    pub hashrate: Hashrate,
+    pub hashrate: Option<Hashrate>,
     pub hashrate_series: Vec<HistoryDatum>,
     pub window: ChartWindow,
-    pub power: ElectricPower,
-    pub efficiency: MiningEfficiency,
-    pub temp_min: Temperature,
-    pub temp_avg: Temperature,
-    pub temp_max: Temperature,
+    pub power: Option<ElectricPower>,
+    pub efficiency: Option<MiningEfficiency>,
+    pub temp_min: Option<Temperature>,
+    pub temp_avg: Option<Temperature>,
+    pub temp_max: Option<Temperature>,
 }
 
 #[must_use]
@@ -78,14 +78,16 @@ fn grid(data: &DashboardViewData) -> Node {
                 props!(gap: GAP),
                 [
                     {
-                        let (v, u) = data.power.format_si_parts(3);
+                        let (v, u) = si_parts_or_dash(data.power.map(|p| p.format_si_parts(3)));
                         metric_tile("Power", &icons::STAT_POWER, &v, &u)
                     },
                     metric_tile(
                         "Efficiency",
                         &icons::STAT_EFFICIENCY,
-                        &data.efficiency.format_value(2),
-                        MiningEfficiency::UNIT,
+                        &data
+                            .efficiency
+                            .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(2)),
+                        data.efficiency.map_or("", |_| MiningEfficiency::UNIT),
                     ),
                     temp_tile(data),
                 ],
@@ -147,7 +149,8 @@ fn hashrate(data: &DashboardViewData) -> Node {
     draws.push(Draw::text(
         CHART_W / 2.0,
         ROW_H / 2.0 + 12.0,
-        data.hashrate.format_si(3),
+        data.hashrate
+            .map_or_else(|| UNAVAILABLE.to_owned(), |h| h.format_si(3)),
         style!(size: VALUE_FONT, weight: FontWeight::SEMIBOLD, color: WHITE, align: TextAlign::Center, valign: VerticalAlign::Center),
     ));
     col(
@@ -186,9 +189,9 @@ fn temp_tile(data: &DashboardViewData) -> Node {
             row(
                 props!(gap: 24.0),
                 [
-                    value_row(&data.temp_avg.format_value(0), "°C"),
-                    value_row(&data.temp_min.format_value(0), "°C"),
-                    value_row(&data.temp_max.format_value(0), "°C"),
+                    temp_value(data.temp_avg),
+                    temp_value(data.temp_min),
+                    temp_value(data.temp_max),
                 ],
             ),
         ],
@@ -202,6 +205,13 @@ fn temp_head(label: &str) -> Node {
             text(label, style!(size: LABEL_FONT, color: LABEL)),
             icon(&icons::STAT_TEMP, METRIC_ICON, LABEL),
         ],
+    )
+}
+
+fn temp_value(temp: Option<Temperature>) -> Node {
+    temp.map_or_else(
+        || value_row(UNAVAILABLE, ""),
+        |t| value_row(&t.format_value(0), "°C"),
     )
 }
 

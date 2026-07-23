@@ -34,7 +34,8 @@ use crate::history::{ChartWindow, HistoryDatum};
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, FRAME_H, FRAME_W, GAP, LABEL, LABEL_FONT, METRIC_ICON, PAD,
-    VALUE_FONT, back_button, breadcrumb, icon, scaled_area_chart, status_glyph,
+    UNAVAILABLE, VALUE_FONT, back_button, breadcrumb, icon, scaled_area_chart, si_parts_or_dash,
+    status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::telemetry::DeviceTemp;
@@ -58,14 +59,14 @@ pub struct DeviceDetailData {
     pub ip: String,
     pub mac: Option<String>,
     pub state: DeviceStatus,
-    pub hashrate: Hashrate,
+    pub hashrate: Option<Hashrate>,
     pub hashrate_series: Vec<HistoryDatum>,
     pub window: ChartWindow,
-    pub nominal_hashrate: Hashrate,
-    pub power: ElectricPower,
-    pub efficiency: MiningEfficiency,
-    pub uptime_hours: u64,
-    pub temperature: DeviceTemp,
+    pub nominal_hashrate: Option<Hashrate>,
+    pub power: Option<ElectricPower>,
+    pub efficiency: Option<MiningEfficiency>,
+    pub uptime_hours: Option<u64>,
+    pub temperature: Option<DeviceTemp>,
 }
 
 #[must_use]
@@ -84,7 +85,8 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
                             state_tile(d.state),
                             chart_tile(
                                 "Hashrate",
-                                &d.hashrate.format_si(3),
+                                &d.hashrate
+                                    .map_or_else(|| UNAVAILABLE.to_owned(), |h| h.format_si(3)),
                                 scaled_area_chart(
                                     &d.hashrate_series,
                                     d.window,
@@ -102,20 +104,23 @@ pub fn device_detail_view(d: &DeviceDetailData) -> Node {
                         props!(gap: GAP, flex: 1.0),
                         [
                             {
-                                let (v, u) = d.power.format_si_parts(3);
+                                let (v, u) =
+                                    si_parts_or_dash(d.power.map(|p| p.format_si_parts(3)));
                                 metric_tile("Power", &icons::STAT_POWER, &v, &u)
                             },
                             metric_tile(
                                 "Efficiency",
                                 &icons::STAT_EFFICIENCY,
-                                &d.efficiency.format_value(2),
-                                MiningEfficiency::UNIT,
+                                &d.efficiency
+                                    .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(2)),
+                                d.efficiency.map_or("", |_| MiningEfficiency::UNIT),
                             ),
                             metric_tile(
                                 "Uptime",
                                 &icons::STAT_TIME,
-                                &fmt!("{}", d.uptime_hours),
-                                "Hrs",
+                                &d.uptime_hours
+                                    .map_or_else(|| UNAVAILABLE.to_owned(), |h| fmt!("{h}")),
+                                d.uptime_hours.map_or("", |_| "Hrs"),
                             ),
                             temp_tile(d.temperature),
                         ],
@@ -230,14 +235,15 @@ fn state_tile(state: DeviceStatus) -> Node {
     clippy::cast_possible_truncation,
     reason = "a chart ceiling is fine at f32 precision"
 )]
-fn nominal_ths(nominal: Hashrate) -> Option<f32> {
-    let ths = nominal.as_terahashes_per_second() as f32;
+fn nominal_ths(nominal: Option<Hashrate>) -> Option<f32> {
+    let ths = nominal?.as_terahashes_per_second() as f32;
     (ths > 0.0).then_some(ths)
 }
 
 // Nominal is a static nameplate, so it shows as a value, not a time chart.
-fn nominal_tile(nominal: Hashrate) -> Node {
-    let (v, u) = nominal.format_si_parts(3);
+// Shown even for an unreachable device — it is a spec, not a live reading.
+fn nominal_tile(nominal: Option<Hashrate>) -> Node {
+    let (v, u) = si_parts_or_dash(nominal.map(|n| n.format_si_parts(3)));
     tile(vec![
         text("Nominal Hashrate", style!(size: LABEL_FONT, color: LABEL)),
         value_row(&v, &u),
@@ -268,13 +274,17 @@ fn chart_tile(label: &str, value: &str, mut draws: Vec<Draw>) -> Node {
 }
 
 // Honest temperature: one value for a single sensor, Avg/Min/Max for a spread.
-fn temp_tile(temp: DeviceTemp) -> Node {
+fn temp_tile(temp: Option<DeviceTemp>) -> Node {
     match temp {
-        DeviceTemp::Single(t) => tile(vec![
+        None => tile(vec![
+            label_row("Temp", &icons::STAT_TEMP),
+            value_row(UNAVAILABLE, ""),
+        ]),
+        Some(DeviceTemp::Single(t)) => tile(vec![
             label_row("Temp", &icons::STAT_TEMP),
             value_row(&t.format_value(0), "°C"),
         ]),
-        DeviceTemp::Spread { min, avg, max } => tile(vec![
+        Some(DeviceTemp::Spread { min, avg, max }) => tile(vec![
             row(
                 props!(gap: 20.0, cross_align: CrossAlign::Center),
                 [temp_head("Avg"), temp_head("Min"), temp_head("Max")],

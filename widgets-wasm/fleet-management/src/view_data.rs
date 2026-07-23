@@ -21,7 +21,7 @@
 //! Build the redesigned screens' view data from the live fleet summary
 //! and its recorded hashrate history.
 
-use bmc_wasm_sdk::{Hashrate, Temperature};
+use bmc_wasm_sdk::Hashrate;
 
 use crate::device::{DeviceId, KnownDevice};
 use crate::history::{ChartWindow, HistoryDatum, HistoryView};
@@ -30,7 +30,6 @@ use crate::screens::device_detail::DeviceDetailData;
 use crate::screens::model_detail::{DeviceRow, ModelDetailViewData};
 use crate::screens::table::{ModelRow, TableViewData};
 use crate::summary::{DeviceStatus, FleetSummary, GroupSummary, device_status};
-use crate::telemetry::DeviceTemp;
 use crate::view::device_click_id;
 
 /// Model groups per page in the list view.
@@ -63,14 +62,14 @@ impl DashboardViewData {
             degraded: degraded(t),
             off: t.off_count,
             auth: t.auth_error_count,
-            hashrate: t.hashrate.unwrap_or_default(),
+            hashrate: t.hashrate,
             hashrate_series: history.total_series(),
             window,
-            power: t.power.unwrap_or_default(),
-            efficiency: t.efficiency.unwrap_or_default(),
-            temp_min: t.min_temperature.unwrap_or_default(),
-            temp_avg: t.avg_temperature.unwrap_or_default(),
-            temp_max: t.max_temperature.unwrap_or_default(),
+            power: t.power,
+            efficiency: t.efficiency,
+            temp_min: t.min_temperature,
+            temp_avg: t.avg_temperature,
+            temp_max: t.max_temperature,
         }
     }
 }
@@ -98,11 +97,11 @@ impl TableViewData {
                 ok: g.ok_count,
                 degraded: degraded(g),
                 off: g.off_count,
-                hashrate: g.hashrate.unwrap_or_default(),
+                hashrate: g.hashrate,
                 series: history.model_series(g.family, &g.label),
-                power: g.power.unwrap_or_default(),
-                efficiency: g.efficiency.unwrap_or_default(),
-                avg_temp: g.avg_temperature.unwrap_or_default(),
+                power: g.power,
+                efficiency: g.efficiency,
+                avg_temp: g.avg_temperature,
             })
             .collect();
         Self {
@@ -138,13 +137,13 @@ impl ModelDetailViewData {
                 hostname: g.label.clone(),
                 click_id: device_click_id(id.as_str()),
                 status: *status,
-                hashrate: g.hashrate.unwrap_or_default(),
+                hashrate: g.hashrate,
                 series: history.device_series(id),
-                power: g.power.unwrap_or_default(),
-                efficiency: g.efficiency.unwrap_or_default(),
-                avg_temp: g.avg_temperature.unwrap_or_default(),
-                min_temp: g.min_temperature.unwrap_or_default(),
-                max_temp: g.max_temperature.unwrap_or_default(),
+                power: g.power,
+                efficiency: g.efficiency,
+                avg_temp: g.avg_temperature,
+                min_temp: g.min_temperature,
+                max_temp: g.max_temperature,
             })
             .collect();
         Self {
@@ -166,8 +165,10 @@ fn seconds_to_hours(seconds: u64) -> u64 {
 }
 
 impl DeviceDetailData {
-    /// One device's detail: the fold-of-one group gives hashrate/power/efficiency/state,
-    /// the raw reading gives MAC/uptime/nominal/temperature.
+    /// One device's detail: the fold-of-one group gives hashrate/power/efficiency,
+    /// the raw reading gives MAC/uptime/nominal/temperature. Live measurements are
+    /// dropped unless the device is delivering, so a stale reading never reads
+    /// as a live one off an unreachable machine.
     #[must_use]
     pub(crate) fn from_device(
         fleet_name: &str,
@@ -182,6 +183,7 @@ impl DeviceDetailData {
             .and_then(|r| r.nominal_hashrate_ths)
             .or_else(|| device.model.as_ref().and_then(|m| m.nominal_hashrate_ths));
         let state = device_status(device);
+        let delivering = matches!(state, DeviceStatus::Ok | DeviceStatus::Degraded);
         Self {
             fleet_name: fleet_name.to_owned(),
             model: model.to_owned(),
@@ -189,18 +191,20 @@ impl DeviceDetailData {
             ip: device.identity.host.clone(),
             mac: reading.and_then(|r| r.mac.clone()),
             state,
-            hashrate: group.hashrate.unwrap_or_default(),
+            hashrate: delivering.then_some(group.hashrate).flatten(),
             hashrate_series,
             window,
-            nominal_hashrate: nominal_ths.map_or_else(Hashrate::default, |n| {
-                Hashrate::from_terahashes_per_second(f64::from(n))
-            }),
-            power: group.power.unwrap_or_default(),
-            efficiency: group.efficiency.unwrap_or_default(),
-            uptime_hours: reading.and_then(|r| r.uptime_s).map_or(0, seconds_to_hours),
-            temperature: reading
-                .and_then(|r| r.temperature)
-                .unwrap_or(DeviceTemp::Single(Temperature::from_celsius(0.0))),
+            nominal_hashrate: nominal_ths
+                .map(|n| Hashrate::from_terahashes_per_second(f64::from(n))),
+            power: delivering.then_some(group.power).flatten(),
+            efficiency: delivering.then_some(group.efficiency).flatten(),
+            uptime_hours: delivering
+                .then(|| reading.and_then(|r| r.uptime_s))
+                .flatten()
+                .map(seconds_to_hours),
+            temperature: delivering
+                .then(|| reading.and_then(|r| r.temperature))
+                .flatten(),
         }
     }
 }
@@ -210,7 +214,7 @@ mod tests {
     use super::*;
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, Membership};
     use crate::history::HashrateHistory;
-    use crate::telemetry::{TelemetryReading, TelemetrySnapshot};
+    use crate::telemetry::{DeviceTemp, TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
     fn grp(label: &str, total: usize, ok: usize, off: usize) -> GroupSummary {
@@ -344,18 +348,18 @@ mod tests {
             DeviceStatus::Ok,
             "reachable and above 20% of nominal"
         );
-        assert_eq!(data.uptime_hours, 12, "43200 s / 3600");
+        assert_eq!(data.uptime_hours, Some(12), "43200 s / 3600");
         assert_eq!(
             data.nominal_hashrate,
-            Hashrate::from_terahashes_per_second(16.0)
+            Some(Hashrate::from_terahashes_per_second(16.0))
         );
         assert_eq!(
             data.temperature,
-            DeviceTemp::Spread {
+            Some(DeviceTemp::Spread {
                 min: Temperature::from_celsius(54.0),
                 avg: Temperature::from_celsius(65.0),
                 max: Temperature::from_celsius(78.0),
-            }
+            })
         );
     }
 
@@ -381,11 +385,17 @@ mod tests {
         );
         assert_eq!(data.state, DeviceStatus::Unreachable);
         assert_eq!(data.mac, None);
-        assert_eq!(data.uptime_hours, 0);
+        // Live measurements read absent — never a fabricated zero —
+        // off a non-delivering device.
+        assert_eq!(data.uptime_hours, None);
+        assert_eq!(data.temperature, None);
+        assert_eq!(data.hashrate, None);
+        assert_eq!(data.power, None);
+        assert_eq!(data.efficiency, None);
         assert_eq!(
             data.nominal_hashrate,
-            Hashrate::from_terahashes_per_second(4.5),
-            "catalog nominal when the reading has none"
+            Some(Hashrate::from_terahashes_per_second(4.5)),
+            "nameplate persists — a spec, not a live reading"
         );
     }
 }

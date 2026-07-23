@@ -32,8 +32,8 @@ use crate::layout::truncate_label;
 use crate::screens::icons;
 use crate::screens::parts::{
     BACK_CHIP, BORDER, CARD_BG, Crumb, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H,
-    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, area_chart, back_button,
-    breadcrumb, icon, pager, status_glyph,
+    HEADER_BG, LABEL, LABEL_FONT, METRIC_ICON, PAD, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart,
+    back_button, breadcrumb, icon, pager, si_parts_or_dash, status_glyph,
 };
 use crate::summary::DeviceStatus;
 use crate::view::{CrumbTarget, PagerScope, crumb_click_id};
@@ -57,13 +57,13 @@ pub struct DeviceRow {
     /// The device drill-in click id.
     pub click_id: String,
     pub status: DeviceStatus,
-    pub hashrate: Hashrate,
+    pub hashrate: Option<Hashrate>,
     pub series: Vec<HistoryDatum>,
-    pub power: ElectricPower,
-    pub efficiency: MiningEfficiency,
-    pub avg_temp: Temperature,
-    pub min_temp: Temperature,
-    pub max_temp: Temperature,
+    pub power: Option<ElectricPower>,
+    pub efficiency: Option<MiningEfficiency>,
+    pub avg_temp: Option<Temperature>,
+    pub min_temp: Option<Temperature>,
+    pub max_temp: Option<Temperature>,
 }
 
 #[derive(Debug)]
@@ -180,7 +180,7 @@ fn device_row(r: &DeviceRow, window: ChartWindow) -> Node {
 fn metric_cells(r: &DeviceRow, window: ChartWindow) -> Vec<Node> {
     vec![
         cell(COL_HASHRATE, {
-            let (v, u) = r.hashrate.format_si_parts(3);
+            let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
             value(&v, &u)
         }),
         cell(
@@ -191,16 +191,20 @@ fn metric_cells(r: &DeviceRow, window: ChartWindow) -> Vec<Node> {
             ),
         ),
         cell(COL_POWER, {
-            let (v, u) = r.power.format_si_parts(3);
+            let (v, u) = si_parts_or_dash(r.power.map(|p| p.format_si_parts(3)));
             value(&v, &u)
         }),
         cell(
             COL_EFF,
-            value(&r.efficiency.format_value(1), MiningEfficiency::UNIT),
+            value(
+                &r.efficiency
+                    .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
+                r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
+            ),
         ),
-        cell(COL_TEMP, value(&r.avg_temp.format_value(0), "°C")),
-        cell(COL_TEMP, value(&r.min_temp.format_value(0), "°C")),
-        cell(COL_TEMP, value(&r.max_temp.format_value(0), "°C")),
+        cell(COL_TEMP, temp_cell(r.avg_temp)),
+        cell(COL_TEMP, temp_cell(r.min_temp)),
+        cell(COL_TEMP, temp_cell(r.max_temp)),
         col(props!(flex: 1.0), Vec::<Node>::new()),
     ]
 }
@@ -249,6 +253,13 @@ fn value(number: &str, unit: &str) -> Node {
     text(
         fmt!("{number} {unit}"),
         style!(size: VALUE_FONT, color: WHITE),
+    )
+}
+
+fn temp_cell(temp: Option<Temperature>) -> Node {
+    temp.map_or_else(
+        || value(UNAVAILABLE, ""),
+        |t| value(&t.format_value(0), "°C"),
     )
 }
 

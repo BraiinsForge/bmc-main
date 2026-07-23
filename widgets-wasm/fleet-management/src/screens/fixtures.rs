@@ -81,7 +81,9 @@ fn model(
         ok,
         degraded,
         off,
-        hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate_ths)),
+        hashrate: Some(Hashrate::from_terahashes_per_second(f64::from(
+            hashrate_ths,
+        ))),
         series: samples(&[
             spark_lo,
             spark_lo + 1.0,
@@ -93,9 +95,11 @@ fn model(
             spark_hi + 0.2,
             spark_hi,
         ]),
-        power: ElectricPower::from_watts(f64::from(power_w)),
-        efficiency: MiningEfficiency::from_joules_per_terahash(f64::from(efficiency_jth)),
-        avg_temp: Temperature::from_celsius(f64::from(avg_temp_c)),
+        power: Some(ElectricPower::from_watts(f64::from(power_w))),
+        efficiency: Some(MiningEfficiency::from_joules_per_terahash(f64::from(
+            efficiency_jth,
+        ))),
+        avg_temp: Some(Temperature::from_celsius(f64::from(avg_temp_c))),
     }
 }
 
@@ -182,14 +186,14 @@ pub fn sample_dashboard(auth: usize) -> DashboardViewData {
         degraded: 4,
         off: 7,
         auth,
-        hashrate: Hashrate::from_terahashes_per_second(17.08),
+        hashrate: Some(Hashrate::from_terahashes_per_second(17.08)),
         hashrate_series,
         window,
-        power: ElectricPower::from_watts(60.0),
-        efficiency: MiningEfficiency::from_joules_per_terahash(10.01),
-        temp_min: Temperature::from_celsius(54.0),
-        temp_avg: Temperature::from_celsius(65.0),
-        temp_max: Temperature::from_celsius(78.0),
+        power: Some(ElectricPower::from_watts(60.0)),
+        efficiency: Some(MiningEfficiency::from_joules_per_terahash(10.01)),
+        temp_min: Some(Temperature::from_celsius(54.0)),
+        temp_avg: Some(Temperature::from_celsius(65.0)),
+        temp_max: Some(Temperature::from_celsius(78.0)),
     }
 }
 
@@ -279,7 +283,7 @@ fn model_detail_devices() -> Vec<DeviceRow> {
         hostname: name.to_owned(),
         click_id: device_click_id(name),
         status,
-        hashrate: Hashrate::from_terahashes_per_second(f64::from(hashrate)),
+        hashrate: Some(Hashrate::from_terahashes_per_second(f64::from(hashrate))),
         series: samples(&[
             hashrate * 0.95,
             hashrate,
@@ -290,11 +294,11 @@ fn model_detail_devices() -> Vec<DeviceRow> {
             hashrate * 1.02,
             hashrate,
         ]),
-        power: ElectricPower::from_watts(2.05),
-        efficiency: MiningEfficiency::from_joules_per_terahash(3.3),
-        avg_temp: Temperature::from_celsius(f64::from(temp)),
-        min_temp: Temperature::from_celsius(f64::from(temp) - 4.0),
-        max_temp: Temperature::from_celsius(f64::from(temp) + 6.0),
+        power: Some(ElectricPower::from_watts(2.05)),
+        efficiency: Some(MiningEfficiency::from_joules_per_terahash(3.3)),
+        avg_temp: Some(Temperature::from_celsius(f64::from(temp))),
+        min_temp: Some(Temperature::from_celsius(f64::from(temp) - 4.0)),
+        max_temp: Some(Temperature::from_celsius(f64::from(temp) + 6.0)),
     };
     // Spread the four statuses across the pages so the story shows each glyph.
     vec![
@@ -337,11 +341,12 @@ pub fn sample_model_detail_view(page: usize) -> ModelDetailViewData {
 
 fn device_detail_fixture(
     mac: Option<&str>,
-    temperature: DeviceTemp,
+    temperature: Option<DeviceTemp>,
     state: DeviceStatus,
 ) -> DeviceDetailData {
     let hashrate_series = samples(&[1.9, 2.0, 2.1, 2.05, 2.08, 2.0, 2.1, 2.08]);
     let window = story_window(Some(&hashrate_series));
+    let delivering = matches!(state, DeviceStatus::Ok | DeviceStatus::Degraded);
     DeviceDetailData {
         fleet_name: "Dominika's Mining Rig".to_owned(),
         model: "Mini Miner".to_owned(),
@@ -349,13 +354,13 @@ fn device_detail_fixture(
         ip: "192.111.18".to_owned(),
         mac: mac.map(str::to_owned),
         state,
-        hashrate: Hashrate::from_terahashes_per_second(2.08),
+        hashrate: delivering.then(|| Hashrate::from_terahashes_per_second(2.08)),
         hashrate_series,
         window,
-        nominal_hashrate: Hashrate::from_terahashes_per_second(16.52),
-        power: ElectricPower::from_watts(60.0),
-        efficiency: MiningEfficiency::from_joules_per_terahash(2.01),
-        uptime_hours: 12,
+        nominal_hashrate: Some(Hashrate::from_terahashes_per_second(16.52)),
+        power: delivering.then(|| ElectricPower::from_watts(60.0)),
+        efficiency: delivering.then(|| MiningEfficiency::from_joules_per_terahash(2.01)),
+        uptime_hours: delivering.then_some(12),
         temperature,
     }
 }
@@ -365,11 +370,11 @@ fn device_detail_fixture(
 pub fn sample_device_detail() -> DeviceDetailData {
     device_detail_fixture(
         Some("02:1A:4B:7C:9D:01"),
-        DeviceTemp::Spread {
+        Some(DeviceTemp::Spread {
             min: Temperature::from_celsius(54.0),
             avg: Temperature::from_celsius(65.0),
             max: Temperature::from_celsius(78.0),
-        },
+        }),
         DeviceStatus::Ok,
     )
 }
@@ -379,20 +384,16 @@ pub fn sample_device_detail() -> DeviceDetailData {
 pub fn sample_device_detail_single() -> DeviceDetailData {
     device_detail_fixture(
         None,
-        DeviceTemp::Single(Temperature::from_celsius(65.0)),
+        Some(DeviceTemp::Single(Temperature::from_celsius(65.0))),
         DeviceStatus::Ok,
     )
 }
 
 /// A miner present over mDNS but not delivering telemetry (a 503 API): the State
-/// tile reads "API error" and the metrics fall back to zero.
+/// tile reads "API error" and the live metrics show the unavailable marker.
 #[must_use]
 pub fn sample_device_detail_error() -> DeviceDetailData {
-    device_detail_fixture(
-        None,
-        DeviceTemp::Single(Temperature::from_celsius(0.0)),
-        DeviceStatus::ApiError,
-    )
+    device_detail_fixture(None, None, DeviceStatus::ApiError)
 }
 
 #[must_use]

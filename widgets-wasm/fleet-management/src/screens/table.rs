@@ -35,7 +35,8 @@ use crate::history::{ChartWindow, HistoryDatum};
 use crate::layout::truncate_label;
 use crate::screens::parts::{
     BORDER, CARD_BG, DATA_H, DETAIL_BUTTON_WIDTH, FRAME_H, FRAME_W, GAP, HEAD_H, HEADER_BG, LABEL,
-    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, area_chart, header, pager, status_counts,
+    LABEL_FONT, PAD, ROW_FONT, ROW_PAD, TABLE_MAX_W, UNAVAILABLE, area_chart, header, pager,
+    si_parts_or_dash, status_counts,
 };
 use crate::view::{PagerScope, model_detail_click_id};
 
@@ -44,7 +45,9 @@ use crate::view::{PagerScope, model_detail_click_id};
 // all — width shifted off Model onto the spark (to the design's ~83px) and the
 // value columns.
 const COL_MODEL: f32 = 310.0;
-const COL_STATUS: f32 = 150.0;
+// The three count slots fill 150; the extra 12 keeps a two-digit off count from
+// crowding the next column, which a short "—" placeholder makes obvious.
+const COL_STATUS: f32 = 162.0;
 const COL_HASHRATE: f32 = 127.0;
 const COL_SPARK: f32 = 100.0;
 const COL_POWER: f32 = 106.0;
@@ -65,11 +68,11 @@ pub struct ModelRow {
     pub ok: usize,
     pub degraded: usize,
     pub off: usize,
-    pub hashrate: Hashrate,
+    pub hashrate: Option<Hashrate>,
     pub series: Vec<HistoryDatum>,
-    pub power: ElectricPower,
-    pub efficiency: MiningEfficiency,
-    pub avg_temp: Temperature,
+    pub power: Option<ElectricPower>,
+    pub efficiency: Option<MiningEfficiency>,
+    pub avg_temp: Option<Temperature>,
 }
 
 #[derive(Debug)]
@@ -155,7 +158,7 @@ fn model_row(r: &ModelRow, window: ChartWindow) -> Node {
                 ),
             ),
             cell(COL_HASHRATE, {
-                let (v, u) = r.hashrate.format_si_parts(3);
+                let (v, u) = si_parts_or_dash(r.hashrate.map(|h| h.format_si_parts(3)));
                 value(&v, &u)
             }),
             cell(
@@ -166,14 +169,25 @@ fn model_row(r: &ModelRow, window: ChartWindow) -> Node {
                 ),
             ),
             cell(COL_POWER, {
-                let (v, u) = r.power.format_si_parts(3);
+                let (v, u) = si_parts_or_dash(r.power.map(|p| p.format_si_parts(3)));
                 value(&v, &u)
             }),
             cell(
                 COL_EFF,
-                value(&r.efficiency.format_value(1), MiningEfficiency::UNIT),
+                value(
+                    &r.efficiency
+                        .map_or_else(|| UNAVAILABLE.to_owned(), |e| e.format_value(1)),
+                    r.efficiency.map_or("", |_| MiningEfficiency::UNIT),
+                ),
             ),
-            cell(COL_AVG, value(&r.avg_temp.format_value(0), "°C")),
+            cell(
+                COL_AVG,
+                value(
+                    &r.avg_temp
+                        .map_or_else(|| UNAVAILABLE.to_owned(), |t| t.format_value(0)),
+                    r.avg_temp.map_or("", |_| "°C"),
+                ),
+            ),
             col(props!(flex: 1.0), Vec::<Node>::new()),
             detail_button(r.family, &r.name),
         ],

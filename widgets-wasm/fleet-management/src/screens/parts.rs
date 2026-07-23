@@ -54,6 +54,16 @@ pub const VALUE_FONT: u32 = 40;
 pub const ROW_FONT: u32 = 20;
 pub const LABEL_FONT: u32 = 20;
 pub const METRIC_ICON: f32 = 20.0;
+/// Shown in a metric slot the device has no reading for
+/// — never a zero, which reads as a real measurement.
+pub const UNAVAILABLE: &str = "\u{2014}";
+
+/// A quantity's `format_si_parts` value and unit, or the marker and no unit when
+/// the reading is absent — the one place the value/unit split renders "no data".
+#[must_use]
+pub fn si_parts_or_dash(parts: Option<(String, String)>) -> (String, String) {
+    parts.unwrap_or_else(|| (UNAVAILABLE.to_owned(), String::new()))
+}
 const AXIS_FONT: u32 = 16;
 // Page count is a secondary control, sized below the row text.
 const PAGER_FONT: u32 = 16;
