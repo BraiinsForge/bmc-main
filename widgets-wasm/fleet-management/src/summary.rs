@@ -254,7 +254,7 @@ pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> Flee
     // `fold_group`); operator model/family filters hide it further.
     let visible: Vec<&KnownDevice> = devices
         .iter()
-        .filter(|d| d.is_reported() && filters.is_visible(d.identity.family, d.model.as_ref()))
+        .filter(|d| d.is_reported() && filters.is_visible(d.identity.family))
         .collect();
 
     // Key on family as well as model name so two families sharing a display name
@@ -308,7 +308,7 @@ pub fn model_detail_rows(
             dev.is_reported()
                 && fam == family_index
                 && lab == label
-                && filters.is_visible(dev.identity.family, dev.model.as_ref())
+                && filters.is_visible(dev.identity.family)
         })
         // fold_group's "Unknown"-label family sentinel may misfire on a
         // device display-named "Unknown"; model-detail rows never read `family`.
@@ -943,41 +943,6 @@ mod tests {
         assert!((eff - 15.0).abs() < 1e-6, "got {eff}");
     }
 
-    #[test]
-    fn blacklist_drops_a_model_group_and_excludes_it_from_totals() {
-        // Two models present; blacklisting one must remove its breakdown group
-        // and leave the total reflecting only the surviving model.
-        let l = list(&[
-            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
-            ("b", Some("NerdQAxe++"), Some(full(4.0, 70.0, 55.0)), true),
-        ]);
-        let filters = Filters {
-            blacklist: vec!["nerdqaxe".to_owned()],
-            ..Default::default()
-        };
-        let summary = summarize(&l, &filters);
-        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
-        assert_eq!(labels, ["BMM 101"], "the blacklisted group is gone");
-        assert_eq!(raw(summary.total.hashrate), Some(1.0));
-        assert_eq!(raw(summary.total.power), Some(30.0));
-    }
-
-    #[test]
-    fn whitelist_keeps_only_matching_model_groups() {
-        let l = list(&[
-            ("a", Some("BMM 101"), Some(full(1.0, 30.0, 60.0)), true),
-            ("b", Some("NerdQAxe++"), Some(full(4.0, 70.0, 55.0)), true),
-        ]);
-        let filters = Filters {
-            whitelist: vec!["bmm101".to_owned()],
-            ..Default::default()
-        };
-        let summary = summarize(&l, &filters);
-        let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
-        assert_eq!(labels, ["BMM 101"], "only the whitelisted model survives");
-        assert_eq!(raw(summary.total.hashrate), Some(1.0));
-    }
-
     fn family_list(specs: &[(&str, DeviceFamily, &str, TelemetryReading)]) -> DeviceList {
         let mut l = DeviceList::new();
         for (i, (name, family, model_name, reading)) in specs.iter().enumerate() {
@@ -1022,7 +987,6 @@ mod tests {
         ]);
         let filters = Filters {
             axeos_enabled: false,
-            ..Default::default()
         };
         let summary = summarize(&l, &filters);
         let labels: Vec<&str> = summary.groups.iter().map(|g| g.label.as_str()).collect();
@@ -1108,11 +1072,11 @@ mod tests {
 
     #[test]
     fn model_detail_rows_hide_a_disabled_familys_modelless_devices() {
-        // The Unknown partition spans families; disabling BOS must hide its
+        // The Unknown partition spans families; disabling AxeOS must hide its
         // model-less device from the drill-in even though the uBOS one keeps
         // the group alive in the summary.
         let mut l = DeviceList::new();
-        for (i, (name, family)) in [("a", DeviceFamily::Bos), ("b", DeviceFamily::Ubos)]
+        for (i, (name, family)) in [("a", DeviceFamily::Bitaxe), ("b", DeviceFamily::Ubos)]
             .iter()
             .enumerate()
         {
@@ -1130,8 +1094,7 @@ mod tests {
             l.apply_telemetry(&id, full(1.0, 30.0, 60.0), true);
         }
         let filters = Filters {
-            bos_enabled: false,
-            ..Default::default()
+            axeos_enabled: false,
         };
         let rows = model_detail_rows(&l, &filters, None, "Unknown", |d| d.identity.name.clone());
         let labels: Vec<&str> = rows.iter().map(|r| r.1.label.as_str()).collect();

@@ -414,7 +414,6 @@ pub extern "C" fn render(delta_ms: u32) {
             let params = manifest_params::Params::current();
             let filters = filter::Filters {
                 axeos_enabled: params.axeos_enabled,
-                ..filter::Filters::default()
             };
             let summary = {
                 let _s = profile::span("summarize");
@@ -636,7 +635,10 @@ pub extern "C" fn on_params_update() {
     }
     if let Some(keys) = changed.as_ref() {
         for family in DeviceFamily::ALL {
-            if !keys.contains(&filter::family_enabled_key(family)) {
+            let Some(key) = filter::family_enabled_key(family) else {
+                continue;
+            };
+            if !keys.contains(&key) {
                 continue;
             }
             // Enabling resumes polling; disabling stops it mid-pass while mDNS
