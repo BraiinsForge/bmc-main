@@ -140,11 +140,12 @@ struct ModelDetailCache {
 #[cfg(target_arch = "wasm32")]
 const HTTP_SERVICE_TYPES: &[&str] = &["_http._tcp"];
 
-/// BOS and AxeOS share `_http._tcp`; the base type resolves reliably even with a
-/// co-located mDNS responder, unlike the flaky `_sub` subtype PTRs. AxeOS passes a
-/// positive TXT test here, so it is identified and kept polled; BOS has no
-/// discovery signal on the shared type and enters only as a candidate. Either way
-/// the report waits for an answered poll — a non-miner responder never earns it.
+/// BOS and AxeOS share `_http._tcp`. Unlike the flaky `_sub` subtype PTRs,
+/// the base type resolves reliably despite co-located mDNS responders.
+/// AxeOS passes a positive TXT test here, so it is identified straight away.
+/// BOS has no discovery signal on the shared type, so it is fingerprinted first,
+/// identified only when its version probe clears — a non-miner responder never
+/// gets that far. Either way the report waits for an answered poll.
 #[cfg(target_arch = "wasm32")]
 fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
@@ -152,7 +153,7 @@ fn on_http_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
             let doc = JsonDoc::parse(json.as_bytes());
             let txt = |key| doc.str(key).is_some_and(|v| !v.is_empty());
             if txt("/txt/family") || txt("/txt/board") {
-                ingest(&BitaxeAdapter, &doc, true);
+                ingest(&BitaxeAdapter, &doc);
             } else {
                 // BOS shares `_http._tcp` with arbitrary hosts; fingerprint the host
                 // before crediting it, so root credentials never reach a non-BOS box.
@@ -172,7 +173,7 @@ fn on_ubos_event(_browse: mdns::MdnsBrowse, event: &mdns::MdnsEvent<'_>) {
     match event {
         mdns::MdnsEvent::Found(json) => {
             let doc = JsonDoc::parse(json.as_bytes());
-            ingest(&UbosAdapter, &doc, true);
+            ingest(&UbosAdapter, &doc);
         }
         mdns::MdnsEvent::Removed(name) => on_removed(DeviceFamily::Ubos, name),
     }
@@ -229,7 +230,7 @@ fn on_removed(family: DeviceFamily, name: &str) {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc, identified: bool) {
+fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc) {
     if let Some(found) = adapter.parse_found(doc) {
         let identity = found.identity;
         let model_hint = found.model_hint;
@@ -240,21 +241,13 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc, identified: bool) {
             .as_ref()
             .map_or_else(|| "model pending".to_owned(), |m| m.name.clone());
         let is_new = DEVICES.with(|d| d.borrow_mut().upsert_with_model_hint(identity, model_hint));
-        // AxeOS/uBOS are positively family-identified at discovery, so keep polling
-        // them until they answer; a base-type BOS is only a candidate. Neither
-        // enters the report here — that waits for an answered poll.
-        if identified {
-            DEVICES.with(|d| d.borrow_mut().identify(&id));
-        }
+        // Every family reaches here positively identified: AxeOS by its TXT test, uBOS
+        // by its dedicated service type, a base-type BOS once its fingerprint clears.
+        // So keep it polled — the report still waits for an answered poll.
+        DEVICES.with(|d| d.borrow_mut().identify(&id));
         if is_new {
-            let verb = if identified {
-                "discovered"
-            } else {
-                "sighted candidate"
-            };
             log_info!(
-                "fleet: {} {} {} ({})",
-                verb,
+                "fleet: discovered {} {} ({})",
                 family_label(family),
                 name,
                 model
@@ -265,11 +258,12 @@ fn ingest(adapter: &dyn FamilyAdapter, doc: &JsonDoc, identified: bool) {
     }
 }
 
-/// Ingest a BOS candidate that cleared the discovery fingerprint.
+/// Ingest a BOS whose version fingerprint cleared — positive identification,
+/// the same role AxeOS's discovery TXT test plays.
 #[cfg(target_arch = "wasm32")]
 pub(crate) fn ingest_probed_bos(json: &str) {
     let doc = JsonDoc::parse(json.as_bytes());
-    ingest(&BosAdapter, &doc, false);
+    ingest(&BosAdapter, &doc);
 }
 
 #[cfg(target_arch = "wasm32")]
