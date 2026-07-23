@@ -69,11 +69,16 @@ impl FamilyAdapter for UbosAdapter {
         UBOS_TELEMETRY_ENDPOINTS
     }
 
-    // HTTP Basic auth from the operator-configured uBOS credentials; the
-    // default `root:root` base64-encodes to `cm9vdDpyb290`.
+    // HTTP Basic auth from the operator-configured uBOS credentials;
+    // the default `root:root` base64-encodes to `cm9vdDpyb290`.
     fn credential_header(&self, username: &str, password: &str) -> Option<String> {
         let encoded = BASE64_STANDARD.encode(bmc_wasm_sdk::fmt!("{}:{}", username, password));
         Some(bmc_wasm_sdk::fmt!("Authorization: Basic {}", encoded))
+    }
+
+    // No login endpoint, so a rejected Basic credential is a 401/403 on telemetry.
+    fn is_auth_error(&self, status: u32) -> bool {
+        status == 401 || status == 403
     }
 
     #[expect(
@@ -257,6 +262,14 @@ mod tests {
         assert_eq!(model.chip_type, None);
         assert_eq!(model.chip_count, None);
         assert_eq!(model.nominal_hashrate_ths, None);
+    }
+
+    #[test]
+    fn recognizes_a_basic_auth_rejection() {
+        assert!(UbosAdapter.is_auth_error(401));
+        assert!(UbosAdapter.is_auth_error(403));
+        assert!(!UbosAdapter.is_auth_error(200));
+        assert!(!UbosAdapter.is_auth_error(503));
     }
 
     #[test]

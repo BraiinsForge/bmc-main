@@ -107,7 +107,7 @@ struct Poller {
     outcomes: Vec<Option<EndpointOutcome>>,
     reauthed: bool,
     /// Why this device's endpoints failed so far, for its surfaced status
-    /// when it yields no telemetry. Reset per device; `ApiError` dominates a mix.
+    /// when it yields no telemetry. Reset per device.
     pass_failure: Option<PollFailure>,
 }
 
@@ -633,6 +633,16 @@ fn on_login(id: &DeviceId, response: &bmc_wasm_sdk::FetchResponse) {
     }
 }
 
+/// The most actionable failure across a pass wins:
+/// `AuthError` over `ApiError` over `Unreachable`.
+fn escalate_failure(current: Option<PollFailure>, kind: PollFailure) -> PollFailure {
+    match (current, kind) {
+        (Some(PollFailure::AuthError), _) | (_, PollFailure::AuthError) => PollFailure::AuthError,
+        (Some(PollFailure::ApiError), _) | (_, PollFailure::ApiError) => PollFailure::ApiError,
+        _ => PollFailure::Unreachable,
+    }
+}
+
 fn on_telemetry(endpoint_idx: usize, response: &bmc_wasm_sdk::FetchResponse) {
     // Every exit must either complete the barrier (decrement `pending`,
     // fire on zero) or advance — otherwise a response for a device
@@ -671,27 +681,19 @@ fn on_telemetry(endpoint_idx: usize, response: &bmc_wasm_sdk::FetchResponse) {
         EndpointOutcome::Failed
     };
 
-    // Track why a failed endpoint failed, for the surfaced status of a device
-    // that yields no telemetry: an HTTP status means the API answered (badly,
-    // e.g. 503); status 0 means nothing reached us. `ApiError` dominates a mix —
-    // any answer at all means the miner is reachable, just erroring.
+    // The surfaced status for a device that yields no telemetry this pass.
     if matches!(
         outcome,
         EndpointOutcome::Failed | EndpointOutcome::AuthFailed
     ) {
         let kind = if response.status == 0 {
             PollFailure::Unreachable
+        } else if adapter.is_auth_error(response.status) {
+            PollFailure::AuthError
         } else {
             PollFailure::ApiError
         };
-        with_poller(|p| {
-            p.pass_failure = match (p.pass_failure, kind) {
-                (Some(PollFailure::ApiError), _) | (_, PollFailure::ApiError) => {
-                    Some(PollFailure::ApiError)
-                }
-                _ => Some(PollFailure::Unreachable),
-            };
-        });
+        with_poller(|p| p.pass_failure = Some(escalate_failure(p.pass_failure, kind)));
     }
 
     let done = with_poller(|p| {
@@ -868,6 +870,17 @@ fn advance() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escalate_failure_prefers_the_most_actionable_reason() {
+        use PollFailure::{ApiError, AuthError, Unreachable};
+        assert_eq!(escalate_failure(None, Unreachable), Unreachable);
+        assert_eq!(escalate_failure(None, ApiError), ApiError);
+        assert_eq!(escalate_failure(None, AuthError), AuthError);
+        assert_eq!(escalate_failure(Some(Unreachable), ApiError), ApiError);
+        assert_eq!(escalate_failure(Some(ApiError), AuthError), AuthError);
+        assert_eq!(escalate_failure(Some(AuthError), ApiError), AuthError);
+    }
 
     #[test]
     fn claim_probe_slot_reclaims_a_stale_slot() {
