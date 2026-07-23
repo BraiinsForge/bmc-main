@@ -75,7 +75,10 @@ struct HubInner {
 }
 
 struct TypeSubscribers {
-    events: mdns_sd::Receiver<mdns_sd::ServiceEvent>,
+    /// `None` while the daemon has rejected this type's browse.
+    /// The pump re-attempts on [`TypeSubscribers::next_browse`] until it takes,
+    /// so a transient reject doesn't drop the subscriber for the process.
+    events: Option<mdns_sd::Receiver<mdns_sd::ServiceEvent>>,
     subscribers: Vec<(u64, std::sync::mpsc::Sender<MdnsEvent>)>,
     /// When this type's browse first started; survives daemon recreates
     /// so the first-resolution latency is measured from the original browse.
@@ -84,6 +87,30 @@ struct TypeSubscribers {
     /// One complaint per boot once the type stays silent past the grace,
     /// so a per-type deafness shows up even while other types resolve.
     silent_warned: bool,
+    /// Consecutive rejected browses, and when the next retry
+    /// is due (both stale once `events` is `Some`).
+    browse_failures: usize,
+    next_browse: Instant,
+}
+
+impl TypeSubscribers {
+    /// Adopt a browse's receiver and clear the retry backoff.
+    fn browse_started(&mut self, events: mdns_sd::Receiver<mdns_sd::ServiceEvent>) {
+        self.events = Some(events);
+        self.browse_failures = 0;
+    }
+
+    /// Record a rejected browse and schedule the next backed-off retry.
+    fn browse_deferred(&mut self, now: Instant) {
+        self.events = None;
+        self.next_browse = now + browse_backoff(self.browse_failures);
+        self.browse_failures = self.browse_failures.saturating_add(1);
+    }
+
+    /// Whether a rejected browse is due for another attempt.
+    fn browse_due(&self, now: Instant) -> bool {
+        self.events.is_none() && now >= self.next_browse
+    }
 }
 
 /// Grace a freshly (re)created daemon gets to resolve
@@ -111,6 +138,21 @@ fn watchdog_grace(fruitless_attempts: usize) -> Duration {
         .min(WATCHDOG_GRACE_CAP)
 }
 
+/// First delay before re-attempting a browse the daemon rejected.
+const BROWSE_RETRY_BASE: Duration = Duration::from_secs(1);
+/// Ceiling for the backed-off per-type browse retry.
+const BROWSE_RETRY_CAP: Duration = Duration::from_secs(60);
+
+/// The delay before re-attempting a rejected browse: [`BROWSE_RETRY_BASE`]
+/// doubled per prior failure and capped. A transient reject recovers quickly;
+/// a persistent one settles to one attempt per cap period, so a dead type
+/// never hammers the daemon.
+fn browse_backoff(failures: usize) -> Duration {
+    BROWSE_RETRY_BASE
+        .saturating_mul(1 << failures.min(6))
+        .min(BROWSE_RETRY_CAP)
+}
+
 impl MdnsHub {
     fn subscribe(&self, service_types: &[String], tx: &std::sync::mpsc::Sender<MdnsEvent>) -> u64 {
         use std::collections::hash_map::Entry;
@@ -126,19 +168,29 @@ impl MdnsHub {
                     e.get_mut().subscribers.push((id, tx.clone()));
                     tracing::debug!("mDNS: subscriber {id} joined the {st} browse");
                 }
-                Entry::Vacant(e) => match inner.daemon.browse(st) {
-                    Ok(events) => {
-                        e.insert(TypeSubscribers {
-                            events,
-                            subscribers: vec![(id, tx.clone())],
-                            started: Instant::now(),
-                            first_resolved: false,
-                            silent_warned: false,
-                        });
-                        tracing::info!("mDNS: browse started for {st} (subscriber {id})");
+                Entry::Vacant(e) => {
+                    let now = Instant::now();
+                    let mut subs = TypeSubscribers {
+                        events: None,
+                        subscribers: vec![(id, tx.clone())],
+                        started: now,
+                        first_resolved: false,
+                        silent_warned: false,
+                        browse_failures: 0,
+                        next_browse: now,
+                    };
+                    match inner.daemon.browse(st) {
+                        Ok(events) => {
+                            subs.browse_started(events);
+                            tracing::info!("mDNS: browse started for {st} (subscriber {id})");
+                        }
+                        Err(err) => {
+                            subs.browse_deferred(now);
+                            tracing::warn!("mDNS browse({st}) rejected, will retry: {err}");
+                        }
                     }
-                    Err(err) => tracing::error!("mDNS browse({st}) failed: {err}"),
-                },
+                    e.insert(subs);
+                }
             }
         }
         id
@@ -188,11 +240,30 @@ impl MdnsHub {
             tracing::info!("mDNS: recreated the daemon after an interface came up");
         }
 
+        // Re-attempt any browse the daemon rejected, once its backoff is due —
+        // a transient reject recovers here even while other types resolve.
+        let now = Instant::now();
+        let daemon = &inner.daemon;
+        for (st, subs) in &mut inner.types {
+            if subs.browse_due(now) {
+                match daemon.browse(st) {
+                    Ok(events) => {
+                        subs.browse_started(events);
+                        tracing::info!("mDNS: deferred browse for {st} started");
+                    }
+                    Err(err) => {
+                        subs.browse_deferred(now);
+                        tracing::debug!("mDNS browse({st}) still rejected: {err}");
+                    }
+                }
+            }
+        }
+
         let mut resolved = false;
         let mut events_heard = 0;
         let mut drained = Vec::new();
         for (st, subs) in &mut inner.types {
-            while let Ok(event) = subs.events.try_recv() {
+            while let Some(event) = subs.events.as_ref().and_then(|e| e.try_recv().ok()) {
                 events_heard += 1;
                 let Some(msg) = to_mdns_event(event) else {
                     continue;
@@ -304,10 +375,14 @@ impl HubInner {
         let Some((daemon, monitor)) = Self::spawn_daemon() else {
             return;
         };
+        let now = Instant::now();
         for (st, subs) in &mut self.types {
             match daemon.browse(st) {
-                Ok(events) => subs.events = events,
-                Err(e) => tracing::error!("mDNS re-browse({st}) failed: {e}"),
+                Ok(events) => subs.browse_started(events),
+                Err(e) => {
+                    subs.browse_deferred(now);
+                    tracing::error!("mDNS re-browse({st}) failed, will retry: {e}");
+                }
             }
         }
         let old = std::mem::replace(&mut self.daemon, daemon);
@@ -365,16 +440,27 @@ fn to_mdns_event(event: mdns_sd::ServiceEvent) -> Option<MdnsEvent> {
     }
 }
 
-/// The process-wide mDNS hub, created on first use (`None` if the daemon can't
-/// be created). Spawns the fan-out pump the first time it succeeds.
+/// The process-wide mDNS hub, created on first use.
+///
+/// `None` when the daemon can't be created — the failure isn't cached,
+/// so the next caller retries instead of stranding discovery for the process.
+///
+/// Spawns the fan-out pump the first time it succeeds.
 fn mdns_hub() -> Option<&'static MdnsHub> {
-    static HUB: std::sync::OnceLock<Option<MdnsHub>> = std::sync::OnceLock::new();
+    static HUB: std::sync::OnceLock<MdnsHub> = std::sync::OnceLock::new();
+    static INIT: std::sync::Mutex<()> = std::sync::Mutex::new(());
     static PUMP: std::sync::Once = std::sync::Once::new();
-    let hub = HUB
-        .get_or_init(|| {
+
+    let hub = if let Some(hub) = HUB.get() {
+        hub
+    } else {
+        // Serialize the creation attempt so a burst of first callers spawns
+        // one daemon, not one each; a failed spawn leaves `HUB` unset to retry.
+        let _guard = INIT.lock().expect("BUG: mDNS hub init lock poisoned");
+        if HUB.get().is_none() {
             let (daemon, monitor) = HubInner::spawn_daemon()?;
             tracing::info!("mDNS hub created");
-            Some(MdnsHub {
+            let _ = HUB.set(MdnsHub {
                 inner: std::sync::Mutex::new(HubInner {
                     daemon,
                     monitor,
@@ -385,9 +471,10 @@ fn mdns_hub() -> Option<&'static MdnsHub> {
                     events_heard: 0,
                 }),
                 next_id: std::sync::atomic::AtomicU64::new(0),
-            })
-        })
-        .as_ref()?;
+            });
+        }
+        HUB.get().expect("BUG: mDNS hub set under the init lock")
+    };
     PUMP.call_once(move || {
         std::thread::spawn(move || {
             loop {
@@ -730,5 +817,56 @@ mod tests {
         assert_eq!(watchdog_grace(5), Duration::from_secs(256));
         assert_eq!(watchdog_grace(6), WATCHDOG_GRACE_CAP);
         assert_eq!(watchdog_grace(usize::MAX), WATCHDOG_GRACE_CAP);
+    }
+
+    #[test]
+    fn browse_backoff_doubles_to_the_cap() {
+        assert_eq!(browse_backoff(0), Duration::from_secs(1));
+        assert_eq!(browse_backoff(1), Duration::from_secs(2));
+        assert_eq!(browse_backoff(5), Duration::from_secs(32));
+        assert_eq!(browse_backoff(6), BROWSE_RETRY_CAP);
+        assert_eq!(browse_backoff(usize::MAX), BROWSE_RETRY_CAP);
+    }
+
+    fn deferred_type(now: Instant) -> TypeSubscribers {
+        TypeSubscribers {
+            events: None,
+            subscribers: Vec::new(),
+            started: now,
+            first_resolved: false,
+            silent_warned: false,
+            browse_failures: 0,
+            next_browse: now,
+        }
+    }
+
+    #[test]
+    fn a_rejected_browse_retries_only_once_its_backoff_elapses() {
+        let now = Instant::now();
+        let mut subs = deferred_type(now);
+
+        subs.browse_deferred(now);
+        assert_eq!(subs.browse_failures, 1);
+        assert!(!subs.browse_due(now), "not due before the base delay");
+        assert!(
+            subs.browse_due(now + browse_backoff(0)),
+            "due once the base delay passes"
+        );
+    }
+
+    #[test]
+    fn each_rejection_backs_the_retry_off_further() {
+        let now = Instant::now();
+        let mut subs = deferred_type(now);
+
+        subs.browse_deferred(now);
+        let second = now + browse_backoff(0);
+        subs.browse_deferred(second);
+        assert_eq!(subs.browse_failures, 2);
+        assert!(
+            !subs.browse_due(second + browse_backoff(0)),
+            "the second retry waits the longer backoff"
+        );
+        assert!(subs.browse_due(second + browse_backoff(1)));
     }
 }
