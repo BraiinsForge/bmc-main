@@ -255,3 +255,8 @@ init-tarball:
   extends: .app
   script:
     - nix build .#init-tarball-armv7
+
+bmc-nix-cli:
+  extends: .app
+  script:
+    - nix build .#bmc-nix-cli-armv7-release
