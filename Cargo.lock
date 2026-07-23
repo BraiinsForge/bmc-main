@@ -963,6 +963,7 @@ dependencies = [
  "ii-net",
  "ii-net-drv",
  "ii-stopwatch",
+ "image",
  "input",
  "libc",
  "log",

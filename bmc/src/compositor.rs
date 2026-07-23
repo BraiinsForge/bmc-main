@@ -61,7 +61,9 @@ pub struct WidgetPlacement {
 pub struct SceneLayout {
     /// Identifies which scene this layout came from; the compositor matches
     /// it against its cycling list to update entries in place instead of
-    /// rebuilding. `None` for tests / default values.
+    /// rebuilding. `None` marks the no-scene sentinel — the layout the
+    /// tracker falls back to with nothing configured — which
+    /// [`SceneLayout::placeholder`] resolves to [`ScenePlaceholder::Logo`].
     pub scene_id: Option<crate::scene::SceneId>,
     /// Per-scene automatic cycling duration override. `None` uses the
     /// global scene-cycling default.
@@ -70,6 +72,36 @@ pub struct SceneLayout {
     /// fullscreen scenes are not. See the renderer's grid drawing.
     pub combined: bool,
     pub widgets: Vec<WidgetPlacement>,
+}
+
+/// What a scene shows while none of its widgets has rendered content yet.
+/// Derived by [`SceneLayout::placeholder`]; the renderer consults it only
+/// for scenes without a committed widget buffer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ScenePlaceholder {
+    /// Combined scene with no widgets configured: there is nothing to load,
+    /// so it shows the separator grid with empty cells instead of the logo.
+    Grid,
+    /// The no-scene sentinel (`scene_id == None`): the branding logo alone —
+    /// a caption would suggest a load that is not happening.
+    Logo,
+    /// A configured scene whose widgets have not painted their first frame:
+    /// the branding logo with the "Loading scene…" caption below it.
+    LogoWithCaption,
+}
+
+impl SceneLayout {
+    /// The placeholder to show while this scene has no rendered widget.
+    #[must_use]
+    pub fn placeholder(&self) -> ScenePlaceholder {
+        if self.combined && self.widgets.is_empty() {
+            ScenePlaceholder::Grid
+        } else if self.scene_id.is_some() {
+            ScenePlaceholder::LogoWithCaption
+        } else {
+            ScenePlaceholder::Logo
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -378,5 +410,58 @@ pub(crate) async fn run_night_mode_cycling_task(
         }
 
         night_mode_was_active = night_mode_active;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SceneLayout, ScenePlaceholder, WidgetPlacement};
+
+    fn placement() -> WidgetPlacement {
+        WidgetPlacement {
+            instance_id: "widget".to_owned(),
+            position: super::Position { x: 0, y: 0 },
+            size: super::Size {
+                width: 317,
+                height: 238,
+            },
+            visible: true,
+        }
+    }
+
+    #[test]
+    fn sentinel_layout_shows_logo_alone() {
+        assert_eq!(SceneLayout::default().placeholder(), ScenePlaceholder::Logo);
+    }
+
+    #[test]
+    fn empty_combined_scene_shows_grid() {
+        let layout = SceneLayout {
+            scene_id: Some(crate::scene::SceneId::generate()),
+            combined: true,
+            ..SceneLayout::default()
+        };
+        assert_eq!(layout.placeholder(), ScenePlaceholder::Grid);
+    }
+
+    #[test]
+    fn unpainted_combined_scene_with_widgets_shows_loading_caption() {
+        let layout = SceneLayout {
+            scene_id: Some(crate::scene::SceneId::generate()),
+            combined: true,
+            widgets: vec![placement()],
+            ..SceneLayout::default()
+        };
+        assert_eq!(layout.placeholder(), ScenePlaceholder::LogoWithCaption);
+    }
+
+    #[test]
+    fn unpainted_fullscreen_scene_shows_loading_caption() {
+        let layout = SceneLayout {
+            scene_id: Some(crate::scene::SceneId::generate()),
+            widgets: vec![placement()],
+            ..SceneLayout::default()
+        };
+        assert_eq!(layout.placeholder(), ScenePlaceholder::LogoWithCaption);
     }
 }

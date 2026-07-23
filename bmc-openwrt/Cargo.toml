@@ -8,7 +8,11 @@ authors = ["Braiins <braiins@braiins.com>"]
 # Non-Rust sources read at compile time; the nix source filter keeps only
 # rust/toml/lock unless a crate opts extra files in here.
 [package.metadata.nix]
-include = ["src/compositor/render/scanout_swizzle.frag"]
+include = [
+    "src/compositor/render/scanout_swizzle.frag",
+    "src/assets/deck_logo.png",
+    "src/assets/loading_scene_text.png",
+]
 
 
 [dependencies]
@@ -42,6 +46,7 @@ get_if_addrs.workspace = true
 gpiod.workspace = true
 iana-time-zone.workspace = true
 ii-stopwatch.workspace = true
+image = { workspace = true, features = ["png"] }
 input.workspace = true
 libc.workspace = true
 log.workspace = true

@@ -23,12 +23,15 @@
 use std::collections::HashMap;
 
 use anyhow::{Context, Result};
+use bmc::compositor::ScenePlaceholder;
 use bmc::scene::WidgetPosition;
 use bmc_gpu_render_lock::GpuRenderLock;
-use bmc_platform::{DisplayPixelFormat, DisplayTransform};
+use bmc_platform::{DisplayPixelFormat, DisplayTransform, Product};
 use smithay::{
+    backend::allocator::Fourcc,
     backend::renderer::{
-        Bind, Color32F, Frame as RendererFrame, ImportDma, ImportMemWl, Renderer, Texture,
+        Bind, Color32F, Frame as RendererFrame, ImportDma, ImportMem, ImportMemWl, Renderer,
+        Texture,
         gles::GlesFrame,
         gles::{GlesRenderer, GlesTexture, ffi},
     },
@@ -47,6 +50,29 @@ use super::widget_tracker::WidgetTracker;
 
 const BACKGROUND_COLOR: Color32F = Color32F::new(0.0, 0.0, 0.0, 1.0);
 const SEPARATOR_COLOR: Color32F = Color32F::new(0.15, 0.15, 0.15, 1.0);
+
+/// DECK logo shown as the screen background when a scene has no rendered
+/// content. Embedded so there is no runtime file dependency.
+const DECK_LOGO_PNG: &[u8] = include_bytes!("../assets/deck_logo.png");
+
+/// Branding logo a product shows in scenes with no rendered content, or
+/// `None` to keep the plain cleared background (which also drops the
+/// "Loading scene…" caption). The DECK logo is Deck branding and is wider
+/// (527px) than the other products' panels, so only the Deck shows it.
+#[must_use]
+pub fn logo_for_product(product: Product) -> Option<&'static [u8]> {
+    match product {
+        Product::Bmc100 => Some(DECK_LOGO_PNG),
+        Product::Bmm100 | Product::Bmm101 | Product::Bfm100 => None,
+    }
+}
+
+/// "Loading scene…" caption drawn below the logo while a configured scene has
+/// not painted its first frame yet.
+const LOADING_SCENE_TEXT_PNG: &[u8] = include_bytes!("../assets/loading_scene_text.png");
+
+/// Logical-pixel gap between the logo and the caption below it.
+const LOGO_TEXT_GAP_PX: i32 = 42;
 
 #[must_use]
 pub fn scanout_transform(profile: DisplayTransform) -> Transform {
@@ -128,6 +154,15 @@ fn draw_rect_on_frame(
     }
 }
 
+// `draw_separator_grids` and `draw_logo_scenes` repaint without reporting into
+// the frame's `damage_rects`, which only holds up while `DrmOutput::page_flip`
+// discards damage clips. Fail the build rather than the panel if that flips
+// before the two draws are damage-tracked.
+const _: () = assert!(
+    !DrmOutput::DAMAGE_CLIPS_ENABLED,
+    "BUG: the logo, caption and separator draws do not report damage - damage-track them before enabling damage clips"
+);
+
 /// Draw the combined-scene separator grid once per entry in `x_offsets`, so it
 /// slides with its scene during swipes and transitions. Widgets snap to
 /// `WidgetPosition::{COL,ROW}_PITCH` (viewport + a uniform 4px gap), so a strip
@@ -148,26 +183,16 @@ fn draw_separator_grids(
     let (lw, lh) = output.logical_size();
     // All panel/grid geometry is small and non-negative; narrow the
     // u32/usize sources to the i32 space the signed x-offsets live in.
-    let [
-        output_w,
-        output_h,
-        logical_w,
-        logical_h,
-        gap,
-        col_pitch,
-        row_pitch,
-    ] = [
-        output.width(),
-        output.height(),
-        lw,
-        lh,
-        WidgetPosition::SEPARATOR_PX,
-        WidgetPosition::col_pitch(lw),
-        WidgetPosition::row_pitch(lh),
-    ]
-    .map(|v| i32::try_from(v).expect("BUG: panel/grid geometry fits i32"));
-    let [cols, rows] = [WidgetPosition::MAX_COLS, WidgetPosition::MAX_ROWS]
-        .map(|v| i32::try_from(v).expect("BUG: grid dimension fits i32"));
+    let to_i32 = |v: u32| i32::try_from(v).expect("BUG: panel/grid geometry fits i32");
+    let output_w = to_i32(output.width());
+    let output_h = to_i32(output.height());
+    let logical_w = to_i32(lw);
+    let logical_h = to_i32(lh);
+    let gap = to_i32(WidgetPosition::SEPARATOR_PX);
+    let col_pitch = to_i32(WidgetPosition::col_pitch(lw));
+    let row_pitch = to_i32(WidgetPosition::row_pitch(lh));
+    let cols = i32::try_from(WidgetPosition::MAX_COLS).expect("BUG: grid dimension fits i32");
+    let rows = i32::try_from(WidgetPosition::MAX_ROWS).expect("BUG: grid dimension fits i32");
     for x_offset in x_offsets {
         for col in 1..cols {
             let x = col * col_pitch - gap + x_offset;
@@ -194,6 +219,198 @@ fn draw_separator_grids(
     }
 }
 
+/// Decode an embedded PNG and upload it as a texture. Returns `None` (with a
+/// warning) on failure so the compositor still starts — these overlays are
+/// cosmetic. `label` names the asset in log messages.
+fn load_texture_from_png(
+    renderer: &mut GlesRenderer,
+    png: &[u8],
+    label: &str,
+) -> Option<GlesTexture> {
+    let rgba = match image::load_from_memory(png) {
+        Ok(image) => image.to_rgba8(),
+        Err(e) => {
+            tracing::warn!("Failed to decode {label}: {e:?}");
+            return None;
+        }
+    };
+    let (width, height) = rgba.dimensions();
+    let (Ok(w), Ok(h)) = (i32::try_from(width), i32::try_from(height)) else {
+        tracing::warn!("{label} dimensions {width}x{height} do not fit i32");
+        return None;
+    };
+    let size = Size::<i32, BufferCoord>::from((w, h));
+    // `to_rgba8` yields bytes in R,G,B,A order, i.e. little-endian ABGR8888.
+    match renderer.import_memory(rgba.as_raw(), Fourcc::Abgr8888, size, false) {
+        Ok(texture) => Some(texture),
+        Err(e) => {
+            tracing::warn!("Failed to upload {label} texture: {e:?}");
+            None
+        }
+    }
+}
+
+/// An overlay texture held only while an overlay scene is on screen. The
+/// `Failed` state keeps a failed load from re-decoding the PNG on every render
+/// for as long as that scene stays up; [`OverlayTexture::unload`] clears it
+/// along with the texture, so the next entry tries once more — a GL upload can
+/// fail transiently, and one attempt per entry is what a successful load costs
+/// anyway.
+enum OverlayTexture {
+    Unloaded,
+    Failed,
+    Ready(GlesTexture),
+}
+
+impl OverlayTexture {
+    /// The texture to draw, or `None` while unloaded or failed.
+    fn texture(&self) -> Option<&GlesTexture> {
+        match self {
+            Self::Ready(texture) => Some(texture),
+            Self::Unloaded | Self::Failed => None,
+        }
+    }
+
+    /// Decode and upload `png`, unless that already succeeded or already
+    /// failed since the last [`Self::unload`].
+    fn ensure_loaded(&mut self, renderer: &mut GlesRenderer, png: &[u8], label: &str) {
+        match self {
+            Self::Failed | Self::Ready(_) => (),
+            Self::Unloaded => {
+                *self = match load_texture_from_png(renderer, png, label) {
+                    Some(texture) => Self::Ready(texture),
+                    None => Self::Failed,
+                };
+            }
+        }
+    }
+
+    /// Drop the texture and forget a failed load.
+    fn unload(&mut self) {
+        *self = Self::Unloaded;
+    }
+}
+
+/// Blit a texture at a logical top-left placement, applying the panel's scanout
+/// transform. Logs a warning on failure without aborting the frame.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "mirrors place_widget's explicit geometry inputs"
+)]
+fn blit_texture_on_frame(
+    frame: &mut GlesFrame<'_, '_>,
+    texture: &GlesTexture,
+    logical_x: i32,
+    logical_y: i32,
+    output_w: i32,
+    output_h: i32,
+    transform: DisplayTransform,
+    label: &str,
+) {
+    let tex_size = texture.size();
+    let dst = place_widget(
+        logical_x, logical_y, tex_size.w, tex_size.h, output_w, output_h, transform,
+    );
+    let src: Rectangle<f64, BufferCoord> =
+        Rectangle::from_loc_and_size((0.0, 0.0), (f64::from(tex_size.w), f64::from(tex_size.h)));
+    if let Err(e) = frame.render_texture_from_to(
+        texture,
+        src,
+        dst,
+        &[texture_damage_rect(dst)],
+        &[],
+        scanout_transform(transform),
+        1.0,
+        None,
+        &[],
+    ) {
+        tracing::warn!("Failed to render {label}: {e:?}");
+    }
+}
+
+/// Start coordinate (left/top edge along one axis) at which `content` sits
+/// centered inside `container`; the 1px bias from integer division is fine
+/// for the overlays this positions.
+#[expect(
+    clippy::integer_division,
+    reason = "1px rounding when centering is fine"
+)]
+fn centered_start(container: i32, content: i32) -> i32 {
+    (container - content) / 2
+}
+
+/// A scene showing the branding logo this frame: the x-offset it slides with
+/// during swipes and transitions, and whether the "Loading scene…" caption is
+/// drawn below the logo (see [`ScenePlaceholder`]).
+struct LogoScene {
+    x_offset: i32,
+    with_caption: bool,
+}
+
+/// Draw the DECK logo centered on every scene in `scenes` — the on-screen
+/// scenes that have no rendered widget yet (the empty sentinel, or a
+/// configured scene whose widgets have not painted — fullscreen, combined, or
+/// preview). A scene with a caption also gets the "Loading scene…" `caption`
+/// below the logo. Drawn per scene at its x-offset so it slides with
+/// swipes/transitions; these scenes are excluded from the separator grid, so
+/// the grid never overlaps the logo. Products without a logo (see
+/// [`logo_for_product`]) pass `logo: None` and keep the cleared background.
+fn draw_logo_scenes(
+    frame: &mut GlesFrame<'_, '_>,
+    output: &DrmOutput,
+    transform: DisplayTransform,
+    scenes: &[LogoScene],
+    logo: Option<&GlesTexture>,
+    caption: Option<&GlesTexture>,
+) {
+    let Some(logo) = logo else {
+        return;
+    };
+    let (lw, lh) = output.logical_size();
+    // Panel dimensions are small and non-negative; narrow them to the i32
+    // space the signed x-offsets live in.
+    let to_i32 = |v: u32| i32::try_from(v).expect("BUG: panel geometry fits i32");
+    let output_w = to_i32(output.width());
+    let output_h = to_i32(output.height());
+    let logical_w = to_i32(lw);
+    let logical_h = to_i32(lh);
+    let logo_size = logo.size();
+    for scene in scenes {
+        // Draw the logo centered.
+        let logo_x = scene.x_offset + centered_start(logical_w, logo_size.w);
+        let logo_y = centered_start(logical_h, logo_size.h);
+        blit_texture_on_frame(
+            frame,
+            logo,
+            logo_x,
+            logo_y,
+            output_w,
+            output_h,
+            transform,
+            "DECK logo",
+        );
+
+        // Draw optional caption under the logo.
+        if scene.with_caption
+            && let Some(caption) = caption
+        {
+            let caption_size = caption.size();
+            let caption_x = scene.x_offset + centered_start(logical_w, caption_size.w);
+            let caption_y = logo_y + logo_size.h + LOGO_TEXT_GAP_PX;
+            blit_texture_on_frame(
+                frame,
+                caption,
+                caption_x,
+                caption_y,
+                output_w,
+                output_h,
+                transform,
+                "loading text",
+            );
+        }
+    }
+}
+
 pub struct SceneRenderer {
     egl: EglContext,
     output: DrmOutput,
@@ -203,6 +420,15 @@ pub struct SceneRenderer {
     swizzler: Option<ScanoutSwizzler>,
     /// Texture cache: maps WlBuffer ObjectId to cached GlesTexture
     texture_cache: HashMap<ObjectId, GlesTexture>,
+    /// Branding logo drawn when a scene has no rendered content, from
+    /// [`logo_for_product`]; `None` keeps the plain cleared background.
+    logo_png: Option<&'static [u8]>,
+    /// Logo texture decoded from [`Self::logo_png`]. Loaded on demand and
+    /// dropped when unused.
+    logo_texture: OverlayTexture,
+    /// "Loading scene…" caption texture. Loaded on demand and dropped when
+    /// unused.
+    loading_text_texture: OverlayTexture,
     /// Cached pixels from the last inline capture readback.
     /// Served to capture clients between renders (avoids re-rendering
     /// just to observe the same frame).
@@ -249,6 +475,7 @@ impl SceneRenderer {
         scanout_transform: DisplayTransform,
         seam_overlap_px: i32,
         pixel_format: DisplayPixelFormat,
+        logo_png: Option<&'static [u8]>,
     ) -> Result<Self> {
         let (width, height) = (output.width(), output.height());
         let (logical_w, logical_h) = output.logical_size();
@@ -272,6 +499,10 @@ impl SceneRenderer {
             buffers: BufferPool::new(width, height, ScanoutFormat::Xrgb8888),
             swizzler,
             texture_cache: HashMap::new(),
+            logo_png,
+            // Overlay textures are loaded lazily on first use (see render_scene).
+            logo_texture: OverlayTexture::Unloaded,
+            loading_text_texture: OverlayTexture::Unloaded,
             capture_cache: CaptureCache::empty(),
             gpu_render_lock: GpuRenderLock::from_env()?,
             scanout_transform,
@@ -381,6 +612,23 @@ impl SceneRenderer {
         }
     }
 
+    /// Whether any visible widget of `scene` has already committed a buffer
+    /// that was imported into a texture — i.e. the scene has real content to
+    /// show this frame rather than a blank/loading placeholder.
+    fn scene_has_rendered_widget(
+        &self,
+        scene: &bmc::compositor::SceneLayout,
+        buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
+    ) -> bool {
+        buffers.iter().any(|(buffer, instance_id)| {
+            self.texture_cache.contains_key(&buffer.id())
+                && scene
+                    .widgets
+                    .iter()
+                    .any(|w| &w.instance_id == instance_id && w.visible)
+        })
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "render hot-path with stopwatch instrumentation; splitting hurts readability"
@@ -420,15 +668,64 @@ impl SceneRenderer {
 
         // Collect render items: (buffer_id, placement, x_offset)
         let mut to_render = Vec::new();
-        // x-offsets of combined scenes in view; each gets a separator grid,
-        // sliding with the scene during swipes and transitions.
+        // x-offsets of rendered combined scenes in view; each gets a separator
+        // grid, sliding with the scene during swipes and transitions. Scenes
+        // that show the logo instead are excluded so the grid never sits on it.
         let mut combined_scene_offsets = Vec::new();
+        // On-screen scenes showing the branding logo, per their
+        // `ScenePlaceholder`. Products without a logo (see `logo_for_product`)
+        // keep the plain cleared background.
+        let mut logo_scenes: Vec<LogoScene> = Vec::new();
 
         for rendered in widgets.rendered_scenes(transition_offset, self.seam_overlap_px) {
             collect_scene_widgets(rendered.scene, buffers, rendered.x_offset, &mut to_render);
-            if rendered.scene.combined {
-                combined_scene_offsets.push(rendered.x_offset);
+            if self.scene_has_rendered_widget(rendered.scene, buffers) {
+                if rendered.scene.combined {
+                    combined_scene_offsets.push(rendered.x_offset);
+                }
+            } else {
+                // The grid-vs-logo-vs-caption policy lives on SceneLayout;
+                // see `ScenePlaceholder` for the policy and its rationale.
+                match rendered.scene.placeholder() {
+                    ScenePlaceholder::Grid => combined_scene_offsets.push(rendered.x_offset),
+                    ScenePlaceholder::Logo => {
+                        if self.logo_png.is_some() {
+                            logo_scenes.push(LogoScene {
+                                x_offset: rendered.x_offset,
+                                with_caption: false,
+                            });
+                        }
+                    }
+                    ScenePlaceholder::LogoWithCaption => {
+                        if self.logo_png.is_some() {
+                            logo_scenes.push(LogoScene {
+                                x_offset: rendered.x_offset,
+                                with_caption: true,
+                            });
+                        }
+                    }
+                }
             }
+        }
+
+        // Load the overlay textures on demand and drop them when unused, so the
+        // GPU only holds them while a "no content yet" scene is on screen.
+        let needs_logo = !logo_scenes.is_empty();
+        let needs_text = logo_scenes.iter().any(|s| s.with_caption);
+        if needs_logo && let Some(png) = self.logo_png {
+            self.logo_texture
+                .ensure_loaded(self.egl.renderer(), png, "DECK logo");
+        } else if !needs_logo {
+            self.logo_texture.unload();
+        }
+        if needs_text {
+            self.loading_text_texture.ensure_loaded(
+                self.egl.renderer(),
+                LOADING_SCENE_TEXT_PNG,
+                "loading text",
+            );
+        } else {
+            self.loading_text_texture.unload();
         }
 
         let buffer = self.buffers.back_buffer(&self.output)?;
@@ -504,6 +801,17 @@ impl SceneRenderer {
                 .clear(BACKGROUND_COLOR, &clear_regions)
                 .context("Failed to clear uncovered output regions")?;
         }
+
+        // Neither the logo/caption nor the separator draws below report into
+        // `damage_rects`; see the assert next to `draw_separator_grids`.
+        draw_logo_scenes(
+            &mut frame,
+            &self.output,
+            self.scanout_transform,
+            &logo_scenes,
+            self.logo_texture.texture(),
+            self.loading_text_texture.texture(),
+        );
 
         // Drawn over the cleared background and before the widgets, for the
         // same reason as the clear above.

@@ -146,6 +146,66 @@ pub fn scene_supported_with_registry(
     }
 }
 
+/// Build the compositor layout for a scene. Widgets the spawner can never
+/// launch — nil or unregistered `widget_type_id`, the same conditions
+/// `spawn_widget` skips or fails on — stay out of the layout, so their grid
+/// cells render empty instead of leaving the scene stuck on the renderer's
+/// "Loading scene…" placeholder waiting for a paint that cannot come.
+fn scene_to_layout_with_registry(
+    registry: &WidgetRegistry,
+    caps: &HardwareCapabilities,
+    scene: &Scene,
+) -> SceneLayout {
+    let widgets = scene
+        .widgets
+        .values()
+        .filter_map(|widget| {
+            if widget.widget_type_id.is_nil() || registry.get(&widget.widget_type_id).is_none() {
+                debug!(
+                    widget_id = %widget.id.as_uuid(),
+                    widget_type = %widget.widget_type_id,
+                    "skipping unspawnable widget in layout"
+                );
+                return None;
+            }
+            let fullscreen_descriptor = fullscreen_descriptor_for_widget(widget, caps);
+            let Some(size) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
+            else {
+                debug!(
+                    placement = ?widget.placement,
+                    "skipping unsupported widget placement in layout"
+                );
+                return None;
+            };
+            Some(WidgetPlacement {
+                instance_id: widget.id.as_uuid().to_string(),
+                position: widget_to_position(caps, widget),
+                size,
+                visible: true,
+            })
+        })
+        .collect();
+
+    SceneLayout {
+        scene_id: Some(scene.id),
+        cycle_duration: scene.cycle_duration,
+        combined: scene.kind == crate::scene::SceneKind::Combined,
+        widgets,
+    }
+}
+
+fn widget_to_position(caps: &HardwareCapabilities, widget: &Widget) -> Position {
+    // Snap the grid cell to its logical-pixel origin. The pitch bakes in a
+    // 4px separator gap (see `WidgetPosition::col_pitch`) and is derived
+    // from this product's logical panel size, so widgets sit flush with
+    // uniform gaps between them.
+    let display = &caps.display;
+    Position {
+        x: u32::from(widget.position.col) * WidgetPosition::col_pitch(display.width),
+        y: u32::from(widget.position.row) * WidgetPosition::row_pitch(display.height),
+    }
+}
+
 /// Minimum environment the spawner puts on a widget process.
 ///
 /// Every piece of widget-specific configuration (instance id, size, params)
@@ -533,7 +593,7 @@ impl Coordinator {
             return;
         }
 
-        let position = self.widget_to_position(widget);
+        let position = widget_to_position(&self.hardware_capabilities, widget);
         let fullscreen_descriptor =
             fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
         let Some(viewport) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
@@ -734,47 +794,7 @@ impl Coordinator {
     }
 
     fn scene_to_layout(&self, scene: &Scene) -> SceneLayout {
-        let widgets = scene
-            .widgets
-            .values()
-            .filter_map(|widget| {
-                let fullscreen_descriptor =
-                    fullscreen_descriptor_for_widget(widget, &self.hardware_capabilities);
-                let Some(size) = placement_viewport_size(&widget.placement, &fullscreen_descriptor)
-                else {
-                    debug!(
-                        placement = ?widget.placement,
-                        "skipping unsupported widget placement in layout"
-                    );
-                    return None;
-                };
-                Some(WidgetPlacement {
-                    instance_id: widget.id.as_uuid().to_string(),
-                    position: self.widget_to_position(widget),
-                    size,
-                    visible: true,
-                })
-            })
-            .collect();
-
-        SceneLayout {
-            scene_id: Some(scene.id),
-            cycle_duration: scene.cycle_duration,
-            combined: scene.kind == crate::scene::SceneKind::Combined,
-            widgets,
-        }
-    }
-
-    fn widget_to_position(&self, widget: &Widget) -> Position {
-        // Snap the grid cell to its logical-pixel origin. The pitch bakes in a
-        // 4px separator gap (see `WidgetPosition::col_pitch`) and is derived
-        // from this product's logical panel size, so widgets sit flush with
-        // uniform gaps between them.
-        let display = &self.hardware_capabilities.display;
-        Position {
-            x: u32::from(widget.position.col) * WidgetPosition::col_pitch(display.width),
-            y: u32::from(widget.position.row) * WidgetPosition::row_pitch(display.height),
-        }
+        scene_to_layout_with_registry(&self.widget_registry, &self.hardware_capabilities, scene)
     }
 
     fn build_localization(config: &LocalizationConfig) -> Localization {
@@ -973,7 +993,10 @@ mod tests {
 
 #[cfg(test)]
 mod support_tests {
-    use super::{fullscreen_descriptor_for_widget, scene_supported_with_registry};
+    use super::{
+        fullscreen_descriptor_for_widget, scene_supported_with_registry,
+        scene_to_layout_with_registry,
+    };
     use crate::compositor::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
     use crate::scene::{Scene, Widget};
     use crate::widget::{ViewportDescriptor, WidgetInfo, WidgetRegistry};
@@ -1076,6 +1099,65 @@ mod support_tests {
             DisplayShape::Rectangular,
         );
         assert!(scene_supported_with_registry(&registry, &scene, &grid));
+    }
+
+    #[test]
+    fn layout_excludes_nil_and_unregistered_widget_types() {
+        let registered = Uuid::new_v4();
+        let constraint = WidgetViewportConstraint {
+            viewport_shape: ViewportShape::Rectangular,
+            min_width: None,
+            max_width: None,
+            min_height: None,
+            max_height: None,
+            min_dpi: None,
+            max_dpi: None,
+        };
+        let registry = registry_with_widget(registered, constraint);
+
+        let mut scene = Scene::combined();
+        let mut spawnable_instance_id = None;
+        for (col, widget_type_id) in [registered, Uuid::new_v4(), Uuid::nil()]
+            .into_iter()
+            .enumerate()
+        {
+            let widget = Widget::new(
+                widget_type_id,
+                BTreeMap::new(),
+                crate::scene::WidgetPosition {
+                    row: 0,
+                    col: u8::try_from(col).expect("BUG: test column fits u8"),
+                },
+                crate::scene::WidgetPlacement::SlotSpan(crate::scene::SlotSpan {
+                    columns: 1,
+                    rows: 1,
+                }),
+            );
+            if widget_type_id == registered {
+                spawnable_instance_id = Some(widget.id.as_uuid().to_string());
+            }
+            scene.widgets.insert(widget.id, widget);
+        }
+
+        let capabilities = caps(
+            Some(SlotGrid {
+                columns: 4,
+                rows: 2,
+            }),
+            1_280,
+            480,
+            DisplayShape::Rectangular,
+        );
+        let layout = scene_to_layout_with_registry(&registry, &capabilities, &scene);
+        assert_eq!(
+            layout
+                .widgets
+                .iter()
+                .map(|w| w.instance_id.clone())
+                .collect::<Vec<_>>(),
+            vec![spawnable_instance_id.expect("BUG: registered widget was inserted")],
+            "layout must keep only widgets the spawner can launch",
+        );
     }
 
     #[test]
