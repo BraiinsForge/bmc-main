@@ -215,7 +215,7 @@ impl DeviceDetailData {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, Membership};
+    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, Membership};
     use crate::history::HashrateHistory;
     use crate::telemetry::{DeviceTemp, TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
@@ -322,7 +322,6 @@ mod tests {
                 name: "d".to_owned(),
                 host: "10.0.0.9".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             },
             model,
             telemetry: reading.map(|reading| TelemetrySnapshot {

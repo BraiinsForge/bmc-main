@@ -21,7 +21,7 @@
 use bmc_wasm_sdk::{Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
-use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
+use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::{MinerModel, ModelAccumulator};
 use crate::telemetry::{DeviceTemp, TelemetryReading};
@@ -79,14 +79,9 @@ impl FamilyAdapter for BitaxeAdapter {
                 name,
                 host,
                 port,
-                source: DeviceSource::Discovered,
             },
             model_hint: txt_model_hint(json),
         })
-    }
-
-    fn default_port(&self) -> u16 {
-        80
     }
 
     fn api_base_path(&self) -> &'static str {
@@ -211,11 +206,6 @@ mod tests {
             BitaxeAdapter.browse_service_types(),
             &["_axeos._sub._http._tcp"]
         );
-    }
-
-    #[test]
-    fn default_port_is_80() {
-        assert_eq!(BitaxeAdapter.default_port(), 80);
     }
 
     #[test]

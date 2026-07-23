@@ -38,13 +38,6 @@ pub trait FamilyAdapter {
     fn browse_service_types(&self) -> &'static [&'static str];
     fn parse_found(&self, json: &dyn JsonLookup) -> Option<DiscoveredDevice>;
 
-    /// Port assumed for a manual host entry that omits `:port`.
-    #[cfg_attr(
-        not(any(target_arch = "wasm32", test)),
-        expect(dead_code, reason = "used by the manual-host reconcile on wasm")
-    )]
-    fn default_port(&self) -> u16;
-
     #[cfg_attr(
         not(target_arch = "wasm32"),
         expect(dead_code, reason = "used by the driver on wasm")

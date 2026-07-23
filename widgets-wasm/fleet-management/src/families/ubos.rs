@@ -22,7 +22,7 @@ use base64::prelude::{BASE64_STANDARD, Engine as _};
 use bmc_wasm_sdk::{Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
-use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
+use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading};
@@ -53,14 +53,9 @@ impl FamilyAdapter for UbosAdapter {
                 name,
                 host,
                 port,
-                source: DeviceSource::Discovered,
             },
             model_hint: None,
         })
-    }
-
-    fn default_port(&self) -> u16 {
-        8080
     }
 
     fn api_base_path(&self) -> &'static str {
@@ -168,11 +163,6 @@ mod tests {
         let mut json = ubos_found();
         json.ints.remove("/port");
         assert_eq!(UbosAdapter.parse_found(&json), None);
-    }
-
-    #[test]
-    fn default_port_is_8080() {
-        assert_eq!(UbosAdapter.default_port(), 8080);
     }
 
     fn info_json() -> MapJson {

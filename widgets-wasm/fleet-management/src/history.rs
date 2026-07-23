@@ -516,7 +516,7 @@ mod tests {
     }
 
     fn devices(specs: &[(&str, f32, bool)]) -> DeviceList {
-        use crate::device::{DeviceIdentity, DeviceSource};
+        use crate::device::DeviceIdentity;
         use crate::telemetry::TelemetryReading;
         let mut list = DeviceList::new();
         for (name, hashrate, reachable) in specs {
@@ -527,7 +527,6 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             });
             list.apply_telemetry(
                 &id,

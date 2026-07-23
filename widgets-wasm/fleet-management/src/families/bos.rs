@@ -21,7 +21,7 @@
 use bmc_wasm_sdk::{Temperature, ufmt};
 
 use crate::adapter::{DiscoveredDevice, FamilyAdapter};
-use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, DeviceSource};
+use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading};
@@ -92,14 +92,9 @@ impl FamilyAdapter for BosAdapter {
                 name,
                 host,
                 port,
-                source: DeviceSource::Discovered,
             },
             model_hint: None,
         })
-    }
-
-    fn default_port(&self) -> u16 {
-        80
     }
 
     fn api_base_path(&self) -> &'static str {
@@ -427,11 +422,6 @@ mod tests {
     #[test]
     fn bos_has_no_proactive_credential_header() {
         assert_eq!(BosAdapter.credential_header("root", "root"), None);
-    }
-
-    #[test]
-    fn default_port_is_80() {
-        assert_eq!(BosAdapter.default_port(), 80);
     }
 
     #[test]

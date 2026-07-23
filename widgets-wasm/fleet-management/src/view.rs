@@ -160,8 +160,8 @@ pub fn model_detail_click_id(family: Option<DeviceFamily>, label: &str) -> Strin
     }
 }
 
-/// The click id for drilling into a single device. The whole device id is the
-/// suffix, so ids containing colons (manual `host:port`) round-trip intact.
+/// The click id for drilling into a single device.
+/// The device id is the suffix verbatim, so an id carrying a colon round-trips intact.
 #[must_use]
 pub fn device_click_id(id: &str) -> String {
     bmc_wasm_sdk::fmt!("device:{id}")
@@ -561,11 +561,11 @@ mod tests {
 
     #[test]
     fn device_click_id_round_trips_ids_with_colons() {
-        let id = device_click_id("bos/manual/host:80");
+        let id = device_click_id("bos/host:80");
         assert_eq!(
             parse_click(&id),
             Some(ClickAction::OpenDevice {
-                id: "bos/manual/host:80".to_owned(),
+                id: "bos/host:80".to_owned(),
             })
         );
     }

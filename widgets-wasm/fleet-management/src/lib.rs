@@ -32,7 +32,6 @@ mod families;
 mod filter;
 mod history;
 mod layout;
-mod manual;
 mod model;
 mod naming;
 mod paging;
@@ -222,8 +221,8 @@ fn on_removed(family: DeviceFamily, name: &str) {
         name,
         model
     );
-    // Remove before reacting so a ring rebuild excludes the gone device instead
-    // of re-polling it (matches the manual-reconcile order).
+    // Remove before reacting so a ring rebuild excludes the gone device
+    // instead of re-polling it.
     DEVICES.with(|d| d.borrow_mut().remove(&id));
     session::remove_token(&id);
     request_frame();
@@ -270,7 +269,6 @@ pub(crate) fn ingest_probed_bos(json: &str) {
 #[unsafe(no_mangle)]
 pub extern "C" fn init() {
     restore_history();
-    reconcile_manual_hosts();
     // One base-type browse for BOS + AxeOS (reliable co-located), plus uBOS's own type.
     if mdns::mdns_browse(HTTP_SERVICE_TYPES, on_http_event).is_none() {
         log_warn!("fleet: HTTP mDNS browse rejected by host runtime limits");
@@ -298,37 +296,6 @@ fn restore_history() {
     let restored = HISTORY.with(|h| h.borrow_mut().restore(&entry.bytes, saved_at, now));
     if !restored {
         cache::evict(history::CACHE_TAG);
-    }
-}
-
-/// Hosts pinned at startup, beyond mDNS — a compile-time seam, no runtime config.
-/// Empty in the shipped build; an entry reaches a device the venue's mDNS can't.
-#[cfg(target_arch = "wasm32")]
-const MANUAL_HOSTS: &[(DeviceFamily, &str)] = &[];
-
-/// Reconcile [`MANUAL_HOSTS`] into `DEVICES` for every family: upsert the desired
-/// identities and drop cached tokens for any row no longer wanted.
-#[cfg(target_arch = "wasm32")]
-fn reconcile_manual_hosts() {
-    for family in DeviceFamily::ALL {
-        let entries: Vec<String> = MANUAL_HOSTS
-            .iter()
-            .filter(|(f, _)| *f == family)
-            .map(|(_, host)| (*host).to_owned())
-            .collect();
-        let adapter = session::adapter_for(family).expect("BUG: every DeviceFamily has an adapter");
-        let Some(desired) = manual::desired_identities(family, adapter.default_port(), &entries)
-        else {
-            continue;
-        };
-        let outcome =
-            DEVICES.with(|d| manual::reconcile_manual_into(&mut d.borrow_mut(), family, desired));
-        for id in &outcome.removed_ids {
-            session::remove_token(id);
-        }
-        if outcome.added_any {
-            session::ensure_running(family);
-        }
     }
 }
 

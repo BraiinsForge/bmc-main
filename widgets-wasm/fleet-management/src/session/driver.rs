@@ -332,8 +332,8 @@ fn on_probe(response: &bmc_wasm_sdk::FetchResponse) {
 /// so a freshly discovered device gets data promptly.
 ///
 /// The family/`is_new` no longer matter — the global ring picks up
-/// every pollable device — but the signature is kept so `lib.rs`
-/// can keep calling it per discovery, re-enable, or manual-host change.
+/// every pollable device — but the signature is kept
+/// so the call site need not change.
 pub fn on_discovered(_family: DeviceFamily, _is_new: bool) {
     kick();
 }

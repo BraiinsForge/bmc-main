@@ -102,32 +102,10 @@ impl DeviceId {
         Self(value)
     }
 
-    /// Build an id for an operator-entered manual host. The `manual/` infix
-    /// keeps manual ids structurally disjoint from `for_family` ids built from
-    /// an mDNS instance name, so discovery removal can never address a manual
-    /// row. The full entry (including any `:port`) is preserved, so `host` and
-    /// `host:port` are distinct devices.
-    #[must_use]
-    pub fn for_manual(family: DeviceFamily, entry: &str) -> Self {
-        let slug = family_id(family);
-        let infix = "/manual/";
-        let mut value = String::with_capacity(slug.len() + infix.len() + entry.len());
-        value.push_str(slug);
-        value.push_str(infix);
-        value.push_str(entry);
-        Self(value)
-    }
-
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DeviceSource {
-    Discovered,
-    Manual,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,7 +115,6 @@ pub struct DeviceIdentity {
     pub name: String,
     pub host: String,
     pub port: u16,
-    pub source: DeviceSource,
 }
 
 /// Consecutive failed poll passes a device must miss before it is reported
@@ -164,9 +141,9 @@ pub enum Membership {
     /// A candidate that spent its probe budget without answering — treated as a
     /// non-miner responder: no longer polled, never reported.
     Dormant,
-    /// Positively family-identified at discovery (uBOS type, AxeOS TXT, or a
-    /// manual entry). Polled indefinitely and shown — with a "not responding"
-    /// status until it delivers telemetry.
+    /// Positively family-identified at discovery (uBOS type or AxeOS TXT).
+    /// Polled indefinitely and shown — with a "not responding" status
+    /// until it delivers telemetry.
     Identified,
     /// Has delivered valid telemetry at least once. Polled indefinitely and shown
     /// with live data. Terminal: never demoted, so a credential reset or an
@@ -426,18 +403,6 @@ impl DeviceList {
         c
     }
 
-    /// Ids of devices in `family` that were added manually (not discovered).
-    /// The reconcile uses this so it only ever adds or removes manual rows,
-    /// leaving mDNS-discovered devices untouched.
-    #[must_use]
-    pub fn manual_ids_for_family(&self, family: DeviceFamily) -> Vec<DeviceId> {
-        self.devices
-            .iter()
-            .filter(|d| d.identity.family == family && d.identity.source == DeviceSource::Manual)
-            .map(|d| d.identity.id.clone())
-            .collect()
-    }
-
     /// Stamp the latest telemetry reading and reachability onto a device. A
     /// returned reading is the positive miner test, so this promotes the device to
     /// [`Membership::Confirmed`] and clears any recorded failure.
@@ -455,11 +420,12 @@ impl DeviceList {
         }
     }
 
-    /// Promote a positively family-identified device (AxeOS TXT, uBOS dedicated
-    /// type, manual entry) to [`Membership::Identified`]: shown and polled
-    /// indefinitely, though "not responding" until it delivers telemetry. Leaves a
-    /// [`Membership::Confirmed`] device alone (never demotes) and no-ops for an
-    /// unknown id. Bumps the mutation sequence when it changes visibility.
+    /// Promote a positively family-identified device (AxeOS TXT or uBOS dedicated type)
+    /// to [`Membership::Identified`]: shown and polled indefinitely,
+    /// though "not responding" until it delivers telemetry.
+    /// Leaves a [`Membership::Confirmed`] device alone (never demotes)
+    /// and no-ops for an unknown id.
+    /// Bumps the mutation sequence when it changes visibility.
     pub fn identify(&mut self, id: &DeviceId) {
         let changed = self
             .devices
@@ -571,7 +537,6 @@ mod tests {
             name: id.to_owned(),
             host: host.to_owned(),
             port: 80,
-            source: DeviceSource::Discovered,
         }
     }
 
@@ -620,27 +585,6 @@ mod tests {
             bos, axe,
             "same instance name in two families must not collide"
         );
-    }
-
-    #[test]
-    fn for_manual_namespaces_under_manual_segment() {
-        let id = DeviceId::for_manual(DeviceFamily::Bos, "10.0.0.5");
-        assert_eq!(id.as_str(), "bos/manual/10.0.0.5");
-        let discovered = DeviceId::for_family(DeviceFamily::Bos, "10.0.0.5");
-        assert_ne!(id, discovered, "manual and discovered ids must not collide");
-    }
-
-    #[test]
-    fn manual_ids_for_family_returns_only_manual_rows() {
-        let mut list = DeviceList::new();
-        list.upsert(identity("disc._http._tcp.local.", "10.0.0.1"));
-        let mut man = identity("10.0.0.5", "10.0.0.5");
-        man.id = DeviceId::for_manual(DeviceFamily::Bos, "10.0.0.5");
-        man.source = DeviceSource::Manual;
-        list.upsert(man);
-        let manual = list.manual_ids_for_family(DeviceFamily::Bos);
-        assert_eq!(manual.len(), 1);
-        assert_eq!(manual[0].as_str(), "bos/manual/10.0.0.5");
     }
 
     #[test]
@@ -1091,7 +1035,7 @@ mod tests {
 
     #[test]
     fn identify_shows_and_polls_but_does_not_confirm() {
-        // A positively family-identified device (uBOS/AxeOS/manual) is reported and
+        // A positively family-identified device (uBOS/AxeOS) is reported and
         // polled at once, but stays "identified, not confirmed" until it answers.
         let mut list = DeviceList::new();
         let id = DeviceId::new("a");

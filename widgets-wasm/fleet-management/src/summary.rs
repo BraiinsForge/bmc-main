@@ -247,7 +247,7 @@ fn partition_key(dev: &KnownDevice) -> (Option<usize>, &str) {
 
 #[must_use]
 pub fn summarize(devices: &DeviceList, filters: &crate::filter::Filters) -> FleetSummary {
-    // Only positively identified devices enter the report: AxeOS/uBOS/manual are
+    // Only positively identified devices enter the report: AxeOS/uBOS are
     // confirmed at discovery, a base-type BOS only once it answers a poll — so a
     // non-miner `_http._tcp` responder never counts. A confirmed device then folds
     // regardless of reachability (an unreachable one contributes no reading, see
@@ -333,9 +333,7 @@ pub fn model_detail_rows(
 mod tests {
     use super::*;
 
-    use crate::device::{
-        DeviceFamily, DeviceId, DeviceIdentity, DeviceSource, KnownDevice, Membership,
-    };
+    use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, KnownDevice, Membership};
     use crate::filter::Filters;
     use crate::telemetry::TelemetrySnapshot;
 
@@ -347,7 +345,6 @@ mod tests {
                 name: "d".to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             },
             model: model.map(|name| crate::model::MinerModel {
                 id: "id".to_owned(),
@@ -610,7 +607,6 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             };
             list.upsert(identity);
             if let Some(group) = group {
@@ -660,7 +656,6 @@ mod tests {
             name: id.to_owned(),
             host: host.to_owned(),
             port,
-            source: DeviceSource::Discovered,
         }
     }
 
@@ -767,7 +762,6 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             });
             l.apply_model(
                 &id,
@@ -805,7 +799,6 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             });
             l.apply_model(
                 &id,
@@ -955,7 +948,6 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             });
             l.apply_model(
                 &id,
@@ -1089,7 +1081,6 @@ mod tests {
                 name: (*name).to_owned(),
                 host: "10.0.0.1".to_owned(),
                 port: 80,
-                source: DeviceSource::Discovered,
             });
             l.apply_telemetry(&id, full(1.0, 30.0, 60.0), true);
         }
