@@ -1573,6 +1573,14 @@ impl AppState {
         }
 
         self.gesture_slot = None;
+        if !touch_sequence_finished {
+            // Legitimate for a multi-finger hold, but also the moment a
+            // leaked slot (up/cancel never delivered) becomes observable.
+            tracing::info!(
+                remaining_slots = ?self.active_touch_slots,
+                "primary touch lifted with other slots still active"
+            );
+        }
         let gesture_result = self.gesture.on_up(time);
 
         if self.edge_reveal_active {
