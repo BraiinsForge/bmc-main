@@ -57,4 +57,4 @@ simulator, not the widget-facing REST API. Its `SystemInfo` (`/api/system/info`)
 Caveat: that firmware is migrating to a Bitaxe-shaped `/api/system/info` (`apiVariant: "ubos-0.1"`, camelCase, no power
 field), while our `families/ubos.rs` still reads the legacy `/api/info` (`power_out_mw`, `temperature`, `name`). The
 adapter is likely stale against current firmware; netsim mirrors the adapter so the demo is unaffected, but real uBOS
-hardware needs a follow-up. Vendor a snapshot here once the endpoint the widget targets is settled.
+hardware needs a follow-up (tracked in BDK-625). Vendor a snapshot here once the endpoint the widget targets is settled.

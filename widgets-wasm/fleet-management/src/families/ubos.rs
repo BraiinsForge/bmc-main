@@ -27,6 +27,8 @@ use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
 use crate::telemetry::{DeviceTemp, TelemetryReading};
 
+// Legacy endpoint. Stale against the firmware's move to `/api/system/info`;
+// retarget once that endpoint settles. See BDK-625.
 const EP_INFO: &str = "/info";
 
 pub const UBOS_TELEMETRY_ENDPOINTS: &[&str] = &[EP_INFO];
