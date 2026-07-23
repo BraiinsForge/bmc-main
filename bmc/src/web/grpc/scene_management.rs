@@ -47,38 +47,28 @@ use crate::widget::{Coordinator, WidgetRegistry};
 
 pub(crate) struct PlatformDescriptor {
     fullscreen: crate::widget::ViewportDescriptor,
-    slot_sizes: &'static [(web::WidgetSize, crate::widget::ViewportDescriptor)],
+    slot_sizes: Vec<(web::WidgetSize, crate::widget::ViewportDescriptor)>,
 }
 
-const BMC100_SLOT_SIZE_DESCRIPTORS: &[(web::WidgetSize, crate::widget::ViewportDescriptor)] = &[
-    (
+fn slot_size_descriptors() -> Vec<(web::WidgetSize, crate::widget::ViewportDescriptor)> {
+    [
         web::WidgetSize::Small,
-        crate::widget::ViewportDescriptor {
-            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
-            width: 317,
-            height: 238,
-            dpi: 217,
-        },
-    ),
-    (
         web::WidgetSize::Medium,
-        crate::widget::ViewportDescriptor {
-            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
-            width: 638,
-            height: 238,
-            dpi: 217,
-        },
-    ),
-    (
         web::WidgetSize::Large,
-        crate::widget::ViewportDescriptor {
-            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
-            width: 638,
-            height: 480,
-            dpi: 217,
-        },
-    ),
-];
+    ]
+    .into_iter()
+    .map(|size| {
+        let descriptor = match scene::WidgetPlacement::try_from(size) {
+            Ok(scene::WidgetPlacement::SlotSpan(span)) => {
+                crate::widget::slot_span_descriptor(span.columns, span.rows)
+            }
+            Ok(scene::WidgetPlacement::Fullscreen) | Err(UnsupportedWidgetSize) => None,
+        }
+        .expect("BUG: slot size labels resolve to slot span descriptors");
+        (size, descriptor)
+    })
+    .collect()
+}
 
 #[cfg(test)]
 fn bmc100_platform_descriptor() -> PlatformDescriptor {
@@ -161,12 +151,11 @@ impl From<&HardwareCapabilities> for PlatformDescriptor {
             height: caps.display.height,
             dpi: caps.display.dpi,
         };
-        let slot_sizes: &'static [(web::WidgetSize, crate::widget::ViewportDescriptor)] =
-            if caps.slot_grid.is_some() {
-                BMC100_SLOT_SIZE_DESCRIPTORS
-            } else {
-                &[]
-            };
+        let slot_sizes = if caps.slot_grid.is_some() {
+            slot_size_descriptors()
+        } else {
+            Vec::new()
+        };
         Self {
             fullscreen,
             slot_sizes,
