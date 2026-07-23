@@ -48,7 +48,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::time::Duration;
 
-use bmc_wasm_protocol::FetchRequestId;
+use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
 use crate::json::JsonDoc;
 
@@ -61,7 +61,7 @@ pub const DEFAULT_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// Response from an HTTP fetch request.
 #[derive(Debug)]
 pub struct FetchResponse {
-    /// HTTP status code (200, 404, etc.). 0 if network error.
+    /// Raw wire status. Prefer [`FetchResponse::outcome`], which types it.
     pub status: u32,
     /// Request ID returned by [`FetchRequest::send`], for correlating responses.
     pub request_id: FetchRequestId,
@@ -73,6 +73,13 @@ impl FetchResponse {
     #[must_use]
     pub fn ok(&self) -> bool {
         (200..300).contains(&self.status)
+    }
+
+    /// How the fetch ended. `None` when the host reported an outcome newer
+    /// than this build knows — treat that as a failure, never as success.
+    #[must_use]
+    pub fn outcome(&self) -> Option<FetchOutcome> {
+        FetchOutcome::from_wire(self.status)
     }
 
     /// Response body as bytes.

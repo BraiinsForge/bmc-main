@@ -1027,7 +1027,7 @@ impl WasmWidgetRuntime {
     }
 
     /// Seal or unseal live I/O at runtime; while sealed every egress is refused
-    /// (a fetch returns the `status: 0` network error), simulating offline.
+    /// (a fetch returns `FetchOutcome::Network`), simulating offline.
     pub fn set_hermetic(&mut self, sealed: bool) {
         let state = self.store.data_mut();
         match (sealed, state.hermetic.is_some()) {

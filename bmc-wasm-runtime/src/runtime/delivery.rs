@@ -23,8 +23,8 @@
 #![expect(clippy::too_many_lines)]
 
 use bmc_wasm_protocol::{
-    BitmapId, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId, SsdpSearchId,
-    UdpBroadcastId, WebsocketId,
+    BitmapId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId,
+    SsdpSearchId, UdpBroadcastId, WebsocketId,
 };
 use std::ptr::NonNull;
 use std::time::Duration;
@@ -1018,7 +1018,7 @@ impl WasmWidgetRuntime {
             if state.refuse_live_io("fetch", &format!("{method} {url}")) {
                 let _ = state.fetch_tx.send(CompletedFetch {
                     request_id,
-                    status: 0,
+                    status: FetchOutcome::Network.to_wire(),
                     body: Vec::new(),
                 });
                 continue;

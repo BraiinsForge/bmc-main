@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bmc_wasm_protocol::{
-    FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId,
-    UdpBroadcastId, WebsocketId,
+    FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId, SocketId,
+    SsdpSearchId, UdpBroadcastId, WebsocketId,
 };
 use wasmi::{Caller, Linker};
 
@@ -117,7 +117,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             if state.refuse_live_io("fetch", &format!("{method} {url}")) {
                 let _ = state.fetch_tx.send(CompletedFetch {
                     request_id,
-                    status: 0,
+                    status: FetchOutcome::Network.to_wire(),
                     body: Vec::new(),
                 });
                 return request_id.to_wire();

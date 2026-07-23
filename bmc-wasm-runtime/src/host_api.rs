@@ -92,7 +92,7 @@ impl CompletedFetch {
         Self {
             request_id: bmc_wasm_protocol::FetchRequestId::from_wire(1)
                 .expect("BUG: 1 is non-zero so from_wire returns Some"),
-            status: 0,
+            status: bmc_wasm_protocol::FetchOutcome::Network.to_wire(),
             body: Vec::new(),
         }
     }

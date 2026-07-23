@@ -22,14 +22,21 @@
 
 use std::time::Duration;
 
+use bmc_wasm_protocol::FetchOutcome;
 use ureq::Agent;
+
+/// Cap on a fetch response body — ureq's own default,
+/// pinned so an upgrade cannot move it under us.
+/// The value is arbitrary; nothing measured it.
+const MAX_FETCH_BODY_BYTES: u64 = 10 * 1024 * 1024;
 
 pub(crate) fn build_fetch_agent() -> Agent {
     Agent::config_builder().build().into()
 }
 
-/// Perform an HTTP request, returning `(status_code, body)`.
-/// Returns `(0, empty_body)` on network errors.
+/// Perform an HTTP request, returning a [`FetchOutcome`] wire value and a body.
+/// For host-decided outcomes the body carries a reason string; it is empty when
+/// the origin never answered.
 ///
 /// `timeout` is the per-call global cap on every ureq operation (DNS, connect,
 /// send, recv). ureq 3.x defaults to no timeout, so without this a stalled peer
@@ -77,24 +84,34 @@ pub(in crate::runtime) fn do_fetch(
     };
     match result {
         Ok(response) => {
-            let status = u32::from(response.status().as_u16());
-            match response.into_body().read_to_vec() {
+            let status = FetchOutcome::Http(response.status().as_u16()).to_wire();
+            let mut body = response.into_body();
+            match body.with_config().limit(MAX_FETCH_BODY_BYTES).read_to_vec() {
                 Ok(body) => (status, body),
-                Err(e) => (0, format!("body read error: {e}").into_bytes()),
+                Err(ureq::Error::BodyExceedsLimit(limit)) => (
+                    FetchOutcome::BodyTooLarge.to_wire(),
+                    format!("response body exceeds the {limit} byte limit").into_bytes(),
+                ),
+                Err(e) => (
+                    FetchOutcome::Network.to_wire(),
+                    format!("body read error: {e}").into_bytes(),
+                ),
             }
         }
-        Err(ureq::Error::StatusCode(code)) => (u32::from(code), Vec::new()),
-        Err(_) => (0, Vec::new()),
+        Err(ureq::Error::StatusCode(code)) => (FetchOutcome::Http(code).to_wire(), Vec::new()),
+        Err(_) => (FetchOutcome::Network.to_wire(), Vec::new()),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::io::Read;
+    use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::{Duration, Instant};
 
-    use super::{build_fetch_agent, do_fetch};
+    use bmc_wasm_protocol::FetchOutcome;
+
+    use super::{MAX_FETCH_BODY_BYTES, build_fetch_agent, do_fetch};
 
     #[test]
     fn per_call_timeout_trips_on_a_stalled_server() {
@@ -114,11 +131,53 @@ mod tests {
         let (status, body) = do_fetch(&agent, "GET", &url, &[], None, Duration::from_millis(300));
         let elapsed = start.elapsed();
 
-        assert_eq!(status, 0, "stalled fetch must surface as a network error");
+        assert_eq!(
+            FetchOutcome::from_wire(status),
+            Some(FetchOutcome::Network),
+            "stalled fetch must surface as a network error"
+        );
         assert!(body.is_empty());
         assert!(
             elapsed < Duration::from_secs(5),
             "per-call timeout must trip before any OS-level timeout, took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn oversized_body_is_refused_as_its_own_outcome() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let oversized = MAX_FETCH_BODY_BYTES + 1;
+        let _flood = std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut buf = [0_u8; 1024];
+                let _ = sock.read(&mut buf);
+                let header =
+                    format!("HTTP/1.1 200 OK\r\nContent-Length: {oversized}\r\n\r\n").into_bytes();
+                // The client hangs up once the cap trips; failing writes are the success path.
+                if sock.write_all(&header).is_ok() {
+                    let chunk = vec![0_u8; 64 * 1024];
+                    let mut sent = 0_u64;
+                    while sent < oversized && sock.write_all(&chunk).is_ok() {
+                        sent += chunk.len() as u64;
+                    }
+                }
+            }
+        });
+
+        let agent = build_fetch_agent();
+        let url = format!("http://{addr}/");
+        let (status, body) = do_fetch(&agent, "GET", &url, &[], None, Duration::from_secs(30));
+
+        assert_eq!(
+            FetchOutcome::from_wire(status),
+            Some(FetchOutcome::BodyTooLarge),
+            "an oversized body must not look like a network error"
+        );
+        let reason = String::from_utf8(body).expect("BUG: reason string is UTF-8");
+        assert!(
+            reason.contains(&MAX_FETCH_BODY_BYTES.to_string()),
+            "the reason must name the limit, got {reason:?}"
         );
     }
 }
