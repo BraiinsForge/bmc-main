@@ -245,7 +245,11 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                     actions,
                 )
             }
-            _ => (View::Failed(kind), vec![A::RequestFrame]),
+            // No image to keep. A non-transient failure (bad body, oversized)
+            // still must slow the poll: without DeferPoll the shell falls back
+            // to the fast retry_ms cadence and hammers an unfixable URL forever.
+            _ if transient => (View::Failed(kind), vec![A::RequestFrame]),
+            _ => (View::Failed(kind), vec![A::RequestFrame, A::DeferPoll]),
         },
         E::Reload => match view {
             View::Shown { bitmap, aspect, .. } => (
@@ -498,8 +502,8 @@ mod tests {
     }
 
     #[test]
-    fn fetch_error_without_image_fails() {
-        let (next, _) = step(
+    fn non_transient_fetch_error_without_image_defers_not_fast_retries() {
+        let (next, actions) = step(
             View::Loading { decode: None },
             Event::FetchError {
                 kind: ErrorKind::TooLarge,
@@ -507,6 +511,27 @@ mod tests {
             },
         );
         assert!(matches!(next, View::Failed(ErrorKind::TooLarge)));
+        assert!(actions.contains(&Action::DeferPoll));
+        assert!(
+            !actions.contains(&Action::Retry),
+            "an unfixable first-load failure waits the interval, not the 10s retry"
+        );
+    }
+
+    #[test]
+    fn transient_fetch_error_without_image_keeps_fast_retry() {
+        let (next, actions) = step(
+            View::Loading { decode: None },
+            Event::FetchError {
+                kind: ErrorKind::LoadFailed,
+                transient: true,
+            },
+        );
+        assert!(matches!(next, View::Failed(ErrorKind::LoadFailed)));
+        assert!(
+            !actions.contains(&Action::DeferPoll),
+            "a network blip on first load keeps the fast retry_ms cadence"
+        );
     }
 
     #[test]

@@ -150,6 +150,13 @@ mod wasm_glue {
 
     /// Probe the response and, on success, start the decode — yielding the event.
     fn classify_response(response: &FetchResponse) -> Event {
+        // Ahead of the ok() check below, which would read a refusal as transient.
+        if response.outcome() == Some(FetchOutcome::BodyTooLarge) {
+            return Event::FetchError {
+                kind: ErrorKind::TooLarge,
+                transient: false,
+            };
+        }
         if !response.ok() || response.body().is_empty() {
             return Event::FetchError {
                 kind: ErrorKind::LoadFailed,
