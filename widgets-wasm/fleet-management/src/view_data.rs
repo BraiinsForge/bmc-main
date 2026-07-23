@@ -96,7 +96,10 @@ impl TableViewData {
                 family: g.family,
                 ok: g.ok_count,
                 degraded: degraded(g),
-                off: g.off_count,
+                // The compact row has no room for a fourth count, so auth failures
+                // fold into off here — both are "present, not delivering".
+                // The dashboard and device detail keep them apart.
+                off: g.off_count + g.auth_error_count,
                 hashrate: g.hashrate,
                 series: history.model_series(g.family, &g.label),
                 power: g.power,
@@ -239,6 +242,23 @@ mod tests {
         assert_eq!(degraded(&grp("m", 10, 6, 2)), 2);
         assert_eq!(degraded(&grp("m", 5, 5, 0)), 0);
         assert_eq!(degraded(&grp("m", 3, 0, 3)), 0);
+    }
+
+    #[test]
+    fn table_row_folds_auth_into_off_so_counts_sum_to_the_total() {
+        let mut g = grp("m", 10, 5, 2);
+        g.auth_error_count = 3;
+        let summary = FleetSummary {
+            total: g.clone(),
+            groups: vec![g],
+        };
+        let history = HashrateHistory::default();
+        let view = history.view(60);
+        let win = ChartWindow::covering(&[]);
+        let row = &TableViewData::from_summary(&summary, "Rig", 0, &view, win).rows[0];
+        assert_eq!(row.off, 5, "2 off + 3 auth failures");
+        assert_eq!(row.degraded, 0, "auth is not degraded");
+        assert_eq!(row.ok + row.degraded + row.off, 10, "counts add up again");
     }
 
     #[test]
