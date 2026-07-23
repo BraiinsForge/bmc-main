@@ -100,7 +100,7 @@ pub(crate) struct SystemManager<T: DisplayBacklightDriver> {
     config_handle: Arc<RwLock<ConfigHandle>>,
     led_state_modified: Arc<Notify>,
     screen_activity: Arc<Notify>,
-    screen_woken_tx: broadcast::Sender<()>,
+    screen_blanked_tx: broadcast::Sender<()>,
 }
 
 impl<T: DisplayBacklightDriver> SystemManager<T> {
@@ -155,19 +155,21 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             manager,
         ));
 
+        // Capacity 1 is enough. The payload is "the panel just went dark", and a lagged
+        // subscriber resets anyway.
+        let (screen_blanked_tx, _) = broadcast::channel(1);
+
         let timeout_changed = config_handle
             .read()
             .await
             .subscribe_screen_off_timeout_change();
-        let (screen_woken_tx, _screen_woken_rx) = broadcast::channel(8);
-
         tokio::spawn(Self::run_screen_auto_off(
             backlight_controller.clone(),
             night_mode_controller.clone(),
             brightness_modified.clone(),
             screen_activity.clone(),
             timeout_changed,
-            screen_woken_tx.clone(),
+            screen_blanked_tx.clone(),
             alarm_ringing,
         ));
 
@@ -180,7 +182,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             config_handle,
             led_state_modified,
             screen_activity,
-            screen_woken_tx,
+            screen_blanked_tx,
         }
     }
 
@@ -317,7 +319,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         brightness_modified: Arc<Notify>,
         screen_activity: Arc<Notify>,
         mut timeout_changed: broadcast::Receiver<Option<u32>>,
-        screen_woken_tx: broadcast::Sender<()>,
+        screen_blanked_tx: broadcast::Sender<()>,
         mut alarm_ringing: watch::Receiver<bool>,
     ) {
         let mut night_mode_receiver = night_mode_controller.subscribe();
@@ -333,12 +335,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     // a firing alarm must never sit on a blank screen, so wake it
                     // if off and hold here until some state changes.
                     if Self::is_backlight_off(&backlight_controller).await {
-                        Self::wake_screen(
-                            &backlight_controller,
-                            &brightness_modified,
-                            &screen_woken_tx,
-                        )
-                        .await;
+                        Self::wake_screen(&backlight_controller, &brightness_modified).await;
                     }
 
                     tokio::select! {
@@ -367,7 +364,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                             // User activity — wake screen if off; timer restarts
                             // on the next loop iteration.
                             if Self::is_backlight_off(&backlight_controller).await {
-                                Self::wake_screen(&backlight_controller, &brightness_modified, &screen_woken_tx).await;
+                                Self::wake_screen(&backlight_controller, &brightness_modified).await;
                                 info!("Screen woken by user activity");
                             }
                         },
@@ -383,6 +380,10 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                                 if let Err(err) = backlight_controller.turn_off().await {
                                     warn!(error = %err, "Failed to turn off backlight for auto-off");
                                 }
+
+                                if let Err(err) = screen_blanked_tx.send(()) {
+                                    warn!(error = %err, "No screen-blanked subscriber; scene reset skipped");
+                                }
                                 info!(timeout_secs = timeout.as_secs(), "Screen auto-off activated");
                             }
                         },
@@ -392,11 +393,16 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         }
     }
 
-    /// Wake the screen from auto-off: power on backlight and restore brightness.
+    /// Wake the screen from auto-off: power on the backlight and restore
+    /// brightness. Scene 0 is already on glass — a `screen_blanked` subscriber
+    /// reset to it when the screen was powered off — so the panel can light
+    /// immediately without exposing a stale scene.
+    ///
+    /// Emits nothing. Cycling stays suspended until night mode ends, and the
+    /// night-mode listener owns that transition.
     async fn wake_screen(
         backlight_controller: &DisplayBacklightController<T>,
         brightness_modified: &Arc<Notify>,
-        screen_woken_tx: &broadcast::Sender<()>,
     ) {
         // Sequence: power on → restore brightness
         // (reverse of turn-off to avoid flash)
@@ -404,16 +410,11 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
             warn!(error = %err, "Failed to turn on backlight on wake");
         }
         brightness_modified.notify_waiters();
-        let _ = screen_woken_tx.send(());
     }
 
     #[expect(dead_code, reason = "reserved for the display-overlay channel")]
     pub(crate) fn notify_screen_activity(&self) {
         self.screen_activity.notify_waiters();
-    }
-
-    pub(crate) fn subscribe_screen_woken(&self) -> broadcast::Receiver<()> {
-        self.screen_woken_tx.subscribe()
     }
 
     pub(crate) async fn set_night_mode_screen_off_timeout(
@@ -427,6 +428,17 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
 
     pub(crate) fn subscribe_night_mode(&self) -> watch::Receiver<bool> {
         self.night_mode_controller.subscribe()
+    }
+
+    /// Fires once each time screen auto-off blanks the panel.
+    ///
+    /// Used e.g., by compositor, which resets the scene while nothing is visible.
+    ///
+    /// Subscribe before the first auto-off can fire, and treat `Lagged` as a
+    /// notification rather than an error — resetting to the first scene is
+    /// idempotent, so coalesced notifications must still trigger it.
+    pub(crate) fn subscribe_screen_blanked(&self) -> broadcast::Receiver<()> {
+        self.screen_blanked_tx.subscribe()
     }
 
     pub(crate) async fn night_mode_config(&self) -> crate::config::NightModeConfig {

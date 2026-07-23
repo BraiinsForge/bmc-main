@@ -35,6 +35,15 @@ sound volume, optionally turns the screen off after inactivity, and controls whe
 - When night mode ends, the audio output returns to the normal configured volume.
 - Volume changes apply immediately when the active mode or configured value changes.
 
+### Hold the display still
+
+> As a user, I want the display to stop moving between scenes during night mode so nothing changes while I sleep.
+
+- Automatic scene cycling stops for as long as night mode is active.
+- When night mode becomes active, the display returns to the first visible scene.
+- Swiping between scenes by hand still works while the screen is on.
+- When night mode ends, automatic scene cycling resumes, unless the user has turned it off in *Settings*.
+
 ### Turn the screen off after inactivity
 
 > As a user, I want the screen to turn off during night mode after a period of inactivity so the room stays dark.
@@ -74,4 +83,5 @@ sound volume, optionally turns the screen off after inactivity, and controls whe
   lands.
 - Bootloader environment sync mirrors the current day/night schedule, screen brightness, and LED settings so early boot
   behavior matches the configured mode.
-- Screen auto-off is separate from scene cycling. It blanks the display hardware instead of replacing the active scene.
+- Screen auto-off blanks the display hardware; it does not replace the active scene. The scene reset that pairs with it
+  happens while the panel is already dark, so it is never visible.

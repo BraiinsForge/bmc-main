@@ -267,9 +267,16 @@ impl WidgetTracker {
     }
 
     /// End the drag gesture. Returns `true` if a scene change was committed.
+    ///
+    /// A drag the tracker no longer follows commits nothing. Anything that lands
+    /// mid-touch — a screen-off reset, night mode, a new cycling list — clears
+    /// `drag_offset` while the gesture machine keeps accumulating, so a lift
+    /// would otherwise advance off the scene that reset just chose.
     #[expect(clippy::cast_precision_loss)]
     pub fn end_drag(&mut self, dx: i32, velocity_x: f32) -> bool {
-        self.drag_offset = None;
+        if self.drag_offset.take().is_none() {
+            return false;
+        }
 
         if self.scenes.len() <= 1 || self.screen_width == 0 {
             return false;
@@ -971,6 +978,28 @@ mod tests {
         );
         assert!(!t.automatic_transition_active());
         assert!(t.drag_offset().is_none());
+    }
+
+    #[test]
+    fn end_drag_after_reset_commits_nothing() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.set_active_scene_index(1);
+        t.start_drag();
+        t.update_drag(-500);
+
+        t.reset_to_first_scene();
+
+        assert!(
+            !t.end_drag(-500, -2000.0),
+            "a lift past both commit thresholds must not commit once the reset \
+             stopped tracking the drag"
+        );
+        assert_eq!(
+            t.current_index(),
+            0,
+            "the scene the reset chose must survive the lift"
+        );
     }
 
     #[test]

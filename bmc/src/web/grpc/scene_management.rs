@@ -1688,7 +1688,14 @@ mod tests {
             Ok(())
         }
 
-        fn reset_scene_cycle(&self) -> Result<(), crate::compositor::CompositorError> {
+        fn set_scene_cycling_suspended(
+            &self,
+            _suspended: bool,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
+        fn reset_to_first_scene(&self) -> Result<(), crate::compositor::CompositorError> {
             Ok(())
         }
 

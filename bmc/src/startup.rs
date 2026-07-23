@@ -28,7 +28,10 @@ use std::sync::atomic::AtomicBool;
 use crate::alarm::{AlarmBus, AlarmController, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
-use crate::compositor::{AlarmCommand, Compositor, CompositorEvent};
+use crate::compositor::{
+    AlarmCommand, Compositor, CompositorEvent, run_night_mode_cycling_task,
+    run_screen_blank_reset_task,
+};
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::{LedController, run_led_state_task};
@@ -316,7 +319,18 @@ where
             alarm_ringing,
         )
         .await;
-        let mut screen_woken_rx = system_manager.subscribe_screen_woken();
+
+        // Subscribing right after init keeps the receiver ahead of the first
+        // possible auto-off, which cannot fire before the inactivity timeout.
+        tokio::spawn(run_screen_blank_reset_task(
+            system_manager.subscribe_screen_blanked(),
+            compositor.clone(),
+        ));
+
+        tokio::spawn(run_night_mode_cycling_task(
+            system_manager.subscribe_night_mode(),
+            compositor.clone(),
+        ));
 
         let screen_activity_for_touch = button_manager.screen_activity.clone();
         tokio::spawn(async move {
@@ -329,23 +343,6 @@ where
                     Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "compositor event receiver lagged");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                }
-            }
-        });
-
-        let compositor_for_wake = compositor.clone();
-        tokio::spawn(async move {
-            loop {
-                match screen_woken_rx.recv().await {
-                    Ok(()) => {
-                        if let Err(err) = compositor_for_wake.reset_scene_cycle() {
-                            tracing::warn!(error = %err, "Failed to reset scene cycle on wake");
-                        }
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(skipped = n, "screen_woken receiver lagged");
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 }

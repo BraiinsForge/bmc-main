@@ -1987,8 +1987,27 @@ fn handle_clear_pid_command(state: &mut AppState, instance_id: &InstanceId, expe
     }
 }
 
-fn handle_reset_scene_cycle_command(state: &mut AppState) {
-    tracing::debug!("resetting scene cycle");
+fn handle_set_scene_cycling_suspended_command(state: &mut AppState, suspended: bool) {
+    tracing::debug!(suspended, "scene cycling suspend gate changed");
+    state.automatic_cycling.set_suspended(suspended);
+    // Suspending has to undo a slide that is already running. Pausing alone
+    // would leave the cycler saying "nothing is running" while the scene is
+    // still half slid, with no timer left to finish the move.
+    //
+    // Resuming must not undo it. The night-mode watch also fires when the value
+    // did not change, so a daytime schedule edit re-sends `false` — that must
+    // not cut off a slide the user is watching.
+    if suspended {
+        state.cancel_automatic_transition_for_interruption();
+    }
+    // Work out the new phase from the flag. Resuming lifts only this gate, so
+    // cycling the user switched off in settings stays off, and a slide or wait
+    // already in progress keeps running.
+    state.reevaluate_automatic_cycling(Instant::now());
+}
+
+fn handle_reset_to_first_scene_command(state: &mut AppState) {
+    tracing::debug!("resetting to the first scene");
     let active_scene_before = (
         state.compositor.widgets.active_scene_id(),
         state.compositor.widgets.active_visible_widget_ids(),
@@ -2092,7 +2111,10 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::SetSceneCyclingConfig { config } => {
             handle_set_scene_cycling_config_command(state, config);
         }
-        CompositorCommand::ResetSceneCycle => handle_reset_scene_cycle_command(state),
+        CompositorCommand::SetSceneCyclingSuspended { suspended } => {
+            handle_set_scene_cycling_suspended_command(state, suspended);
+        }
+        CompositorCommand::ResetToFirstScene => handle_reset_to_first_scene_command(state),
         CompositorCommand::BroadcastSetting { setting } => {
             tracing::debug!("Broadcasting setting: {:?}", setting);
             state
@@ -2478,9 +2500,15 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
-    fn reset_scene_cycle(&self) -> Result<(), CompositorError> {
+    fn set_scene_cycling_suspended(&self, suspended: bool) -> Result<(), CompositorError> {
         self.command_tx
-            .send(CompositorCommand::ResetSceneCycle)
+            .send(CompositorCommand::SetSceneCyclingSuspended { suspended })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn reset_to_first_scene(&self) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::ResetToFirstScene)
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
@@ -2800,6 +2828,13 @@ mod tests {
                 time: u64::from(time_msec) * 1000,
                 x: 1.0,
                 y: 1.0,
+            }
+        }
+
+        fn at_x(slot: u32, time_msec: u32, x: f64) -> Self {
+            Self {
+                x,
+                ..Self::new(slot, time_msec)
             }
         }
     }
@@ -3681,5 +3716,217 @@ mod tests {
             rx.try_recv(),
             Ok(SettingsCommand::SetBrightness(42))
         ));
+    }
+
+    /// Cycling enabled, two scenes, sitting on scene 1 and waiting to cycle.
+    fn make_cycling_app_state() -> AppState {
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(true));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        state.compositor.widgets.set_active_scene_index(1);
+        state.reevaluate_automatic_cycling(Instant::now());
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
+        ));
+        state.compositor.clear_output_damage();
+        state
+    }
+
+    #[test]
+    fn suspend_pauses_cycling_without_moving_the_scene() {
+        // The night-mode fix: cycling stops as soon as night mode starts, while
+        // the panel is still lit, so it must not yank the visible scene around.
+        let mut state = make_cycling_app_state();
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: true },
+        );
+
+        assert!(
+            matches!(
+                state.automatic_cycling.phase(),
+                AutomaticCyclingPhase::PausedDisabled { .. }
+            ),
+            "night mode must stop cycling immediately"
+        );
+        assert_eq!(
+            state.compositor.widgets.active_visible_widget_ids(),
+            vec!["b".to_owned()],
+            "suspending must leave the lit panel on the scene it was showing"
+        );
+    }
+
+    /// Put `state` into a running slide, the way the cycling timer would.
+    fn begin_automatic_slide(state: &mut AppState) {
+        state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state.automatic_cycling.enter_pre_transition(Instant::now());
+        let _ = emit_lifecycle_transitions(state);
+    }
+
+    #[test]
+    fn suspending_mid_slide_reverts_the_slide() {
+        // Night mode can start while a slide is running. Without the undo the
+        // scene is left half slid, with nothing left to finish the move.
+        let mut state = make_cycling_app_state();
+        begin_automatic_slide(&mut state);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: true },
+        );
+
+        assert!(
+            !state.compositor.widgets.automatic_transition_active(),
+            "suspending must revert an in-flight slide, not strand it"
+        );
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+        assert_eq!(
+            state.compositor.widgets.active_visible_widget_ids(),
+            vec!["b".to_owned()],
+            "reverting a slide must restore the scene it started from"
+        );
+    }
+
+    #[test]
+    fn resuming_mid_slide_lets_the_slide_finish() {
+        // The night-mode watch also fires when the value did not change, so a
+        // daytime schedule edit re-sends `suspended: false` while cycling runs.
+        // That must not cut off a slide the user is watching.
+        let mut state = make_cycling_app_state();
+        begin_automatic_slide(&mut state);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: false },
+        );
+
+        assert!(
+            state.compositor.widgets.automatic_transition_active(),
+            "a redundant resume must leave a running slide alone"
+        );
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PreTransition { .. }
+        ));
+    }
+
+    #[test]
+    fn reset_to_first_scene_lands_on_scene_zero_and_stays_paused() {
+        let mut state = make_cycling_app_state();
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: true },
+        );
+        state.compositor.clear_output_damage();
+
+        handle_command(&mut state, CompositorCommand::ResetToFirstScene);
+
+        assert_eq!(
+            state.compositor.widgets.active_visible_widget_ids(),
+            vec!["a".to_owned()],
+            "screen-off must reset to the first scene"
+        );
+        assert!(
+            state.compositor.needs_redraw(),
+            "the scene-0 frame must be scheduled while the panel is dark"
+        );
+        assert!(
+            matches!(
+                state.automatic_cycling.phase(),
+                AutomaticCyclingPhase::PausedDisabled { .. }
+            ),
+            "the reset must not re-arm cycling while still suspended"
+        );
+    }
+
+    #[test]
+    fn reset_landing_mid_drag_survives_the_lift() {
+        // The reset only stops tracking the drag; the gesture machine keeps its
+        // accumulated dx either way, so the lift decides on its own numbers.
+        let mut state = make_cycling_app_state();
+
+        state.on_touch_down(&FakeTouchEvent::at_x(0, 1, 400.0));
+        state.on_touch_motion(&FakeTouchEvent::at_x(0, 20, 100.0));
+        assert!(
+            state.scene_drag_active,
+            "a 300 px swipe on a lit panel must activate the scene drag"
+        );
+
+        handle_command(&mut state, CompositorCommand::ResetToFirstScene);
+        state.on_touch_up(&FakeTouchEvent::at_x(0, 40, 100.0));
+
+        assert_eq!(
+            state.compositor.widgets.active_visible_widget_ids(),
+            vec!["a".to_owned()],
+            "a lift past the commit threshold must not advance off the scene \
+             the reset chose"
+        );
+    }
+
+    #[test]
+    fn resume_re_arms_cycling_with_a_fresh_timer() {
+        let mut state = make_cycling_app_state();
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: true },
+        );
+        handle_command(&mut state, CompositorCommand::ResetToFirstScene);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: false },
+        );
+
+        assert_eq!(
+            state.compositor.widgets.active_visible_widget_ids(),
+            vec!["a".to_owned()],
+            "leaving night mode must not move the scene"
+        );
+        assert!(
+            matches!(
+                state.automatic_cycling.phase(),
+                AutomaticCyclingPhase::WaitingForTimer { .. }
+            ),
+            "leaving night mode must resume cycling with a fresh timer"
+        );
+    }
+
+    #[test]
+    fn resume_does_not_override_disabled_cycling_config() {
+        let mut state = make_app_state();
+        state.automatic_cycling.set_config(cycling_config(false));
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: true },
+        );
+        handle_command(
+            &mut state,
+            CompositorCommand::SetSceneCyclingSuspended { suspended: false },
+        );
+
+        assert!(
+            matches!(
+                state.automatic_cycling.phase(),
+                AutomaticCyclingPhase::PausedDisabled { .. }
+            ),
+            "resuming lifts only the suspend gate, never the user's disabled config"
+        );
     }
 }

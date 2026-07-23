@@ -253,6 +253,10 @@ pub fn start_volume_listener(
 /// overlay. Recomputes on EVERY watch notification, not only on active-state
 /// flips: the controller's set_enabled/set_interval send_replace the watch
 /// unconditionally, so schedule edits refresh the boundary too.
+///
+/// Overlay state only. Night mode's effect on scene cycling is owned by the
+/// listener in `startup`, which needs edge detection this loop deliberately
+/// does not do.
 pub fn start_night_mode_listener<U>(
     compositor: Arc<dyn Compositor>,
     system_manager: crate::system_manager::SystemManager<U>,

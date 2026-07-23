@@ -56,7 +56,12 @@ pub enum CompositorCommand {
     SetSceneCyclingConfig {
         config: SceneCycling,
     },
-    ResetSceneCycle,
+    /// Gate automatic cycling independently of the user's configured
+    /// `enabled`.
+    SetSceneCyclingSuspended {
+        suspended: bool,
+    },
+    ResetToFirstScene,
     BroadcastSetting {
         setting: SettingUpdate,
     },

@@ -68,6 +68,12 @@ pub(crate) struct AutomaticCycling {
     config: SceneCyclingRuntimeConfig,
     pending_config: Option<SceneCyclingRuntimeConfig>,
     phase: AutomaticCyclingPhase,
+    /// Night-mode gate, separate from the user's `config.enabled`: cycling stops
+    /// for the whole of night mode, so the cycler cannot walk away from the scene
+    /// the panel will wake on. Unlike a config disable this takes effect at once,
+    /// and night mode can start while the panel is still lit — so the caller has
+    /// to undo a slide that is already running.
+    suspended: bool,
 }
 
 impl AutomaticCycling {
@@ -76,7 +82,12 @@ impl AutomaticCycling {
             config,
             pending_config: None,
             phase: AutomaticCyclingPhase::PausedDisabled { started_at },
+            suspended: false,
         }
+    }
+
+    pub(crate) fn set_suspended(&mut self, suspended: bool) {
+        self.suspended = suspended;
     }
 
     pub(crate) fn phase(&self) -> AutomaticCyclingPhase {
@@ -109,7 +120,12 @@ impl AutomaticCycling {
         scene_count: usize,
         touch_active: bool,
     ) {
-        if !self.config.enabled || !has_cycleable_scenes || scene_count < 2 || touch_active {
+        if self.suspended
+            || !self.config.enabled
+            || !has_cycleable_scenes
+            || scene_count < 2
+            || touch_active
+        {
             self.phase = AutomaticCyclingPhase::PausedDisabled { started_at: now };
             return;
         }
@@ -123,7 +139,7 @@ impl AutomaticCycling {
         if let Some(config) = self.pending_config.take() {
             self.config = config;
         }
-        if self.config.enabled && scene_count >= 2 && !touch_active {
+        if !self.suspended && self.config.enabled && scene_count >= 2 && !touch_active {
             self.phase = AutomaticCyclingPhase::WaitingForTimer { started_at: now };
         } else {
             self.phase = AutomaticCyclingPhase::PausedDisabled { started_at: now };
@@ -356,6 +372,55 @@ mod tests {
             state.phase(),
             AutomaticCyclingPhase::PausedDisabled { .. }
         ));
+    }
+
+    #[test]
+    fn suspension_pauses_and_resuming_restarts_waiting() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.reevaluate(now, true, 2, false);
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
+        ));
+
+        // Screen off: suspension pauses immediately and stops the timer.
+        state.set_suspended(true);
+        state.reevaluate(now, true, 2, false);
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+        assert_eq!(state.next_delay(now, Duration::from_secs(30)), None);
+
+        // Wake: resume restarts a fresh waiting period.
+        state.set_suspended(false);
+        let later = now + Duration::from_secs(3600);
+        state.reevaluate(later, true, 2, false);
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
+        ));
+        assert_eq!(
+            state.next_delay(later, Duration::from_secs(30)),
+            Some(Duration::from_secs(30)),
+            "waiting must restart from resume, not from before the suspend"
+        );
+    }
+
+    #[test]
+    fn reset_waiting_stays_paused_while_suspended() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.set_suspended(true);
+
+        state.reset_waiting(now, 2, false);
+
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+        assert_eq!(state.next_delay(now, Duration::from_secs(30)), None);
     }
 
     #[test]

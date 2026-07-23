@@ -285,8 +285,13 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
-    fn reset_scene_cycle(&self) -> Result<(), CompositorError> {
-        tracing::info!("MockCompositor: reset scene cycle");
+    fn set_scene_cycling_suspended(&self, suspended: bool) -> Result<(), CompositorError> {
+        tracing::info!("MockCompositor: set scene cycling suspended={suspended}");
+        Ok(())
+    }
+
+    fn reset_to_first_scene(&self) -> Result<(), CompositorError> {
+        tracing::info!("MockCompositor: reset to first scene");
         Ok(())
     }
 

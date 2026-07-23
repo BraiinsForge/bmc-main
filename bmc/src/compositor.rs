@@ -24,6 +24,7 @@
 //! on tokio. Communication happens via channels.
 
 use std::collections::BTreeSet;
+use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, watch};
@@ -205,8 +206,13 @@ pub trait Compositor: Send + Sync {
     /// Set scene cycling behavior configuration.
     fn set_scene_cycling_config(&self, config: SceneCycling) -> Result<(), CompositorError>;
 
-    /// Reset cycling back to the first scene.
-    fn reset_scene_cycle(&self) -> Result<(), CompositorError>;
+    /// Gate automatic scene cycling without touching the user's configured
+    /// `SceneCycling.enabled`, so resuming cannot override a user who turned
+    /// cycling off themselves.
+    fn set_scene_cycling_suspended(&self, suspended: bool) -> Result<(), CompositorError>;
+
+    /// Jump the cycler back to the first scene.
+    fn reset_to_first_scene(&self) -> Result<(), CompositorError>;
 
     /// Broadcast a setting update to all connected widgets.
     fn broadcast_setting(&self, setting: SettingUpdate) -> Result<(), CompositorError>;
@@ -312,4 +318,62 @@ pub trait Compositor: Send + Sync {
 
     /// Shutdown the compositor.
     fn shutdown(&self) -> Result<(), CompositorError>;
+}
+
+/// Reset the cycler to the first scene each time auto-off blanks the panel, so
+/// the frame is already on glass when the backlight returns.
+pub(crate) async fn run_screen_blank_reset_task(
+    mut screen_blanked_rx: broadcast::Receiver<()>,
+    compositor: Arc<dyn Compositor>,
+) {
+    loop {
+        // `Lagged` still means the panel went dark; the reset is idempotent, so
+        // fall through instead of skipping it.
+        match screen_blanked_rx.recv().await {
+            Ok(()) => {}
+            Err(broadcast::error::RecvError::Lagged(n)) => {
+                tracing::warn!(skipped = n, "screen_blanked receiver lagged");
+            }
+            Err(broadcast::error::RecvError::Closed) => break,
+        }
+        if let Err(err) = compositor.reset_to_first_scene() {
+            tracing::warn!(error = %err, "Failed to reset to the first scene on blank");
+        }
+    }
+}
+
+/// Hold cycling off for as long as night mode lasts, and land on the first
+/// scene when it starts.
+pub(crate) async fn run_night_mode_cycling_task(
+    mut night_mode_active_rx: watch::Receiver<bool>,
+    compositor: Arc<dyn Compositor>,
+) {
+    // The sender may have written before this subscribe, so force the first
+    // changed() to deliver the init state.
+    night_mode_active_rx.mark_changed();
+
+    // night_mode_active_rx.changed() fires also when the value was unchanged -
+    // track the changes locally.
+    let mut night_mode_was_active = false;
+    loop {
+        if night_mode_active_rx.changed().await.is_err() {
+            tracing::info!("night mode watch channel closed; startup listener exiting");
+            break;
+        }
+
+        let night_mode_active = *night_mode_active_rx.borrow();
+
+        if let Err(err) = compositor.set_scene_cycling_suspended(night_mode_active) {
+            tracing::warn!(error = %err, "Failed to suspend scene cycling on night mode");
+        }
+
+        if night_mode_active
+            && !night_mode_was_active
+            && let Err(err) = compositor.reset_to_first_scene()
+        {
+            tracing::warn!(error = %err, "Failed to reset to the first scene on night mode");
+        }
+
+        night_mode_was_active = night_mode_active;
+    }
 }
