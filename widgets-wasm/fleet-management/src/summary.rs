@@ -353,11 +353,7 @@ mod tests {
                 chip_count: None,
                 nominal_hashrate_ths: None,
             }),
-            telemetry: reading.map(|reading| TelemetrySnapshot {
-                reading,
-                refreshed_seq: 1,
-            }),
-            last_seen_seq: 1,
+            telemetry: reading.map(|reading| TelemetrySnapshot { reading }),
             reachable: true,
             consecutive_failures: 0,
             membership: Membership::Confirmed,
@@ -710,7 +706,6 @@ mod tests {
             identity: discovered("d", DeviceFamily::Bos, "10.0.0.1", 80),
             model: None,
             telemetry: None,
-            last_seen_seq: 1,
             reachable: false,
             consecutive_failures: 0,
             membership: Membership::Identified,
@@ -722,7 +717,6 @@ mod tests {
             d.reachable = true;
             d.telemetry = Some(TelemetrySnapshot {
                 reading: reading(Some(ths)),
-                refreshed_seq: 1,
             });
             d
         };

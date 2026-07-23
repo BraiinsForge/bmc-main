@@ -324,11 +324,7 @@ mod tests {
                 port: 80,
             },
             model,
-            telemetry: reading.map(|reading| TelemetrySnapshot {
-                reading,
-                refreshed_seq: 1,
-            }),
-            last_seen_seq: 1,
+            telemetry: reading.map(|reading| TelemetrySnapshot { reading }),
             reachable: true,
             consecutive_failures: 0,
             membership: Membership::Confirmed,

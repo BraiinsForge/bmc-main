@@ -168,7 +168,6 @@ pub struct KnownDevice {
     pub identity: DeviceIdentity,
     pub model: Option<MinerModel>,
     pub telemetry: Option<TelemetrySnapshot>,
-    pub last_seen_seq: u64,
     pub reachable: bool,
     /// Poll passes that have failed in a row since the last success. Reset to 0
     /// by any reachable pass; once it reaches [`UNREACHABLE_AFTER_FAILED_PASSES`]
@@ -260,29 +259,26 @@ impl DeviceList {
         self.devices.len()
     }
 
-    /// Insert a newly discovered device, or update the identity of an existing
-    /// one with the same id, stamping it with a fresh discovery sequence.
-    /// Reachability is left untouched: it is set only by telemetry polling, so
-    /// a device is never counted online from an mDNS sighting alone. Returns
-    /// `true` when the device was newly inserted, so callers can log
-    /// first-discovery without firing on every mDNS re-announcement.
+    /// Insert a newly discovered device,
+    /// or update the identity of an existing one with the same id.
+    /// Reachability is left untouched: it is set only by telemetry polling,
+    /// so a device is never counted online from an mDNS sighting alone.
+    /// Returns `true` when the device was newly inserted,
+    /// so callers can log first-discovery without firing on every re-announcement.
     pub fn upsert(&mut self, identity: DeviceIdentity) -> bool {
         self.seq += 1;
-        let seq = self.seq;
         if let Some(existing) = self
             .devices
             .iter_mut()
             .find(|d| d.identity.id == identity.id)
         {
             existing.identity = identity;
-            existing.last_seen_seq = seq;
             false
         } else {
             self.devices.push(KnownDevice {
                 identity,
                 model: None,
                 telemetry: None,
-                last_seen_seq: seq,
                 reachable: false,
                 consecutive_failures: 0,
                 membership: Membership::Candidate,
@@ -308,17 +304,6 @@ impl DeviceList {
             self.apply_model(&id, model);
         }
         is_new
-    }
-
-    /// Bump the discovery sequence of a device still being announced.
-    /// Reachability is left to telemetry polling.
-    #[cfg(test)]
-    pub fn mark_seen(&mut self, id: &DeviceId) {
-        self.seq += 1;
-        let seq = self.seq;
-        if let Some(existing) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
-            existing.last_seen_seq = seq;
-        }
     }
 
     /// Remove a device that discovery reported as gone.
@@ -408,12 +393,8 @@ impl DeviceList {
     /// [`Membership::Confirmed`] and clears any recorded failure.
     pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
         self.seq += 1;
-        let seq = self.seq;
         if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
-            dev.telemetry = Some(TelemetrySnapshot {
-                reading,
-                refreshed_seq: seq,
-            });
+            dev.telemetry = Some(TelemetrySnapshot { reading });
             dev.reachable = reachable;
             dev.membership = Membership::Confirmed;
             dev.last_failure = None;
@@ -645,24 +626,6 @@ mod tests {
         assert_eq!(
             DeviceId::new("miner-a._http._tcp.local.").as_str(),
             "miner-a._http._tcp.local."
-        );
-    }
-
-    #[test]
-    fn mark_seen_leaves_reachability_to_polling() {
-        let mut list = DeviceList::new();
-        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
-        list.apply_telemetry(
-            &DeviceId::new("a._http._tcp.local."),
-            TelemetryReading::default(),
-            true,
-        );
-        list.mark_seen(&DeviceId::new("a._http._tcp.local."));
-        assert_eq!(list.len(), 1);
-        let dev = list.iter().next().expect("BUG: device present");
-        assert!(
-            dev.reachable,
-            "mark_seen must not disturb a poll-set reachability"
         );
     }
 

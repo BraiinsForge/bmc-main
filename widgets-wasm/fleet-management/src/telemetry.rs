@@ -58,7 +58,6 @@ pub struct TelemetryReading {
 #[derive(Debug, Clone, PartialEq)]
 pub struct TelemetrySnapshot {
     pub reading: TelemetryReading,
-    pub refreshed_seq: u64,
 }
 
 #[cfg(test)]
