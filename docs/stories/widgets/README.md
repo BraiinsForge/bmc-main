@@ -22,7 +22,7 @@ BMM100, BMM101, and BFM100 panels, and recolours for night mode.
 An at-a-glance view of every Bitcoin miner on the local network. Discovers BOS, Braiins OS Libre, and AxeOS (Bitaxe /
 NerdQAxe++) miners over mDNS, polls each for live telemetry, and rolls them up into a fleet total, a per-model
 breakdown, and a per-device detail view — with hashrate trend charts, OK/degraded/off health against each miner's
-nominal, per-family credentials, manual-host fallback, and model/family filtering.
+nominal, per-family credentials, and a selectable chart time range.
 
 ### [Halving Countdown Widget](halving-countdown.md)
 

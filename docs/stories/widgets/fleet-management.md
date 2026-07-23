@@ -3,9 +3,8 @@
 The fleet management widget gives an at-a-glance view of every Bitcoin miner on the local network, and lets the operator
 drill from the whole-fleet overview down to a single miner. It discovers miners over mDNS, polls each one for live
 telemetry, and rolls the readings up into a fleet total, a per-model breakdown, and a per-device detail view. It
-supports three device families — BOS, Braiins OS Libre, and AxeOS (Bitaxe / NerdQAxe++) — and each family is
-independently discovered, authenticated, polled, and toggled, so one family failing or being disabled never blanks
-another's numbers.
+supports three device families — BOS, Braiins OS Libre, and AxeOS (Bitaxe / NerdQAxe++) — each independently discovered,
+authenticated, and polled, so one family failing never blanks another's numbers.
 
 ## User stories
 
@@ -17,8 +16,9 @@ another's numbers.
 - The overview shows the fleet total: combined hashrate, power, and efficiency, a min/avg/max temperature spread, and a
   status breakdown of how many miners are OK, degraded, or off.
 - A hashrate chart carries the fleet's recent trend and headline hashrate (see *Read the hashrate trend*).
-- Efficiency is total power divided by total hashrate across the fleet, not the mean of per-device ratios, so an idle
-  but powered miner correctly drags the figure down.
+- Efficiency is total power divided by total hashrate, not the mean of per-device ratios. Only actively-mining devices
+  count toward it, so an idle-but-powered miner is left out of the ratio rather than inflating it — though its draw
+  still counts in the fleet's total power.
 - Temperature reads as a `min/avg/max °C` spread over the fleet; a single-sensor device collapses the three to one.
 
 ### Know which miners are healthy
@@ -31,8 +31,9 @@ another's numbers.
 - A miner is OK when its current hashrate is at least 20% of its nominal (nameplate) hashrate. The nominal comes from
   the miner's own API where it exposes one, otherwise from a built-in model catalog; with neither known, a small
   hashrate floor stands in.
-- A device's detail screen splits *off* by cause: unreachable (no HTTP response at all) or API error (the device
-  answered, but with an error such as `503`).
+- A device's detail screen splits *off* by cause: unreachable (no HTTP response at all), API error (the device answered,
+  but with an error such as `503`), or not authenticating (the device answered but rejected the login — a prompt to
+  check the credentials).
 
 ### Move between the overview and a per-model list
 
@@ -55,8 +56,8 @@ another's numbers.
 
 > As an operator, I want to open a model and see each individual miner of that type.
 
-- Opening a model's *Detail* shows a per-device list for that model: one row per miner with its hostname (or friendly
-  name), hashrate and sparkline, power, efficiency, and avg/min/max temperature.
+- Opening a model's *Detail* shows a per-device list for that model: one row per miner with its hostname, hashrate and
+  sparkline, power, efficiency, and avg/min/max temperature.
 - A miner with no live telemetry shows its status (unreachable / API error) where the metric columns would be, instead
   of a row of meaningless zeros.
 - The list pages when it exceeds the body height; a back affordance returns to the fleet.
@@ -80,15 +81,6 @@ another's numbers.
 - History is accumulated on-device from successive polls, so it is uniform across families whether or not a miner
   exposes a hashrate-history endpoint.
 
-### Give devices friendly names
-
-> As an operator, I want to label miners by where they are so the per-device list reads at a glance.
-
-- *Device names* is a JSON object mapping a device's mDNS name — or a manual host/IP — to a friendly label shown in the
-  per-model device list (e.g. `{"miner-a": "Rack 3 left", "10.0.0.5": "Test bench"}`).
-- The key is the device's mDNS name before the first `._`, or the host/IP as entered in *hosts* (a `:port` suffix is not
-  part of the key).
-
 ### Point the widget at my miners' credentials
 
 > As an operator, I want to give the widget one set of credentials per family so it can read stats from every miner of
@@ -101,41 +93,21 @@ another's numbers.
 - Credentials are shared fleet-wide per family — one BOS password and one Braiins OS Libre login for the whole network,
   not a per-device setting.
 
-### Reach miners that mDNS does not find
+### Show or hide AxeOS miners
 
-> As an operator on a segmented or quiet network, I want to name miners by address so the widget polls them even when
-> mDNS discovery does not surface them.
+> As an operator, I want to hide the AxeOS (Bitaxe / NerdQAxe++) miners so they do not clutter a view of my main fleet.
 
-- *BOS hosts*, *Braiins OS Libre hosts*, and *AxeOS hosts* are each a JSON array of extra hosts to poll, beyond mDNS
-  discovery.
-- Each entry is `host` or `host:port` (e.g. `["10.0.0.5", "miner.local:8080"]`); a bare host uses the family's default
-  port (80 for BOS and AxeOS, 8080 for Braiins OS Libre). IPv6 literals use bracket notation with an explicit port (e.g.
-  `[fe80::1]:80`).
-- A host found both manually and via mDNS appears twice in the fleet.
-- Editing a host param reconciles the manual set live: added hosts start polling, removed hosts stop and drop their
-  cached session token. Clearing a family's manual hosts requires the explicit empty array `[]`; invalid JSON or any
-  other empty value leaves the manual set unchanged, so a typo cannot silently wipe the list.
-
-### Choose which models the widget shows
-
-> As an operator, I want to filter the fleet view down to the models I care about, or hide ones I do not.
-
-- *Shown models* (whitelist) is a JSON array of model-name fragments; when non-empty, only matching models are shown.
-  *Hidden models* (blacklist) is a JSON array of fragments to hide.
-- Matching is case-insensitive and whitespace-insensitive, against both the model name and its internal id (e.g.
-  `["bmm101"]` matches `Braiins Mini Miner BMM 101`).
-- The blacklist overrides the whitelist for the same model. A device whose model has not yet resolved cannot be filtered
-  by model and stays visible.
-- Filtered-out devices are removed from both their breakdown group and the fleet total.
-
-### Turn whole families on and off
-
-> As an operator, I want to switch a device family off so the widget ignores it entirely.
-
-- *Show BOS miners*, *Show Braiins OS Libre miners*, and *Show AxeOS miners* each include their family in the view and
-  keep polling it; turning one off hides every device of that family and stops polling them.
-- mDNS discovery keeps running for a disabled family, so re-enabling it resumes polling the already-discovered devices
+- *Show AxeOS miners* toggles the AxeOS family in the view; turning it off hides every AxeOS device and stops polling
+  them. BOS and Braiins OS Libre are always shown.
+- mDNS discovery keeps running while AxeOS is hidden, so re-enabling it resumes polling the already-discovered devices
   without re-discovery.
+
+### Choose the hashrate chart's time range
+
+> As an operator, I want to widen or narrow the window the hashrate charts cover.
+
+- *Chart time range* sets the span the dashboard and device-detail hashrate charts cover — 15 minutes, 1 hour (the
+  default), 6 hours, or 24 hours. A fixed number of points spans the range, so a longer range samples less often.
 
 ### Name my fleet
 
@@ -149,7 +121,9 @@ another's numbers.
 > live, nor a phantom fleet after everything is gone.
 
 - A miner keeps its last good reading through a few failed passes before it flips to unreachable, so a single missed
-  poll on a flaky network does not blank it. Once unreachable it folds into the totals as zero and counts as *off*.
+  poll on a flaky network does not blank it. Once unreachable it counts as *off* and drops out of the fleet totals
+  entirely — an unreachable miner is unknown, not a measured zero, so an all-down group reads as unavailable rather than
+  a fabricated `0`.
 - A confirmed miner is kept across an mDNS *removed* event — which fires unreliably on lossy Wi-Fi as a cache expiry,
   not only a real departure — so a dropped announcement cannot churn it out of the fleet. Its liveness is governed by
   polling from then on, not by discovery.
@@ -175,7 +149,7 @@ another's numbers.
   carries no distinguishing signal there, so it enters as a *candidate* and is only admitted to the report once it
   answers a poll — a non-miner web server is probed a few times and then dropped. Braiins OS Libre is identified
   directly by its own service type. A miner that advertises neither browsed type, or sits on a network segment mDNS does
-  not reach, is added by address through the *hosts* params.
+  not reach, is not discovered.
 - **BOS** (Braiins OS) miners are polled across three endpoints: `/miner/stats` (hashrate and power),
   `/miner/hw/hashboards` (the hottest chip temperature and the chip type/count), and `/miner/details` (uptime, platform,
   nominal hashrate, and miner model). A `401`/`403` triggers one re-authentication per device per pass.
@@ -191,21 +165,14 @@ another's numbers.
 
 All parameters are manifest-driven widget settings, configurable from the web UI.
 
-| Key               | Name                         | Type    | Default    | Purpose                                                                    |
-| ----------------- | ---------------------------- | ------- | ---------- | -------------------------------------------------------------------------- |
-| `fleet_name`      | Fleet name                   | string  | `My Fleet` | Heading shown above the fleet overview.                                    |
-| `device_names`    | Device names                 | string  | `{}`       | JSON object mapping a device mDNS name or manual host to a friendly label. |
-| `bos_password`    | BOS password                 | string  | `root`     | Root password used to log into every BOS miner on the network.             |
-| `ubos_username`   | Braiins OS Libre username    | string  | `root`     | User name for HTTP Basic auth against every Braiins OS Libre device.       |
-| `ubos_password`   | Braiins OS Libre password    | string  | `root`     | Password for HTTP Basic auth against every Braiins OS Libre device.        |
-| `model_whitelist` | Shown models                 | string  | `[]`       | JSON array of model-name fragments to show; empty shows all.               |
-| `model_blacklist` | Hidden models                | string  | `[]`       | JSON array of model-name fragments to hide.                                |
-| `bos_enabled`     | Show BOS miners              | boolean | `true`     | Include BOS miners in the view and keep polling them.                      |
-| `ubos_enabled`    | Show Braiins OS Libre miners | boolean | `true`     | Include Braiins OS Libre devices in the view and keep polling them.        |
-| `axeos_enabled`   | Show AxeOS miners            | boolean | `true`     | Include AxeOS miners in the view and keep polling them.                    |
-| `bos_hosts`       | BOS hosts                    | string  | `[]`       | JSON array of extra BOS hosts to poll beyond mDNS; `host` or `host:port`.  |
-| `ubos_hosts`      | Braiins OS Libre hosts       | string  | `[]`       | JSON array of extra Braiins OS Libre hosts to poll beyond mDNS.            |
-| `axeos_hosts`     | AxeOS hosts                  | string  | `[]`       | JSON array of extra AxeOS hosts to poll beyond mDNS.                       |
+| Key                  | Name                      | Type    | Default    | Purpose                                                              |
+| -------------------- | ------------------------- | ------- | ---------- | -------------------------------------------------------------------- |
+| `fleet_name`         | Fleet name                | string  | `My Fleet` | Heading shown above the fleet overview.                              |
+| `bos_password`       | BOS password              | string  | `root`     | Root password used to log into every BOS miner on the network.       |
+| `ubos_username`      | Braiins OS Libre username | string  | `root`     | User name for HTTP Basic auth against every Braiins OS Libre device. |
+| `ubos_password`      | Braiins OS Libre password | string  | `root`     | Password for HTTP Basic auth against every Braiins OS Libre device.  |
+| `axeos_enabled`      | Show AxeOS miners         | boolean | `true`     | Include AxeOS miners in the view and keep polling them.              |
+| `chart_span_minutes` | Chart time range          | integer | `60`       | Minutes the hashrate charts cover: `15`, `60`, `360`, or `1440`.     |
 
 ## Constraints
 
@@ -221,4 +188,4 @@ All parameters are manifest-driven widget settings, configurable from the web UI
   same family.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
 - mDNS discovery is subject to the host runtime's browse limits; if a browse is rejected the widget logs a warning and
-  that family relies on its manually configured hosts.
+  that family is not discovered.
