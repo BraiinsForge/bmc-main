@@ -197,7 +197,8 @@ mod tests {
     /// Layout matches `params.rs` (count header + per-entry tag/key/payload).
     fn build(entries: &[(&str, Entry<'_>)]) -> Params {
         let mut buf = Vec::new();
-        buf.extend_from_slice(&(entries.len() as u32).to_le_bytes());
+        let count = u32::try_from(entries.len()).expect("BUG: test entry count fits u32");
+        buf.extend_from_slice(&count.to_le_bytes());
         for (key, ent) in entries {
             let key_bytes = key.as_bytes();
             let key_len = u16::try_from(key_bytes.len()).expect("BUG: test key under 64 KiB");
@@ -207,7 +208,8 @@ mod tests {
                     buf.extend_from_slice(&key_len.to_le_bytes());
                     buf.extend_from_slice(key_bytes);
                     let vb = v.as_bytes();
-                    buf.extend_from_slice(&(vb.len() as u32).to_le_bytes());
+                    let val_len = u32::try_from(vb.len()).expect("BUG: test value under 4 GiB");
+                    buf.extend_from_slice(&val_len.to_le_bytes());
                     buf.extend_from_slice(vb);
                 }
                 Entry::I32(v) => {

@@ -193,13 +193,15 @@ impl TreeBuffer {
         self.write_u8(NODE_PARAGRAPH);
         self.write_props(props);
         self.write_bytes(&base_style.to_bytes());
-        self.write_u16(spans.len() as u16);
+        self.write_u16(u16::try_from(spans.len()).expect("BUG: text spans exceed u16::MAX"));
 
         for span in spans {
             self.write_u16(span.flags());
             self.write_u8(span.extra_flags());
             let bytes = span.text.as_bytes();
-            self.write_u16(bytes.len() as u16);
+            self.write_u16(
+                u16::try_from(bytes.len()).expect("BUG: span text exceeds u16::MAX bytes"),
+            );
             self.write_bytes(bytes);
             if let Some(color) = span.color {
                 self.write_color(color);
@@ -224,7 +226,7 @@ impl TreeBuffer {
     ) {
         self.write_u8(NODE_BUTTON);
         let id_bytes = id.as_bytes();
-        self.write_u16(id_bytes.len() as u16);
+        self.write_u16(u16::try_from(id_bytes.len()).expect("BUG: text id exceeds u16::MAX bytes"));
         self.write_bytes(id_bytes);
         self.write_u8(style as u8);
         self.write_u8(size as u8);
@@ -232,7 +234,7 @@ impl TreeBuffer {
         self.write_u8(u8::from(disabled));
         self.write_u8(u8::from(stretch));
         let bytes = label.as_bytes();
-        self.write_u16(bytes.len() as u16);
+        self.write_u16(u16::try_from(bytes.len()).expect("BUG: text exceeds u16::MAX bytes"));
         self.write_bytes(bytes);
     }
 
@@ -249,7 +251,9 @@ impl TreeBuffer {
         self.write_u8(NODE_CANVAS);
         self.write_props(props);
         if let Some(key) = touch_key {
-            self.write_u16(key.len() as u16);
+            self.write_u16(
+                u16::try_from(key.len()).expect("BUG: touch key exceeds u16::MAX bytes"),
+            );
             self.data.extend_from_slice(key.as_bytes());
         } else {
             self.write_u16(0);
@@ -264,7 +268,9 @@ impl TreeBuffer {
     /// ```
     pub fn write_scroll(&mut self, scroll_key: &str, props: &PropsData, child_count: u16) {
         self.write_u8(NODE_SCROLL);
-        self.write_u16(scroll_key.len() as u16);
+        self.write_u16(
+            u16::try_from(scroll_key.len()).expect("BUG: scroll key exceeds u16::MAX bytes"),
+        );
         self.data.extend_from_slice(scroll_key.as_bytes());
         self.write_props(props);
         self.write_u16(child_count);
@@ -280,10 +286,14 @@ impl TreeBuffer {
         self.write_u8(NODE_NOTIFICATION);
         self.write_u8(kind as u8);
         let title_bytes = title.as_bytes();
-        self.write_u16(title_bytes.len() as u16);
+        self.write_u16(
+            u16::try_from(title_bytes.len()).expect("BUG: title exceeds u16::MAX bytes"),
+        );
         self.write_bytes(title_bytes);
         let subtitle_bytes = subtitle.as_bytes();
-        self.write_u16(subtitle_bytes.len() as u16);
+        self.write_u16(
+            u16::try_from(subtitle_bytes.len()).expect("BUG: subtitle exceeds u16::MAX bytes"),
+        );
         self.write_bytes(subtitle_bytes);
     }
 
@@ -331,13 +341,15 @@ impl TreeBuffer {
     /// ```
     pub fn write_switcher(&mut self, active: usize, disabled: bool, tabs: &[SwitcherTab]) {
         self.write_u8(NODE_SWITCHER);
-        self.write_u8(active as u8);
+        self.write_u8(u8::try_from(active).expect("BUG: active tab index exceeds u8::MAX"));
         self.write_u8(u8::from(disabled));
-        self.write_u8(tabs.len() as u8);
+        self.write_u8(u8::try_from(tabs.len()).expect("BUG: switcher tabs exceed u8::MAX"));
         for tab in tabs {
             self.write_icon_id(tab.icon);
             let bytes = tab.click_id.as_bytes();
-            self.write_u16(bytes.len() as u16);
+            self.write_u16(
+                u16::try_from(bytes.len()).expect("BUG: tab click id exceeds u16::MAX bytes"),
+            );
             self.write_bytes(bytes);
         }
     }
@@ -362,13 +374,17 @@ impl TreeBuffer {
     ) {
         self.write_u8(NODE_MODAL);
         let id_bytes = modal_id.as_bytes();
-        self.write_u16(id_bytes.len() as u16);
+        self.write_u16(
+            u16::try_from(id_bytes.len()).expect("BUG: modal id exceeds u16::MAX bytes"),
+        );
         self.write_bytes(id_bytes);
         self.write_u8(u8::from(is_open));
         self.write_u16(padding);
         self.write_u8(backdrop_alpha);
         let title_bytes = title.as_bytes();
-        self.write_u16(title_bytes.len() as u16);
+        self.write_u16(
+            u16::try_from(title_bytes.len()).expect("BUG: modal title exceeds u16::MAX bytes"),
+        );
         self.write_bytes(title_bytes);
         self.write_f32(content_height);
         self.write_u16(child_count);
@@ -395,7 +411,9 @@ impl TreeBuffer {
     ) {
         self.write_u8(NODE_PROGRESS_BAR);
         let key_bytes = touch_key.as_bytes();
-        self.write_u16(key_bytes.len() as u16);
+        self.write_u16(
+            u16::try_from(key_bytes.len()).expect("BUG: progress touch key exceeds u16::MAX bytes"),
+        );
         self.write_bytes(key_bytes);
         self.write_f32(track_h);
         match mode {
@@ -1771,19 +1789,28 @@ macro_rules! fill {
 fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
     match node {
         Node::Column(props, children) => {
-            buf.write_column(props, children.len() as u16);
+            buf.write_column(
+                props,
+                u16::try_from(children.len()).expect("BUG: column children exceed u16::MAX"),
+            );
             for child in children {
                 serialize_node(buf, child);
             }
         }
         Node::Row(props, children) => {
-            buf.write_row(props, children.len() as u16);
+            buf.write_row(
+                props,
+                u16::try_from(children.len()).expect("BUG: row children exceed u16::MAX"),
+            );
             for child in children {
                 serialize_node(buf, child);
             }
         }
         Node::Center(props, children) => {
-            buf.write_center(props, children.len() as u16);
+            buf.write_center(
+                props,
+                u16::try_from(children.len()).expect("BUG: center children exceed u16::MAX"),
+            );
             for child in children {
                 serialize_node(buf, child);
             }
@@ -1857,7 +1884,11 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             touch_key,
             draws,
         } => {
-            buf.write_canvas(props, touch_key.as_deref(), draws.len() as u16);
+            buf.write_canvas(
+                props,
+                touch_key.as_deref(),
+                u16::try_from(draws.len()).expect("BUG: canvas draws exceed u16::MAX"),
+            );
             for draw in draws {
                 serialize_draw(buf, draw);
             }
@@ -1867,7 +1898,11 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             props,
             children,
         } => {
-            buf.write_scroll(scroll_key, props, children.len() as u16);
+            buf.write_scroll(
+                scroll_key,
+                props,
+                u16::try_from(children.len()).expect("BUG: scroll children exceed u16::MAX"),
+            );
             for child in children {
                 serialize_node(buf, child);
             }
@@ -1911,7 +1946,7 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 *backdrop_alpha,
                 title,
                 *content_height,
-                body.len() as u16,
+                u16::try_from(body.len()).expect("BUG: modal body children exceed u16::MAX"),
             );
             buf.write_color(*bg_color);
             buf.write_color(*header_color);
@@ -1921,13 +1956,25 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
                 serialize_node(buf, child);
             }
             // Footer descriptor: [pk_len][pk][pl_len][pl][sk_len][sk][sl_len][sl][danger:u8]
-            buf.write_u16(footer_primary_key.len() as u16);
+            buf.write_u16(
+                u16::try_from(footer_primary_key.len())
+                    .expect("BUG: footer primary key exceeds u16::MAX bytes"),
+            );
             buf.write_bytes(footer_primary_key.as_bytes());
-            buf.write_u16(footer_primary_label.len() as u16);
+            buf.write_u16(
+                u16::try_from(footer_primary_label.len())
+                    .expect("BUG: footer primary label exceeds u16::MAX bytes"),
+            );
             buf.write_bytes(footer_primary_label.as_bytes());
-            buf.write_u16(footer_secondary_key.len() as u16);
+            buf.write_u16(
+                u16::try_from(footer_secondary_key.len())
+                    .expect("BUG: footer secondary key exceeds u16::MAX bytes"),
+            );
             buf.write_bytes(footer_secondary_key.as_bytes());
-            buf.write_u16(footer_secondary_label.len() as u16);
+            buf.write_u16(
+                u16::try_from(footer_secondary_label.len())
+                    .expect("BUG: footer secondary label exceeds u16::MAX bytes"),
+            );
             buf.write_bytes(footer_secondary_label.as_bytes());
             buf.write_u8(u8::from(*footer_danger));
         }
@@ -2106,7 +2153,9 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_u8(flags);
 
             if !animations.is_empty() {
-                buf.write_u8(animations.len() as u8);
+                buf.write_u8(
+                    u8::try_from(animations.len()).expect("BUG: node animations exceed u8::MAX"),
+                );
                 for anim in animations {
                     buf.write_u8(anim.property as u8);
                     buf.write_f32(anim.from);
@@ -2147,7 +2196,7 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             }
             buf.write_u8(DRAW_PATH);
             buf.write_u8(flags);
-            buf.write_u16(points.len() as u16);
+            buf.write_u16(u16::try_from(points.len()).expect("BUG: path points exceed u16::MAX"));
             for &(x, y) in points {
                 buf.write_f32(x);
                 buf.write_f32(y);
@@ -2170,7 +2219,9 @@ fn serialize_draw(buf: &mut TreeBuffer, draw: &Draw) {
             buf.write_f32(*y);
             buf.write_bytes(&style.to_bytes());
             let bytes = text.as_bytes();
-            buf.write_u16(bytes.len() as u16);
+            buf.write_u16(
+                u16::try_from(bytes.len()).expect("BUG: draw text exceeds u16::MAX bytes"),
+            );
             buf.write_bytes(bytes);
         }
         Draw::CurvedText {
