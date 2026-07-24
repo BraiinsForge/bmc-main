@@ -149,8 +149,7 @@ fn params() -> Rc<Params> {
     PARAMS.with(|p| Rc::clone(&p.borrow()))
 }
 
-/// Re-read the param snapshot into the driver cache. Called from
-/// `on_params_update`.
+/// Re-read the param snapshot into the driver cache.
 pub fn refresh_params() {
     PARAMS.with(|p| *p.borrow_mut() = Rc::new(Params::current()));
 }
@@ -477,8 +476,6 @@ fn park_idle() {
 }
 
 /// Fire every still-pending (`None`) endpoint of the current device.
-/// `delay_ms` spaces the opening fetch across the rotation;
-/// the rest go out at once.
 fn fire_pending(
     id: &DeviceId,
     family: DeviceFamily,
