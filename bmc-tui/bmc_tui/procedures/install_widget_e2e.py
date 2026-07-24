@@ -62,7 +62,9 @@ class InstallWidgetE2e:
         # Serve the full package set by default: any system-installed package
         # absent from every consulted index aborts the device's upgrade check.
         attrs = self.packages or backend.list_packages()
-        plan = catalog.Deployment(attrs=attrs, prefix=catalog.package_prefix(self.profile))
+        plan = catalog.Deployment(
+            attrs=[nix.Attr(a) for a in attrs], prefix=catalog.package_prefix(self.profile)
+        )
         cycle = catalog.UpgradeCycle(
             password=self.password,
             port=self.port,

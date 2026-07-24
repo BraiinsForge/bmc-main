@@ -33,7 +33,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import NewType, Protocol
 
 from bmc_tui import console
 from bmc_tui.stage import dry_run
@@ -46,20 +46,28 @@ _WIDGET_FILTER = (
 )
 
 
+# An absolute `/nix/store/…` path. Two equal ones mean the same build,
+# so they stay distinct from the device paths they are compared with.
+StorePath = NewType("StorePath", str)
+
+# A flake attribute or installable, e.g. `.#deck-packages.core` or `…^out`.
+Attr = NewType("Attr", str)
+
+
 @dataclass(frozen=True)
 class Pkg:
     """A resolved package: how to build it and how to register it afterwards."""
 
     name: str
     version: str
-    installable: str  # e.g. ".#deck-packages.core.pkg^out"
+    installable: Attr  # e.g. ".#deck-packages.core.pkg^out"
 
 
 @dataclass(frozen=True)
 class Built(Pkg):
     """A `Pkg` after its closure has been realised into the store."""
 
-    store_path: str
+    store_path: StorePath
 
 
 class Nix(Protocol):
@@ -73,7 +81,7 @@ class Nix(Protocol):
         """Leaf names of every deck package."""
         ...
 
-    def resolve(self, attr: str) -> Pkg:
+    def resolve(self, attr: Attr) -> Pkg:
         """Detect index-vs-raw package and read its name, version, installable."""
         ...
 
@@ -82,19 +90,19 @@ class Nix(Protocol):
         progress goes to stderr. Returns the builts in the input order."""
         ...
 
-    def build_out(self, attr: str) -> str:
+    def build_out(self, attr: Attr) -> StorePath:
         """Realise a single derivation and return its lone out-path — for
         artifacts (e.g. the init tarball) that carry no package metadata."""
         ...
 
-    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         """Realise attrs of a parameterized nix file (`--impure -f`) in ONE
         invocation — one consistent evaluation of the mutable worktree —
         returning their out-paths in attr order. Flake outputs cannot take
         parameters."""
         ...
 
-    def copy(self, store_paths: list[str], dest: str) -> None:
+    def copy(self, store_paths: list[StorePath], dest: str) -> None:
         """Copy closures to `dest`. Under --dry-run, log and skip."""
         ...
 
@@ -103,7 +111,7 @@ class Nix(Protocol):
         public key."""
         ...
 
-    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
         """Copy closures into a local file:// binary cache, signing every
         path with `secret`."""
         ...
@@ -125,15 +133,17 @@ class _RealNix:
             return []
         return sorted(str(name) for name in out)
 
-    def resolve(self, attr: str) -> Pkg:
+    def resolve(self, attr: Attr) -> Pkg:
         version = _eval_raw(f"{attr}.version")
         if _eval_ok(f"{attr}.pkg.name"):  # index package — build its .pkg output
-            return Pkg(name=attr.rsplit(".", 1)[-1], version=version, installable=f"{attr}.pkg^out")
+            return Pkg(
+                name=attr.rsplit(".", 1)[-1], version=version, installable=Attr(f"{attr}.pkg^out")
+            )
         # Raw nixpkgs derivation — build directly, prefix the name like nix-deploy.sh.
         return Pkg(
             name=f"nixpkgs-{_eval_raw(f'{attr}.pname')}",
             version=version,
-            installable=f"{attr}^out",
+            installable=Attr(f"{attr}^out"),
         )
 
     def build(self, pkgs: list[Pkg]) -> list[Built]:
@@ -160,11 +170,11 @@ class _RealNix:
             msg = f"BUG: nix build printed {len(paths)} paths for {len(pkgs)} package(s)"
             raise RuntimeError(msg)
         return [
-            Built(pkg.name, pkg.version, pkg.installable, store_path=path)
+            Built(pkg.name, pkg.version, pkg.installable, store_path=StorePath(path))
             for pkg, path in zip(pkgs, paths, strict=True)
         ]
 
-    def build_out(self, attr: str) -> str:
+    def build_out(self, attr: Attr) -> StorePath:
         # Single `nix build` of one attr; capture stdout for the out-path, let
         # nix draw its own progress on the inherited stderr.
         proc = subprocess.run(
@@ -177,9 +187,9 @@ class _RealNix:
         if len(paths) != 1:
             msg = f"BUG: nix build printed {len(paths)} paths for {attr}"
             raise RuntimeError(msg)
-        return paths[0]
+        return StorePath(paths[0])
 
-    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         argstrs = [s for key, value in sorted(args.items()) for s in ("--argstr", key, value)]
         proc = subprocess.run(
             [
@@ -201,9 +211,9 @@ class _RealNix:
         if len(paths) != len(attrs):
             msg = f"BUG: nix build printed {len(paths)} paths for {len(attrs)} attrs"
             raise RuntimeError(msg)
-        return paths
+        return [StorePath(p) for p in paths]
 
-    def copy(self, store_paths: list[str], dest: str) -> None:
+    def copy(self, store_paths: list[StorePath], dest: str) -> None:
         if dry_run.get():
             console.kv("would copy", f"{len(store_paths)} closure(s) -> {dest}")
             return
@@ -230,7 +240,7 @@ class _RealNix:
         )
         return public.stdout.strip()
 
-    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
         # Host-side artifact staging, not a device mutation — runs under
         # --dry-run like `build`; the ?secret-key param signs on write.
         subprocess.run(

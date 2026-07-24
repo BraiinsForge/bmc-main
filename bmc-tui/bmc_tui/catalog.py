@@ -43,9 +43,9 @@ from pathlib import Path
 from typing import Any
 
 from bmc_tui import console, rig
-from bmc_tui.device import Device
+from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
-from bmc_tui.nix import Built, Nix, Pkg
+from bmc_tui.nix import Attr, Built, Nix, Pkg
 from bmc_tui.stage import Abort, done_if, dry_run, ensure, require, stage
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
@@ -60,13 +60,16 @@ _NIX_CONF = "/etc/nix/nix.conf"
 # Device-side nix store: a directory on the data partition, bind-mounted at /nix
 # so the read-only rootfs gains a writable store. Matches the init tarball layout.
 _NIX_STORE = "/nix"
+_WIDGET_DIR = "/run/current-profile/lib/bmc-widgets"
+_COMPOSITOR = "bmc-openwrt"
+_ORCHESTRATOR = "bmc-nix-service-orchestrator"
 _NIX_BACKING = "/mnt/data/nix"
-_INIT_TARBALL = ".#init-tarball-armv7"
-_NIX_CLI_ATTR = ".#bmc-nix-cli-armv7-release"
+_INIT_TARBALL = Attr(".#init-tarball-armv7")
+_NIX_CLI_ATTR = Attr(".#bmc-nix-cli-armv7-release")
 # Run-unique device paths for the pushed CLI and tarball: Device.push
 # truncates via `cat >`, so a constant name would let concurrent
 # harness runs upload, read, and clean up the same file.
-_REMOTE_CLI = f"/tmp/bmc-nix-cli.deck-init.{os.getpid()}"
+_REMOTE_CLI = RemotePath(f"/tmp/bmc-nix-cli.deck-init.{os.getpid()}")
 
 
 @stage("Device reachable")
@@ -104,7 +107,7 @@ def upload_firmware(dev: Device, image: Image) -> str:
     """Upload the firmware; a matching on-device sha256 makes a re-run a no-op."""
 
     done_if(_remote_sha(dev, image.remote_path) == image.sha256)
-    dev.push(image.path, image.remote_path)
+    dev.push(image.path, RemotePath(image.remote_path))
     if dry_run.get():
         return f"→ {console.lit(image.remote_path)}"
     # A short/corrupt upload would otherwise be flashed blind under `sysupgrade
@@ -173,7 +176,7 @@ def package_prefix(profile: str) -> str:
 class Deployment:
     """Mutable carrier threaded through the deploy stages."""
 
-    attrs: list[str]  # flake attrs to deploy; empty → discover core, bmc-nix-cli + all widgets
+    attrs: list[Attr]  # flake attrs to deploy; empty → discover core, bmc-nix-cli + all widgets
     prefix: str = _DECK_PACKAGES  # attr root for the build profile (see package_prefix)
     resolved: list[Pkg] = field(default_factory=list)
     built: list[Built] = field(default_factory=list)
@@ -185,7 +188,7 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
         return "ok" in dev.read(f"test -x {_NIX_CLI} && echo ok || true")
 
     def bootstrap() -> None:
-        [built] = nix.build([nix.resolve(".#deck-packages.bmc-nix-cli")])
+        [built] = nix.build([nix.resolve(Attr(".#deck-packages.bmc-nix-cli"))])
         nix.copy([built.store_path], dev.copy_dest)
         dev.run(_register_cmd([built], cli=f"{built.store_path}/bin/bmc-nix-cli"))
 
@@ -205,16 +208,16 @@ def _unknown_package_hint(attr: str, packages: list[str], prefix: str) -> str:
     return f"package {console.lit(attr)} does not exist{suffix}"
 
 
-def _qualify(attr: str, prefix: str) -> str:
+def _qualify(attr: str, prefix: str) -> Attr:
     """Expand a bare package name to its `prefix.` attr (profile-aware)."""
-    return attr if "#" in attr else f"{prefix}.{attr}"
+    return Attr(attr if "#" in attr else f"{prefix}.{attr}")
 
 
 @stage("Resolve packages")
 def resolve_packages(nix: Nix, plan: Deployment) -> str:
     if not plan.attrs:
         names = ["core", "bmc-nix-cli", *nix.discover_widgets()]
-        plan.attrs = [f"{plan.prefix}.{name}" for name in names]
+        plan.attrs = [Attr(f"{plan.prefix}.{name}") for name in names]
     plan.attrs = [_qualify(a, plan.prefix) for a in plan.attrs]
     resolved: list[Pkg] = []
     for attr in plan.attrs:
@@ -311,7 +314,7 @@ class Provisioning:
     tarball: Path | None = None  # the built init tarball, located by build_init_tarball
     profile_path: str | None = None  # promoted profile path, from the tarball's metadata.json
     cli: Path | None = None  # host path of the built bmc-nix-cli
-    remote_tarball: str | None = None  # device path of the pushed tarball
+    remote_tarball: RemotePath | None = None  # device path of the pushed tarball
 
 
 @stage("Build init tarball")
@@ -422,7 +425,7 @@ def push_init_tarball(dev: Device, plan: Provisioning) -> str:
         raise RuntimeError(msg)
     # Recorded before the upload starts so a failed stream still leaves
     # the path known to the cleanup stage.
-    remote = f"/mnt/data/{tarball.name}.deck-init.{os.getpid()}"
+    remote = RemotePath(f"/mnt/data/{tarball.name}.deck-init.{os.getpid()}")
     plan.remote_tarball = remote
     dev.push(tarball, remote)
     return f"→ {console.lit(remote)}"
@@ -555,7 +558,13 @@ def build_e2e_artifacts(nix: Nix, run: E2eRun) -> str:
     metadata == feed entry == flashed firmware version."""
 
     args = {"bosVersionA": run.image_a.version, "bosVersionB": run.image_b.version}
-    outs = dict(zip(_E2E_ATTRS, nix.build_file(_E2E_ARTIFACTS_FILE, _E2E_ATTRS, args), strict=True))
+    outs = dict(
+        zip(
+            _E2E_ATTRS,
+            nix.build_file(_E2E_ARTIFACTS_FILE, [Attr(a) for a in _E2E_ATTRS], args),
+            strict=True,
+        )
+    )
     run.variant_a = _variant(run.image_a.version, outs["index-a"], outs["tarball-a"])
     run.variant_b = _variant(run.image_b.version, outs["index-b"], outs["tarball-b"])
     return f"{console.lit(run.variant_a.tarball.name)}, {console.lit(run.variant_b.tarball.name)}"

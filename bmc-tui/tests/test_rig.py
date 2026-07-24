@@ -26,7 +26,7 @@ import urllib.request
 from pathlib import Path
 
 from bmc_tui import rig
-from bmc_tui.nix import Built, Pkg
+from bmc_tui.nix import Attr, Built, Pkg, StorePath
 
 _PROFILE = "/nix/var/nix/gcroots/profiles/bmc"
 
@@ -111,14 +111,14 @@ def test_rig_server_serves_content_added_after_start(tmp_path: Path) -> None:
 
 
 def test_make_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
-    copied: list[tuple[list[str], Path, Path]] = []
+    copied: list[tuple[list[StorePath], Path, Path]] = []
 
     class _Nix:
         def generate_cache_key(self, name: str, secret: Path) -> str:
             secret.write_text("sk")
             return f"{name}:PUB"
 
-        def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+        def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
             copied.append((store_paths, cache, secret))
 
         def discover_widgets(self) -> list[str]:
@@ -127,19 +127,19 @@ def test_make_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
         def list_packages(self) -> list[str]:
             return []
 
-        def resolve(self, attr: str) -> Pkg:
+        def resolve(self, attr: Attr) -> Pkg:
             raise NotImplementedError
 
         def build(self, pkgs: list[Pkg]) -> list[Built]:
             return []
 
-        def build_out(self, attr: str) -> str:
+        def build_out(self, attr: Attr) -> StorePath:
             raise NotImplementedError
 
-        def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+        def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
             raise NotImplementedError
 
-        def copy(self, store_paths: list[str], dest: str) -> None:
+        def copy(self, store_paths: list[StorePath], dest: str) -> None:
             return None
 
     a = _variant(tmp_path, "va", ["/nix/store/shared", "/nix/store/a-only"])

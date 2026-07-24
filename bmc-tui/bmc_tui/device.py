@@ -34,7 +34,7 @@ import shlex
 import subprocess
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, NewType, Protocol
 
 from bmc_tui import console
 from bmc_tui.stage import dry_run
@@ -58,6 +58,10 @@ _SSH_OPTS = [
 ]
 
 _CHUNK = 1 << 16  # 64 KiB upload chunk
+
+# An absolute path on the device, as opposed to a local `Path`.
+# `push` already takes one of each; this names the distinction.
+RemotePath = NewType("RemotePath", str)
 
 # Exit codes >= 128 mean the session died rather than the command failing:
 # 255 is ssh's own code for a dropped connection, and anything else in the
@@ -157,7 +161,7 @@ class Device:
                 raise
             return None
 
-    def push(self, local: Path, remote: str) -> None:
+    def push(self, local: Path, remote: RemotePath) -> None:
         """Upload a file, streamed over ssh with a live progress bar. Under
         --dry-run, log and skip."""
         if dry_run.get():

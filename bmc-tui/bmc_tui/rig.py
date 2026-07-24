@@ -35,7 +35,7 @@ from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
-from bmc_tui.nix import Nix
+from bmc_tui.nix import Nix, StorePath
 
 FEED_NAME = "nix-package-feed.v1.json"
 INDEX_NAME = "nix-package-index.v1.json"
@@ -66,11 +66,11 @@ def feed_document(variants: list[Variant], base_url: str) -> str:
     return json.dumps({"version": 1, "entries": entries}, indent=2)
 
 
-def index_store_paths(index: Path) -> list[str]:
+def index_store_paths(index: Path) -> list[StorePath]:
     """Every package store path an index lists — the closure roots the rig
     cache must hold."""
     doc = json.loads((index / INDEX_NAME).read_text())
-    return [p["store_path"] for p in doc["packages"]]
+    return [StorePath(p["store_path"]) for p in doc["packages"]]
 
 
 def package_store_path(index: Path, name: str) -> str | None:

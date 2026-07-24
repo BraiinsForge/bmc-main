@@ -34,9 +34,9 @@ from typing import Literal, Required, TypedDict, Unpack
 import pytest
 
 from bmc_tui import catalog, rig
-from bmc_tui.device import Device
+from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
-from bmc_tui.nix import Built, Pkg
+from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.stage import Abort, dry_run
@@ -113,7 +113,7 @@ class _FakeNix:
 
     def __init__(self, outs: dict[str, Path]) -> None:
         self._outs = outs
-        self.build_file_calls: list[tuple[str, list[str], dict[str, str]]] = []
+        self.build_file_calls: list[tuple[str, list[Attr], dict[str, str]]] = []
 
     def discover_widgets(self) -> list[str]:
         return []
@@ -121,28 +121,28 @@ class _FakeNix:
     def list_packages(self) -> list[str]:
         return []
 
-    def resolve(self, attr: str) -> Pkg:
+    def resolve(self, attr: Attr) -> Pkg:
         raise NotImplementedError
 
     def build(self, pkgs: list[Pkg]) -> list[Built]:
         return []
 
-    def build_out(self, attr: str) -> str:
-        return str(self._outs[attr])
+    def build_out(self, attr: Attr) -> StorePath:
+        return StorePath(str(self._outs[attr]))
 
-    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         self.build_file_calls.append((file, attrs, args))
-        return [str(self._outs[attr]) for attr in attrs]
+        return [StorePath(str(self._outs[attr])) for attr in attrs]
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
         secret.write_text("sk")
         return f"{name}:PUBLICKEY"
 
-    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
         cache.mkdir(parents=True, exist_ok=True)
         (cache / "fake.narinfo").write_text("StorePath: /nix/store/fake\n")
 
-    def copy(self, store_paths: list[str], dest: str) -> None:
+    def copy(self, store_paths: list[StorePath], dest: str) -> None:
         return None
 
 
@@ -332,7 +332,7 @@ class _Nix:
         self.widgets = list(widgets)
         self.packages = list(packages) or ["core", *self.widgets]
         self.built: list[Pkg] = []
-        self.copied: list[tuple[list[str], str]] = []
+        self.copied: list[tuple[list[StorePath], str]] = []
         self.out_dir = out_dir
 
     def discover_widgets(self) -> list[str]:
@@ -341,30 +341,35 @@ class _Nix:
     def list_packages(self) -> list[str]:
         return list(self.packages)
 
-    def build_out(self, attr: str) -> str:
-        return self.out_dir
+    def build_out(self, attr: Attr) -> StorePath:
+        return StorePath(self.out_dir)
 
-    def build_file(self, file: str, attrs: list[str], args: dict[str, str]) -> list[str]:
+    def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         raise NotImplementedError
 
     def generate_cache_key(self, name: str, secret: Path) -> str:
         raise NotImplementedError
 
-    def copy_signed(self, store_paths: list[str], cache: Path, secret: Path) -> None:
+    def copy_signed(self, store_paths: list[StorePath], cache: Path, secret: Path) -> None:
         raise NotImplementedError
 
-    def resolve(self, attr: str) -> Pkg:
+    def resolve(self, attr: Attr) -> Pkg:
         name = attr.rsplit(".", 1)[-1]
-        return Pkg(name=name, version="1.0.0", installable=f"{attr}.pkg^out")
+        return Pkg(name=name, version="1.0.0", installable=Attr(f"{attr}.pkg^out"))
 
     def build(self, pkgs: list[Pkg]) -> list[Built]:
         self.built.extend(pkgs)
         return [
-            Built(pkg.name, pkg.version, pkg.installable, store_path=f"/nix/store/{pkg.name}")
+            Built(
+                pkg.name,
+                pkg.version,
+                pkg.installable,
+                store_path=StorePath(f"/nix/store/{pkg.name}"),
+            )
             for pkg in pkgs
         ]
 
-    def copy(self, store_paths: list[str], dest: str) -> None:
+    def copy(self, store_paths: list[StorePath], dest: str) -> None:
         self.copied.append((store_paths, dest))
 
 
@@ -376,40 +381,40 @@ def test_resolve_discovers_core_plus_widgets() -> None:
 
 
 def test_resolve_uses_explicit_packages() -> None:
-    plan = catalog.Deployment(attrs=[".#deck-packages.core"])
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.core")])
     catalog.resolve_packages(_Nix(widgets=("clock",)), plan)  # widgets ignored when explicit
     assert [p.name for p in plan.resolved] == ["core"]
 
 
 def test_resolve_aborts_with_suggestion_on_unknown_package() -> None:
     class _BadNix(_Nix):
-        def resolve(self, attr: str) -> Pkg:
+        def resolve(self, attr: Attr) -> Pkg:
             raise subprocess.CalledProcessError(1, ["nix", "eval", attr])
 
-    plan = catalog.Deployment(attrs=[".#deck-packages.image"])
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.image")])
     with pytest.raises(Abort, match="widget-image"):
         catalog.resolve_packages(_BadNix(widgets=("widget-image", "widget-clock")), plan)
 
 
 def test_resolve_suggests_non_widget_packages() -> None:
     class _BadNix(_Nix):
-        def resolve(self, attr: str) -> Pkg:
+        def resolve(self, attr: Attr) -> Pkg:
             raise subprocess.CalledProcessError(1, ["nix", "eval", attr])
 
-    plan = catalog.Deployment(attrs=[".#deck-packages.frontend"])
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.frontend")])
     nix = _BadNix(packages=("core", "bmc-frontend", "widget-image"))
     with pytest.raises(Abort, match="bmc-frontend"):
         catalog.resolve_packages(nix, plan)
 
 
 def test_resolve_qualifies_bare_package_names() -> None:
-    plan = catalog.Deployment(attrs=["core", "widget-image"])
+    plan = catalog.Deployment(attrs=[Attr("core"), Attr("widget-image")])
     catalog.resolve_packages(_Nix(), plan)
     assert plan.attrs == [".#deck-packages.core", ".#deck-packages.widget-image"]
 
 
 def test_resolve_leaves_qualified_attrs_alone() -> None:
-    plan = catalog.Deployment(attrs=[".#armv7-nixpkgs.strace"])
+    plan = catalog.Deployment(attrs=[Attr(".#armv7-nixpkgs.strace")])
     catalog.resolve_packages(_Nix(), plan)
     assert plan.attrs == [".#armv7-nixpkgs.strace"]
 
@@ -430,7 +435,7 @@ def test_resolve_uses_debug_prefix_for_discovery_and_bare_names() -> None:
 
 
 def test_build_realises_each_resolved() -> None:
-    plan = catalog.Deployment(attrs=[], resolved=[Pkg("core", "1.0", ".#x.pkg^out")])
+    plan = catalog.Deployment(attrs=[], resolved=[Pkg("core", "1.0", Attr(".#x.pkg^out"))])
     catalog.build_packages(_Nix(), plan)
     assert [b.store_path for b in plan.built] == ["/nix/store/core"]
 
@@ -439,7 +444,7 @@ def test_copy_closures_sends_built_paths() -> None:
     nix = _Nix()
     dev = Device("h", backend=_Exec(_routes({})))
     plan = catalog.Deployment(
-        attrs=[], built=[Built("core", "1.0", ".#x.pkg^out", "/nix/store/core")]
+        attrs=[], built=[Built("core", "1.0", Attr(".#x.pkg^out"), StorePath("/nix/store/core"))]
     )
     catalog.copy_closures(nix, dev, plan)
     assert nix.copied == [(["/nix/store/core"], dev.copy_dest)]
@@ -449,7 +454,7 @@ def test_register_packages_builds_cli_command() -> None:
     backend = _Exec(_routes({}))
     dev = Device("h", backend=backend)
     plan = catalog.Deployment(
-        attrs=[], built=[Built("core", "1.0", ".#x.pkg^out", "/nix/store/core")]
+        attrs=[], built=[Built("core", "1.0", Attr(".#x.pkg^out"), StorePath("/nix/store/core"))]
     )
     catalog.register_packages(dev, plan)
     cmd = backend.runs[-1][-1]
@@ -458,7 +463,9 @@ def test_register_packages_builds_cli_command() -> None:
 
 
 def _flip_clock_plan() -> catalog.Deployment:
-    built = Built("widget-flip-clock", "1.0", ".#x^out", store_path="/nix/store/wfc")
+    built = Built(
+        "widget-flip-clock", "1.0", Attr(".#x^out"), store_path=StorePath("/nix/store/wfc")
+    )
     return catalog.Deployment(attrs=[], built=[built])
 
 
@@ -472,7 +479,8 @@ def test_remove_legacy_flip_clock_skips_without_successor() -> None:
     # No widget-flip-clock in the deploy → no conflict → nothing to remove.
     backend = _Exec(_routes({}))
     plan = catalog.Deployment(
-        attrs=[], built=[Built("core", "1.0", ".#x^out", store_path="/nix/store/core")]
+        attrs=[],
+        built=[Built("core", "1.0", Attr(".#x^out"), store_path=StorePath("/nix/store/core"))],
     )
     catalog.remove_legacy_flip_clock(Device("h", backend=backend), plan)
     assert backend.runs == []
@@ -710,7 +718,7 @@ def test_store_absent_aborts_when_umount_fails() -> None:
 def _pushed_plan(tmp_path: Path) -> catalog.Provisioning:
     plan = catalog.Provisioning()
     plan.profile_path = "/nix/var/nix/gcroots/profiles/bmc"
-    plan.remote_tarball = "/mnt/data/nix-x.tar.gz.deck-init.1"
+    plan.remote_tarball = RemotePath("/mnt/data/nix-x.tar.gz.deck-init.1")
     plan.tarball = tmp_path / "t.tar.gz"
     return plan
 
@@ -881,7 +889,7 @@ def _manifest(**paths: str) -> str:
 
 def test_verify_profile_advanced_ok() -> None:
     cycle = _cycle(generation_before=5, installed_before={"core"})
-    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     manifest = _manifest(core="/nix/store/abc-core")
     backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
     plan = catalog.Deployment(attrs=[], built=[built])
@@ -899,7 +907,7 @@ def test_verify_profile_advanced_aborts_when_generation_unchanged() -> None:
 
 def test_verify_profile_advanced_aborts_on_missing_store_path() -> None:
     cycle = _cycle(generation_before=5, installed_before={"core"})
-    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     manifest = _manifest(core="/nix/store/other")
     backend = _Exec(_routes({"readlink": "6-link", "cat": manifest}))
     plan = catalog.Deployment(attrs=[], built=[built])
@@ -909,7 +917,7 @@ def test_verify_profile_advanced_aborts_on_missing_store_path() -> None:
 
 def test_verify_profile_advanced_aborts_on_path_under_wrong_package() -> None:
     cycle = _cycle(generation_before=5, installed_before={"core"})
-    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     # The served path is present, but attached to a different package — a
     # substring check would have wrongly passed.
     manifest = _manifest(other="/nix/store/abc-core", core="/nix/store/stale-core")
@@ -921,7 +929,7 @@ def test_verify_profile_advanced_aborts_on_path_under_wrong_package() -> None:
 
 def test_verify_profile_advanced_aborts_on_non_json_manifest() -> None:
     cycle = _cycle(generation_before=5, installed_before={"core"})
-    built = Built("core", "1.0", ".#x", store_path="/nix/store/abc-core")
+    built = Built("core", "1.0", Attr(".#x"), store_path=StorePath("/nix/store/abc-core"))
     backend = _Exec(_routes({"readlink": "6-link", "cat": "/nix/store/abc-core"}))
     plan = catalog.Deployment(attrs=[], built=[built])
     with pytest.raises(Abort, match="not a package manifest"):
@@ -937,8 +945,13 @@ def test_upgrade_server_argv_serves_widgets_with_metadata() -> None:
         index_port=8081,
         key_dir=Path("/k"),
         built=[
-            Built("core", "1.0", ".#core^out", store_path="/nix/store/core"),
-            Built("widget-weather", "0.1.0", ".#w^out", store_path="/nix/store/weather"),
+            Built("core", "1.0", Attr(".#core^out"), store_path=StorePath("/nix/store/core")),
+            Built(
+                "widget-weather",
+                "0.1.0",
+                Attr(".#w^out"),
+                store_path=StorePath("/nix/store/weather"),
+            ),
         ],
     )
     assert argv[argv.index("--package") + 1] == "core=1.0=/nix/store/core"

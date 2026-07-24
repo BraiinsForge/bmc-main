@@ -26,7 +26,7 @@ from pathlib import Path
 
 import pytest
 
-from bmc_tui.device import Device
+from bmc_tui.device import Device, RemotePath
 from bmc_tui.stage import dry_run
 
 
@@ -79,7 +79,7 @@ def test_push_streams_file_over_ssh(tmp_path: Path) -> None:
     fw = tmp_path / "fw.tar"
     fw.write_bytes(b"firmware-bytes")
     backend = _FakeExec()
-    Device("h", backend=backend).push(fw, "/mnt/data/fw.tar")
+    Device("h", backend=backend).push(fw, RemotePath("/mnt/data/fw.tar"))
     argv, data = backend.streams[0]
     assert argv[0] == "ssh"
     assert argv[-1] == "cat > /mnt/data/fw.tar"
@@ -91,7 +91,7 @@ def test_push_quotes_remote_path(tmp_path: Path) -> None:
     local.write_bytes(b"x")
     backend = _FakeExec()
     dev = Device("h", backend=backend)
-    dev.push(local, "/mnt/data/odd name.tar.gz")
+    dev.push(local, RemotePath("/mnt/data/odd name.tar.gz"))
     argv, _ = backend.streams[0]
     assert argv[-1] == "cat > '/mnt/data/odd name.tar.gz'"
 
@@ -102,7 +102,7 @@ def test_push_skips_under_dry_run(tmp_path: Path) -> None:
     backend = _FakeExec()
     token = dry_run.set(True)
     try:
-        Device("h", backend=backend).push(fw, "/mnt/data/fw.tar")
+        Device("h", backend=backend).push(fw, RemotePath("/mnt/data/fw.tar"))
     finally:
         dry_run.reset(token)
     assert backend.streams == []

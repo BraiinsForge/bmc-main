@@ -49,7 +49,9 @@ class Deploy:
             dry_run.set(True)
         dev = Device(self.device)
         backend = nix.real(max_jobs=self.max_jobs)
-        plan = catalog.Deployment(attrs=self.packages, prefix=catalog.package_prefix(self.profile))
+        plan = catalog.Deployment(
+            attrs=[nix.Attr(p) for p in self.packages], prefix=catalog.package_prefix(self.profile)
+        )
 
         console.header("Deploy packages")
         dev.print()
