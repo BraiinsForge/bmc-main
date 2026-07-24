@@ -20,6 +20,7 @@
 
 //! Background discovery helpers for the WASM runtime.
 
+use std::fmt::Write as _;
 use std::time::{Duration, Instant};
 
 use crate::host_api::{MdnsEvent, SsdpEvent, UdpBroadcastEvent};
@@ -662,12 +663,27 @@ pub(in crate::runtime) fn udp_broadcast_thread(
     }
 }
 
+/// Escape a discovered string for the hand-built JSON the guest parses.
+/// A TXT record or SSDP header may hold any character, and JSON forbids
+/// an unescaped control below `U+0020` — one raw character costs the event,
+/// because the guest's parser rejects the whole document.
 fn escape_json(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t")
+    let mut escaped = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            '\t' => escaped.push_str("\\t"),
+            control if control < '\u{20}' => {
+                write!(escaped, "\\u{:04x}", control as u32)
+                    .expect("BUG: writing to a String cannot fail");
+            }
+            other => escaped.push(other),
+        }
+    }
+    escaped
 }
 
 fn ssdp_handle_response(
@@ -809,6 +825,28 @@ fn ssdp_fetch_description(location: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn escaping_leaves_every_control_byte_parseable() {
+        // Assert on a parse, not on the escape's spelling.
+        // A raw control costs the whole event; only a parser proves it survived.
+        for byte in 0_u8..0x20 {
+            let raw = format!("na{}me", char::from(byte));
+            let document = format!(r#"{{"name":"{}"}}"#, escape_json(&raw));
+            let parsed: serde_json::Value = serde_json::from_str(&document)
+                .unwrap_or_else(|e| panic!("BUG: byte {byte:#04x} broke the document: {e}"));
+            assert_eq!(parsed["name"], serde_json::Value::String(raw));
+        }
+    }
+
+    #[test]
+    fn escaping_round_trips_quotes_backslashes_and_unicode() {
+        let raw = "a\\b\"c\td—é";
+        let document = format!(r#"{{"name":"{}"}}"#, escape_json(raw));
+        let parsed: serde_json::Value =
+            serde_json::from_str(&document).expect("BUG: document must parse");
+        assert_eq!(parsed["name"], serde_json::Value::String(raw.to_owned()));
+    }
 
     #[test]
     fn watchdog_grace_doubles_to_the_cap() {
