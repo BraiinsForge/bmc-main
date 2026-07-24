@@ -23,7 +23,7 @@ pub struct MinerModel {
     pub id: String,
     pub name: String,
     pub chip_type: Option<String>,
-    pub chip_count: Option<u32>,
+    pub chip_count: Option<usize>,
     pub nominal_hashrate_ths: Option<f32>,
 }
 
@@ -32,7 +32,7 @@ pub struct ModelAccumulator {
     pub id: Option<String>,
     pub name: Option<String>,
     pub chip_type: Option<String>,
-    pub chip_count: Option<u32>,
+    pub chip_count: Option<usize>,
 }
 
 /// Nameplate hashrate (TH/s) for models whose API omits a nominal (today uBOS).

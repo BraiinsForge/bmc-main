@@ -226,7 +226,7 @@ impl FamilyAdapter for BosAdapter {
                     model.chip_type = summary.model;
                 }
                 if let Some(count) = summary.count {
-                    model.chip_count = u32::try_from(count).ok();
+                    model.chip_count = Some(count);
                 }
             }
             _ => {}

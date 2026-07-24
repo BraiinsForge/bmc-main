@@ -55,7 +55,7 @@ fn txt_model_hint(json: &dyn JsonLookup) -> Option<MinerModel> {
         ),
         (None, None) => return None,
     };
-    let chip_count = non_empty(json, "/txt/asic_count").and_then(|s| s.parse::<u32>().ok());
+    let chip_count = non_empty(json, "/txt/asic_count").and_then(|s| s.parse::<usize>().ok());
     Some(MinerModel {
         id,
         name,
@@ -175,7 +175,7 @@ impl FamilyAdapter for BitaxeAdapter {
         if let Some(asic) = non_empty(json, "/ASICModel") {
             model.chip_type = Some(asic);
         }
-        if let Some(chip_count) = json.i64("/asicCount").and_then(|v| u32::try_from(v).ok()) {
+        if let Some(chip_count) = json.i64("/asicCount").and_then(|v| usize::try_from(v).ok()) {
             model.chip_count = Some(chip_count);
         }
     }
