@@ -35,7 +35,9 @@ use serde_json::{Value as Json, json};
 
 use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec};
 use crate::build::{celsius, drift, leaf, mac, steady};
+use crate::http_status::HttpStatus;
 use crate::noise::{mix, mix_index, stable01};
+use crate::quantity::{Celsius, NonNegative};
 
 /// Peak per-board temperature spread (°C): each board sits within half this
 /// of the miner's baseline.
@@ -48,40 +50,43 @@ fn board_offset(base: u64, index: usize) -> f64 {
 }
 
 /// Tunables for a simulated BOS+ miner.
+// Strict, unlike persisted state: a blueprint is hand-authored, so a mistyped
+// key is a fault that would silently never fire rather than a forward-compatible
+// field to skip over.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[schemars(rename = "BosParams")]
 pub struct Params {
     /// Model name reported on `/miner/details`.
     pub model_name: String,
     /// Current hashrate to hover around, in TH/s (low value = not-okay).
-    pub hashrate_ths: f64,
+    pub hashrate_ths: NonNegative,
     /// Nameplate (`sticker_hashrate`) hashrate, in TH/s.
-    pub nominal_ths: f64,
+    pub nominal_ths: NonNegative,
     /// Power draw to hover around, in W.
-    pub power_w: f64,
+    pub power_w: NonNegative,
     /// Junction temperature to hover around, in °C.
-    pub temp_c: f64,
+    pub temp_c: Celsius,
     /// Reported uptime, in seconds.
     pub uptime_s: u64,
     /// HTTP status the telemetry endpoints return (503 = present, unreadable).
-    pub status: u16,
+    pub status: HttpStatus,
     /// HTTP status the login endpoint returns; 401 = the miner needs credentials
     /// the widget doesn't have, so it never authenticates (the no-creds case).
-    pub auth_status: u16,
+    pub auth_status: HttpStatus,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Self {
             model_name: "Braiins Mini Miner BMM 101".to_owned(),
-            hashrate_ths: 1.0,
-            nominal_ths: 1.0,
-            power_w: 32.0,
-            temp_c: 65.0,
+            hashrate_ths: NonNegative::from(1.0),
+            nominal_ths: NonNegative::from(1.0),
+            power_w: NonNegative::from(32.0),
+            temp_c: Celsius::from(65.0),
             uptime_s: 187_020,
-            status: 200,
-            auth_status: 200,
+            status: HttpStatus::OK,
+            auth_status: HttpStatus::OK,
         }
     }
 }
@@ -89,8 +94,8 @@ impl Default for Params {
 impl Params {
     #[must_use]
     pub fn resource(&self, name: &str, port: u16) -> ResourceSpec {
-        let ghs = leaf(drift(self.hashrate_ths * 1_000.0));
-        let watt = leaf(drift(self.power_w));
+        let ghs = leaf(drift(self.hashrate_ths.get() * 1_000.0));
+        let watt = leaf(drift(self.power_w.get()));
         let base = mix(0, name);
         let endpoints = vec![
             // The widget fingerprints BOS over this unauthenticated endpoint
@@ -99,7 +104,7 @@ impl Params {
                 method: "GET".to_owned(),
                 path: "/api/v1/version".to_owned(),
                 body: Body::Render(json!({ "major": 1, "minor": 6, "patch": 0 })),
-                status: 200,
+                status: HttpStatus::OK,
             },
             EndpointSpec {
                 method: "POST".to_owned(),
@@ -132,7 +137,7 @@ impl Params {
                     "platform": 8,
                     "mac_address": mac(name),
                     "miner_identity": { "miner_model": self.model_name.as_str() },
-                    "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths * 1_000.0)) },
+                    "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * 1_000.0)) },
                 })),
                 status: self.status,
             },
@@ -153,7 +158,7 @@ impl Params {
     /// A hashboard whose chip temperature drifts around the baseline plus `offset_c`.
     fn board(&self, offset_c: f64) -> Json {
         json!({
-            "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c + offset_c)) } },
+            "highest_chip_temp": { "temperature": { "degree_c": leaf(celsius(self.temp_c.get() + offset_c)) } },
             "chip_type": "BM1370",
             "chips_count": 76,
         })

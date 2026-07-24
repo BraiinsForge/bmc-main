@@ -28,6 +28,10 @@ default:
 # Fast sanity check, not CI-reproducible (use `validate-full` for that).
 validate: format clippy python validate-wasm
     just manifest::check-schema
+    # Native crates are clippy-gated above but not otherwise tested here: a
+    # `--workspace` run cannot build (bmc-wasm-sdk loses bmc_render_macros under
+    # workspace-wide feature unification), so each has to be named.
+    just test bmc-netsim
     nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
     nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
     @echo "validate: OK"

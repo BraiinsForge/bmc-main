@@ -35,6 +35,8 @@ use serde_json::{Value as Json, json};
 use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec, Sampler, SeriesSpec};
 use crate::build::{celsius, drift, leaf, mac, steady};
 use crate::cache::Cache;
+use crate::http_status::HttpStatus;
+use crate::quantity::{Celsius, NonNegative};
 
 /// AxeOS 10-minute history window: 300 samples at a 2 s cadence
 /// (ESP-Miner `HISTORY_WINDOW_TEN_MINS`).
@@ -73,36 +75,38 @@ fn statistics_body(cache: &Cache) -> Json {
 }
 
 /// Tunables for a simulated AxeOS miner.
+// Strict for the same reason as the BOS params: a mistyped key in a
+// hand-authored blueprint must not silently drop the fault it meant to inject.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[schemars(rename = "AxeosParams")]
 pub struct Params {
     /// Model name reported as `deviceModel`.
     pub model_name: String,
     /// Current hashrate to hover around, in TH/s.
-    pub hashrate_ths: f64,
+    pub hashrate_ths: NonNegative,
     /// Nameplate (expected) hashrate at current settings, in TH/s.
-    pub nominal_ths: f64,
+    pub nominal_ths: NonNegative,
     /// Power draw to hover around, in W.
-    pub power_w: f64,
+    pub power_w: NonNegative,
     /// Temperature to hover around, in °C.
-    pub temp_c: f64,
+    pub temp_c: Celsius,
     /// Reported uptime, in seconds.
     pub uptime_s: u64,
     /// HTTP status the telemetry endpoint returns (503 = present, unreadable).
-    pub status: u16,
+    pub status: HttpStatus,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Self {
             model_name: "NerdQAxe++".to_owned(),
-            hashrate_ths: 4.5,
-            nominal_ths: 4.5,
-            power_w: 76.0,
-            temp_c: 62.0,
+            hashrate_ths: NonNegative::from(4.5),
+            nominal_ths: NonNegative::from(4.5),
+            power_w: NonNegative::from(76.0),
+            temp_c: Celsius::from(62.0),
             uptime_s: 187_020,
-            status: 200,
+            status: HttpStatus::OK,
         }
     }
 }
@@ -117,9 +121,9 @@ impl Params {
         txt.insert("asic_count".to_owned(), "4".to_owned());
         // Shared by the live leaves and the sampled series; series are named
         // after the info keys so seeds — and the newest sample — align.
-        let hashrate = drift(self.hashrate_ths * 1_000.0);
-        let power = drift(self.power_w);
-        let temp = celsius(self.temp_c);
+        let hashrate = drift(self.hashrate_ths.get() * 1_000.0);
+        let power = drift(self.power_w.get());
+        let temp = celsius(self.temp_c.get());
         ResourceSpec {
             name: name.to_owned(),
             port,
@@ -134,7 +138,7 @@ impl Params {
                     path: "/api/system/info".to_owned(),
                     body: Body::Render(json!({
                         "hashRate": leaf(hashrate),
-                        "expectedHashrate": leaf(steady(self.nominal_ths * 1_000.0)),
+                        "expectedHashrate": leaf(steady(self.nominal_ths.get() * 1_000.0)),
                         "power": leaf(power),
                         "temp": leaf(temp),
                         "uptimeSeconds": self.uptime_s,

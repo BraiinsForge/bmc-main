@@ -203,6 +203,7 @@ cbc = { version = "0.1.2", default-features = false }
 chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }
+codespan-reporting = "0.13.1"
 cognos = "1.0.1"
 console = { version = "0.15.11", default-features = false, features = ["ansi-parsing"] }
 cosmic-text = { version = "0.18", default-features = false, features = ["std", "swash"] }
@@ -218,6 +219,7 @@ drm-fourcc = "2.2.0"
 eframe = { version = "0.34", default-features = false, features = ["default_fonts", "glow", "persistence", "wayland", "x11"] }
 egui = "0.34"
 egui-notify = "0.22"
+strsim = "0.11.1"
 # Pinned to yvind/master (open PR #53 upstream — egui 0.34 bump unmerged
 # as of 2026-04-07). Drop back to a crates.io release once that PR lands;
 # follow-up tracked in BDK-477.

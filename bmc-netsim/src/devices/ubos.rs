@@ -39,35 +39,39 @@ use serde_json::json;
 
 use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec};
 use crate::build::{celsius, drift, leaf};
+use crate::http_status::HttpStatus;
+use crate::quantity::{Celsius, NonNegative};
 
 /// Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).
+// Strict for the same reason as the BOS params: a mistyped key in a
+// hand-authored blueprint must not silently drop the fault it meant to inject.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 #[schemars(rename = "UbosParams")]
 pub struct Params {
     /// Product name reported on `/api/info`.
     pub model_name: String,
     /// Current hashrate to hover around, in TH/s.
-    pub hashrate_ths: f64,
+    pub hashrate_ths: NonNegative,
     /// Power draw to hover around, in W.
-    pub power_w: f64,
+    pub power_w: NonNegative,
     /// Temperature to hover around, in °C.
-    pub temp_c: f64,
+    pub temp_c: Celsius,
     /// Reported uptime, in seconds.
     pub uptime_s: u64,
     /// HTTP status the telemetry endpoint returns (503 = present, unreadable).
-    pub status: u16,
+    pub status: HttpStatus,
 }
 
 impl Default for Params {
     fn default() -> Self {
         Self {
             model_name: "Braiins Forge Miner x4".to_owned(),
-            hashrate_ths: 4.8,
-            power_w: 76.0,
-            temp_c: 65.0,
+            hashrate_ths: NonNegative::from(4.8),
+            power_w: NonNegative::from(76.0),
+            temp_c: Celsius::from(65.0),
             uptime_s: 187_020,
-            status: 200,
+            status: HttpStatus::OK,
         }
     }
 }
@@ -88,9 +92,9 @@ impl Params {
                 path: "/api/info".to_owned(),
                 body: Body::Render(json!({
                     "name": self.model_name.as_str(),
-                    "hashrate": leaf(drift(self.hashrate_ths * 1e12)),
-                    "power_out_mw": leaf(drift(self.power_w * 1_000.0)),
-                    "temperature": leaf(celsius(self.temp_c)),
+                    "hashrate": leaf(drift(self.hashrate_ths.get() * 1e12)),
+                    "power_out_mw": leaf(drift(self.power_w.get() * 1_000.0)),
+                    "temperature": leaf(celsius(self.temp_c.get())),
                     "uptime": self.uptime_s,
                 })),
                 status: self.status,

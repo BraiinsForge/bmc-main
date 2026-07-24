@@ -25,12 +25,16 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use std::fmt;
+
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::de::{self, MapAccess, Visitor};
+use serde::{Deserialize, Deserializer};
 use serde_json::Value as Json;
 
 use crate::cache::Cache;
 use crate::devices::{axeos, bos, ubos};
+use crate::http_status::HttpStatus;
 use crate::value::Value;
 
 /// A run: the device instances to bring up.
@@ -42,7 +46,9 @@ pub struct Blueprint {
 
 /// One device instance, discriminated by `device`
 /// and carrying that device's typed params.
-#[derive(Debug, Clone, Deserialize, JsonSchema)]
+// The `serde` attributes are here for `schemars`, which reads them to shape the
+// schema; `Deserialize` is hand-written below rather than derived.
+#[derive(Debug, Clone, JsonSchema)]
 #[serde(tag = "device", rename_all = "snake_case")]
 pub enum Instance {
     Bos {
@@ -78,6 +84,143 @@ pub enum Instance {
 
 fn one() -> usize {
     1
+}
+
+/// The device keys a blueprint may name, as written in the `device` field.
+const DEVICE_KEYS: &[&str] = &["bos", "bos-libre", "axeos"];
+const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count"];
+
+/// One device's typed params, before they are folded into an [`Instance`].
+enum DeviceParams {
+    Bos(bos::Params),
+    Ubos(ubos::Params),
+    Axeos(axeos::Params),
+}
+
+impl DeviceParams {
+    /// Read the params straight from the map, so the underlying format keeps
+    /// its source span for anything the params reject.
+    fn read<'de, A: MapAccess<'de>>(device: &str, map: &mut A) -> Result<Self, A::Error> {
+        Ok(match device {
+            "bos" => DeviceParams::Bos(map.next_value()?),
+            "bos-libre" => DeviceParams::Ubos(map.next_value()?),
+            "axeos" => DeviceParams::Axeos(map.next_value()?),
+            other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
+        })
+    }
+
+    /// Re-read params that arrived before the `device` naming their type. The
+    /// span is already lost by the time they can be typed, so this path only
+    /// keeps such blueprints working — put `device` first to keep the caret.
+    fn reparse<E: de::Error>(device: &str, json: Json) -> Result<Self, E> {
+        Ok(match device {
+            "bos" => DeviceParams::Bos(serde_json::from_value(json).map_err(E::custom)?),
+            "bos-libre" => DeviceParams::Ubos(serde_json::from_value(json).map_err(E::custom)?),
+            "axeos" => DeviceParams::Axeos(serde_json::from_value(json).map_err(E::custom)?),
+            other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
+        })
+    }
+
+    fn fallback<E: de::Error>(device: &str) -> Result<Self, E> {
+        Ok(match device {
+            "bos" => DeviceParams::Bos(bos::Params::default()),
+            "bos-libre" => DeviceParams::Ubos(ubos::Params::default()),
+            "axeos" => DeviceParams::Axeos(axeos::Params::default()),
+            other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
+        })
+    }
+
+    fn into_instance(self, label: Option<String>, count: usize) -> Instance {
+        match self {
+            DeviceParams::Bos(params) => Instance::Bos {
+                label,
+                params,
+                count,
+            },
+            DeviceParams::Ubos(params) => Instance::Ubos {
+                label,
+                params,
+                count,
+            },
+            DeviceParams::Axeos(params) => Instance::Axeos {
+                label,
+                params,
+                count,
+            },
+        }
+    }
+}
+
+/// Hand-written rather than derived: `#[serde(tag = ...)]` makes serde buffer
+/// each entry into an in-memory `Content` before dispatching on the tag, and a
+/// value rejected inside that buffer carries no source position — which costs
+/// every blueprint error its caret. Reading the tag first and the params
+/// straight from the map keeps the format's spans intact.
+impl<'de> Deserialize<'de> for Instance {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_map(InstanceVisitor)
+    }
+}
+
+struct InstanceVisitor;
+
+impl<'de> Visitor<'de> for InstanceVisitor {
+    type Value = Instance;
+
+    fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("a device instance naming its `device`")
+    }
+
+    fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> Result<Instance, A::Error> {
+        let mut device: Option<String> = None;
+        let mut label: Option<Option<String>> = None;
+        let mut count: Option<usize> = None;
+        let mut params: Option<DeviceParams> = None;
+        let mut early_params: Option<Json> = None;
+
+        while let Some(key) = map.next_key::<String>()? {
+            // Refuse a repeated key as the derive would; a duplicated `params`
+            // block is a copy-paste whose earlier half would vanish unread.
+            match key.as_str() {
+                "device" => {
+                    if device.is_some() {
+                        return Err(de::Error::duplicate_field("device"));
+                    }
+                    device = Some(map.next_value()?);
+                }
+                "label" => {
+                    if label.is_some() {
+                        return Err(de::Error::duplicate_field("label"));
+                    }
+                    label = Some(map.next_value()?);
+                }
+                "count" => {
+                    if count.is_some() {
+                        return Err(de::Error::duplicate_field("count"));
+                    }
+                    count = Some(map.next_value()?);
+                }
+                "params" => {
+                    if params.is_some() || early_params.is_some() {
+                        return Err(de::Error::duplicate_field("params"));
+                    }
+                    match device.as_deref() {
+                        Some(device) => params = Some(DeviceParams::read(device, &mut map)?),
+                        None => early_params = Some(map.next_value()?),
+                    }
+                }
+                other => return Err(de::Error::unknown_field(other, INSTANCE_FIELDS)),
+            }
+        }
+
+        let device = device.ok_or_else(|| de::Error::missing_field("device"))?;
+        let params = match (params, early_params) {
+            (Some(params), _) => params,
+            (None, Some(json)) => DeviceParams::reparse(&device, json)?,
+            (None, None) => DeviceParams::fallback(&device)?,
+        };
+        Ok(params.into_instance(label.flatten(), count.unwrap_or_else(one)))
+    }
 }
 
 impl Instance {
@@ -190,7 +333,7 @@ pub struct EndpointSpec {
     pub method: String,
     pub path: String,
     pub body: Body,
-    pub status: u16,
+    pub status: HttpStatus,
 }
 
 /// How an endpoint produces its response body.
@@ -227,7 +370,94 @@ impl std::fmt::Debug for Body {
 
 #[cfg(test)]
 mod tests {
-    use super::Blueprint;
+    use super::{Blueprint, Instance};
+
+    fn instance(source: &str) -> Instance {
+        json5::from_str(source).expect("BUG: instance must parse")
+    }
+
+    #[test]
+    fn reads_each_device_key_into_its_variant() {
+        assert!(matches!(
+            instance(r#"{ device: "bos" }"#),
+            Instance::Bos { .. }
+        ));
+        assert!(matches!(
+            instance(r#"{ device: "bos-libre" }"#),
+            Instance::Ubos { .. }
+        ));
+        assert!(matches!(
+            instance(r#"{ device: "axeos" }"#),
+            Instance::Axeos { .. }
+        ));
+    }
+
+    #[test]
+    fn omitted_params_and_count_fall_back_to_defaults() {
+        let Instance::Bos { label, count, .. } = instance(r#"{ device: "bos" }"#) else {
+            panic!("BUG: expected a BOS instance");
+        };
+        assert_eq!(count, 1, "count defaults to one");
+        assert_eq!(label, None);
+    }
+
+    #[test]
+    fn params_before_device_still_load() {
+        // The span is lost for this ordering, but the blueprint must not break.
+        let Instance::Bos { params, .. } =
+            instance(r#"{ params: { uptime_s: 42 }, device: "bos" }"#)
+        else {
+            panic!("BUG: expected a BOS instance");
+        };
+        assert_eq!(params.uptime_s, 42);
+    }
+
+    #[test]
+    fn a_rejected_param_keeps_its_source_position() {
+        // The whole reason `Deserialize` is hand-written: a derived, internally
+        // tagged enum buffers the entry and loses this location.
+        let err = json5::from_str::<Instance>(
+            "{\n  device: \"bos\",\n  params: {\n    status: 99,\n  },\n}",
+        )
+        .expect_err("BUG: 99 must be rejected");
+        let json5::Error::Message { location, .. } = err;
+        let location = location.expect("BUG: the rejection must carry a location");
+        assert_eq!(location.line, 4, "the status sits on the fourth line");
+    }
+
+    #[test]
+    fn an_unknown_device_names_the_ones_that_exist() {
+        let err = json5::from_str::<Instance>(r#"{ device: "toaster" }"#)
+            .expect_err("BUG: unknown device must be rejected");
+        let json5::Error::Message { msg, .. } = err;
+        assert!(msg.contains("toaster"), "message was: {msg}");
+        assert!(msg.contains("bos-libre"), "must list the valid keys: {msg}");
+    }
+
+    #[test]
+    fn a_missing_device_is_rejected() {
+        assert!(json5::from_str::<Instance>(r"{ count: 2 }").is_err());
+    }
+
+    #[test]
+    fn a_repeated_key_is_refused() {
+        let err = json5::from_str::<Instance>(
+            r#"{ device: "bos", params: { uptime_s: 1 }, params: { uptime_s: 2 } }"#,
+        )
+        .expect_err("BUG: a duplicated params block must be refused");
+        let json5::Error::Message { msg, .. } = err;
+        assert!(msg.contains("params"), "names the repeated key: {msg}");
+    }
+
+    #[test]
+    fn an_unknown_field_is_refused() {
+        // A blueprint is hand-authored input, not persisted state: a mistyped
+        // key would silently drop the fault it meant to inject.
+        let err = json5::from_str::<Instance>(r#"{ device: "bos", stauts: 503 }"#)
+            .expect_err("BUG: a mistyped key must be refused");
+        let json5::Error::Message { msg, .. } = err;
+        assert!(msg.contains("stauts"), "names the offender: {msg}");
+    }
 
     /// Keep the committed `blueprint.schema.json` in lockstep with the types.
     /// Regenerate with `UPDATE_SCHEMA=1 cargo test -p bmc-netsim`.

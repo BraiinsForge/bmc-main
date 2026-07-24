@@ -22,15 +22,17 @@
 //! loaded from disk, or emit the blueprint JSON schema for authoring.
 
 use std::fmt;
+use std::io::IsTerminal;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand};
 use tracing_subscriber::fmt::FormatFields;
 use tracing_subscriber::fmt::format::Writer;
 
 use bmc_netsim::blueprint::Blueprint;
+use bmc_netsim::diag;
 
 #[derive(Parser, Debug)]
 #[command(
@@ -109,6 +111,9 @@ impl<'w> FormatFields<'w> for KvFields {
 async fn main() -> ExitCode {
     tracing_subscriber::fmt()
         .with_max_level(tracing::Level::INFO)
+        // The subscriber writes to stdout; colour it only when that is a
+        // terminal, so a redirected log holds text rather than escapes.
+        .with_ansi(std::io::stdout().is_terminal())
         .fmt_fields(KvFields)
         .init();
     match run().await {
@@ -129,10 +134,15 @@ async fn run() -> Result<()> {
         Command::Run { blueprint } => {
             let text = std::fs::read_to_string(&blueprint)
                 .with_context(|| format!("reading {}", blueprint.display()))?;
-            let blueprint: Blueprint = json5::from_str(&text)
-                .with_context(|| format!("parsing {}", blueprint.display()))?;
-            tracing::info!(instances = blueprint.instances.len(), "blueprint loaded");
-            bmc_netsim::serve(blueprint).await?;
+            let parsed = match json5::from_str::<Blueprint>(&text) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    diag::emit_error(&blueprint, &text, &err);
+                    bail!("invalid blueprint {}", blueprint.display());
+                }
+            };
+            tracing::info!(instances = parsed.instances.len(), "blueprint loaded");
+            bmc_netsim::serve(parsed).await?;
         }
     }
     Ok(())

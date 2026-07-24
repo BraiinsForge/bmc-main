@@ -42,8 +42,7 @@ pub fn build_router(
     for endpoint in endpoints {
         let body = endpoint.body.clone();
         let cache = Arc::clone(cache);
-        let status =
-            axum::http::StatusCode::from_u16(endpoint.status).unwrap_or(axum::http::StatusCode::OK);
+        let status = endpoint.status.code();
         let handler = move || {
             let body = body.clone();
             let cache = Arc::clone(&cache);
