@@ -308,8 +308,11 @@ impl DeviceList {
 
     /// Remove a device that discovery reported as gone.
     pub fn remove(&mut self, id: &DeviceId) {
-        self.seq += 1;
+        let before = self.devices.len();
         self.devices.retain(|d| &d.identity.id != id);
+        if self.devices.len() != before {
+            self.seq += 1;
+        }
     }
 
     /// Retire devices unreachable with no response (not an API error) for over
@@ -392,12 +395,12 @@ impl DeviceList {
     /// returned reading is the positive miner test, so this promotes the device to
     /// [`Membership::Confirmed`] and clears any recorded failure.
     pub fn apply_telemetry(&mut self, id: &DeviceId, reading: TelemetryReading, reachable: bool) {
-        self.seq += 1;
         if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
             dev.telemetry = Some(TelemetrySnapshot { reading });
             dev.reachable = reachable;
             dev.membership = Membership::Confirmed;
             dev.last_failure = None;
+            self.seq += 1;
         }
     }
 
@@ -406,7 +409,6 @@ impl DeviceList {
     /// though "not responding" until it delivers telemetry.
     /// Leaves a [`Membership::Confirmed`] device alone (never demotes)
     /// and no-ops for an unknown id.
-    /// Bumps the mutation sequence when it changes visibility.
     pub fn identify(&mut self, id: &DeviceId) {
         let changed = self
             .devices
@@ -455,7 +457,6 @@ impl DeviceList {
             }
             return 0;
         }
-        self.seq += 1;
         match self.devices.iter_mut().find(|d| &d.identity.id == id) {
             Some(dev) => {
                 dev.consecutive_failures = dev.consecutive_failures.saturating_add(1);
@@ -469,7 +470,9 @@ impl DeviceList {
                 {
                     dev.membership = Membership::Dormant;
                 }
-                dev.consecutive_failures
+                let streak = dev.consecutive_failures;
+                self.seq += 1;
+                streak
             }
             None => 0,
         }
@@ -479,9 +482,9 @@ impl DeviceList {
     /// telemetry are updated independently; if a fetch fails the caller omits
     /// the call and the previous model is retained.
     pub fn apply_model(&mut self, id: &DeviceId, model: MinerModel) {
-        self.seq += 1;
         if let Some(dev) = self.devices.iter_mut().find(|d| &d.identity.id == id) {
             dev.model = Some(model);
+            self.seq += 1;
         }
     }
 
@@ -491,7 +494,7 @@ impl DeviceList {
     /// Devices stay listed; readings/model go back to absent and reachability is
     /// recomputed on the next telemetry pass.
     pub fn clear_telemetry_for(&mut self, family: DeviceFamily) {
-        self.seq += 1;
+        let mut cleared = false;
         for dev in self
             .devices
             .iter_mut()
@@ -502,6 +505,10 @@ impl DeviceList {
             dev.reachable = false;
             dev.consecutive_failures = 0;
             dev.last_failure = None;
+            cleared = true;
+        }
+        if cleared {
+            self.seq += 1;
         }
     }
 }
@@ -598,6 +605,34 @@ mod tests {
         let before = list.seq();
         list.remove(&id);
         assert!(list.seq() > before, "remove must advance seq");
+    }
+
+    #[test]
+    fn a_call_that_changes_nothing_leaves_seq_alone() {
+        // A pass finishing for a device that discovery already dropped
+        // mutates nothing, so it must not invalidate the cached summary.
+        let mut list = DeviceList::new();
+        list.upsert(identity("a._http._tcp.local.", "10.0.0.1"));
+        let departed = DeviceId::new("gone._http._tcp.local.");
+
+        let before = list.seq();
+        list.apply_telemetry(&departed, TelemetryReading::default(), true);
+        assert_eq!(list.seq(), before, "telemetry for a departed device");
+
+        list.apply_model(&departed, model("BMM 101"));
+        assert_eq!(list.seq(), before, "model for a departed device");
+
+        assert_eq!(
+            list.record_pass(&departed, TelemetryReading::default(), false),
+            0
+        );
+        assert_eq!(list.seq(), before, "failed pass for a departed device");
+
+        list.remove(&departed);
+        assert_eq!(list.seq(), before, "removing what was never there");
+
+        list.clear_telemetry_for(DeviceFamily::Bitaxe);
+        assert_eq!(list.seq(), before, "clearing a family with no devices");
     }
 
     #[test]
