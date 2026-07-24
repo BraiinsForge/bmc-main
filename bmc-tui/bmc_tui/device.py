@@ -32,12 +32,14 @@ All subprocess work goes through an injected `Exec` backend (`run` captures,
 import json
 import shlex
 import subprocess
+import uuid
 from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NewType, Protocol
 
 from bmc_tui import console
-from bmc_tui.stage import dry_run
+from bmc_tui.stage import dry_run, require
 
 # Key-based, accept-new host key, no password — unlike the VM's sshpass path.
 _SSH_OPTS = [
@@ -62,6 +64,7 @@ _CHUNK = 1 << 16  # 64 KiB upload chunk
 # An absolute path on the device, as opposed to a local `Path`.
 # `push` already takes one of each; this names the distinction.
 RemotePath = NewType("RemotePath", str)
+_WINDOW_MARK = "bmc-tui-log-window"
 
 # Exit codes >= 128 mean the session died rather than the command failing:
 # 255 is ssh's own code for a dropped connection, and anything else in the
@@ -210,6 +213,62 @@ class Device:
         """Installed firmware version. Not cached — sysupgrade changes it across
         the reboot, so each access re-reads the live value."""
         return self.read("cat /etc/bos_version")
+
+    def log_window(self, path: RemotePath) -> "LogWindow":
+        """Stamp `path` and return a handle onto what follows the stamp."""
+        nonce = uuid.uuid4().hex
+        self.run(f"echo '{_WINDOW_MARK} {nonce}' >> {path}")
+        return LogWindow(self, path, nonce)
+
+
+@dataclass
+class LogWindow:
+    """A device log bounded to what was written while the window was open.
+
+    Device logs outlive the runs they are read for.
+    An unbounded read therefore takes an earlier run's lines for this one's.
+    The stamp written on open is the lower bound; closing captures the upper one.
+
+    `read` is always stamp-relative; `with` matters only for the upper bound.
+    """
+
+    _dev: "Device"
+    path: RemotePath
+    nonce: str
+    _closed: str | None = None
+
+    def read(self) -> str:
+        """Everything after the stamp.
+
+        A missing stamp means the log rotated or was truncated,
+        so this aborts rather than return lines that predate the window.
+        """
+        text = self._dev.read(f"sed -n '/{_WINDOW_MARK} {self.nonce}/,$p' {self.path}")
+        require(
+            self.nonce in text,
+            f"the window marker is gone from {self.path} — it rotated or was "
+            "truncated, so the lines still there may predate this run; "
+            "refusing to report rather than risk stale evidence",
+        )
+        return text
+
+    def __enter__(self) -> "LogWindow":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+        # An in-flight exception is the more useful failure;
+        # capturing here would bury it behind a marker-missing abort.
+        if exc_type is None:
+            self._closed = self.read()
+        return False
+
+    @property
+    def text(self) -> str:
+        """What the window captured when it closed."""
+        if self._closed is None:
+            msg = "log window is still open — read() inside the block, or use text after it"
+            raise RuntimeError(msg)
+        return self._closed
 
 
 def _chunks(local: Path) -> Iterator[bytes]:

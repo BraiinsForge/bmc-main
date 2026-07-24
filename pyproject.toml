@@ -11,12 +11,25 @@ members = [
 [dependency-groups]
 dev = [
     "pytest>=8",
+    "pytest-cov>=5",
 ]
 
 [tool.pytest.ini_options]
 # importlib mode keeps the two same-named `tests` dirs from colliding.
-addopts = "--import-mode=importlib"
+addopts = "--import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
 testpaths = [
     "bmc-tui/tests",
     "bmc-virt/harness/tests",
 ]
+
+# Scoped to one package so the reported total is not diluted by an unmeasured one.
+[tool.coverage.run]
+source = ["bmc_tui"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+# coverage.py's XML report is Cobertura, which is what GitLab ingests to annotate a diff.
+[tool.coverage.xml]
+output = "coverage.xml"

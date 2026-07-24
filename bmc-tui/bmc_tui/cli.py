@@ -22,6 +22,7 @@
 
 from bmc_tui.procedures.deploy import Deploy
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
+from bmc_tui.procedures.image_formats import ImageFormats
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.install_widget_e2e import InstallWidgetE2e
 from bmc_tui.procedures.sysupgrade import Sysupgrade
@@ -31,7 +32,13 @@ from bmc_tui.stage import entrypoint
 
 @entrypoint
 def main(
-    command: Init | Deploy | Sysupgrade | UpgradeE2e | InstallWidgetE2e | E2eSysupgrade,
+    command: Init
+    | Deploy
+    | Sysupgrade
+    | UpgradeE2e
+    | InstallWidgetE2e
+    | E2eSysupgrade
+    | ImageFormats,
 ) -> None:
     command.run()
 

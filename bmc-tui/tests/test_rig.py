@@ -21,9 +21,11 @@
 """Unit tests for the e2e package rig."""
 
 import json
-import socket
+import urllib.error
 import urllib.request
 from pathlib import Path
+
+import pytest
 
 from bmc_tui import rig
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
@@ -136,6 +138,9 @@ def test_make_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
         def build_out(self, attr: Attr) -> StorePath:
             raise NotImplementedError
 
+        def out_path(self, attr: Attr) -> StorePath:
+            raise NotImplementedError
+
         def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
             raise NotImplementedError
 
@@ -157,7 +162,31 @@ def test_make_cache_signs_the_union_of_index_paths(tmp_path: Path) -> None:
     ]
 
 
-def test_default_serve_ip_uses_the_route_towards_the_device() -> None:
-    with socket.create_server(("127.0.0.1", 0)) as listener:
-        port = listener.getsockname()[1]
-        assert rig.default_serve_ip("127.0.0.1", port=port) == "127.0.0.1"
+def _served(tmp_path: Path) -> Path:
+    root = tmp_path / "serve"
+    rig.write_serve_root(root, [_variant(tmp_path, "va", ["/nix/store/a"])], "http://placeholder")
+    return root
+
+
+def test_rig_server_head_reports_size_without_a_body(tmp_path: Path) -> None:
+    with rig.RigServer(_served(tmp_path), port=0, bind_ip="127.0.0.1") as server:
+        url = f"http://127.0.0.1:{server.port}/tarballs/nix-va.tar.gz"
+        with urllib.request.urlopen(urllib.request.Request(url, method="HEAD")) as response:
+            assert response.status == 200
+            assert int(response.headers["Content-Length"]) == len(b"tar-bytes-va")
+            assert response.read() == b""
+
+
+def test_rig_server_404s_unknown_paths_and_directories(tmp_path: Path) -> None:
+    """Directories are not listed; every rig consumer fetches an exact path."""
+    with rig.RigServer(_served(tmp_path), port=0, bind_ip="127.0.0.1") as server:
+        base = f"http://127.0.0.1:{server.port}"
+        for path in ("/nope.json", "/tarballs/"):
+            with pytest.raises(urllib.error.HTTPError) as caught:
+                _get(f"{base}{path}")
+            assert caught.value.status == 404
+
+
+def test_rig_server_port_before_start_is_a_bug(tmp_path: Path) -> None:
+    with pytest.raises(RuntimeError, match="before it was started"):
+        _ = rig.RigServer(tmp_path, port=0).port

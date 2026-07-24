@@ -28,14 +28,12 @@ it from a stdlib ThreadingHTTPServer on a daemon thread.
 """
 
 import json
-import socket
-import threading
 from dataclasses import dataclass
-from functools import partial
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Self
 
 from bmc_tui.nix import Nix, StorePath
+from bmc_tui.server import ServerHandle, server
 
 FEED_NAME = "nix-package-feed.v1.json"
 INDEX_NAME = "nix-package-index.v1.json"
@@ -109,34 +107,31 @@ def make_cache(nix: Nix, secret: Path, cache: Path, variants: list[Variant]) -> 
     return public
 
 
-def default_serve_ip(device_host: str, *, port: int = 22) -> str:
-    """The IPv4 address the device can reach us on: the source address the
-    kernel picks for an AF_INET connection towards the device. Pinned to
-    AF_INET — the rig's URLs never bracket IPv6 literals."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.settimeout(8)
-        sock.connect((device_host, port))
-        ip: str = sock.getsockname()[0]
-        return ip
-
-
 class RigServer:
-    """Serve `root` from a daemon thread; use as a context manager."""
+    """Mount `root` at the serve root; use as a context manager.
+
+    Binding is deferred to `__enter__` because the caller populates `root`
+    after construction — the mount resolves per request, so files appearing
+    later are still served.
+    """
 
     def __init__(self, root: Path, *, port: int, bind_ip: str = "0.0.0.0") -> None:
-        handler = partial(SimpleHTTPRequestHandler, directory=str(root))
-        self._httpd = ThreadingHTTPServer((bind_ip, port), handler)
-        self._thread = threading.Thread(target=self._httpd.serve_forever, daemon=True)
+        self._root = root
+        self._port = port
+        self._bind_ip = bind_ip
+        self._handle: ServerHandle | None = None
 
     @property
     def port(self) -> int:
         """The bound port — the requested one, or the ephemeral pick for 0."""
-        return int(self._httpd.server_address[1])
+        if self._handle is None:
+            raise RuntimeError("BUG: rig server port read before it was started")
+        return self._handle.port
 
-    def __enter__(self) -> "RigServer":
-        self._thread.start()
+    def __enter__(self) -> Self:
+        self._handle = server({"/": self._root}, bind_host=self._bind_ip, port=self._port)
         return self
 
     def __exit__(self, *_exc: object) -> None:
-        self._httpd.shutdown()
-        self._httpd.server_close()
+        if self._handle is not None:
+            self._handle.stop()

@@ -42,6 +42,7 @@ class Deploy:
     packages: list[str] = field(default_factory=list)
     profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
     dry_run: bool = False  # build + probe for real; log device mutations without executing
+    no_restart: bool = False  # leave the display alone; widgets load on the next start
     max_jobs: int | None = None  # nix --max-jobs for the build; None → use nix's own config
 
     def run(self) -> None:
@@ -62,8 +63,9 @@ class Deploy:
         catalog.build_packages(backend, plan)
         catalog.copy_closures(backend, dev, plan)
         catalog.remove_legacy_flip_clock(dev, plan)
+        old_pid = catalog.compositor_pid(dev)
         catalog.register_packages(dev, plan)
-        catalog.restart_compositor(dev)
+        catalog.restart_compositor(dev, old_pid=old_pid, skip=self.no_restart)
 
 
 @entrypoint

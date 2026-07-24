@@ -130,6 +130,9 @@ class _FakeNix:
     def build_out(self, attr: Attr) -> StorePath:
         return StorePath(str(self._outs[attr]))
 
+    def out_path(self, attr: Attr) -> StorePath:
+        return StorePath(str(self._outs[attr]))
+
     def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         self.build_file_calls.append((file, attrs, args))
         return [StorePath(str(self._outs[attr])) for attr in attrs]
@@ -344,6 +347,9 @@ class _Nix:
     def build_out(self, attr: Attr) -> StorePath:
         return StorePath(self.out_dir)
 
+    def out_path(self, attr: Attr) -> StorePath:
+        return StorePath(self.out_dir)
+
     def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         raise NotImplementedError
 
@@ -492,22 +498,37 @@ def test_remove_legacy_flip_clock_tolerates_failure() -> None:
     catalog.remove_legacy_flip_clock(Device("h", backend=_Exec(_unreachable)), _flip_clock_plan())
 
 
-def test_restart_compositor_runs_on_confirm(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: True)
-    backend = _Exec(_routes({}))
-    catalog.restart_compositor(Device("h", backend=backend))
-    assert "/etc/init.d/bmc-compositor restart" in backend.runs[-1][-1]
+def _restarted(backend: _Exec) -> bool:
+    return any("/etc/init.d/bmc-compositor restart" in argv[-1] for argv in backend.runs)
 
 
-def test_restart_compositor_skips_on_decline(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: False)
+def test_restart_compositor_restarts_by_default() -> None:
     backend = _Exec(_routes({}))
     catalog.restart_compositor(Device("h", backend=backend))
+    assert _restarted(backend)
+
+
+def test_restart_compositor_skips_on_request() -> None:
+    backend = _Exec(_routes({}))
+    catalog.restart_compositor(Device("h", backend=backend), skip=True)
     assert backend.runs == []
 
 
-def test_restart_compositor_skips_under_dry_run(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr("bmc_tui.console.confirm", lambda _q: True)
+def test_restart_compositor_defers_to_the_orchestrator() -> None:
+    """A pid that moved across the activation means the reload already ran."""
+    backend = _Exec(_routes({"pidof": "999"}))
+    catalog.restart_compositor(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    assert not _restarted(backend)
+
+
+def test_restart_compositor_restarts_when_the_pid_held() -> None:
+    """An unchanged pid means only widgets moved, so nothing reloaded them."""
+    backend = _Exec(_routes({"pidof": "111"}))
+    catalog.restart_compositor(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    assert _restarted(backend)
+
+
+def test_restart_compositor_skips_under_dry_run() -> None:
     token = dry_run.set(True)
     backend = _Exec(_routes({}))
     try:

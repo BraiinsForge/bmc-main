@@ -151,6 +151,11 @@ def styled_data(data: dict[str, object]) -> Text:
     return result
 
 
+def blank() -> None:
+    """Print a blank line, subject to the same collapsing as any other."""
+    _print()
+
+
 def ok(msg: str) -> None:
     """Print a success message (literals in `msg` may use console.lit)."""
     _print(f"[green]✓[/green] {msg}", highlight=False)

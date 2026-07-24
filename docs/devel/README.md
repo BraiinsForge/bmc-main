@@ -109,6 +109,13 @@ into the runtime, supported viewport constraints, and the rationale behind the v
 is intentionally not duplicated here — it lives in the Rust types of `bmc-widget-manifest` and is mirrored into the
 committed `manifest.schema.json` artifact (with rustdoc propagated into the schema's `description` fields).
 
+### [Image Widget Format Testing](image-widget-format-testing.md)
+
+Test corpus for the image widget's decoder set: a verified sample per supported format, plus near-boundary and oversized
+inputs that probe the pixel and allocation budgets from both sides. Covers the JPEG scale-on-load headroom, why
+high-precision formats hit the ceiling sooner, the on-device scene-cycling procedure, and the log greps that show which
+formats decoded.
+
 ### [WASM Widgets](wasm-widgets/)
 
 How WASM widgets consume host-delivered inputs. Covers per-widget params generated from `manifest.json`, hardcoded

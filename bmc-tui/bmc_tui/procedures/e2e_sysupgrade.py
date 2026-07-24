@@ -39,6 +39,7 @@ from bmc_tui import catalog, console, nix, rig
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix
+from bmc_tui.server import default_serve_ip
 from bmc_tui.stage import dry_run, entrypoint
 
 # sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk; same
@@ -92,7 +93,7 @@ class E2eSysupgrade:
         catalog.build_e2e_artifacts(backend, state)
         catalog.build_nix_cli(backend, prov)
 
-        serve_ip = self.serve_ip or rig.default_serve_ip(dev.host)
+        serve_ip = self.serve_ip or default_serve_ip(dev.host)
         server_factory = make_server or (lambda root: rig.RigServer(root, port=self.serve_port))
         # The workdir holds the rig cache and the private signing key;
         # neither may outlive the run.

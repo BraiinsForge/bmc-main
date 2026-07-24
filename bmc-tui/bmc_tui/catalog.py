@@ -33,6 +33,7 @@ import shlex
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -40,12 +41,12 @@ import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, NewType
 
 from bmc_tui import console, rig
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
-from bmc_tui.nix import Attr, Built, Nix, Pkg
+from bmc_tui.nix import Attr, Built, Nix, Pkg, StorePath
 from bmc_tui.stage import Abort, done_if, dry_run, ensure, require, stage
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
@@ -63,6 +64,7 @@ _NIX_STORE = "/nix"
 _WIDGET_DIR = "/run/current-profile/lib/bmc-widgets"
 _COMPOSITOR = "bmc-openwrt"
 _ORCHESTRATOR = "bmc-nix-service-orchestrator"
+_ORCHESTRATOR_TIMEOUT = 30  # seconds; it holds the profile lock for its whole run
 _NIX_BACKING = "/mnt/data/nix"
 _INIT_TARBALL = Attr(".#init-tarball-armv7")
 _NIX_CLI_ATTR = Attr(".#bmc-nix-cli-armv7-release")
@@ -78,6 +80,74 @@ def ensure_device_reachable(dev: Device) -> None:
         dev.reachable,
         f"{dev.host} is unreachable — power-cycle the Deck and check the network",
     )
+
+
+def running_binary(dev: Device, process: str) -> StorePath | None:
+    """Store path of a running process's executable, None when it is not up.
+
+    Callers that collect measurements should re-read this afterwards:
+    an equal path proves the whole window belongs to one build.
+    """
+    found = dev.read(
+        f"p=$(pidof {process} | cut -d' ' -f1); readlink -f /proc/$p/exe 2>/dev/null || true"
+    ).strip()
+    return StorePath(found) if found else None
+
+
+@stage("Profiling build")
+def ensure_profiling_build(dev: Device, process: str, marker: str) -> str:
+    """Prove instrumentation from the running binary rather than from its log.
+
+    A log outlives the build that wrote it, so a debug-then-release redeploy
+    leaves stale `mesh::profile` lines proving a build that is gone.
+    `marker` is a literal only the profiling build contains.
+    """
+    path = running_binary(dev, process)
+    if path is None:
+        raise Abort(f"{process} is not running — deploy it before measuring")
+    found = dev.read(f"grep -aq {marker} {path} && echo yes || echo no").strip()
+    require(
+        found == "yes",
+        f"{process} carries no profiling instrumentation — redeploy with "
+        f"`deck deploy --device {dev.host} --profile debug`",
+    )
+    return path.rsplit("/", 1)[-1]
+
+
+def deployed_widget_path(dev: Device, widget: str) -> StorePath | None:
+    """Store path of a deployed widget package, None when it is absent."""
+    resolved = dev.read(f"readlink -f {_WIDGET_DIR}/{widget}")
+    return StorePath(resolved.split("/lib/", 1)[0]) if resolved else None
+
+
+@stage("Deployed build")
+def check_deployed_build(backend: Nix, dev: Device, attr: Attr, widget: str) -> str:
+    """Compare what this tree builds against what the device runs.
+
+    Store paths are input-addressed, so equality means one derivation produced
+    both — the device is running this tree's build, which is what a measurement
+    run depends on and what a firmware version cannot tell you. Answers "should
+    I redeploy first", so it warns and asks rather than blocking. Without a TTY
+    to ask on, it proceeds loudly.
+    """
+    installed = deployed_widget_path(dev, widget)
+    if installed is None:
+        raise Abort(f"the {widget} widget is not deployed on {dev.host}")
+    expected = backend.out_path(attr)
+    if expected == installed:
+        return installed.rsplit("/", 1)[-1]
+    # Same-width labels so the two hashes line up for character comparison.
+    console.warn(f"the deployed {widget} widget is not what this tree builds")
+    console.kv(" - on deck", installed.rsplit("/", 1)[-1])
+    console.kv(" - in repo", expected.rsplit("/", 1)[-1])
+    console.blank()
+    if not sys.stdin.isatty():
+        return "MISMATCH, unacknowledged (no TTY)"
+    require(
+        console.confirm("Continue against a build this tree did not produce?"),
+        "deployed build mismatch not acknowledged",
+    )
+    return "mismatch acknowledged"
 
 
 @stage("Validate firmware image")
@@ -275,14 +345,54 @@ def register_packages(dev: Device, plan: Deployment) -> str:
     return f"{names} → generation {console.lit(generation)}" if generation else names
 
 
-@stage("Restart compositor")
-def restart_compositor(dev: Device) -> str:
-    """Offer to restart the compositor so it reloads the widget set."""
+Pid = NewType("Pid", str)
 
+
+def compositor_pid(dev: Device) -> Pid | None:
+    """PID of the running compositor, None when it is down."""
+    found = dev.read(f"pidof {_COMPOSITOR} | cut -d' ' -f1").strip()
+    return Pid(found) if found else None
+
+
+def _await_orchestrator(dev: Device, timeout: int = _ORCHESTRATOR_TIMEOUT) -> None:
+    """Block while the post-activation service reconciliation is still running.
+
+    It is spawned detached and waits on the profile lock.
+    That lets it bounce the compositor after `add-packages` has returned,
+    so sampling before it settles would miss the restart it is about to make.
+    """
+    dev.read(
+        f"i=0; while pidof {_ORCHESTRATOR} >/dev/null 2>&1 && [ $i -lt {timeout} ]; "
+        "do sleep 1; i=$((i+1)); done"
+    )
+
+
+@stage("Restart compositor")
+def restart_compositor(dev: Device, *, old_pid: Pid | None = None, skip: bool = False) -> str:
+    """Restart the compositor so it reloads the widget set.
+
+    The orchestrator only reloads it when its init script changed.
+    That happens for a compositor package change, not a widget-only one.
+    Pass `old_pid`, sampled ahead of the activation, to tell those apart:
+    a changed pid means the reload already happened.
+
+    Deliberately not a question. The prompt it replaces defaulted to no,
+    answering itself that way whenever stdin was not a TTY — so a deploy
+    could report success having loaded nothing.
+    `skip` is the explicit opt-out for leaving a running display alone.
+    """
     if dry_run.get():
         return "skipped (dry-run)"
-    if not console.confirm("Restart the compositor now to load new or changed widgets?"):
-        return "skipped"
+
+    if skip:
+        return "skipped on request — widgets load on the compositor's next start"
+
+    if old_pid is not None:
+        _await_orchestrator(dev)
+        now = compositor_pid(dev)
+        if now is not None and now != old_pid:
+            return f"already restarted by the service orchestrator (pid {now})"
+
     dev.run("/etc/init.d/bmc-compositor restart")
     return "restarted"
 

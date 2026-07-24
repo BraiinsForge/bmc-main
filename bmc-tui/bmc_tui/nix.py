@@ -95,6 +95,14 @@ class Nix(Protocol):
         artifacts (e.g. the init tarball) that carry no package metadata."""
         ...
 
+    def out_path(self, attr: Attr) -> StorePath:
+        """The store path an index package *would* have, without building it.
+
+        Input-addressed, so it answers whether a device is running this
+        tree's build without realising the derivation.
+        """
+        ...
+
     def build_file(self, file: str, attrs: list[Attr], args: dict[str, str]) -> list[StorePath]:
         """Realise attrs of a parameterized nix file (`--impure -f`) in ONE
         invocation — one consistent evaluation of the mutable worktree —
@@ -173,6 +181,9 @@ class _RealNix:
             Built(pkg.name, pkg.version, pkg.installable, store_path=StorePath(path))
             for pkg, path in zip(pkgs, paths, strict=True)
         ]
+
+    def out_path(self, attr: Attr) -> StorePath:
+        return StorePath(_eval_raw(f"{attr}.pkg.outPath"))
 
     def build_out(self, attr: Attr) -> StorePath:
         # Single `nix build` of one attr; capture stdout for the out-path, let

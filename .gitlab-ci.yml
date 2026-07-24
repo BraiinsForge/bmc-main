@@ -155,6 +155,13 @@ python-check:
   needs: []
   script:
     - nix develop --command just python
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    when: always
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
 
 build:
   stage: check
