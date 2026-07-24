@@ -502,7 +502,7 @@ fn fire_pending(
             .map(|(i, _)| i)
             .collect()
     });
-    log_info!(
+    log_debug!(
         "fleet: {} {} fetching telemetry at {}",
         family_label(family),
         id.as_str(),
@@ -554,7 +554,7 @@ fn issue_login(
     };
     let params = params();
     let url = fmt!("{}{}", base_url(adapter, host, port), auth_path);
-    log_info!(
+    log_debug!(
         "fleet: {} {} logging in at {}",
         family_label(family),
         id.as_str(),
@@ -790,7 +790,7 @@ fn log_fetch(
     model: Option<&MinerModel>,
 ) {
     if !reachable {
-        log_info!(
+        log_debug!(
             "fleet: {} {} unreachable ({} in a row)",
             family_label(family),
             id.as_str(),
@@ -799,7 +799,7 @@ fn log_fetch(
         return;
     }
     let model = model.map_or_else(|| "unknown model".to_owned(), |m| m.name.clone());
-    log_info!(
+    log_debug!(
         "fleet: {} {} ({}) {}",
         family_label(family),
         id.as_str(),
