@@ -28,7 +28,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
-from typing import Protocol
+from typing import Literal, Protocol
 
 from rich.console import Console
 from rich.markup import escape
@@ -104,6 +104,22 @@ def _print(*args: object, style: str | None = None, highlight: bool = True) -> N
     else:
         _blank_count = 0
         out.print(*args, style=style, highlight=highlight)
+
+
+Level = Literal["info", "success", "warn", "error"]
+
+APP_NAME = "deck"
+_ICON = {
+    "info": "dialog-information",
+    "success": "emblem-default",
+    "warn": "dialog-warning",
+    "error": "dialog-error",
+}
+# Nothing is `low`: GNOME files a low-urgency notification straight into the
+# message tray without ever showing a banner, and every caller here has already
+# decided the user looked away. The level picks the icon; it must not decide
+# whether the notification is seen at all.
+_URGENCY = {"info": "normal", "success": "normal", "warn": "normal", "error": "critical"}
 
 
 def format_ts(ts: datetime) -> str:
@@ -321,14 +337,16 @@ def mark_run_start() -> None:
     _run_started.set(time.monotonic())
 
 
-def notify(summary: str, *, body: str | None = None) -> None:
+def notify(summary: str, *, body: str | None = None, level: Level = "info") -> None:
     """Ring the terminal bell and best-effort fire a desktop notification."""
     if sys.stdout.isatty():
         out.bell()
-    desktop_notify(summary, body=body)
+    desktop_notify(summary, body=body, level=level)
 
 
-def alert(summary: str, *, body: str | None = None, after: float = 10.0) -> None:
+def alert(
+    summary: str, *, body: str | None = None, after: float = 10.0, level: Level = "info"
+) -> None:
     """Notify that attention is needed, but only when interactive and the run
     has been going at least `after` seconds — a quick run means the user is
     watching, so stay silent (the undistract-me heuristic)."""
@@ -337,7 +355,7 @@ def alert(summary: str, *, body: str | None = None, after: float = 10.0) -> None
     started = _run_started.get()
     if started is not None and time.monotonic() - started < after:
         return
-    notify(summary, body=body)
+    notify(summary, body=body, level=level)
 
 
 def confirm(question: str) -> bool:
@@ -349,14 +367,28 @@ def confirm(question: str) -> bool:
     return Confirm.ask(question, default=False, console=out)
 
 
-def desktop_notify(summary: str, *, body: str | None = None) -> None:
-    """Best-effort OS notification via whichever notifier is on PATH; silent if
-    none. Standalone of the bell, so scripts can fire one without a TTY."""
+def desktop_notify(summary: str, *, body: str | None = None, level: Level = "info") -> None:
+    """Best-effort OS notification via whichever notifier is on PATH; silent if none.
+    Standalone of the bell, so scripts can fire one without a TTY.
+
+    An error is sent `critical`, which most desktops keep on screen until
+    it is dismissed; everything else is `normal`, which still raises a banner.
+    """
     text = body or summary
     if shutil.which("notify-send"):
-        cmd = ["notify-send", summary, text]
+        cmd = [
+            "notify-send",
+            "--app-name",
+            APP_NAME,
+            "--urgency",
+            _URGENCY[level],
+            "--icon",
+            _ICON[level],
+            summary,
+            text,
+        ]
     elif shutil.which("terminal-notifier"):
-        cmd = ["terminal-notifier", "-title", summary, "-message", text]
+        cmd = ["terminal-notifier", "-title", summary, "-message", text, "-group", APP_NAME]
     elif shutil.which("osascript"):
         title = summary.replace('"', '\\"')
         message = text.replace('"', '\\"')

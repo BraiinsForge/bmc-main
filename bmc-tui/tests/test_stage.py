@@ -21,6 +21,8 @@
 """Unit tests for the staged-procedure engine."""
 
 import subprocess
+import sys
+import threading
 from dataclasses import dataclass
 
 import pytest
@@ -190,3 +192,32 @@ def test_entrypoint_renders_signal_death_on_command_failure(
 
 def test_dry_run_defaults_false() -> None:
     assert dry_run.get() is False
+
+
+def test_a_worker_crash_is_rendered_like_the_main_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """sys.excepthook is never consulted for a thread; entrypoint bridges it."""
+    seen: list[type[BaseException]] = []
+    monkeypatch.setattr(sys, "excepthook", lambda kind, *_rest: seen.append(kind))
+
+    def boom() -> None:
+        raise ValueError("from a worker")
+
+    worker = threading.Thread(target=boom)
+    worker.start()
+    worker.join()
+    assert seen == [ValueError]
+
+
+def test_a_worker_exiting_on_purpose_is_not_a_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[type[BaseException]] = []
+    monkeypatch.setattr(sys, "excepthook", lambda kind, *_rest: seen.append(kind))
+
+    def quit_thread() -> None:
+        raise SystemExit(0)
+
+    worker = threading.Thread(target=quit_thread)
+    worker.start()
+    worker.join()
+    assert seen == []

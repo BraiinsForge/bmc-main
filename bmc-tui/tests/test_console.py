@@ -72,13 +72,39 @@ def test_alert_silent_during_warmup(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_notify_fires_desktop(monkeypatch: pytest.MonkeyPatch) -> None:
-    fired: list[tuple[str, str | None]] = []
+    fired: list[tuple[str, str | None, str]] = []
     monkeypatch.setattr(console.sys.stdout, "isatty", lambda: False)
     monkeypatch.setattr(
-        console, "desktop_notify", lambda summary, *, body=None: fired.append((summary, body))
+        console,
+        "desktop_notify",
+        lambda summary, *, body=None, level="info": fired.append((summary, body, level)),
     )
     console.notify("done", body="ready")
-    assert fired == [("done", "ready")]
+    assert fired == [("done", "ready", "info")]
+
+
+def test_an_error_notification_is_critical(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A failure should survive on screen until it is dismissed."""
+    sent: list[list[str]] = []
+    monkeypatch.setattr(console.shutil, "which", lambda name: name == "notify-send")
+    monkeypatch.setattr(console.subprocess, "run", lambda cmd, **_kw: sent.append(cmd))
+    console.desktop_notify("run failed", body="boom", level="error")
+    assert "--urgency" in sent[0]
+    assert sent[0][sent[0].index("--urgency") + 1] == "critical"
+    assert sent[0][sent[0].index("--icon") + 1] == "dialog-error"
+
+
+@pytest.mark.parametrize("level", ["info", "success", "warn"])
+def test_a_non_error_notification_still_raises_a_banner(
+    level: console.Level, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`low` is filed into the tray unseen, which defeats the point: every
+    caller has already decided the user looked away."""
+    sent: list[list[str]] = []
+    monkeypatch.setattr(console.shutil, "which", lambda name: name == "notify-send")
+    monkeypatch.setattr(console.subprocess, "run", lambda cmd, **_kw: sent.append(cmd))
+    console.desktop_notify("finished", level=level)
+    assert sent[0][sent[0].index("--urgency") + 1] == "normal"
 
 
 def test_desktop_notify_silent_without_notifier(monkeypatch: pytest.MonkeyPatch) -> None:

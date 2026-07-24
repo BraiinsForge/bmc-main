@@ -30,6 +30,8 @@ import functools
 import inspect
 import shlex
 import subprocess
+import sys
+import threading
 from collections.abc import Callable
 from contextvars import ContextVar
 from typing import ParamSpec, get_type_hints
@@ -114,6 +116,23 @@ def stage(
     return decorate
 
 
+def _thread_excepthook(args: threading.ExceptHookArgs) -> None:
+    """Give a worker's crash the same rendering as the main thread's.
+
+    `sys.excepthook` is never consulted for a thread, so without this a worker
+    dumps a raw traceback next to output the rest of the run renders.
+    """
+    # SystemExit ends a thread on purpose; the stdlib default ignores it too.
+    if args.exc_value is None or issubclass(args.exc_type, SystemExit):
+        return
+    sys.excepthook(args.exc_type, args.exc_value, args.exc_traceback)
+    console.alert(
+        f"{args.exc_type.__name__} in {args.thread.name if args.thread else 'a worker'}",
+        body=str(args.exc_value),
+        level="error",
+    )
+
+
 def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     """Wrap a script's `main`: parse CLI args from its dataclass parameter via
     tyro (auto `--help`, usage-on-error), run it, turn an `Abort` into a rendered
@@ -124,6 +143,7 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
     top-to-bottom statements.
     """
     install_rich_traceback(show_locals=True, width=120)
+    threading.excepthook = _thread_excepthook
     params = list(inspect.signature(main).parameters.values())
     args_type = get_type_hints(main)[params[0].name] if params else None
 
@@ -135,8 +155,10 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
                 main()
             else:
                 main(tyro.cli(args_type, args=argv))
+            console.alert(f"{main.__module__.rsplit('.', 1)[-1]} finished", level="success")
         except Abort as e:
             console.error(e.hint)
+            console.alert("run failed", body=e.hint, level="error")
             raise SystemExit(1) from e
         except subprocess.CalledProcessError as e:
             cmd = e.cmd if isinstance(e.cmd, str) else shlex.join(e.cmd)
@@ -145,6 +167,7 @@ def entrypoint(main: Callable[..., None]) -> Callable[..., None]:
                 f"killed by signal {-e.returncode}" if e.returncode < 0 else f"exit {e.returncode}"
             )
             console.error(f"{status}: {console.lit(cmd)}")
+            console.alert("run failed", body=f"{status}: {cmd}", level="error")
             for captured in (e.stdout, e.stderr):
                 text = _output_text(captured)
                 if text.strip():
