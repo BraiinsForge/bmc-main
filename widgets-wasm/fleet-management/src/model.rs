@@ -40,8 +40,8 @@ pub struct ModelAccumulator {
 /// falls back to the floor.
 fn catalog_nominal_ths(name: &str) -> Option<f32> {
     match name {
-        // Braiins Forge Miner: 4.8 TH/s nameplate (4× BM1370); uBOS exposes no nominal.
-        "HashNode" | "Braiins Forge Miner x4" => Some(4.8),
+        // 4× BM1370.
+        "Braiins Forge Miner x4" => Some(4.8),
         _ => None,
     }
 }
@@ -107,8 +107,8 @@ mod tests {
     #[test]
     fn into_model_stamps_catalog_nominal_for_a_known_ubos_model() {
         let acc = ModelAccumulator {
-            id: Some("HashNode".to_owned()),
-            name: Some("HashNode".to_owned()),
+            id: Some("Braiins Forge Miner x4".to_owned()),
+            name: Some("Braiins Forge Miner x4".to_owned()),
             ..ModelAccumulator::default()
         };
         let model = acc

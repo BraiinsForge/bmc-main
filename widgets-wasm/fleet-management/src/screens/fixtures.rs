@@ -108,7 +108,18 @@ fn fleet_models() -> Vec<ModelRow> {
     vec![
         model("BOS BMM", 14, 0, 0, 8.06, 20.54, 3.3, 65.0, 6.0, 8.0),
         model("BOS BFM", 10, 2, 2, 8.06, 20.78, 3.3, 65.0, 7.0, 8.2),
-        model("uBOS HashNode", 9, 0, 2, 4.02, 19.50, 3.3, 65.0, 3.0, 4.1),
+        model(
+            "uBOS Forge Miner x4",
+            9,
+            0,
+            2,
+            4.02,
+            19.50,
+            3.3,
+            65.0,
+            3.0,
+            4.1,
+        ),
         model(
             "AxeOS NerdQaxe++",
             10,

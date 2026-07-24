@@ -382,7 +382,7 @@ mod tests {
     fn device_detail_falls_back_to_catalog_nominal_and_marks_unreachable() {
         let model = crate::model::MinerModel {
             id: "id".to_owned(),
-            name: "HashNode".to_owned(),
+            name: "Braiins Forge Miner x4".to_owned(),
             chip_type: None,
             chip_count: None,
             nominal_hashrate_ths: Some(4.5),
@@ -392,7 +392,7 @@ mod tests {
         dev.reachable = false;
         let data = DeviceDetailData::from_device(
             "Rig",
-            "HashNode",
+            "Braiins Forge Miner x4",
             &grp("bmm", 1, 0, 1),
             &dev,
             vec![],
