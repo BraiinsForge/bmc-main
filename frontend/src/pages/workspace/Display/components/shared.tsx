@@ -19,19 +19,18 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { useMemo } from 'react';
 import { useIntl } from 'react-intl';
 import { FormattedMessage } from 'react-intl';
 
 // App
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
-import { useIsTouchDevice } from '@/lib/react';
+import type { OptionItem } from '@/components/ParamField';
 
 // Components
 import { ButtonSwitch, Checkbox } from '@/components';
 import { Screen as IconScreen, Information as IconInfo } from '@carbon/react/icons';
-import { RadioButtonGroup, RadioButton, Toggle, ComboBox, Dropdown, Select, SelectItem } from '@carbon/react';
+import { RadioButtonGroup, RadioButton, Dropdown } from '@carbon/react';
 
 // Styles
 import css from './shared.scss';
@@ -90,74 +89,6 @@ export function BoundCheckbox(props: BoundCheckboxProps) {
             onChange={(_, { checked }) => onChange?.(checked)}
             invalid={!!error}
             invalidText={error}
-        />
-    );
-}
-
-export interface OptionItem<T extends string | number> {
-    value: T;
-    label: number | string;
-}
-
-export interface BoundComboBoxProps<T extends string | number> extends iField<T> {
-    id: string;
-    labelText: string;
-    items: Array<OptionItem<T>>;
-    decorator?: ReactNode;
-    helperText?: ReactNode;
-}
-export function BoundComboBox<T extends string | number>(props: BoundComboBoxProps<T>) {
-    const { id, labelText, helperText, decorator, value, items, onChange, disabled, error } = props;
-    const isTouchDevice = useIsTouchDevice();
-
-    const selectedItemStruct = useMemo<undefined | OptionItem<T>>(() => {
-        const x = items.find(x => x.value === value);
-        return x ? { value: x.value, label: x.label } : undefined;
-    }, [value, items]);
-
-    // On touch devices, use native select for better UX
-    // (uses OS picker on mobile - iOS wheel, Android spinner)
-    if (isTouchDevice) {
-        return (
-            <Select
-                id={id}
-                labelText={labelText}
-                helperText={helperText}
-                decorator={decorator}
-                value={value ?? undefined}
-                onChange={e => onChange?.(e.target.value as T)}
-                invalid={!!error}
-                invalidText={error}
-                disabled={disabled}
-                children={items.map(item => (
-                    <SelectItem key={item.value} value={item.value} text={String(item.label)} />
-                ))}
-            />
-        );
-    }
-
-    return (
-        <ComboBox<OptionItem<T>>
-            id={id}
-            // This little shit seems to really need thrashing because otherwise
-            // it remembers the last selected value even when it's on a different
-            // parent entity and it should be nullified by the new one.
-            key={`${id}-${value}`}
-            autoAlign
-            className={css.comboBox}
-            onChange={x => {
-                const v = x.selectedItem?.value;
-                if (v != null) onChange?.(v);
-            }}
-            itemToString={x => (x?.label ? String(x.label) : '')}
-            items={items}
-            selectedItem={selectedItemStruct}
-            titleText={labelText}
-            decorator={decorator}
-            helperText={helperText}
-            invalid={!!error}
-            invalidText={error}
-            disabled={disabled}
         />
     );
 }
@@ -253,32 +184,6 @@ export function BoundRadioGroup<T extends string | number>(props: BoundRadioGrou
             helperText={helperText}
             decorator={decorator}
             disabled={disabled}
-        />
-    );
-}
-
-export interface BoundToggleProps extends iField<boolean> {
-    id: string;
-    labelText: string;
-}
-export function BoundToggle(props: BoundToggleProps) {
-    const { id, labelText, value, onChange, disabled } = props;
-    const { formatMessage } = useIntl();
-
-    return (
-        <Toggle
-            id={id}
-            // This little shit seems to really need thrashing because otherwise
-            // it remembers the last selected value even when it's on a different
-            // parent entity and it should be nullified by the new one.
-            key={`${id}-${value}`}
-            size="md"
-            toggled={!!value}
-            onToggle={onChange}
-            disabled={disabled}
-            labelA={formatMessage({ defaultMessage: 'Off' })}
-            labelB={formatMessage({ defaultMessage: 'On' })}
-            labelText={labelText}
         />
     );
 }

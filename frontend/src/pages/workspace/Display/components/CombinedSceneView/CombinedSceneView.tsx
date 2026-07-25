@@ -389,7 +389,7 @@ export function CombinedSceneView(props: CombinedSceneViewProps) {
             if (idActive === idOver) return;
 
             const source: Maybe<pb.Widget> = widgets.find(x => x.id === idActive);
-            const target: Maybe<fn.Located> = (e.over?.data as DataRef<DroppableData>).current;
+            const target: Maybe<fn.Located> = (e.over?.data as DataRef<DroppableData> | undefined)?.current;
 
             if (!source || !target) {
                 console.warn('Invalid drag-end state, source or target not found', { source, target });

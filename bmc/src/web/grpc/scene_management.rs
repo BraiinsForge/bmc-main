@@ -545,6 +545,7 @@ fn string_format_to_proto(f: bmc_widget_manifest::StringFormat) -> web::StringFo
         F::Time => web::StringFormat::Time,
         F::Email => web::StringFormat::Email,
         F::Uri => web::StringFormat::Uri,
+        F::Password => web::StringFormat::Password,
     }
 }
 

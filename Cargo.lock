@@ -767,6 +767,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-field-schema"
+version = "0.1.0"
+dependencies = [
+ "indexmap",
+ "schemars",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "bmc-gpio"
 version = "0.1.0"
 dependencies = [
@@ -1564,6 +1575,7 @@ dependencies = [
 name = "bmc-widget-manifest"
 version = "0.1.0"
 dependencies = [
+ "bmc-field-schema",
  "indexmap",
  "jsonschema",
  "schemars",

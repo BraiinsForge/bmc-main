@@ -159,22 +159,22 @@
       ]
     },
     "ParamDefinition": {
-      "description": "Per-instance parameter declaration inside a manifest's `params` map.\nThe `kind` field carries the value-type-specific options (`enum_values`, `min`, `max`, etc.)\nvia a serde-flattened tagged enum.",
+      "description": "Per-field declaration inside a schema's field map.\nThe `kind` field carries the value-type-specific options (`enum_values`, `min`, `max`, etc.)\nvia a serde-flattened tagged enum.",
       "type": "object",
       "properties": {
         "description": {
-          "description": "Optional one-line parameter description, shown in the operator UI as help text.",
+          "description": "Optional one-line field description, shown in the operator UI as help text.",
           "type": [
             "string",
             "null"
           ]
         },
         "name": {
-          "description": "Human-readable parameter name, shown in the operator UI.",
+          "description": "Human-readable field name, shown in the operator UI.",
           "type": "string"
         },
         "optional": {
-          "description": "Whether the operator can leave this param unset.\nOptional params may have a default; required params *must* (and the host always delivers a value).",
+          "description": "Whether the operator can leave this field unset.\nOptional fields may have a default; required fields *must* (and the host always delivers a value).",
           "type": "boolean"
         }
       },
@@ -412,6 +412,11 @@
           "description": "RFC 3986 URI.",
           "type": "string",
           "const": "uri"
+        },
+        {
+          "description": "Sensitive value the UI must mask (render a password input, never echo the value back).",
+          "type": "string",
+          "const": "password"
         }
       ]
     },

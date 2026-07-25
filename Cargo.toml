@@ -8,6 +8,7 @@ members = [
     "bmc",
     "bmc-audio",
     "bmc-button",
+    "bmc-field-schema",
     "bmc-gpio",
     "bmc-gpu-render-lock",
     "bmc-grpc",
@@ -161,6 +162,7 @@ bitflags = "2.11.0"
 bmc = { path = "bmc" }
 bmc-audio = { path = "bmc-audio" }
 bmc-button = { path = "bmc-button" }
+bmc-field-schema = { path = "bmc-field-schema" }
 bmc-gpio = { path = "bmc-gpio" }
 bmc-gpu-render-lock = { path = "bmc-gpu-render-lock" }
 bmc-grpc = { path = "bmc-grpc", default-features = false }
