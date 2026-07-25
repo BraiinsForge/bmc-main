@@ -1,0 +1,54 @@
+// Copyright (C) 2026  Braiins Forge s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
+import { useState } from 'react';
+import type * as pb from '@/proto';
+import { Markdown } from '@/components';
+import { ParamField, type FieldValue } from '@/components/ParamField';
+import css from './CredentialTypeForm.scss';
+
+export interface CredentialTypeFormProps {
+    type: pb.CredentialType;
+}
+
+// Renders a credential type's fields via the shared ParamField; secret fields mask via the Password format.
+export function CredentialTypeForm({ type }: CredentialTypeFormProps) {
+    const [values, setValues] = useState<Record<string, FieldValue>>({});
+    const onChange = (key: string, value: FieldValue) => setValues(prev => ({ ...prev, [key]: value }));
+
+    return (
+        <div className={css.root}>
+            <div className={css.intro}>
+                <h4 className={css.title} children={type.name} />
+                <Markdown className={css.description} source={type.description} />
+            </div>
+            {type.fields.map(field => (
+                <ParamField
+                    key={field.key}
+                    id={`cred-${type.id}-${field.key}`}
+                    definition={field}
+                    value={values[field.key] ?? ''}
+                    onChange={onChange}
+                    timezones={[]}
+                />
+            ))}
+        </div>
+    );
+}

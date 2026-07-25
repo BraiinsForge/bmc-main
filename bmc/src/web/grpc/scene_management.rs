@@ -466,7 +466,10 @@ fn param_value_to_wire(v: &bmc_widget_manifest::ParamValue) -> web::WidgetDataVa
     web::WidgetDataValue { kind: Some(arm) }
 }
 
-fn param_definition_to_proto(key: &str, def: &ParamDefinition) -> web::ManifestParamDefinition {
+pub(crate) fn param_definition_to_proto(
+    key: &str,
+    def: &ParamDefinition,
+) -> web::ManifestParamDefinition {
     use web::manifest_param_definition::Kind as PK;
     let kind = match &def.kind {
         ParamKind::String {

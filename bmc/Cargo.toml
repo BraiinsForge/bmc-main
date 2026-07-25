@@ -42,6 +42,7 @@ axum-extra = { workspace = true, features = [
 ] }
 bmc-audio.workspace = true
 bmc-button.workspace = true
+bmc-field-schema.workspace = true
 bmc-grpc = { workspace = true, features = ["server"] }
 bmc-ipc.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }

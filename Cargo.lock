@@ -697,6 +697,7 @@ dependencies = [
  "axum-extra",
  "bmc-audio",
  "bmc-button",
+ "bmc-field-schema",
  "bmc-grpc",
  "bmc-ipc",
  "bmc-led",

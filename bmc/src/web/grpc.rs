@@ -56,6 +56,7 @@ use tracing::debug;
 
 mod account_management;
 pub mod authentication;
+mod credential_management;
 mod logging;
 mod metadata;
 mod system;
@@ -223,6 +224,11 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 account_management::AccountManagementService::new(self.config_handle),
             );
 
+        let credential_management_service =
+            web::credential_management_service_server::CredentialManagementServiceServer::new(
+                credential_management::CredentialManagementService,
+            );
+
         let alarm_service = web::alarm_service_server::AlarmServiceServer::new(
             alarm::AlarmService::new(self.alarm_controller),
         );
@@ -272,6 +278,14 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     .layer(logging_layer.clone())
                     .service(GrpcWebLayer::new().layer(InterceptorFor::new(
                         account_management_service,
+                        auth_interceptor.clone(),
+                    ))),
+            )
+            .add_service(
+                tower::ServiceBuilder::new()
+                    .layer(logging_layer.clone())
+                    .service(GrpcWebLayer::new().layer(InterceptorFor::new(
+                        credential_management_service,
                         auth_interceptor.clone(),
                     ))),
             )

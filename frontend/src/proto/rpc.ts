@@ -26,6 +26,7 @@ import {
     AlarmService,
     AuthenticationService,
     ConfigurationService,
+    CredentialManagementService,
     HardwareService,
     InitialSetupService,
     MetadataService,
@@ -40,6 +41,7 @@ export const rpc = {
     init: getClient(InitialSetupService),
 
     accounts: getClient(AccountManagementService),
+    credentials: getClient(CredentialManagementService),
     auth: getClient(AuthenticationService),
     alarm: getClient(AlarmService),
     config: getClient(ConfigurationService),
@@ -55,6 +57,7 @@ export const rpc = {
 export const services = {
     AccountManagementService,
     AuthenticationService,
+    CredentialManagementService,
     HardwareService,
     InitialSetupService,
     MetadataService,
