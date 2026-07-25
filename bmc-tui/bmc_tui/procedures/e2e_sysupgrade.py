@@ -40,20 +40,12 @@ from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix
 from bmc_tui.server import default_serve_ip
-from bmc_tui.stage import dry_run, entrypoint
+from bmc_tui.stage import best_effort, dry_run, entrypoint
 
 # sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk; same
 # headroom rationale as procedures/sysupgrade.py. The memory ask also
 # covers the key-trust stage's transient rootfs.img extraction.
 _FLASH_HEADROOM = 20 * 1024 * 1024
-
-
-def _best_effort(action: Callable[[], object]) -> None:
-    """Cleanup must not mask the failure that triggered it."""
-    try:
-        action()
-    except Exception as e:
-        console.kv("cleanup failed", str(e))
 
 
 @dataclass
@@ -114,10 +106,10 @@ class E2eSysupgrade:
                         self._scenario_b(dev, prov, state, make_device)
                 finally:
                     if state.device_mutated:
-                        _best_effort(lambda: catalog.cleanup_e2e_marker(dev))
-                        _best_effort(lambda: catalog.cleanup_server_registry(dev))
-                        _best_effort(lambda: catalog.sweep_uploaded_images(dev, state))
-                        _best_effort(lambda: catalog.cleanup_remote_artifacts(dev, prov))
+                        best_effort(lambda: catalog.cleanup_e2e_marker(dev))
+                        best_effort(lambda: catalog.cleanup_server_registry(dev))
+                        best_effort(lambda: catalog.sweep_uploaded_images(dev, state))
+                        best_effort(lambda: catalog.cleanup_remote_artifacts(dev, prov))
                         if not dry_run.get():
                             console.kv(
                                 "note",

@@ -140,10 +140,10 @@
         # that lack the nixos binary cache substituter.
         ty-bin = pkgs.stdenv.mkDerivation {
           pname = "ty";
-          version = "0.0.23";
+          version = "0.0.63";
           src = pkgs.fetchurl {
-            url = "https://github.com/astral-sh/ty/releases/download/0.0.23/ty-x86_64-unknown-linux-gnu.tar.gz";
-            hash = "sha256-4ctmL00e9mcc9K0lQVOaTbGlYwhIA054ON3V4ymjeXU=";
+            url = "https://github.com/astral-sh/ty/releases/download/0.0.63/ty-x86_64-unknown-linux-gnu.tar.gz";
+            hash = "sha256-6JFqPBEKzk1PJec7WFDv2UR+B5bZPsnho6tpvIxG9Ww=";
           };
           nativeBuildInputs = [ pkgs.autoPatchelfHook ];
           buildInputs = [ pkgs.stdenv.cc.cc.lib ];

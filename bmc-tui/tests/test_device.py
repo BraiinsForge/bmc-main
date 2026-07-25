@@ -21,7 +21,7 @@
 """Unit tests for the SSH device transport."""
 
 import subprocess
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 import pytest
@@ -31,13 +31,24 @@ from bmc_tui.stage import dry_run
 
 
 class _FakeExec:
-    """Records run/stream calls; returns canned stdout or raises a canned error."""
+    """Records run/stream calls; returns canned stdout or raises a canned error.
+    stream_output() feeds canned lines to the callback and returns a canned code."""
 
-    def __init__(self, *, stdout: str = "", error: Exception | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        stdout: str = "",
+        error: Exception | None = None,
+        lines: list[str] | None = None,
+        code: int = 0,
+    ) -> None:
         self.runs: list[list[str]] = []
         self.streams: list[tuple[list[str], bytes]] = []
+        self.stream_outputs: list[list[str]] = []
         self._stdout = stdout
         self._error = error
+        self._lines = lines or []
+        self._code = code
 
     def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
         self.runs.append(argv)
@@ -47,6 +58,12 @@ class _FakeExec:
 
     def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
         self.streams.append((argv, b"".join(chunks)))
+
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        self.stream_outputs.append(argv)
+        for line in self._lines:
+            on_line(line)
+        return self._code
 
 
 # ── read / run / push ─────────────────────────────────────────────────────────
@@ -209,6 +226,56 @@ def test_run_reraises_disconnect_when_not_expected() -> None:
     backend = _FakeExec(error=subprocess.CalledProcessError(255, ["ssh"]))
     with pytest.raises(subprocess.CalledProcessError):
         Device("h", backend=backend).run("sysupgrade x")
+
+
+# ── run_streamed ─────────────────────────────────────────────────────────────
+
+
+def _drop(_line: str) -> None:
+    """Discard a streamed line — for tests that only assert on the exit path."""
+
+
+def test_run_streamed_feeds_lines_over_ssh() -> None:
+    backend = _FakeExec(lines=['@bmc {"type":"realization_finished"}', "Image check failed."])
+    seen: list[str] = []
+    Device("h", backend=backend).run_streamed("sysupgrade x", on_line=seen.append)
+    assert seen == ['@bmc {"type":"realization_finished"}', "Image check failed."]
+    assert backend.stream_outputs[0][0] == "ssh"
+    assert backend.stream_outputs[0][-1] == "sysupgrade x"
+
+
+def test_run_streamed_skips_under_dry_run() -> None:
+    backend = _FakeExec(lines=["x"])
+    token = dry_run.set(True)
+    try:
+        Device("h", backend=backend).run_streamed("sysupgrade x", on_line=_drop)
+    finally:
+        dry_run.reset(token)
+    assert backend.stream_outputs == []
+
+
+def test_run_streamed_swallows_disconnect_when_expected() -> None:
+    backend = _FakeExec(code=255)  # ssh's own code for a dropped connection
+    Device("h", backend=backend).run_streamed("sysupgrade x", on_line=_drop, expect_disconnect=True)
+
+
+def test_run_streamed_swallows_signal_killed_session_when_expected() -> None:
+    backend = _FakeExec(code=246)  # -SIGUSR1 wrapped to an unsigned byte
+    Device("h", backend=backend).run_streamed("sysupgrade x", on_line=_drop, expect_disconnect=True)
+
+
+def test_run_streamed_reraises_remote_failure_even_when_disconnect_expected() -> None:
+    backend = _FakeExec(code=1)  # session alive, command failed → a real failure
+    with pytest.raises(subprocess.CalledProcessError):
+        Device("h", backend=backend).run_streamed(
+            "sysupgrade x", on_line=_drop, expect_disconnect=True
+        )
+
+
+def test_run_streamed_reraises_disconnect_when_not_expected() -> None:
+    backend = _FakeExec(code=255)
+    with pytest.raises(subprocess.CalledProcessError):
+        Device("h", backend=backend).run_streamed("sysupgrade x", on_line=_drop)
 
 
 def test_print_shows_host(capsys: pytest.CaptureFixture[str]) -> None:

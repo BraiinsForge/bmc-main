@@ -33,7 +33,7 @@ import json
 import shlex
 import subprocess
 import uuid
-from collections.abc import Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, NewType, Protocol
@@ -84,6 +84,11 @@ class Exec(Protocol):
         """Run a command, feeding `chunks` to its stdin."""
         ...
 
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        """Run a command, calling `on_line` for each output line as it arrives;
+        return the exit code without raising on a nonzero one."""
+        ...
+
 
 class _RealExec:
     def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
@@ -103,6 +108,18 @@ class _RealExec:
             stderr = proc.stderr.read() if proc.stderr is not None else b""
         if proc.returncode:
             raise subprocess.CalledProcessError(proc.returncode, argv, stderr=stderr)
+
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        # Merge stderr into stdout so progress and errors arrive as one ordered stream.
+        with subprocess.Popen(
+            argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace"
+        ) as proc:
+            if proc.stdout is None:
+                msg = "BUG: Popen(stdout=PIPE) produced no stdout"
+                raise RuntimeError(msg)
+            for line in proc.stdout:
+                on_line(line.rstrip("\n"))
+        return proc.returncode
 
 
 class Device:
@@ -163,6 +180,26 @@ class Device:
             if not (expect_disconnect and e.returncode >= _SESSION_DEATH_FLOOR):
                 raise
             return None
+
+    def run_streamed(
+        self,
+        command: str,
+        *,
+        on_line: Callable[[str], None],
+        expect_disconnect: bool = False,
+    ) -> None:
+        """Stream a mutating command's merged stdout+stderr to `on_line` line by
+        line — nothing is captured. Under --dry-run, log and skip. Exit handling
+        mirrors `run` (disconnect is success when `expect_disconnect`); a raised
+        `CalledProcessError` carries no output, since it was streamed."""
+        if dry_run.get():
+            console.kv("would run", command)
+            return
+        argv = self._ssh_argv(command)
+        code = self._exec.stream_output(argv, on_line)
+        if code == 0 or (expect_disconnect and code >= _SESSION_DEATH_FLOOR):
+            return
+        raise subprocess.CalledProcessError(code, argv)
 
     def push(self, local: Path, remote: RemotePath) -> None:
         """Upload a file, streamed over ssh with a live progress bar. Under

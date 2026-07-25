@@ -24,17 +24,29 @@ import shutil
 import subprocess
 import sys
 import time
-from collections.abc import Callable, Iterator
+from collections import deque
+from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import datetime
+from pathlib import Path
 from typing import Literal, Protocol
 
-from rich.console import Console
+from rich.console import Console, Group, RenderableType
+from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
-from rich.progress import BarColumn, DownloadColumn, Progress, TextColumn, TimeRemainingColumn
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    TaskID,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.prompt import Confirm
+from rich.spinner import Spinner
 from rich.status import Status
 from rich.syntax import Syntax
 from rich.text import Text
@@ -55,6 +67,7 @@ __all__ = [
     "instruct_user",
     "kv",
     "lit",
+    "live_scrollback",
     "mark_run_start",
     "notify",
     "ok",
@@ -236,7 +249,7 @@ def spinner(msg: str) -> Status:
 
 
 @contextmanager
-def progress(label: str, total: int) -> Iterator[Callable[[int], None]]:
+def progress(label: str, total: int) -> Generator[Callable[[int], None], None, None]:
     """Byte-count progress bar; yields an ``advance(n)`` callback.
 
     Usage::
@@ -256,6 +269,105 @@ def progress(label: str, total: int) -> Iterator[Callable[[int], None]]:
     with bar:
         task = bar.add_task(label, total=total)
         yield lambda n: bar.advance(task, n)
+
+
+# ── bounded live region ("local scrollback") ─────────────────────────────────
+
+SCROLLBACK_TAIL: int = 20
+
+
+class LiveScrollback:
+    """Handle for a `live_scrollback` region: intent-level updates driving one
+    in-place display. It knows nothing of any wire format — the caller translates
+    a command's progress into these calls, so a flood collapses in place."""
+
+    def __init__(self, live: Live, log_path: Path, tail: int) -> None:
+        self._live = live
+        self._log_path = log_path
+        self._phase: str | None = None
+        self._note: str | None = None
+        self._download_bar = Progress(
+            TextColumn("[dim]downloading[/dim]"),
+            BarColumn(),
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
+            console=out,
+        )
+        self._download: TaskID | None = None
+        self._downloading = False
+        self.tail: deque[str] = deque(maxlen=tail)
+        self._render()
+
+    def phase(self, text: str) -> None:
+        # A phase change ends any download; download() re-arms it if bytes resume.
+        self._phase = text
+        self._downloading = False
+        self._render()
+
+    def download(self, done: int, total: int | None) -> None:
+        """Advance the download bar; an unknown `total` leaves it indeterminate."""
+        task = self._download
+        if task is None:
+            task = self._download = self._download_bar.add_task("download", total=total)
+        self._download_bar.update(task, completed=done, total=total)
+        self._downloading = True
+        self._render()
+
+    def realize(self, total_paths: int) -> None:
+        self._note = f"realizing {total_paths} store paths"
+        self._render()
+
+    def realized(self) -> None:
+        """Realization ended. The note outlives its phase otherwise, so a later
+        `verifying`/`building` renders beside a line still claiming store paths
+        are being realized."""
+        self._note = None
+        self._render()
+
+    def gc(self, deleted_paths: int, freed_bytes: int | None = None) -> None:
+        freed = f", {human_size(freed_bytes)} freed" if freed_bytes is not None else ""
+        self._note = f"collected {deleted_paths} paths{freed}"
+        self._render()
+
+    def echo(self, line: str) -> None:
+        """Append a raw line, keeping only the last `tail` on screen."""
+        self.tail.append(line)
+        self._render()
+
+    def _render(self) -> None:
+        rows: list[RenderableType] = []
+        # While bytes flow, the bar's own motion is the activity cue; the spinner
+        # shows only between downloads (verifying, building, …).
+        if self._downloading and self._download is not None:
+            rows.append(self._download_bar.get_renderable())
+        elif self._phase is not None:
+            rows.append(Spinner("dots", text=Text(self._phase, style="cyan")))
+        if self._note is not None:
+            rows.append(Text(f"  {self._note}", style="dim"))
+        # Text() (not from_markup) so raw device lines with [brackets] stay literal.
+        rows.extend(Text(f"  {line}", style="dim") for line in self.tail)
+        rows.append(Text(f"see {self._log_path}", style="dim"))
+        self._live.update(Group(*rows))
+
+
+@contextmanager
+def live_scrollback(
+    *, log_path: Path, window: int | None = None
+) -> Generator[LiveScrollback, None, None]:
+    """A bounded, in-place live region for a command that would otherwise flood
+    the terminal, with the full output referenced at `log_path`. Yields a handle
+    the caller drives; `transient`, so scrollback stays clean on exit.
+
+    Usage::
+
+        with console.live_scrollback(log_path=log) as live:
+            live.phase("realizing")
+            live.download(done, total)
+            live.echo(raw_line)
+    """
+    with Live(console=out, transient=True, refresh_per_second=12) as live:
+        yield LiveScrollback(live, log_path, window or SCROLLBACK_TAIL)
 
 
 def panel(

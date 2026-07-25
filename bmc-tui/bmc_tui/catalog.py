@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NewType
 
-from bmc_tui import console, rig
+from bmc_tui import console, nix_progress, rig
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import Attr, Built, Nix, Pkg, StorePath
@@ -165,6 +165,8 @@ def validate_firmware_image(image: Image, *, device_target: str) -> None:
 @stage("Memory headroom")
 def ensure_memory(dev: Device, need: int) -> str:
     available = _mem_available(dev)
+    if available < need:
+        available = _offer_stale_firmware_cleanup(dev, available)
     require(
         available >= need,
         f"need {console.human_size(need)} free RAM, only {console.human_size(available)} available",
@@ -172,12 +174,44 @@ def ensure_memory(dev: Device, need: int) -> str:
     return f"{console.lit(console.human_size(available))} RAM available"
 
 
+def _offer_stale_firmware_cleanup(dev: Device, available: int) -> int:
+    """Short on RAM, so offer to drop firmware tars left in tmpfs by a run that
+    never reached its own cleanup — a killed or crashed one. Returns what is
+    free afterwards.
+
+    Only `*.tar` is offered: `/tmp` on the device holds live system state
+    (resolv.conf, leases, logs), so a broader sweep could break the running
+    system. The listing prints before the prompt, so a non-interactive run
+    still reports what is occupying the space it lacks.
+    """
+    stale = _tmp_firmware(dev)
+    if not stale:
+        return available
+    console.warn(f"{len(stale)} firmware tar(s) left in /tmp — tmpfs, so they hold RAM")
+
+    # cmd_output, not kv: this list explains the warning above it,
+    # and kv would put it on stdout where a redirect could separate the two.
+    console.cmd_output("\n".join(stale))
+
+    if not console.confirm("remove them?"):
+        return available
+
+    dev.run("rm -f " + " ".join(shlex.quote(p) for p in stale))
+    return _mem_available(dev)
+
+
+def _tmp_firmware(dev: Device) -> list[str]:
+    """Firmware tars currently in the device's /tmp, newest listing order."""
+    listed = dev.read("ls -1 /tmp/*.tar 2>/dev/null")
+    return [line for line in listed.splitlines() if line.strip()]
+
+
 @stage("Upload firmware")
 def upload_firmware(dev: Device, image: Image) -> str:
     """Upload the firmware; a matching on-device sha256 makes a re-run a no-op."""
 
     done_if(_remote_sha(dev, image.remote_path) == image.sha256)
-    dev.push(image.path, RemotePath(image.remote_path))
+    dev.push(image.path, image.remote_path)
     if dry_run.get():
         return f"→ {console.lit(image.remote_path)}"
     # A short/corrupt upload would otherwise be flashed blind under `sysupgrade
@@ -190,7 +224,14 @@ def upload_firmware(dev: Device, image: Image) -> str:
 
 
 @stage("Sysupgrade")
-def sysupgrade(dev: Device, image: Image, *, force: bool = False, assume_yes: bool = False) -> str:
+def sysupgrade(
+    dev: Device,
+    image: Image,
+    *,
+    force: bool = False,
+    assume_yes: bool = False,
+    skip_nix: bool = False,
+) -> str:
     done_if(dev.version == image.version)
     require(
         assume_yes
@@ -202,8 +243,23 @@ def sysupgrade(dev: Device, image: Image, *, force: bool = False, assume_yes: bo
         "flash declined — pass --yes to skip the prompt",
     )
     flag = "-F " if force else ""
-    dev.run(f"sysupgrade {flag}{image.remote_path}", expect_disconnect=True)
+    # BOS_NIX_SKIP=1 skips the firmware's Nix-profile staging.
+    # The escape hatch when an old device nix.conf (build-users-group=nixbld) breaks it.
+    env = "BOS_NIX_SKIP=1 " if skip_nix else ""
+    nix_progress.stream_flash(dev, f"{env}sysupgrade {flag}{shlex.quote(image.remote_path)}")
     return f"{console.lit(image.version)} → reboot"
+
+
+@stage("Clear firmware from /tmp")
+def cleanup_firmware(dev: Device, image: Image) -> str:
+    """Remove this image's tar from /tmp (tmpfs), before the upload and after the
+    flash. A successful flash reboots and wipes it; a killed or crashed run leaves
+    it in RAM, where it eats the headroom the next run needs.
+
+    Clearing it up front means the upload is never skipped by the checksum
+    shortcut in `upload_firmware`, so every flash sends bytes it just verified."""
+    dev.run(f"rm -f {shlex.quote(image.remote_path)}")
+    return console.lit(image.remote_path)
 
 
 @stage("Wait for device")

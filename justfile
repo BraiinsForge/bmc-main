@@ -54,7 +54,8 @@ python:
     uv sync
     ruff check bmc-tui bmc-virt/harness
     ruff format --check bmc-tui bmc-virt/harness
-    ty check bmc-tui bmc-virt/harness
+    # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
+    ty check --error deprecated bmc-tui bmc-virt/harness
     uv run pytest
 
 # Run nextest for a single crate with mem-box caps (auto-enters nix shell).

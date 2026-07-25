@@ -20,10 +20,22 @@
 
 """Unit tests for console formatting helpers."""
 
+import io
+from pathlib import Path
+
 import pytest
+from rich.console import Console, RenderableType
+from rich.live import Live
 
 from bmc_tui import console
 from bmc_tui.console import human_size, lit
+
+
+def _rendered(renderable: RenderableType | None) -> str:
+    """Text a renderable produces, so a test can assert what the user sees."""
+    buf = io.StringIO()
+    Console(file=buf, width=100, no_color=True).print(renderable)
+    return buf.getvalue()
 
 
 def test_human_size_bytes() -> None:
@@ -44,6 +56,39 @@ def test_lit_wraps_in_literal_style() -> None:
 
 def test_lit_escapes_markup() -> None:
     assert lit("a[b]") == "[magenta]a\\[b][/magenta]"
+
+
+# ── live_scrollback ───────────────────────────────────────────────────────────
+
+
+def test_live_scrollback_bounds_the_raw_tail() -> None:
+    overshoot = console.SCROLLBACK_TAIL + 5
+    with console.live_scrollback(log_path=Path("/tmp/flash.log")) as live:
+        live.phase("realizing")
+        live.realize(3)
+        live.download(10, 100)
+        live.gc(2, freed_bytes=1024)
+        for i in range(overshoot):
+            live.echo(f"line {i}")
+        assert len(live.tail) == console.SCROLLBACK_TAIL
+        assert live.tail[0] == f"line {overshoot - console.SCROLLBACK_TAIL}"
+        assert live.tail[-1] == f"line {overshoot - 1}"
+
+
+def test_the_realization_note_does_not_outlive_its_phase() -> None:
+    """Realizing sets a note that nothing else clears, so without an explicit
+    end the next phase renders beside a line still claiming it is realizing."""
+    live = Live(console=Console(file=io.StringIO()), auto_refresh=False)
+    region = console.LiveScrollback(live, Path("/tmp/flash.log"), tail=5)
+
+    region.realize(42)
+    assert "realizing 42 store paths" in _rendered(live.renderable)
+
+    region.realized()
+    region.phase("verifying")
+    shown = _rendered(live.renderable)
+    assert "verifying" in shown
+    assert "realizing" not in shown
 
 
 # ── notifications ─────────────────────────────────────────────────────────────

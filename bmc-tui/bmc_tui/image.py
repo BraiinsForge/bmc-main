@@ -32,6 +32,7 @@ from functools import cached_property
 from pathlib import Path
 
 from bmc_tui import console
+from bmc_tui.device import RemotePath
 
 # /tmp (tmpfs), not the /nix-shared /mnt/data: sysupgrade flashes a /tmp image
 # in place, keeping firmware off the contended nix store.
@@ -61,8 +62,8 @@ class Image:
         return _REMOTE_DIR
 
     @property
-    def remote_path(self) -> str:
-        return f"{self.remote_dir}/{self.path.name}"
+    def remote_path(self) -> RemotePath:
+        return RemotePath(f"{self.remote_dir}/{self.path.name}")
 
     def print(self) -> None:
         """Print a short image summary for a run preamble."""

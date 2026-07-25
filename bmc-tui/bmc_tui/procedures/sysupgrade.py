@@ -30,11 +30,12 @@ from pathlib import Path
 from bmc_tui import catalog, console
 from bmc_tui.device import Device
 from bmc_tui.image import Image
-from bmc_tui.stage import dry_run, entrypoint, require
+from bmc_tui.stage import best_effort, dry_run, entrypoint, require
 
-# sysupgrade stages the tar in /tmp (tmpfs) and pivots to a ramdisk, so it needs
-# RAM beyond the tar: a ~45 MB tar was observed needing >70 MB free, hence +20 MB.
-_FLASH_HEADROOM = 20 * 1024 * 1024
+# sysupgrade stages the tar in /tmp (tmpfs) and pivots
+# to a ramdisk, so it needs RAM beyond the tar: a ~45 MB tar
+# was observed needing >70 MB free, hence +20 MB.
+FLASH_HEADROOM = 20 * 1024 * 1024
 
 
 @dataclass
@@ -43,6 +44,7 @@ class Sysupgrade:
     image: Path  # path to the firmware sysupgrade .tar
     force: bool = False  # pass -F to sysupgrade (override the device's compat check)
     yes: bool = False  # skip the confirm prompt before the irreversible flash
+    skip_nix: bool = False  # set BOS_NIX_SKIP=1 to skip Nix staging (already-initialized store)
     dry_run: bool = False  # run read-only checks; log mutations without executing
 
     def run(self) -> None:
@@ -58,11 +60,25 @@ class Sysupgrade:
 
         catalog.ensure_device_reachable(dev)
         catalog.validate_firmware_image(image, device_target=dev.target)
-        catalog.ensure_memory(dev, image.size + _FLASH_HEADROOM)
-        catalog.upload_firmware(dev, image)
-        catalog.sysupgrade(dev, image, force=self.force, assume_yes=self.yes)
-        catalog.wait_for_device(dev)
-        catalog.verify_post_upgrade(dev, expect=image.version)
+
+        # Before the headroom check, not only after the flash: a run killed
+        # mid-flight never reaches its own cleanup, and its tar is counted
+        # against the RAM this one needs.
+        best_effort(lambda: catalog.cleanup_firmware(dev, image))
+        catalog.ensure_memory(dev, image.size + FLASH_HEADROOM)
+
+        # The upload is inside the cleanup scope: an interrupted transfer
+        # or a failed checksum leaves a partial tar in tmpfs, which is exactly
+        # what starves the next run's headroom check.
+        try:
+            catalog.upload_firmware(dev, image)
+            catalog.sysupgrade(
+                dev, image, force=self.force, assume_yes=self.yes, skip_nix=self.skip_nix
+            )
+            catalog.wait_for_device(dev)
+            catalog.verify_post_upgrade(dev, expect=image.version)
+        finally:
+            best_effort(lambda: catalog.cleanup_firmware(dev, image))
 
 
 @entrypoint

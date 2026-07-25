@@ -33,12 +33,13 @@ from typing import Literal, Required, TypedDict, Unpack
 
 import pytest
 
-from bmc_tui import catalog, rig
+from bmc_tui import catalog, nix_progress, rig
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import Attr, Built, Pkg, StorePath
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
 from bmc_tui.procedures.init import Init
+from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.stage import Abort, dry_run
 
 _TARGET = "stm32mp15/ii3"
@@ -52,12 +53,15 @@ def _cp(argv: list[str], stdout: str = "") -> "subprocess.CompletedProcess[str]"
 
 
 class _Exec:
-    """Fake Exec: run() delegates to `respond(argv)`; stream() records bytes."""
+    """Fake Exec: run() delegates to `respond(argv)`; stream() records bytes;
+    stream_output() records argv and reports a rebooted (disconnected) flash."""
 
-    def __init__(self, respond: _Respond) -> None:
+    def __init__(self, respond: _Respond, *, stream_code: int = 255) -> None:
         self._respond = respond
+        self._stream_code = stream_code
         self.runs: list[list[str]] = []
         self.streams: list[tuple[list[str], bytes]] = []
+        self.stream_outputs: list[list[str]] = []
 
     def run(self, argv: list[str]) -> "subprocess.CompletedProcess[str]":
         self.runs.append(argv)
@@ -65,6 +69,10 @@ class _Exec:
 
     def stream(self, argv: list[str], chunks: Iterable[bytes]) -> None:
         self.streams.append((argv, b"".join(chunks)))
+
+    def stream_output(self, argv: list[str], on_line: Callable[[str], None]) -> int:
+        self.stream_outputs.append(argv)
+        return self._stream_code
 
 
 def _routes(routes: dict[str, str]) -> _Respond:
@@ -232,6 +240,42 @@ def test_memory_aborts_when_insufficient() -> None:
         catalog.ensure_memory(dev, 200_000_000)
 
 
+def test_memory_shortfall_reports_stale_firmware_before_asking(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A non-interactive run declines the prompt, so the listing has to be printed
+    first — otherwise the operator is told there is no RAM but not what took it."""
+
+    monkeypatch.setattr(catalog.console, "confirm", lambda _q: False)
+    dev = Device(
+        "h", backend=_Exec(_routes({"MemAvailable": "102924", "ls -1 /tmp": "/tmp/old.tar\n"}))
+    )
+
+    with pytest.raises(Abort, match="free RAM"):
+        catalog.ensure_memory(dev, 200_000_000)
+
+    assert "/tmp/old.tar" in capsys.readouterr().err
+
+
+def test_memory_recovers_when_the_stale_firmware_is_removed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accepting the offer frees the tmpfs the tar held, so the run continues
+    instead of making the operator re-invoke it."""
+
+    monkeypatch.setattr(catalog.console, "confirm", lambda _q: True)
+    free = iter([100 * 1024 * 1024, 300 * 1024 * 1024])  # before the removal, then after
+    backend = _Exec(_routes({"ls -1 /tmp": "/tmp/old.tar\n"}))
+    dev = Device("h", backend=backend)
+    monkeypatch.setattr(catalog, "_mem_available", lambda _d: next(free))
+
+    catalog.ensure_memory(dev, 200_000_000)
+
+    removed = [" ".join(argv) for argv in backend.runs if "rm -f" in " ".join(argv)]
+    assert removed, "the tar must be removed"
+    assert "/tmp/old.tar" in removed[0]
+
+
 # ── upload_firmware ───────────────────────────────────────────────────────────
 
 
@@ -272,21 +316,64 @@ def test_sysupgrade_skips_when_already_on_target(tmp_path: Path) -> None:
     image = _image(tmp_path)
     backend = _Exec(_routes({"cat /etc/bos_version": image.version}))
     catalog.sysupgrade(Device("h", backend=backend), image)
-    assert not any("sysupgrade" in argv[-1] for argv in backend.runs)
+    assert backend.stream_outputs == []
 
 
 def test_sysupgrade_runs_with_force(tmp_path: Path) -> None:
     image = _image(tmp_path)
     backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
     catalog.sysupgrade(Device("h", backend=backend), image, force=True, assume_yes=True)
-    assert any("sysupgrade -F " in argv[-1] for argv in backend.runs)
+    assert any("sysupgrade -F " in argv[-1] for argv in backend.stream_outputs)
 
 
 def test_sysupgrade_runs_with_assume_yes(tmp_path: Path) -> None:
     image = _image(tmp_path)
     backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
     catalog.sysupgrade(Device("h", backend=backend), image, assume_yes=True)
-    assert any("sysupgrade " in argv[-1] for argv in backend.runs)
+    argv = backend.stream_outputs[0][-1]
+    assert argv.startswith("sysupgrade ")  # no BOS_NIX_SKIP prefix by default
+
+
+def test_sysupgrade_skip_nix_prefixes_env(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_routes({"cat /etc/bos_version": "older-version"}))
+    catalog.sysupgrade(Device("h", backend=backend), image, assume_yes=True, skip_nix=True)
+    assert any("BOS_NIX_SKIP=1 sysupgrade " in argv[-1] for argv in backend.stream_outputs)
+
+
+def test_cleanup_firmware_removes_uploaded_tar(tmp_path: Path) -> None:
+    image = _image(tmp_path)
+    backend = _Exec(_routes({}))
+    catalog.cleanup_firmware(Device("h", backend=backend), image)
+    assert any(f"rm -f {shlex.quote(image.remote_path)}" in argv[-1] for argv in backend.runs)
+
+
+def test_sysupgrade_cleans_up_tmp_after_flash_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(nix_progress.tempfile, "gettempdir", lambda: str(tmp_path))
+    image = _image(tmp_path)
+    backend = _Exec(
+        _routes(
+            {
+                "ubus call system board": json.dumps(
+                    {"board_name": "b", "release": {"target": _TARGET}}
+                ),
+                "MemAvailable": "9999999",
+                "sha256sum": image.sha256,
+                "cat /etc/bos_version": "older-version",
+            }
+        ),
+        stream_code=1,  # flash fails without rebooting → the tar stays in /tmp
+    )
+    monkeypatch.setattr(
+        "bmc_tui.procedures.sysupgrade.Device", lambda host: Device(host, backend=backend)
+    )
+
+    with pytest.raises(Abort):
+        Sysupgrade(device="h", image=image.path, yes=True).run()
+
+    assert any(f"rm -f {shlex.quote(image.remote_path)}" in argv[-1] for argv in backend.runs)
 
 
 def test_sysupgrade_aborts_when_declined(tmp_path: Path) -> None:

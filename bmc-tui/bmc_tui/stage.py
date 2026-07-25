@@ -86,6 +86,15 @@ def done_if(cond: bool) -> None:
         raise _Skip
 
 
+def best_effort(action: Callable[[], object]) -> None:
+    """Run a cleanup `action`, swallowing any failure — cleanup in a `finally`
+    must not mask the error that triggered it."""
+    try:
+        action()
+    except Exception as e:
+        console.warn(f"cleanup failed: {e}")
+
+
 def stage(
     name: str,
 ) -> Callable[[Callable[_StageParams, str | None]], Callable[_StageParams, None]]:

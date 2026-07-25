@@ -27,7 +27,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from bmc_tui.stage import Abort, done_if, dry_run, ensure, entrypoint, require, stage
+from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, entrypoint, require, stage
 
 # ── guard verbs ──────────────────────────────────────────────────────────────
 
@@ -60,6 +60,27 @@ def test_ensure_runs_remedy_then_rechecks() -> None:
 def test_ensure_aborts_when_remedy_does_not_satisfy() -> None:
     with pytest.raises(Abort, match="still bad"):
         ensure(lambda: False, lambda: None, "still bad")
+
+
+def test_best_effort_runs_action() -> None:
+    ran: list[int] = []
+    best_effort(lambda: ran.append(1))
+    assert ran == [1]
+
+
+def test_best_effort_warns_on_stderr_and_swallows_the_failure(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A swallowed failure is a diagnostic, so it shares the stream with the
+    error it must not mask — a redirect capturing stdout would lose it."""
+
+    def boom() -> None:
+        raise RuntimeError("kaboom")
+
+    best_effort(boom)
+    captured = capsys.readouterr()
+    assert "cleanup failed: kaboom" in captured.err
+    assert captured.out == ""
 
 
 # ── stage wrapper ────────────────────────────────────────────────────────────

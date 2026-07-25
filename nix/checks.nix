@@ -154,7 +154,8 @@ in
     cd $src
     export RUFF_CACHE_DIR="$(mktemp -d)"
     ruff check
-    ty check
+    # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
+    ty check --error deprecated
     touch $out
   '';
 }
