@@ -216,7 +216,7 @@ impl DeviceDetailData {
 mod tests {
     use super::*;
     use crate::device::{DeviceFamily, DeviceId, DeviceIdentity, Membership};
-    use crate::history::HashrateHistory;
+    use crate::history::{ChartSpan, HashrateHistory};
     use crate::telemetry::{DeviceTemp, TelemetryReading, TelemetrySnapshot};
     use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 
@@ -253,7 +253,7 @@ mod tests {
             groups: vec![g],
         };
         let history = HashrateHistory::default();
-        let view = history.view(60);
+        let view = history.view(ChartSpan::OneHour);
         let win = ChartWindow::covering(&[]);
         let row = &TableViewData::from_summary(&summary, "Rig", 0, &view, win).rows[0];
         assert_eq!(row.off, 5, "2 off + 3 auth failures");
@@ -275,7 +275,7 @@ mod tests {
             groups,
         };
         let history = HashrateHistory::default();
-        let view = history.view(60);
+        let view = history.view(ChartSpan::OneHour);
         let win = ChartWindow::covering(&[]);
         let first = TableViewData::from_summary(&summary, "Rig", 0, &view, win);
         assert_eq!(first.page_count, 3, "9 groups, 4 per page");
@@ -299,7 +299,7 @@ mod tests {
             })
             .collect();
         let history = HashrateHistory::default();
-        let view = history.view(60);
+        let view = history.view(ChartSpan::OneHour);
         let win = ChartWindow::covering(&[]);
         let first = ModelDetailViewData::from_summary("Rig", "BMM 101", &rows, 0, &view, win);
         assert_eq!(first.device_count, 6);

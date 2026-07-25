@@ -41,9 +41,62 @@ use crate::summary::FleetSummary;
 /// number of points a chart draws, whatever range is chosen.
 const POINTS: usize = 60;
 
-/// The chart ranges in minutes — one consolidation tier each. Must match the
-/// `chart_span_minutes` manifest param's options.
-pub(crate) const TIER_MINUTES: [i32; 4] = [15, 60, 360, 1_440];
+/// A chart range — one consolidation tier each. Mirrors the `chart_span_minutes`
+/// manifest options, but stays independent of that generated enum (wasm32-only);
+/// the `From` impl below is the one checked crossing between them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChartSpan {
+    FifteenMinutes,
+    OneHour,
+    SixHours,
+    TwentyFourHours,
+}
+
+impl ChartSpan {
+    /// Every span, in tier order — one tier is built per entry.
+    pub(crate) const ALL: [Self; 4] = [
+        Self::FifteenMinutes,
+        Self::OneHour,
+        Self::SixHours,
+        Self::TwentyFourHours,
+    ];
+
+    /// The range this span covers.
+    pub(crate) const fn minutes(self) -> i32 {
+        match self {
+            Self::FifteenMinutes => 15,
+            Self::OneHour => 60,
+            Self::SixHours => 360,
+            Self::TwentyFourHours => 1_440,
+        }
+    }
+
+    /// This span's index into [`Self::ALL`], and so into the tier array.
+    const fn tier(self) -> usize {
+        match self {
+            Self::FifteenMinutes => 0,
+            Self::OneHour => 1,
+            Self::SixHours => 2,
+            Self::TwentyFourHours => 3,
+        }
+    }
+}
+
+/// The one crossing from the generated manifest enum to the tiers, and exhaustive
+/// by design: a new `chart_span_minutes` option won't compile until it has a tier
+/// here, so the two lists can never silently diverge.
+#[cfg(target_arch = "wasm32")]
+impl From<crate::manifest_params::ChartSpanMinutes> for ChartSpan {
+    fn from(span: crate::manifest_params::ChartSpanMinutes) -> Self {
+        use crate::manifest_params::ChartSpanMinutes;
+        match span {
+            ChartSpanMinutes::_15Minutes => Self::FifteenMinutes,
+            ChartSpanMinutes::_1Hour => Self::OneHour,
+            ChartSpanMinutes::_6Hours => Self::SixHours,
+            ChartSpanMinutes::_24Hours => Self::TwentyFourHours,
+        }
+    }
+}
 
 /// Sample interval (seconds) for a `span_minutes` range over [`POINTS`] points,
 /// floored at 1 s so a tiny range can't stall the gate.
@@ -197,7 +250,7 @@ impl Tier {
 /// range. Read through [`HashrateHistory::view`].
 #[derive(Debug)]
 pub struct HashrateHistory {
-    tiers: [Tier; TIER_MINUTES.len()],
+    tiers: [Tier; ChartSpan::ALL.len()],
     last_snapshot_at: Option<i64>,
 }
 
@@ -205,7 +258,7 @@ impl Default for HashrateHistory {
     fn default() -> Self {
         Self {
             tiers: core::array::from_fn(|i| Tier {
-                interval_secs: interval_secs(TIER_MINUTES[i]),
+                interval_secs: interval_secs(ChartSpan::ALL[i].minutes()),
                 ..Tier::default()
             }),
             last_snapshot_at: None,
@@ -228,16 +281,11 @@ impl HashrateHistory {
         }
     }
 
-    /// A read-only view at `span_minutes` — the tier serving that range,
-    /// falling back to the shortest tier for an unknown range.
+    /// A read-only view at `span` — the tier serving that range.
     #[must_use]
-    pub(crate) fn view(&self, span_minutes: i32) -> HistoryView<'_> {
-        let idx = TIER_MINUTES
-            .iter()
-            .position(|&m| m == span_minutes)
-            .unwrap_or(0);
+    pub(crate) fn view(&self, span: ChartSpan) -> HistoryView<'_> {
         HistoryView {
-            tier: &self.tiers[idx],
+            tier: &self.tiers[span.tier()],
         }
     }
 }
@@ -346,7 +394,7 @@ impl HashrateHistory {
             return false;
         }
         for (i, (tier, snap)) in self.tiers.iter_mut().zip(tiers).enumerate() {
-            let range_secs = i64::from(TIER_MINUTES[i]) * 60;
+            let range_secs = i64::from(ChartSpan::ALL[i].minutes()) * 60;
             if now.saturating_sub(saved_at) >= range_secs {
                 continue; // fully stale — leave empty, refills live
             }
@@ -396,6 +444,18 @@ mod tests {
         series.iter().map(|s| s.value).collect()
     }
 
+    #[test]
+    fn each_span_reads_the_tier_built_for_it() {
+        for (i, span) in ChartSpan::ALL.iter().enumerate() {
+            assert_eq!(
+                span.tier(),
+                i,
+                "{span:?} indexes tier {} but is ALL[{i}]",
+                span.tier(),
+            );
+        }
+    }
+
     fn group(label: &str, hashrate: f64) -> crate::summary::GroupSummary {
         crate::summary::GroupSummary {
             label: label.to_owned(),
@@ -429,11 +489,14 @@ mod tests {
         h.record(14, &summary(99.0, 99.0), &DeviceList::new()); // same bucket — refreshes
         h.record(15, &summary(12.0, 5.0), &DeviceList::new());
         assert_eq!(
-            vals(&h.view(15).total_series()),
+            vals(&h.view(ChartSpan::FifteenMinutes).total_series()),
             vec![Some(99.0), Some(12.0)]
         );
         assert_eq!(
-            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM")),
+            vals(
+                &h.view(ChartSpan::FifteenMinutes)
+                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
+            ),
             vec![Some(99.0), Some(5.0)]
         );
     }
@@ -445,7 +508,7 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record(0, &summary(10.0, 4.0), &DeviceList::new());
         h.record(14, &summary(99.0, 4.0), &DeviceList::new());
-        let series = h.view(15).total_series();
+        let series = h.view(ChartSpan::FifteenMinutes).total_series();
         assert_eq!(series.len(), 1, "still one bucket");
         assert_eq!(
             series[0].at, 0,
@@ -459,7 +522,12 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record(100, &summary(10.0, 4.0), &DeviceList::new());
         h.record(115, &summary(12.0, 5.0), &DeviceList::new());
-        let ats: Vec<i64> = h.view(15).total_series().iter().map(|s| s.at).collect();
+        let ats: Vec<i64> = h
+            .view(ChartSpan::FifteenMinutes)
+            .total_series()
+            .iter()
+            .map(|s| s.at)
+            .collect();
         assert_eq!(ats, vec![100, 115]);
     }
 
@@ -472,8 +540,8 @@ mod tests {
             h.record(now, &summary(1.0, 1.0), &DeviceList::new());
             now += 1;
         }
-        assert_eq!(h.view(15).total_series().len(), 5); // 0, 15, 30, 45, 60
-        assert_eq!(h.view(60).total_series().len(), 2); // 0, 60
+        assert_eq!(h.view(ChartSpan::FifteenMinutes).total_series().len(), 5); // 0, 15, 30, 45, 60
+        assert_eq!(h.view(ChartSpan::OneHour).total_series().len(), 2); // 0, 60
     }
 
     #[test]
@@ -487,7 +555,7 @@ mod tests {
             },
             &DeviceList::new(),
         );
-        assert!(h.view(15).total_series().is_empty());
+        assert!(h.view(ChartSpan::FifteenMinutes).total_series().is_empty());
     }
 
     #[test]
@@ -500,7 +568,7 @@ mod tests {
             now += 15; // one sample per 15-min-tier interval
             value += 1.0;
         }
-        let series = h.view(15).total_series();
+        let series = h.view(ChartSpan::FifteenMinutes).total_series();
         assert_eq!(series.len(), POINTS);
         assert_eq!(series[0].value, Some(5.0), "the oldest five were dropped");
     }
@@ -509,7 +577,7 @@ mod tests {
     fn an_unknown_model_has_an_empty_series() {
         let h = HashrateHistory::default();
         assert!(
-            h.view(15)
+            h.view(ChartSpan::FifteenMinutes)
                 .model_series(Some(DeviceFamily::Bos), "nope")
                 .is_empty()
         );
@@ -547,7 +615,7 @@ mod tests {
         h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
         h.record(15, &summary(12.0, 5.0), &devices(&[("bos/a", 4.0, true)]));
         assert_eq!(
-            vals(&h.view(15).device_series(&a)),
+            vals(&h.view(ChartSpan::FifteenMinutes).device_series(&a)),
             vec![Some(3.0), Some(4.0)]
         );
     }
@@ -560,12 +628,15 @@ mod tests {
         s.groups[0].hashrate = None;
         h.record(0, &s, &DeviceList::new());
         assert_eq!(
-            vals(&h.view(15).total_series()),
+            vals(&h.view(ChartSpan::FifteenMinutes).total_series()),
             vec![None],
             "a summary with no hashrate is a gap, matching the device-series policy"
         );
         assert_eq!(
-            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM")),
+            vals(
+                &h.view(ChartSpan::FifteenMinutes)
+                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
+            ),
             vec![None]
         );
     }
@@ -580,7 +651,7 @@ mod tests {
             &devices(&[("bos/a", 3.0, true), ("bos/b", 9.0, false)]),
         );
         assert_eq!(
-            vals(&h.view(15).device_series(&down)),
+            vals(&h.view(ChartSpan::FifteenMinutes).device_series(&down)),
             vec![None],
             "unreachable is a gap, not a false zero"
         );
@@ -590,7 +661,7 @@ mod tests {
     fn an_unknown_device_has_an_empty_series() {
         let h = HashrateHistory::default();
         assert!(
-            h.view(15)
+            h.view(ChartSpan::FifteenMinutes)
                 .device_series(&DeviceId::new("bos/nope"))
                 .is_empty()
         );
@@ -601,14 +672,24 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record(0, &summary(10.0, 4.0), &devices(&[("bos/a", 3.0, true)]));
         assert_eq!(
-            vals(&h.view(15).device_series(&DeviceId::new("bos/a"))),
+            vals(
+                &h.view(ChartSpan::FifteenMinutes)
+                    .device_series(&DeviceId::new("bos/a"))
+            ),
             vec![Some(3.0)]
         );
         // The next cycle no longer lists bos/a — its series is dropped.
         h.record(15, &summary(10.0, 4.0), &devices(&[("bos/b", 5.0, true)]));
-        assert!(h.view(15).device_series(&DeviceId::new("bos/a")).is_empty());
+        assert!(
+            h.view(ChartSpan::FifteenMinutes)
+                .device_series(&DeviceId::new("bos/a"))
+                .is_empty()
+        );
         assert_eq!(
-            vals(&h.view(15).device_series(&DeviceId::new("bos/b"))),
+            vals(
+                &h.view(ChartSpan::FifteenMinutes)
+                    .device_series(&DeviceId::new("bos/b"))
+            ),
             vec![Some(5.0)]
         );
     }
@@ -618,7 +699,10 @@ mod tests {
         let mut h = HashrateHistory::default();
         h.record(0, &summary(10.0, 4.0), &DeviceList::new()); // group "BOS BMM"
         assert_eq!(
-            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BMM")),
+            vals(
+                &h.view(ChartSpan::FifteenMinutes)
+                    .model_series(Some(DeviceFamily::Bos), "BOS BMM")
+            ),
             vec![Some(4.0)]
         );
         let other = FleetSummary {
@@ -627,12 +711,15 @@ mod tests {
         };
         h.record(15, &other, &DeviceList::new());
         assert!(
-            h.view(15)
+            h.view(ChartSpan::FifteenMinutes)
                 .model_series(Some(DeviceFamily::Bos), "BOS BMM")
                 .is_empty()
         );
         assert_eq!(
-            vals(&h.view(15).model_series(Some(DeviceFamily::Bos), "BOS BFM")),
+            vals(
+                &h.view(ChartSpan::FifteenMinutes)
+                    .model_series(Some(DeviceFamily::Bos), "BOS BFM")
+            ),
             vec![Some(7.0)]
         );
     }
@@ -651,13 +738,13 @@ mod tests {
         let mut restored = HashrateHistory::default();
         assert!(restored.restore(&blob, 15, 20), "fresh blob restores");
         assert_eq!(
-            vals(&restored.view(15).total_series()),
+            vals(&restored.view(ChartSpan::FifteenMinutes).total_series()),
             vec![Some(10.0), Some(12.0)]
         );
         assert_eq!(
             vals(
                 &restored
-                    .view(15)
+                    .view(ChartSpan::FifteenMinutes)
                     .model_series(Some(DeviceFamily::Bos), "BOS BMM")
             ),
             vec![Some(4.0), Some(5.0)]
@@ -665,7 +752,7 @@ mod tests {
         // Per-device series are RAM-only: never persisted.
         assert!(
             restored
-                .view(15)
+                .view(ChartSpan::FifteenMinutes)
                 .device_series(&DeviceId::new("bos/a"))
                 .is_empty()
         );
@@ -683,11 +770,14 @@ mod tests {
         let now = 20 * 60;
         restored.restore(&blob, saved_at, now);
         assert!(
-            restored.view(15).total_series().is_empty(),
+            restored
+                .view(ChartSpan::FifteenMinutes)
+                .total_series()
+                .is_empty(),
             "15-min tier fully stale"
         );
         assert_eq!(
-            vals(&restored.view(60).total_series()),
+            vals(&restored.view(ChartSpan::OneHour).total_series()),
             vec![Some(10.0)],
             "1-h tier still in range"
         );
@@ -705,7 +795,10 @@ mod tests {
             !h.restore(&[SNAPSHOT_MAGIC, SNAPSHOT_VERSION, 0xFF, 0xFF], 0, 0),
             "garbage payload"
         );
-        assert!(h.view(15).total_series().is_empty(), "nothing restored");
+        assert!(
+            h.view(ChartSpan::FifteenMinutes).total_series().is_empty(),
+            "nothing restored"
+        );
     }
 
     #[test]

@@ -412,15 +412,14 @@ pub extern "C" fn render(delta_ms: u32) {
             });
         }
         let derived = cell.as_mut().expect("BUG: derived view populated above");
-        let span_minutes = manifest_params::Params::current()
-            .chart_span_minutes
-            .as_manifest_value();
+        let chart_span =
+            history::ChartSpan::from(manifest_params::Params::current().chart_span_minutes);
 
         // The chart's time axis: render now back one range, so points
         // place by timestamp with the newest at the right edge.
         let chart_window = history::ChartWindow {
             end: SystemTime::now().unix_secs,
-            span_secs: i64::from(span_minutes) * 60,
+            span_secs: i64::from(chart_span.minutes()) * 60,
         };
         VIEW.with(|view_state| {
             let mut nav = view_state.borrow_mut();
@@ -464,7 +463,7 @@ pub extern "C" fn render(delta_ms: u32) {
                         .find(|(id, _, _)| id.as_str() == device_id)
                         .and_then(|(id, group, _)| {
                             let series =
-                                HISTORY.with(|h| h.borrow().view(span_minutes).device_series(id));
+                                HISTORY.with(|h| h.borrow().view(chart_span).device_series(id));
                             DEVICES.with(|devs| {
                                 devs.borrow()
                                     .iter()
@@ -490,7 +489,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &sel.label,
                                 rows,
                                 sel.page,
-                                &h.borrow().view(span_minutes),
+                                &h.borrow().view(chart_span),
                                 chart_window,
                             )
                         });
@@ -504,7 +503,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             &sel.label,
                             rows,
                             sel.page,
-                            &h.borrow().view(span_minutes),
+                            &h.borrow().view(chart_span),
                             chart_window,
                         )
                     });
@@ -524,7 +523,7 @@ pub extern "C" fn render(delta_ms: u32) {
                             DashboardViewData::from_summary(
                                 &derived.summary,
                                 &derived.fleet_name,
-                                &h.borrow().view(span_minutes),
+                                &h.borrow().view(chart_span),
                                 chart_window,
                             )
                         });
@@ -536,7 +535,7 @@ pub extern "C" fn render(delta_ms: u32) {
                                 &derived.summary,
                                 &derived.fleet_name,
                                 nav.fleet_page,
-                                &h.borrow().view(span_minutes),
+                                &h.borrow().view(chart_span),
                                 chart_window,
                             )
                         });
