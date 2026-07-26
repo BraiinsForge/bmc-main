@@ -19,29 +19,26 @@
 // the grant above.
 
 import IconBraiinsPool from './braiins-pool.svg';
-import * as pb from '@/proto';
-import { assertUnreachable } from '@/lib/ts';
+import { Password as IconToken, User as IconUserpass } from '@carbon/react/icons';
 
 export { IconBraiinsPool };
 
 export interface AccountIconProps {
-    type: pb.AccountType;
+    typeId: string;
     size: number;
 
     className?: string;
     style?: CSSProperties;
 }
-export function AccountIcon(props: AccountIconProps) {
-    const { type, size, style, className } = props;
 
-    switch (type) {
-        case pb.AccountType.UNSPECIFIED:
-            return null;
-
-        case pb.AccountType.BRAIINSPOOL:
-            return <IconBraiinsPool width={size} style={style} className={className} />;
-
-        default:
-            assertUnreachable(type);
+// Braiins Pool keeps its brand mark; the generic types split by shape — a key for a lone token, a
+// person for a username & password. Unknown/user-defined types fall back to the key.
+export function AccountIcon({ typeId, size, style, className }: AccountIconProps) {
+    if (typeId === 'braiins-pool') {
+        return <IconBraiinsPool width={size} style={style} className={className} />;
     }
+    if (typeId === 'generic-userpass') {
+        return <IconUserpass size={size} style={style} className={className} />;
+    }
+    return <IconToken size={size} style={style} className={className} />;
 }

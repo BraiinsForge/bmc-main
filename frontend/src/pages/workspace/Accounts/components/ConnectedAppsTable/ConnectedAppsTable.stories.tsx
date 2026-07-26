@@ -24,11 +24,24 @@ import { action } from 'storybook/actions';
 import * as pb from '@/proto';
 import { ConnectedAccountsTable, type ConnectedAccountsTableProps } from './index';
 
+const credentialTypes = [
+    pb.create(pb.CredentialTypeSchema, { id: 'braiins-pool', name: 'Braiins Pool' }),
+    pb.create(pb.CredentialTypeSchema, { id: 'generic-token', name: 'Token' }),
+    pb.create(pb.CredentialTypeSchema, { id: 'generic-userpass', name: 'Username & password' }),
+];
+
+const accounts = [
+    pb.create(pb.AccountSchema, { id: '1', typeId: 'braiins-pool', name: 'Primary pool' }),
+    pb.create(pb.AccountSchema, { id: '2', typeId: 'generic-token', name: 'Weather API' }),
+    pb.create(pb.AccountSchema, { id: '3', typeId: 'generic-userpass', name: 'Media server' }),
+];
+
 export default {
-    title: 'accounts/Table',
+    title: 'Accounts/Table',
     component: ConnectedAccountsTable,
     args: {
-        accounts: [pb.create(pb.AccountSchema, {}), pb.create(pb.AccountSchema, {}), pb.create(pb.AccountSchema, {})],
+        accounts,
+        credentialTypes,
         onDelete: action('onDelete'),
         onEdit: action('onEdit'),
     } satisfies ConnectedAccountsTableProps,

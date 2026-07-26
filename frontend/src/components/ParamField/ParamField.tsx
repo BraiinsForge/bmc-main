@@ -163,8 +163,10 @@ export function ParamField(props: {
 }) {
     const { id, definition, value, onChange, timezones, error } = props;
     const { formatMessage } = useIntl();
-    const required = !definition.isOptional;
-    const labelText = required ? `${definition.name} *` : definition.name;
+    // Carbon convention: required is the norm (unmarked); flag only the optional fields.
+    const labelText = definition.isOptional
+        ? formatMessage({ defaultMessage: '{name} (optional)' }, { name: definition.name })
+        : definition.name;
 
     switch (definition.kind.case) {
         case 'paramString': {

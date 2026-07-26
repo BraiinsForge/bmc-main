@@ -401,24 +401,6 @@ export function numberFormatToString(x: Maybe<pb.NumberFormat>): null | string {
     }
 }
 
-export const accountTypeOptions: Array<Exclude<pb.AccountType, 0>> = [pb.AccountType.BRAIINSPOOL];
-export function accountTypeToString(intl: IntlShape, x?: Maybe<pb.AccountType>): null;
-export function accountTypeToString(intl: IntlShape, x: Exclude<pb.AccountType, 0>): string;
-export function accountTypeToString(intl: IntlShape, x?: null | pb.AccountType) {
-    switch (x) {
-        case null:
-        case undefined:
-        case pb.AccountType.UNSPECIFIED:
-            return null;
-
-        case pb.AccountType.BRAIINSPOOL:
-            return intl.formatMessage({ defaultMessage: 'Braiins Pool' });
-
-        default:
-            assertUnreachable(x, 'clock style');
-    }
-}
-
 // ── Manifest-driven scene / widget helpers ────────────────────────────
 //
 // Since every widget is identified by a manifest UID, titles and

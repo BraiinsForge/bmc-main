@@ -18,7 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { useState } from 'react';
 import * as pb from '@/proto';
+import type { FieldValue } from '@/components';
 import { CredentialTypeForm } from './CredentialTypeForm';
 
 // Mirror the firmware built-ins in bmc/src/credential.rs.
@@ -45,7 +47,7 @@ const genericToken = pb.create(pb.CredentialTypeSchema, {
 const genericUserpass = pb.create(pb.CredentialTypeSchema, {
     id: 'generic-userpass',
     name: 'Username & password',
-    description: 'A username and password pair.\n\n**The widget may send them to any host.**',
+    description: '**The widget may send them to any host.**',
     fields: [
         stringField('username', 'Username', 'The account username.', false),
         stringField('password', 'Password', 'The account password.', true),
@@ -61,22 +63,23 @@ const braiinsPool = pb.create(pb.CredentialTypeSchema, {
 });
 
 export default {
-    title: 'workspace/Accounts/CredentialTypeForm',
+    title: 'Accounts/CredentialTypeForm',
     component: CredentialTypeForm,
 };
 
-export const BraiinsPool = () => (
-    <div className="ui-box">
-        <CredentialTypeForm type={braiinsPool} />
-    </div>
-);
-export const GenericToken = () => (
-    <div className="ui-box">
-        <CredentialTypeForm type={genericToken} />
-    </div>
-);
-export const GenericUserpass = () => (
-    <div className="ui-box">
-        <CredentialTypeForm type={genericUserpass} />
-    </div>
-);
+function Demo({ type }: { type: pb.CredentialType }) {
+    const [values, setValues] = useState<Record<string, FieldValue>>({});
+    return (
+        <div className="ui-box" style={{ minWidth: 600 }}>
+            <CredentialTypeForm
+                type={type}
+                values={values}
+                onChange={(key, value) => setValues(prev => ({ ...prev, [key]: value }))}
+            />
+        </div>
+    );
+}
+
+export const BraiinsPool = () => <Demo type={braiinsPool} />;
+export const GenericToken = () => <Demo type={genericToken} />;
+export const GenericUserpass = () => <Demo type={genericUserpass} />;

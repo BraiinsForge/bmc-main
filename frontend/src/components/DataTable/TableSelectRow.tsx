@@ -20,7 +20,7 @@
 
 import cn from 'clsx';
 import { Checkbox } from '@/components/Checkbox';
-import { RadioButton } from '@/components/RadioButton';
+import { RadioButton } from '@carbon/react';
 
 export interface TableSelectRowProps {
     // ids
@@ -72,7 +72,7 @@ export function TableSelectRow(props: TableSelectRowProps) {
                         onChange={(_, __, e) => onChange((e.target satisfies HTMLInputElement).checked)}
                         checked={checked}
                         disabled={disabled}
-                        label={ariaLabel}
+                        labelText={ariaLabel}
                         hideLabel
                     />
                 ) : (

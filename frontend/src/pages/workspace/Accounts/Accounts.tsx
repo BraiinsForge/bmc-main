@@ -18,18 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component, Fragment } from 'react';
+import { Component } from 'react';
 
 // Libs
 import { Helmet } from '@dr.pogodin/react-helmet';
-import { cloneDeep, debounce } from 'es-toolkit';
+import { debounce } from 'es-toolkit';
 import { FormattedMessage, type IntlShape, useIntl } from 'react-intl';
 import { useNavigate, type NavigateFunction } from 'react-router';
 
 import { setState } from '@/lib/react';
-import { assertUnreachable } from '@/lib/ts';
-import type { FormPropsToLocalState } from '@/lib/form';
 import { toast } from '@/lib/toast';
+import type { FormPropsToValuesRec, iField } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
@@ -39,7 +38,7 @@ import AppContext, { type AppContextType } from '@/context';
 
 // Components
 import * as Comp from './components';
-import { Button, Modal } from '@/components';
+import { Button, Modal, type FieldValue } from '@/components';
 import { Add as IconAdd } from '@carbon/react/icons';
 
 // CSS
@@ -50,47 +49,38 @@ interface Props {
     navigate: NavigateFunction;
 }
 
-type FormStateCombined = FormPropsToLocalState<Pick<Comp.FormCombinedProps, 'type'>> & {
-    connectedWidgetsCount: null | number;
+type Dialog = null | { mode: 'create' } | { mode: 'edit'; id: string; typeId: string };
+// Error shape mirroring the request payload's field paths,
+// so `parseFormErrors` routes each violation back to its control:
+// `name`, `typeId`, and the per-field `fieldValues.<key>`.
+type AccountErrors = {
+    name: string;
+    typeId: string;
+    fieldValues: Record<string, string>;
 };
-type FormStateBraiinsPool = FormPropsToLocalState<Comp.FormBraiinsPoolProps>;
-
-type DialogStates = {
-    combined: FormStateCombined;
-    braiinsPool: FormStateBraiinsPool;
+type FormState = {
+    values: FormPropsToValuesRec<Pick<Comp.AccountFormProps, 'type' | 'name'>>;
+    fieldValues: Record<string, FieldValue>;
+    errors: null | pb.FormErrors<AccountErrors>;
 };
-function getInitialDialogStates(): DialogStates {
-    return {
-        combined: {
-            errors: null,
-            values: { type: pb.AccountType.BRAIINSPOOL },
-            connectedWidgetsCount: null,
-        },
-        braiinsPool: {
-            errors: null,
-            values: {
-                name: '',
-                apiKey: '',
-            },
-        },
-    };
-}
 
 interface State {
     accounts: pb.Account[];
+    credentialTypes: pb.CredentialType[];
     isLoading: boolean;
-
     isSaving: boolean;
-    openDialog: null | { kind: 'create' } | { kind: 'edit'; id: string };
-    dialogStates: DialogStates;
+    dialog: Dialog;
+    form: FormState;
 }
+
+const emptyForm = (): FormState => ({ values: { type: '', name: '' }, errors: null, fieldValues: {} });
 const getInitialState = (): State => ({
     accounts: [],
+    credentialTypes: [],
     isLoading: false,
-
     isSaving: false,
-    openDialog: null,
-    dialogStates: getInitialDialogStates(),
+    dialog: null,
+    form: emptyForm(),
 });
 
 const $ = getID('list').get;
@@ -101,345 +91,119 @@ class View extends Component<Props, State> {
     readonly state = getInitialState();
     componentDidMount = () => this.#mount();
     componentWillUnmount = () => pb.abort.all(this);
+    #mount = debounce(() => this.#fetch(), 150);
 
-    #mount = debounce(() => this.#fetchAccounts(), 150);
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
             title: formatMessage({ defaultMessage: 'Connected Accounts' }),
+            subtitle: formatMessage({ defaultMessage: 'Manage your API credentials and service accounts.' }),
+            add: formatMessage({ defaultMessage: 'Add New Account' }),
+            edit: formatMessage({ defaultMessage: 'Edit Account' }),
             cancel: formatMessage({ defaultMessage: 'Cancel' }),
-            addNewAccount: formatMessage({ defaultMessage: 'Add New Account' }),
-            editAccount: formatMessage({ defaultMessage: 'Edit Account' }),
+            save: formatMessage({ defaultMessage: 'Save' }),
+            empty: formatMessage({ defaultMessage: 'No Connected Accounts Yet.' }),
         };
     }
 
-    private fetchAccountsAbort = pb.abort.get();
-    #fetchAccounts = async (): Promise<void> => {
+    private fetchAbort = pb.abort.get();
+    #fetch = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
         await setState(this, { isLoading: true });
 
         try {
-            const { accounts } = await pb.rpc.accounts.getAllAccounts({}, this.fetchAccountsAbort.replace());
-            this.setState({ accounts, isLoading: false });
+            const opts = this.fetchAbort.replace();
+            const [accountsResponse, typesResponse] = await Promise.all([
+                pb.rpc.accounts.getAllAccounts({}, opts),
+                pb.rpc.credentials.getCredentialTypes({}, opts),
+            ]);
+            this.setState({
+                accounts: accountsResponse.accounts,
+                credentialTypes: typesResponse.credentialTypes,
+            });
         } catch ($) {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to fetch accounts!' });
+            msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
             toast.error(msg);
         } finally {
             this.setState({ isLoading: false });
         }
     };
 
-    #getFieldChangeHandler = <
-        const Kind extends keyof DialogStates,
-        const FieldKey extends keyof DialogStates[Kind]['values'],
-    >(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ) => {
-        return (value: DialogStates[Kind]['values'][FieldKey]) => {
-            this.setState(s => {
-                const form = cloneDeep(s.dialogStates[widgetKind]);
-                form.errors = null;
-                form.values = {
-                    ...form.values,
-                    [fieldKey]: value,
-                };
-
-                return {
-                    dialogStates: {
-                        ...s.dialogStates,
-                        [widgetKind]: form,
-                    },
-                };
-            });
-        };
-    };
-    #getFieldValue = <const Kind extends keyof DialogStates, const FieldKey extends keyof DialogStates[Kind]['values']>(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ) => {
-        const { dialogStates } = this.state;
-
-        const values = dialogStates[widgetKind].values as DialogStates[Kind]['values'];
-        return values?.[fieldKey] ?? null;
-    };
-    #getFieldError = <const Kind extends keyof DialogStates, const FieldKey extends keyof DialogStates[Kind]['values']>(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ): null | string => {
-        const { dialogStates } = this.state;
-
-        const errors = dialogStates[widgetKind].errors as null | pb.FormErrors<any>;
-        if (!errors) return null;
-
-        const fieldError = errors.fields?.[fieldKey] as null | pb.FieldErrors;
-        return pb.renderFieldErrorsAsList(fieldError);
-    };
-    #getFieldStruct = <
-        const Kind extends keyof DialogStates,
-        const FieldKey extends keyof DialogStates[Kind]['values'],
-    >(
-        widgetKind: Kind,
-        fieldKey: FieldKey,
-    ) => {
-        return {
-            value: this.#getFieldValue(widgetKind, fieldKey),
-            error: this.#getFieldError(widgetKind, fieldKey),
-            onChange: this.#getFieldChangeHandler(widgetKind, fieldKey),
-            disabled: false,
-        };
-    };
-
     //
-    // Dialogs
+    // Dialog
     //
 
-    #dialogClose = (): void => this.setState({ openDialog: null });
-
-    #accountFormOpen = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-
-        try {
-            const { defaultAccountType } = await pb.rpc.accounts.addAccount({});
-            this.setState(s => ({
-                openDialog: { kind: 'create' },
-                dialogStates: {
-                    ...s.dialogStates,
-                    combined: {
-                        errors: null,
-                        connectedWidgetsCount: null,
-                        values: { type: defaultAccountType },
-                    },
-                },
-            }));
-        } catch ($) {
-            let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Failed to load account creation metadata!' });
-            toast.error(msg);
-        }
+    #openCreate = (): void => {
+        const first = this.state.credentialTypes.at(0);
+        this.setState({
+            dialog: { mode: 'create' },
+            form: { ...emptyForm(), values: { type: first?.id ?? '', name: '' } },
+        });
     };
-
-    private accountFormSubmitAbort = pb.abort.get();
-    #accountFormSubmitNew = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const { openDialog, dialogStates } = this.state;
-
-        if (openDialog?.kind !== 'create') {
-            toast.error(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
-            return;
-        }
-
-        await setState(this, { isSaving: true });
-
-        try {
-            const opts = this.accountFormSubmitAbort.replace();
-
-            const accountType = dialogStates.combined.values.type;
-            const accountName = dialogStates.braiinsPool.values.name;
-            const authentication: pb.Authentication = pb.create(pb.AuthenticationSchema, {
-                value: {
-                    case: 'apiKey',
-                    value: String(dialogStates.braiinsPool.values.apiKey),
-                },
-            });
-
-            const payload = pb.create(pb.ConnectAppRequestSchema, { accountType, accountName, authentication });
-            await pb.rpc.accounts.connectApp(payload, opts);
-
-            this.#dialogClose();
-            toast.success(formatMessage({ defaultMessage: 'Account "{name}" connected' }, { name: accountName }));
-        } catch ($) {
-            if (pb.abort.is($)) return;
-
-            const { global, fields } = pb.parseFormErrors($, ['accountName', 'authentication']);
-            const res = cloneDeep(this.state.dialogStates);
-            const type = dialogStates.combined.values.type;
-
-            switch (type) {
-                case undefined:
-                case pb.AccountType.UNSPECIFIED:
-                    res.combined.errors = { global };
-                    break;
-
-                case pb.AccountType.BRAIINSPOOL: {
-                    res.braiinsPool.errors = {
-                        global,
-                        fields: {
-                            name: fields.accountName,
-                            apiKey: fields.authentication,
-                        },
-                    };
-                    break;
-                }
-
-                default:
-                    assertUnreachable(type, 'Unknown account type');
-            }
-
-            this.setState({ dialogStates: res });
-        } finally {
-            this.setState({ isSaving: false }, this.#fetchAccounts);
-        }
+    #openEdit = (acc: pb.Account): void => {
+        this.setState({
+            dialog: { mode: 'edit', id: acc.id, typeId: acc.typeId },
+            form: { ...emptyForm(), values: { type: acc.typeId, name: acc.name } },
+        });
     };
-    #accountFormSubmitEdit = async (): Promise<void> => {
-        const { formatMessage } = this.props.intl;
-        const { openDialog, dialogStates } = this.state;
+    #close = (): void => this.setState({ dialog: null });
 
-        if (openDialog?.kind !== 'edit') {
-            toast.error(formatMessage({ defaultMessage: 'Invalid state, account form is not active!' }));
-            return;
-        }
-
-        await setState(this, { isSaving: true });
-
-        try {
-            const opts = this.accountFormSubmitAbort.replace();
-
-            const accountName = dialogStates.braiinsPool.values.name;
-            const authentication: pb.Authentication = pb.create(pb.AuthenticationSchema, {
-                value: {
-                    case: 'apiKey',
-                    value: String(dialogStates.braiinsPool.values.apiKey),
-                },
-            });
-
-            const payload = pb.create(pb.EditAccountRequestSchema, {
-                id: openDialog.id,
-                accountName,
-                authentication,
-            });
-            await pb.rpc.accounts.editAccount(payload, opts);
-
-            this.#dialogClose();
-            toast.success(formatMessage({ defaultMessage: 'Account "{name}" saved' }, { name: accountName }));
-        } catch ($) {
-            if (pb.abort.is($)) return;
-
-            const { global, fields } = pb.parseFormErrors($, ['accountName', 'authentication']);
-            const res = cloneDeep(this.state.dialogStates);
-            const type = dialogStates.combined.values.type;
-
-            switch (type) {
-                case undefined:
-                case pb.AccountType.UNSPECIFIED:
-                    res.combined.errors = { global };
-                    break;
-
-                case pb.AccountType.BRAIINSPOOL: {
-                    res.braiinsPool.errors = {
-                        global,
-                        fields: {
-                            name: fields.accountName,
-                            apiKey: fields.authentication,
-                        },
-                    };
-                    break;
-                }
-
-                default:
-                    assertUnreachable(type, 'Unknown account type');
-            }
-
-            this.setState({ dialogStates: res });
-        } finally {
-            this.setState({ isSaving: false }, this.#fetchAccounts);
-        }
-    };
-
-    #accountFormRender = (): ReactNode => {
-        const { openDialog, dialogStates } = this.state;
-
-        const txt = this.#txt;
-        const actionLabel: string = openDialog?.kind === 'edit' ? txt.editAccount : txt.addNewAccount;
-
-        let isOpen: boolean = false;
-        let submitMethod: undefined | AnyFunction;
-        if (openDialog?.kind === 'create') {
-            isOpen = true;
-            submitMethod = this.#accountFormSubmitNew;
-        } else if (openDialog?.kind === 'edit') {
-            isOpen = true;
-            submitMethod = this.#accountFormSubmitEdit;
-        }
-
-        return (
-            <Fragment>
-                <Modal
-                    id={$('account-modal')}
-                    open={isOpen}
-                    size="sm"
-                    modalHeading={actionLabel}
-                    selectorPrimaryFocus="input"
-                    // Submit
-                    onRequestSubmit={submitMethod}
-                    primaryButtonText={actionLabel}
-                    primaryButtonDisabled={false} // FIXME: Likely disabled when required fields are empty
-                    // Cancel
-                    onSecondarySubmit={this.#dialogClose}
-                    onRequestClose={this.#dialogClose}
-                    secondaryButtonText={txt.cancel}
-                >
-                    <Comp.FormCombined
-                        type={this.#getFieldStruct('combined', 'type')}
-                        valuesBraiinsPool={{
-                            name: this.#getFieldStruct('braiinsPool', 'name'),
-                            apiKey: this.#getFieldStruct('braiinsPool', 'apiKey'),
-                        }}
-                        connectedWidgetsCount={dialogStates.combined.connectedWidgetsCount}
-                    />
-                </Modal>
-            </Fragment>
-        );
-    };
-
-    //
-    // Header
-    //
-
-    #renderAddNewButton = () => {
-        const { addNewAccount } = this.#txt;
-        return (
-            <Button
-                id={$('connect-acc')}
-                key="connect-acc"
-                kind="primary"
-                onClick={this.#accountFormOpen}
-                icon={IconAdd}
-                children={addNewAccount}
-            />
-        );
-    };
-    #headerRender = (): ReactElement => {
-        return <div className={css.headerControls} children={this.#renderAddNewButton()} />;
-    };
-
-    //
-    // Table methods
-    //
-
-    #edit = async (acc: pb.Account): Promise<void> => {
+    #onType = (type: string): void =>
         this.setState(s => ({
-            openDialog: { kind: 'edit', id: acc.id },
-            dialogStates: {
-                ...s.dialogStates,
-                braiinsPool: {
-                    errors: null,
-                    values: {
-                        name: acc.accountName,
-                        apiKey: acc.authentication?.value.value,
-                    },
-                },
-                combined: {
-                    errors: null,
-                    values: { type: acc.accountType },
-                    connectedWidgetsCount: acc.connectedWidgets.length,
-                },
-            },
+            form: { ...s.form, errors: null, values: { ...s.form.values, type }, fieldValues: {} },
         }));
+    #onName = (name: string): void =>
+        this.setState(s => ({ form: { ...s.form, errors: null, values: { ...s.form.values, name } } }));
+    #onField = (key: string, value: FieldValue): void =>
+        this.setState(s => ({
+            form: { ...s.form, errors: null, fieldValues: { ...s.form.fieldValues, [key]: value } },
+        }));
+
+    private submitAbort = pb.abort.get();
+    #submit = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+        const { dialog, form } = this.state;
+        if (!dialog) return;
+
+        await setState(this, { isSaving: true });
+
+        try {
+            const opts = this.submitAbort.replace();
+
+            // A blank field is omitted; on edit an empty map means "keep the stored secrets".
+            const fieldValues: Record<string, string> = {};
+            for (const [key, value] of Object.entries(form.fieldValues)) {
+                const text = typeof value === 'string' ? value : value == null ? '' : String(value);
+                if (text.length > 0) fieldValues[key] = text;
+            }
+
+            const request = pb.create(pb.UpsertAccountRequestSchema, {
+                id: dialog.mode === 'edit' ? dialog.id : '',
+                typeId: dialog.mode === 'create' ? (form.values.type ?? '') : '',
+                name: form.values.name ?? '',
+                fieldValues,
+            });
+            await pb.rpc.accounts.upsertAccount(request, opts);
+
+            this.#close();
+            toast.success(
+                formatMessage({ defaultMessage: 'Account "{name}" saved' }, { name: form.values.name ?? '' }),
+            );
+        } catch ($) {
+            if (pb.abort.is($)) return;
+
+            // Violations arrive under the payload's own field paths (`name`, `type_id`,
+            // `field_values.<key>`); parseFormErrors camelCases them so each routes to its control.
+            const errors = pb.parseFormErrors<AccountErrors>($, ['name', 'typeId', 'fieldValues']);
+            this.setState(s => ({ form: { ...s.form, errors } }));
+        } finally {
+            this.setState({ isSaving: false }, this.#fetch);
+        }
     };
+
     #delete = async (acc: pb.Account): Promise<void> => {
         const {
             intl: { formatMessage },
@@ -447,23 +211,22 @@ class View extends Component<Props, State> {
         } = this.props;
         const { confirm } = this.context;
 
-        const confirmStringTitle: string = formatMessage({ defaultMessage: 'Delete Account' });
-        const confirmStringCancel: string = formatMessage({ defaultMessage: 'Cancel' });
-        const connectedAccountsCount: number = acc.connectedWidgets.length;
+        const title = formatMessage({ defaultMessage: 'Delete Account' });
+        const cancel = formatMessage({ defaultMessage: 'Cancel' });
+        const connected = acc.connectedWidgets.length;
 
-        // When the account is connected to any widget,
-        // user has to abort or go edit those widgets
-        if (connectedAccountsCount > 0) {
+        // A bound account can't be deleted until its widgets are freed.
+        if (connected > 0) {
             const answer = await confirm({
                 size: 'sm',
                 danger: false,
-                title: confirmStringTitle,
-                cancelLabel: confirmStringCancel,
+                title,
+                cancelLabel: cancel,
                 confirmLabel: formatMessage({ defaultMessage: 'Go to display widgets' }),
                 message: (
                     <FormattedMessage
                         defaultMessage="This account is linked to <b>{count, plural, one {1 widget} other {# widgets}}</b>. To delete it, please remove or edit {count, plural, one {that widget} other {those widgets}}."
-                        values={{ b: ch => <strong children={ch} />, count: connectedAccountsCount }}
+                        values={{ b: ch => <strong children={ch} />, count: connected }}
                     />
                 ),
             });
@@ -471,17 +234,16 @@ class View extends Component<Props, State> {
             return;
         }
 
-        // Otherwise we'll just ask them to confirm the deletion
-        const confirmed: boolean = await confirm({
+        const confirmed = await confirm({
             size: 'sm',
             danger: true,
-            title: confirmStringTitle,
-            cancelLabel: confirmStringCancel,
-            confirmLabel: confirmStringTitle,
+            title,
+            cancelLabel: cancel,
+            confirmLabel: title,
             message: (
                 <FormattedMessage
                     defaultMessage="This account isn’t used in any display widgets. You can safely delete {name} now."
-                    values={{ name: <strong children={acc.accountName} /> }}
+                    values={{ name: <strong children={acc.name} /> }}
                 />
             ),
         });
@@ -495,28 +257,92 @@ class View extends Component<Props, State> {
             msg ||= formatMessage({ defaultMessage: 'Account deletion failed!' });
             toast.error(msg);
         } finally {
-            this.#fetchAccounts();
+            this.#fetch();
         }
     };
 
+    //
+    // Render
+    //
+
+    #renderAddButton = (): ReactElement => (
+        <Button
+            id={$('connect-acc')}
+            key="connect-acc"
+            kind="primary"
+            onClick={this.#openCreate}
+            icon={IconAdd}
+            children={this.#txt.add}
+        />
+    );
+
+    #renderModal = (): ReactNode => {
+        const { dialog, form, credentialTypes, isSaving } = this.state;
+        if (!dialog) return null;
+
+        const txt = this.#txt;
+        const isEdit = dialog.mode === 'edit';
+
+        const errors = form.errors;
+        const type: iField<string> = {
+            value: form.values.type ?? '',
+            onChange: this.#onType,
+            error: pb.renderFieldErrorsAsList(errors?.fields?.typeId),
+        };
+        const name: iField<string> = {
+            value: form.values.name ?? '',
+            onChange: this.#onName,
+            error: pb.renderFieldErrorsAsList(errors?.fields?.name),
+        };
+
+        return (
+            <Modal
+                id={$('account-modal')}
+                open
+                size="sm"
+                modalHeading={isEdit ? txt.edit : txt.add}
+                selectorPrimaryFocus="input"
+                onRequestSubmit={this.#submit}
+                primaryButtonText={isEdit ? txt.save : txt.add}
+                primaryButtonDisabled={isSaving}
+                onSecondarySubmit={this.#close}
+                onRequestClose={this.#close}
+                secondaryButtonText={txt.cancel}
+            >
+                <Comp.AccountForm
+                    mode={dialog.mode}
+                    credentialTypes={credentialTypes}
+                    type={type}
+                    name={name}
+                    fieldValues={form.fieldValues}
+                    fieldErrors={errors?.fields?.fieldValues}
+                    onFieldChange={this.#onField}
+                    error={pb.renderFieldErrorsAsList(errors?.global)}
+                />
+            </Modal>
+        );
+    };
+
     render() {
-        const { intl } = this.props;
-        const { accounts } = this.state;
+        const { accounts, credentialTypes } = this.state;
         const txt = this.#txt;
 
         let content: ReactNode;
-
         if (accounts.length > 0) {
-            content = <Comp.ConnectedAccountsTable accounts={accounts} onEdit={this.#edit} onDelete={this.#delete} />;
+            content = (
+                <Comp.ConnectedAccountsTable
+                    accounts={accounts}
+                    credentialTypes={credentialTypes}
+                    onEdit={this.#openEdit}
+                    onDelete={this.#delete}
+                />
+            );
         } else {
             content = (
                 <div className={css.emptyViewWrapper}>
                     <Comp.Placeholder rowsCount={3} className={css.placeholderTable} />
-                    <h2
-                        className={css.heading}
-                        children={intl.formatMessage({ defaultMessage: 'No Connected Accounts Yet.' })}
-                    />
-                    {this.#renderAddNewButton()}
+                    <h2 className={css.heading} children={txt.empty} />
+                    {this.#renderAddButton()}
                 </div>
             );
         }
@@ -526,21 +352,15 @@ class View extends Component<Props, State> {
                 <Helmet title={txt.title} />
                 <header className={css.header}>
                     <div className={css.headerLeft}>
-                        <h1 className={css.title} children={this.#txt.title} />
-                        <div
-                            className={css.subtitle}
-                            children={intl.formatMessage({
-                                defaultMessage: 'Manage your API credentials and service accounts.',
-                            })}
-                        />
+                        <h1 className={css.title} children={txt.title} />
+                        <div className={css.subtitle} children={txt.subtitle} />
                     </div>
-
-                    {this.#headerRender()}
+                    <div className={css.headerControls} children={this.#renderAddButton()} />
                 </header>
 
                 <main className={css.main} children={content} />
 
-                {this.#accountFormRender()}
+                {this.#renderModal()}
             </div>
         );
     }

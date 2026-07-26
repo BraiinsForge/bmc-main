@@ -64,9 +64,9 @@ export function InlineNotification(props: InlineNotificationProps) {
 
     const resProps = {
         ...rest,
-        children,
+        children: children != null ? <div className={css.children} children={children} /> : null,
         kind,
-        lowContrast: true,
+        lowContrast: false,
         title: title || '',
         className: cn(css.root, stretch && css.stretch, kindClass, theme && THEME[theme], className),
     } as BaseProps;

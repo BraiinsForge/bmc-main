@@ -18,37 +18,52 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { useState } from 'react';
+import { useIntl } from 'react-intl';
 import type * as pb from '@/proto';
-import { Markdown } from '@/components';
-import { ParamField, type FieldValue } from '@/components/ParamField';
 import css from './CredentialTypeForm.scss';
+import { Markdown, ParamField, type FieldValue } from '@/components';
 
 export interface CredentialTypeFormProps {
     type: pb.CredentialType;
+    values: Record<string, FieldValue>;
+    onChange(key: string, value: FieldValue): void;
+    // Per-field errors keyed by field key (from the backend's `field_values.<key>` violations).
+    errors?: Record<string, string[] | undefined>;
 }
 
-// Renders a credential type's fields via the shared ParamField; secret fields mask via the Password format.
-export function CredentialTypeForm({ type }: CredentialTypeFormProps) {
-    const [values, setValues] = useState<Record<string, FieldValue>>({});
-    const onChange = (key: string, value: FieldValue) => setValues(prev => ({ ...prev, [key]: value }));
+// Renders a credential type's fields via the shared ParamField; secret fields mask via the Password
+// format. Controlled — the parent owns the field values and submits them.
+export function CredentialTypeForm({ type, values, onChange, errors }: CredentialTypeFormProps) {
+    const { formatMessage } = useIntl();
+
+    // Derived from the structured policy rather than the type's own prose,
+    // so it stays truthful for a type whose description someone else wrote.
+    const hosts = type.egress?.allowHosts ?? [];
+    const egress = hosts.length
+        ? formatMessage({ defaultMessage: 'Its secret is only ever sent to {hosts}.' }, { hosts: hosts.join(', ') })
+        : formatMessage({ defaultMessage: 'Its secret may be sent to any host.' });
 
     return (
         <div className={css.root}>
             <div className={css.intro}>
                 <h4 className={css.title} children={type.name} />
                 <Markdown className={css.description} source={type.description} />
+                <p className={css.egress} children={egress} />
             </div>
-            {type.fields.map(field => (
-                <ParamField
-                    key={field.key}
-                    id={`cred-${type.id}-${field.key}`}
-                    definition={field}
-                    value={values[field.key] ?? ''}
-                    onChange={onChange}
-                    timezones={[]}
-                />
-            ))}
+
+            <section
+                children={type.fields.map(field => (
+                    <ParamField
+                        key={field.key}
+                        id={`cred-${type.id}-${field.key}`}
+                        definition={field}
+                        value={values[field.key] ?? ''}
+                        error={errors?.[field.key]?.[0]}
+                        onChange={onChange}
+                        timezones={[]}
+                    />
+                ))}
+            />
         </div>
     );
 }

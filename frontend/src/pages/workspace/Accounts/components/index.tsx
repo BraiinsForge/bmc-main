@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-export * from './forms';
-
 export * from './Placeholder';
 export * from './ConnectedAppsTable';
+export * from './CredentialTypeForm';
+export * from './AccountForm';

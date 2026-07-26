@@ -18,12 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component, useState, useCallback, type RefObject } from 'react';
+import { Component, type RefObject } from 'react';
 import { Sized } from '@/lib/react';
 import { useIntl, type IntlShape } from 'react-intl';
 
 // APP
-import * as pb from '@/proto';
+import type * as pb from '@/proto';
 import { getID } from '../const';
 
 // Components
@@ -36,13 +36,14 @@ import {
     Button,
     ButtonGroup,
 } from '@/components';
-import { TrashCan as IconDelete, Edit as IconEdit, View as IconShow, ViewOff as IconHide } from '@carbon/react/icons';
+import { TrashCan as IconDelete, Edit as IconEdit } from '@carbon/react/icons';
 
 // Styles
 import css from './ConnectedAppsTable.scss';
 
 export interface ConnectedAccountsTableProps {
     accounts: pb.Account[];
+    credentialTypes: pb.CredentialType[];
     onEdit(acc: pb.Account): void;
     onDelete(acc: pb.Account): void;
 }
@@ -55,11 +56,14 @@ interface Props extends ConnectedAccountsTableProps {
     };
 }
 
-type TableCol = 'type' | 'name' | 'apiKey' | 'createdAt' | 'actions';
-const NA = <span children="N/A" />;
+type TableCol = 'type' | 'name' | 'createdAt' | 'actions';
 const $ = getID('accounts-table').get;
 
 class View extends Component<Props> {
+    #typeName(typeId: string): string {
+        return this.props.credentialTypes.find(t => t.id === typeId)?.name ?? typeId;
+    }
+
     get #headers(): Array<DataTableHeader<TableCol>> {
         const {
             intl: { formatMessage },
@@ -76,11 +80,6 @@ class View extends Component<Props> {
             header: formatMessage({ defaultMessage: 'Account' }),
             align: 'start',
         };
-        const $apiKey: DataTableHeader<TableCol> = {
-            key: 'apiKey',
-            header: formatMessage({ defaultMessage: 'API Key' }),
-            align: 'start',
-        };
         const $createdAt: DataTableHeader<TableCol> = {
             key: 'createdAt',
             header: formatMessage({ defaultMessage: 'Created At' }),
@@ -95,7 +94,7 @@ class View extends Component<Props> {
         if (layout.xs) return [$type, $actions];
         if (layout.sm) return [$type, $name, $actions];
 
-        return [$type, $name, $apiKey, $createdAt, $actions];
+        return [$type, $name, $createdAt, $actions];
     }
     get #rows(): Array<DataTableRow<TableCol>> {
         const { accounts, onEdit, onDelete, layout, intl } = this.props;
@@ -120,12 +119,11 @@ class View extends Component<Props> {
                 cells: {
                     type: (
                         <div className={css.typeColContent}>
-                            <AccountIcon size={24} type={x.accountType} />
-                            <span children={pb.accountTypeToString(intl, x.accountType)} />
+                            <AccountIcon size={24} typeId={x.typeId} />
+                            <span children={this.#typeName(x.typeId)} />
                         </div>
                     ),
-                    name: x.accountName,
-                    apiKey: <ApiKey id={$('api-key', index)} value={x.authentication?.value?.value} />,
+                    name: x.name,
                     createdAt: <Datetime value={x.createdAt} format="%d.%m.%Y %H:%M" />,
                     actions: (
                         <ButtonGroup spaced>
@@ -169,33 +167,5 @@ export function ConnectedAccountsTable(props: ConnectedAccountsTableProps) {
                 return <View {...props} tableRef={ref} intl={intl} layout={{ sm, xs }} />;
             }}
         />
-    );
-}
-
-interface ApiKeyProps {
-    id: string;
-    value: Maybe<string>;
-}
-function ApiKey(props: ApiKeyProps) {
-    const { id, value } = props;
-
-    const { formatMessage } = useIntl();
-    const [shown, setShown] = useState<boolean>(false);
-    const toggleShown = useCallback(() => setShown(x => !x), []);
-
-    if (!value) return NA;
-    return (
-        <div className={css.apiToken}>
-            <span children={shown ? value : '****************'} />
-            <Button
-                id={id}
-                size="sm"
-                kind="ghost"
-                icon={shown ? IconHide : IconShow}
-                hasIconOnly
-                title={shown ? formatMessage({ defaultMessage: 'Hide' }) : formatMessage({ defaultMessage: 'Show' })}
-                onClick={toggleShown}
-            />
-        </div>
     );
 }

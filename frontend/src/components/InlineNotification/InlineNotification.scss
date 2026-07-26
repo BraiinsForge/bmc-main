@@ -98,3 +98,7 @@ div.root.error {
 div.root.success {
     @include theme($braiins-alert-green);
 }
+
+.children:not(:first-child) {
+    margin-block-start: mini-units(1);
+}

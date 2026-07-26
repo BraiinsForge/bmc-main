@@ -2,8 +2,8 @@
 // @generated from file web/account_management.proto (package braiins.bmc.web, syntax proto3)
 /* eslint-disable */
 
-import type { GenEnum, GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
-import { enumDesc, fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
+import type { GenFile, GenMessage, GenService } from '@bufbuild/protobuf/codegenv2';
+import { fileDesc, messageDesc, serviceDesc } from '@bufbuild/protobuf/codegenv2';
 import type { EmptySchema, StringValueSchema, Timestamp } from '@bufbuild/protobuf/wkt';
 import {
     file_google_protobuf_empty,
@@ -18,27 +18,52 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_account_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chx3ZWIvYWNjb3VudF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIiUAoSQWRkQWNjb3VudFJlc3BvbnNlEjoKFGRlZmF1bHRfYWNjb3VudF90eXBlGAEgASgOMhwuYnJhaWlucy5ibWMud2ViLkFjY291bnRUeXBlIkQKFkdldEFsbEFjY291bnRzUmVzcG9uc2USKgoIYWNjb3VudHMYASADKAsyGC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudCJvChJFZGl0QWNjb3VudFJlcXVlc3QSCgoCaWQYASABKAkSFAoMYWNjb3VudF9uYW1lGAIgASgJEjcKDmF1dGhlbnRpY2F0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLkF1dGhlbnRpY2F0aW9uIpYBChFDb25uZWN0QXBwUmVxdWVzdBIyCgxhY2NvdW50X3R5cGUYASABKA4yHC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudFR5cGUSFAoMYWNjb3VudF9uYW1lGAIgASgJEjcKDmF1dGhlbnRpY2F0aW9uGAMgASgLMh8uYnJhaWlucy5ibWMud2ViLkF1dGhlbnRpY2F0aW9uIuMBCgdBY2NvdW50EgoKAmlkGAEgASgJEjIKDGFjY291bnRfdHlwZRgCIAEoDjIcLmJyYWlpbnMuYm1jLndlYi5BY2NvdW50VHlwZRIUCgxhY2NvdW50X25hbWUYAyABKAkSNwoOYXV0aGVudGljYXRpb24YBCABKAsyHy5icmFpaW5zLmJtYy53ZWIuQXV0aGVudGljYXRpb24SLgoKY3JlYXRlZF9hdBgFIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGQoRY29ubmVjdGVkX3dpZGdldHMYBiADKAkiLAoOQXV0aGVudGljYXRpb24SEQoHYXBpX2tleRgBIAEoCUgAQgcKBXZhbHVlKkkKC0FjY291bnRUeXBlEhwKGEFDQ09VTlRfVFlQRV9VTlNQRUNJRklFRBAAEhwKGEFDQ09VTlRfVFlQRV9CUkFJSU5TUE9PTBABMpsDChhBY2NvdW50TWFuYWdlbWVudFNlcnZpY2USSQoKQWRkQWNjb3VudBIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRojLmJyYWlpbnMuYm1jLndlYi5BZGRBY2NvdW50UmVzcG9uc2USRQoNUmVtb3ZlQWNjb3VudBIcLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJKCgtFZGl0QWNjb3VudBIjLmJyYWlpbnMuYm1jLndlYi5FZGl0QWNjb3VudFJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUQoOR2V0QWxsQWNjb3VudHMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QWxsQWNjb3VudHNSZXNwb25zZRJOCgpDb25uZWN0QXBwEiIuYnJhaWlucy5ibWMud2ViLkNvbm5lY3RBcHBSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlYgZwcm90bzM',
+        'Chx3ZWIvYWNjb3VudF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIifwoHQWNjb3VudBIKCgJpZBgBIAEoCRIPCgd0eXBlX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGQoRY29ubmVjdGVkX3dpZGdldHMYBSADKAkiRAoWR2V0QWxsQWNjb3VudHNSZXNwb25zZRIqCghhY2NvdW50cxgBIAMoCzIYLmJyYWlpbnMuYm1jLndlYi5BY2NvdW50IsMBChRVcHNlcnRBY2NvdW50UmVxdWVzdBIKCgJpZBgBIAEoCRIPCgd0eXBlX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSTAoMZmllbGRfdmFsdWVzGAQgAygLMjYuYnJhaWlucy5ibWMud2ViLlVwc2VydEFjY291bnRSZXF1ZXN0LkZpZWxkVmFsdWVzRW50cnkaMgoQRmllbGRWYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBMooCChhBY2NvdW50TWFuYWdlbWVudFNlcnZpY2USUQoOR2V0QWxsQWNjb3VudHMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QWxsQWNjb3VudHNSZXNwb25zZRJUCg1VcHNlcnRBY2NvdW50EiUuYnJhaWlucy5ibWMud2ViLlVwc2VydEFjY291bnRSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkUKDVJlbW92ZUFjY291bnQSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaFi5nb29nbGUucHJvdG9idWYuRW1wdHliBnByb3RvMw',
         [file_google_protobuf_empty, file_google_protobuf_timestamp, file_google_protobuf_wrappers],
     );
 
 /**
- * @generated from message braiins.bmc.web.AddAccountResponse
+ * A saved account — a typed instance of a credential type.
+ * Secret field values are write-only: set via UpsertAccount.
+ *
+ * @generated from message braiins.bmc.web.Account
  */
-export type AddAccountResponse = Message<'braiins.bmc.web.AddAccountResponse'> & {
+export type Account = Message<'braiins.bmc.web.Account'> & {
     /**
-     * @generated from field: braiins.bmc.web.AccountType default_account_type = 1;
+     * @generated from field: string id = 1;
      */
-    defaultAccountType: AccountType;
+    id: string;
+
+    /**
+     * Credential-type id (e.g. "braiins-pool").
+     *
+     * @generated from field: string type_id = 2;
+     */
+    typeId: string;
+
+    /**
+     * @generated from field: string name = 3;
+     */
+    name: string;
+
+    /**
+     * @generated from field: google.protobuf.Timestamp created_at = 4;
+     */
+    createdAt?: Timestamp | undefined;
+
+    /**
+     * Widget instances currently bound to this account.
+     *
+     * @generated from field: repeated string connected_widgets = 5;
+     */
+    connectedWidgets: string[];
 };
 
 /**
- * Describes the message braiins.bmc.web.AddAccountResponse.
- * Use `create(AddAccountResponseSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.Account.
+ * Use `create(AccountSchema)` to create a new message.
  */
-export const AddAccountResponseSchema: GenMessage<AddAccountResponse> =
-    /*@__PURE__*/
-    messageDesc(file_web_account_management, 0);
+export const AccountSchema: GenMessage<Account> = /*@__PURE__*/ messageDesc(file_web_account_management, 0);
 
 /**
  * @generated from message braiins.bmc.web.GetAllAccountsResponse
@@ -59,201 +84,51 @@ export const GetAllAccountsResponseSchema: GenMessage<GetAllAccountsResponse> =
     messageDesc(file_web_account_management, 1);
 
 /**
- * @generated from message braiins.bmc.web.EditAccountRequest
+ * @generated from message braiins.bmc.web.UpsertAccountRequest
  */
-export type EditAccountRequest = Message<'braiins.bmc.web.EditAccountRequest'> & {
+export type UpsertAccountRequest = Message<'braiins.bmc.web.UpsertAccountRequest'> & {
     /**
+     * Empty to create; an existing account id to update.
+     *
      * @generated from field: string id = 1;
      */
     id: string;
 
     /**
-     * @generated from field: string account_name = 2;
+     * Required on create; ignored on update.
+     *
+     * @generated from field: string type_id = 2;
      */
-    accountName: string;
+    typeId: string;
 
     /**
-     * @generated from field: braiins.bmc.web.Authentication authentication = 3;
+     * @generated from field: string name = 3;
      */
-    authentication?: Authentication | undefined;
+    name: string;
+
+    /**
+     * Secret values keyed by the credential type's field key.
+     * On update, leave empty to keep the stored values.
+     *
+     * @generated from field: map<string, string> field_values = 4;
+     */
+    fieldValues: { [key: string]: string };
 };
 
 /**
- * Describes the message braiins.bmc.web.EditAccountRequest.
- * Use `create(EditAccountRequestSchema)` to create a new message.
+ * Describes the message braiins.bmc.web.UpsertAccountRequest.
+ * Use `create(UpsertAccountRequestSchema)` to create a new message.
  */
-export const EditAccountRequestSchema: GenMessage<EditAccountRequest> =
+export const UpsertAccountRequestSchema: GenMessage<UpsertAccountRequest> =
     /*@__PURE__*/
     messageDesc(file_web_account_management, 2);
 
 /**
- * @generated from message braiins.bmc.web.ConnectAppRequest
- */
-export type ConnectAppRequest = Message<'braiins.bmc.web.ConnectAppRequest'> & {
-    /**
-     * @generated from field: braiins.bmc.web.AccountType account_type = 1;
-     */
-    accountType: AccountType;
-
-    /**
-     * @generated from field: string account_name = 2;
-     */
-    accountName: string;
-
-    /**
-     * @generated from field: braiins.bmc.web.Authentication authentication = 3;
-     */
-    authentication?: Authentication | undefined;
-};
-
-/**
- * Describes the message braiins.bmc.web.ConnectAppRequest.
- * Use `create(ConnectAppRequestSchema)` to create a new message.
- */
-export const ConnectAppRequestSchema: GenMessage<ConnectAppRequest> =
-    /*@__PURE__*/
-    messageDesc(file_web_account_management, 3);
-
-/**
- * @generated from message braiins.bmc.web.Account
- */
-export type Account = Message<'braiins.bmc.web.Account'> & {
-    /**
-     * @generated from field: string id = 1;
-     */
-    id: string;
-
-    /**
-     * @generated from field: braiins.bmc.web.AccountType account_type = 2;
-     */
-    accountType: AccountType;
-
-    /**
-     * @generated from field: string account_name = 3;
-     */
-    accountName: string;
-
-    /**
-     * @generated from field: braiins.bmc.web.Authentication authentication = 4;
-     */
-    authentication?: Authentication | undefined;
-
-    /**
-     * @generated from field: google.protobuf.Timestamp created_at = 5;
-     */
-    createdAt?: Timestamp | undefined;
-
-    /**
-     * @generated from field: repeated string connected_widgets = 6;
-     */
-    connectedWidgets: string[];
-};
-
-/**
- * Describes the message braiins.bmc.web.Account.
- * Use `create(AccountSchema)` to create a new message.
- */
-export const AccountSchema: GenMessage<Account> = /*@__PURE__*/ messageDesc(file_web_account_management, 4);
-
-/**
- * @generated from message braiins.bmc.web.Authentication
- */
-export type Authentication = Message<'braiins.bmc.web.Authentication'> & {
-    /**
-     * @generated from oneof braiins.bmc.web.Authentication.value
-     */
-    value:
-        | {
-              /**
-               * @generated from field: string api_key = 1;
-               */
-              value: string;
-              case: 'apiKey';
-          }
-        | { case: undefined; value?: undefined };
-};
-
-/**
- * Describes the message braiins.bmc.web.Authentication.
- * Use `create(AuthenticationSchema)` to create a new message.
- */
-export const AuthenticationSchema: GenMessage<Authentication> =
-    /*@__PURE__*/
-    messageDesc(file_web_account_management, 5);
-
-/**
- * @generated from enum braiins.bmc.web.AccountType
- */
-export enum AccountType {
-    /**
-     * @generated from enum value: ACCOUNT_TYPE_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * default
-     *
-     * @generated from enum value: ACCOUNT_TYPE_BRAIINSPOOL = 1;
-     */
-    BRAIINSPOOL = 1,
-}
-
-/**
- * Describes the enum braiins.bmc.web.AccountType.
- */
-export const AccountTypeSchema: GenEnum<AccountType> = /*@__PURE__*/ enumDesc(file_web_account_management, 0);
-
-/**
- * Manages accounts creation, edit and removal
- *
- * add account
- * - call `AddAccount`
- * - call `ConnectApp`
- *
- * edit account
- * - call `GetAllAccounts`
- * - call `EditAccount`
- *
- * remove account
- * - call `GetAllAccounts`
- * - call `RemoveAccount`
- *
  * @generated from service braiins.bmc.web.AccountManagementService
  */
 export const AccountManagementService: GenService<{
     /**
-     * Add new account
-     * Returns available types of accounts
-     *
-     * @generated from rpc braiins.bmc.web.AccountManagementService.AddAccount
-     */
-    addAccount: {
-        methodKind: 'unary';
-        input: typeof EmptySchema;
-        output: typeof AddAccountResponseSchema;
-    };
-    /**
-     * Remove account by ID
-     *
-     * @generated from rpc braiins.bmc.web.AccountManagementService.RemoveAccount
-     */
-    removeAccount: {
-        methodKind: 'unary';
-        input: typeof StringValueSchema;
-        output: typeof EmptySchema;
-    };
-    /**
-     * Edit existing account
-     *
-     * @generated from rpc braiins.bmc.web.AccountManagementService.EditAccount
-     */
-    editAccount: {
-        methodKind: 'unary';
-        input: typeof EditAccountRequestSchema;
-        output: typeof EmptySchema;
-    };
-    /**
-     * Get all accounts
+     * List saved accounts (without secret values).
      *
      * @generated from rpc braiins.bmc.web.AccountManagementService.GetAllAccounts
      */
@@ -263,14 +138,23 @@ export const AccountManagementService: GenService<{
         output: typeof GetAllAccountsResponseSchema;
     };
     /**
-     * Connect the app to the account
-     * Returns new account ID
+     * Create (empty id) or update an account. Returns the account id.
      *
-     * @generated from rpc braiins.bmc.web.AccountManagementService.ConnectApp
+     * @generated from rpc braiins.bmc.web.AccountManagementService.UpsertAccount
      */
-    connectApp: {
+    upsertAccount: {
         methodKind: 'unary';
-        input: typeof ConnectAppRequestSchema;
+        input: typeof UpsertAccountRequestSchema;
         output: typeof StringValueSchema;
+    };
+    /**
+     * Delete an account by id.
+     *
+     * @generated from rpc braiins.bmc.web.AccountManagementService.RemoveAccount
+     */
+    removeAccount: {
+        methodKind: 'unary';
+        input: typeof StringValueSchema;
+        output: typeof EmptySchema;
     };
 }> = /*@__PURE__*/ serviceDesc(file_web_account_management, 0);

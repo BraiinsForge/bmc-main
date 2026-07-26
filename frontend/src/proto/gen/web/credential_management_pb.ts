@@ -21,9 +21,8 @@ export const file_web_credential_management: GenFile =
     );
 
 /**
- * A kind of account a widget can bind. `fields` reuse the manifest param-definition
- * vocabulary, so the same form renderer drives both. Each field key is the interpolation
- * variable a widget embeds in its outbound request.
+ * A kind of account a widget can bind. Each field key is the interpolation variable a widget
+ * embeds in its outbound request.
  *
  * @generated from message braiins.bmc.web.CredentialType
  */
