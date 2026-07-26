@@ -19,26 +19,28 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-// TODO: display refactor
-#![allow(clippy::map_identity, unused_mut)]
-
-use crate::config::ConfigHandle;
-use crate::data::{Account, AccountId, AccountType, AuthenticationType};
-use crate::web::grpc::GrpcError;
-use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
-use bmc_grpc::web;
-use prost_types::Timestamp;
-use reqwest::StatusCode;
+use std::collections::HashMap;
 use std::panic;
 use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
-use tap::TapOptional;
+
+use bmc_field_schema::ParamKey;
+use bmc_grpc::web;
+use indexmap::IndexMap;
+use prost_types::Timestamp;
+use reqwest::StatusCode;
 use thiserror::Error;
 use tokio::sync::RwLock;
 use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
+
+use crate::config::ConfigHandle;
+use crate::credential;
+use crate::data::{Account, AccountId};
+use crate::web::grpc::GrpcError;
+use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
 
 const POOL_API_URL: &str = "https://api.braiins.com/pool/v2";
 const POOL_API_ENDPOINT: &str = "/user/hashrate/current";
@@ -56,269 +58,121 @@ impl AccountManagementService {
 
 #[async_trait::async_trait]
 impl web::account_management_service_server::AccountManagementService for AccountManagementService {
-    async fn add_account(
-        &self,
-        _request: Request<()>,
-    ) -> Result<Response<web::AddAccountResponse>, Status> {
-        let default_account_type = web::AccountType::Braiinspool;
-
-        Ok(Response::new(web::AddAccountResponse {
-            default_account_type: default_account_type.into(),
-        }))
-    }
-
-    async fn remove_account(&self, request: Request<String>) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-        let (id, field_violations) = parse_account_id("account_id", &request);
-
-        if !field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(field_violations),
-            ));
-        }
-
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
-
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-            async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
-
-                temp_config
-                    .accounts
-                    .remove(&id)
-                    .ok_or_else(|| Status::not_found("Account not found"))?;
-
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
-    }
-
-    async fn edit_account(
-        &self,
-        request: Request<web::EditAccountRequest>,
-    ) -> Result<Response<()>, Status> {
-        let request = request.into_inner();
-
-        let mut all_field_violations = FieldViolations::new();
-
-        let (id, field_violations) = parse_account_id("account_id", &request.id);
-        all_field_violations.extend(field_violations);
-
-        let (account_name, field_violations) =
-            parse_account_name("account_name", &request.account_name);
-        all_field_violations.extend(field_violations);
-
-        let (authentication_key, field_violations) =
-            parse_authentication("authentication", request.authentication);
-        all_field_violations.extend(field_violations);
-
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
-        }
-
-        let id = id.ok_or_else(unchecked_field_violations_status)?;
-        let account_name = account_name.ok_or_else(unchecked_field_violations_status)?;
-        let authentication_key =
-            authentication_key.ok_or_else(unchecked_field_violations_status)?;
-
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
-        let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
-
-            async move {
-                let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
-
-                let account = temp_config
-                    .accounts
-                    .get_mut(&id)
-                    .ok_or_else(|| Status::not_found("Account not found"))?;
-                let authentication_validation = match account.r#type {
-                    AccountType::BraiinsPool => {
-                        validate_api_key(account.r#type, &authentication_key).await
-                    }
-                };
-                if let Err(connect_app_error) = authentication_validation {
-                    let description = match connect_app_error {
-                        ConnectAppError::ServiceNotAvailable => "Service or internet unavailable",
-                        ConnectAppError::ClientInitFailed => "Failed to initialize HTTP client",
-                        ConnectAppError::InvalidApiKey => "Invalid API key",
-                        #[expect(unused_variables)]
-                        ConnectAppError::UnexpectedResponse(status) => {
-                            "Unexpected response status: {status}"
-                        }
-                    };
-                    return Err(Status::with_error_details(
-                        Code::InvalidArgument,
-                        GrpcError::BadRequest.to_string(),
-                        ErrorDetails::with_bad_request_violation("authentication", description),
-                    ));
-                }
-
-                let authentication_type = match account.r#type {
-                    AccountType::BraiinsPool => AuthenticationType::ApiKey(authentication_key),
-                };
-
-                account.name = account_name;
-                account.authentication = authentication_type;
-
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
-                    return Err(Status::internal("Failed to save configuration"));
-                }
-                *config = temp_config;
-
-                Ok(Response::new(()))
-            }
-        });
-
-        join_handle
-            .await
-            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
-    }
-
     async fn get_all_accounts(
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::GetAllAccountsResponse>, Status> {
         let config = self.config_handle.read().await;
-
-        let accounts: Vec<web::Account> = config
+        let accounts = config
             .accounts
-            .clone()
-            .into_values()
+            .values()
+            .cloned()
             .map(map_account_to_proto)
-            .map(|mut account| {
-                // TODO: display refactor - connected_widgets needs new implementation
-                // account.connected_widgets = config
-                //     .scenes
-                //     .values()
-                //     .flat_map(|scene| scene.widgets.values())
-                //     .filter_map(|w| match &w.kind {
-                //         WidgetKind::BraiinsPool(pool_widget)
-                //             if pool_widget
-                //                 .account_id
-                //                 .as_ref()
-                //                 .is_some_and(|id| id.to_string() == account.id) =>
-                //         {
-                //             Some(w.id.to_string())
-                //         }
-                //         WidgetKind::BraiinsPool(_)
-                //         | WidgetKind::Clock(_)
-                //         | WidgetKind::TickerBtc(_)
-                //         | WidgetKind::BlockHeight(_)
-                //         | WidgetKind::RemoteImage(_)
-                //         | WidgetKind::BlockchainData
-                //         | WidgetKind::RemoteWidget(_)
-                //         | WidgetKind::HalvingCountdown
-                //     })
-                //     .collect();
-                account
-            })
             .collect();
-
         Ok(Response::new(web::GetAllAccountsResponse { accounts }))
     }
 
-    async fn connect_app(
+    async fn upsert_account(
         &self,
-        request: Request<web::ConnectAppRequest>,
+        request: Request<web::UpsertAccountRequest>,
     ) -> Result<Response<String>, Status> {
-        let request = request.into_inner();
-        let mut all_field_violations = FieldViolations::new();
+        let req = request.into_inner();
 
-        let (account_type, field_violations) =
-            parse_account_type("account_type", request.account_type());
-        all_field_violations.extend(field_violations);
+        let mut violations = FieldViolations::new();
+        let (name, v) = parse_account_name("name", &req.name);
+        violations.extend(v);
+        let target_id = if req.id.is_empty() {
+            None
+        } else {
+            let (id, v) = parse_account_id("id", &req.id);
+            violations.extend(v);
+            id
+        };
+        let field_values = parse_field_values("field_values", &req.field_values, &mut violations);
+        if !violations.is_empty() {
+            return Err(bad_request(violations));
+        }
+        let name = name.ok_or_else(unchecked_field_violations_status)?;
 
-        let (account_name, field_violations) =
-            parse_account_name("account_name", &request.account_name);
-        all_field_violations.extend(field_violations);
+        // The type is fixed for an account's life: on create it comes from the request, on update
+        // from the stored account (the request's type_id is ignored).
+        let type_id = match &target_id {
+            Some(id) => self
+                .config_handle
+                .read()
+                .await
+                .accounts
+                .get(id)
+                .ok_or_else(|| Status::not_found("Account not found"))?
+                .type_id
+                .clone(),
+            None => req.type_id.clone(),
+        };
 
-        let (authentication_key, field_violations) =
-            parse_authentication("authentication", request.authentication);
-        all_field_violations.extend(field_violations);
-
-        if !all_field_violations.is_empty() {
-            return Err(Status::with_error_details(
-                tonic::Code::InvalidArgument,
-                GrpcError::BadRequest.to_string(),
-                ErrorDetails::with_bad_request(all_field_violations),
-            ));
+        // On update, an empty field_values map keeps the stored secrets — skip validation then.
+        let replace_values = target_id.is_none() || !field_values.is_empty();
+        if replace_values {
+            validate_account(&type_id, &field_values).await?;
         }
 
-        let account_type = account_type.ok_or_else(unchecked_field_violations_status)?;
-        let account_name = account_name.ok_or_else(unchecked_field_violations_status)?;
-        let authentication_key =
-            authentication_key.ok_or_else(unchecked_field_violations_status)?;
-
-        // NOTE: wrapped in tokio task to avoid cancellation on client disconnect
         let join_handle = tokio::spawn({
             let config_handle = self.config_handle.clone();
-
             async move {
-                let authentication_validation = match account_type {
-                    AccountType::BraiinsPool => {
-                        validate_api_key(account_type, &authentication_key).await
-                    }
-                };
-                if let Err(connect_app_error) = authentication_validation {
-                    let description = match connect_app_error {
-                        ConnectAppError::ServiceNotAvailable => "Service or internet unavailable",
-                        ConnectAppError::ClientInitFailed => "Failed to initialize HTTP client",
-                        ConnectAppError::InvalidApiKey => "Invalid API key",
-                        #[expect(unused_variables)]
-                        ConnectAppError::UnexpectedResponse(status) => {
-                            "Unexpected response status: {status}"
-                        }
-                    };
-                    return Err(Status::with_error_details(
-                        Code::InvalidArgument,
-                        GrpcError::BadRequest.to_string(),
-                        ErrorDetails::with_bad_request_violation("authentication", description),
-                    ));
-                }
-
-                let authentication_type = match account_type {
-                    AccountType::BraiinsPool => AuthenticationType::ApiKey(authentication_key),
-                };
-
-                let new_account = Account::new(account_type, &account_name, authentication_type);
-
                 let mut config = config_handle.write().await;
-                let mut temp_config = config.clone();
-                let new_account_id = new_account.id.clone();
+                let mut temp = config.clone();
 
-                temp_config
-                    .accounts
-                    .insert(new_account_id.clone(), new_account);
+                let id = if let Some(id) = target_id {
+                    let account = temp
+                        .accounts
+                        .get_mut(&id)
+                        .ok_or_else(|| Status::not_found("Account not found"))?;
+                    account.name = name;
+                    if replace_values {
+                        account.field_values = field_values;
+                    }
+                    id
+                } else {
+                    let account = Account::new(type_id, name, field_values);
+                    let id = account.id.clone();
+                    temp.accounts.insert(id.clone(), account);
+                    id
+                };
 
-                if let Err(err) = temp_config.save().await {
-                    error!("Cannot save config: {}", err);
+                if let Err(err) = temp.save().await {
+                    error!("Cannot save config: {err}");
                     return Err(Status::internal("Failed to save configuration"));
                 }
-                *config = temp_config;
+                *config = temp;
+                Ok(Response::new(id.to_string()))
+            }
+        });
 
-                Ok(Response::new(new_account_id.to_string()))
+        join_handle
+            .await
+            .unwrap_or_else(|err| panic::resume_unwind(err.into_panic()))
+    }
+
+    async fn remove_account(&self, request: Request<String>) -> Result<Response<()>, Status> {
+        let (id, violations) = parse_account_id("id", &request.into_inner());
+        if !violations.is_empty() {
+            return Err(bad_request(violations));
+        }
+        let id = id.ok_or_else(unchecked_field_violations_status)?;
+
+        let join_handle = tokio::spawn({
+            let config_handle = self.config_handle.clone();
+            async move {
+                let mut config = config_handle.write().await;
+                let mut temp = config.clone();
+                temp.accounts
+                    .shift_remove(&id)
+                    .ok_or_else(|| Status::not_found("Account not found"))?;
+                if let Err(err) = temp.save().await {
+                    error!("Cannot save config: {err}");
+                    return Err(Status::internal("Failed to save configuration"));
+                }
+                *config = temp;
+                Ok(Response::new(()))
             }
         });
 
@@ -328,149 +182,230 @@ impl web::account_management_service_server::AccountManagementService for Accoun
     }
 }
 
-async fn validate_api_key(account_type: AccountType, api_key: &str) -> Result<(), ConnectAppError> {
-    let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
-        warn!("Cannot build reqwest::ClientBuilder");
-        return Err(ConnectAppError::ClientInitFailed);
+/// Field-violation key for a credential field (e.g. `token` → `field_values.token`), so the web UI
+/// can attach the error to that field's input rather than showing it form-wide.
+fn field_error_key(field: &str) -> String {
+    format!("field_values.{field}")
+}
+
+/// Check the field values against the type's schema, then run the per-type upstream check,
+/// collecting every field violation and returning them together.
+async fn validate_account(
+    type_id: &str,
+    field_values: &IndexMap<ParamKey, String>,
+) -> Result<(), Status> {
+    let mut violations = FieldViolations::new();
+    validate_schema(type_id, field_values, &mut violations);
+    // Only spend a network round-trip once the field shape is valid.
+    if violations.is_empty() {
+        validate_upstream(type_id, field_values, &mut violations).await;
+    }
+    if violations.is_empty() {
+        Ok(())
+    } else {
+        Err(bad_request(violations))
+    }
+}
+
+/// `type_id` must name a known credential type, and `field_values` must supply exactly its fields,
+/// each non-empty. Pure (no upstream call), so unit-testable on its own.
+fn validate_schema(
+    type_id: &str,
+    field_values: &IndexMap<ParamKey, String>,
+    violations: &mut FieldViolations,
+) {
+    let Some(cred_type) = credential::builtins().into_iter().find(|t| t.id == type_id) else {
+        violations.push("type_id", format!("Unknown credential type {type_id:?}"));
+        return;
     };
 
-    let status = match account_type {
-        AccountType::BraiinsPool => {
-            let endpoint = format!("{POOL_API_URL}{POOL_API_ENDPOINT}");
-            match client
-                .get(endpoint)
-                .header("X-API-Key", api_key)
-                .send()
-                .await
-            {
-                Ok(response) => response.status(),
-                Err(e) => {
-                    warn!("Failed to get response from API endpoint: {e}");
-                    return Err(ConnectAppError::ServiceNotAvailable);
-                }
-            }
+    for key in cred_type.fields.keys() {
+        let has_value = field_values.get(key).is_some_and(|value| !value.is_empty());
+        if !has_value {
+            violations.push(field_error_key(key.as_str()), "Required");
+        }
+    }
+    for key in field_values.keys() {
+        if !cred_type.fields.contains_key(key) {
+            violations.push(field_error_key(key.as_str()), "Unknown field");
+        }
+    }
+}
+
+/// Per-type live check. Braiins Pool verifies the token against the pool API; other types have no
+/// upstream to check against and pass.
+async fn validate_upstream(
+    type_id: &str,
+    field_values: &IndexMap<ParamKey, String>,
+    violations: &mut FieldViolations,
+) {
+    if type_id != "braiins-pool" {
+        return;
+    }
+    let token = field_values.get("token").map_or("", String::as_str);
+    if let Err(err) = check_braiins_pool_token(token).await {
+        violations.push(field_error_key("token"), err.to_string());
+    }
+}
+
+async fn check_braiins_pool_token(token: &str) -> Result<(), CredentialCheckError> {
+    let Ok(client) = reqwest::ClientBuilder::new().timeout(API_TIMEOUT).build() else {
+        warn!("Cannot build reqwest client");
+        return Err(CredentialCheckError::ClientInitFailed);
+    };
+
+    let endpoint = format!("{POOL_API_URL}{POOL_API_ENDPOINT}");
+    let status = match client.get(endpoint).header("X-API-Key", token).send().await {
+        Ok(response) => response.status(),
+        Err(err) => {
+            warn!("Failed to reach pool API: {err}");
+            return Err(CredentialCheckError::ServiceNotAvailable);
         }
     };
 
     match status {
         StatusCode::OK => Ok(()),
-        StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => Err(ConnectAppError::InvalidApiKey),
+        StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => Err(CredentialCheckError::Invalid),
         status if status.is_server_error() => {
-            warn!("API server error: {status}");
-            Err(ConnectAppError::ServiceNotAvailable)
+            warn!("Pool API server error: {status}");
+            Err(CredentialCheckError::ServiceNotAvailable)
         }
         status => {
-            warn!("Failed to verify API key with upstream service, status: {status}");
-            Err(ConnectAppError::UnexpectedResponse(status))
+            warn!("Unexpected pool API status: {status}");
+            Err(CredentialCheckError::Unexpected)
         }
     }
 }
 
 fn map_account_to_proto(account: Account) -> web::Account {
-    use web::AccountType as AccountTypeProto;
-
-    let account_type = match account.r#type {
-        AccountType::BraiinsPool => AccountTypeProto::Braiinspool,
-    };
-
-    let authentication = match account.authentication {
-        AuthenticationType::ApiKey(api_key) => web::authentication::Value::ApiKey(api_key),
-    };
-
     web::Account {
         id: account.id.to_string(),
-        account_type: account_type.into(),
-        account_name: account.name,
-        authentication: Some(web::Authentication {
-            value: Some(authentication),
-        }),
+        type_id: account.type_id,
+        name: account.name,
         created_at: Some(Timestamp {
             seconds: account.created_at.timestamp(),
             nanos: 0,
         }),
-        ..Default::default()
+        connected_widgets: Vec::new(),
     }
 }
 
-fn parse_account_type(field: &str, input: web::AccountType) -> ParseOutput<AccountType> {
-    use web::AccountType as AccountTypeProto;
-
-    let mut field_violations = FieldViolations::new();
-
-    let maybe_type = match input {
-        AccountTypeProto::Unspecified => {
-            field_violations.push(field, "Missing value!");
-            None
-        }
-        AccountTypeProto::Braiinspool => Some(AccountType::BraiinsPool),
-    };
-
-    (maybe_type, field_violations)
-}
-
 fn parse_account_name(field: &str, input: &str) -> ParseOutput<String> {
-    let mut field_violations = FieldViolations::new();
-
+    let mut violations = FieldViolations::new();
     let maybe_name = match input.len() {
         0 => {
-            field_violations.push(field, "Missing value!");
+            violations.push(field, "Missing value!");
             None
         }
         1..=50 => Some(input.to_owned()),
         _ => {
-            field_violations.push(field, "Input too long!");
+            violations.push(field, "Input too long!");
             None
         }
     };
-
-    (maybe_name, field_violations)
-}
-
-fn parse_authentication(field: &str, input: Option<web::Authentication>) -> ParseOutput<String> {
-    let mut field_violations = FieldViolations::new();
-
-    let Some(input) = input else {
-        field_violations.push(field, "Missing value!");
-        return (None, field_violations);
-    };
-
-    let Some(value) = input.value else {
-        field_violations.push(format!("{field}.value"), "Missing value!");
-        return (None, field_violations);
-    };
-
-    let maybe_authentication = match value {
-        web::authentication::Value::ApiKey(api_key) => {
-            if api_key.is_empty() {
-                field_violations.push("api_key", "Missing value!");
-                None
-            } else {
-                Some(api_key.clone())
-            }
-        }
-    };
-
-    (maybe_authentication, field_violations)
+    (maybe_name, violations)
 }
 
 fn parse_account_id(field: &str, input: &str) -> ParseOutput<AccountId> {
-    let mut field_violations = FieldViolations::new();
+    let mut violations = FieldViolations::new();
+    let maybe_id = AccountId::from_str(input).ok();
+    if maybe_id.is_none() {
+        violations.push(field, "Invalid account ID");
+    }
+    (maybe_id, violations)
+}
 
-    let maybe_id = AccountId::from_str(input).ok().tap_none(|| {
-        field_violations.push(field, "Invalid account ID");
-    });
+fn parse_field_values(
+    field: &str,
+    input: &HashMap<String, String>,
+    violations: &mut FieldViolations,
+) -> IndexMap<ParamKey, String> {
+    let mut out = IndexMap::with_capacity(input.len());
+    for (key, value) in input {
+        match ParamKey::try_new(key.clone()) {
+            Ok(key) => {
+                out.insert(key, value.clone());
+            }
+            Err(bad) => violations.push(field, format!("Invalid field key {bad:?}")),
+        }
+    }
+    out
+}
 
-    (maybe_id, field_violations)
+fn bad_request(violations: FieldViolations) -> Status {
+    Status::with_error_details(
+        Code::InvalidArgument,
+        GrpcError::BadRequest.to_string(),
+        ErrorDetails::with_bad_request(violations),
+    )
 }
 
 #[derive(Debug, Clone, Error)]
-pub enum ConnectAppError {
-    #[error("Service unavailable")]
+enum CredentialCheckError {
+    #[error("Service or internet unavailable")]
     ServiceNotAvailable,
     #[error("Invalid API key")]
-    InvalidApiKey,
-    #[error("Unexpected API response: {0}")]
-    UnexpectedResponse(StatusCode),
+    Invalid,
+    #[error("Unexpected response from the credential service")]
+    Unexpected,
     #[error("Failed to initialize HTTP client")]
     ClientInitFailed,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tonic_types::FieldViolation;
+
+    fn values(pairs: &[(&str, &str)]) -> IndexMap<ParamKey, String> {
+        pairs
+            .iter()
+            .map(|(key, value)| {
+                let key = ParamKey::try_new((*key).to_owned()).expect("BUG: test key is valid");
+                (key, (*value).to_owned())
+            })
+            .collect()
+    }
+
+    /// Collect the field violations `validate_schema` produces for a (type, fields) pair.
+    fn schema_violations(type_id: &str, pairs: &[(&str, &str)]) -> Vec<FieldViolation> {
+        let mut violations = FieldViolations::new();
+        validate_schema(type_id, &values(pairs), &mut violations);
+        violations.into()
+    }
+
+    #[test]
+    fn schema_accepts_matching_values() {
+        assert!(schema_violations("generic-token", &[("token", "abc")]).is_empty());
+        assert!(
+            schema_violations("generic-userpass", &[("username", "u"), ("password", "p")])
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn schema_rejects_unknown_type() {
+        assert_eq!(schema_violations("nope", &[])[0].field, "type_id");
+    }
+
+    #[test]
+    fn schema_keys_each_missing_field_to_its_own_path() {
+        // Both fields missing → one violation each, keyed under the field's own path so the web UI
+        // can attach them to the right inputs.
+        let violations = schema_violations("generic-userpass", &[]);
+        let fields: Vec<&str> = violations.iter().map(|v| v.field.as_str()).collect();
+        assert_eq!(fields, ["field_values.username", "field_values.password"]);
+    }
+
+    #[test]
+    fn schema_flags_empty_and_unknown_field() {
+        assert_eq!(
+            schema_violations("generic-token", &[("token", "")])[0].field,
+            "field_values.token",
+        );
+        assert_eq!(
+            schema_violations("generic-token", &[("token", "abc"), ("extra", "x")])[0].field,
+            "field_values.extra",
+        );
+    }
 }

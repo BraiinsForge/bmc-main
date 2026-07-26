@@ -56,7 +56,7 @@ use serde_json::{Map, Value, json};
 use tracing::warn;
 use uuid::Uuid;
 
-use super::{Report, v0};
+use super::{Report, upgrade_v1, v0};
 use crate::config::widget_uuids::{
     BLOCK_HEIGHT_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
     SPACEX_LAUNCH_UID, WEATHER_UID,
@@ -149,17 +149,18 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
         boot_sound_enabled: passthrough_setting("boot_sound_enabled", v0.boot_sound_enabled),
         autoupgrade: passthrough_setting("autoupgrade", v0.autoupgrade),
     };
-    let accounts = deserialize_accounts_passthrough(v0.accounts);
+    let accounts = upgrade_v1::reshape_and_collect_accounts(v0.accounts);
     let current = Config::from_migrated_parts(scenes, accounts, settings);
     (current, report)
 }
 
-// This module upgrades a version-0 config directly to the current
-// schema in a single hop, which is only correct while the current
-// version sits exactly one above the legacy baseline of 0. A bump past
-// 1 means an intermediate hop is needed and this direct upgrade must be
-// revisited.
-const _: () = assert!(CONFIG_VERSION == 1);
+// `upgrade_v0` produces the current schema in one hop:
+// the v0 → v1 widget translation here plus the v1 → current
+// account reshape (shared with `upgrade_v1`).
+//
+// A bump past the current version adds an axis
+// this hop wouldn't apply, so revisit when the assert fires.
+const _: () = assert!(CONFIG_VERSION == 2);
 
 // --- Per-widget dispatch -----------------------------------------------------
 
@@ -593,7 +594,7 @@ fn parse_size(size: &str) -> WidgetSize {
     })
 }
 
-// --- Accounts pass-through ---------------------------------------------------
+// --- Settings pass-through ---------------------------------------------------
 
 /// Re-parse one top-level v0 setting into its current typed form.
 /// The shape is identical on both sides so this is a validate step,
@@ -621,33 +622,6 @@ fn passthrough_setting<T: serde::de::DeserializeOwned>(
     }
 }
 
-/// Re-parse the v0 `accounts` array through the current `Account`
-/// type. The shape is identical on both sides so this is a validate
-/// step, not a transformation; any malformed entry is logged and
-/// dropped rather than failing the whole migration.
-fn deserialize_accounts_passthrough(
-    accounts: Vec<Value>,
-) -> IndexMap<crate::data::AccountId, crate::data::Account> {
-    use crate::data::{Account, AccountId};
-
-    let mut out = IndexMap::<AccountId, Account>::new();
-    for (idx, raw) in accounts.into_iter().enumerate() {
-        match serde_json::from_value::<Account>(raw) {
-            Ok(account) => {
-                out.insert(account.id.clone(), account);
-            }
-            Err(err) => {
-                warn!(
-                    index = idx,
-                    error = %err,
-                    "legacy account dropped: failed to parse into current schema"
-                );
-            }
-        }
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -664,9 +638,9 @@ mod tests {
         }
     }
 
-    /// Build the current typed param map from `(key, value)` pairs so
-    /// pass-through expectations can be stated without leaning on
-    /// [`params_from_value`] (which is what we're checking against).
+    /// Build the current typed param map from `(key, value)` pairs
+    /// so pass-through expectations can be stated without leaning
+    /// on [`params_from_value`] (which is what we're checking against).
     fn param_map(pairs: &[(&str, ParamValue)]) -> BTreeMap<ParamKey, ParamValue> {
         pairs
             .iter()
@@ -696,10 +670,10 @@ mod tests {
     /// Every migration fallback must equal the `default_value` (or, for
     /// the country list, the `enum_values`) that the target widget's own
     /// `manifest.json` declares, and every value `translate_font_style`
-    /// emits must be a real member of the shared font enum. This is the
-    /// guard the review asked for: the fallbacks live here rather than
-    /// being read from the manifest at runtime, so this test is what
-    /// keeps them from drifting out of sync with the shipped widgets.
+    /// emits must be a real member of the shared font enum.
+    /// This is the guard the review asked for: the fallbacks live here
+    /// rather than being read from the manifest at runtime, so this test
+    /// is what keeps them from drifting out of sync with the shipped widgets.
     #[test]
     fn migration_fallbacks_match_the_shipped_manifests() {
         use std::collections::BTreeSet;

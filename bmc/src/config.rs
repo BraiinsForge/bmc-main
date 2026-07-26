@@ -145,15 +145,19 @@ impl ConfigNotify {
     }
 }
 
-/// Current on-disk config schema version. Bump on every breaking shape
-/// change and wire a new migration arm in `crate::config_migration`.
-pub const CONFIG_VERSION: u32 = 1;
+/// Current on-disk config schema version.
+/// Bump on every breaking shape change and wire
+/// a new migration arm in `crate::config_migration`.
+///
+/// - `0`: slint-monolith schema (`kind`-enum widgets).
+/// - `1`: first manifest-driven widget schema.
+/// - `2`: accounts become typed credential instances (`type_id` + `field_values`) fed into the wasm host for placeholder interpolation.
+pub const CONFIG_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
-    /// Schema version of the on-disk config. `0` (or missing) means a
-    /// legacy slint-monolith config that needs migration; `1` is the
-    /// current manifest-driven format. Unknown values abort the load —
+    /// Schema version of the on-disk config; see [`CONFIG_VERSION`] for the version history. `0` or
+    /// missing means a legacy config that needs migration. Unknown (future) values abort the load —
     /// see `crate::config_migration::LoadedConfig`.
     #[serde(default)]
     pub version: u32,

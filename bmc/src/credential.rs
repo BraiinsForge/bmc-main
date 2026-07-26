@@ -105,8 +105,7 @@ fn generic_userpass() -> CredentialType {
     CredentialType {
         id: "generic-userpass".to_owned(),
         name: "Username & password".to_owned(),
-        description: "A username and password pair.\n\n**The widget may send them to any host.**"
-            .to_owned(),
+        description: "**The widget may send them to any host.**".to_owned(),
         fields: field_map([
             (
                 "username",

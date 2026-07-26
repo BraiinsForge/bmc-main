@@ -19,14 +19,15 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc_field_schema::ParamKey;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::error::Error;
 use std::fmt::{Display, Formatter};
-use std::hash::Hash;
 use std::str::FromStr;
 use std::time::Duration;
+use tracing::warn;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,35 +93,25 @@ impl FromStr for AccountId {
     }
 }
 
-#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AccountType {
-    BraiinsPool,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum AuthenticationType {
-    ApiKey(String),
-}
-
+/// A saved account — a typed instance of a credential type (see [`crate::credential`]).
+/// `type_id` names the credential type; `field_values` are the secret values, keyed by field key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
-    pub r#type: AccountType,
+    pub type_id: String,
     pub name: String,
-    pub authentication: AuthenticationType,
+    pub field_values: IndexMap<ParamKey, String>,
     pub created_at: DateTime<Utc>,
 }
 
 impl Account {
     #[must_use]
-    pub fn new(account_type: AccountType, name: &str, authentication: AuthenticationType) -> Self {
+    pub fn new(type_id: String, name: String, field_values: IndexMap<ParamKey, String>) -> Self {
         Self {
             id: AccountId::generate(),
-            r#type: account_type,
-            name: name.to_owned(),
-            authentication,
+            type_id,
+            name,
+            field_values,
             created_at: Utc::now(),
         }
     }
@@ -134,23 +125,24 @@ pub fn serialize_accounts<S: Serializer>(
     serializer.collect_seq(map.values())
 }
 
-#[inline]
+/// Deserialize the on-disk account array, keyed by id. Entries that don't match the current
+/// schema (e.g. a pre-typed-credential account) are dropped with a warning rather than failing
+/// the whole config load.
 pub fn deserialize_accounts<'de, D: Deserializer<'de>>(
     deserializer: D,
 ) -> Result<IndexMap<AccountId, Account>, D::Error> {
-    de_indexmap(deserializer, |account: &Account| account.id.clone())
-}
-
-fn de_indexmap<'de, D: Deserializer<'de>, K: Hash + Eq, V: Deserialize<'de>>(
-    deserializer: D,
-    key_selector: impl Fn(&V) -> K,
-) -> Result<IndexMap<K, V>, D::Error> {
-    let vec = Vec::<V>::deserialize(deserializer)?;
-    let map = vec
-        .into_iter()
-        .map(|value| (key_selector(&value), value))
-        .collect::<IndexMap<_, _>>();
-
+    let raw = Vec::<serde_json::Value>::deserialize(deserializer)?;
+    let mut map = IndexMap::with_capacity(raw.len());
+    for (index, value) in raw.into_iter().enumerate() {
+        match serde_json::from_value::<Account>(value) {
+            Ok(account) => {
+                map.insert(account.id.clone(), account);
+            }
+            Err(err) => {
+                warn!(index, error = %err, "dropping account that does not match the current schema");
+            }
+        }
+    }
     Ok(map)
 }
 
@@ -179,30 +171,31 @@ mod tests {
     }
 
     #[test]
-    fn deserialize_accounts_indexes_by_account_id() {
-        let first_id = Uuid::new_v4().to_string();
-        let second_id = Uuid::new_v4().to_string();
+    fn deserialize_accounts_indexes_by_id_and_drops_incompatible() {
+        let valid_id = Uuid::new_v4().to_string();
         let json = json!([
             {
-                "id": first_id,
-                "type": "braiins_pool",
+                "id": valid_id,
+                "type_id": "braiins-pool",
                 "name": "primary",
-                "authentication": { "api_key": "first-key" },
+                "field_values": { "token": "a-token" },
                 "created_at": "2025-01-01T00:00:00Z"
             },
             {
-                "id": second_id,
+                // legacy pre-typed-credential shape — dropped, not fatal
+                "id": Uuid::new_v4().to_string(),
                 "type": "braiins_pool",
-                "name": "backup",
-                "authentication": { "api_key": "second-key" },
+                "name": "legacy",
+                "authentication": { "api_key": "old-key" },
                 "created_at": "2025-01-02T00:00:00Z"
             }
         ]);
 
-        let accounts = deserialize_accounts(json).expect("BUG: test JSON should deserialize");
+        let accounts = deserialize_accounts(json).expect("BUG: valid array should deserialize");
 
-        assert_eq!(accounts.len(), 2);
-        assert!(accounts.contains_key(&AccountId::from_str(&first_id).expect("BUG: id is valid")));
-        assert!(accounts.contains_key(&AccountId::from_str(&second_id).expect("BUG: id is valid")));
+        assert_eq!(accounts.len(), 1);
+        let id = AccountId::from_str(&valid_id).expect("BUG: id is valid");
+        assert_eq!(accounts[&id].type_id, "braiins-pool");
+        assert_eq!(accounts[&id].field_values["token"], "a-token");
     }
 }

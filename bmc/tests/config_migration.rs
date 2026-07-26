@@ -29,7 +29,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
-use bmc::config_migration::{self, LoadedConfig};
+use bmc::config_migration::{self, CONFIG_VERSION, LoadedConfig};
 use tempfile::TempDir;
 use tokio::fs;
 
@@ -93,7 +93,7 @@ async fn migrates_device_sample_without_losing_scenes() {
     let v: serde_json::Value =
         serde_json::from_str(&migrated).expect("BUG: migrated output must be valid JSON");
     assert_eq!(
-        v["version"], 1,
+        v["version"], CONFIG_VERSION,
         "migrated config must carry the current schema version",
     );
 
@@ -154,9 +154,12 @@ async fn migrates_device_sample_without_losing_scenes() {
 async fn current_version_config_is_a_noop() {
     let tmp = tempdir();
     let dest = tmp.path().join("bmc_config.json");
-    fs::write(&dest, r#"{"version":1,"scenes":[],"accounts":[]}"#)
-        .await
-        .expect("BUG: seed write should succeed");
+    fs::write(
+        &dest,
+        format!(r#"{{"version":{CONFIG_VERSION},"scenes":[],"accounts":[]}}"#),
+    )
+    .await
+    .expect("BUG: seed write should succeed");
 
     let loaded = migrate_and_persist(&dest)
         .await
@@ -182,6 +185,41 @@ async fn current_version_config_is_a_noop() {
             "no-op must not create a backup (got {name})",
         );
     }
+}
+
+#[test]
+fn v1_config_reshapes_account_to_typed_credential() {
+    // A v1 (pre-typed-credential) config migrates to the current schema:
+    // the closed braiins_pool + api_key account becomes a typed
+    // braiins-pool credential instance with a `token` field value.
+    let v1 = r#"{
+        "version": 1,
+        "scenes": [],
+        "accounts": [{
+            "id": "11111111-1111-1111-1111-111111111111",
+            "type": "braiins_pool",
+            "name": "primary",
+            "authentication": { "api_key": "sk-secret" },
+            "created_at": "2025-01-01T00:00:00Z"
+        }]
+    }"#;
+
+    let loaded = LoadedConfig::from_str(v1).expect("BUG: v1 config must parse");
+    assert!(loaded.was_migrated(), "a v1 config must be migrated");
+    assert!(
+        loaded.report().is_none(),
+        "the v1 hop carries no widget report"
+    );
+
+    let config = loaded.current();
+    assert_eq!(config.version, CONFIG_VERSION);
+    let account = config
+        .accounts
+        .values()
+        .next()
+        .expect("BUG: the account must survive the reshape");
+    assert_eq!(account.type_id, "braiins-pool");
+    assert_eq!(account.field_values["token"], "sk-secret");
 }
 
 #[tokio::test]
@@ -270,7 +308,7 @@ async fn load_is_pure_without_persist() {
     assert!(loaded.was_migrated());
     assert_eq!(
         loaded.current().version,
-        1,
+        CONFIG_VERSION,
         "FromStr path must upgrade to the current schema"
     );
 }
@@ -290,9 +328,12 @@ async fn legacy_path_is_relocated_on_first_load() {
     let legacy_path = tmp.path().join("bmc_config.json");
 
     // Seed the legacy path, current schema body.
-    fs::write(&legacy_path, r#"{"version":1,"scenes":[],"accounts":[]}"#)
-        .await
-        .expect("BUG: seed legacy file");
+    fs::write(
+        &legacy_path,
+        format!(r#"{{"version":{CONFIG_VERSION},"scenes":[],"accounts":[]}}"#),
+    )
+    .await
+    .expect("BUG: seed legacy file");
 
     let loaded = config_migration::load_any_version(&new_path)
         .await
@@ -322,9 +363,12 @@ async fn legacy_path_ignored_when_new_path_already_exists() {
     let new_path = new_dir.join("config.json");
     let legacy_path = tmp.path().join("bmc_config.json");
 
-    fs::write(&new_path, r#"{"version":1,"scenes":[],"accounts":[]}"#)
-        .await
-        .expect("BUG: seed new file");
+    fs::write(
+        &new_path,
+        format!(r#"{{"version":{CONFIG_VERSION},"scenes":[],"accounts":[]}}"#),
+    )
+    .await
+    .expect("BUG: seed new file");
     fs::write(&legacy_path, r#"{"ignored":true}"#)
         .await
         .expect("BUG: seed legacy file");

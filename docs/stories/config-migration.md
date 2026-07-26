@@ -6,10 +6,10 @@ manual step. The user never has to know that the schema changed, or that a file 
 
 Migration is a chain of one-hop upgrade steps: each schema version knows how to read the version directly below it and
 produce the next one. A config that is several versions behind is walked up one step at a time until it matches the
-version the running BMC Application expects. Today the chain is a single hop — from the legacy slint-monolith config
-(schema version `0`) to the first manifest-driven widget schema (version `1`) — but every later schema bump adds one
-more step to the same chain, and the guarantees below (automatic, transparent, and validated before write) hold for
-every future upgrade the same way.
+version the running BMC Application expects. Today the chain reaches schema version `2`: version `0` is the legacy
+slint-monolith config, version `1` the first manifest-driven widget schema, and version `2` moves saved accounts to
+typed credential instances. Every later schema bump adds one more step to the same chain, and the guarantees below
+(automatic, transparent, and validated before write) hold for every future upgrade the same way.
 
 ## User stories
 
@@ -31,3 +31,5 @@ every future upgrade the same way.
   v1 this includes the legacy ticker, Braiins Pool, blockchain-data, and halving-countdown widgets, and the remote
   exchange-rate, Formula 1, NASA picture of the day, and ticker widgets — none of which have a WASM counterpart yet.
   Dropped widgets are not preserved as empty placeholders.
+- Saved accounts survive too. The version `1` → `2` step migrates a Braiins Pool account to the typed-credential shape,
+  keeping its name and token; the user never re-enters it.

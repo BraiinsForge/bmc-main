@@ -20,30 +20,31 @@
 
 //! Config migration, typed-per-version style.
 //!
-//! Adapted from `bos-main/open/bosminer/bosminer-config`, which
-//! represents each on-disk schema version as its own Rust type.
+//! Adapted from `bos-main/open/bosminer/bosminer-config`, which represents
+//! each on-disk schema version as its own Rust type.
+//!
 //! [`LoadedConfig::from_str`] reads the `version` header, dispatches
-//! to the matching parser, and upgrades to the current schema in
-//! memory. The chain today is a single hop (v0 → current) handled by
-//! [`upgrade_v0::upgrade_with_report`]; a second hop would add another
-//! parse arm and upgrade step here.
+//! to the matching parser, and upgrades to the current schema in memory.
+//!
+//! Each older version has its own parse arm: v0 (slint-monolith)
+//! via [`upgrade_v0`], v1 via [`upgrade_v1`]. Both land on
+//! the current schema; a later version adds one more arm.
 //!
 //! Key properties:
 //!
-//! - **Pure, in-memory upgrades.** `LoadedConfig::from_str` never
-//!   touches the filesystem. The caller decides whether and when to
-//!   persist the result; the boot path keeps the migrated config in
-//!   memory and writes it back only on the first genuine change.
-//! - **No boot-time rewrite.** Because the boot path does not persist,
-//!   the on-disk file keeps its version until a genuine change is
-//!   saved. Downgrades are not supported, so a config a newer BMC
-//!   application wrote is treated as unreadable (backed up and replaced
-//!   with defaults) rather than preserved in place.
+//! - **Pure, in-memory upgrades.** `LoadedConfig::from_str` never touches the filesystem.
+//!   The caller decides whether and when to persist the result; the boot path keeps
+//!   the migrated config in memory and writes it back only on the first genuine change.
+//! - **No boot-time rewrite.** Because the boot path does not persist, the on-disk file
+//!   keeps its version until a genuine change is saved.
+//!   Downgrades are not supported, so a config a newer BMC application wrote is treated
+//!   as unreadable (backed up and replaced with defaults) rather than preserved in place.
 //!
 //! See `docs/stories/config-migration.md` for user-facing behaviour
 //! and `docs/devlogs/BDK-346/design.md` for design notes.
 
 mod upgrade_v0;
+mod upgrade_v1;
 pub mod v0;
 
 use std::path::{Path, PathBuf};
@@ -54,7 +55,8 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use tracing::info;
 
-use crate::config::{CONFIG_VERSION, Config};
+pub use crate::config::CONFIG_VERSION;
+use crate::config::Config;
 
 /// Minimal view of an on-disk config used to dispatch to the
 /// matching parse arm. Deserializes fast and tolerates unknown
@@ -98,8 +100,10 @@ pub struct Report {
 pub enum LoadedConfig {
     /// File already carried `version = CONFIG_VERSION`.
     AlreadyCurrent(Config),
-    /// File was a v0 (legacy) config; the upgrade has been applied.
+    /// File was a v0 (slint-monolith) config; the widget and account upgrade has been applied.
     MigratedFromV0 { current: Config, report: Report },
+    /// File was a v1 config; the account reshape to the current schema has been applied.
+    MigratedFromV1 { current: Config },
 }
 
 impl LoadedConfig {
@@ -108,7 +112,7 @@ impl LoadedConfig {
     pub fn current(&self) -> &Config {
         match self {
             Self::AlreadyCurrent(c) => c,
-            Self::MigratedFromV0 { current, .. } => current,
+            Self::MigratedFromV0 { current, .. } | Self::MigratedFromV1 { current } => current,
         }
     }
 
@@ -118,19 +122,22 @@ impl LoadedConfig {
     pub fn into_current(self) -> Config {
         match self {
             Self::AlreadyCurrent(c) => c,
-            Self::MigratedFromV0 { current, .. } => current,
+            Self::MigratedFromV0 { current, .. } | Self::MigratedFromV1 { current } => current,
         }
     }
 
     #[must_use]
     pub fn was_migrated(&self) -> bool {
-        matches!(self, Self::MigratedFromV0 { .. })
+        matches!(
+            self,
+            Self::MigratedFromV0 { .. } | Self::MigratedFromV1 { .. }
+        )
     }
 
     #[must_use]
     pub fn report(&self) -> Option<&Report> {
         match self {
-            Self::AlreadyCurrent(_) => None,
+            Self::AlreadyCurrent(_) | Self::MigratedFromV1 { .. } => None,
             Self::MigratedFromV0 { report, .. } => Some(report),
         }
     }
@@ -165,6 +172,12 @@ impl FromStr for LoadedConfig {
                 )?;
                 let (current, report) = upgrade_v0::upgrade_with_report(legacy);
                 Ok(Self::MigratedFromV0 { current, report })
+            }
+            1 => {
+                let document: serde_json::Value = serde_json::from_str(raw)
+                    .context("config header names v1 but body is not valid JSON")?;
+                let current = upgrade_v1::upgrade(document)?;
+                Ok(Self::MigratedFromV1 { current })
             }
             other => bail!(
                 "unsupported config version: {other}; refusing to read a config written by a \

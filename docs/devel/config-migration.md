@@ -16,19 +16,21 @@ Typed-per-version, borrowed from `bos-main/open/bosminer/bosminer-config`. Each 
 Rust type. `LoadedConfig::from_str` reads the `version` header, dispatches to the matching parser, and upgrades to the
 current schema in memory.
 
-The chain today is a single hop (v0 → current), handled directly by `upgrade_v0::upgrade_with_report`, which returns the
-upgraded `Config` together with a `Report` of what was translated and dropped. The shape pays off in two ways:
+The chain has two hops today, both landing on the current schema: v0 → current via `upgrade_v0::upgrade_with_report`
+(returning the upgraded `Config` plus a `Report` of what was translated and dropped) and v1 → current via
+`upgrade_v1::upgrade` (an account reshape, no widget report). The shape pays off in two ways:
 
 1. **In-memory upgrades.** `LoadedConfig::from_str` never touches the filesystem. Parsing any version produces the
    upgraded `Config` (and, for a legacy file, its migration `Report`); the caller decides whether, when, and how to
    persist.
-2. **Adding v2 is localized.** Define `ConfigV2`, add a `from_str` match arm for its version, and a `v1 → v2` upgrade
-   step alongside `upgrade_v0`. (No trait chain is imposed up front — with only one hop it would be speculative
-   scaffolding; the shape for walking multiple hops is best designed once a second real hop exists.)
+2. **Each hop is localized.** v1 → v2 is exactly this: a `from_str` arm for version 1 and `upgrade_v1`, which reshapes
+   only the accounts (the sole v1 → v2 change) and re-parses the rest as current. v0 → current stays one function that
+   composes the widget translation with the shared account reshape (`upgrade_v1::reshape_and_collect_accounts`). A
+   future v3 adds one more arm the same way — no trait chain imposed up front, designed per hop as real hops appear.
 
 `Config` carries a top-level `version: u32` field (`#[serde(default)]`, so v0 configs deserialise as 0). The migration
 builds the upgraded config through `Config::from_migrated_parts(scenes, accounts, settings)`, which pins `version` to
-`CONFIG_VERSION` (currently 1); `Config::save` pins it again on every write as a belt-and-braces guard.
+`CONFIG_VERSION` (currently 2); `Config::save` pins it again on every write as a belt-and-braces guard.
 
 ### Dispatch
 
@@ -38,7 +40,8 @@ parse FormatHeader (version only)
 match version:
   0 (or missing) → parse as v0::Config → upgrade_v0::upgrade_with_report(v0)
                    → LoadedConfig::MigratedFromV0 { current, report }
-  1 (current)    → parse as Config → LoadedConfig::AlreadyCurrent
+  1              → reshape accounts → upgrade_v1::upgrade → LoadedConfig::MigratedFromV1 { current }
+  2 (current)    → parse as Config → LoadedConfig::AlreadyCurrent
   other          → bail with explicit error, do not read as config
 ```
 
@@ -118,15 +121,20 @@ the original up and replacing it with the platform default). This is only reacha
 file — a config written by an older BMC app is always internally consistent — so dropping the whole config is preferred
 over the added complexity of per-scene geometry salvage.
 
-## Settings and accounts pass-through
+## Settings pass-through and account reshape
 
 The top-level settings kept their shape across the schema change: `scene_cycling`, `localization`, `data_collection`,
 `brightness_pct`, `night_mode`, `sound_volume_pct`, `alarms`, `led_enabled`, `boot_sound_enabled`, `autoupgrade`. Each
 is carried as raw JSON in `v0::Config` and re-parsed into its current typed form during the upgrade
 (`passthrough_setting`) — a validate step, not a transformation. A value that fails the re-parse is dropped with a
 `warn!` naming the field; a single bad setting never fails the migration, and the dropped field falls back to the same
-default a field-less current config would use. Accounts go through the same lenient per-entry re-parse
-(`deserialize_accounts_passthrough`).
+default a field-less current config would use.
+
+**Accounts are transformed, not passed through** (as of v2). A v1 account
+(`{ type: "braiins_pool", authentication: { api_key } }`) becomes a typed credential instance
+(`{ type_id: "braiins-pool", field_values: { token } }`) via `upgrade_v1::reshape_legacy_account`. v0 carries its
+accounts as raw JSON of the same pre-typed shape, so the v0 → current path runs the same reshape
+(`reshape_and_collect_accounts`); an entry that doesn't match is dropped with a `warn!`.
 
 ## Safety
 
@@ -210,8 +218,9 @@ the same code path.
 A bad migration is diagnosed from the pre-migration state, so the support archive (`bmc-support`) collects the whole
 `/etc/bmc/` directory (current config plus every `config.json.backup.<ts>`) **and** the deliberately-kept legacy
 `/etc/bmc_config.json`. Credential censoring matches the whole config family — the current config, its backups, and the
-legacy file all carry pool `api_key`s — via a path predicate (`filters::is_bmc_config`) rather than a single fixed path,
-so a newly-created backup is never archived uncensored.
+legacy file — via a path predicate (`filters::is_bmc_config`) rather than a single fixed path, so a newly-created backup
+is never archived uncensored. Note: the censor currently matches only the legacy `"api_key"` key; the v2 account reshape
+moves secrets into `field_values` (`token`/`password`), so broadening it is tracked as a Phase-G follow-up.
 
 ## Open items / follow-ups
 
@@ -247,6 +256,8 @@ so a newly-created backup is never archived uncensored.
 - `bmc/src/config_migration/v0.rs` — deserialize-only v0 types.
 - `bmc/src/config_migration/upgrade_v0.rs` — manifest UID constants, remote-widget slug dispatch, per-widget translators
   (required-param filling, enum guards), and `params_from_value` (legacy JSON params → typed param map).
+- `bmc/src/config_migration/upgrade_v1.rs` — the v1 → current account reshape (`reshape_legacy_account`), shared with
+  the v0 path.
 - `bmc/src/widget/coordinator.rs` — defensive nil-UID skip (the migration no longer produces nil UIDs; the guard is
   harmless).
 - `bmc/src/bin/migrate_config.rs` — offline CLI.
