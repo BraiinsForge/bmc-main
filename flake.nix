@@ -246,9 +246,7 @@
           # The armv7 cross outputs are CI-only: keep them out of
           # `nix flake check` (full armv7 workspace build + qemu test run).
           builtins.removeAttrs self.packages.${localSystem} [ "workspace-deps-armv7" "nextest-armv7" ]
-          // workspace.checks // checks // {
-            content = content-checks;
-          };
+          // workspace.checks // checks;
 
         bmc = workspace.bmc;
 
@@ -311,6 +309,14 @@
         apps.firmware-index-serve = {
           type = "app";
           program = pkgs.lib.getExe firmware-index-serve;
+        };
+
+        # An app, not a check: the script lists files with `git`,
+        # which a build sandbox cannot do.
+        # As a `checks` entry it was only ever built, never run.
+        apps.content-checks = {
+          type = "app";
+          program = pkgs.lib.getExe content-checks;
         };
 
         # default: full local dev (Rust + frontend + GUI, both local and for Deck)

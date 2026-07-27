@@ -95,7 +95,7 @@ content-checks:
   stage: lint
   needs: []
   script:
-    - nix build -L .#checks.x86_64-linux.content
+    - nix run .#content-checks
 
 license-headers:
   stage: lint

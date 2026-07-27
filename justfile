@@ -32,7 +32,7 @@ validate: format clippy python validate-wasm
     # `--workspace` run cannot build (bmc-wasm-sdk loses bmc_render_macros under
     # workspace-wide feature unification), so each has to be named.
     just test bmc-netsim
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.content"
+    nix run ".#content-checks"
     nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
     @echo "validate: OK"
 
