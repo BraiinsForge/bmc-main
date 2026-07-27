@@ -32,6 +32,8 @@ source "$(dirname "$0")/_.sh"
 
 mkdir -p "$LOGDIR"
 
+# Run on the guest, which defines these from its own paths.env — must not expand here.
+# shellcheck disable=SC2016
 LOG_SPECS=(
     'bmc.log:. /etc/bmc-virt/paths.env && cat "$BMC_LOG"'
     'relay.log:. /etc/bmc-virt/paths.env && cat "$RELAY_LOG"'

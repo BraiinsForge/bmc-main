@@ -35,7 +35,8 @@ cmd=$(jq -r '.tool_input.command // empty' 2>/dev/null) || exit 0
 # `rg` (at a command boundary) carrying a short `-…r…` flag cluster, bounded by
 # pipe/;/& so a later `rm -r` in the same line is not mistaken for rg's flag.
 if grep -Eq '(^|[|&;[:space:]])rg([[:space:]][^|&;]*)?[[:space:]]-[A-Za-z]*r[A-Za-z]*([[:space:]]|$)' <<<"$cmd"; then
-    printf 'rg-guard: `rg -r` is `--replace` and rewrites every match — you almost certainly meant `-n` for line numbers. Use `rg -n`. For deliberate replacement use the long form `--replace=…`.\n' >&2
+    printf 'rg-guard: short -r is --replace and rewrites every match — you almost certainly meant -n for line numbers.\n' >&2
+    printf 'Use rg -n. For deliberate replacement use the long form --replace=…\n' >&2
     exit 2
 fi
 

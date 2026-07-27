@@ -18,6 +18,9 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
+# Embedded into a writeShellApplication by flake.nix, which supplies the shebang.
+# shellcheck shell=bash
+
 usage() {
     cat <<EOF
 Usage: firmware-index-serve <proxy|local>

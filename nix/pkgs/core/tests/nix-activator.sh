@@ -45,6 +45,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# shellcheck source=/dev/null
 . "$activator"
 
 LOG() {
@@ -54,6 +55,8 @@ LOG() {
 mkdir -p "$tmp"
 printf 'test-1\n' >"$tmp/bos_version"
 
+# Consumed by the sourced activator.
+# shellcheck disable=SC2034
 NIX_ACTIVATOR_BOS_VERSION_FILE="$tmp/bos_version"
 
 write_entrypoint() {
@@ -155,6 +158,8 @@ write_entrypoint "$profile/2-link" "ln -sfn 2-link \"$profile/current\""
 ln -s 1-link "$profile/current"
 ln -s 2-link "$profile/next.test-1"
 
+# Consumed by the sourced activator.
+# shellcheck disable=SC2034
 NIX_ACTIVATOR_PROFILE_DIR="$profile"
 activate_profile || fail "successful staged activation reported failure"
 
