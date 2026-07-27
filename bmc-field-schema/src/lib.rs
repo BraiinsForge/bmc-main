@@ -32,6 +32,8 @@ use serde::de::{Error as _, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 
+pub mod credential;
+
 /// Maximum byte length of a [`ParamKey`]. Under the wire-format `u16` length field, so the
 /// encoder's `u16::try_from` is statically infallible.
 pub const MAX_PARAM_KEY_LENGTH: usize = 64;
