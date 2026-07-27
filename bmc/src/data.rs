@@ -95,13 +95,37 @@ impl FromStr for AccountId {
 
 /// A saved account — a typed instance of a credential type (see [`crate::credential`]).
 /// `type_id` names the credential type; `field_values` are the secret values, keyed by field key.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Account {
     pub id: AccountId,
     pub type_id: String,
     pub name: String,
     pub field_values: IndexMap<ParamKey, String>,
     pub created_at: DateTime<Utc>,
+}
+
+/// Hand-written so a debug-logged account can never
+/// leak its secrets; logs end up in support archives.
+impl std::fmt::Debug for Account {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Account")
+            .field("id", &self.id)
+            .field("type_id", &self.type_id)
+            .field("name", &self.name)
+            .field("field_values", &RedactedKeys(&self.field_values))
+            .field("created_at", &self.created_at)
+            .finish()
+    }
+}
+
+struct RedactedKeys<'a>(&'a IndexMap<ParamKey, String>);
+
+impl std::fmt::Debug for RedactedKeys<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|key| (key.as_str(), "<redacted>")))
+            .finish()
+    }
 }
 
 impl Account {

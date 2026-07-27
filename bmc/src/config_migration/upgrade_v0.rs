@@ -56,7 +56,7 @@ use serde_json::{Map, Value, json};
 use tracing::warn;
 use uuid::Uuid;
 
-use super::{Report, upgrade_v1, v0};
+use super::{Report, v0};
 use crate::config::widget_uuids::{
     BLOCK_HEIGHT_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
     SPACEX_LAUNCH_UID, WEATHER_UID,
@@ -106,10 +106,9 @@ const NAMEDAY_COUNTRIES: &[&str] = &[
 
 // --- Upgrade entry point -----------------------------------------------------
 
-/// Core upgrade. Returns both the upgraded [`Config`] and the
-/// [`Report`] counts. The single entry point for the v0 → current
-/// migration; `LoadedConfig::from_str` dispatches straight here.
-pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
+/// The v0 hop. Accounts come back raw and untouched —
+/// reshaping them is the next hop's transform, sequenced one level up.
+pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report, Vec<Value>) {
     let mut report = Report::default();
 
     // Insert explicitly rather than `collect()` so a duplicate scene
@@ -149,17 +148,13 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report) {
         boot_sound_enabled: passthrough_setting("boot_sound_enabled", v0.boot_sound_enabled),
         autoupgrade: passthrough_setting("autoupgrade", v0.autoupgrade),
     };
-    let accounts = upgrade_v1::reshape_and_collect_accounts(v0.accounts);
-    let current = Config::from_migrated_parts(scenes, accounts, settings);
-    (current, report)
+    let current = Config::from_migrated_parts(scenes, settings);
+    (current, report, v0.accounts)
 }
 
-// `upgrade_v0` produces the current schema in one hop:
-// the v0 → v1 widget translation here plus the v1 → current
-// account reshape (shared with `upgrade_v1`).
-//
-// A bump past the current version adds an axis
-// this hop wouldn't apply, so revisit when the assert fires.
+// This hop lands scenes and settings on the current schema directly;
+// a bump past the current version adds an axis it wouldn't apply,
+// so revisit when the assert fires.
 const _: () = assert!(CONFIG_VERSION == 2);
 
 // --- Per-widget dispatch -----------------------------------------------------
@@ -1015,7 +1010,7 @@ mod tests {
     #[test]
     fn scene_with_only_unmappable_widgets_is_dropped() {
         let scene = scene_with(vec![mk_widget("mystery_widget", json!({}))]);
-        let (_current, report) = upgrade_with_report(v0::Config {
+        let (_current, report, _) = upgrade_with_report(v0::Config {
             scenes: vec![scene],
             ..Default::default()
         });
@@ -1027,7 +1022,7 @@ mod tests {
     #[test]
     fn scene_with_a_survivor_is_kept() {
         let scene = scene_with(vec![mk_widget("clock", json!({}))]);
-        let (_current, report) = upgrade_with_report(v0::Config {
+        let (_current, report, _) = upgrade_with_report(v0::Config {
             scenes: vec![scene],
             ..Default::default()
         });
@@ -1048,7 +1043,7 @@ mod tests {
             kind: v0::SceneKind::Fullscreen,
             widgets: vec![mk_widget("clock", json!({}))],
         };
-        let (current, _) = upgrade_with_report(v0::Config {
+        let (current, _, _) = upgrade_with_report(v0::Config {
             scenes: vec![scene.clone()],
             ..Default::default()
         });
@@ -1096,7 +1091,7 @@ mod tests {
             kind,
             widgets: vec![mk_widget("clock", json!({}))],
         };
-        let (current, report) = upgrade_with_report(v0::Config {
+        let (current, report, _) = upgrade_with_report(v0::Config {
             scenes: vec![
                 scene(v0::SceneKind::Fullscreen),
                 scene(v0::SceneKind::Fullscreen),
@@ -1129,7 +1124,7 @@ mod tests {
             kind: v0::SceneKind::Combined,
             widgets: vec![first, duplicate],
         };
-        let (current, report) = upgrade_with_report(v0::Config {
+        let (current, report, _) = upgrade_with_report(v0::Config {
             scenes: vec![scene],
             ..Default::default()
         });
@@ -1336,7 +1331,7 @@ mod tests {
     #[test]
     fn upgraded_config_carries_current_version() {
         let v0 = v0::Config::default();
-        let (upgraded, _) = upgrade_with_report(v0);
+        let (upgraded, _, _) = upgrade_with_report(v0);
         assert_eq!(upgraded.version, CONFIG_VERSION);
     }
 
@@ -1359,7 +1354,7 @@ mod tests {
             }]
         }))
         .expect("BUG: v0 settings fixture must parse");
-        let (current, _) = upgrade_with_report(v0);
+        let (current, _, _) = upgrade_with_report(v0);
         let out = serde_json::to_value(&current).expect("BUG: config must serialize");
         assert_eq!(out["brightness_pct"], 30);
         assert_eq!(out["sound_volume_pct"], 45);
@@ -1378,7 +1373,7 @@ mod tests {
             "night_mode": "not-an-object"
         }))
         .expect("BUG: v0 fixture must parse");
-        let (current, _) = upgrade_with_report(v0);
+        let (current, _, _) = upgrade_with_report(v0);
         let out = serde_json::to_value(&current).expect("BUG: config must serialize");
         assert_eq!(out["brightness_pct"], 30);
         assert!(
@@ -1394,7 +1389,7 @@ mod tests {
             "brightness_pct": null
         }))
         .expect("BUG: v0 fixture must parse");
-        let (current, _) = upgrade_with_report(v0);
+        let (current, _, _) = upgrade_with_report(v0);
         let out = serde_json::to_value(&current).expect("BUG: config must serialize");
         assert!(out.get("brightness_pct").is_none());
     }

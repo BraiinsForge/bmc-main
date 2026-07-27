@@ -33,6 +33,7 @@ use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::led_coordinator::LedCoordinatorHandle;
+use crate::secret_store::SecretStoreHandle;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::web::SessionManager;
@@ -106,6 +107,7 @@ pub(crate) struct GrpcWeb<
     session_manager: Arc<S>,
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
     initial_setup: InitialSetup<T, U>,
     led_controller: LedController<T>,
     widget_registry: Arc<WidgetRegistry>,
@@ -126,6 +128,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         session_manager: Arc<S>,
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        secret_store: Arc<RwLock<SecretStoreHandle>>,
         initial_setup: InitialSetup<T, U>,
         led_controller: LedController<T>,
         widget_registry: Arc<WidgetRegistry>,
@@ -141,6 +144,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             session_manager,
             system_upgrade_service,
             config_handle,
+            secret_store,
             initial_setup,
             led_controller,
             widget_registry,
@@ -221,7 +225,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let account_management_service =
             web::account_management_service_server::AccountManagementServiceServer::new(
-                account_management::AccountManagementService::new(self.config_handle),
+                account_management::AccountManagementService::new(self.secret_store),
             );
 
         let credential_management_service =

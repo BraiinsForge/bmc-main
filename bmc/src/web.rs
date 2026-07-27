@@ -31,6 +31,7 @@ use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
 use crate::led::LedController;
 use crate::led_coordinator::LedCoordinatorHandle;
+use crate::secret_store::SecretStoreHandle;
 use crate::session::Manager as SessionManager;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
@@ -57,6 +58,7 @@ pub(crate) struct WebService<
     config: ServerConfig,
     system_upgrade_service: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
     initial_setup: InitialSetup<T, U>,
     led_controller: LedController<T>,
     widget_registry: Arc<WidgetRegistry>,
@@ -78,6 +80,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         config: ServerConfig,
         system_upgrade_service: SystemUpgradeService<U, T>,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        secret_store: Arc<RwLock<SecretStoreHandle>>,
         initial_setup: InitialSetup<T, U>,
         led_controller: LedController<T>,
         widget_registry: Arc<WidgetRegistry>,
@@ -94,6 +97,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             config,
             system_upgrade_service,
             config_handle,
+            secret_store,
             initial_setup,
             led_controller,
             widget_registry,
@@ -118,6 +122,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
             self.session_manager.clone(),
             self.system_upgrade_service,
             self.config_handle,
+            self.secret_store,
             self.initial_setup,
             self.led_controller,
             self.widget_registry,

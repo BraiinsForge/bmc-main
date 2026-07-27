@@ -262,6 +262,11 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
     pub fn add_fs_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
+        if filters::is_excluded(path) {
+            info!("Skipped excluded file {}", path.display());
+            return Ok(());
+        }
+
         let mut file = File::open(path)?;
         let mut buf = vec![];
         file.read_to_end(&mut buf)?;

@@ -2713,7 +2713,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100)
+                .await
+                .0,
         ));
         let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
         let widget_registry = widget_manager.registry();
@@ -2776,7 +2778,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100)
+                .await
+                .0,
         ));
         let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
         let widget_registry = widget_manager.registry();
@@ -2821,7 +2825,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100)
+                .await
+                .0,
         ));
         let scene = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
         let scene_id = scene.id;
@@ -2903,7 +2909,9 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100)
+                .await
+                .0,
         ));
 
         // Two enabled, supported scenes — without a preview both must cycle.

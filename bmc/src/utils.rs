@@ -44,6 +44,17 @@ pub async fn replace_file(
     path: impl AsRef<Path>,
     data: &[u8],
 ) -> Result<Option<SystemTime>, std::io::Error> {
+    replace_file_with_mode(path, data, None).await
+}
+
+/// As [`replace_file`], restricting the file to `mode` when given.
+/// The temporary file is created with `mode` already applied,
+/// so the data is never on disk more readable than requested.
+pub async fn replace_file_with_mode(
+    path: impl AsRef<Path>,
+    data: &[u8],
+    mode: Option<u32>,
+) -> Result<Option<SystemTime>, std::io::Error> {
     // Both the temporary file and the final rename target live in the
     // destination's parent directory, so it must exist first. On a
     // fresh install the config lives under a directory (`/etc/bmc/`)
@@ -57,18 +68,58 @@ pub async fn replace_file(
     // this prevents interference with other external processes
     let mut tmp_path = PathBuf::from(path.as_ref());
     tmp_path.set_extension(TMP_FILE_EXTENSION);
+
+    // A tmp left by an interrupted save would fail `create_new` forever.
+    match fs::remove_file(&tmp_path).await {
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => return Err(err),
+        Ok(()) | Err(_) => {}
+    }
     {
-        let mut file = fs::File::create(&tmp_path).await?;
+        // `create_new` with the mode at open: a `create`-then-chmod pair
+        // would leave a window in which another opener keeps a readable fd.
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        if let Some(mode) = mode {
+            options.mode(mode);
+        }
+        let mut file = options.open(&tmp_path).await?;
         file.write_all(data).await?;
+        // Data blocks first, rename second — a power cut between the two
+        // can otherwise leave the target present but empty,
+        // its metadata committed ahead of its blocks.
+        file.sync_all().await?;
     }
     let modified = get_modified_from_path(&tmp_path).await;
-    fs::rename(&tmp_path, path).await?;
+    fs::rename(&tmp_path, path.as_ref()).await?;
+    // The directory fsync is what commits the rename itself.
+    if let Some(parent) = path.as_ref().parent()
+        && !parent.as_os_str().is_empty()
+    {
+        fs::File::open(parent).await?.sync_all().await?;
+    }
     Ok(modified)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_stale_tmp_from_an_interrupted_save_does_not_block_the_next() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = dir.path().join("config.json");
+        let mut tmp = PathBuf::from(&path);
+        tmp.set_extension(TMP_FILE_EXTENSION);
+        fs::write(&tmp, b"torn")
+            .await
+            .expect("BUG: seed a stale tmp");
+
+        replace_file(&path, b"payload")
+            .await
+            .expect("BUG: a stale tmp must not fail the save");
+        let written = fs::read_to_string(&path).await.expect("BUG: read back");
+        assert_eq!(written, "payload");
+    }
 
     #[tokio::test]
     async fn replace_file_creates_missing_parent_dirs() {

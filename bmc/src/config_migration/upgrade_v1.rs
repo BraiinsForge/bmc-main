@@ -20,11 +20,10 @@
 
 //! v1 → current schema upgrade.
 //!
-//! v1 and the current schema differ only in the account shape: v1 stored a closed
-//! `{ type: "braiins_pool", authentication: { api_key } }` account; the current schema stores a
-//! typed credential instance `{ type_id, field_values }` (see [`crate::credential`]). Widgets and
-//! top-level settings are unchanged, so the upgrade reshapes the `accounts` array and re-parses the
-//! rest of the document as current.
+//! v1 stored a closed `{ type: "braiins_pool", authentication: { api_key } }` account
+//! inside the config; the current schema stores typed credential instances
+//! `{ type_id, field_values }` in the secret store beside it (see [`crate::secret_store`]).
+//! The upgrade extracts and reshapes the accounts, then re-parses the rest as current.
 //!
 //! [`reshape_legacy_account`] is the single account transform. The v0 → current path reuses it via
 //! [`reshape_and_collect_accounts`]: v0 carries its accounts as raw JSON of the same pre-typed
@@ -38,31 +37,29 @@ use tracing::warn;
 use crate::config::{CONFIG_VERSION, Config};
 use crate::data::{Account, AccountId};
 
-/// Upgrade a v1 config document to the current schema. Only the accounts change; the rest is
-/// already current-shaped and re-parses directly.
-pub(super) fn upgrade(mut document: Value) -> Result<Config> {
-    reshape_accounts_in_place(&mut document);
+/// Upgrade a v1 config document to the current schema.
+/// Only the accounts change; the rest is already current-shaped and re-parses directly.
+pub(super) fn upgrade(mut document: Value) -> Result<(Config, IndexMap<AccountId, Account>)> {
+    let accounts = extract_accounts(&mut document);
     document["version"] = json!(CONFIG_VERSION);
-    serde_json::from_value(document)
-        .context("v1 config body failed to parse as current after account reshape")
+    let config = serde_json::from_value(document)
+        .context("v1 config body failed to parse as current after account extraction")?;
+    Ok((config, accounts))
 }
 
-/// Reshape each entry of the document's `accounts` array in place, dropping any that doesn't match
-/// the v1 shape (logged). Leaves the array current-shaped so the normal [`Config`] parser reads it.
-fn reshape_accounts_in_place(document: &mut Value) {
-    let Some(accounts) = document.get_mut("accounts").and_then(Value::as_array_mut) else {
-        return;
+/// Take the document's `accounts` array out — the current config carries none.
+fn extract_accounts(document: &mut Value) -> IndexMap<AccountId, Account> {
+    let Some(Value::Array(entries)) = document
+        .as_object_mut()
+        .and_then(|object| object.remove("accounts"))
+    else {
+        return IndexMap::new();
     };
-    let reshaped = accounts
-        .iter()
-        .enumerate()
-        .filter_map(|(index, raw)| reshape_or_warn(index, raw))
-        .collect();
-    *accounts = reshaped;
+    reshape_and_collect_accounts(entries)
 }
 
-/// Reshape the raw v0 `accounts` values — which carry the same pre-typed shape — into the current
-/// account map. Used by the v0 → current path, which assembles its [`Config`] from typed parts.
+/// Reshape raw pre-typed account values — v0 and v1 carry the same shape — into the current
+/// account map, dropping and logging any entry that doesn't match.
 pub(super) fn reshape_and_collect_accounts(accounts: Vec<Value>) -> IndexMap<AccountId, Account> {
     let mut out = IndexMap::with_capacity(accounts.len());
     for (index, raw) in accounts.into_iter().enumerate() {
@@ -156,7 +153,7 @@ mod tests {
     }
 
     #[test]
-    fn upgrade_reshapes_accounts_and_pins_version() {
+    fn upgrade_extracts_accounts_and_pins_version() {
         let document = json!({
             "version": 1,
             "scenes": [],
@@ -165,11 +162,18 @@ mod tests {
                 "authentication": { "api_key": "tok" }, "created_at": "2025-01-01T00:00:00Z"
             }]
         });
-        let config = upgrade(document).expect("BUG: v1 document should upgrade");
+        let (config, accounts) = upgrade(document).expect("BUG: v1 document should upgrade");
         assert_eq!(config.version, CONFIG_VERSION);
-        assert_eq!(config.accounts.len(), 1);
-        let account = config.accounts.values().next().expect("BUG: one account");
+        assert_eq!(accounts.len(), 1);
+        let account = accounts.values().next().expect("BUG: one account");
         assert_eq!(account.type_id, "braiins-pool");
         assert_eq!(account.field_values["token"], "tok");
+
+        let serialized =
+            serde_json::to_value(&config).expect("BUG: upgraded config must serialize");
+        assert!(
+            serialized.get("accounts").is_none(),
+            "the config must no longer carry accounts"
+        );
     }
 }

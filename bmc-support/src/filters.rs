@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use crate::constants::{BMC_CONFIG_DIR, BMC_CONFIG_LEGACY};
+use crate::constants::{BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BMC_SECRETS};
 use regex::Regex;
 use std::path::Path;
 use tracing::warn;
@@ -39,6 +39,25 @@ const CREDENTIAL_FILTERS: &[(MatchFn, FilterFn)] = &[
     (is_bmc_config, censor_bmc_config),
     (is_uci_wireless, censor_uci_wireless),
 ];
+
+/// Whether a path must be kept out of the archive entirely.
+///
+/// The secret store holds plaintext account credentials with no diagnostic value,
+/// so it is excluded rather than censored — a censor would have to track every
+/// credential-type field name as the catalog grows, and missing one leaks.
+pub fn is_excluded(path: &Path) -> bool {
+    let secrets = Path::new(BMC_SECRETS);
+    let Some(stem) = secrets.file_stem().and_then(|stem| stem.to_str()) else {
+        return false;
+    };
+    let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+        return false;
+    };
+
+    // Matched on the stem: `set_extension` replaces rather than appends, so the atomic write
+    // leaves `secrets.tmp` mid-rename, not `secrets.json.tmp`.
+    path.parent() == secrets.parent() && name.starts_with(&format!("{stem}."))
+}
 
 /// Apply credential censoring to file content if a filter matches the path.
 ///
@@ -160,6 +179,18 @@ mod tests {
         assert!(!is_bmc_config(Path::new("/etc/bmc")));
         assert!(!is_bmc_config(Path::new("/etc/bmc_config.jsonx")));
         assert!(!is_bmc_config(Path::new("/etc/hosts")));
+    }
+
+    #[test]
+    fn is_excluded_matches_the_secret_store_family_only() {
+        assert!(is_excluded(Path::new("/etc/bmc/secrets.json")));
+        // The atomic-write temp file and the unreadable-store backup carry the same secrets.
+        assert!(is_excluded(Path::new("/etc/bmc/secrets.tmp")));
+        assert!(is_excluded(Path::new("/etc/bmc/secrets.json.bcp")));
+        // The config beside it is collected (censored), never excluded.
+        assert!(!is_excluded(Path::new("/etc/bmc/config.json")));
+        assert!(!is_excluded(Path::new("/etc/bmc")));
+        assert!(!is_excluded(Path::new("/etc/secrets.json")));
     }
 
     #[test]

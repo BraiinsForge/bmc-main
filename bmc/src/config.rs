@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use crate::data::{Account, AccountId, SceneCycling, deserialize_accounts, serialize_accounts};
+use crate::data::{Account, AccountId, SceneCycling};
 use crate::{
     alarm::{AlarmData, AlarmId},
     scene::{Scene, SceneId, SceneKind, WidgetPlacement, deserialize_scenes, serialize_scenes},
@@ -33,7 +33,7 @@ use bmc_shared_utils::unit_system::UnitSystem;
 use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use bmc_widget_manifest::{ParamKey, ParamValue};
 use chrono::{Local, NaiveTime};
-use indexmap::{IndexMap, indexmap};
+use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap};
@@ -151,7 +151,9 @@ impl ConfigNotify {
 ///
 /// - `0`: slint-monolith schema (`kind`-enum widgets).
 /// - `1`: first manifest-driven widget schema.
-/// - `2`: accounts become typed credential instances (`type_id` + `field_values`) fed into the wasm host for placeholder interpolation.
+/// - `2`: accounts become typed credential instances and move out of the config
+///   into the secret store beside it (see [`crate::secret_store`]);
+///   widget `placement` replaces legacy `size`.
 pub const CONFIG_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -187,12 +189,6 @@ pub struct Config {
     boot_sound_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     autoupgrade: Option<AutoUpgradeConfig>,
-    #[serde(
-        default,
-        serialize_with = "serialize_accounts",
-        deserialize_with = "deserialize_accounts"
-    )]
-    pub accounts: IndexMap<AccountId, Account>,
 }
 
 impl Config {
@@ -409,16 +405,12 @@ pub(crate) struct MigratedSettings {
 }
 
 impl Config {
-    /// Assemble a current-schema config from the parts a v0 migration
-    /// recovers: the scene layout, the account list, and the top-level
-    /// settings whose shape survived the schema change unchanged. A
-    /// `None` setting falls back to the same default a field-less
-    /// current config would use. `version` is pinned to
-    /// [`CONFIG_VERSION`] so the migrated config serialises as the
-    /// current schema without a further save-time fixup.
+    /// Assemble a current-schema config from what a v0 migration recovers:
+    /// the scene layout, plus the top-level settings whose shape survived unchanged
+    /// (a `None` falls back to the field-less default).
+    /// `version` is pinned to [`CONFIG_VERSION`] so the result serialises as current.
     pub(crate) fn from_migrated_parts(
         scenes: IndexMap<SceneId, Scene>,
-        accounts: IndexMap<AccountId, Account>,
         settings: MigratedSettings,
     ) -> Self {
         // Destructure so a settings field added later cannot be
@@ -448,7 +440,6 @@ impl Config {
             led_enabled,
             boot_sound_enabled,
             autoupgrade,
-            accounts,
         }
     }
 
@@ -467,7 +458,6 @@ impl Config {
             led_enabled: None,
             boot_sound_enabled: None,
             autoupgrade: None,
-            accounts: indexmap! {},
         }
     }
 }
@@ -510,12 +500,12 @@ pub struct ConfigHandle {
 }
 
 impl ConfigHandle {
-    /// Load the config and validate it, migrating a legacy schema to the
-    /// current one *in memory* if needed. The on-disk file is **not**
-    /// rewritten here — a migrated config is persisted only on the first
-    /// genuine change (see [`Self::save`]). Returns the config and
-    /// whether it was migrated.
-    async fn load_and_validate(path: &Path) -> Result<(Config, bool)> {
+    /// Load and validate the config, migrating a legacy schema *in memory* if needed.
+    /// The on-disk file is **not** rewritten here —
+    /// a migrated config is persisted only on the first genuine change (see [`Self::save`]).
+    async fn load_and_validate(
+        path: &Path,
+    ) -> Result<(Config, bool, IndexMap<AccountId, Account>)> {
         let loaded = crate::config_migration::load_any_version(path).await?;
         if let Some(report) = loaded.report() {
             info!(
@@ -527,11 +517,11 @@ impl ConfigHandle {
             );
         }
         let migrated = loaded.was_migrated();
-        let config = loaded.into_current();
+        let (config, accounts) = loaded.into_parts();
         config
             .validate()
             .context("loaded config failed validation")?;
-        Ok((config, migrated))
+        Ok((config, migrated, accounts))
     }
 
     /// Fallback when [`Self::load_and_validate`] fails: the on-disk file
@@ -569,20 +559,23 @@ impl ConfigHandle {
         default_sound_volume_pct: u8,
         default_night_mode_sound_volume_pct: u8,
         product: bmc_platform::Product,
-    ) -> Self {
-        // On first boot after an upgrade this migrates a legacy
-        // `version: 0` config *in memory* (it is persisted on the first
-        // genuine change, not here) and, for an already-current config,
-        // is a cheap no-op. See `crate::config_migration`.
-        let (config, migrated) = match Self::load_and_validate(&path).await {
-            Ok((config, migrated)) => (config, migrated),
+    ) -> (Self, IndexMap<AccountId, Account>) {
+        // On first boot after an upgrade this migrates a legacy config *in memory*
+        // (it is persisted on the first genuine change, not here) and,
+        // for an already-current config, is a cheap no-op. See `crate::config_migration`.
+        let (config, migrated, extracted) = match Self::load_and_validate(&path).await {
+            Ok(parts) => parts,
             Err(err) => {
                 warn!(?err, "Failed to load or migrate config");
-                (Self::recover_from_failed_load(&path, product).await, false)
+                (
+                    Self::recover_from_failed_load(&path, product).await,
+                    false,
+                    IndexMap::new(),
+                )
             }
         };
 
-        Self {
+        let handle = Self {
             path,
             config,
             config_notify: ConfigNotify::new(),
@@ -598,7 +591,8 @@ impl ConfigHandle {
             default_night_mode_brightness_pct,
             default_sound_volume_pct,
             default_night_mode_sound_volume_pct,
-        }
+        };
+        (handle, extracted)
     }
 
     pub fn subscribe_localization_change(&self) -> broadcast::Receiver<LocalizationConfig> {
@@ -965,7 +959,8 @@ mod tests {
     async fn fresh_handle() -> (tempfile::TempDir, ConfigHandle) {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let path = tmp.path().join("bmc-config.json");
-        let handle = ConfigHandle::init(path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
+        let (handle, _) =
+            ConfigHandle::init(path, 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
         (tmp, handle)
     }
 
@@ -1023,7 +1018,7 @@ mod tests {
 
         let dir = tempdir().expect("BUG: tempdir");
         let path = dir.path().join("config.json");
-        let mut handle =
+        let (mut handle, _) =
             ConfigHandle::init(path, 80, 30, 80, 30, bmc_platform::Product::Bmc100).await;
 
         let mut rx = handle.subscribe_scenes_change();
@@ -1045,7 +1040,7 @@ mod tests {
 
         let dir = tempdir().expect("BUG: tempdir");
         let path = dir.path().join("config.json");
-        let mut handle =
+        let (mut handle, _) =
             ConfigHandle::init(path, 80, 30, 80, 30, bmc_platform::Product::Bmc100).await;
 
         let mut rx = handle.subscribe_scenes_change();
@@ -1140,7 +1135,7 @@ mod tests {
             .await
             .expect("BUG: seed legacy file");
 
-        let mut handle =
+        let (mut handle, _) =
             ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
         // Migrated in memory: the running config is the current schema.
         assert_eq!(handle.config.version, CONFIG_VERSION);
@@ -1199,7 +1194,7 @@ mod tests {
             .await
             .expect("BUG: seed newer file");
 
-        let handle =
+        let (handle, _) =
             ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
         assert_eq!(
             handle.config.version, CONFIG_VERSION,
@@ -1232,7 +1227,7 @@ mod tests {
         let path = dir.path().join("bmc").join("config.json");
         assert!(!path.exists(), "precondition: config must not exist yet");
 
-        let handle =
+        let (handle, _) =
             ConfigHandle::init(path.clone(), 50, 50, 50, 50, bmc_platform::Product::Bmc100).await;
         assert_eq!(handle.config.version, CONFIG_VERSION);
 

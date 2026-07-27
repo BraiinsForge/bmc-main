@@ -49,14 +49,17 @@ pub mod v0;
 
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, bail};
+use indexmap::IndexMap;
 use serde::Deserialize;
 use tracing::info;
 
 pub use crate::config::CONFIG_VERSION;
 use crate::config::Config;
+use crate::data::{Account, AccountId};
 
 /// Minimal view of an on-disk config used to dispatch to the
 /// matching parse arm. Deserializes fast and tolerates unknown
@@ -100,10 +103,18 @@ pub struct Report {
 pub enum LoadedConfig {
     /// File already carried `version = CONFIG_VERSION`.
     AlreadyCurrent(Config),
-    /// File was a v0 (slint-monolith) config; the widget and account upgrade has been applied.
-    MigratedFromV0 { current: Config, report: Report },
-    /// File was a v1 config; the account reshape to the current schema has been applied.
-    MigratedFromV1 { current: Config },
+    /// File was a v0 (slint-monolith) config; the widget upgrade has been applied and the
+    /// reshaped accounts extracted for the secret store.
+    MigratedFromV0 {
+        current: Config,
+        report: Report,
+        accounts: IndexMap<AccountId, Account>,
+    },
+    /// File was a v1 config; the accounts have been reshaped and extracted for the secret store.
+    MigratedFromV1 {
+        current: Config,
+        accounts: IndexMap<AccountId, Account>,
+    },
 }
 
 impl LoadedConfig {
@@ -112,17 +123,33 @@ impl LoadedConfig {
     pub fn current(&self) -> &Config {
         match self {
             Self::AlreadyCurrent(c) => c,
-            Self::MigratedFromV0 { current, .. } | Self::MigratedFromV1 { current } => current,
+            Self::MigratedFromV0 { current, .. } | Self::MigratedFromV1 { current, .. } => current,
         }
     }
 
-    /// Take ownership of the current config, discarding the
-    /// migration report if any.
+    /// Accounts a migration extracted for the secret store; empty for a current-schema file,
+    /// which by construction carries none.
     #[must_use]
-    pub fn into_current(self) -> Config {
+    pub fn extracted_accounts(&self) -> &IndexMap<AccountId, Account> {
+        static EMPTY: LazyLock<IndexMap<AccountId, Account>> = LazyLock::new(IndexMap::new);
         match self {
-            Self::AlreadyCurrent(c) => c,
-            Self::MigratedFromV0 { current, .. } | Self::MigratedFromV1 { current } => current,
+            Self::AlreadyCurrent(_) => &EMPTY,
+            Self::MigratedFromV0 { accounts, .. } | Self::MigratedFromV1 { accounts, .. } => {
+                accounts
+            }
+        }
+    }
+
+    /// Take ownership of the current config and the extracted accounts,
+    /// discarding the migration report if any.
+    #[must_use]
+    pub fn into_parts(self) -> (Config, IndexMap<AccountId, Account>) {
+        match self {
+            Self::AlreadyCurrent(c) => (c, IndexMap::new()),
+            Self::MigratedFromV0 {
+                current, accounts, ..
+            }
+            | Self::MigratedFromV1 { current, accounts } => (current, accounts),
         }
     }
 
@@ -170,14 +197,19 @@ impl FromStr for LoadedConfig {
                 let legacy: v0::Config = serde_json::from_str(raw).context(
                     "config parses as neither the current schema nor a recognized legacy schema",
                 )?;
-                let (current, report) = upgrade_v0::upgrade_with_report(legacy);
-                Ok(Self::MigratedFromV0 { current, report })
+                let (current, report, raw_accounts) = upgrade_v0::upgrade_with_report(legacy);
+                let accounts = upgrade_v1::reshape_and_collect_accounts(raw_accounts);
+                Ok(Self::MigratedFromV0 {
+                    current,
+                    report,
+                    accounts,
+                })
             }
             1 => {
                 let document: serde_json::Value = serde_json::from_str(raw)
                     .context("config header names v1 but body is not valid JSON")?;
-                let current = upgrade_v1::upgrade(document)?;
-                Ok(Self::MigratedFromV1 { current })
+                let (current, accounts) = upgrade_v1::upgrade(document)?;
+                Ok(Self::MigratedFromV1 { current, accounts })
             }
             other => bail!(
                 "unsupported config version: {other}; refusing to read a config written by a \

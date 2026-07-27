@@ -38,6 +38,7 @@ use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
 use bmc::config_migration::{self, LoadedConfig};
+use bmc::secret_store::SecretStoreHandle;
 
 // One-shot CLI doing sequential async file I/O — a single-threaded
 // runtime is enough; no worker pool needed.
@@ -83,14 +84,28 @@ async fn run() -> Result<()> {
         .context("migrated config failed validation; refusing to write it to <dst>")?;
     config_migration::save_with_backup(loaded.current(), &dst).await?;
 
+    // Accounts leave the config for the secret store; mirror the boot
+    // path by writing them beside <dst> so the migration loses nothing.
+    let extracted = loaded.extracted_accounts();
+    let account_count = extracted.len();
+    SecretStoreHandle::init(&dst)
+        .await
+        .merge_extracted(extracted.clone())
+        .await
+        .context("failed to write the extracted accounts beside <dst>")?;
+
+    // Only the v0 hop produces widget counts;
+    // the v1 hop reshapes accounts and widget placement without one,
+    // so migrated-ness is read from the load itself.
+    let was_migrated = loaded.was_migrated();
     if let Some(report) = loaded.report() {
         println!(
-            "scenes={} dropped_scenes={} translated_widgets={} dropped_widgets={} was_migrated=true",
+            "scenes={} dropped_scenes={} translated_widgets={} dropped_widgets={} accounts={account_count} was_migrated={was_migrated}",
             report.scenes, report.dropped_scenes, report.translated_widgets, report.dropped_widgets,
         );
     } else {
         println!(
-            "scenes={} dropped_scenes=0 translated_widgets=0 dropped_widgets=0 was_migrated=false",
+            "scenes={} dropped_scenes=0 translated_widgets=0 dropped_widgets=0 accounts={account_count} was_migrated={was_migrated}",
             loaded.current().scenes().len(),
         );
     }

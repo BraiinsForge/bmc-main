@@ -827,7 +827,7 @@ mod tests {
         DisplayBacklightController<ScriptedBacklightDriver>,
     ) {
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
-        let handle = ConfigHandle::init(
+        let (handle, _extracted_accounts) = ConfigHandle::init(
             tmp.path().join("bmc-config.json"),
             50,
             50,

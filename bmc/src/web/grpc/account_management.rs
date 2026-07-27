@@ -36,9 +36,9 @@ use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
-use crate::config::ConfigHandle;
 use crate::credential;
 use crate::data::{Account, AccountId};
+use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
 
@@ -47,12 +47,12 @@ const POOL_API_ENDPOINT: &str = "/user/hashrate/current";
 const API_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct AccountManagementService {
-    config_handle: Arc<RwLock<ConfigHandle>>,
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
 }
 
 impl AccountManagementService {
-    pub(crate) fn new(config_handle: Arc<RwLock<ConfigHandle>>) -> Self {
-        Self { config_handle }
+    pub(crate) fn new(secret_store: Arc<RwLock<SecretStoreHandle>>) -> Self {
+        Self { secret_store }
     }
 }
 
@@ -62,9 +62,9 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::GetAllAccountsResponse>, Status> {
-        let config = self.config_handle.read().await;
-        let accounts = config
-            .accounts
+        let store = self.secret_store.read().await;
+        let accounts = store
+            .accounts()
             .values()
             .cloned()
             .map(map_account_to_proto)
@@ -98,10 +98,10 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         // from the stored account (the request's type_id is ignored).
         let type_id = match &target_id {
             Some(id) => self
-                .config_handle
+                .secret_store
                 .read()
                 .await
-                .accounts
+                .accounts()
                 .get(id)
                 .ok_or_else(|| Status::not_found("Account not found"))?
                 .type_id
@@ -116,14 +116,14 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         }
 
         let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
+            let secret_store = self.secret_store.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp = config.clone();
+                let mut store = secret_store.write().await;
+                let mut temp = store.clone();
 
                 let id = if let Some(id) = target_id {
                     let account = temp
-                        .accounts
+                        .accounts_mut()
                         .get_mut(&id)
                         .ok_or_else(|| Status::not_found("Account not found"))?;
                     account.name = name;
@@ -134,15 +134,15 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                 } else {
                     let account = Account::new(type_id, name, field_values);
                     let id = account.id.clone();
-                    temp.accounts.insert(id.clone(), account);
+                    temp.accounts_mut().insert(id.clone(), account);
                     id
                 };
 
                 if let Err(err) = temp.save().await {
-                    error!("Cannot save config: {err}");
-                    return Err(Status::internal("Failed to save configuration"));
+                    error!("Cannot save accounts: {err}");
+                    return Err(Status::internal("Failed to save accounts"));
                 }
-                *config = temp;
+                *store = temp;
                 Ok(Response::new(id.to_string()))
             }
         });
@@ -160,18 +160,18 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
         let join_handle = tokio::spawn({
-            let config_handle = self.config_handle.clone();
+            let secret_store = self.secret_store.clone();
             async move {
-                let mut config = config_handle.write().await;
-                let mut temp = config.clone();
-                temp.accounts
+                let mut store = secret_store.write().await;
+                let mut temp = store.clone();
+                temp.accounts_mut()
                     .shift_remove(&id)
                     .ok_or_else(|| Status::not_found("Account not found"))?;
                 if let Err(err) = temp.save().await {
-                    error!("Cannot save config: {err}");
-                    return Err(Status::internal("Failed to save configuration"));
+                    error!("Cannot save accounts: {err}");
+                    return Err(Status::internal("Failed to save accounts"));
                 }
-                *config = temp;
+                *store = temp;
                 Ok(Response::new(()))
             }
         });

@@ -37,6 +37,7 @@ use crate::initial_setup::InitialSetup;
 use crate::led::{LedController, run_led_state_task};
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::BmcManager;
+use crate::secret_store::SecretStoreHandle;
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::system_upgrade::{StateService, SystemUpgradeService};
@@ -52,7 +53,7 @@ use bmc_upgrade::packages::PackageBackend;
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
 use tokio::sync::{RwLock, watch};
-use tracing::info;
+use tracing::{error, info, warn};
 
 /// Bridge the alarm domain and the alarm overlay through the compositor.
 ///
@@ -160,6 +161,7 @@ where
     config: Configuration,
     system_upgrade_service: SystemUpgradeService<V, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
     initial_setup: InitialSetup<T, V>,
     button_manager: ButtonManager<T>,
     led_controller: LedController<T>,
@@ -205,7 +207,7 @@ where
 
         let state_service = StateService::new();
 
-        let config_handle = ConfigHandle::init(
+        let (mut config_handle, extracted_accounts) = ConfigHandle::init(
             config.config_path.clone(),
             config.default_brightness_pct,
             config.default_night_mode_brightness_pct,
@@ -215,10 +217,32 @@ where
         )
         .await;
 
+        // Store first: the config may only stop carrying secrets once they are safely stored.
+        // A failed store write leaves them in the on-disk config for the next boot to retry
+        // — a guarantee that lasts only until the first config save writes v2 without them.
+        // They also stay in the running store, so any later account edit persists them.
+        let mut secret_store = SecretStoreHandle::init(&config.config_path).await;
+        match secret_store.merge_extracted(extracted_accounts).await {
+            Ok(false) => {}
+            Ok(true) => {
+                if let Err(err) = config_handle.save().await {
+                    warn!(
+                        ?err,
+                        "failed to persist the config after account extraction"
+                    );
+                }
+            }
+            Err(err) => error!(
+                ?err,
+                "failed to persist extracted accounts; leaving them in the config"
+            ),
+        }
+
         let autoupgrade_config = config_handle.autoupgrade();
         let led_enabled = config_handle.led_enabled();
 
         let config_handle = Arc::new(RwLock::new(config_handle));
+        let secret_store = Arc::new(RwLock::new(secret_store));
 
         let scheduler = JobScheduler::init(
             manager.watch_timezone_updates(),
@@ -445,6 +469,7 @@ where
             config,
             system_upgrade_service,
             config_handle,
+            secret_store,
             initial_setup,
             button_manager,
             led_controller,
@@ -470,6 +495,7 @@ where
             self.config.server_config,
             self.system_upgrade_service,
             self.config_handle,
+            self.secret_store,
             self.initial_setup,
             self.led_controller,
             self.widget_registry,

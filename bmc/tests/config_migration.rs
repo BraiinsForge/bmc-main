@@ -211,10 +211,9 @@ fn v1_config_reshapes_account_to_typed_credential() {
         "the v1 hop carries no widget report"
     );
 
-    let config = loaded.current();
-    assert_eq!(config.version, CONFIG_VERSION);
-    let account = config
-        .accounts
+    assert_eq!(loaded.current().version, CONFIG_VERSION);
+    let account = loaded
+        .extracted_accounts()
         .values()
         .next()
         .expect("BUG: the account must survive the reshape");
