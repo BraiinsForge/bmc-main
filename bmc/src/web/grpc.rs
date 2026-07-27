@@ -341,6 +341,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 pub(crate) enum GrpcError {
     #[strum(serialize = "Some of the fields are invalid")]
     BadRequest,
+    #[strum(serialize = "Could not verify the credential")]
+    CredentialUnverified,
 }
 
 impl Display for GrpcError {

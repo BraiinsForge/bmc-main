@@ -197,15 +197,11 @@ async fn validate_account(
 ) -> Result<(), Status> {
     let mut violations = FieldViolations::new();
     validate_schema(type_id, field_values, &mut violations);
+    if !violations.is_empty() {
+        return Err(bad_request(violations));
+    }
     // Only spend a network round-trip once the field shape is valid.
-    if violations.is_empty() {
-        validate_upstream(type_id, field_values, &mut violations).await;
-    }
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(bad_request(violations))
-    }
+    validate_upstream(type_id, field_values).await
 }
 
 /// `type_id` must name a known credential type, and `field_values` must supply exactly its fields,
@@ -238,14 +234,33 @@ fn validate_schema(
 async fn validate_upstream(
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
-    violations: &mut FieldViolations,
-) {
+) -> Result<(), Status> {
     if type_id != "braiins-pool" {
-        return;
+        return Ok(());
     }
     let token = field_values.get("token").map_or("", String::as_str);
-    if let Err(err) = check_braiins_pool_token(token).await {
-        violations.push(field_error_key("token"), err.to_string());
+    match check_braiins_pool_token(token).await {
+        Ok(()) => Ok(()),
+        Err(err) => Err(upstream_check_status(&err)),
+    }
+}
+
+/// A rejected token is the operator's to correct, so it stays an invalid-argument. Any
+/// other outcome means the check could not run, and calling that invalid would send the
+/// operator chasing a value that may be fine. Both keep the violation on the token field.
+fn upstream_check_status(err: &CredentialCheckError) -> Status {
+    let mut violations = FieldViolations::new();
+    violations.push(field_error_key("token"), err.to_string());
+
+    match err {
+        CredentialCheckError::Invalid => bad_request(violations),
+        CredentialCheckError::ServiceNotAvailable
+        | CredentialCheckError::Unexpected
+        | CredentialCheckError::ClientInitFailed => Status::with_error_details(
+            Code::Unavailable,
+            GrpcError::CredentialUnverified.to_string(),
+            ErrorDetails::with_bad_request(violations),
+        ),
     }
 }
 
@@ -343,13 +358,13 @@ fn bad_request(violations: FieldViolations) -> Status {
 
 #[derive(Debug, Clone, Error)]
 enum CredentialCheckError {
-    #[error("Service or internet unavailable")]
+    #[error("Could not reach Braiins Pool, so this token is unverified")]
     ServiceNotAvailable,
     #[error("Invalid API key")]
     Invalid,
-    #[error("Unexpected response from the credential service")]
+    #[error("Braiins Pool gave an unexpected response, so this token is unverified")]
     Unexpected,
-    #[error("Failed to initialize HTTP client")]
+    #[error("Could not run the check, so this token is unverified")]
     ClientInitFailed,
 }
 
@@ -373,6 +388,19 @@ mod tests {
         let mut violations = FieldViolations::new();
         validate_schema(type_id, &values(pairs), &mut violations);
         violations.into()
+    }
+
+    fn violation_fields(status: &Status) -> Vec<String> {
+        status
+            .get_error_details()
+            .bad_request()
+            .map(|bad| {
+                bad.field_violations
+                    .iter()
+                    .map(|v| v.field.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     #[test]
@@ -411,5 +439,45 @@ mod tests {
             schema_violations("generic-token", &[("token", "abc"), ("extra", "x")])[0].field,
             r#"field_values["extra"]"#,
         );
+    }
+
+    #[test]
+    fn a_rejected_token_is_the_operators_to_fix() {
+        let status = upstream_check_status(&CredentialCheckError::Invalid);
+
+        assert_eq!(status.code(), Code::InvalidArgument);
+        assert_eq!(status.message(), GrpcError::BadRequest.to_string());
+    }
+
+    #[test]
+    fn an_unreachable_pool_does_not_claim_the_token_is_invalid() {
+        for err in [
+            CredentialCheckError::ServiceNotAvailable,
+            CredentialCheckError::Unexpected,
+            CredentialCheckError::ClientInitFailed,
+        ] {
+            let status = upstream_check_status(&err);
+
+            assert_eq!(status.code(), Code::Unavailable, "for {err:?}");
+            assert_eq!(
+                status.message(),
+                GrpcError::CredentialUnverified.to_string(),
+                "for {err:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_upstream_outcome_still_marks_the_token_field() {
+        for err in [
+            CredentialCheckError::Invalid,
+            CredentialCheckError::ServiceNotAvailable,
+            CredentialCheckError::Unexpected,
+            CredentialCheckError::ClientInitFailed,
+        ] {
+            let fields = violation_fields(&upstream_check_status(&err));
+
+            assert_eq!(fields, [r#"field_values["token"]"#], "for {err:?}");
+        }
     }
 }
