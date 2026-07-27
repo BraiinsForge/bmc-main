@@ -189,7 +189,7 @@ impl From<Uuid> for WidgetId {
     }
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Widget {
     pub id: WidgetId,
     #[serde(flatten)]
@@ -204,45 +204,6 @@ pub struct Widget {
 
 fn default_widget_viewport_shape() -> bmc_widget_manifest::ViewportShape {
     bmc_widget_manifest::ViewportShape::Rectangular
-}
-
-#[derive(Deserialize)]
-struct RawWidget {
-    id: WidgetId,
-    #[serde(flatten)]
-    position: WidgetPosition,
-    #[serde(default)]
-    placement: Option<WidgetPlacement>,
-    #[serde(default)]
-    size: Option<WidgetSize>,
-    widget_type_id: Uuid,
-    #[serde(default = "default_widget_viewport_shape")]
-    viewport_shape: bmc_widget_manifest::ViewportShape,
-    #[serde(default)]
-    params: BTreeMap<ParamKey, ParamValue>,
-}
-
-impl<'de> Deserialize<'de> for Widget {
-    fn deserialize<D: Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
-        let raw = RawWidget::deserialize(d)?;
-        let placement = match (raw.placement, raw.size) {
-            (Some(p), _) => p,
-            (None, Some(size)) => WidgetPlacement::from(size),
-            (None, None) => {
-                return Err(serde::de::Error::custom(
-                    "widget requires `placement` or legacy `size`",
-                ));
-            }
-        };
-        Ok(Self {
-            id: raw.id,
-            position: raw.position,
-            placement,
-            viewport_shape: raw.viewport_shape,
-            widget_type_id: raw.widget_type_id,
-            params: raw.params,
-        })
-    }
 }
 
 impl Widget {
@@ -559,7 +520,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_size_migrates_to_placement_on_deserialize() {
+    fn widget_with_only_a_legacy_size_fails_to_parse() {
         let json = r#"{
             "id": "550e8400-e29b-41d4-a716-446655440010",
             "row": 0,
@@ -567,53 +528,7 @@ mod tests {
             "size": "small",
             "widget_type_id": "550e8400-e29b-41d4-a716-446655440011"
         }"#;
-        let w: Widget = serde_json::from_str(json).expect("BUG: legacy widget must migrate");
-        assert_eq!(
-            w.placement,
-            WidgetPlacement::SlotSpan(SlotSpan {
-                columns: 1,
-                rows: 1
-            })
-        );
-    }
-
-    #[test]
-    fn legacy_full_size_migrates_to_fullscreen() {
-        let json = r#"{
-            "id": "550e8400-e29b-41d4-a716-446655440010",
-            "row": 0,
-            "col": 0,
-            "size": "full",
-            "widget_type_id": "550e8400-e29b-41d4-a716-446655440011"
-        }"#;
-        let w: Widget = serde_json::from_str(json).expect("BUG: legacy full must migrate");
-        assert_eq!(w.placement, WidgetPlacement::Fullscreen);
-    }
-
-    #[test]
-    fn legacy_medium_and_large_map_to_spans() {
-        let mk = |size: &str| -> Widget {
-            let json = format!(
-                r#"{{"id":"550e8400-e29b-41d4-a716-446655440010","row":0,"col":0,
-                     "size":"{size}",
-                     "widget_type_id":"550e8400-e29b-41d4-a716-446655440011"}}"#
-            );
-            serde_json::from_str(&json).expect("BUG: legacy size must migrate")
-        };
-        assert_eq!(
-            mk("medium").placement,
-            WidgetPlacement::SlotSpan(SlotSpan {
-                columns: 2,
-                rows: 1
-            })
-        );
-        assert_eq!(
-            mk("large").placement,
-            WidgetPlacement::SlotSpan(SlotSpan {
-                columns: 2,
-                rows: 2
-            })
-        );
+        assert!(serde_json::from_str::<Widget>(json).is_err());
     }
 
     #[test]

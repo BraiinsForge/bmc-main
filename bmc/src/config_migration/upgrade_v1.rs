@@ -23,7 +23,7 @@
 //! v1 stored a closed `{ type: "braiins_pool", authentication: { api_key } }` account
 //! inside the config; the current schema stores typed credential instances
 //! `{ type_id, field_values }` in the secret store beside it (see [`crate::secret_store`]).
-//! The upgrade extracts and reshapes the accounts, then re-parses the rest as current.
+//! The upgrade extracts the accounts and re-parses the rest as current.
 //!
 //! [`reshape_legacy_account`] is the single account transform. The v0 → current path reuses it via
 //! [`reshape_and_collect_accounts`]: v0 carries its accounts as raw JSON of the same pre-typed
@@ -38,7 +38,8 @@ use crate::config::{CONFIG_VERSION, Config};
 use crate::data::{Account, AccountId};
 
 /// Upgrade a v1 config document to the current schema.
-/// Only the accounts change; the rest is already current-shaped and re-parses directly.
+/// Only the accounts change; the rest is already current-shaped
+/// and re-parses directly.
 pub(super) fn upgrade(mut document: Value) -> Result<(Config, IndexMap<AccountId, Account>)> {
     let accounts = extract_accounts(&mut document);
     document["version"] = json!(CONFIG_VERSION);
