@@ -23,7 +23,7 @@
 
 import { useMemo, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
-import { ComboBox, NumberInput, Select, SelectItem, TextInput, Toggle } from '@carbon/react';
+import { ComboBox, NumberInput, PasswordInput, Select, SelectItem, TextInput, Toggle } from '@carbon/react';
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
 import { useIsTouchDevice } from '@/lib/react';
@@ -139,8 +139,7 @@ function stringFormatToInputType(format: pb.StringFormat | undefined): string {
             return 'email';
         case pb.StringFormat.URI:
             return 'url';
-        case pb.StringFormat.PASSWORD:
-            return 'password';
+        // PASSWORD is handled by `PasswordInput` before this is reached.
         default:
             return 'text';
     }
@@ -184,6 +183,20 @@ export function ParamField(props: {
                         items={items}
                         value={asString(value) || null}
                         onChange={v => onChange(definition.key, v)}
+                    />
+                );
+            }
+            if (format === pb.StringFormat.PASSWORD) {
+                return (
+                    <PasswordInput
+                        id={id}
+                        labelText={labelText}
+                        helperText={definition.description}
+                        invalid={!!error}
+                        invalidText={error}
+                        tooltipPosition="left"
+                        value={asString(value)}
+                        onChange={e => onChange(definition.key, e.target.value)}
                     />
                 );
             }
