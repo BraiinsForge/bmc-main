@@ -252,7 +252,11 @@ describe('FormWidgetManifest credential slots', () => {
 
     test('warns when a required slot is unbound', () => {
         const { queryByText } = renderSlots({ required: true });
+
         expect(queryByText('No account bound')).toBeTruthy();
+        // `fakeIntl` hands back the template unsubstituted, which is the part worth
+        // pinning: the sentence must not repeat a noun the slot label already carries.
+        expect(queryByText('Bind a {label} for this widget to work.')).toBeTruthy();
     });
 
     test('drops the warning once a required slot is bound', () => {

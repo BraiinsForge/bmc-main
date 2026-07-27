@@ -136,7 +136,7 @@ function CredentialSlotField(props: CredentialSlotFieldProps) {
                     hideCloseButton
                     title={formatMessage({ defaultMessage: 'No account bound' })}
                     children={formatMessage(
-                        { defaultMessage: 'This widget needs a {label} account to reach its service.' },
+                        { defaultMessage: 'Bind a {label} for this widget to work.' },
                         { label: slot.label },
                     )}
                 />
