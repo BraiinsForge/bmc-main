@@ -34,7 +34,7 @@ use bmc_openwrt::cli::Parser;
 use bmc_openwrt::compositor::EglCompositor;
 use bmc_openwrt::{button_driver::UEventButtons, manager::Manager, session::OpenwrtSessionManager};
 use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
-use bmc_platform::backlight::DisplayBacklightDriver;
+use bmc_platform::backlight::{BacklightVisibility, DisplayBacklightDriver};
 use bmc_platform::generic_backlight_driver::GenericBacklightDriver;
 use bmc_platform::{BmcInfo, BosPlatform, HardwareProfile, HardwareProfileSelection};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
@@ -168,13 +168,16 @@ async fn main() -> Result<()> {
     let backlight_path = backlight_path.to_string_lossy().into_owned();
     let mut backlight_driver = GenericBacklightDriver::new(&backlight_path);
     backlight_driver.init()?;
+    // The compositor only reads panel visibility, so it gets a driver handle of
+    // its own rather than contending for the write lock from the input path.
+    let screen_visibility = Arc::new(BacklightVisibility::new(backlight_driver.clone()));
     let backlight_driver = Arc::new(Mutex::new(backlight_driver));
 
     // Initialize and start the EGL compositor
-    let compositor = Arc::new(EglCompositor::new(
-        profile.clone(),
-        args.headless_compositor,
-    ));
+    let compositor = Arc::new(
+        EglCompositor::new(profile.clone(), args.headless_compositor)
+            .with_screen_visibility(screen_visibility),
+    );
     let wayland_display = compositor
         .start()
         .expect("BUG: failed to start EGL compositor");

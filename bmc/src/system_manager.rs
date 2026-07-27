@@ -301,13 +301,11 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
         }
     }
 
-    /// Query whether the hardware backlight is currently off.
-    /// Falls back to `false` (assume on) if the driver query fails.
-    async fn is_backlight_off(backlight_controller: &DisplayBacklightController<T>) -> bool {
-        match backlight_controller.is_on().await {
-            Ok(on) => !on,
+    async fn is_screen_dark(backlight_controller: &DisplayBacklightController<T>) -> bool {
+        match backlight_controller.is_visible().await {
+            Ok(visible) => !visible,
             Err(err) => {
-                warn!(error = %err, "Failed to query backlight state, assuming on");
+                warn!(error = %err, "Failed to query panel visibility, assuming visible");
                 false
             }
         }
@@ -334,7 +332,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                     // Not in night mode, no timeout set, or an alarm is ringing —
                     // a firing alarm must never sit on a blank screen, so wake it
                     // if off and hold here until some state changes.
-                    if Self::is_backlight_off(&backlight_controller).await {
+                    if Self::is_screen_dark(&backlight_controller).await {
                         Self::wake_screen(&backlight_controller, &brightness_modified).await;
                     }
 
@@ -363,7 +361,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                         () = screen_activity.notified() => {
                             // User activity — wake screen if off; timer restarts
                             // on the next loop iteration.
-                            if Self::is_backlight_off(&backlight_controller).await {
+                            if Self::is_screen_dark(&backlight_controller).await {
                                 Self::wake_screen(&backlight_controller, &brightness_modified).await;
                                 info!("Screen woken by user activity");
                             }
@@ -373,7 +371,7 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                             // Timeout expired — turn off screen.
                             // Sequence: brightness→0, then power off pin
                             // to avoid a visible flash from the kernel backlight driver.
-                            if !Self::is_backlight_off(&backlight_controller).await {
+                            if !Self::is_screen_dark(&backlight_controller).await {
                                 if let Err(err) = backlight_controller.set_display_brightness(0).await {
                                     warn!(error = %err, "Failed to zero brightness for auto-off");
                                 }
@@ -381,10 +379,20 @@ impl<T: DisplayBacklightDriver> SystemManager<T> {
                                     warn!(error = %err, "Failed to turn off backlight for auto-off");
                                 }
 
-                                if let Err(err) = screen_blanked_tx.send(()) {
-                                    warn!(error = %err, "No screen-blanked subscriber; scene reset skipped");
+                                // Announce the blank only once the panel is
+                                // confirmed dark — the scene-0 reset is a
+                                // visible jump on a screen that stayed lit.
+                                // A failed write needs no rollback: the panel
+                                // is still visible, so the next timeout tries
+                                // again and any touch meanwhile wakes it.
+                                if Self::is_screen_dark(&backlight_controller).await {
+                                    if let Err(err) = screen_blanked_tx.send(()) {
+                                        warn!(error = %err, "No screen-blanked subscriber; scene reset skipped");
+                                    }
+                                    info!(timeout_secs = timeout.as_secs(), "Screen auto-off activated");
+                                } else {
+                                    warn!("Screen auto-off left the panel visible; retrying at the next timeout");
                                 }
-                                info!(timeout_secs = timeout.as_secs(), "Screen auto-off activated");
                             }
                         },
                     }
@@ -746,6 +754,7 @@ mod tests {
     use super::*;
     use crate::backlight::DisplayBacklightDriver;
     use std::str::FromStr;
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
     #[derive(Debug, Clone)]
     struct DummyBacklightDriver;
@@ -769,6 +778,103 @@ mod tests {
         fn set_brightness(&self, _value: u8) -> anyhow::Result<()> {
             Ok(())
         }
+    }
+
+    /// Driver whose power and brightness are scriptable so a test can pose the
+    /// half-blanked panel a failed `turn_off` leaves behind.
+    #[derive(Debug, Clone)]
+    struct ScriptedBacklightDriver {
+        powered: Arc<AtomicBool>,
+        brightness: Arc<AtomicU8>,
+    }
+
+    impl ScriptedBacklightDriver {
+        fn new(powered: bool, brightness: u8) -> Self {
+            Self {
+                powered: Arc::new(AtomicBool::new(powered)),
+                brightness: Arc::new(AtomicU8::new(brightness)),
+            }
+        }
+    }
+
+    impl DisplayBacklightDriver for ScriptedBacklightDriver {
+        fn init(&mut self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        fn change_state(&self, enabled: bool) -> anyhow::Result<()> {
+            self.powered.store(enabled, Ordering::Relaxed);
+            Ok(())
+        }
+        fn state(&self) -> anyhow::Result<bool> {
+            Ok(self.powered.load(Ordering::Relaxed))
+        }
+        fn brightness(&self) -> anyhow::Result<u8> {
+            Ok(self.brightness.load(Ordering::Relaxed))
+        }
+        fn max_brightness(&self) -> u8 {
+            255
+        }
+        fn set_brightness(&self, value: u8) -> anyhow::Result<()> {
+            self.brightness.store(value, Ordering::Relaxed);
+            Ok(())
+        }
+    }
+
+    async fn scripted_controller(
+        driver: ScriptedBacklightDriver,
+    ) -> (
+        tempfile::TempDir,
+        DisplayBacklightController<ScriptedBacklightDriver>,
+    ) {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let handle = ConfigHandle::init(
+            tmp.path().join("bmc-config.json"),
+            50,
+            50,
+            50,
+            50,
+            bmc_platform::Product::Bmc100,
+        )
+        .await;
+        let controller = DisplayBacklightController::new(
+            Arc::new(RwLock::new(handle)),
+            Arc::new(Mutex::new(driver)),
+        );
+        (tmp, controller)
+    }
+
+    #[tokio::test]
+    async fn a_panel_dimmed_to_zero_reads_as_dark_though_power_stayed_on() {
+        // The state a failed `turn_off` strands: brightness zeroed, power pin
+        // still high. The power-only predicate called this lit, so the activity
+        // arm skipped the wake and brightness was never restored — a black
+        // screen that ate every touch.
+        let (_tmp, controller) = scripted_controller(ScriptedBacklightDriver::new(true, 0)).await;
+
+        assert!(
+            SystemManager::<ScriptedBacklightDriver>::is_screen_dark(&controller).await,
+            "a panel dimmed to zero is dark whatever the power pin says"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_lit_panel_is_not_dark() {
+        let (_tmp, controller) = scripted_controller(ScriptedBacklightDriver::new(true, 50)).await;
+
+        assert!(
+            !SystemManager::<ScriptedBacklightDriver>::is_screen_dark(&controller).await,
+            "a powered, lit panel must never be woken or announced as blanked"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unpowered_panel_is_dark() {
+        let (_tmp, controller) = scripted_controller(ScriptedBacklightDriver::new(false, 50)).await;
+
+        assert!(
+            SystemManager::<ScriptedBacklightDriver>::is_screen_dark(&controller).await,
+            "a fully blanked panel must read as dark so the wake path fires"
+        );
     }
 
     #[test]

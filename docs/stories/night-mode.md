@@ -59,9 +59,11 @@ sound volume, optionally turns the screen off after inactivity, and controls whe
 > As a user, I want to wake the screen with normal device interaction so I do not need a special gesture at night.
 
 - Touch activity wakes the screen when screen auto-off has turned it off.
+- The touch that wakes the screen only wakes it — it does not press, swipe, or otherwise interact with the scene
+  underneath.
 - Physical button activity wakes the screen when screen auto-off has turned it off.
 - Waking the screen restores the correct current brightness for the active mode.
-- After waking from screen auto-off, the display returns to the first visible scene.
+- After waking from screen auto-off, the display shows the first visible scene.
 - Activity restarts the inactivity timeout while night mode remains active.
 
 ### Control LED notifications overnight

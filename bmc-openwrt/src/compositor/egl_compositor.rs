@@ -40,6 +40,7 @@ use bmc::compositor::{
     LedRequestStatusEvent, Position, SceneLayout, SettingsCommand, Size, WidgetAction,
 };
 use bmc_platform::TouchTransform;
+use bmc_platform::backlight::ScreenVisibility;
 use bmc_platform::linux_input::discover_touch_node;
 use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 use smithay::backend::{
@@ -225,6 +226,7 @@ pub struct EglCompositor {
     device_access: DeviceAccessConfig,
     profile: bmc_platform::HardwareProfile,
     headless: bool,
+    screen_visibility: Option<Arc<dyn ScreenVisibility>>,
 }
 
 impl std::fmt::Debug for EglCompositor {
@@ -307,7 +309,17 @@ impl EglCompositor {
             device_access,
             profile,
             headless,
+            screen_visibility: None,
         }
+    }
+
+    /// Attach the panel-visibility source consulted before a touch is
+    /// delivered. Leave it unset — as the tests do — and every touch counts as
+    /// landing on a lit screen.
+    #[must_use]
+    pub fn with_screen_visibility(mut self, screen_visibility: Arc<dyn ScreenVisibility>) -> Self {
+        self.screen_visibility = Some(screen_visibility);
+        self
     }
 
     #[expect(clippy::too_many_lines)]
@@ -324,6 +336,7 @@ impl EglCompositor {
         has_explicit_input_nodes: bool,
         profile: &bmc_platform::HardwareProfile,
         headless: bool,
+        screen_visibility: Option<Arc<dyn ScreenVisibility>>,
         command_channel: calloop_channel::Channel<CompositorCommand>,
         action_tx: mpsc::UnboundedSender<WidgetAction>,
         event_tx: broadcast::Sender<CompositorEvent>,
@@ -484,6 +497,7 @@ impl EglCompositor {
             }),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
+            screen_visibility,
             scene_drag_active: false,
             edge_reveal_active: false,
             touch_frame_dirty: false,
@@ -944,6 +958,14 @@ struct AppState {
     gesture_slot: Option<TouchSlot>,
     /// All currently active libinput touch slots.
     active_touch_slots: HashSet<TouchSlot>,
+    /// Panel visibility, read from the backlight driver on demand. While the
+    /// panel is dark the primary touch-down is consumed right after it emits
+    /// `ScreenActivity`: the touch wakes the screen but must not reach gesture
+    /// arbitration or `wl_touch` delivery.
+    ///
+    /// Deliberately not a `bool` mirrored from a screen-power command to keep
+    /// the backlight driver a single source of the truth.
+    screen_visibility: Option<Arc<dyn ScreenVisibility>>,
     /// `true` once the current touch has been arbitrated to scene-drag
     /// mode; cleared on [`GestureState::on_up`] / cancel. Separate from
     /// `gesture.drag_active()` so the cancel-on-first-drag-sample and
@@ -1430,7 +1452,31 @@ impl AppState {
             return;
         }
 
+        // Check whether the panel is currently showing the user anything
+        // before sending a screen activity event to decide whether
+        // to swallow a touch.
+        //
+        // If the backlight state cannot be read, assume that the screen
+        // is on, as an unreadable backlight must not silently eat every touch.
+        let screen_was_visible = self.screen_visibility.as_ref().is_none_or(|visibility| {
+            visibility.is_visible().unwrap_or_else(|err| {
+                tracing::warn!(error = %err, "backlight state unreadable; assuming screen is visible");
+                true
+            })
+        });
+
         let _ = self.event_tx.send(CompositorEvent::ScreenActivity);
+
+        // A touch on a dark panel only wakes the screen.
+        //
+        // The user cannot see what is under the finger, so it must not
+        // reach gesture arbitration or `wl_touch` delivery. Leaving
+        // `gesture_slot` unset makes the single-touch-policy checks swallow
+        // the sequence's motion/up too.
+        if !screen_was_visible {
+            tracing::info!("consumed touch on dark screen: wake only");
+            return;
+        }
 
         self.gesture_slot = Some(slot);
         self.gesture.on_down(location, time);
@@ -2345,6 +2391,7 @@ impl Compositor for EglCompositor {
         let input_nodes = self.device_access.resolved_input_nodes();
         let profile = self.profile.clone();
         let headless = self.headless;
+        let screen_visibility = self.screen_visibility.clone();
         let command_channel = self
             .command_channel
             .lock()
@@ -2375,6 +2422,7 @@ impl Compositor for EglCompositor {
                     has_explicit_input_nodes,
                     &profile,
                     headless,
+                    screen_visibility,
                     command_channel,
                     action_tx,
                     event_tx,
@@ -2669,7 +2717,10 @@ mod tests {
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
         SceneCyclingRuntimeConfig,
     };
-    use bmc::compositor::{InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetPlacement};
+    use bmc::compositor::{
+        CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetPlacement,
+    };
+    use bmc_platform::backlight::ScreenVisibility;
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
     use smithay::reexports::{
         calloop::EventLoop,
@@ -2679,9 +2730,55 @@ mod tests {
     use std::{
         collections::{HashMap, HashSet},
         path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicBool, Ordering},
+        },
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
     use tokio::sync::mpsc;
+
+    /// Panel visibility a test can flip *without* dispatching a command, which
+    /// is the whole point: the touch guard must track the hardware, not the
+    /// compositor's command queue.
+    #[derive(Debug)]
+    struct FakeScreenVisibility {
+        visible: AtomicBool,
+        readable: AtomicBool,
+    }
+
+    impl FakeScreenVisibility {
+        fn new(visible: bool) -> Arc<Self> {
+            Arc::new(Self {
+                visible: AtomicBool::new(visible),
+                readable: AtomicBool::new(true),
+            })
+        }
+
+        fn set_visible(&self, visible: bool) {
+            self.visible.store(visible, Ordering::Relaxed);
+        }
+
+        fn fail_reads(&self) {
+            self.readable.store(false, Ordering::Relaxed);
+        }
+    }
+
+    impl ScreenVisibility for FakeScreenVisibility {
+        fn is_visible(&self) -> anyhow::Result<bool> {
+            if self.readable.load(Ordering::Relaxed) {
+                Ok(self.visible.load(Ordering::Relaxed))
+            } else {
+                anyhow::bail!("simulated backlight read failure")
+            }
+        }
+    }
+
+    fn make_app_state_with_screen(screen: &Arc<FakeScreenVisibility>) -> AppState {
+        let mut state = make_app_state();
+        state.screen_visibility = Some(Arc::clone(screen) as Arc<dyn ScreenVisibility>);
+        state
+    }
 
     fn make_widget_config() -> WidgetInitialConfig {
         WidgetInitialConfig {
@@ -2749,6 +2846,7 @@ mod tests {
             }),
             gesture_slot: None,
             active_touch_slots: HashSet::new(),
+            screen_visibility: None,
             scene_drag_active: false,
             edge_reveal_active: false,
             touch_frame_dirty: false,
@@ -3900,6 +3998,94 @@ mod tests {
                 AutomaticCyclingPhase::WaitingForTimer { .. }
             ),
             "leaving night mode must resume cycling with a fresh timer"
+        );
+    }
+
+    #[test]
+    fn touch_on_dark_screen_wakes_but_is_not_delivered() {
+        let screen = FakeScreenVisibility::new(false);
+        let mut state = make_app_state_with_screen(&screen);
+        let mut event_rx = state.event_tx.subscribe();
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+
+        assert!(
+            matches!(event_rx.try_recv(), Ok(CompositorEvent::ScreenActivity)),
+            "the consumed touch must still wake the screen"
+        );
+        assert!(
+            state.gesture_slot.is_none(),
+            "a dark-screen touch must not enter gesture arbitration"
+        );
+        assert!(
+            !state.touch_frame_dirty,
+            "a dark-screen touch must not emit wl_touch events"
+        );
+        assert!(
+            !state.active_touch_slots.is_empty(),
+            "the consumed slot still counts toward the touch sequence"
+        );
+
+        state.on_touch_up(&FakeTouchEvent::new(0, 2));
+        assert!(state.active_touch_slots.is_empty());
+
+        screen.set_visible(true);
+        state.on_touch_down(&FakeTouchEvent::new(0, 3));
+        assert!(
+            state.gesture_slot.is_some(),
+            "a touch after wake must be delivered normally"
+        );
+    }
+
+    #[test]
+    fn touch_guard_follows_the_panel_not_the_command_queue() {
+        // Both directions of the race a mirrored screen-power flag lost: the
+        // hardware transition happens first, any command about it arrives
+        // later, and touches in between must follow the panel.
+        let screen = FakeScreenVisibility::new(true);
+        let mut state = make_app_state_with_screen(&screen);
+
+        screen.set_visible(false);
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+        assert!(
+            state.gesture_slot.is_none(),
+            "a touch after power-off must be consumed before the command lands"
+        );
+        state.on_touch_up(&FakeTouchEvent::new(0, 2));
+
+        screen.set_visible(true);
+        state.on_touch_down(&FakeTouchEvent::new(0, 3));
+        assert!(
+            state.gesture_slot.is_some(),
+            "a touch on a lit panel must be delivered before the command lands"
+        );
+    }
+
+    #[test]
+    fn unreadable_backlight_delivers_touches() {
+        let screen = FakeScreenVisibility::new(false);
+        let mut state = make_app_state_with_screen(&screen);
+        screen.fail_reads();
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+
+        assert!(
+            state.gesture_slot.is_some(),
+            "an unreadable backlight must fail open, never swallow every touch"
+        );
+    }
+
+    #[test]
+    fn alarm_dismiss_wins_over_dark_screen_touch_inhibit() {
+        let screen = FakeScreenVisibility::new(false);
+        let mut state = make_app_state_with_screen(&screen);
+        state.compositor.alarm.ring("07:30", "", "", false);
+
+        state.on_touch_down(&FakeTouchEvent::new(0, 1));
+
+        assert!(
+            !state.compositor.alarm.is_ringing(),
+            "a touch on a dark ringing screen must still dismiss the alarm"
         );
     }
 

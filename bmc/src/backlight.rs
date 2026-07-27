@@ -79,8 +79,13 @@ impl<T: DisplayBacklightDriver> DisplayBacklightController<T> {
         Ok(())
     }
 
-    pub(crate) async fn is_on(&self) -> anyhow::Result<bool> {
-        self.backlight_driver.lock().await.state()
+    /// Whether the panel is showing the user anything.
+    ///
+    /// Delegates to [`DisplayBacklightDriver::is_visible`], the same predicate
+    /// the compositor's [`bmc_platform::backlight::ScreenVisibility`] port
+    /// answers with, so the two ends cannot disagree about a dark panel.
+    pub(crate) async fn is_visible(&self) -> anyhow::Result<bool> {
+        self.backlight_driver.lock().await.is_visible()
     }
 
     pub(crate) async fn turn_on(&self) -> anyhow::Result<()> {
