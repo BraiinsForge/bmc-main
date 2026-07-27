@@ -88,9 +88,18 @@ enum WidgetSize {
   WIDGET_SIZE_FULL = 4;
 }
 
+// Account bound per credential slot, keyed by the manifest's slot key.
+// A wrapper rather than a bare map because proto3 maps have no presence,
+// which UpdateWidget needs to tell "keep the stored set" from "unbind all".
+message CredentialBindings {
+  // Slot key -> account id.
+  map<string, string> bindings = 1;
+}
+
 message WidgetConfig {
   string widget_uid = 1;
   WidgetDataStruct params = 2;
+  CredentialBindings credential_bindings = 3;
 }
 
 // A widget instance placed in a scene. Every widget is driven by a manifest;
@@ -115,6 +124,9 @@ message UpdateWidgetRequest {
   WidgetPosition position = 3;
   WidgetSize size = 4;
   WidgetDataStruct params = 5;
+  // Absent keeps the stored bindings, so a caller that rebuilds this request
+  // from a cached widget cannot unbind an account it never knew about.
+  CredentialBindings credential_bindings = 6;
 }
 
 message RemoveWidgetRequest {
@@ -186,6 +198,24 @@ message WidgetManifest {
   WidgetCategory category = 11;
   // Optional Markdown rendered in the widget-config window.
   optional string config_help = 12;
+  // Ordered like `params`: the FE renders one account picker per entry.
+  repeated CredentialSlotDefinition credentials = 13;
+}
+
+// A kind of account the widget needs bound before it can reach its service.
+// The secret never reaches the widget: it references the slot's fields
+// as `{{ credential.<key>.<field> }}` and the host substitutes them at egress.
+message CredentialSlotDefinition {
+  // Slot key, as declared in the manifest.
+  string key = 1;
+  // Credential type this slot accepts, from the firmware catalog.
+  string type_id = 2;
+  // Operator-facing label shown beside the picker.
+  string label = 3;
+  // Help text shown under the picker.
+  optional string description = 4;
+  // A required but unbound slot warns the operator; it never blocks saving.
+  bool required = 5;
 }
 
 message GetAvailableWidgetsResponse {

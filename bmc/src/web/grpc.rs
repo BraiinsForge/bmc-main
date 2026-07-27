@@ -217,6 +217,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                 scene_management::SceneManagementService::new(
                     self.widget_registry,
                     self.config_handle.clone(),
+                    self.secret_store.clone(),
                     self.widget_coordinator,
                     self.hardware_capabilities,
                     self.led_coordinator,

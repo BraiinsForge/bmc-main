@@ -19,7 +19,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_widget_manifest::{ParamKey, ParamValue};
+use crate::data::AccountId;
+use bmc_widget_manifest::{CredentialKey, ParamKey, ParamValue};
 use indexmap::IndexMap;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use std::collections::BTreeMap;
@@ -200,6 +201,10 @@ pub struct Widget {
     pub viewport_shape: bmc_widget_manifest::ViewportShape,
     #[serde(default)]
     pub params: BTreeMap<ParamKey, ParamValue>,
+    /// Account bound per credential slot the manifest declares.
+    /// The secret itself never lands here — it lives in [`crate::secret_store`].
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub credential_bindings: BTreeMap<CredentialKey, AccountId>,
 }
 
 fn default_widget_viewport_shape() -> bmc_widget_manifest::ViewportShape {
@@ -219,6 +224,7 @@ impl Widget {
             widget_type_id,
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params,
+            credential_bindings: BTreeMap::new(),
             position,
             placement,
         }
@@ -395,6 +401,8 @@ fn deserialize_widgets<'de, D: Deserializer<'de>>(
 
 #[cfg(test)]
 mod tests {
+    use std::str::FromStr as _;
+
     use super::*;
 
     #[test]
@@ -412,6 +420,7 @@ mod tests {
             widget_type_id: Uuid::nil(),
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: BTreeMap::new(),
+            credential_bindings: BTreeMap::new(),
         };
         assert!(
             !widget.in_bounds(),
@@ -434,6 +443,7 @@ mod tests {
             widget_type_id: Uuid::nil(),
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: BTreeMap::new(),
+            credential_bindings: BTreeMap::new(),
         };
         let b = a.clone_with_new_id();
         assert!(
@@ -545,6 +555,38 @@ mod tests {
         let json = serde_json::to_value(&w).expect("BUG: serialize widget");
         assert_eq!(json["placement"]["slot_span"]["columns"], 2);
         assert_eq!(json["placement"]["slot_span"]["rows"], 2);
+    }
+
+    fn widget_at_origin() -> Widget {
+        Widget::new(
+            Uuid::nil(),
+            BTreeMap::new(),
+            WidgetPosition { row: 0, col: 0 },
+            WidgetPlacement::Fullscreen,
+        )
+    }
+
+    #[test]
+    fn an_unbound_widget_writes_no_credential_bindings_key() {
+        let json = serde_json::to_value(widget_at_origin()).expect("BUG: serialize widget");
+        assert!(
+            json.get("credential_bindings").is_none(),
+            "an empty binding map must stay out of the config file"
+        );
+    }
+
+    #[test]
+    fn credential_bindings_survive_a_config_round_trip() {
+        let mut widget = widget_at_origin();
+        let slot: CredentialKey = serde_json::from_str("\"pool\"").expect("BUG: valid slot key");
+        let account =
+            AccountId::from_str("11111111-1111-1111-1111-111111111111").expect("BUG: non-empty id");
+        widget.credential_bindings.insert(slot.clone(), account);
+
+        let json = serde_json::to_string(&widget).expect("BUG: serialize widget");
+        let parsed: Widget = serde_json::from_str(&json).expect("BUG: deserialize widget");
+
+        assert_eq!(parsed.credential_bindings, widget.credential_bindings);
     }
 
     #[test]

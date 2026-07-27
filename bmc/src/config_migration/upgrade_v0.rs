@@ -233,6 +233,7 @@ fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
         // rectangular. A future manifest can override it when it loads.
         viewport_shape: ViewportShape::Rectangular,
         params: params_from_value(params),
+        credential_bindings: BTreeMap::new(),
     })
 }
 

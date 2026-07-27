@@ -19,15 +19,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::str::FromStr as _;
 use std::sync::Arc;
 use std::time::Duration;
 
 use bmc_grpc::web;
 use bmc_grpc::web::scene_management_service_server::SceneManagementService as GrpcSceneManagementService;
 use bmc_shared_time::time::Timezone;
-use bmc_widget_manifest::{ParamDefinition, ParamKind};
+use bmc_widget_manifest::{CredentialKey, ParamDefinition, ParamKind};
 use futures::stream::{BoxStream, StreamExt};
+use indexmap::IndexMap;
 use tokio::sync::{Mutex, RwLock};
 use tokio::time;
 use tokio_stream::wrappers::IntervalStream;
@@ -38,9 +40,10 @@ use uuid::Uuid;
 use bmc_platform::HardwareCapabilities;
 
 use crate::config::ConfigHandle;
-use crate::data::{SceneCycling, SceneCyclingTransition};
+use crate::data::{Account, AccountId, SceneCycling, SceneCyclingTransition};
 use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene;
+use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
 use crate::widget::{Coordinator, WidgetRegistry};
@@ -345,6 +348,8 @@ struct ParsedUpdateWidgetShape {
     position: scene::WidgetPosition,
     placement: scene::WidgetPlacement,
     params: Option<web::WidgetDataStruct>,
+    /// Unlike `params`, `None` here keeps the stored bindings rather than clearing them.
+    credential_bindings: Option<web::CredentialBindings>,
 }
 
 fn parse_update_widget_shape(
@@ -372,6 +377,7 @@ fn parse_update_widget_shape(
                 position: scene::WidgetPosition { row, col },
                 placement,
                 params: req.params,
+                credential_bindings: req.credential_bindings,
             })
         }
         _ => Err(Status::internal(
@@ -383,6 +389,8 @@ fn parse_update_widget_shape(
 pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    /// Lock order wherever both are held: `config_handle` first, then this.
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
     coordinator: Arc<Coordinator>,
     capabilities: HardwareCapabilities,
     led_coordinator: LedCoordinatorHandle,
@@ -401,6 +409,7 @@ impl SceneManagementService {
     pub(crate) fn new(
         widget_registry: Arc<WidgetRegistry>,
         config_handle: Arc<RwLock<ConfigHandle>>,
+        secret_store: Arc<RwLock<SecretStoreHandle>>,
         coordinator: Arc<Coordinator>,
         capabilities: HardwareCapabilities,
         led_coordinator: LedCoordinatorHandle,
@@ -408,6 +417,7 @@ impl SceneManagementService {
         Self {
             widget_registry,
             config_handle,
+            secret_store,
             coordinator,
             capabilities,
             led_coordinator,
@@ -588,6 +598,17 @@ fn widget_info_to_proto(
             .iter()
             .map(|(key, param)| param_definition_to_proto(key.as_str(), param))
             .collect(),
+        credentials: manifest
+            .credentials
+            .iter()
+            .map(|(key, slot)| web::CredentialSlotDefinition {
+                key: key.as_str().to_owned(),
+                type_id: slot.type_id.clone(),
+                label: slot.label.clone(),
+                description: slot.description.clone(),
+                required: slot.required,
+            })
+            .collect(),
         // BMC icon endpoint when an icon exists; absent → FE fallback glyph.
         icon_url: info
             .icon_path
@@ -766,6 +787,57 @@ pub(crate) fn validate_widget_params(
     }
 }
 
+/// Validate a binding set against the manifest's slots and the stored accounts,
+/// projecting it onto a typed map. A required slot left unbound is *not* a violation:
+/// an operator may save a widget before creating the account it needs.
+///
+/// Callers read `accounts` under the config write lock that also inserts the result:
+/// a removal slipping between check and insert would persist a binding
+/// with no account behind it, the state the delete cascade exists to prevent.
+pub(crate) fn validate_credential_bindings(
+    manifest: &bmc_widget_manifest::Manifest,
+    bindings: &HashMap<String, String>,
+    accounts: &IndexMap<AccountId, Account>,
+) -> Result<BTreeMap<CredentialKey, AccountId>, FieldViolations> {
+    let mut violations = FieldViolations::new();
+    let mut typed = BTreeMap::new();
+
+    for (key, slot) in &manifest.credentials {
+        // The picker's "— None —" sends an empty id rather than dropping the key.
+        let Some(raw) = bindings.get(key.as_str()).filter(|id| !id.is_empty()) else {
+            continue;
+        };
+        let path = format!("credential_bindings[{:?}]", key.as_str());
+        match AccountId::from_str(raw)
+            .ok()
+            .and_then(|id| accounts.get_key_value(&id))
+        {
+            None => violations.push(path, "Account not found"),
+            Some((_, account)) if account.type_id != slot.type_id => {
+                violations.push(path, "Account is of a different credential type");
+            }
+            Some((id, _)) => {
+                typed.insert(key.clone(), id.clone());
+            }
+        }
+    }
+
+    for key in bindings.keys() {
+        if !manifest.credentials.contains_key(key.as_str()) {
+            violations.push(
+                format!("credential_bindings[{key:?}]"),
+                "Unknown credential slot",
+            );
+        }
+    }
+
+    if violations.is_empty() {
+        Ok(typed)
+    } else {
+        Err(violations)
+    }
+}
+
 fn type_mismatch_message(kind: &ParamKind) -> &'static str {
     match kind {
         ParamKind::String { .. } => "Must be text",
@@ -885,6 +957,13 @@ fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
         config: Some(web::WidgetConfig {
             widget_uid: widget.widget_type_id.to_string(),
             params: Some(params_to_widget_data_struct(&widget.params)),
+            credential_bindings: Some(web::CredentialBindings {
+                bindings: widget
+                    .credential_bindings
+                    .iter()
+                    .map(|(key, id)| (key.as_str().to_owned(), id.to_string()))
+                    .collect(),
+            }),
         }),
     }
 }
@@ -1013,6 +1092,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let params = config.params.unwrap_or_default();
         let typed_params = validate_widget_params(manifest, &params, ValidateMode::Add)
             .map_err(bad_request_status)?;
+        let requested_bindings = config.credential_bindings.unwrap_or_default().bindings;
 
         let mut scene = scene::Scene::fullscreen(widget_uid, typed_params);
         for widget in scene.widgets.values_mut() {
@@ -1025,6 +1105,15 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         {
             let mut config = self.config_handle.write().await;
+            let typed_bindings = validate_credential_bindings(
+                manifest,
+                &requested_bindings,
+                self.secret_store.read().await.accounts(),
+            )
+            .map_err(bad_request_status)?;
+            for widget in scene.widgets.values_mut() {
+                widget.credential_bindings = typed_bindings.clone();
+            }
             config.scenes_mut().insert(scene.id, scene);
             Self::save_config(&mut config).await?;
         }
@@ -1449,6 +1538,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let mut widget = scene::Widget::new(widget_uid, typed_params, position, placement);
         stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
         let widget_id = widget.id.to_string();
+        let requested_bindings = config_req.credential_bindings.unwrap_or_default().bindings;
 
         let scene_id_key = scene::SceneId::from(scene_id);
 
@@ -1456,6 +1546,12 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let widget_to_spawn = {
             let mut config = self.config_handle.write().await;
+            widget.credential_bindings = validate_credential_bindings(
+                manifest,
+                &requested_bindings,
+                self.secret_store.read().await.accounts(),
+            )
+            .map_err(bad_request_status)?;
             let scene = config
                 .scenes_mut()
                 .get_mut(&scene_id_key)
@@ -1493,6 +1589,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             position,
             placement,
             params,
+            credential_bindings,
         } = parse_update_widget_shape(request.into_inner())?;
 
         let scene_id_key = scene::SceneId::from(scene_id);
@@ -1551,6 +1648,18 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             let params_changed = existing.params != typed_params;
 
+            // Keeping stored bindings on absent means the FE call sites that rebuild
+            // this request from a cached widget cannot unbind an account they never saw.
+            let typed_bindings = match credential_bindings {
+                None => existing.credential_bindings.clone(),
+                Some(requested) => validate_credential_bindings(
+                    manifest,
+                    &requested.bindings,
+                    self.secret_store.read().await.accounts(),
+                )
+                .map_err(bad_request_status)?,
+            };
+
             // Build the post-update widget snapshot first so placement
             // validation runs against immutable state. If anything below
             // fails the in-memory ConfigHandle is left untouched.
@@ -1561,6 +1670,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 widget_type_id: widget_uid,
                 viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
                 params: typed_params,
+                credential_bindings: typed_bindings,
             };
             stamp_widget_viewport_shape_from_caps(&mut updated_widget, &self.capabilities);
             validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
@@ -2111,6 +2221,135 @@ mod tests {
         }
     }
 
+    /// `keep()` because the handle outlives this call: a `TempDir` dropped here
+    /// would leave it pointing into a deleted directory.
+    async fn empty_secret_store() -> Arc<RwLock<SecretStoreHandle>> {
+        let dir = tempfile::tempdir().expect("BUG: tempdir").keep();
+        let store = SecretStoreHandle::init(&dir.join("config.json")).await;
+        Arc::new(RwLock::new(store))
+    }
+
+    fn manifest_with_credentials(entries: &[(&str, &str, bool)]) -> bmc_widget_manifest::Manifest {
+        let mut manifest = manifest_with_params(&[]);
+        for (key, type_id, required) in entries {
+            let key: CredentialKey =
+                serde_json::from_str(&format!("\"{key}\"")).expect("BUG: valid key");
+            let slot = bmc_widget_manifest::CredentialSlot {
+                type_id: (*type_id).to_owned(),
+                label: "Test".into(),
+                description: None,
+                required: *required,
+            };
+            manifest.credentials.insert(key, slot);
+        }
+        manifest
+    }
+
+    fn account_of_type(id: &str, type_id: &str) -> (AccountId, Account) {
+        let id = AccountId::from_str(id).expect("BUG: non-empty id");
+        let account = Account {
+            id: id.clone(),
+            type_id: type_id.to_owned(),
+            name: "Test".into(),
+            field_values: indexmap::IndexMap::new(),
+            created_at: chrono::Utc::now(),
+        };
+        (id, account)
+    }
+
+    fn binding_violations(
+        manifest: &bmc_widget_manifest::Manifest,
+        bindings: &[(&str, &str)],
+        accounts: &IndexMap<AccountId, Account>,
+    ) -> Vec<tonic_types::FieldViolation> {
+        let bindings = bindings
+            .iter()
+            .map(|(key, id)| ((*key).to_owned(), (*id).to_owned()))
+            .collect();
+        match validate_credential_bindings(manifest, &bindings, accounts) {
+            Ok(_) => vec![],
+            Err(violations) => violations.into(),
+        }
+    }
+
+    #[test]
+    fn credential_binding_of_a_matching_account_is_stored_typed() {
+        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let (id, account) = account_of_type("acct-1", "braiins-pool");
+        let accounts = indexmap::indexmap! { id.clone() => account };
+
+        let typed = validate_credential_bindings(
+            &manifest,
+            &[("pool".to_owned(), "acct-1".to_owned())]
+                .into_iter()
+                .collect(),
+            &accounts,
+        )
+        .expect("BUG: a matching account must validate");
+
+        assert_eq!(typed.len(), 1);
+        assert_eq!(typed.values().next(), Some(&id));
+    }
+
+    #[test]
+    fn credential_binding_of_an_unknown_account_is_rejected() {
+        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let violations = binding_violations(&manifest, &[("pool", "acct-gone")], &IndexMap::new());
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, r#"credential_bindings["pool"]"#);
+        assert_eq!(violations[0].description, "Account not found");
+    }
+
+    #[test]
+    fn credential_binding_of_a_wrong_type_account_is_rejected() {
+        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let (id, account) = account_of_type("acct-1", "generic-token");
+        let accounts = indexmap::indexmap! { id => account };
+        let violations = binding_violations(&manifest, &[("pool", "acct-1")], &accounts);
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(
+            violations[0].description,
+            "Account is of a different credential type"
+        );
+    }
+
+    #[test]
+    fn credential_binding_of_a_slot_the_manifest_does_not_declare_is_rejected() {
+        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", false)]);
+        let violations = binding_violations(&manifest, &[("mystery", "acct-1")], &IndexMap::new());
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, r#"credential_bindings["mystery"]"#);
+        assert_eq!(violations[0].description, "Unknown credential slot");
+    }
+
+    #[test]
+    fn an_empty_credential_binding_unbinds_the_slot() {
+        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let (id, account) = account_of_type("acct-1", "braiins-pool");
+        let accounts = indexmap::indexmap! { id => account };
+
+        let typed = validate_credential_bindings(
+            &manifest,
+            &[("pool".to_owned(), String::new())].into_iter().collect(),
+            &accounts,
+        )
+        .expect("BUG: unbinding must validate");
+
+        assert!(typed.is_empty(), "an empty id must not bind anything");
+    }
+
+    #[test]
+    fn a_required_credential_slot_may_stay_unbound() {
+        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let typed = validate_credential_bindings(&manifest, &HashMap::new(), &IndexMap::new())
+            .expect("BUG: a required slot must never block saving");
+
+        assert!(typed.is_empty());
+    }
+
     fn violation_count(
         manifest: &bmc_widget_manifest::Manifest,
         params: &web::WidgetDataStruct,
@@ -2613,6 +2852,66 @@ mod tests {
     }
 
     #[test]
+    fn scene_to_proto_emits_stored_credential_bindings() {
+        let mut scene = scene_with_widget(uuid::Uuid::new_v4(), BTreeMap::new());
+        let slot: CredentialKey = serde_json::from_str("\"pool\"").expect("BUG: valid key");
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        for widget in scene.widgets.values_mut() {
+            widget.credential_bindings.insert(slot.clone(), id.clone());
+        }
+
+        let proto = scene_to_proto(&scene);
+        let bindings = proto_scene_first_widget(&proto)
+            .config
+            .as_ref()
+            .expect("BUG: config")
+            .credential_bindings
+            .as_ref()
+            .expect("BUG: bindings");
+
+        assert_eq!(bindings.bindings["pool"], "acct-1");
+    }
+
+    #[test]
+    fn widget_info_to_proto_emits_declared_credential_slots() {
+        use std::str::FromStr as _;
+
+        let json = format!(
+            r#"{{
+                "uid": "{}",
+                "version": "1.0.0",
+                "name": "T",
+                "description": "T",
+                "binary": "bin/test",
+                "credentials": {{
+                    "pool": {{"type": "braiins-pool", "label": "Pool", "required": true}}
+                }},
+                "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
+            }}"#,
+            uuid::Uuid::new_v4()
+        );
+        let info = crate::widget::WidgetInfo {
+            manifest: bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
+            widget_dir: std::path::PathBuf::from("/w"),
+            binary_path: std::path::PathBuf::from("/w/bin/test"),
+            icon_path: None,
+        };
+
+        let slots = widget_info_to_proto(&info, &bmc100_platform_descriptor()).credentials;
+
+        assert_eq!(
+            slots,
+            vec![web::CredentialSlotDefinition {
+                key: "pool".to_owned(),
+                type_id: "braiins-pool".to_owned(),
+                label: "Pool".to_owned(),
+                description: None,
+                required: true,
+            }]
+        );
+    }
+
+    #[test]
     fn scene_to_proto_emits_typed_params_directly() {
         use bmc_widget_manifest::{ParamKey, ParamValue as PV};
         use web::widget_data_value::Kind as VK;
@@ -2733,6 +3032,7 @@ mod tests {
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
+            empty_secret_store().await,
             coordinator,
             capabilities,
             led_coordinator,
@@ -2798,6 +3098,7 @@ mod tests {
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
+            empty_secret_store().await,
             coordinator,
             capabilities,
             led_coordinator,
@@ -2853,6 +3154,7 @@ mod tests {
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
+            empty_secret_store().await,
             coordinator,
             capabilities,
             led_coordinator,
@@ -2940,6 +3242,7 @@ mod tests {
         let service = SceneManagementService::new(
             widget_registry,
             Arc::clone(&config_handle),
+            empty_secret_store().await,
             coordinator,
             capabilities,
             led_coordinator,

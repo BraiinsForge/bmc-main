@@ -109,6 +109,7 @@ fn widget(
         widget_type_id: type_uid,
         viewport_shape: shape,
         params,
+        credential_bindings: BTreeMap::new(),
     }
 }
 
