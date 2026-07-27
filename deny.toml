@@ -56,10 +56,6 @@ skip = [
     { crate = "bincode@1" },
     { crate = "quick-xml@0.38" },
 
-    # egui/eframe transitive deps
-    { crate = "jni@0.21" },
-    { crate = "jni-sys@0.3" },
-
     # gltf (sdk-macros) uses base64 0.13
     { crate = "base64@0.13" },
 
