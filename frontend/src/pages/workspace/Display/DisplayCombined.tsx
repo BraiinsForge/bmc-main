@@ -62,6 +62,8 @@ interface ManifestFormState {
     originalParams: FormifiedParams;
     originalSize: pb.WidgetSize;
     isNewWidget: boolean;
+    credentialBindings: Record<string, string>;
+    originalCredentialBindings: Record<string, string>;
 }
 
 interface Props {
@@ -79,6 +81,7 @@ interface State {
     scene: null | pb.Scene;
     timezones: pb.Timezone[];
     hardwareCapabilities: null | pb.HardwareCapabilities;
+    accounts: pb.Account[];
 
     openDialogKind: OpenDialogKind;
     addPosition: null | pb.WidgetPosition;
@@ -93,6 +96,7 @@ const getInitialState = (): State => ({
     scene: null,
     timezones: [],
     hardwareCapabilities: null,
+    accounts: [],
     openDialogKind: null,
     addPosition: null,
     manifestForm: {
@@ -107,6 +111,8 @@ const getInitialState = (): State => ({
         originalParams: {},
         originalSize: pb.WidgetSize.UNSPECIFIED,
         isNewWidget: false,
+        credentialBindings: {},
+        originalCredentialBindings: {},
     },
 });
 
@@ -128,6 +134,7 @@ class View extends Component<Props, State> {
         this.#loadManifestWidgets();
         this.#loadTimezones();
         this.#loadHardwareCapabilities();
+        this.#loadAccounts();
     }
     componentWillUnmount() {
         pb.abort.all(this);
@@ -162,6 +169,22 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load hardware capabilities!' });
+            toast.error(msg);
+        }
+    };
+
+    private abortLoadAccounts = pb.abort.get();
+    #loadAccounts = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortLoadAccounts.replace();
+            const { accounts } = await pb.rpc.accounts.getAllAccounts({}, { signal });
+            this.setState({ accounts });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
             toast.error(msg);
         }
     };
@@ -324,6 +347,7 @@ class View extends Component<Props, State> {
         }
 
         const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
+        const bindings = widget.config?.credentialBindings?.bindings ?? {};
         const position = widget.position ?? pb.create(pb.WidgetPositionSchema);
         const sizeOptions = this.#computeSizeOptions(manifest, { id, position });
 
@@ -341,6 +365,8 @@ class View extends Component<Props, State> {
                 originalParams: { ...params },
                 originalSize: widget.size,
                 isNewWidget: false,
+                credentialBindings: { ...bindings },
+                originalCredentialBindings: { ...bindings },
             },
         });
     };
@@ -422,6 +448,8 @@ class View extends Component<Props, State> {
                     originalParams: {},
                     originalSize: pb.WidgetSize.UNSPECIFIED,
                     isNewWidget: true,
+                    credentialBindings: {},
+                    originalCredentialBindings: {},
                 },
             });
             this.#loadSceneDebounced();
@@ -505,6 +533,15 @@ class View extends Component<Props, State> {
         );
     };
 
+    #handleCredentialBindingChange = (slotKey: string, accountId: string): void => {
+        this.setState(s => {
+            const credentialBindings = { ...s.manifestForm.credentialBindings };
+            if (accountId) credentialBindings[slotKey] = accountId;
+            else delete credentialBindings[slotKey];
+            return { manifestForm: { ...s.manifestForm, credentialBindings } };
+        });
+    };
+
     #handleManifestSizeChange = (size: pb.WidgetSize): void => {
         if (this.state.manifestForm.size === size) return;
 
@@ -525,7 +562,7 @@ class View extends Component<Props, State> {
     #handleManifestFormDone = async (): Promise<void> => {
         const { sceneId } = this.props;
         const { manifestForm } = this.state;
-        const { manifest, widgetID, params, size, position } = manifestForm;
+        const { manifest, widgetID, params, size, position, credentialBindings } = manifestForm;
 
         if (!manifest || !widgetID) {
             this.setState({ openDialogKind: null });
@@ -547,6 +584,7 @@ class View extends Component<Props, State> {
                 position,
                 size,
                 params: built.value,
+                credentialBindings: { bindings: credentialBindings },
             });
 
             toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
@@ -572,7 +610,8 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { widgetID, position, originalSize, originalParams, isNewWidget, manifest } = this.state.manifestForm;
+        const { widgetID, position, originalSize, originalParams, originalCredentialBindings, isNewWidget, manifest } =
+            this.state.manifestForm;
         this.setState({ openDialogKind: null, addPosition: null });
         if (!widgetID) return;
         this.#livePreviewWidget.cancel();
@@ -600,6 +639,7 @@ class View extends Component<Props, State> {
                 position,
                 size: originalSize,
                 params: built.value,
+                credentialBindings: { bindings: originalCredentialBindings },
             });
             this.#loadSceneDebounced();
         } catch ($) {
@@ -735,6 +775,9 @@ class View extends Component<Props, State> {
                         size={manifestForm.size}
                         sizeOptions={manifestForm.sizeOptions}
                         onSizeChange={this.#handleManifestSizeChange}
+                        accounts={this.state.accounts}
+                        credentialBindings={manifestForm.credentialBindings}
+                        onCredentialBindingChange={this.#handleCredentialBindingChange}
                     />
                 </div>
             </CombinedEditorCapabilityGate>

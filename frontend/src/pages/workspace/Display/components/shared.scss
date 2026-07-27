@@ -24,6 +24,7 @@
 
 .form {
     composes: inline vertical from 'styles/layout.scss';
+    text-align: start;
     inline-size: 100%;
     gap: mini-units(3);
 }

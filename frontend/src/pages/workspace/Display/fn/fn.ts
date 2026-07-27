@@ -306,7 +306,10 @@ export function getValidDropSlots(pool: C.Located[], widget: C.Located): C.Valid
 
 export type FormifiedValue = string | boolean | null;
 export type FormifiedParams = Record<string, FormifiedValue>;
-export type ParamsFormErrors = pb.FormErrors<FormifiedParams>;
+export type ParamsFormErrors = pb.FormErrors<FormifiedParams> & {
+    /** Binding violations, keyed by slot key. */
+    credentials?: Record<string, string[]>;
+};
 
 export function clearFieldError(errors: null | ParamsFormErrors, key: string): null | ParamsFormErrors {
     if (!errors) return null;

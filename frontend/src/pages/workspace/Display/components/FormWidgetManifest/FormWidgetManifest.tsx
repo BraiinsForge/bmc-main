@@ -18,6 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+import { Fragment } from 'react';
 import { useIntl } from 'react-intl';
 import * as pb from '@/proto';
 import { Form, hasFormErrors } from '@/lib/form';
@@ -25,18 +26,15 @@ import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
-import { CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
-import { ModalCustom, Button, InlineNotification, Markdown } from '@/components';
+import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
+import { AccountIcon, Datetime, ModalCustom, Button, InlineNotification, Markdown } from '@/components';
+import { Calendar as IconCalendar } from '@carbon/react/icons';
 import { WidgetName } from '../WidgetName';
 import css from '../shared.scss';
 
 const $ = getID('manifest-form').get;
 
-export interface FormWidgetManifestProps {
-    isOpen: boolean;
-    onSave(): void;
-    onCancel(): void;
-
+export interface WidgetManifestFormProps {
     manifest: null | pb.WidgetManifest;
     params: FormifiedParams;
     errors: null | ParamsFormErrors;
@@ -46,13 +44,109 @@ export interface FormWidgetManifestProps {
     size?: pb.WidgetSize;
     sizeOptions?: Array<Exclude<pb.WidgetSize, pb.WidgetSize.UNSPECIFIED>>;
     onSizeChange?(size: pb.WidgetSize): void;
+
+    accounts?: pb.Account[];
+    /** Slot key to bound account id; a slot missing here is unbound. */
+    credentialBindings?: Record<string, string>;
+    /** An empty `accountId` unbinds the slot. */
+    onCredentialBindingChange?(slotKey: string, accountId: string): void;
 }
 
-export function FormWidgetManifest(props: FormWidgetManifestProps) {
+export interface FormWidgetManifestProps extends WidgetManifestFormProps {
+    isOpen: boolean;
+    onSave(): void;
+    onCancel(): void;
+}
+
+// The dropdown drops a null selection, so "no account" has to be a real item.
+const UNBOUND = pb.create(pb.AccountSchema, { id: '', name: '' });
+
+function AccountOption(account: pb.Account) {
+    if (!account.id) return <span children={account.name} />;
+
+    return (
+        <div className={css.accountElement}>
+            <div className={css.accountElementName}>
+                <AccountIcon typeId={account.typeId} size={18} />
+                <span children={account.name} />
+            </div>
+            <div className={css.accountElementDate}>
+                <IconCalendar size={16} />
+                <Datetime value={account.createdAt} format="%d.%m.%Y" />
+            </div>
+        </div>
+    );
+}
+
+interface CredentialSlotFieldProps {
+    slot: pb.CredentialSlotDefinition;
+    accounts: pb.Account[];
+    boundAccountId: string;
+    error?: string;
+    onChange(slotKey: string, accountId: string): void;
+}
+
+function CredentialSlotField(props: CredentialSlotFieldProps) {
+    const { slot, accounts, boundAccountId, error, onChange } = props;
+    const { formatMessage } = useIntl();
+
+    const none = { ...UNBOUND, name: formatMessage({ defaultMessage: '— None —' }) };
+    const eligible = accounts.filter(a => a.typeId === slot.typeId);
+    const items = [none, ...eligible];
+
+    // A deleted account must read as broken, not as "— None —": the id still saves.
+    const bound = boundAccountId ? eligible.find(a => a.id === boundAccountId) : undefined;
+    const isDangling = !!boundAccountId && !bound;
+
+    return (
+        <Fragment>
+            <BoundDropdown<pb.Account>
+                id={$(`credential-${slot.key}`)}
+                labelText={
+                    slot.required
+                        ? formatMessage({ defaultMessage: '{label} (required)' }, { label: slot.label })
+                        : slot.label
+                }
+                placeholderText={none.name}
+                helperText={slot.description}
+                items={items}
+                value={bound ?? none}
+                error={error}
+                onChange={account => onChange(slot.key, account.id)}
+                itemToString={a => a?.name ?? ''}
+                itemToElement={AccountOption}
+            />
+
+            {isDangling ? (
+                <InlineNotification
+                    kind="error"
+                    theme="inverse"
+                    stretch
+                    hideCloseButton
+                    title={formatMessage({ defaultMessage: 'Bound account is gone' })}
+                    children={formatMessage({
+                        defaultMessage: 'The account this slot pointed at no longer exists. Pick a replacement.',
+                    })}
+                />
+            ) : slot.required && !boundAccountId ? (
+                <InlineNotification
+                    kind="warning"
+                    theme="inverse"
+                    stretch
+                    hideCloseButton
+                    title={formatMessage({ defaultMessage: 'No account bound' })}
+                    children={formatMessage(
+                        { defaultMessage: 'This widget needs a {label} account to reach its service.' },
+                        { label: slot.label },
+                    )}
+                />
+            ) : null}
+        </Fragment>
+    );
+}
+
+export function WidgetManifestForm(props: WidgetManifestFormProps) {
     const {
-        isOpen,
-        onSave,
-        onCancel,
         manifest,
         params,
         errors,
@@ -61,6 +155,9 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
         size,
         sizeOptions,
         onSizeChange,
+        accounts = [],
+        credentialBindings = {},
+        onCredentialBindingChange,
     } = props;
     const { formatMessage } = useIntl();
 
@@ -72,13 +169,26 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
     const globalErrors = errors?.global?.filter(Boolean) ?? [];
     const showGlobalError = !hasFieldErrors && globalErrors.length > 0;
 
-    const form = (
+    return (
         <Form className={css.form}>
             {manifest.configHelp ? <Markdown source={manifest.configHelp} className={css.configHelp} /> : null}
 
             {showSizeSelector ? (
                 <WidgetSizeSelector field={{ value: size, options: sizeOptions, onChange: onSizeChange }} />
             ) : null}
+
+            {onCredentialBindingChange
+                ? manifest.credentials.map(slot => (
+                      <CredentialSlotField
+                          key={slot.key}
+                          slot={slot}
+                          accounts={accounts}
+                          boundAccountId={credentialBindings[slot.key] ?? ''}
+                          error={errors?.credentials?.[slot.key]?.[0]}
+                          onChange={onCredentialBindingChange}
+                      />
+                  ))
+                : null}
 
             {manifest.params.map(def => (
                 <ParamField
@@ -106,6 +216,14 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
             ) : null}
         </Form>
     );
+}
+
+export function FormWidgetManifest(props: FormWidgetManifestProps) {
+    const { isOpen, onSave, onCancel, ...formProps } = props;
+    const { manifest, errors } = formProps;
+    const { formatMessage } = useIntl();
+
+    if (!manifest) return null;
 
     return (
         <ModalCustom
@@ -117,7 +235,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
             title={<WidgetName name={manifest.name} subname={manifest.subname} />}
             label={formatMessage({ defaultMessage: 'Configure Widget' })}
             onClose={onCancel}
-            children={form}
+            children={<WidgetManifestForm {...formProps} />}
             footer={
                 <Button
                     id={$('done')}

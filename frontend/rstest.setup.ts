@@ -28,3 +28,6 @@ class NoopResizeObserver implements ResizeObserver {
 }
 
 globalThis.ResizeObserver ??= NoopResizeObserver;
+
+// Nor a scrollIntoView, which Carbon's Dropdown calls on its highlighted option.
+Element.prototype.scrollIntoView ??= function scrollIntoView(): void {};

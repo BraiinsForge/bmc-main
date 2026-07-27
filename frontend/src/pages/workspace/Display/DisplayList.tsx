@@ -67,6 +67,8 @@ interface ManifestFormState {
     errors: null | ParamsFormErrors;
     isNewScene: boolean;
     originalParams: FormifiedParams;
+    credentialBindings: Record<string, string>;
+    originalCredentialBindings: Record<string, string>;
 }
 
 interface Props {
@@ -83,6 +85,7 @@ interface State {
     manifestsLoading: boolean;
     timezones: pb.Timezone[];
     hardwareCapabilities: null | pb.HardwareCapabilities;
+    accounts: pb.Account[];
 
     cycle: {
         isOpen: boolean;
@@ -104,6 +107,7 @@ const getInitialState = (): State => ({
     manifestsLoading: false,
     timezones: [],
     hardwareCapabilities: null,
+    accounts: [],
 
     cycle: {
         isOpen: false,
@@ -121,6 +125,8 @@ const getInitialState = (): State => ({
         errors: null,
         isNewScene: false,
         originalParams: {},
+        credentialBindings: {},
+        originalCredentialBindings: {},
     },
 });
 
@@ -149,6 +155,7 @@ class View extends Component<Props, State> {
         this.#loadManifestWidgets();
         this.#loadTimezones();
         this.#loadHardwareCapabilities();
+        this.#loadAccounts();
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
@@ -183,6 +190,22 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load scene cycling settings!' });
+            toast.error(msg);
+        }
+    };
+
+    private abortLoadAccounts = pb.abort.get();
+    #loadAccounts = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortLoadAccounts.replace();
+            const { accounts } = await pb.rpc.accounts.getAllAccounts({}, { signal });
+            this.setState({ accounts });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
             toast.error(msg);
         }
     };
@@ -297,6 +320,8 @@ class View extends Component<Props, State> {
                         errors: null,
                         isNewScene: true,
                         originalParams: {},
+                        credentialBindings: {},
+                        originalCredentialBindings: {},
                     },
                 },
                 () => this.#previewOpen(sceneID),
@@ -323,7 +348,7 @@ class View extends Component<Props, State> {
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
-        const { sceneID, widgetID, manifest, originalParams, isNewScene } = manifestForm;
+        const { sceneID, widgetID, manifest, originalParams, originalCredentialBindings, isNewScene } = manifestForm;
         this.#liveUpdateWidget.cancel();
         this.abortPreview.abort();
         this.setState({ openDialogKind: null });
@@ -351,6 +376,7 @@ class View extends Component<Props, State> {
                 position: { row: 0, col: 0 },
                 size: pb.WidgetSize.FULL,
                 params: built.value,
+                credentialBindings: { bindings: originalCredentialBindings },
             });
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -432,9 +458,18 @@ class View extends Component<Props, State> {
         );
     };
 
+    #handleCredentialBindingChange = (slotKey: string, accountId: string): void => {
+        this.setState(s => {
+            const credentialBindings = { ...s.manifestForm.credentialBindings };
+            if (accountId) credentialBindings[slotKey] = accountId;
+            else delete credentialBindings[slotKey];
+            return { manifestForm: { ...s.manifestForm, credentialBindings } };
+        });
+    };
+
     #handleManifestFormDone = async (): Promise<void> => {
         const { manifestForm } = this.state;
-        const { manifest, sceneID, widgetID, params } = manifestForm;
+        const { manifest, sceneID, widgetID, params, credentialBindings } = manifestForm;
         this.#liveUpdateWidget.cancel();
 
         if (!manifest || !widgetID) {
@@ -459,6 +494,7 @@ class View extends Component<Props, State> {
                 position: widget?.position ?? pb.create(pb.WidgetPositionSchema),
                 size: widget?.size ?? pb.WidgetSize.FULL,
                 params: built.value,
+                credentialBindings: { bindings: credentialBindings },
             });
 
             toast.success(formatMessage({ defaultMessage: 'Widget updated!' }));
@@ -503,6 +539,9 @@ class View extends Component<Props, State> {
                     errors={this.state.manifestForm.errors}
                     onParamChange={this.#handleManifestParamChange}
                     timezones={this.state.timezones}
+                    accounts={this.state.accounts}
+                    credentialBindings={this.state.manifestForm.credentialBindings}
+                    onCredentialBindingChange={this.#handleCredentialBindingChange}
                 />
             </Fragment>
         );
@@ -711,6 +750,7 @@ class View extends Component<Props, State> {
                 }
 
                 const params = fn.widgetParamsToFormifiedState(manifest, widget.config?.params);
+                const bindings = widget.config?.credentialBindings?.bindings ?? {};
 
                 this.setState(
                     {
@@ -723,6 +763,8 @@ class View extends Component<Props, State> {
                             errors: null,
                             isNewScene: false,
                             originalParams: { ...params },
+                            credentialBindings: { ...bindings },
+                            originalCredentialBindings: { ...bindings },
                         },
                     },
                     () => this.#previewOpen(id),
