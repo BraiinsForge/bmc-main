@@ -159,24 +159,12 @@ impl Params {
             double_enum: <DoubleEnum as ParamRead>::read_required(snap, "double_enum"),
             double_range: <f64 as ParamRead>::read_required(snap, "double_range"),
             free_string: <String as ParamRead>::read_required(snap, "free_string"),
-            integer_enum: <IntegerEnum as ParamRead>::read_required(
-                snap,
-                "integer_enum",
-            ),
+            integer_enum: <IntegerEnum as ParamRead>::read_required(snap, "integer_enum"),
             integer_range: <i32 as ParamRead>::read_required(snap, "integer_range"),
-            optional_boolean: <bool as ParamRead>::read_optional(
-                snap,
-                "optional_boolean",
-            ),
+            optional_boolean: <bool as ParamRead>::read_optional(snap, "optional_boolean"),
             optional_double: <f64 as ParamRead>::read_optional(snap, "optional_double"),
-            optional_integer: <i32 as ParamRead>::read_optional(
-                snap,
-                "optional_integer",
-            ),
-            optional_string: <String as ParamRead>::read_optional(
-                snap,
-                "optional_string",
-            ),
+            optional_integer: <i32 as ParamRead>::read_optional(snap, "optional_integer"),
+            optional_string: <String as ParamRead>::read_optional(snap, "optional_string"),
             string_date: <String as ParamRead>::read_required(snap, "string_date"),
             string_enum: <StringEnum as ParamRead>::read_required(snap, "string_enum"),
             string_uri: <String as ParamRead>::read_required(snap, "string_uri"),
@@ -193,16 +181,17 @@ impl Params {
             core::cell::RefCell::new(None) };
         }
         let v = snapshot::version();
-        CACHE
-            .with(|cell| {
-                let mut cache = cell.borrow_mut();
-                if let Some((cv, ref params)) = *cache && cv == v {
-                    return params.clone();
-                }
-                let fresh = Self::from_snapshot(&snapshot::current());
-                *cache = Some((v, fresh.clone()));
-                fresh
-            })
+        CACHE.with(|cell| {
+            let mut cache = cell.borrow_mut();
+            if let Some((cv, ref params)) = *cache
+                && cv == v
+            {
+                return params.clone();
+            }
+            let fresh = Self::from_snapshot(&snapshot::current());
+            *cache = Some((v, fresh.clone()));
+            fresh
+        })
     }
     /// Snapshot delivered immediately before [`current`]; `None` until at
     /// least one update has been observed (i.e. during `init` and the
@@ -210,7 +199,11 @@ impl Params {
     #[must_use]
     pub fn previous() -> Option<Self> {
         let prev = snapshot::previous();
-        if prev.is_empty() { None } else { Some(Self::from_snapshot(&prev)) }
+        if prev.is_empty() {
+            None
+        } else {
+            Some(Self::from_snapshot(&prev))
+        }
     }
     /// Manifest keys whose value differs between `self` and `other`.
     ///

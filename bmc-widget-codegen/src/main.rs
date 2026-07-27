@@ -25,9 +25,8 @@
 //! ```
 //!
 //! [`bmc_widget_codegen::generate`] returns source pre-formatted by
-//! `prettyplease`; this driver writes that to disk and then invokes the
-//! project's `nix fmt` against the output path so the committed artifact
-//! matches the workspace's canonical style. Failure of `nix fmt` is
+//! `prettyplease`; this driver writes that to disk and then runs `rustfmt` over it
+//! so the committed artifact matches the workspace's canonical style. Failure is
 //! non-fatal — the file is still written in `prettyplease`'s canonical form.
 
 use std::path::{Path, PathBuf};
@@ -49,7 +48,7 @@ struct Cli {
     #[arg(long, value_name = "PATH")]
     out: PathBuf,
 
-    /// Skip the `nix fmt` post-process. Use when this binary is invoked from
+    /// Skip the `rustfmt` post-process. Use when this binary is invoked from
     /// inside the nix build sandbox where the formatter is unreachable.
     #[arg(long)]
     skip_format: bool,
@@ -86,21 +85,27 @@ fn main() -> Result<()> {
     eprintln!("wrote {}", cli.out.display());
 
     if !cli.skip_format {
-        run_nix_fmt(&cli.out);
+        run_rustfmt(&cli.out);
     }
     Ok(())
 }
 
-/// Best-effort `nix fmt <path>` so the committed artifact matches the project's
-/// canonical Rust style (workspace `rustfmt.toml`, comment wrapping rules, etc.).
-/// A missing `nix` or formatter is non-fatal — the file is still on disk in
-/// `prettyplease`'s canonical form.
-fn run_nix_fmt(path: &Path) {
-    let result = Command::new("nix").args(["fmt", "--"]).arg(path).status();
+/// Best-effort `rustfmt` so the committed artifact matches the project's canonical
+/// style; it finds the workspace `rustfmt.toml` by walking up from `path`, and
+/// `--edition` mirrors the project formatter so the result matches CI's check.
+/// A missing `rustfmt` is non-fatal — the file stays in `prettyplease` form.
+///
+/// Not `nix fmt`: the generated file is excluded from it, to keep the license
+/// stamper off a regenerated artifact, which makes that pass a silent no-op.
+fn run_rustfmt(path: &Path) {
+    let result = Command::new("rustfmt")
+        .args(["--edition", "2024"])
+        .arg(path)
+        .status();
     match result {
         Ok(status) if status.success() => {}
-        Ok(status) => eprintln!("nix fmt exited with {status} — generated file left unformatted"),
-        Err(e) => eprintln!("nix fmt unavailable ({e}) — generated file left unformatted"),
+        Ok(status) => eprintln!("rustfmt exited with {status} — generated file left unformatted"),
+        Err(e) => eprintln!("rustfmt unavailable ({e}) — generated file left unformatted"),
     }
 }
 

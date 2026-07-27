@@ -38,7 +38,9 @@ validate: format clippy python validate-wasm
 
 # Auto-format everything (nix fmt + SVG pass).
 format:
-    nix fmt
+    # `--no-cache` matches the CI fmt job: a cache hit hides drift that CI then
+    # rejects, so without it a clean `just validate` says nothing about the fmt job.
+    nix fmt -- --no-cache
     nix run .#fmt-svg
     {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness
 

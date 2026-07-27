@@ -68,8 +68,7 @@
 //! - fields and `from_snapshot` reads are emitted in `ParamKey::as_str()` order;
 //! - enum variants are emitted in manifest-declaration order;
 //! - the output goes through `prettyplease` (canonical formatting, no external
-//!   `rustfmt` subprocess), then through the project formatter at write time
-//!   if invoked through `wasm::gen`.
+//!   subprocess), which the driver binary then hands to `rustfmt`.
 //!
 //! ## Identifier mapping
 //!
