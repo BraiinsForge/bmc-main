@@ -32,6 +32,16 @@
       ],
       "maxLength": 2000
     },
+    "credentials": {
+      "description": "Credential slots the operator binds a saved account to, keyed by [`CredentialKey`].\nIteration order matches manifest order.",
+      "type": "object",
+      "additionalProperties": false,
+      "patternProperties": {
+        "^[A-Za-z][A-Za-z0-9_\\-]*$": {
+          "$ref": "#/$defs/CredentialSlot"
+        }
+      }
+    },
     "description": {
       "description": "One-line widget description, shown in the operator UI.\nCapped at 200 characters.",
       "type": "string",
@@ -118,6 +128,35 @@
       },
       "required": [
         "name"
+      ]
+    },
+    "CredentialSlot": {
+      "description": "One credential slot a widget declares: which kind of account it accepts, and how the operator\nsees it in the picker.",
+      "type": "object",
+      "properties": {
+        "description": {
+          "description": "Help text shown under the picker.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "label": {
+          "description": "Operator-facing slot label, shown beside the account picker. Must not be blank.",
+          "type": "string"
+        },
+        "required": {
+          "description": "Whether the widget cannot work without this slot bound.",
+          "type": "boolean"
+        },
+        "type": {
+          "description": "Id of the credential type this slot accepts, from the firmware catalog\n([`credential::builtins`]).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "type",
+        "label"
       ]
     },
     "DoubleOption": {

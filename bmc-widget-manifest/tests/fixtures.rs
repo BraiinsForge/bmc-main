@@ -304,6 +304,40 @@ const FIXTURES: &[Negative] = &[
         schema_accepts: false,
         manifest_accepts: false,
     },
+    // ── Credential slots ──────────────────────────────────────────────
+    Negative {
+        label: "credentials: slot type is a number (structural)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440012",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Bad slot type literal",
+            "binary": "bin/x",
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
+            "credentials": {
+                "pool": {"type": 42, "label": "Pool"}
+            }
+        }"#,
+        schema_accepts: false,
+        manifest_accepts: false,
+    },
+    Negative {
+        // A firmware constant, so JSON Schema cannot know the ids — only the Rust validator can.
+        label: "credentials: unknown credential type id (semantic)",
+        json: r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440013",
+            "version": "0.1.0",
+            "name": "X",
+            "description": "Unknown slot type",
+            "binary": "bin/x",
+            "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238,"min_dpi":1,"max_dpi":1}],
+            "credentials": {
+                "pool": {"type": "braiins_pool", "label": "Pool"}
+            }
+        }"#,
+        schema_accepts: true,
+        manifest_accepts: false,
+    },
 ];
 
 #[test]

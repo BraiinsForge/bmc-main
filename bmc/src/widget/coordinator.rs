@@ -1037,6 +1037,7 @@ mod support_tests {
             settings: vec![],
             supported_viewports: vec![constraint],
             params: indexmap::IndexMap::new(),
+            credentials: indexmap::IndexMap::new(),
         };
         WidgetRegistry::new(vec![WidgetInfo {
             manifest,

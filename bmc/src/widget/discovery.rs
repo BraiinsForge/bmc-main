@@ -562,6 +562,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn skip_widget_declaring_an_unknown_credential_type() {
+        let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
+
+        create_valid_widget(
+            temp_dir.path(),
+            "valid-widget",
+            "550e8400-e29b-41d4-a716-446655440001",
+        );
+
+        let bad_dir = temp_dir.path().join("bad-slot-widget");
+        std_fs::create_dir_all(&bad_dir).expect("BUG: failed to create dir");
+        std_fs::write(
+            bad_dir.join("manifest.json"),
+            r#"{
+                "uid": "550e8400-e29b-41d4-a716-446655440002",
+                "version": "1.0.0",
+                "name": "bad-slot-widget",
+                "description": "Declares a credential type that does not exist",
+                "binary": "widget",
+                "supported_viewports": [{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}],
+                "credentials": {
+                    "pool": {"type": "braiins_pool", "label": "Pool account"}
+                }
+            }"#,
+        )
+        .expect("BUG: failed to write manifest");
+
+        let discovery = PathDiscovery::new(vec![temp_dir.path().to_path_buf()]);
+        let widgets = discovery.discover().await;
+
+        assert_eq!(
+            widgets.len(),
+            1,
+            "an unknown slot type skips its widget without failing the scan"
+        );
+        assert_eq!(widgets[0].manifest.name, "valid-widget");
+    }
+
+    #[tokio::test]
     async fn skip_missing_binary() {
         let temp_dir = TempDir::new().expect("BUG: failed to create temp dir");
 

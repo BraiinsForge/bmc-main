@@ -26,6 +26,8 @@
 //! (`default_value` in `[min, max]` / in `enum_values`, `±0.0` enum collision) live in
 //! [`ParamDefinition::validate`].
 
+use std::marker::PhantomData;
+
 use indexmap::IndexMap;
 use schemars::JsonSchema;
 use serde::de::{Error as _, MapAccess, Visitor};
@@ -287,20 +289,26 @@ impl TryFrom<&serde_json::Value> for ParamValue {
     }
 }
 
-/// Deserialize a field map, rejecting duplicate keys instead of silently keeping the last.
-pub fn deserialize_unique_params<'de, D>(
+/// As [`deserialize_unique_params`], for any value type. `what` names the key kind in the error:
+/// `"param key"` yields `duplicate param key "theme"`.
+pub fn deserialize_unique_keyed<'de, D, V>(
     deserializer: D,
-) -> Result<IndexMap<ParamKey, ParamDefinition>, D::Error>
+    what: &'static str,
+) -> Result<IndexMap<ParamKey, V>, D::Error>
 where
     D: Deserializer<'de>,
+    V: Deserialize<'de>,
 {
-    struct UniqueMapVisitor;
+    struct UniqueMapVisitor<V> {
+        what: &'static str,
+        value: PhantomData<V>,
+    }
 
-    impl<'de> Visitor<'de> for UniqueMapVisitor {
-        type Value = IndexMap<ParamKey, ParamDefinition>;
+    impl<'de, V: Deserialize<'de>> Visitor<'de> for UniqueMapVisitor<V> {
+        type Value = IndexMap<ParamKey, V>;
 
         fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            f.write_str("a map with unique param keys")
+            write!(f, "a map with unique {}s", self.what)
         }
 
         fn visit_map<M>(self, mut access: M) -> Result<Self::Value, M::Error>
@@ -308,10 +316,11 @@ where
             M: MapAccess<'de>,
         {
             let mut map = IndexMap::with_capacity(access.size_hint().unwrap_or(0));
-            while let Some((key, value)) = access.next_entry::<ParamKey, ParamDefinition>()? {
+            while let Some((key, value)) = access.next_entry::<ParamKey, V>()? {
                 if map.contains_key(&key) {
                     return Err(M::Error::custom(format!(
-                        "duplicate param key {:?}",
+                        "duplicate {} {:?}",
+                        self.what,
                         key.as_str()
                     )));
                 }
@@ -321,7 +330,20 @@ where
         }
     }
 
-    deserializer.deserialize_map(UniqueMapVisitor)
+    deserializer.deserialize_map(UniqueMapVisitor {
+        what,
+        value: PhantomData,
+    })
+}
+
+/// Deserialize a field map, rejecting duplicate keys instead of silently keeping the last.
+pub fn deserialize_unique_params<'de, D>(
+    deserializer: D,
+) -> Result<IndexMap<ParamKey, ParamDefinition>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    deserialize_unique_keyed(deserializer, "param key")
 }
 
 /// Per-field declaration inside a schema's field map.

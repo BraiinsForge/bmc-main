@@ -43,6 +43,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
 
+pub use bmc_field_schema::credential;
 pub use bmc_field_schema::{
     DoubleOption, FieldSchemaError, IntegerOption, MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH,
     ParamDefinition, ParamKey, ParamKind, ParamValue, ParamValueConversionError, StringFormat,
@@ -50,17 +51,20 @@ pub use bmc_field_schema::{
 };
 use indexmap::IndexMap;
 use schemars::JsonSchema;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
+
+pub type CredentialKey = ParamKey;
 
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_SUBNAME_LENGTH: usize = 30;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
 const MAX_CONFIG_HELP_LENGTH: usize = 2_000;
 
-/// Errors produced by [`Manifest::from_str`] and the structural / semantic validators it dispatches to.
-/// Each variant names the rule that was violated, so a downstream caller can surface them without re-parsing the message.
+/// Errors produced by [`Manifest::from_str`] and the structural / semantic
+/// validators it dispatches to. Each variant names the rule that was violated,
+/// so a downstream caller can surface them without re-parsing the message.
 #[derive(Debug, Error)]
 pub enum ManifestError {
     /// JSON could not be parsed at all, or violated a `#[serde(...)]`
@@ -73,7 +77,8 @@ pub enum ManifestError {
     InvalidUuid(#[from] uuid::Error),
 
     /// The `uid` field parsed as a UUID but was not version 4.
-    /// Widgets are required to use random UUIDs so that any new widget gets a fresh identifier without coordination.
+    /// Widgets are required to use random UUIDs so that
+    /// any new widget gets a fresh identifier without coordination.
     #[error("UUID must be version 4, got version {0}")]
     InvalidUuidVersion(usize),
 
@@ -120,6 +125,17 @@ pub enum ManifestError {
     /// forwarded from the shared field-schema validator.
     #[error(transparent)]
     Field(#[from] FieldSchemaError),
+
+    /// Lists the valid ids inline: discovery only logs this plus the manifest path.
+    #[error("credential slot {slot:?}: unknown credential type {type_id:?} (valid types: {valid})")]
+    UnknownCredentialType {
+        slot: String,
+        type_id: String,
+        valid: String,
+    },
+
+    #[error("credential slot {slot:?}: label must not be empty")]
+    EmptyCredentialLabel { slot: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -148,6 +164,58 @@ struct RawManifest {
         deserialize_with = "bmc_field_schema::deserialize_unique_params"
     )]
     params: IndexMap<ParamKey, ParamDefinition>,
+    #[serde(default, deserialize_with = "deserialize_unique_credentials")]
+    credentials: IndexMap<CredentialKey, CredentialSlot>,
+}
+
+fn deserialize_unique_credentials<'de, D>(
+    deserializer: D,
+) -> Result<IndexMap<CredentialKey, CredentialSlot>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    bmc_field_schema::deserialize_unique_keyed(deserializer, "credential slot")
+}
+
+/// One credential slot a widget declares: which kind of account it accepts, and how the operator
+/// sees it in the picker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct CredentialSlot {
+    /// Id of the credential type this slot accepts, from the firmware catalog
+    /// ([`credential::builtins`]).
+    #[serde(rename = "type")]
+    pub type_id: String,
+    /// Operator-facing slot label, shown beside the account picker. Must not be blank.
+    pub label: String,
+    /// Help text shown under the picker.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Whether the widget cannot work without this slot bound.
+    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    pub required: bool,
+}
+
+impl CredentialSlot {
+    fn validate(&self, slot: &str) -> Result<(), ManifestError> {
+        if self.label.trim().is_empty() {
+            return Err(ManifestError::EmptyCredentialLabel {
+                slot: slot.to_owned(),
+            });
+        }
+
+        let catalog = credential::builtins();
+        if !catalog.iter().any(|t| t.id == self.type_id) {
+            let mut valid: Vec<&str> = catalog.iter().map(|t| t.id.as_str()).collect();
+            valid.sort_unstable();
+            return Err(ManifestError::UnknownCredentialType {
+                slot: slot.to_owned(),
+                type_id: self.type_id.clone(),
+                valid: valid.join(", "),
+            });
+        }
+
+        Ok(())
+    }
 }
 
 /// The parsed and validated form of a widget's `manifest.json`.
@@ -206,6 +274,10 @@ pub struct Manifest {
     /// Iteration order matches manifest order.
     #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
     pub params: IndexMap<ParamKey, ParamDefinition>,
+    /// Credential slots the operator binds a saved account to, keyed by [`CredentialKey`].
+    /// Iteration order matches manifest order.
+    #[serde(default, skip_serializing_if = "IndexMap::is_empty")]
+    pub credentials: IndexMap<CredentialKey, CredentialSlot>,
 }
 
 impl FromStr for Manifest {
@@ -257,6 +329,7 @@ impl Manifest {
             settings: raw.settings,
             supported_viewports: raw.supported_viewports,
             params: raw.params,
+            credentials: raw.credentials,
         };
 
         manifest.validate()?;
@@ -318,6 +391,10 @@ impl Manifest {
 
         for (key, param) in &self.params {
             param.validate(key.as_str())?;
+        }
+
+        for (key, slot) in &self.credentials {
+            slot.validate(key.as_str())?;
         }
 
         Ok(())
@@ -485,6 +562,18 @@ mod tests {
                     "type": "boolean",
                     "description": "Display seconds on the clock",
                     "default_value": false
+                }
+            },
+            "credentials": {
+                "weather": {
+                    "type": "generic-token",
+                    "label": "Weather service",
+                    "description": "Token for the forecast API",
+                    "required": true
+                },
+                "media": {
+                    "type": "generic-userpass",
+                    "label": "Media server"
                 }
             }
         }"#
@@ -698,6 +787,20 @@ mod tests {
         let author = manifest.author.expect("BUG: should have author");
         assert_eq!(author.name, "Braiins");
         assert_eq!(author.url, Some("https://braiins.com".to_owned()));
+
+        let slots: Vec<(&str, &str, bool)> = manifest
+            .credentials
+            .iter()
+            .map(|(key, slot)| (key.as_str(), slot.type_id.as_str(), slot.required))
+            .collect();
+        assert_eq!(
+            slots,
+            vec![
+                ("weather", "generic-token", true),
+                ("media", "generic-userpass", false),
+            ],
+            "credential slots keep manifest order, and `required` defaults to false"
+        );
 
         assert_eq!(
             manifest.settings,
@@ -1225,6 +1328,69 @@ mod tests {
         assert!(
             err.to_string().contains("duplicate"),
             "error must mention duplicate: {err}"
+        );
+    }
+
+    fn manifest_with_credentials(credentials: &str) -> String {
+        format!(
+            r#"{{
+            "uid": "550e8400-e29b-41d4-a716-446655440000",
+            "version": "1.0.0",
+            "name": "Test",
+            "description": "Test",
+            "binary": "bin/test",
+            "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}],
+            "credentials": {credentials}
+        }}"#
+        )
+    }
+
+    #[test]
+    fn manifest_without_credentials_declares_none() {
+        let manifest = Manifest::from_str(minimal_manifest_json()).expect("BUG: should parse");
+        assert!(manifest.credentials.is_empty());
+    }
+
+    #[test]
+    fn manifest_rejects_unknown_credential_type() {
+        let json =
+            manifest_with_credentials(r#"{"pool": {"type": "braiins_pool", "label": "Pool"}}"#);
+        let err = Manifest::from_str(&json).expect_err("unknown credential type must fail");
+        let msg = err.to_string();
+
+        assert!(msg.contains(r#""pool""#), "names the slot: {msg}");
+        assert!(
+            msg.contains(r#""braiins_pool""#),
+            "quotes the bad id: {msg}"
+        );
+        for valid in ["braiins-pool", "generic-token", "generic-userpass"] {
+            assert!(msg.contains(valid), "lists {valid}: {msg}");
+        }
+    }
+
+    #[test]
+    fn manifest_rejects_blank_credential_label() {
+        let json =
+            manifest_with_credentials(r#"{"pool": {"type": "braiins-pool", "label": "   "}}"#);
+        let err = Manifest::from_str(&json).expect_err("blank credential label must fail");
+        assert!(
+            err.to_string().contains("label"),
+            "error must mention the label: {err}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_duplicate_credential_slots() {
+        let json = manifest_with_credentials(
+            r#"{
+                "pool": {"type": "braiins-pool", "label": "First"},
+                "pool": {"type": "generic-token", "label": "Second"}
+            }"#,
+        );
+        let err = Manifest::from_str(&json).expect_err("duplicate credential slot must fail");
+        assert!(
+            err.to_string().contains("duplicate credential slot"),
+            "error must name the duplicate slot kind: {err}"
         );
     }
 

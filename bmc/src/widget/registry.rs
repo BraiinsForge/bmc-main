@@ -299,6 +299,7 @@ mod tests {
             settings: vec![],
             supported_viewports: viewports,
             params: indexmap::IndexMap::new(),
+            credentials: indexmap::IndexMap::new(),
         };
 
         WidgetInfo {

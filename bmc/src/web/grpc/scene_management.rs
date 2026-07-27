@@ -2060,6 +2060,7 @@ mod tests {
                 max_dpi: Some(1),
             }],
             params,
+            credentials: indexmap::IndexMap::new(),
         }
     }
 
@@ -2100,6 +2101,7 @@ mod tests {
                 max_dpi: Some(1),
             }],
             params,
+            credentials: indexmap::IndexMap::new(),
         }
     }
 
@@ -2889,6 +2891,7 @@ mod tests {
                 max_dpi: None,
             }],
             params: indexmap::IndexMap::new(),
+            credentials: indexmap::IndexMap::new(),
         };
         let widget_registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
             manifest,
