@@ -24,25 +24,35 @@ import type { BadRequest_FieldViolation } from '../gen/google/rpc/error_details_
 
 type FieldViolation = BadRequest_FieldViolation;
 
+// Either `[…]`, holding an entry key, or a run of anything that is not path punctuation.
+const PATH_STEP = /\[([^\]]*)\]|([^.[\]]+)/g;
+
+// Only a matched pair, so a key that legitimately contains one quote survives.
+const WRAPPING_QUOTES = /^(["'])(.*)\1$/;
+
 /**
+ * Turn a `BadRequest.FieldViolation.field` path into a property path.
+ *
+ * A named step is a field of the request message: proto spells those snake_case and the
+ * generated types camelCase, so it is translated. A `[…]` step addresses an entry inside
+ * a field — a map key or an array index — which is request data, so it is never renamed.
+ *
  * @example
  * parseFieldPath('emailAddresses[3].type[2]')
- * ['emailAddresses', 3, 'type', 2]
+ * ['emailAddresses', '3', 'type', '2']
+ * parseFieldPath('params["show_date"]')
+ * ['params', 'show_date']
  */
 export function parseFieldPath(path: string): string[] {
-    return (
-        path
-            // » emailAddresses[3].type[2]
-            // « emailAddresses[3.type[2
-            .replaceAll(']', '')
-            // » emailAddresses[3.type[2
-            // « emailAddresses.3.type.2
-            .replaceAll('[', '.')
-            // » emailAddresses.3.type.2
-            // « [emailAddresses, 3, type, 2]
-            .split('.')
-            .filter(Boolean)
-    );
+    const steps: string[] = [];
+
+    for (const [, entryKey, fieldName] of path.matchAll(PATH_STEP)) {
+        // An empty step carries nothing to match on.
+        if (entryKey) steps.push(entryKey.replace(WRAPPING_QUOTES, '$2'));
+        else if (fieldName) steps.push(camelCase(fieldName));
+    }
+
+    return steps;
 }
 
 export function parseFieldViolations<Input extends Rec, KnownKey extends PropertyKey>(
@@ -54,7 +64,7 @@ export function parseFieldViolations<Input extends Rec, KnownKey extends Propert
 
     input.forEach(f => {
         const fieldPath = f.field;
-        const resultKey: string[] = parseFieldPath(fieldPath).map(camelCase);
+        const resultKey: string[] = parseFieldPath(fieldPath);
 
         if (knownKeys && !knownKeys.includes(resultKey[0] as KnownKey)) {
             unmatched.push(f.description);

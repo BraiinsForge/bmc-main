@@ -27,7 +27,7 @@ export interface CredentialTypeFormProps {
     type: pb.CredentialType;
     values: Record<string, FieldValue>;
     onChange(key: string, value: FieldValue): void;
-    // Per-field errors keyed by field key (from the backend's `field_values.<key>` violations).
+    // Per-field errors keyed by field key (from the backend's `field_values["<key>"]` violations).
     errors?: Record<string, string[] | undefined>;
 }
 

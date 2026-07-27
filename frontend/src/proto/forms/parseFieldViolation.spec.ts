@@ -47,6 +47,38 @@ describe('parseFieldPath', () => {
     test('empty array for empty string', () => {
         expect(parseFieldPath('')).toEqual([]);
     });
+
+    test('a snake_case field name becomes camelCase', () => {
+        expect(parseFieldPath('dns_servers[0]')).toEqual(['dnsServers', '0']);
+    });
+
+    test('a map key keeps its wire spelling', () => {
+        expect(parseFieldPath('params["show_date"]')).toEqual(['params', 'show_date']);
+    });
+
+    test('an unquoted map key keeps its wire spelling too', () => {
+        expect(parseFieldPath('params[show_date]')).toEqual(['params', 'show_date']);
+    });
+
+    test('a lone quote inside a key is kept', () => {
+        expect(parseFieldPath(`params["it's"]`)).toEqual(['params', "it's"]);
+    });
+
+    test('a dot inside a key does not split it', () => {
+        expect(parseFieldPath('params["a.b"]')).toEqual(['params', 'a.b']);
+    });
+
+    test('an opening bracket inside a key is kept', () => {
+        expect(parseFieldPath('params["a[b"]')).toEqual(['params', 'a[b']);
+    });
+
+    test('empty brackets are dropped', () => {
+        expect(parseFieldPath('params[]')).toEqual(['params']);
+    });
+
+    test('repeated separators collapse', () => {
+        expect(parseFieldPath('a..b')).toEqual(['a', 'b']);
+    });
 });
 
 describe('parseFieldViolations', () => {
@@ -139,5 +171,46 @@ describe('parseFieldViolations', () => {
 
         expect(parsed).toEqual(outputParsed);
         expect(unmatched).toEqual(outputUnmatched);
+    });
+});
+
+describe('parseFieldViolations entry keys', () => {
+    const violation = (field: string, description: string): BadRequest_FieldViolation => ({
+        $typeName: 'google.rpc.BadRequest.FieldViolation',
+        field,
+        description,
+        reason: '',
+    });
+
+    test('a map key keeps its wire spelling', () => {
+        const input = [violation('params["show_date"]', 'Must be true or false')];
+
+        expect(parseFieldViolations(input, ['params']).parsed).toEqual({
+            params: { show_date: ['Must be true or false'] },
+        });
+    });
+
+    test('a single-word map key is unaffected either way', () => {
+        const input = [violation('credential_bindings["pool"]', 'Account not found')];
+
+        expect(parseFieldViolations(input, ['credentialBindings']).parsed).toEqual({
+            credentialBindings: { pool: ['Account not found'] },
+        });
+    });
+
+    test('a field name outside brackets is still camelCased', () => {
+        const input = [violation('dns_servers[0]', 'bad address')];
+
+        expect(parseFieldViolations(input, ['dnsServers']).parsed).toEqual({
+            dnsServers: [['bad address']],
+        });
+    });
+
+    test('an unquoted map key keeps its wire spelling too', () => {
+        const input = [violation('params[show_date]', 'Must be true or false')];
+
+        expect(parseFieldViolations(input, ['params']).parsed).toEqual({
+            params: { show_date: ['Must be true or false'] },
+        });
     });
 });

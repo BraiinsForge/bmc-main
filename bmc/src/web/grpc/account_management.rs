@@ -184,8 +184,9 @@ impl web::account_management_service_server::AccountManagementService for Accoun
 
 /// Field-violation key for a credential field (e.g. `token` → `field_values.token`), so the web UI
 /// can attach the error to that field's input rather than showing it form-wide.
+// Bracketed like every other map entry, so the key reaches the form unrenamed.
 fn field_error_key(field: &str) -> String {
-    format!("field_values.{field}")
+    format!("field_values[{field:?}]")
 }
 
 /// Check the field values against the type's schema, then run the per-type upstream check,
@@ -394,18 +395,21 @@ mod tests {
         // can attach them to the right inputs.
         let violations = schema_violations("generic-userpass", &[]);
         let fields: Vec<&str> = violations.iter().map(|v| v.field.as_str()).collect();
-        assert_eq!(fields, ["field_values.username", "field_values.password"]);
+        assert_eq!(
+            fields,
+            [r#"field_values["username"]"#, r#"field_values["password"]"#]
+        );
     }
 
     #[test]
     fn schema_flags_empty_and_unknown_field() {
         assert_eq!(
             schema_violations("generic-token", &[("token", "")])[0].field,
-            "field_values.token",
+            r#"field_values["token"]"#,
         );
         assert_eq!(
             schema_violations("generic-token", &[("token", "abc"), ("extra", "x")])[0].field,
-            "field_values.extra",
+            r#"field_values["extra"]"#,
         );
     }
 }

@@ -52,7 +52,7 @@ interface Props {
 type Dialog = null | { mode: 'create' } | { mode: 'edit'; id: string; typeId: string };
 // Error shape mirroring the request payload's field paths,
 // so `parseFormErrors` routes each violation back to its control:
-// `name`, `typeId`, and the per-field `fieldValues.<key>`.
+// `name`, `typeId`, and the per-field `fieldValues["<key>"]`.
 type AccountErrors = {
     name: string;
     typeId: string;
@@ -195,8 +195,6 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            // Violations arrive under the payload's own field paths (`name`, `type_id`,
-            // `field_values.<key>`); parseFormErrors camelCases them so each routes to its control.
             const errors = pb.parseFormErrors<AccountErrors>($, ['name', 'typeId', 'fieldValues']);
             this.setState(s => ({ form: { ...s.form, errors } }));
         } finally {
