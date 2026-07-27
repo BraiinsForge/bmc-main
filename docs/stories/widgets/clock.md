@@ -63,7 +63,7 @@ readouts, and surfaces the next scheduled alarm. It runs full-screen on every su
 - Clock style, date, seconds, timezone, numeral weight, and the timezone override are manifest-driven widget parameters,
   configurable from the web UI.
 - Day / night appearance follows the device-wide night mode signal — the clock recolours itself; it is not a per-widget
-  setting. See [Night Mode](night-mode.md).
+  setting. See [Night Mode](../night-mode.md).
 - The next alarm and the 12-/24-hour time format come from device system state, not from widget configuration.
 
 ## Platforms

@@ -14,8 +14,9 @@ This is the Braiins clock codebase - a Rust-based embedded system for a smart cl
 project consists of a modular Rust backend running on OpenWRT (ARMv7), a React/TypeScript frontend, and uses Wayland for
 the display UI.
 
-**📖 For detailed architecture information, see [`docs/architecture.md`](docs/architecture.md)** - This contains
-comprehensive documentation of the display system, state management, gesture handling, and performance characteristics.
+**📖 For detailed architecture information, see [`docs/architecture/overview.md`](docs/architecture/overview.md)** - This
+contains comprehensive documentation of the display system, state management, gesture handling, and performance
+characteristics.
 
 ## Architecture
 

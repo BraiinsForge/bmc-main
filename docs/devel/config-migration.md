@@ -7,7 +7,7 @@ manifest-driven shape on first boot of the new firmware, with no user action. Sc
 widgets we recognise survive the upgrade; widgets we do not recognise are dropped with a warning rather than preserved
 in a placeholder shape.
 
-The user-facing behaviour is in [`docs/stories/config-migration.md`](../../stories/config-migration.md). This document
+The user-facing behaviour is in [`docs/stories/config-migration.md`](../stories/config-migration.md). This document
 captures the design decisions.
 
 ## Versioning

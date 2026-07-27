@@ -149,7 +149,3 @@ $LINKER --library-path "$LD_LIBRARY_PATH" /tmp/bmc-compositor-egl
 - Geometry extruded into 3D with depth
 - Lit with directional light showing edge faces
 - Whole digit rotates around X axis (180°)
-
-## Development
-
-See [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md) for detailed implementation stages and architecture decisions.

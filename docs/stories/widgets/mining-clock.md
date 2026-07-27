@@ -130,7 +130,7 @@ and reads live stats from a BOS miner over its REST API. It runs full-screen on 
   — with the minimum at a quarter of the ring, the default at three-quarters, and the maximum at the full ring. When a
   target is unavailable, its ring reads empty rather than guessing a scale.
 - Day / night appearance follows the device-wide night mode signal — the clock recolours itself; it is not a per-widget
-  setting. See [Night Mode](night-mode.md).
+  setting. See [Night Mode](../night-mode.md).
 - The next alarm and the 12-/24-hour time format come from device system state, not from widget configuration.
 - Number formatting follows the device's localization system setting; it is not a per-widget setting.
 - The *Miner password* is stored and shown as ordinary widget text because the manifest system has no secret-parameter
