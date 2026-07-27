@@ -26,6 +26,7 @@ anyhow = { workspace = true }
 bmc-widget-manifest = { workspace = true }
 clap = { workspace = true }
 heck = { workspace = true }
+indoc = { workspace = true }
 prettyplease = { workspace = true }
 proc-macro2 = { workspace = true }
 quote = { workspace = true }

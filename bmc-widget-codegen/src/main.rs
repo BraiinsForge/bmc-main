@@ -63,18 +63,18 @@ fn main() -> Result<()> {
     let manifest = <Manifest as std::str::FromStr>::from_str(&body)
         .with_context(|| format!("parse manifest at {}", cli.manifest.display()))?;
 
-    if manifest.params.is_empty() {
-        // Plan's "empty params → no file emitted" rule. Remove a stale file if present
-        // so the drift-guard doesn't bark on widgets that had params dropped from the manifest.
+    if manifest.params.is_empty() && manifest.credentials.is_empty() {
+        // Remove a stale file if present, so the drift-guard doesn't bark on a widget that had its
+        // params or credentials dropped from the manifest.
         if cli.out.exists() {
             std::fs::remove_file(&cli.out)
                 .with_context(|| format!("remove stale {}", cli.out.display()))?;
             eprintln!(
-                "removed stale {} (manifest has no params)",
+                "removed stale {} (manifest declares no params or credentials)",
                 cli.out.display()
             );
         } else {
-            eprintln!("manifest has no params — nothing to emit");
+            eprintln!("manifest declares no params or credentials — nothing to emit");
         }
         return Ok(());
     }

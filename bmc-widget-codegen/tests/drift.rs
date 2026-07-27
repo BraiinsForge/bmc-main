@@ -91,10 +91,10 @@ fn check_widget(name: &str, widget_dir: &Path, manifest_path: &Path, failures: &
 
     let generated_path: PathBuf = widget_dir.join("src/manifest_params.rs");
 
-    if manifest.params.is_empty() {
+    if manifest.params.is_empty() && manifest.credentials.is_empty() {
         if generated_path.exists() {
             failures.push(format!(
-                "{name}: manifest declares no params but \
+                "{name}: manifest declares no params or credentials but \
                  src/manifest_params.rs still exists — `just wasm::gen \
                  {name}` to remove it",
             ));
@@ -104,7 +104,7 @@ fn check_widget(name: &str, widget_dir: &Path, manifest_path: &Path, failures: &
 
     if !generated_path.exists() {
         failures.push(format!(
-            "{name}: manifest declares params but \
+            "{name}: manifest declares params or credentials but \
              src/manifest_params.rs is missing — \
              `just wasm::gen {name}` to create it",
         ));

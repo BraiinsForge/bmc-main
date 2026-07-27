@@ -161,5 +161,23 @@
       "type": "boolean",
       "optional": true
     }
+  },
+  "credentials": {
+    "pool": {
+      "type": "braiins-pool",
+      "label": "Pool account",
+      "description": "Egress-pinned type — its secret may only be sent to api.braiins.com",
+      "required": true
+    },
+    "weather": {
+      "type": "generic-token",
+      "label": "Weather service",
+      "description": "Single-token type, no egress pin"
+    },
+    "media": {
+      "type": "generic-userpass",
+      "label": "Media server",
+      "description": "Two-field type — exercises more than one placeholder per slot"
+    }
   }
 }

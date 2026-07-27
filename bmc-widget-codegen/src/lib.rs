@@ -58,6 +58,10 @@
 //! use the `impl_manifest_{str,i32,f64}_enum!` macros from the SDK so each
 //! emitted file stays small.
 //!
+//! Declared credential slots become a `credentials` module, one nested module per slot, holding a
+//! `&'static str` const per field of the slot's type. Each const carries the
+//! `{{ credential.<slot>.<field> }}` placeholder the host substitutes at egress — never a secret.
+//!
 //! ## Determinism
 //!
 //! The same manifest produces byte-equal output across runs:
@@ -78,8 +82,11 @@
 //! the same enum are a hard error.
 
 use anyhow::{Context as _, Result, anyhow, bail};
-use bmc_widget_manifest::{Manifest, ParamDefinition, ParamKey, ParamKind};
-use heck::{AsSnakeCase, AsUpperCamelCase};
+use bmc_widget_manifest::{
+    CredentialKey, CredentialSlot, Manifest, ParamDefinition, ParamKey, ParamKind, credential,
+};
+use heck::{AsShoutySnakeCase, AsSnakeCase, AsUpperCamelCase};
+use indoc::formatdoc;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::{format_ident, quote};
 use std::collections::HashSet;
@@ -92,16 +99,50 @@ pub const TOOL_VERSION: &str = env!("CARGO_PKG_VERSION");
 /// generated file can find the source manifest. Pass it relative to where
 /// the generated file lives (e.g. `../manifest.json`).
 ///
-/// Returns `Err` if the manifest declares no params (the caller should not
-/// emit a file in that case) or if name-mapping produces a collision.
+/// Returns `Err` if the manifest declares neither params nor credentials (the
+/// caller should not emit a file in that case) or if name-mapping produces a
+/// collision.
 pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
     let mut params: Vec<(&ParamKey, &ParamDefinition)> = manifest.params.iter().collect();
     params.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
 
-    if params.is_empty() {
-        bail!("manifest has no params; do not emit a file");
+    if params.is_empty() && manifest.credentials.is_empty() {
+        bail!("manifest has no params or credentials; do not emit a file");
     }
 
+    let params_block = if params.is_empty() {
+        TokenStream::new()
+    } else {
+        emit_params_block(&params)?
+    };
+    let credentials_block = emit_credentials_block(manifest)?;
+
+    let body = quote! {
+        #params_block
+        #credentials_block
+    };
+
+    let file: syn::File =
+        syn::parse2(body).context("BUG: emitted token stream is not a valid Rust file")?;
+    let pretty = prettyplease::unparse(&file);
+
+    // `allow`, not `expect`, as we cannot know what the widgets
+    // will use or not. It is fine for a widget to not use all functions
+    // from this file, such as not using the previous parameters.
+    Ok(formatdoc! {r#"
+        // AUTO-GENERATED FROM {manifest_relpath} by `bmc-widget-codegen` v{TOOL_VERSION}.
+        // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.
+
+        #![allow(
+            dead_code,
+            reason = "fields are widget-specific; not every key is used by every render path"
+        )]
+
+        {pretty}"#
+    })
+}
+
+fn emit_params_block(params: &[(&ParamKey, &ParamDefinition)]) -> Result<TokenStream> {
     // Resolve identifiers once so the same name is used consistently across the struct
     // declaration, the helper-enum declarations, and the `from_snapshot` body.
     let resolved: Vec<Resolved> = params
@@ -141,7 +182,7 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
         quote! { if self.#field != other.#field { out.push(#key_lit); } }
     });
 
-    let body = quote! {
+    Ok(quote! {
         use bmc_wasm_sdk::params as snapshot;
         use bmc_wasm_sdk::params::typed::ParamRead;
 
@@ -210,21 +251,86 @@ pub fn generate(manifest: &Manifest, manifest_relpath: &str) -> Result<String> {
                 out
             }
         }
+    })
+}
+
+fn emit_credentials_block(manifest: &Manifest) -> Result<TokenStream> {
+    if manifest.credentials.is_empty() {
+        return Ok(TokenStream::new());
+    }
+
+    let catalog = credential::builtins();
+    let mut slots: Vec<(&CredentialKey, &CredentialSlot)> = manifest.credentials.iter().collect();
+    slots.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
+
+    let modules = slots
+        .into_iter()
+        .map(|(key, slot)| emit_credential_slot(&catalog, key.as_str(), slot))
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(quote! {
+        /// Credential slots this widget declares, one module per slot.
+        pub mod credentials {
+            #(#modules)*
+        }
+    })
+}
+
+fn emit_credential_slot(
+    catalog: &[credential::CredentialType],
+    slot_key: &str,
+    slot: &CredentialSlot,
+) -> Result<TokenStream> {
+    let cred_type = catalog
+        .iter()
+        .find(|t| t.id == slot.type_id)
+        .ok_or_else(|| {
+            anyhow!(
+                "BUG: slot {slot_key:?} names unknown credential type {:?}, which \
+                 Manifest::validate must have rejected first",
+                slot.type_id
+            )
+        })?;
+
+    let mut field_keys: Vec<&ParamKey> = cred_type.fields.keys().collect();
+    field_keys.sort_by(|a, b| a.as_str().cmp(b.as_str()));
+
+    let consts = field_keys.into_iter().map(|field| {
+        let name = format_ident!("{}", AsShoutySnakeCase(field.as_str()).to_string());
+        let placeholder = Literal::string(&format!(
+            "{{{{ credential.{slot_key}.{} }}}}",
+            field.as_str()
+        ));
+        let doc = format!("Placeholder for this slot's `{}` field.", field.as_str());
+        quote! {
+            #[doc = #doc]
+            pub const #name: &str = #placeholder;
+        }
+    });
+
+    let requiredness = if slot.required {
+        "Required — the widget cannot work until an account is bound."
+    } else {
+        "Optional."
     };
+    // One attribute per line: a single multi-line `#[doc]` renders as an unindented `/** */` block.
+    let mut doc_lines = vec![format!(
+        "{} — a `{}` account. {requiredness}",
+        slot.label, slot.type_id
+    )];
+    if let Some(description) = &slot.description {
+        doc_lines.push(String::new());
+        doc_lines.push(description.clone());
+    }
+    let docs = doc_lines.iter().map(|line| quote! { #[doc = #line] });
+    let module = field_ident(slot_key);
 
-    let file: syn::File =
-        syn::parse2(body).context("BUG: emitted token stream is not a valid Rust file")?;
-    let pretty = prettyplease::unparse(&file);
-
-    // `allow`, not `expect`, as we cannot know what the widgets
-    // will use or not. It is fine for a widget to not use all functions
-    // from this file, such as not using the previous parameters.
-    Ok(format!(
-        "// AUTO-GENERATED FROM {manifest_relpath} by `bmc-widget-codegen` v{TOOL_VERSION}.\n\
-         // Do not edit by hand. Run `just wasm::gen <widget>` after changing the manifest.\n\n\
-         #![allow(\n    dead_code,\n    reason = \"fields are widget-specific; not every key is used by every render path\"\n)]\n\n\
-         {pretty}"
-    ))
+    Ok(quote! {
+        #(#docs)*
+        pub mod #module {
+            #(#consts)*
+        }
+    })
 }
 
 // ── Resolution: manifest key → emitted identifier set ───────────────
@@ -772,5 +878,84 @@ mod tests {
         assert!(items.contains(&"Theme".to_owned()), "items: {items:?}");
         // `ratio` is optional, no enum → no helper enum emitted.
         assert!(!items.contains(&"Ratio".to_owned()));
+    }
+
+    fn manifest_with_credentials(credentials: &str, params: &str) -> Manifest {
+        let json = format!(
+            r#"{{
+            "uid": "00000000-0000-4000-8000-000000000000",
+            "version": "0.1.0",
+            "name": "T",
+            "description": "T",
+            "binary": "t.wasm",
+            "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}],
+            "params": {params},
+            "credentials": {credentials}
+        }}"#
+        );
+        <Manifest as std::str::FromStr>::from_str(&json)
+            .expect("BUG: hand-crafted test manifest must parse")
+    }
+
+    #[test]
+    fn credential_slots_emit_placeholder_consts_for_every_field_of_their_type() {
+        let manifest = manifest_with_credentials(
+            r#"{"media": {"type": "generic-userpass", "label": "Media server"}}"#,
+            "{}",
+        );
+        let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
+        syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
+
+        assert!(src.contains("pub mod credentials"), "{src}");
+        assert!(src.contains("pub mod media"), "{src}");
+        assert!(
+            src.contains(r#"pub const USERNAME: &str = "{{ credential.media.username }}""#),
+            "{src}"
+        );
+        assert!(
+            src.contains(r#"pub const PASSWORD: &str = "{{ credential.media.password }}""#),
+            "{src}"
+        );
+    }
+
+    #[test]
+    fn a_credentials_only_manifest_emits_no_params_scaffolding() {
+        let manifest = manifest_with_credentials(
+            r#"{"pool": {"type": "braiins-pool", "label": "Pool"}}"#,
+            "{}",
+        );
+        let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
+
+        assert!(src.contains("pub mod credentials"), "{src}");
+        assert!(
+            !src.contains("pub struct Params"),
+            "no params declared, so no Params struct: {src}"
+        );
+        assert!(
+            !src.contains("bmc_wasm_sdk"),
+            "the SDK import would be unused without params: {src}"
+        );
+    }
+
+    #[test]
+    fn a_slot_key_becomes_a_snake_case_module_while_the_placeholder_keeps_the_manifest_key() {
+        let manifest = manifest_with_credentials(
+            r#"{"main-pool": {"type": "braiins-pool", "label": "Pool"}}"#,
+            "{}",
+        );
+        let src = generate(&manifest, "test://").expect("BUG: credentials alone must emit a file");
+        syn::parse_str::<syn::File>(&src).expect("BUG: codegen output must be valid Rust");
+
+        assert!(src.contains("pub mod main_pool"), "{src}");
+        assert!(
+            src.contains(r#""{{ credential.main-pool.token }}""#),
+            "the placeholder is resolved against the manifest key, not the Rust ident: {src}"
+        );
+    }
+
+    #[test]
+    fn a_manifest_with_neither_params_nor_credentials_emits_nothing() {
+        let manifest = manifest_with_credentials("{}", "{}");
+        assert!(generate(&manifest, "test://").is_err());
     }
 }
