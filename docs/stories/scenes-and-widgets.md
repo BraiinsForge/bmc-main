@@ -26,6 +26,18 @@ multiple compatible widgets placed on the shared grid.
   different settings.
 - Updating widget settings applies to the scene without requiring the user to recreate it.
 
+### Know when a scene is still loading
+
+> As a user, I want clear feedback when a scene has no content to show yet, so a brief loading moment does not look like
+> a broken device.
+
+- Any scene — fullscreen or combined — whose widgets have not drawn their first frame yet shows the DECK logo with a
+  "Loading scene…" caption beneath it.
+- When no scene is configured at all, the device shows the logo alone.
+- The loading placeholder moves with the scene during swipes, transitions, and previews, just like real content.
+- An empty combined scene is not "loading": it shows its separator grid instead (see
+  [Combined Scene](combined-scene.md)).
+
 ### Enable or disable scenes
 
 > As a user, I want to keep a scene configured but temporarily remove it from the display rotation.
@@ -76,6 +88,8 @@ swipes and automatic rotation.
   manifests.
 - If every configured scene is disabled or unsupported, the device cannot build a normal scene-cycling list from user
   configuration.
+- The branding logo appears only on the Braiins Deck; other products show a plain dark background while a scene has no
+  rendered content.
 
 ## Out of scope
 

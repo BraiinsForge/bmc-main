@@ -32,13 +32,13 @@ diagnostic files, so users can safely share archives with support without exposi
 
 Scenes are user-configured display pages containing fullscreen or combined widget layouts. Users can enable, disable,
 reorder, swipe between, and automatically cycle through scenes while keeping widget settings scoped to each widget
-instance.
+instance. A scene with no rendered content yet shows a loading placeholder.
 
 ### [Combined Scene](combined-scene.md)
 
 A combined scene lets the user compose multiple compatible widgets on a single display. Widgets share a common sizing
-model (`small`, `medium`, `large`) and keep their own widget-specific configuration while rendering as one scene.
-`full`-sized widgets are reserved for fullscreen scenes.
+model (`small`, `medium`, `large`) and keep their own widget-specific configuration while rendering as one scene, laid
+out on a uniform separator grid. `full`-sized widgets are reserved for fullscreen scenes.
 
 ### [Default Scenes](default-scenes.md)
 

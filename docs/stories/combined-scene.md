@@ -42,6 +42,29 @@ the whole screen to one widget, the device composes several widgets together and
   shared scene.
 - Editing one widget does not require recreating the scene or changing the other widgets in it.
 
+### See where widgets begin and end
+
+> As a user, I want visible separators between the widgets of a combined scene so the layout reads as a tidy grid
+> instead of content floating on a dark background.
+
+- Widgets in a combined scene are divided by thin, uniformly spaced separator lines.
+- Widgets sit flush in the panel with even gaps; there are no dead strips at the panel edges.
+- Cells with no widget stay dark, framed by the separator lines.
+- The separator grid moves with the scene during swipes, transitions, and previews.
+- Fullscreen scenes are unaffected; separators appear only in combined scenes.
+
+### Tell an empty scene from a loading one
+
+> As a user, I want an empty combined scene to look deliberately empty, not stuck loading, so I can trust what the
+> device is telling me.
+
+- An empty combined scene (no widgets configured) shows the separator grid with dark cells, not the loading placeholder
+  — there is nothing to load.
+- A widget that cannot run (for example, its package was uninstalled) leaves its grid cell empty instead of holding the
+  scene in a loading state.
+- The general loading placeholder for scenes with unpainted widgets is described in
+  [Scenes & Widgets](scenes-and-widgets.md).
+
 ## Constraints
 
 - Combined scene is a separate scene type from fullscreen scene.
