@@ -21,6 +21,8 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
+preview = true
+explicit-preview-rules = true
 select = [
     "F", # pyflakes
     "E", # pycodestyle errors
@@ -37,6 +39,7 @@ select = [
     "PL", # pylint
     "PERF", # perflint
     "FURB", # refurb
+    "PLR0917", # too many positional arguments (preview in ruff < 0.16)
 ]
 
 [tool.ruff.lint.isort]
