@@ -29,13 +29,23 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use memmap2::Mmap;
 
 /// On-disk header (LE): `saved_at` u64, `meta_len` u32; then metadata, then bytes.
 const HEADER: usize = 12;
 const EXT: &str = "blob";
+
+/// Sidecar holding `saved_at` alone, so re-verifying an unchanged entry can
+/// restamp it without rewriting the payload. Shadows the header when present.
+const STAMP_EXT: &str = "ts";
+const STAMP_TMP_EXT: &str = "ts.tmp";
+
+fn read_stamp(blob_path: &Path) -> Option<u64> {
+    let raw = fs::read(blob_path.with_extension(STAMP_EXT)).ok()?;
+    Some(u64::from_le_bytes(raw.get(..8)?.try_into().ok()?))
+}
 
 /// Total on-disk size of an entry (`header + metadata + payload`); `None` on overflow.
 fn entry_len(metadata_len: usize, bytes_len: usize) -> Option<u64> {
@@ -106,6 +116,12 @@ impl DiskCache {
             ));
         }
 
+        // A re-verified entry only needs a fresh stamp; rewriting an unchanged
+        // payload would spend its full size in flash on every refresh.
+        if self.matches(key, metadata, bytes) {
+            return self.write_stamp(&path, saved_at);
+        }
+
         fs::create_dir_all(&self.dir)?;
         let tmp = path.with_extension("tmp");
         // Stream header/metadata/payload rather than concatenating one big buffer.
@@ -117,8 +133,25 @@ impl DiskCache {
         w.flush()?;
         drop(w);
         fs::rename(&tmp, &path)?;
+        // The header now carries the current stamp; a leftover sidecar would shadow it.
+        let _ = fs::remove_file(path.with_extension(STAMP_EXT));
         self.trim();
         Ok(())
+    }
+
+    /// Whether the stored entry is byte-identical to what `put` would write.
+    fn matches(&self, key: &str, metadata: &[u8], bytes: &[u8]) -> bool {
+        self.get(key)
+            .is_some_and(|blob| blob.metadata() == metadata && blob.bytes() == bytes)
+    }
+
+    /// Replace the sidecar stamp via temp+rename, so a concurrent reader sees
+    /// either the old value or the new one, never a half-written u64.
+    fn write_stamp(&self, blob_path: &Path, saved_at: u64) -> io::Result<()> {
+        fs::create_dir_all(&self.dir)?;
+        let tmp = blob_path.with_extension(STAMP_TMP_EXT);
+        fs::write(&tmp, saved_at.to_le_bytes())?;
+        fs::rename(&tmp, blob_path.with_extension(STAMP_EXT))
     }
 
     /// True if a `metadata_len` + `bytes_len` entry fits the bucket cap. Callers
@@ -132,7 +165,8 @@ impl DiskCache {
     /// malformed file, so the caller falls back to a fresh fetch.
     #[must_use]
     pub fn get(&self, key: &str) -> Option<CachedBlob> {
-        let file = fs::File::open(self.path(key)?).ok()?;
+        let path = self.path(key)?;
+        let file = fs::File::open(&path).ok()?;
         // SAFETY: host-owned dir, entries written atomically (temp+rename), so a
         // mapped file is never truncated mid-read by this process.
         let map = unsafe { Mmap::map(&file) }.ok()?;
@@ -146,12 +180,13 @@ impl DiskCache {
         Some(CachedBlob {
             map,
             meta_end,
-            saved_at,
+            saved_at: read_stamp(&path).unwrap_or(saved_at),
         })
     }
 
     pub fn evict(&self, key: &str) {
         if let Some(path) = self.path(key) {
+            let _ = fs::remove_file(path.with_extension(STAMP_EXT));
             let _ = fs::remove_file(path);
         }
     }
@@ -165,7 +200,7 @@ impl DiskCache {
         for entry in entries.flatten() {
             let path = entry.path();
             match path.extension().and_then(|e| e.to_str()) {
-                Some(EXT) => {
+                Some(EXT | STAMP_EXT) => {
                     let key = path.file_stem().and_then(|s| s.to_str());
                     if key.is_some_and(|k| !live.contains(k)) {
                         let _ = fs::remove_file(&path);
@@ -201,7 +236,11 @@ impl DiskCache {
         (count, bytes)
     }
 
-    /// Trim to `max_bytes`, evicting oldest-modified entries first.
+    /// Trim to `max_bytes`, evicting least-recently-used entries first.
+    ///
+    /// Recency is the newer of the payload and its sidecar: a deduplicated
+    /// entry stops advancing its own mtime while still being verified, so
+    /// payload mtime alone would evict precisely the entries still in use.
     fn trim(&self) {
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return;
@@ -209,22 +248,33 @@ impl DiskCache {
         let mut files: Vec<(PathBuf, std::time::SystemTime, u64)> = entries
             .flatten()
             .filter_map(|e| {
+                let path = e.path();
+                if path.extension().and_then(|x| x.to_str()) != Some(EXT) {
+                    return None;
+                }
                 let meta = e.metadata().ok()?;
-                meta.is_file()
-                    .then(|| Some((e.path(), meta.modified().ok()?, meta.len())))
-                    .flatten()
+                if !meta.is_file() {
+                    return None;
+                }
+                let written = meta.modified().ok()?;
+                let stamped = fs::metadata(path.with_extension(STAMP_EXT))
+                    .and_then(|s| s.modified())
+                    .ok();
+                let used = stamped.map_or(written, |stamp| stamp.max(written));
+                Some((path, used, meta.len()))
             })
             .collect();
         let total: u64 = files.iter().map(|(_, _, len)| len).sum();
         let Some(mut over) = total.checked_sub(self.max_bytes).filter(|o| *o > 0) else {
             return;
         };
-        files.sort_by_key(|(_, mtime, _)| *mtime);
+        files.sort_by_key(|(_, used, _)| *used);
         for (path, _, len) in files {
             if over == 0 {
                 break;
             }
             if fs::remove_file(&path).is_ok() {
+                let _ = fs::remove_file(path.with_extension(STAMP_EXT));
                 over = over.saturating_sub(len);
             }
         }
@@ -251,6 +301,107 @@ mod tests {
         assert_eq!(got.saved_at, TS);
         assert_eq!(got.metadata(), b"meta");
         assert_eq!(got.bytes(), b"payload");
+    }
+
+    /// Path of the sidecar for `key`, whose presence marks a deduplicated write.
+    fn stamp_of(dir: &tempfile::TempDir, key: &str) -> PathBuf {
+        dir.path().join(format!("{key}.{STAMP_EXT}"))
+    }
+
+    #[test]
+    fn identical_content_restamps_instead_of_rewriting() {
+        let (d, c) = cache(1 << 20);
+        c.put("k", TS, b"meta", b"payload").expect("put");
+        assert!(
+            !stamp_of(&d, "k").exists(),
+            "a first write carries its stamp in the header, not a sidecar"
+        );
+
+        c.put("k", TS + 5_000, b"meta", b"payload").expect("re-put");
+        assert!(
+            stamp_of(&d, "k").exists(),
+            "an unchanged payload must restamp via the sidecar, not rewrite"
+        );
+        assert_eq!(c.get("k").expect("hit").saved_at, TS + 5_000);
+    }
+
+    #[test]
+    fn changed_content_rewrites_and_drops_the_sidecar() {
+        let (d, c) = cache(1 << 20);
+        c.put("k", TS, b"meta", b"payload").expect("put");
+        c.put("k", TS + 5_000, b"meta", b"payload").expect("re-put");
+
+        c.put("k", TS + 9_000, b"meta", b"changed")
+            .expect("put changed");
+        assert!(
+            !stamp_of(&d, "k").exists(),
+            "a rewritten header owns the stamp; a stale sidecar would shadow it"
+        );
+        let got = c.get("k").expect("hit");
+        assert_eq!(got.saved_at, TS + 9_000);
+        assert_eq!(got.bytes(), b"changed");
+    }
+
+    #[test]
+    fn evict_and_sweep_take_the_sidecar_too() {
+        let (d, c) = cache(1 << 20);
+        c.put("gone", TS, b"m", b"p").expect("put");
+        c.put("gone", TS + 1, b"m", b"p").expect("re-put");
+        assert!(stamp_of(&d, "gone").exists());
+        c.evict("gone");
+        assert!(
+            !stamp_of(&d, "gone").exists(),
+            "evict must not orphan a stamp"
+        );
+
+        c.put("swept", TS, b"m", b"p").expect("put");
+        c.put("swept", TS + 1, b"m", b"p").expect("re-put");
+        c.sweep(&HashSet::new());
+        assert!(
+            !stamp_of(&d, "swept").exists(),
+            "sweep must not orphan a stamp"
+        );
+    }
+
+    #[test]
+    fn trim_evicts_by_last_verified_not_last_written() {
+        let payload = [7_u8; 512];
+        // Roomy while seeding, so `put`'s own trim can't evict mid-setup.
+        let (d, c) = cache(1 << 20);
+        c.put("old", TS, b"m", &payload).expect("put old");
+        c.put("new", TS, b"m", &payload).expect("put new");
+        // Re-verifying "old" restamps the sidecar and leaves the payload untouched.
+        c.put("old", TS + 1, b"m", &payload).expect("re-put old");
+
+        let at = |secs| std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+        let set_mtime = |path: PathBuf, secs| {
+            fs::File::options()
+                .write(true)
+                .open(path)
+                .expect("open")
+                .set_modified(at(secs))
+                .expect("set mtime");
+        };
+        // "old" was written first but verified last, so payload mtime alone
+        // would pick it as the eviction candidate.
+        set_mtime(d.path().join("old.blob"), 1_000);
+        set_mtime(d.path().join("new.blob"), 2_000);
+        set_mtime(stamp_of(&d, "old"), 3_000);
+
+        // One entry fits, two do not, so exactly one must go.
+        let tight = DiskCache::new(
+            d.path().to_path_buf(),
+            entry_len(1, payload.len()).expect("len") + 1,
+        );
+        tight.trim();
+        assert!(
+            tight.get("old").is_some(),
+            "the most recently verified entry must survive"
+        );
+        assert!(
+            tight.get("new").is_none(),
+            "the least recently used entry goes"
+        );
     }
 
     #[test]
