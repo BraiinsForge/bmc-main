@@ -28,6 +28,7 @@
       "name": "Refresh interval (seconds)",
       "description": "How often to re-fetch the image",
       "type": "integer",
+      "min": 300,
       "default_value": 3600
     },
     "sizing": {

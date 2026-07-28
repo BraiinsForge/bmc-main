@@ -102,6 +102,9 @@ mod wasm_glue {
         });
     }
 
+    // Zero guard only, deliberately not the manifest's `min`. Staleness fires
+    // at `interval * stale_factor`, so clamping a stored interval up here
+    // would move that threshold too — quietly weakening the configured freshness.
     fn refresh_interval_ms() -> u32 {
         let secs = manifest_params::Params::current().refresh_seconds.max(1);
         u32::try_from(secs).unwrap_or(u32::MAX).saturating_mul(1000)

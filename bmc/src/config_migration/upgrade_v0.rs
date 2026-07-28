@@ -94,6 +94,8 @@ const DEFAULT_WEATHER_LOCATION: &str = "Prague";
 const DEFAULT_WEATHER_TIME_ZONE: &str = "location";
 /// Image `refresh_seconds` fallback — image manifest `default_value`.
 const DEFAULT_REFRESH_SECONDS: i32 = 3600;
+/// Image `refresh_seconds` floor — image manifest `min`.
+const MIN_REFRESH_SECONDS: i32 = 300;
 /// Nameday `country` fallback — nameday manifest `default_value`.
 const DEFAULT_NAMEDAY_COUNTRY: &str = "cz";
 /// Nameday `country` vocabulary — nameday manifest `enum_values`.
@@ -431,13 +433,18 @@ fn dispatch_remote_image(widget: &v0::Widget) -> (Uuid, Value) {
     // widget's required-i32 read would then panic on boot, so clamp into
     // the manifest's representable range. Absent or unparseable input
     // falls back to the manifest default.
+    //
+    // v0 had no lower bound, so a carried-over interval is raised to the floor.
+    // Migration is the only point a v0 value enters; values written since then
+    // are bounded where they are set.
     let refresh_seconds = widget
         .params
         .get("refresh_duration")
         .and_then(|v| humantime_serde::deserialize::<Duration, _>(v).ok())
         .map_or(DEFAULT_REFRESH_SECONDS, |d| {
             i32::try_from(d.as_secs()).unwrap_or(i32::MAX)
-        });
+        })
+        .max(MIN_REFRESH_SECONDS);
     params.insert("refresh_seconds".to_owned(), json!(refresh_seconds));
 
     // `image_scale_mode` (`fit` / `fill`) was renamed to `sizing`
@@ -933,7 +940,7 @@ mod tests {
 
     #[test]
     fn remote_image_parses_humantime_refresh_into_seconds() {
-        for (human, secs) in [("30s", 30), ("5m", 300), ("1h", 3600)] {
+        for (human, secs) in [("5m", 300), ("1h", 3600), ("2h30m", 9000)] {
             let upgraded = upgrade("remote_image", json!({ "refresh_duration": human }));
             assert_eq!(
                 upgraded.params["refresh_seconds"],
@@ -941,6 +948,16 @@ mod tests {
                 "`{human}` must become {secs} seconds"
             );
         }
+    }
+
+    #[test]
+    fn remote_image_refresh_under_the_floor_is_raised_to_it() {
+        let upgraded = upgrade("remote_image", json!({ "refresh_duration": "30s" }));
+        assert_eq!(
+            upgraded.params["refresh_seconds"],
+            ParamValue::Integer(300),
+            "a v0 interval under the manifest floor must be raised, not carried over"
+        );
     }
 
     #[test]
