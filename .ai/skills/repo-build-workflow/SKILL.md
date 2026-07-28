@@ -42,9 +42,6 @@ line at the end is the success marker; nothing else needed.
 
 These are **supplements**, not substitutes for `just validate`. Always finish with the full one.
 
-- `just validate-wasm` — workspace-narrow validation specific to wasm/protocol crates (`bmc-wasm-runtime/`, protocol
-  crates). Faster than full validate; misses formatter drift in unrelated files and breakage in crates outside its
-  scope.
 - `just clippy` — clippy only, no formatter, no content checks. Use during tight iteration; finish with `just validate`.
 - `just format` / `nix fmt` — formatter only. Use when you want to format-only on a partial change before continuing to
   iterate.

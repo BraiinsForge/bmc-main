@@ -1,8 +1,8 @@
 # cargo-deny configuration for the wasm32 dep graph.
 #
-# Invoked via `just validate-wasm-deny`, which adds
-# `--target wasm32-unknown-unknown` so this analysis
-# only sees crates that would land in widget binaries.
+# Invoked via the `cargo-deny-wasm` nix check (run by `just validate` and CI),
+# which adds `--target wasm32-unknown-unknown` so this analysis only sees
+# crates that would land in widget binaries.
 #
 # The host-side dep hygiene check lives in `deny.toml`.
 #

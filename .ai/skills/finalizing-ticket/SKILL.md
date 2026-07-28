@@ -20,9 +20,8 @@ Walk the Definition of Done from `.ai/instructions.md` and confirm each item is 
 
 ## 2. Validate the tree
 
-Run the repo's validation path — never raw `cargo`/`nix` substitutes. See the `repo-build-workflow` skill for which
-target fits the change; the default is plain `just validate`, with `just validate-wasm` as a supplement when touching
-`bmc-wasm-runtime/` or protocol crates. Finish on the full `just validate` and confirm the `validate: OK` marker.
+Run the repo's validation path — never raw `cargo`/`nix` substitutes. See the `repo-build-workflow` skill for the
+narrower targets worth using mid-iteration. Finish on the full `just validate` and confirm the `validate: OK` marker.
 
 ## 3. Clean up scratch state
 

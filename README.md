@@ -207,11 +207,7 @@ cargo clippy --manifest-path ./widgets-wasm/Cargo.toml --workspace --target wasm
 cargo test --manifest-path ./widgets-wasm/Cargo.toml --workspace
 ```
 
-Or run the one-line wasm validation recipe:
-
-```shell
-just validate-wasm
-```
+Both of these are covered by `just validate` above — the wasm gates run as part of it.
 
 Other useful focused recipes:
 

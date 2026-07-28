@@ -26,14 +26,43 @@ default:
 # === Quick local validation (default; LLM-friendly) ===
 
 # Fast sanity check, not CI-reproducible (use `validate-full` for that).
-validate: format clippy python validate-wasm
+validate: format clippy python
+    # Cheap static gates.
     just manifest::check-schema
+    # The other generated-artifact guard: every widget's manifest_params.rs
+    # against its manifest. Stale output otherwise surfaces only in CI.
+    # Bare like the cargo runs below, so one toolchain owns the target dir.
+    cargo nextest run -p bmc-widget-codegen
     # Native crates are clippy-gated above but not otherwise tested here: a
     # `--workspace` run cannot build (bmc-wasm-sdk loses bmc_render_macros under
     # workspace-wide feature unification), so each has to be named.
     just test bmc-netsim
     nix run ".#content-checks"
+
+    # Dependency policy, host and wasm.
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny"
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
+
+    # No allocating fmt machinery in widget code.
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.no-fmt-in-wasm"
+
+    # Wasm lint; production widgets are gated, examples only have to build.
+    cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
+    cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
+    (cd widgets-wasm && cargo clippy --target wasm32-unknown-unknown --workspace -- -D warnings)
+
+    # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.
+    # Left unwrapped like the clippy runs above: `nix develop` swaps the toolchain
+    # and the sccache wrapper, and two rustc setups over one target dir do not link.
+    cargo nextest run -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-wasm-thin -p bmc-wasm-thin-protocol
+
+    # Widget logic has native tests; the wasm32 builds below can't run them.
+    (cd widgets-wasm && cargo nextest run --workspace)
+
+    # Slowest last: every widget workspace for wasm32, then the SDK docs.
+    for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
     nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
+
     @echo "validate: OK"
 
 # Auto-format everything (nix fmt + SVG pass).
@@ -59,9 +88,9 @@ clippy:
         -D warnings
 
 # Lint, type-check and test the Python uv workspace (bmc-tui + harness).
-# ruff/ty are nix-provided (PyPI binaries don't run in the pure-nix CI); pytest
-# runs through uv. `uv sync` first so ty sees the workspace .venv.
 python:
+    # ruff/ty are nix-provided (PyPI binaries don't run in the pure-nix CI); pytest
+    # runs through uv. `uv sync` first so ty sees the workspace .venv.
     {{ NIX_DEV }} uv sync
     {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness
     {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
@@ -82,32 +111,6 @@ fmt-images *PATHS:
 # Full nix-driven checks (matches CI's main stage) - Very heavy
 validate-full:
     scripts/mem-box.sh nix flake check -L --option max-jobs 4
-
-# === WASM Runtime ===
-
-# Validate the wasm runtime + widget workspaces (format, lint, clippy, test, build).
-validate-wasm: format validate-wasm-deny validate-wasm-no-fmt
-    cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
-    cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
-    # Wasm crates only: a full --workspace build breaks feature unification (bmc-wasm-sdk loses bmc_render_macros).
-    cargo nextest run -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-wasm-thin -p bmc-wasm-thin-protocol
-    # Production widgets are lint-gated (matches CI clippy-wasm-widgets); examples below build but aren't held to -D warnings.
-    (cd widgets-wasm && cargo clippy --target wasm32-unknown-unknown --workspace -- -D warnings)
-    for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
-    # Widget logic has native unit tests; the wasm32 build above can't run them.
-    (cd widgets-wasm && cargo nextest run --workspace)
-
-# Block bloat crates from creeping into the wasm32 dep graph (source: `nix/checks.nix::cargo-deny-wasm`).
-validate-wasm-deny:
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
-
-# Block allocating fmt macros in widget code (source: `nix/checks.nix::no-fmt-in-wasm`).
-validate-wasm-no-fmt:
-    nix build -L ".#checks.{{ NIX_SYSTEM }}.no-fmt-in-wasm"
-
-# Fast local ast-grep scan (same `rules/` as validate-wasm-no-fmt, no nix build).
-ast-grep:
-    nix-shell -p ast-grep --run "ast-grep scan --error"
 
 # === Storybook ===
 

@@ -89,6 +89,6 @@ Run these from the repository root unless noted:
 - `nix develop -c cargo test -p <widget>` (from `widgets-wasm/`) — host unit tests.
 - `nix develop -c cargo clippy -p <widget> --target wasm32-unknown-unknown -- -D warnings` — the lint gate that actually
   compiles the gated render code.
-- `just validate-wasm-no-fmt` — rejects allocating `fmt` macros.
+- `just validate` — among its gates, rejects allocating `fmt` macros in widget code.
 - `just wasm::verify <widget>` — the visual-regression gate. Headless rendering and baseline capture need a GPU
   (`/dev/dri`); without one this only runs in CI.
