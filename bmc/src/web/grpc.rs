@@ -226,7 +226,10 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let account_management_service =
             web::account_management_service_server::AccountManagementServiceServer::new(
-                account_management::AccountManagementService::new(self.secret_store),
+                account_management::AccountManagementService::new(
+                    self.config_handle,
+                    self.secret_store,
+                ),
             );
 
         let credential_management_service =

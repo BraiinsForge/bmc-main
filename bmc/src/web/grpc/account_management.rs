@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic;
 use std::str::FromStr;
 use std::sync::Arc;
@@ -36,8 +36,10 @@ use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
 
+use crate::config::ConfigHandle;
 use crate::credential;
 use crate::data::{Account, AccountId};
+use crate::scene::{Scene, SceneId};
 use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
@@ -47,12 +49,20 @@ const POOL_API_ENDPOINT: &str = "/user/hashrate/current";
 const API_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct AccountManagementService {
+    /// Lock order wherever both are held: this first, then `secret_store`.
+    config_handle: Arc<RwLock<ConfigHandle>>,
     secret_store: Arc<RwLock<SecretStoreHandle>>,
 }
 
 impl AccountManagementService {
-    pub(crate) fn new(secret_store: Arc<RwLock<SecretStoreHandle>>) -> Self {
-        Self { secret_store }
+    pub(crate) fn new(
+        config_handle: Arc<RwLock<ConfigHandle>>,
+        secret_store: Arc<RwLock<SecretStoreHandle>>,
+    ) -> Self {
+        Self {
+            config_handle,
+            secret_store,
+        }
     }
 }
 
@@ -62,12 +72,16 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::GetAllAccountsResponse>, Status> {
+        let mut bound = bindings_by_account(self.config_handle.read().await.scenes());
         let store = self.secret_store.read().await;
         let accounts = store
             .accounts()
             .values()
             .cloned()
-            .map(map_account_to_proto)
+            .map(|account| {
+                let widgets = bound.remove(&account.id).unwrap_or_default();
+                map_account_to_proto(account, widgets)
+            })
             .collect();
         Ok(Response::new(web::GetAllAccountsResponse { accounts }))
     }
@@ -159,6 +173,23 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         }
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
+        // Lock order forces the scan ahead of the existence check.
+        // Both facts are gathered first,
+        // and only the reporting order is chosen.
+        let bound = bindings_by_account(self.config_handle.read().await.scenes());
+        let bound_count = bound.get(&id).map_or(0, Vec::len);
+        let exists = self.secret_store.read().await.accounts().contains_key(&id);
+        match decide_remove_account(exists, bound_count) {
+            RemoveAccountOutcome::NotFound => return Err(Status::not_found("Account not found")),
+            RemoveAccountOutcome::Bound(count) => {
+                let noun = if count == 1 { "widget" } else { "widgets" };
+                return Err(Status::failed_precondition(format!(
+                    "account is bound to {count} {noun}; unbind it there first"
+                )));
+            }
+            RemoveAccountOutcome::Remove => {}
+        }
+
         let join_handle = tokio::spawn({
             let secret_store = self.secret_store.clone();
             async move {
@@ -182,15 +213,16 @@ impl web::account_management_service_server::AccountManagementService for Accoun
     }
 }
 
-/// Field-violation key for a credential field (e.g. `token` → `field_values.token`), so the web UI
-/// can attach the error to that field's input rather than showing it form-wide.
+/// Field-violation key for a credential field (e.g. `token` → `field_values.token`),
+/// so the web UI can attach the error to that field rather than showing it form-wide.
 // Bracketed like every other map entry, so the key reaches the form unrenamed.
 fn field_error_key(field: &str) -> String {
     format!("field_values[{field:?}]")
 }
 
-/// Check the field values against the type's schema, then run the per-type upstream check,
-/// collecting every field violation and returning them together.
+/// Check the field values against the type's schema,
+/// then run the per-type upstream check, collecting
+/// every field violation and returning them together.
 async fn validate_account(
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
@@ -204,8 +236,9 @@ async fn validate_account(
     validate_upstream(type_id, field_values).await
 }
 
-/// `type_id` must name a known credential type, and `field_values` must supply exactly its fields,
-/// each non-empty. Pure (no upstream call), so unit-testable on its own.
+/// `type_id` must name a known credential type, and `field_values`
+/// must supply exactly its fields, each non-empty.
+/// Pure (no upstream call), so unit-testable on its own.
 fn validate_schema(
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
@@ -293,7 +326,52 @@ async fn check_braiins_pool_token(token: &str) -> Result<(), CredentialCheckErro
     }
 }
 
-fn map_account_to_proto(account: Account) -> web::Account {
+/// Widget instances bound to each account.
+/// A widget that spends the same account on two slots
+/// is still one widget, so its id appears once.
+fn bindings_by_account(scenes: &IndexMap<SceneId, Scene>) -> HashMap<AccountId, Vec<String>> {
+    let mut bound: HashMap<AccountId, Vec<String>> = HashMap::new();
+    for scene in scenes.values() {
+        for widget in scene.widgets.values() {
+            let mut seen = HashSet::new();
+            for account_id in widget.credential_bindings.values() {
+                if seen.insert(account_id) {
+                    bound
+                        .entry(account_id.clone())
+                        .or_default()
+                        .push(widget.id.to_string());
+                }
+            }
+        }
+    }
+    bound
+}
+
+/// What `RemoveAccount` does once both preconditions are known.
+#[derive(Debug, PartialEq, Eq)]
+enum RemoveAccountOutcome {
+    NotFound,
+    /// Refused; the count is widgets, not slots.
+    Bound(usize),
+    Remove,
+}
+
+/// A missing account outranks a stale binding,
+/// because `secrets.json` is hand-editable:
+/// a binding can name an account that is gone,
+/// and "unbind it first" would then send the operator
+/// chasing something that no longer exists.
+fn decide_remove_account(exists: bool, bound_count: usize) -> RemoveAccountOutcome {
+    if !exists {
+        RemoveAccountOutcome::NotFound
+    } else if bound_count > 0 {
+        RemoveAccountOutcome::Bound(bound_count)
+    } else {
+        RemoveAccountOutcome::Remove
+    }
+}
+
+fn map_account_to_proto(account: Account, connected_widgets: Vec<String>) -> web::Account {
     web::Account {
         id: account.id.to_string(),
         type_id: account.type_id,
@@ -302,7 +380,7 @@ fn map_account_to_proto(account: Account) -> web::Account {
             seconds: account.created_at.timestamp(),
             nanos: 0,
         }),
-        connected_widgets: Vec::new(),
+        connected_widgets,
     }
 }
 
@@ -370,8 +448,13 @@ enum CredentialCheckError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeMap;
+
+    use proptest::prelude::*;
     use tonic_types::FieldViolation;
+
+    use super::*;
+    use crate::scene::{SceneKind, Widget, WidgetPlacement, WidgetPosition};
 
     fn values(pairs: &[(&str, &str)]) -> IndexMap<ParamKey, String> {
         pairs
@@ -439,6 +522,191 @@ mod tests {
             schema_violations("generic-token", &[("token", "abc"), ("extra", "x")])[0].field,
             r#"field_values["extra"]"#,
         );
+    }
+
+    /// A one-widget scene whose slots bind the given accounts, keyed `slot0`, `slot1`, …
+    /// A widget whose slots, keyed `slot0`, `slot1`, …, bind the given accounts.
+    fn widget_binding(accounts: &[&str]) -> Widget {
+        let mut widget = Widget::new(
+            uuid::Uuid::nil(),
+            BTreeMap::new(),
+            WidgetPosition { row: 0, col: 0 },
+            WidgetPlacement::Fullscreen,
+        );
+        for (i, account) in accounts.iter().enumerate() {
+            let slot = serde_json::from_str(&format!("\"slot{i}\"")).expect("BUG: valid slot key");
+            let id = AccountId::from_str(account).expect("BUG: non-empty id");
+            widget.credential_bindings.insert(slot, id);
+        }
+        widget
+    }
+
+    fn scene_of(kind: SceneKind, widgets: Vec<Widget>) -> Scene {
+        Scene {
+            id: SceneId::generate(),
+            enabled: true,
+            cycle_duration: None,
+            kind,
+            widgets: widgets.into_iter().map(|w| (w.id, w)).collect(),
+        }
+    }
+
+    fn scene_binding(accounts: &[&str]) -> (Scene, String) {
+        let widget = widget_binding(accounts);
+        let widget_id = widget.id.to_string();
+
+        (scene_of(SceneKind::Fullscreen, vec![widget]), widget_id)
+    }
+
+    /// A combined scene holding one widget per entry, with that entry's bindings.
+    fn combined_scene(widgets: &[&[&str]]) -> (Scene, Vec<String>) {
+        let widgets: Vec<Widget> = widgets.iter().copied().map(widget_binding).collect();
+        let ids = widgets.iter().map(|w| w.id.to_string()).collect();
+
+        (scene_of(SceneKind::Combined, widgets), ids)
+    }
+
+    fn scenes_of(scenes: Vec<Scene>) -> IndexMap<SceneId, Scene> {
+        scenes.into_iter().map(|scene| (scene.id, scene)).collect()
+    }
+
+    #[test]
+    fn an_unbound_account_has_no_connected_widgets() {
+        let (scene, _) = scene_binding(&[]);
+
+        assert!(bindings_by_account(&scenes_of(vec![scene])).is_empty());
+    }
+
+    #[test]
+    fn a_bound_account_names_the_widget_holding_it() {
+        let (scene, widget_id) = scene_binding(&["acct-1"]);
+        let bound = bindings_by_account(&scenes_of(vec![scene]));
+
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(bound.get(&id), Some(&vec![widget_id]));
+    }
+
+    #[test]
+    fn one_widget_spending_an_account_twice_still_counts_once() {
+        let (scene, widget_id) = scene_binding(&["acct-1", "acct-1"]);
+        let bound = bindings_by_account(&scenes_of(vec![scene]));
+
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(bound.get(&id), Some(&vec![widget_id]));
+    }
+
+    #[test]
+    fn a_scene_of_several_widgets_reports_each_one_that_binds_the_account() {
+        let (scene, ids) = combined_scene(&[&["acct-1"], &[], &["acct-1", "acct-2"]]);
+        let bound = bindings_by_account(&scenes_of(vec![scene]));
+
+        let shared = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(
+            bound.get(&shared),
+            Some(&vec![ids[0].clone(), ids[2].clone()]),
+            "the unbound middle widget must not shift the reported set"
+        );
+
+        let single = AccountId::from_str("acct-2").expect("BUG: non-empty id");
+        assert_eq!(bound.get(&single), Some(&vec![ids[2].clone()]));
+    }
+
+    #[test]
+    fn an_account_bound_across_scenes_collects_every_widget() {
+        let (first, first_id) = scene_binding(&["acct-1"]);
+        let (second, second_id) = scene_binding(&["acct-1"]);
+        let bound = bindings_by_account(&scenes_of(vec![first, second]));
+
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(bound.get(&id), Some(&vec![first_id, second_id]));
+    }
+
+    #[test]
+    fn an_existing_unbound_account_is_removed() {
+        assert_eq!(decide_remove_account(true, 0), RemoveAccountOutcome::Remove);
+    }
+
+    #[test]
+    fn an_account_that_was_never_there_is_not_found() {
+        assert_eq!(
+            decide_remove_account(false, 0),
+            RemoveAccountOutcome::NotFound
+        );
+    }
+
+    #[test]
+    fn a_bound_account_is_refused_with_its_widget_count() {
+        assert_eq!(
+            decide_remove_account(true, 2),
+            RemoveAccountOutcome::Bound(2)
+        );
+    }
+
+    #[test]
+    fn a_stale_binding_does_not_mask_a_missing_account() {
+        assert_eq!(
+            decide_remove_account(false, 1),
+            RemoveAccountOutcome::NotFound,
+            "a binding left over from a hand-edited store must not read as still bound"
+        );
+    }
+
+    /// Scenes of 0..4 widgets, each binding 0..3 slots from a 3-account pool: small
+    /// enough for a readable shrunk counterexample, wide enough to reach the
+    /// multi-widget and shared-account shapes.
+    fn arb_scenes() -> impl Strategy<Value = IndexMap<SceneId, Scene>> {
+        let bindings = prop::collection::vec(0_usize..3, 0..3);
+        let widget = bindings.prop_map(|accounts| {
+            let accounts: Vec<String> = accounts.iter().map(|a| format!("acct-{a}")).collect();
+            widget_binding(&accounts.iter().map(String::as_str).collect::<Vec<_>>())
+        });
+        let scene = prop::collection::vec(widget, 0..4)
+            .prop_map(|widgets| scene_of(SceneKind::Combined, widgets));
+
+        prop::collection::vec(scene, 0..3).prop_map(|scenes| {
+            scenes
+                .into_iter()
+                .map(|scene| (scene.id, scene))
+                .collect::<IndexMap<_, _>>()
+        })
+    }
+
+    proptest! {
+        /// Every account is reported against exactly the widgets that name it, and no
+        /// widget is listed twice for one account, whatever the scene shape.
+        #[test]
+        fn reported_widgets_match_the_bindings_that_name_them(scenes in arb_scenes()) {
+            let bound = bindings_by_account(&scenes);
+
+            for (account, widgets) in &bound {
+                let mut unique = widgets.clone();
+                unique.sort();
+                unique.dedup();
+                prop_assert_eq!(&unique.len(), &widgets.len(), "widget listed twice");
+
+                for widget_id in widgets {
+                    let names_it = scenes.values().any(|scene| {
+                        scene.widgets.values().any(|w| {
+                            &w.id.to_string() == widget_id
+                                && w.credential_bindings.values().any(|a| a == account)
+                        })
+                    });
+                    prop_assert!(names_it, "reported a widget that does not bind the account");
+                }
+            }
+
+            // …and nothing that does bind an account is left out.
+            for scene in scenes.values() {
+                for widget in scene.widgets.values() {
+                    for account in widget.credential_bindings.values() {
+                        let reported = bound.get(account).is_some_and(|widgets| {
+                            widgets.contains(&widget.id.to_string())
+                        });
+                        prop_assert!(reported, "a bound widget went unreported");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
