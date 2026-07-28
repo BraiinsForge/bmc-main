@@ -25,9 +25,9 @@
 use std::collections::BTreeSet;
 
 use bmc::compositor::{
-    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, HardwareCapabilities,
-    InstanceId, LedRequestStatusEvent, Position, SceneCycling, SceneLayout, SettingUpdate,
-    SettingsCommand, Size, WidgetAction, WidgetInitialConfig,
+    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CredentialSecrets,
+    HardwareCapabilities, InstanceId, LedRequestStatusEvent, Position, SceneCycling, SceneLayout,
+    SettingUpdate, SettingsCommand, Size, WidgetAction, WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -308,6 +308,20 @@ impl Compositor for MockCompositor {
         tracing::info!(
             "MockCompositor: update_widget_params {instance_id}: {}",
             serde_json::Value::Object(params)
+        );
+        Ok(())
+    }
+
+    fn update_widget_credentials(
+        &self,
+        instance_id: &InstanceId,
+        credentials: serde_json::Map<String, serde_json::Value>,
+        _secrets: CredentialSecrets,
+    ) -> Result<(), CompositorError> {
+        // The view names accounts but carries no secret, so logging it is safe.
+        tracing::info!(
+            "MockCompositor: update_widget_credentials {instance_id}: {}",
+            serde_json::Value::Object(credentials)
         );
         Ok(())
     }

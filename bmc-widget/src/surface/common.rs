@@ -238,6 +238,11 @@ pub enum WidgetEvent {
     /// A setting was updated at runtime.
     Setting(bmc_widget_protocol::SettingUpdate),
     ParamUpdate(serde_json::Map<String, serde_json::Value>),
+    /// Bound credential slots; names accounts, carries no secret.
+    CredentialsUpdate(serde_json::Map<String, serde_json::Value>),
+    /// Secret values held by this process on the widget's behalf,
+    /// never handed to the widget itself.
+    SecretsUpdate(bmc_widget_protocol::CredentialSecrets),
     /// The compositor requests graceful shutdown.
     Shutdown,
     /// Touch point down (standard Wayland `wl_touch`).

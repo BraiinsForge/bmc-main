@@ -26,11 +26,23 @@
 use std::collections::BTreeMap;
 
 use bmc_widget_manifest::CredentialKey;
+use bmc_widget_protocol::CredentialSecrets;
 use indexmap::IndexMap;
+use serde_json::{Map, Value};
 
 use crate::data::{Account, AccountId};
 
 pub use bmc_field_schema::credential::*;
+
+/// Both halves of a resolved binding set,
+/// produced together so the account lookup runs once.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Resolution {
+    /// Slot → `{"type": …, "account": …}`,
+    /// the whole of what the guest may learn.
+    pub view: Map<String, Value>,
+    pub secrets: CredentialSecrets,
+}
 
 /// Bindings whose account still exists, in slot order.
 ///
@@ -48,6 +60,48 @@ pub fn effective_bindings<'a>(
     bindings
         .iter()
         .filter_map(|(slot, id)| accounts.get(id).map(|account| (slot, account)))
+}
+
+/// Slots bound to an account that is gone,
+/// for the caller to report with its widget context.
+pub fn dangling_bindings<'a>(
+    bindings: &'a BTreeMap<CredentialKey, AccountId>,
+    accounts: &'a IndexMap<AccountId, Account>,
+) -> impl Iterator<Item = (&'a CredentialKey, &'a AccountId)> {
+    bindings
+        .iter()
+        .filter(|(_, id)| !accounts.contains_key(*id))
+}
+
+#[must_use]
+pub fn resolve(
+    bindings: &BTreeMap<CredentialKey, AccountId>,
+    accounts: &IndexMap<AccountId, Account>,
+) -> Resolution {
+    let mut view = Map::new();
+    let mut secrets = Map::new();
+
+    for (slot, account) in effective_bindings(bindings, accounts) {
+        view.insert(
+            slot.as_str().to_owned(),
+            serde_json::json!({ "type": account.type_id, "account": account.name }),
+        );
+        secrets.insert(
+            slot.as_str().to_owned(),
+            Value::Object(
+                account
+                    .field_values
+                    .iter()
+                    .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
+                    .collect(),
+            ),
+        );
+    }
+
+    Resolution {
+        view,
+        secrets: CredentialSecrets::new(secrets),
+    }
 }
 
 #[cfg(test)]

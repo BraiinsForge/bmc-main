@@ -741,6 +741,11 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for WidgetState {
             Event::LedRequestStatus { request_id, status } => {
                 tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
             }
+            // This client exposes no credential API to its widget,
+            // so it has nothing to hold a resolution or spend a secret on.
+            Event::Credentials { .. } | Event::CredentialSecrets { .. } => {
+                tracing::trace!("Ignoring credential event on a client without credential support");
+            }
             _ => {}
         }
     }

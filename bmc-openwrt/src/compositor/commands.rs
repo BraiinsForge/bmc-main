@@ -89,6 +89,12 @@ pub enum CompositorCommand {
         instance_id: InstanceId,
         params: serde_json::Map<String, serde_json::Value>,
     },
+    /// Push a re-resolved credential set to a running widget.
+    UpdateWidgetCredentials {
+        instance_id: InstanceId,
+        credentials: serde_json::Map<String, serde_json::Value>,
+        secrets: bmc_widget_protocol::CredentialSecrets,
+    },
     Shutdown,
     RingAlarm {
         time: String,

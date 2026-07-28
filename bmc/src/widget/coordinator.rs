@@ -36,7 +36,9 @@ use crate::compositor::{
 };
 use crate::config::ConfigHandle;
 use crate::config::LocalizationConfig;
+use crate::credential;
 use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
+use crate::secret_store::SecretStoreHandle;
 
 use super::{WidgetManager, WidgetRegistry};
 
@@ -223,6 +225,10 @@ pub struct Coordinator {
     compositor: Arc<dyn Compositor>,
     widget_registry: Arc<WidgetRegistry>,
     hardware_capabilities: HardwareCapabilities,
+    /// Read on every spawn to resolve the widget's credential bindings.
+    /// Callers already hold the config lock when spawning,
+    /// which is the required order: config first, then secrets.
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
 }
 
 impl std::fmt::Debug for Coordinator {
@@ -384,12 +390,14 @@ impl Coordinator {
         compositor: Arc<dyn Compositor>,
         widget_registry: Arc<WidgetRegistry>,
         hardware_capabilities: HardwareCapabilities,
+        secret_store: Arc<RwLock<SecretStoreHandle>>,
     ) -> Self {
         Self {
             widget_manager,
             compositor,
             widget_registry,
             hardware_capabilities,
+            secret_store,
         }
     }
 
@@ -605,12 +613,15 @@ impl Coordinator {
             return;
         };
         let size = viewport;
+        let resolved = self.resolve_credentials(widget).await;
         let initial_config = WidgetInitialConfig {
             width: viewport.width,
             height: viewport.height,
             viewport_shape: manifest_to_protocol_viewport_shape(widget.viewport_shape),
             display: platform_to_protocol_display(self.hardware_capabilities.display),
             params: params_to_json_map(&widget.params),
+            credentials: resolved.view,
+            credential_secrets: resolved.secrets,
             token: format!(
                 "{}-{}",
                 widget.id.as_uuid(),
@@ -710,6 +721,33 @@ impl Coordinator {
     ) -> Result<(), CompositorError> {
         self.compositor
             .update_widget_params(&instance_id.to_owned(), params_to_json_map(params))
+    }
+
+    /// Resolve the widget's bindings against the stored accounts,
+    /// warning about any slot whose account has since disappeared.
+    pub(crate) async fn resolve_credentials(&self, widget: &Widget) -> credential::Resolution {
+        let store = self.secret_store.read().await;
+        for (slot, account) in
+            credential::dangling_bindings(&widget.credential_bindings, store.accounts())
+        {
+            warn!(
+                widget_id = %widget.id,
+                slot = slot.as_str(),
+                account = %account,
+                "credential slot bound to an account that no longer exists; treating it as unbound"
+            );
+        }
+
+        credential::resolve(&widget.credential_bindings, store.accounts())
+    }
+
+    pub async fn update_widget_credentials(&self, widget: &Widget) -> Result<(), CompositorError> {
+        let resolved = self.resolve_credentials(widget).await;
+        self.compositor.update_widget_credentials(
+            &widget.id.as_uuid().to_string(),
+            resolved.view,
+            resolved.secrets,
+        )
     }
 
     pub async fn stop_scene_widgets(&self, scene: &Scene) {

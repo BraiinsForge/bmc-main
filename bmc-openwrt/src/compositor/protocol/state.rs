@@ -109,6 +109,8 @@ trait WidgetSurface {
         dpi: u32,
     );
     fn params(&self, params_json: String);
+    fn credentials(&self, credentials_json: String);
+    fn credential_secrets(&self, secrets_json: String);
     fn emit_setting(&self, setting: &SettingUpdate);
     fn configure_done(&self);
 }
@@ -136,6 +138,14 @@ impl WidgetSurface for DeckWidgetSurfaceV1 {
 
     fn params(&self, params_json: String) {
         self.params(params_json);
+    }
+
+    fn credentials(&self, credentials_json: String) {
+        self.credentials(credentials_json);
+    }
+
+    fn credential_secrets(&self, secrets_json: String) {
+        self.credential_secrets(secrets_json);
     }
 
     fn emit_setting(&self, setting: &SettingUpdate) {
@@ -412,6 +422,31 @@ impl DeckWidgetProtocolState {
         surface.params(params_json);
     }
 
+    /// Also refreshes the stored config, so a reconnect replays the resolution.
+    pub fn update_widget_credentials(
+        &mut self,
+        instance_id: &InstanceId,
+        credentials: serde_json::Map<String, serde_json::Value>,
+        secrets: bmc_widget_protocol::CredentialSecrets,
+    ) {
+        let Some(widget_data) = self.widgets.get_mut(instance_id) else {
+            tracing::warn!("update_widget_credentials: no widget record for {instance_id}");
+            return;
+        };
+        if !credentials_changed(&widget_data.config, &credentials, &secrets) {
+            return;
+        }
+        widget_data.config.credentials = credentials;
+        widget_data.config.credential_secrets = secrets;
+
+        let Some(surface) = widget_data.protocol_surface.as_ref() else {
+            tracing::warn!("update_widget_credentials: widget {instance_id} has no surface yet");
+            return;
+        };
+
+        emit_credentials(surface, &widget_data.config);
+    }
+
     /// Emit the initial configure batch on the given surface for the
     /// given instance: `configure` → `display_info` → `params` → setting events →
     /// `configure_done`. Called by the dispatch handler right after the
@@ -446,6 +481,8 @@ impl DeckWidgetProtocolState {
 
         let params_json = serde_json::Value::Object(config.params.clone()).to_string();
         surface.params(params_json);
+
+        emit_credentials(surface, config);
 
         for setting in &self.current_settings {
             surface.emit_setting(setting);
@@ -560,6 +597,21 @@ fn led_request_status_to_protocol(
     }
 }
 
+fn credentials_changed(
+    stored: &WidgetInitialConfig,
+    credentials: &serde_json::Map<String, serde_json::Value>,
+    secrets: &bmc_widget_protocol::CredentialSecrets,
+) -> bool {
+    &stored.credentials != credentials || &stored.credential_secrets != secrets
+}
+
+/// Emit the guest-visible view and then the secrets, always as a pair:
+/// a widget that saw a slot appear must be able to spend it.
+fn emit_credentials<S: WidgetSurface>(surface: &S, config: &WidgetInitialConfig) {
+    surface.credentials(serde_json::Value::Object(config.credentials.clone()).to_string());
+    surface.credential_secrets(config.credential_secrets.to_json_string());
+}
+
 fn emit_setting(surface: &DeckWidgetSurfaceV1, setting: &SettingUpdate) {
     match setting {
         SettingUpdate::Timezone(tz) => surface.timezone(tz.clone()),
@@ -641,6 +693,8 @@ enum RecordedEvent {
         dpi: u32,
     },
     Params,
+    Credentials(String),
+    CredentialSecrets(String),
     Setting,
     ConfigureDone,
 }
@@ -684,6 +738,18 @@ impl WidgetSurface for RecordingSurface {
         self.events.borrow_mut().push(RecordedEvent::Params);
     }
 
+    fn credentials(&self, credentials_json: String) {
+        self.events
+            .borrow_mut()
+            .push(RecordedEvent::Credentials(credentials_json));
+    }
+
+    fn credential_secrets(&self, secrets_json: String) {
+        self.events
+            .borrow_mut()
+            .push(RecordedEvent::CredentialSecrets(secrets_json));
+    }
+
     fn emit_setting(&self, _setting: &SettingUpdate) {
         self.events.borrow_mut().push(RecordedEvent::Setting);
     }
@@ -705,6 +771,23 @@ impl RecordingSurface {
 
 #[cfg(test)]
 impl RecordedEvents {
+    /// The `credentials` and `credential_secrets` payloads, in emit order.
+    fn credential_payloads(&self) -> Vec<&str> {
+        self.0
+            .iter()
+            .filter_map(|e| match e {
+                RecordedEvent::Credentials(json) | RecordedEvent::CredentialSecrets(json) => {
+                    Some(json.as_str())
+                }
+                RecordedEvent::Configure(..)
+                | RecordedEvent::DisplayInfo { .. }
+                | RecordedEvent::Params
+                | RecordedEvent::Setting
+                | RecordedEvent::ConfigureDone => None,
+            })
+            .collect()
+    }
+
     fn names(&self) -> Vec<&'static str> {
         self.0
             .iter()
@@ -712,6 +795,8 @@ impl RecordedEvents {
                 RecordedEvent::Configure(..) => "configure",
                 RecordedEvent::DisplayInfo { .. } => "display_info",
                 RecordedEvent::Params => "params",
+                RecordedEvent::Credentials(_) => "credentials",
+                RecordedEvent::CredentialSecrets(_) => "credential_secrets",
                 RecordedEvent::Setting => "setting",
                 RecordedEvent::ConfigureDone => "configure_done",
             })
@@ -760,6 +845,7 @@ impl RecordedEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_widget_protocol::CredentialSecrets;
 
     fn make_config() -> WidgetInitialConfig {
         WidgetInitialConfig {
@@ -768,6 +854,8 @@ mod tests {
             viewport_shape: bmc_widget_protocol::ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
+            credentials: serde_json::Map::new(),
+            credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             token: "test-instance-2x1".to_owned(),
         }
     }
@@ -912,7 +1000,14 @@ mod tests {
 
         assert_eq!(
             events.names(),
-            ["configure", "display_info", "params", "configure_done",],
+            [
+                "configure",
+                "display_info",
+                "params",
+                "credentials",
+                "credential_secrets",
+                "configure_done",
+            ],
         );
         assert_eq!(
             events.configure(),
@@ -927,5 +1022,103 @@ mod tests {
                 217
             )),
         );
+    }
+
+    fn bound_pool() -> (
+        serde_json::Map<String, serde_json::Value>,
+        CredentialSecrets,
+    ) {
+        let as_object = |v: serde_json::Value| {
+            v.as_object()
+                .expect("BUG: json! literal is an object")
+                .clone()
+        };
+        let view = as_object(
+            serde_json::json!({ "pool": { "type": "braiins-pool", "account": "My pool" } }),
+        );
+        let secrets = as_object(serde_json::json!({ "pool": { "token": "s3cr3t" } }));
+
+        (view, CredentialSecrets::new(secrets))
+    }
+
+    #[test]
+    fn a_bound_widget_replays_both_credential_events_on_reconnect() {
+        let mut state = DeckWidgetProtocolState::new();
+        let (view, secrets) = bound_pool();
+        state.register_widget("alpha".to_owned(), make_config());
+        state.update_widget_credentials(&"alpha".to_owned(), view, secrets);
+
+        let events = state
+            .test_emit_initial_state_events("alpha")
+            .expect("BUG: alpha must be registered");
+
+        let payloads = events.credential_payloads();
+        assert!(
+            payloads[0].contains("My pool") && !payloads[0].contains("s3cr3t"),
+            "the guest-visible half must name the account and carry no secret: {}",
+            payloads[0]
+        );
+        assert!(payloads[1].contains("s3cr3t"));
+    }
+
+    #[test]
+    fn an_identical_resolution_is_not_a_change() {
+        let (view, secrets) = bound_pool();
+        let mut stored = make_config();
+        stored.credentials = view.clone();
+        stored.credential_secrets = secrets.clone();
+
+        assert!(!credentials_changed(&stored, &view, &secrets));
+    }
+
+    #[test]
+    fn a_rotated_secret_is_a_change_even_though_the_view_is_identical() {
+        let (view, secrets) = bound_pool();
+        let mut stored = make_config();
+        stored.credentials = view.clone();
+        stored.credential_secrets = secrets;
+
+        let rotated = CredentialSecrets::new(
+            serde_json::json!({ "pool": { "token": "rotated" } })
+                .as_object()
+                .expect("BUG: json! literal is an object")
+                .clone(),
+        );
+
+        assert!(
+            credentials_changed(&stored, &view, &rotated),
+            "a token rotation never shows in the view, so only the secret half can catch it"
+        );
+    }
+
+    #[test]
+    fn unbinding_is_a_change() {
+        let (view, secrets) = bound_pool();
+        let mut stored = make_config();
+        stored.credentials = view;
+        stored.credential_secrets = secrets;
+
+        assert!(credentials_changed(
+            &stored,
+            &serde_json::Map::new(),
+            &CredentialSecrets::default()
+        ));
+    }
+
+    #[test]
+    fn unbinding_clears_the_stored_resolution() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+        let (view, secrets) = bound_pool();
+        state.update_widget_credentials(&"alpha".to_owned(), view, secrets);
+
+        state.update_widget_credentials(
+            &"alpha".to_owned(),
+            serde_json::Map::new(),
+            CredentialSecrets::default(),
+        );
+
+        let stored = state.widget_config("alpha").expect("BUG: registered");
+        assert!(stored.credentials.is_empty() && stored.credential_secrets.is_empty());
     }
 }

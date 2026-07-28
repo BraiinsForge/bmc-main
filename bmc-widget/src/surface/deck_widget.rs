@@ -62,6 +62,8 @@ pub enum DeckWidgetEvent {
     /// A system setting changed at runtime.
     Setting(SettingUpdate),
     ParamUpdate(serde_json::Map<String, serde_json::Value>),
+    CredentialsUpdate(serde_json::Map<String, serde_json::Value>),
+    SecretsUpdate(bmc_widget_protocol::CredentialSecrets),
     /// Compositor requested graceful shutdown.
     Shutdown,
     /// Touch down from standard `wl_touch`.
@@ -93,6 +95,8 @@ impl From<DeckWidgetEvent> for WidgetEvent {
         match event {
             DeckWidgetEvent::Setting(update) => Self::Setting(update),
             DeckWidgetEvent::ParamUpdate(params) => Self::ParamUpdate(params),
+            DeckWidgetEvent::CredentialsUpdate(view) => Self::CredentialsUpdate(view),
+            DeckWidgetEvent::SecretsUpdate(secrets) => Self::SecretsUpdate(secrets),
             DeckWidgetEvent::Shutdown => Self::Shutdown,
             DeckWidgetEvent::TouchDown { id, x, y } => Self::TouchDown { id, x, y },
             DeckWidgetEvent::TouchMotion { id, x, y } => Self::TouchMotion { id, x, y },
@@ -120,6 +124,10 @@ pub struct InitialState {
     pub viewport_shape: ViewportShape,
     pub display: bmc_widget_protocol::DisplayInfo,
     pub params: serde_json::Map<String, serde_json::Value>,
+    pub credentials: serde_json::Map<String, serde_json::Value>,
+    /// For this process to spend on the widget's behalf,
+    /// never forwarded to the widget itself.
+    pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     pub settings: Vec<SettingUpdate>,
     /// Opaque, stable per-instance token delivered on the handshake (via
     /// `configure`); keys per-instance resources such as the asset cache.
@@ -165,6 +173,10 @@ pub struct DeckWidgetSurfaceState {
     /// Accumulated `params(json)` event (empty if the compositor sent
     /// `{}`).
     pending_params: serde_json::Map<String, serde_json::Value>,
+    /// Accumulated `credentials(json)` event (empty when nothing is bound).
+    pending_credentials: serde_json::Map<String, serde_json::Value>,
+    /// Accumulated `credential_secrets(json)` event.
+    pending_secrets: serde_json::Map<String, serde_json::Value>,
     /// Accumulated setting events emitted before `configure_done`.
     pending_initial_settings: Vec<SettingUpdate>,
 
@@ -313,6 +325,8 @@ impl DeckWidgetSurfaceClient {
             pending_size: None,
             pending_display: None,
             pending_params: serde_json::Map::new(),
+            pending_credentials: serde_json::Map::new(),
+            pending_secrets: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
             buffer_slots: BufferSlotMap::new(),
@@ -366,15 +380,7 @@ impl DeckWidgetSurfaceClient {
         state.width = width;
         state.height = height;
 
-        let initial = InitialState {
-            width,
-            height,
-            viewport_shape,
-            display: resolve_display(state.pending_display.take()),
-            params: std::mem::take(&mut state.pending_params),
-            settings: std::mem::take(&mut state.pending_initial_settings),
-            token,
-        };
+        let initial = take_initial_state(&mut state, viewport_shape, width, height, token);
 
         tracing::info!(
             "Deck widget surface ready (fd): {}x{} viewport_shape={:?} params={} settings={}",
@@ -438,6 +444,8 @@ impl DeckWidgetSurfaceClient {
             pending_size: None,
             pending_display: None,
             pending_params: serde_json::Map::new(),
+            pending_credentials: serde_json::Map::new(),
+            pending_secrets: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
             buffer_slots: BufferSlotMap::new(),
@@ -496,15 +504,7 @@ impl DeckWidgetSurfaceClient {
         state.width = width;
         state.height = height;
 
-        let initial = InitialState {
-            width,
-            height,
-            viewport_shape,
-            display: resolve_display(state.pending_display.take()),
-            params: std::mem::take(&mut state.pending_params),
-            settings: std::mem::take(&mut state.pending_initial_settings),
-            token,
-        };
+        let initial = take_initial_state(&mut state, viewport_shape, width, height, token);
 
         tracing::info!(
             "Deck widget surface ready: {}x{} viewport_shape={:?} params={} settings={}",
@@ -1061,6 +1061,30 @@ impl Dispatch<DeckWidgetSurfaceV1, ()> for DeckWidgetSurfaceState {
                     .pending_events
                     .push(DeckWidgetEvent::TransitionIncoming);
             }
+            deck_widget_surface_v1::Event::Credentials { json } => {
+                handle_credential_json(
+                    &mut state.pending_credentials,
+                    &mut state.pending_events,
+                    state.configure_done,
+                    &json,
+                    DeckWidgetEvent::CredentialsUpdate,
+                    "credentials",
+                );
+            }
+            deck_widget_surface_v1::Event::CredentialSecrets { json } => {
+                handle_credential_json(
+                    &mut state.pending_secrets,
+                    &mut state.pending_events,
+                    state.configure_done,
+                    &json,
+                    |map| {
+                        DeckWidgetEvent::SecretsUpdate(bmc_widget_protocol::CredentialSecrets::new(
+                            map,
+                        ))
+                    },
+                    "credential_secrets",
+                );
+            }
             deck_widget_surface_v1::Event::LedRequestStatus { request_id, status } => {
                 tracing::debug!("Received led_request_status: req={request_id} status={status:?}");
             }
@@ -1089,6 +1113,54 @@ fn push_params(
         pending_events.push(DeckWidgetEvent::ParamUpdate(params));
     } else {
         *pending_params = params;
+    }
+}
+
+/// Drain the accumulated configure batch into the state handed to the widget.
+fn take_initial_state(
+    state: &mut DeckWidgetSurfaceState,
+    viewport_shape: ViewportShape,
+    width: u32,
+    height: u32,
+    token: String,
+) -> InitialState {
+    InitialState {
+        width,
+        height,
+        viewport_shape,
+        display: resolve_display(state.pending_display.take()),
+        params: std::mem::take(&mut state.pending_params),
+        credentials: std::mem::take(&mut state.pending_credentials),
+        credential_secrets: bmc_widget_protocol::CredentialSecrets::new(std::mem::take(
+            &mut state.pending_secrets,
+        )),
+        settings: std::mem::take(&mut state.pending_initial_settings),
+        token,
+    }
+}
+
+/// Decode one credential event into the initial batch or the runtime queue.
+///
+/// `what` names the event for the decode-failure log; the payload is never
+/// logged, since the secrets variant flows through here too.
+fn handle_credential_json(
+    pending: &mut serde_json::Map<String, serde_json::Value>,
+    pending_events: &mut Vec<DeckWidgetEvent>,
+    configure_done: bool,
+    json: &str,
+    to_event: fn(serde_json::Map<String, serde_json::Value>) -> DeckWidgetEvent,
+    what: &str,
+) {
+    match serde_json::from_str::<serde_json::Value>(json) {
+        Ok(serde_json::Value::Object(map)) => {
+            if configure_done {
+                pending_events.push(to_event(map));
+            } else {
+                *pending = map;
+            }
+        }
+        Ok(_) => tracing::warn!("{what} JSON is not an object, ignoring"),
+        Err(e) => tracing::warn!("Failed to decode {what} JSON: {e}"),
     }
 }
 
@@ -1233,6 +1305,8 @@ mod tests {
             pending_size: None,
             pending_display: None,
             pending_params: serde_json::Map::new(),
+            pending_credentials: serde_json::Map::new(),
+            pending_secrets: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
             buffer_slots: super::BufferSlotMap::new(),
@@ -1380,6 +1454,8 @@ mod tests {
             pending_size: None,
             pending_display: None,
             pending_params: serde_json::Map::new(),
+            pending_credentials: serde_json::Map::new(),
+            pending_secrets: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
             buffer_slots: super::BufferSlotMap::new(),
@@ -1414,6 +1490,8 @@ mod tests {
             pending_size: None,
             pending_display: None,
             pending_params: serde_json::Map::new(),
+            pending_credentials: serde_json::Map::new(),
+            pending_secrets: serde_json::Map::new(),
             pending_initial_settings: Vec::new(),
             pending_events: Vec::new(),
             buffer_slots: super::BufferSlotMap::new(),

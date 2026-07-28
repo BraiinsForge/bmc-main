@@ -258,6 +258,7 @@ where
             compositor.clone(),
             widget_registry.clone(),
             hardware_capabilities,
+            secret_store.clone(),
         ));
 
         let system_upgrade_service = SystemUpgradeService::new(

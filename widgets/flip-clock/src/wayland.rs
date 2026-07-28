@@ -287,7 +287,11 @@ impl RenderLoopState {
                         };
                     self.apply_param_update(manifest, gl, surface)?;
                 }
+                // This widget declares no credential slots, so a resolution
+                // never applies to it and there is no secret for it to spend.
                 WidgetEvent::Setting(_)
+                | WidgetEvent::CredentialsUpdate(_)
+                | WidgetEvent::SecretsUpdate(_)
                 | WidgetEvent::Shutdown
                 | WidgetEvent::TransitionIncoming
                 | WidgetEvent::TouchDown { .. }

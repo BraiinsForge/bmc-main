@@ -1840,6 +1840,15 @@ mod tests {
             Ok(())
         }
 
+        fn update_widget_credentials(
+            &self,
+            _instance_id: &crate::compositor::InstanceId,
+            _credentials: serde_json::Map<String, serde_json::Value>,
+            _secrets: bmc_widget_protocol::CredentialSecrets,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
         fn action_receiver(
             &self,
         ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::WidgetAction> {
@@ -3072,6 +3081,7 @@ mod tests {
             compositor_for_coordinator,
             Arc::clone(&widget_registry),
             capabilities,
+            empty_secret_store().await,
         ));
         let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
         let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
@@ -3138,6 +3148,7 @@ mod tests {
             compositor_for_coordinator,
             Arc::clone(&widget_registry),
             capabilities,
+            empty_secret_store().await,
         ));
         let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
         let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
@@ -3194,6 +3205,7 @@ mod tests {
             compositor_for_coordinator,
             Arc::clone(&widget_registry),
             capabilities,
+            empty_secret_store().await,
         ));
         let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
         let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);
@@ -3282,6 +3294,7 @@ mod tests {
             compositor_for_coordinator,
             Arc::clone(&widget_registry),
             capabilities,
+            empty_secret_store().await,
         ));
         let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
         let led_coordinator = crate::led_coordinator::spawn_led_coordinator(led_tx);

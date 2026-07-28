@@ -32,7 +32,8 @@ use tokio::sync::{broadcast, mpsc, watch};
 pub use crate::data::SceneCycling;
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 pub use bmc_widget_protocol::{
-    ActionPayload, LedRequestId, LedRequestStatus, SettingUpdate, WidgetInitialConfig,
+    ActionPayload, CredentialSecrets, LedRequestId, LedRequestStatus, SettingUpdate,
+    WidgetInitialConfig,
 };
 
 pub type InstanceId = String;
@@ -318,6 +319,18 @@ pub trait Compositor: Send + Sync {
         &self,
         instance_id: &InstanceId,
         params: serde_json::Map<String, serde_json::Value>,
+    ) -> Result<(), CompositorError>;
+
+    /// Push a re-resolved credential set to a single running widget.
+    ///
+    /// The compositor drops the push when the values match
+    /// what it already holds, since callers here react to
+    /// a change hint and have no old value to compare against.
+    fn update_widget_credentials(
+        &self,
+        instance_id: &InstanceId,
+        credentials: serde_json::Map<String, serde_json::Value>,
+        secrets: bmc_widget_protocol::CredentialSecrets,
     ) -> Result<(), CompositorError>;
 
     /// Get a receiver for widget action requests (sound, LED).

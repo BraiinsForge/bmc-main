@@ -385,6 +385,13 @@ impl WidgetSlot {
                         .push_touch_event(bmc_render::interaction::TouchEvent::Cancel);
                     touch_dirty = true;
                 }
+                // Slot counts only: the secrets payload must not reach a log.
+                WidgetEvent::CredentialsUpdate(view) => {
+                    tracing::debug!(slots = view.len(), "credential resolution received");
+                }
+                WidgetEvent::SecretsUpdate(secrets) => {
+                    tracing::debug!(slots = secrets.slot_count(), "credential secrets received");
+                }
                 event @ (WidgetEvent::Lifecycle(_)
                 | WidgetEvent::TransitionIncoming
                 | WidgetEvent::Shutdown) => {
@@ -392,28 +399,7 @@ impl WidgetSlot {
                 }
             }
         }
-        if system_dirty {
-            tracing::info!(
-                peer_pid = self.peer_pid,
-                wasm = %self.wasm_basename,
-                "settings drained from wayland — delivering system snapshot to runtime"
-            );
-            self.runtime
-                .deliver_system_update(self.pending_system.clone());
-            self.surface.mark_needs_render();
-        }
-        if let Some(params) = latest_params
-            && let Ok(table) = bmc_wasm_runtime::parse_params_json(&params)
-        {
-            tracing::info!(
-                peer_pid = self.peer_pid,
-                wasm = %self.wasm_basename,
-                params = table.len(),
-                "param update received"
-            );
-            self.runtime.deliver_params_update(table);
-            self.surface.mark_needs_render();
-        }
+        self.deliver_coalesced_snapshots(system_dirty, latest_params);
         if touch_dirty {
             // No `mark_needs_render` here: the widget decides whether to re-render
             // by calling `request_frame()` from `on_touch`, which the main loop's
@@ -834,6 +820,35 @@ impl WidgetSlot {
         drop(self.control_socket);
     }
 
+    fn deliver_coalesced_snapshots(
+        &mut self,
+        system_dirty: bool,
+        latest_params: Option<serde_json::Map<String, Value>>,
+    ) {
+        if system_dirty {
+            tracing::info!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                "settings drained from wayland — delivering system snapshot to runtime"
+            );
+            self.runtime
+                .deliver_system_update(self.pending_system.clone());
+            self.surface.mark_needs_render();
+        }
+        if let Some(params) = latest_params
+            && let Ok(table) = bmc_wasm_runtime::parse_params_json(&params)
+        {
+            tracing::info!(
+                peer_pid = self.peer_pid,
+                wasm = %self.wasm_basename,
+                params = table.len(),
+                "param update received"
+            );
+            self.runtime.deliver_params_update(table);
+            self.surface.mark_needs_render();
+        }
+    }
+
     fn on_wayland_event(&mut self, event: &WidgetEvent) {
         match event {
             WidgetEvent::Lifecycle(state) => {
@@ -875,14 +890,16 @@ impl WidgetSlot {
             }
             WidgetEvent::Setting(_)
             | WidgetEvent::ParamUpdate(_)
+            | WidgetEvent::CredentialsUpdate(_)
+            | WidgetEvent::SecretsUpdate(_)
             | WidgetEvent::TouchDown { .. }
             | WidgetEvent::TouchMotion { .. }
             | WidgetEvent::TouchUp { .. }
             | WidgetEvent::TouchCancel => {
                 // The drain loop in `dispatch_wayland_events` filters Setting,
-                // ParamUpdate, and touch events into their coalescing paths and
-                // never dispatches them here.
-                unreachable!("Setting/ParamUpdate/touch handled in dispatch_wayland_events drain");
+                // ParamUpdate, credential and touch events into their coalescing
+                // paths and never dispatches them here.
+                unreachable!("coalesced events are handled in dispatch_wayland_events drain");
             }
         }
     }

@@ -400,6 +400,8 @@ mod tests {
             viewport_shape: ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
+            credentials: serde_json::Map::new(),
+            credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             token: "test-instance-2x1".to_owned(),
         }
     }

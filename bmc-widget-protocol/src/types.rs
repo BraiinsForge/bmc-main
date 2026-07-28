@@ -84,6 +84,12 @@ impl CredentialSecrets {
         self.0.is_empty()
     }
 
+    /// Number of slots carrying secrets. Safe to log, unlike the values.
+    #[must_use]
+    pub fn slot_count(&self) -> usize {
+        self.0.len()
+    }
+
     /// The JSON text emitted on the `credential_secrets` event.
     #[must_use]
     pub fn to_json_string(&self) -> String {
@@ -120,6 +126,16 @@ pub struct WidgetInitialConfig {
     /// means the widget has no configured params.
     #[serde(default)]
     pub params: serde_json::Map<String, serde_json::Value>,
+    /// Keyed by manifest slot name; an absent slot is unbound.
+    #[serde(default)]
+    pub credentials: serde_json::Map<String, serde_json::Value>,
+    /// Stored so a respawned widget does not render a frame
+    /// with its slots falsely unbound.
+    ///
+    /// Skipped by serde: a record that round-trips
+    /// through JSON must not be able to carry a secret.
+    #[serde(skip)]
+    pub credential_secrets: CredentialSecrets,
     /// Opaque, stable per-instance token the compositor mints; keys
     /// per-instance resources (e.g. the asset cache), stable across
     /// dormancy and restart.
@@ -378,6 +394,25 @@ mod tests {
         assert!(
             !rendered.contains("s3cr3t") && !rendered.contains("token"),
             "neither the value nor the field name may reach a log: {rendered}"
+        );
+    }
+
+    #[test]
+    fn debugging_a_config_holding_secrets_leaks_no_value() {
+        let config = WidgetInitialConfig {
+            width: 1,
+            height: 1,
+            viewport_shape: ViewportShape::Rectangular,
+            display: DisplayInfo::BMC100,
+            params: serde_json::Map::new(),
+            credentials: serde_json::Map::new(),
+            credential_secrets: secrets_of("pool", "token", "s3cr3t"),
+            token: "t".to_owned(),
+        };
+
+        assert!(
+            !format!("{config:?}").contains("s3cr3t"),
+            "a derived Debug on the record must not be a way out for a secret"
         );
     }
 

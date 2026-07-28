@@ -2194,6 +2194,17 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .deck_widget_state
                 .update_widget_params(&instance_id, params);
         }
+        CompositorCommand::UpdateWidgetCredentials {
+            instance_id,
+            credentials,
+            secrets,
+        } => {
+            tracing::debug!("Updating widget credentials: {instance_id}");
+            state
+                .compositor
+                .deck_widget_state
+                .update_widget_credentials(&instance_id, credentials, secrets);
+        }
         CompositorCommand::Shutdown => {
             tracing::info!("Shutdown command received");
             state.compositor.deck_widget_state.broadcast_shutdown();
@@ -2642,6 +2653,21 @@ impl Compositor for EglCompositor {
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
+    fn update_widget_credentials(
+        &self,
+        instance_id: &InstanceId,
+        credentials: serde_json::Map<String, serde_json::Value>,
+        secrets: bmc_widget_protocol::CredentialSecrets,
+    ) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::UpdateWidgetCredentials {
+                instance_id: instance_id.clone(),
+                credentials,
+                secrets,
+            })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {
         self.action_rx
             .lock()
@@ -2788,6 +2814,8 @@ mod tests {
             viewport_shape: ViewportShape::Rectangular,
             display: bmc_widget_protocol::DisplayInfo::BMC100,
             params: serde_json::Map::new(),
+            credentials: serde_json::Map::new(),
+            credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             token: "test-instance-2x1".to_owned(),
         }
     }
