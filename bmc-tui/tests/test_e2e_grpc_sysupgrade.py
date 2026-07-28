@@ -143,7 +143,7 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "preflight_versions", versions)
 
     def snapshot_upgrade(_dev: object, cycle: catalog.FirmwareCycle) -> None:
-        cycle.servers_snapshot = catalog.FileSnapshot(catalog._SERVERS_JSON, None)
+        cycle.servers_snapshot = catalog.FileSnapshot(catalog.SERVERS_JSON, None)
         cycle.nix_conf_snapshot = catalog.FileSnapshot(catalog._NIX_CONF, None)
         events.append("snapshot config")
 

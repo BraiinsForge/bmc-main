@@ -738,7 +738,7 @@ def cleanup_remote_artifacts(dev: Device, plan: Provisioning) -> str:
 
 _E2E_ARTIFACTS_FILE = "nix/e2e-artifacts.nix"
 _E2E_ATTRS = ["index-a", "tarball-a", "index-b", "tarball-b"]
-_SERVERS_JSON = "/etc/nix-upgrade/servers.json"
+SERVERS_JSON = "/etc/nix-upgrade/servers.json"
 _E2E_MARKER = f"{_NIX_BACKING}/.sysupgrade-e2e-marker"
 _BUMPED_PACKAGE = "bmc-nix-cli"
 _NIX_PAYLOAD_MEMBERS = ("bmc-nix-cli", "servers.json.default")
@@ -929,7 +929,7 @@ def register_rig(dev: Device, run: E2eRun) -> str:
             "servers": [],
         }
     )
-    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {_SERVERS_JSON}")
+    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
     dev.run(
         f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
         f"--feed-url {shlex.quote(r.feed_url)} "
@@ -946,8 +946,7 @@ def register_rig(dev: Device, run: E2eRun) -> str:
 def _servers_json_b64(dev: Device) -> str | None:
     """base64 of the runtime registry's bytes, or None when absent."""
     out = dev.read(
-        f"if [ -e {_SERVERS_JSON} ]; then echo PRESENT; base64 {_SERVERS_JSON}; "
-        "else echo ABSENT; fi"
+        f"if [ -e {SERVERS_JSON} ]; then echo PRESENT; base64 {SERVERS_JSON}; else echo ABSENT; fi"
     )
     marker, _, body = out.partition("\n")
     require(marker in ("PRESENT", "ABSENT"), f"unexpected capture output: {out[:80]!r}")
@@ -966,7 +965,7 @@ def capture_server_registry(dev: Device, plan: Provisioning) -> str:
     plan.original_servers_json = _servers_json_b64(dev)
     plan.servers_json_captured = True
     state = "captured" if plan.original_servers_json is not None else "absent before the run"
-    return f"{console.lit(_SERVERS_JSON)} {state}"
+    return f"{console.lit(SERVERS_JSON)} {state}"
 
 
 @stage("Restore server registry")
@@ -978,13 +977,13 @@ def restore_server_registry(dev: Device, plan: Provisioning) -> str:
 
     require(plan.servers_json_captured, "BUG: restore without a prior capture")
     if plan.original_servers_json is None:
-        dev.run(f"rm -f {_SERVERS_JSON}")
-        return f"{console.lit(_SERVERS_JSON)} removed (absent before the run)"
+        dev.run(f"rm -f {SERVERS_JSON}")
+        return f"{console.lit(SERVERS_JSON)} removed (absent before the run)"
     dev.run(
         f"echo {shlex.quote(plan.original_servers_json)} | base64 -d "
-        f"> {_SERVERS_JSON}.tmp && mv {_SERVERS_JSON}.tmp {_SERVERS_JSON} && sync"
+        f"> {SERVERS_JSON}.tmp && mv {SERVERS_JSON}.tmp {SERVERS_JSON} && sync"
     )
-    return f"{console.lit(_SERVERS_JSON)} restored"
+    return f"{console.lit(SERVERS_JSON)} restored"
 
 
 @stage("Preflight rig from device")
@@ -1907,7 +1906,7 @@ def register_rig_tampered(dev: Device, run: E2eRun, *, wrong_public_key: str) ->
             "servers": [],
         }
     )
-    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {_SERVERS_JSON}")
+    dev.run(f"mkdir -p /etc/nix-upgrade && printf '%s' {shlex.quote(config)} > {SERVERS_JSON}")
     dev.run(
         f"{shlex.quote(_REMOTE_CLI)} register-server --id e2e "
         f"--feed-url {shlex.quote(r.feed_url)} "
@@ -2086,9 +2085,9 @@ def record_servers_json(dev: Device, state: FaultsState) -> str:
         return "snapshot logged (dry-run: registration was only logged)"
     require(
         state.servers_json_before is not None,
-        f"{console.lit(_SERVERS_JSON)} missing before the D5 flash — registration did not write it",
+        f"{console.lit(SERVERS_JSON)} missing before the D5 flash — registration did not write it",
     )
-    return f"{console.lit(_SERVERS_JSON)} snapshot taken"
+    return f"{console.lit(SERVERS_JSON)} snapshot taken"
 
 
 @stage("Preservation policy (D5)")
@@ -2121,7 +2120,7 @@ def require_preservation_policy(  # noqa: PLR0913  the policy flag, the snapshot
         return "nix.conf preserved; servers.json probe skipped (dry-run)"
 
     def present() -> bool:
-        return bool(dev.read(f"[ -f {_SERVERS_JSON} ] && echo yes || true"))
+        return bool(dev.read(f"[ -f {SERVERS_JSON} ] && echo yes || true"))
 
     if not servers_json_preserved:
         observed = (
@@ -2360,13 +2359,13 @@ def restrict_package_servers(dev: Device) -> str:
     production entries (e.g. forge) may not serve a package feed at all —
     and one unusable server fails the whole CheckForUpgrade package probe."""
 
-    raw = dev.read(f"cat {_SERVERS_JSON}")
+    raw = dev.read(f"cat {SERVERS_JSON}")
     try:
         config = json.loads(raw)
     except json.JSONDecodeError as e:
-        raise Abort(f"{_SERVERS_JSON} is not valid JSON after registration: {e}") from None
+        raise Abort(f"{SERVERS_JSON} is not valid JSON after registration: {e}") from None
     servers = config.get("servers")
-    require(isinstance(servers, list), f"{_SERVERS_JSON} has no servers list")
+    require(isinstance(servers, list), f"{SERVERS_JSON} has no servers list")
     kept = [
         entry
         for entry in servers
@@ -2374,12 +2373,12 @@ def restrict_package_servers(dev: Device) -> str:
     ]
     require(
         len(kept) == 1,
-        f"expected exactly one {_UPGRADE_SERVER_ID} entry in {_SERVERS_JSON}, found {len(kept)}",
+        f"expected exactly one {_UPGRADE_SERVER_ID} entry in {SERVERS_JSON}, found {len(kept)}",
     )
     config["servers"] = kept
     payload = json.dumps(config, indent=2)
-    dev.run(f"printf '%s' {shlex.quote(payload)} > {_SERVERS_JSON}")
-    return f"{console.lit(_SERVERS_JSON)} → {console.lit(_UPGRADE_SERVER_ID)} only"
+    dev.run(f"printf '%s' {shlex.quote(payload)} > {SERVERS_JSON}")
+    return f"{console.lit(SERVERS_JSON)} → {console.lit(_UPGRADE_SERVER_ID)} only"
 
 
 @stage("Authenticate")
@@ -2888,7 +2887,7 @@ def restore_remote_dir(dev: Device, snap: DirSnapshot) -> None:
 
 
 def _bcp_siblings(dev: Device) -> frozenset[str]:
-    pattern = f"{_SERVERS_JSON}.bcp*"
+    pattern = f"{SERVERS_JSON}.bcp*"
     # With no match the glob stays literal and the trailing `[ -e ]` would
     # otherwise make the loop (and ssh) exit 1.
     output = dev.read(
@@ -2903,7 +2902,7 @@ def restore_servers_config(dev: Device, cycle: FirmwareCycle) -> None:
         msg = "BUG: servers.json was not snapshotted before restoration"
         raise RuntimeError(msg)
     restore_remote_file(dev, snapshot)
-    directory = _SERVERS_JSON.rpartition("/")[0]
+    directory = SERVERS_JSON.rpartition("/")[0]
     for name in sorted(_bcp_siblings(dev) - cycle.bcp_before):
         dev.run(f"rm -f {shlex.quote(f'{directory}/{name}')}")
 
@@ -2966,13 +2965,13 @@ def preflight_device(dev: Device) -> str:
         dev.read(f"test -x {shlex.quote(_NIX_CLI)} && echo ok || true") == "ok",
         f"{_NIX_CLI} is missing — prepare the device with deck deploy",
     )
-    servers = shlex.quote(_SERVERS_JSON)
+    servers = shlex.quote(SERVERS_JSON)
     if dev.read(f"test -f {servers} && echo present || true") == "present":
         raw = dev.read(f"cat {servers}")
         try:
             json.loads(raw)
         except json.JSONDecodeError as e:
-            raise Abort(f"{_SERVERS_JSON} is not valid JSON: {e}") from None
+            raise Abort(f"{SERVERS_JSON} is not valid JSON: {e}") from None
     return "base64, nix CLI, and servers config verified"
 
 
@@ -2980,7 +2979,7 @@ def preflight_device(dev: Device) -> str:
 def snapshot_upgrade_config(dev: Device, cycle: FirmwareCycle) -> str:
     cycle.bcp_before = _bcp_siblings(dev)
     cycle.servers_snapshot = snapshot_remote_file(
-        dev, _SERVERS_JSON, cycle.snapshot_dir / "servers.json"
+        dev, SERVERS_JSON, cycle.snapshot_dir / "servers.json"
     )
     cycle.nix_conf_snapshot = snapshot_remote_file(dev, _NIX_CONF, cycle.snapshot_dir / "nix.conf")
     return f"snapshots → {console.lit(cycle.snapshot_dir)}"

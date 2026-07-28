@@ -28,21 +28,13 @@ served build must contain the removed widget for the install to be offered.
 The server registration persists on the device after the run.
 """
 
-import os
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Literal
 
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device
+from bmc_tui.procedures.upgrade_e2e import default_key_dir
 from bmc_tui.stage import entrypoint
-
-
-def _default_key_dir() -> Path:
-    """The upgrade-server script's own default keypair location."""
-    state_home = os.environ.get("XDG_STATE_HOME", "")
-    base = Path(state_home) if state_home else Path.home() / ".local" / "state"
-    return base / "bmc-upgrade-server"
 
 
 @dataclass
@@ -69,7 +61,7 @@ class InstallWidgetE2e:
             password=self.password,
             port=self.port,
             index_port=self.index_port,
-            key_dir=_default_key_dir(),
+            key_dir=default_key_dir(),
         )
 
         console.header("End-to-end widget install")

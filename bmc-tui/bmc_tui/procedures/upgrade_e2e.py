@@ -38,7 +38,7 @@ from bmc_tui.device import Device
 from bmc_tui.stage import entrypoint
 
 
-def _default_key_dir() -> Path:
+def default_key_dir() -> Path:
     """The upgrade-server script's own default keypair location."""
     state_home = os.environ.get("XDG_STATE_HOME", "")
     base = Path(state_home) if state_home else Path.home() / ".local" / "state"
@@ -68,7 +68,7 @@ class UpgradeE2e:
             password=self.password,
             port=self.port,
             index_port=self.index_port,
-            key_dir=_default_key_dir(),
+            key_dir=default_key_dir(),
         )
 
         console.header("End-to-end package upgrade")

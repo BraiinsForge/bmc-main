@@ -1081,25 +1081,25 @@ def test_restrict_package_servers_keeps_only_harness_entry() -> None:
     # the shipped default, whose production entries (forge) may not serve a
     # package feed — one unusable server fails the whole package probe.
     raw = _servers_json("forge", catalog._UPGRADE_SERVER_ID)
-    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON}": raw}))
+    backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": raw}))
     catalog.restrict_package_servers(Device("h", backend=backend))
     push = next(argv[-1] for argv in backend.runs if "printf" in argv[-1])
     tokens = shlex.split(push)
     assert tokens[0] == "printf"
-    assert tokens[-1] == catalog._SERVERS_JSON
+    assert tokens[-1] == catalog.SERVERS_JSON
     written = json.loads(tokens[2])
     assert written["factory"]["id"] == "factory"
     assert [entry["id"] for entry in written["servers"]] == [catalog._UPGRADE_SERVER_ID]
 
 
 def test_restrict_package_servers_aborts_without_harness_entry() -> None:
-    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON}": _servers_json("forge")}))
+    backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": _servers_json("forge")}))
     with pytest.raises(Abort, match="expected exactly one dev-upgrade entry"):
         catalog.restrict_package_servers(Device("h", backend=backend))
 
 
 def test_restrict_package_servers_aborts_on_malformed_json() -> None:
-    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON}": "not json"}))
+    backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": "not json"}))
     with pytest.raises(Abort, match="not valid JSON after registration"):
         catalog.restrict_package_servers(Device("h", backend=backend))
 
@@ -2758,7 +2758,7 @@ def test_snapshot_remote_file_is_byte_exact_and_restores_by_push(tmp_path: Path)
 
 def test_restore_servers_config_removes_only_new_quarantine_siblings(tmp_path: Path) -> None:
     cycle = _firmware_cycle(tmp_path)
-    cycle.servers_snapshot = catalog.FileSnapshot(catalog._SERVERS_JSON, None)
+    cycle.servers_snapshot = catalog.FileSnapshot(catalog.SERVERS_JSON, None)
     cycle.bcp_before = frozenset({"servers.json.bcp"})
     backend = _Exec(_routes({"servers.json.bcp*": "servers.json.bcp\nservers.json.bcp.1"}))
     catalog.restore_servers_config(Device("h", backend=backend), cycle)
@@ -2841,8 +2841,8 @@ def test_require_nix_era_accepts_complete_payload_and_rejects_missing(tmp_path: 
             {
                 "command -v base64": "ok",
                 f"test -x {catalog._NIX_CLI}": "ok",
-                f"test -f {catalog._SERVERS_JSON}": "present",
-                f"cat {catalog._SERVERS_JSON}": "not-json",
+                f"test -f {catalog.SERVERS_JSON}": "present",
+                f"cat {catalog.SERVERS_JSON}": "not-json",
             },
             "JSON",
         ),
@@ -3498,7 +3498,7 @@ def _restorable_cycle(tmp_path: Path) -> catalog.FirmwareCycle:
     servers.write_text("servers")
     nix_conf.write_text("nix-conf")
     opkg_keys.write_text("keys")
-    cycle.servers_snapshot = catalog.FileSnapshot(catalog._SERVERS_JSON, servers)
+    cycle.servers_snapshot = catalog.FileSnapshot(catalog.SERVERS_JSON, servers)
     cycle.nix_conf_snapshot = catalog.FileSnapshot(catalog._NIX_CONF, nix_conf)
     cycle.opkg_keys_snapshot = catalog.DirSnapshot("/etc/opkg/keys", opkg_keys)
     return cycle
@@ -3518,7 +3518,7 @@ def test_restore_after_success_quiesces_before_restores_and_start(
     cycle = _restorable_cycle(tmp_path)
     catalog.restore_after_success(Device("h", backend=backend), cycle)
     commands = [argv[-1] for argv in backend.runs]
-    server_push = commands.index(f"cat > {catalog._SERVERS_JSON}")
+    server_push = commands.index(f"cat > {catalog.SERVERS_JSON}")
     nix_push = commands.index(f"cat > {catalog._NIX_CONF}")
     scan_indices = [
         index for index, command in enumerate(commands) if "for exe in /proc/[0-9]*/exe" in command
@@ -3563,7 +3563,7 @@ def test_restore_after_success_aborts_if_stock_service_does_not_start(
     with pytest.raises(Abort, match="bmc-compositor"):
         catalog.restore_after_success(Device("h", backend=backend), _restorable_cycle(tmp_path))
     commands = [argv[-1] for argv in backend.runs]
-    assert commands.index(f"cat > {catalog._SERVERS_JSON}") < commands.index(
+    assert commands.index(f"cat > {catalog.SERVERS_JSON}") < commands.index(
         "service bmc-compositor start"
     )
     assert commands.index(f"cat > {catalog._NIX_CONF}") < commands.index(

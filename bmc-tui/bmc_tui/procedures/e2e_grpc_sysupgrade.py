@@ -39,7 +39,7 @@ from bmc_tui.catalog import FirmwareCycle, StreamResult  # noqa: TC001
 from bmc_tui.device import Device
 from bmc_tui.image import Image
 from bmc_tui.nix import Nix
-from bmc_tui.procedures.upgrade_e2e import _default_key_dir
+from bmc_tui.procedures.upgrade_e2e import default_key_dir
 from bmc_tui.server import default_serve_ip
 from bmc_tui.stage import Abort, entrypoint
 
@@ -400,7 +400,7 @@ class E2eGrpcSysupgrade:
             password=self.password,
             port=self.packages_port,
             index_port=self.packages_index_port,
-            key_dir=_default_key_dir(),
+            key_dir=default_key_dir(),
         )
         console.header("End-to-end gRPC sysupgrade")
         dev.print()
@@ -492,7 +492,7 @@ class E2eGrpcSysupgrade:
             except subprocess.CalledProcessError as error:
                 raise Abort(
                     "firmware check RPC failed; a package-check failure points to "
-                    f"{catalog._SERVERS_JSON} or the package-server log at "
+                    f"{catalog.SERVERS_JSON} or the package-server log at "
                     f"{packages.log_path}: {error}"
                 ) from None
             catalog.snapshot_boot_id(mutation_dev, cycle)
