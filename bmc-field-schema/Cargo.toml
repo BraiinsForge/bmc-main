@@ -8,6 +8,7 @@ description = "Schema-driven form field vocabulary (param/field definitions, kin
 
 [dependencies]
 indexmap.workspace = true
+ipnet.workspace = true
 schemars = { workspace = true, features = ["indexmap2"] }
 serde.workspace = true
 serde_json.workspace = true

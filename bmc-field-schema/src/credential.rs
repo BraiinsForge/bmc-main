@@ -24,13 +24,16 @@
 //!
 //! Here rather than in the firmware crate so `bmc-widget-codegen` can read each type's fields.
 
+use std::net::IpAddr;
+
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{ParamDefinition, ParamKey, ParamKind, StringFormat};
 
 /// A kind of account a widget can bind, e.g. a Braiins Pool API token.
-/// Each field key is the interpolation variable a widget embeds as `{{ credential.<slot>.<field_key> }}`.
+/// Each field key is the interpolation variable a widget embeds
+/// as `{{ credential.<slot>.<field_key> }}`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CredentialType {
     /// Stable id, referenced by widget manifests and accounts.
@@ -47,10 +50,79 @@ pub struct CredentialType {
 /// Hosts a credential type's secrets may be sent to.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EgressPolicy {
-    /// Matched exactly against the request's normalised authority — full host (every subdomain
-    /// label) and port, lowercased and IDNA-normalised — never the path. Subdomain wildcards are
-    /// not yet supported (open question).
+    /// Where this type's secret may go.
+    /// Each entry is one of:
+    ///
+    /// - an exact host, optionally with a port
+    ///     - `api.example.com`
+    ///     - `api.example.com:8443`.
+    ///     - Omitting the port allows any port
+    /// - a subdomain wildcard `*.example.com`, matching exactly one label
+    ///   and never the apex, as TLS and cookies do;
+    /// - a CIDR range `10.0.0.0/8`, `fd00::/8`.
+    ///
+    /// An empty list allows everything, exactly as omitting the policy does.
     pub allow_hosts: Vec<String>,
+}
+
+impl EgressPolicy {
+    /// Whether this policy permits sending the secret to `host`.
+    ///
+    /// `host` is the request authority with any IPv6 brackets already removed,
+    /// and `port` its explicit port if the URL carried one.
+    /// The caller does that split because it holds a URL parser;
+    /// this crate deliberately has no URL dependency.
+    ///
+    /// Comparison is ASCII-case-insensitive.
+    /// A non-ASCII host is compared as-is,
+    /// so an internationalised domain must be listed in punycode.
+    #[must_use]
+    pub fn allows(&self, host: &str, port: Option<u16>) -> bool {
+        self.allow_hosts.is_empty()
+            || self
+                .allow_hosts
+                .iter()
+                .any(|entry| entry_allows(entry, host, port))
+    }
+}
+
+fn entry_allows(entry: &str, host: &str, port: Option<u16>) -> bool {
+    if entry.contains('/') {
+        // A range can only speak about literal addresses.
+        // Resolving a name here would approve one address
+        // and let the fetch dial another.
+        return match (entry.parse::<ipnet::IpNet>(), host.parse::<IpAddr>()) {
+            (Ok(network), Ok(addr)) => network.contains(&addr),
+            _ => false,
+        };
+    }
+
+    let (entry_host, entry_port) = split_port(entry);
+    if entry_port.is_some() && entry_port != port {
+        return false;
+    }
+    match entry_host.strip_prefix("*.") {
+        // Lowercased on both sides: `strip_suffix` is case-sensitive,
+        // entries are operator-written, and the exact arm below already
+        // ignores case through `eq_ignore_ascii_case`.
+        Some(suffix) => host
+            .to_ascii_lowercase()
+            .strip_suffix(&suffix.to_ascii_lowercase())
+            .and_then(|label| label.strip_suffix('.'))
+            // One label, and never the apex: an empty prefix
+            // would mean the bare domain,
+            // a dotted one would reach deeper than the entry declared.
+            .is_some_and(|label| !label.is_empty() && !label.contains('.')),
+        None => entry_host.eq_ignore_ascii_case(host),
+    }
+}
+
+/// Split a trailing `:port`, ignoring the colons inside an IPv6 literal.
+fn split_port(entry: &str) -> (&str, Option<u16>) {
+    match entry.rsplit_once(':') {
+        Some((host, port)) if !host.contains(':') => (host, port.parse().ok()),
+        _ => (entry, None),
+    }
 }
 
 /// The fixed set of firmware-provided credential types.
@@ -139,6 +211,132 @@ fn braiins_pool() -> CredentialType {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn policy(entries: &[&str]) -> EgressPolicy {
+        EgressPolicy {
+            allow_hosts: entries.iter().map(|e| (*e).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn an_empty_list_allows_everything() {
+        assert!(policy(&[]).allows("anywhere.example.com", None));
+    }
+
+    #[test]
+    fn an_exact_host_matches_regardless_of_case_or_port() {
+        let pinned = policy(&["api.braiins.com"]);
+
+        assert!(pinned.allows("api.braiins.com", None));
+        assert!(pinned.allows("API.Braiins.COM", None));
+        assert!(
+            pinned.allows("api.braiins.com", Some(8443)),
+            "an entry without a port speaks for every port"
+        );
+        assert!(!pinned.allows("evil.com", None));
+    }
+
+    #[test]
+    fn an_entry_with_a_port_restricts_to_it() {
+        let pinned = policy(&["api.braiins.com:8443"]);
+
+        assert!(pinned.allows("api.braiins.com", Some(8443)));
+        assert!(!pinned.allows("api.braiins.com", Some(443)));
+        assert!(!pinned.allows("api.braiins.com", None));
+    }
+
+    #[test]
+    fn a_wildcard_takes_one_label_and_never_the_apex() {
+        let pinned = policy(&["*.braiins.com"]);
+
+        assert!(pinned.allows("api.braiins.com", None));
+        assert!(
+            !pinned.allows("braiins.com", None),
+            "the apex is listed separately or not at all"
+        );
+        assert!(
+            !pinned.allows("a.b.braiins.com", None),
+            "one label only, as TLS and cookies do it"
+        );
+    }
+
+    #[test]
+    fn a_wildcard_ignores_case_on_both_sides() {
+        assert!(
+            policy(&["*.Braiins.com"]).allows("API.braiins.COM", None),
+            "an operator writes these by hand; case must not silently void one"
+        );
+    }
+
+    #[test]
+    fn a_wildcard_cannot_be_escaped_by_a_lookalike_suffix() {
+        let pinned = policy(&["*.braiins.com"]);
+
+        assert!(
+            !pinned.allows("api.notbraiins.com", None),
+            "the label boundary must be a real dot, not a substring match"
+        );
+        assert!(!pinned.allows("braiins.com.evil.com", None));
+    }
+
+    #[test]
+    fn a_cidr_range_admits_addresses_inside_it() {
+        let lan = policy(&["10.0.0.0/8"]);
+
+        assert!(lan.allows("10.1.2.3", None));
+        assert!(!lan.allows("11.1.2.3", None));
+        assert!(
+            lan.allows("10.1.2.3", Some(4028)),
+            "a range says nothing about ports"
+        );
+    }
+
+    #[test]
+    fn a_cidr_range_never_matches_a_hostname() {
+        assert!(
+            !policy(&["10.0.0.0/8"]).allows("rig.local", None),
+            "resolving here would approve one address and let the fetch dial another"
+        );
+    }
+
+    #[test]
+    fn address_families_do_not_cross() {
+        assert!(!policy(&["10.0.0.0/8"]).allows("fd00::1", None));
+        assert!(!policy(&["fd00::/8"]).allows("10.1.2.3", None));
+    }
+
+    #[test]
+    fn ipv6_ranges_compare_by_prefix() {
+        let lan = policy(&["fd00::/8"]);
+
+        assert!(lan.allows("fd00::1", None));
+        assert!(lan.allows("fdff:ffff::1", None));
+        assert!(!lan.allows("fe80::1", None));
+    }
+
+    #[test]
+    fn a_zero_length_prefix_admits_the_whole_family() {
+        assert!(policy(&["0.0.0.0/0"]).allows("203.0.113.9", None));
+        assert!(!policy(&["0.0.0.0/0"]).allows("fd00::1", None));
+    }
+
+    #[test]
+    fn a_malformed_entry_admits_nothing() {
+        assert!(!policy(&["10.0.0.0/nonsense"]).allows("10.1.2.3", None));
+        assert!(!policy(&["10.0.0.0/33"]).allows("10.1.2.3", None));
+        assert!(!policy(&["not a host/8"]).allows("10.1.2.3", None));
+    }
+
+    #[test]
+    fn the_pool_type_admits_its_api_and_nothing_else() {
+        let egress = find("braiins-pool")
+            .egress
+            .expect("BUG: braiins-pool is egress-pinned");
+
+        assert!(egress.allows("api.braiins.com", None));
+        assert!(!egress.allows("braiins.com", None));
+        assert!(!egress.allows("attacker.example", None));
+    }
 
     fn find(id: &str) -> CredentialType {
         builtins()

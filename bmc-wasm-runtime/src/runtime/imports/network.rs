@@ -166,6 +166,19 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return request_id.to_wire();
             }
 
+            // Last hop before the wire. Everything above sees the placeholder
+            // form — the fetch key, the interceptor, the hermetic-breach
+            // record — so no diagnostic, fixture or log can hold a secret.
+            let Some(spent) = super::credentials::spend(state, &url, &headers, body) else {
+                let _ = state.fetch_tx.send(CompletedFetch {
+                    request_id,
+                    status: 0,
+                    body: Vec::new(),
+                });
+                return request_id.to_wire();
+            };
+            let super::credentials::SpentRequest { url, headers, body } = spent;
+
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {

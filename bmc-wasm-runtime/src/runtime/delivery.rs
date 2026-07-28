@@ -1024,6 +1024,20 @@ impl WasmWidgetRuntime {
                 continue;
             }
 
+            // Resolved here rather than when the fetch was queued,
+            // so a rotated secret is the one that goes out
+            // and the queue never holds a secret at all.
+            let Some(spent) = super::imports::credentials::spend(state, &url, &headers, body)
+            else {
+                let _ = state.fetch_tx.send(CompletedFetch {
+                    request_id,
+                    status: 0,
+                    body: Vec::new(),
+                });
+                continue;
+            };
+            let super::imports::credentials::SpentRequest { url, headers, body } = spent;
+
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {

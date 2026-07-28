@@ -773,6 +773,7 @@ name = "bmc-field-schema"
 version = "0.1.0"
 dependencies = [
  "indexmap",
+ "ipnet",
  "schemars",
  "serde",
  "serde_json",
@@ -1459,6 +1460,7 @@ dependencies = [
  "tracing-subscriber",
  "tungstenite",
  "ureq",
+ "url",
  "wasmi",
  "wat",
  "webpki-roots 1.0.6",

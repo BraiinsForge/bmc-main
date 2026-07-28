@@ -90,6 +90,20 @@ impl CredentialSecrets {
         self.0.len()
     }
 
+    /// Whether an account is bound to this slot, regardless of its fields.
+    /// Distinguishes an unbound slot from a mistyped field name.
+    #[must_use]
+    pub fn has_slot(&self, slot: &str) -> bool {
+        self.0.contains_key(slot)
+    }
+
+    /// One field's value, for the host to substitute at egress.
+    /// The only way out of this type, and it hands back one field at a time.
+    #[must_use]
+    pub fn field(&self, slot: &str, field: &str) -> Option<&str> {
+        self.0.get(slot)?.get(field)?.as_str()
+    }
+
     /// The JSON text emitted on the `credential_secrets` event.
     #[must_use]
     pub fn to_json_string(&self) -> String {
