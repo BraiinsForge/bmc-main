@@ -63,6 +63,42 @@ impl DisplayInfo {
     };
 }
 
+/// Secret field values per credential slot, JSON-shaped
+/// as the wire carries them: `{"<slot>": {"<field>": "<value>"}}`.
+///
+/// A newtype rather than a bare map, so redaction rides on the type.
+/// `Debug` renders every slot against `<redacted>`,
+/// and serde skips the field wherever it is stored,
+/// so no log line or serialized config can carry a secret.
+#[derive(Clone, Default, PartialEq)]
+pub struct CredentialSecrets(serde_json::Map<String, serde_json::Value>);
+
+impl CredentialSecrets {
+    #[must_use]
+    pub fn new(secrets: serde_json::Map<String, serde_json::Value>) -> Self {
+        Self(secrets)
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// The JSON text emitted on the `credential_secrets` event.
+    #[must_use]
+    pub fn to_json_string(&self) -> String {
+        serde_json::Value::Object(self.0.clone()).to_string()
+    }
+}
+
+impl std::fmt::Debug for CredentialSecrets {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_map()
+            .entries(self.0.keys().map(|slot| (slot, "<redacted>")))
+            .finish()
+    }
+}
+
 /// Full initial configuration for a widget instance.
 ///
 /// The coordinator pushes one of these into the compositor before spawning
@@ -321,6 +357,29 @@ pub enum ActionPayload {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn secrets_of(slot: &str, field: &str, value: &str) -> CredentialSecrets {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            field.to_owned(),
+            serde_json::Value::String(value.to_owned()),
+        );
+        let mut slots = serde_json::Map::new();
+        slots.insert(slot.to_owned(), serde_json::Value::Object(fields));
+
+        CredentialSecrets::new(slots)
+    }
+
+    #[test]
+    fn debugging_credential_secrets_names_the_slot_but_not_the_value() {
+        let rendered = format!("{:?}", secrets_of("pool", "token", "s3cr3t"));
+
+        assert!(rendered.contains("pool"), "the slot must stay debuggable");
+        assert!(
+            !rendered.contains("s3cr3t") && !rendered.contains("token"),
+            "neither the value nor the field name may reach a log: {rendered}"
+        );
+    }
 
     #[test]
     fn widget_initial_config_defaults_viewport_shape_to_rectangular() {

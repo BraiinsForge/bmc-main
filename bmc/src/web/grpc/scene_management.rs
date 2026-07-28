@@ -40,6 +40,7 @@ use uuid::Uuid;
 use bmc_platform::HardwareCapabilities;
 
 use crate::config::ConfigHandle;
+use crate::credential;
 use crate::data::{Account, AccountId, SceneCycling, SceneCyclingTransition};
 use crate::led_coordinator::{Layer, LedCoordinatorHandle};
 use crate::scene;
@@ -944,7 +945,10 @@ fn validate_and_project_param_value(
     }
 }
 
-fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
+fn scene_widget_to_proto(
+    widget: &scene::Widget,
+    accounts: &IndexMap<AccountId, Account>,
+) -> web::Widget {
     web::Widget {
         id: widget.id.to_string(),
         position: Some(web::WidgetPosition {
@@ -958,18 +962,20 @@ fn scene_widget_to_proto(widget: &scene::Widget) -> web::Widget {
             widget_uid: widget.widget_type_id.to_string(),
             params: Some(params_to_widget_data_struct(&widget.params)),
             credential_bindings: Some(web::CredentialBindings {
-                bindings: widget
-                    .credential_bindings
-                    .iter()
-                    .map(|(key, id)| (key.as_str().to_owned(), id.to_string()))
+                bindings: credential::effective_bindings(&widget.credential_bindings, accounts)
+                    .map(|(key, account)| (key.as_str().to_owned(), account.id.to_string()))
                     .collect(),
             }),
         }),
     }
 }
 
-fn scene_to_proto(scene: &scene::Scene) -> web::Scene {
-    let widgets: Vec<web::Widget> = scene.widgets.values().map(scene_widget_to_proto).collect();
+fn scene_to_proto(scene: &scene::Scene, accounts: &IndexMap<AccountId, Account>) -> web::Scene {
+    let widgets: Vec<web::Widget> = scene
+        .widgets
+        .values()
+        .map(|widget| scene_widget_to_proto(widget, accounts))
+        .collect();
 
     let kind = match scene.kind {
         scene::SceneKind::Fullscreen => web::scene::Kind::Fullscreen(web::scene::Fullscreen {
@@ -1043,7 +1049,12 @@ impl GrpcSceneManagementService for SceneManagementService {
         _request: Request<()>,
     ) -> Result<Response<web::GetScenesResponse>, Status> {
         let config = self.config_handle.read().await;
-        let scenes = config.scenes().values().map(scene_to_proto).collect();
+        let store = self.secret_store.read().await;
+        let scenes = config
+            .scenes()
+            .values()
+            .map(|scene| scene_to_proto(scene, store.accounts()))
+            .collect();
         Ok(Response::new(web::GetScenesResponse { scenes }))
     }
 
@@ -1061,8 +1072,9 @@ impl GrpcSceneManagementService for SceneManagementService {
             .get(&scene::SceneId::from(id))
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
 
+        let store = self.secret_store.read().await;
         Ok(Response::new(web::SceneResponse {
-            scene: Some(scene_to_proto(scene)),
+            scene: Some(scene_to_proto(scene, store.accounts())),
         }))
     }
 
@@ -2851,25 +2863,59 @@ mod tests {
         }
     }
 
-    #[test]
-    fn scene_to_proto_emits_stored_credential_bindings() {
+    fn accounts_of(ids: &[&str]) -> IndexMap<AccountId, Account> {
+        ids.iter()
+            .map(|id| {
+                let id = AccountId::from_str(id).expect("BUG: non-empty id");
+                let account = Account {
+                    id: id.clone(),
+                    type_id: "generic-token".to_owned(),
+                    name: "Token".to_owned(),
+                    field_values: IndexMap::new(),
+                    created_at: chrono::Utc::now(),
+                };
+                (id, account)
+            })
+            .collect()
+    }
+
+    fn scene_bound_to(account: &str) -> scene::Scene {
         let mut scene = scene_with_widget(uuid::Uuid::new_v4(), BTreeMap::new());
-        let slot: CredentialKey = serde_json::from_str("\"pool\"").expect("BUG: valid key");
-        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        let slot = CredentialKey::try_new("pool".to_owned()).expect("BUG: valid key");
+        let id = AccountId::from_str(account).expect("BUG: non-empty id");
         for widget in scene.widgets.values_mut() {
             widget.credential_bindings.insert(slot.clone(), id.clone());
         }
 
-        let proto = scene_to_proto(&scene);
-        let bindings = proto_scene_first_widget(&proto)
+        scene
+    }
+
+    fn proto_bindings(proto: &web::Scene) -> &HashMap<String, String> {
+        &proto_scene_first_widget(proto)
             .config
             .as_ref()
             .expect("BUG: config")
             .credential_bindings
             .as_ref()
-            .expect("BUG: bindings");
+            .expect("BUG: bindings")
+            .bindings
+    }
 
-        assert_eq!(bindings.bindings["pool"], "acct-1");
+    #[test]
+    fn scene_to_proto_emits_a_binding_whose_account_exists() {
+        let proto = scene_to_proto(&scene_bound_to("acct-1"), &accounts_of(&["acct-1"]));
+
+        assert_eq!(proto_bindings(&proto)["pool"], "acct-1");
+    }
+
+    #[test]
+    fn scene_to_proto_omits_a_binding_whose_account_is_gone() {
+        let proto = scene_to_proto(&scene_bound_to("acct-1"), &accounts_of(&[]));
+
+        assert!(
+            proto_bindings(&proto).is_empty(),
+            "the editor must not be handed an id it would then fail to save"
+        );
     }
 
     #[test]
@@ -2921,7 +2967,7 @@ mod tests {
         let params: BTreeMap<ParamKey, PV> = [(key, PV::Integer(5))].into_iter().collect();
 
         let scene = scene_with_widget(widget_uid, params);
-        let proto = scene_to_proto(&scene);
+        let proto = scene_to_proto(&scene, &IndexMap::new());
         let widget = proto_scene_first_widget(&proto);
         let config = widget.config.as_ref().expect("BUG: config");
         let params = config.params.as_ref().expect("BUG: params");
@@ -2946,7 +2992,7 @@ mod tests {
         .collect();
 
         let scene = scene_with_widget(widget_uid, params);
-        let proto = scene_to_proto(&scene);
+        let proto = scene_to_proto(&scene, &IndexMap::new());
         let widget = proto_scene_first_widget(&proto);
         let fields = &widget
             .config
