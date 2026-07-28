@@ -750,7 +750,10 @@ impl CompositorState {
     }
 
     /// Mapped layer surfaces as (buffer, logical destination rect) in paint
-    /// order (bottom first). Destination carries both location and size.
+    /// order (bottom first). The renderer scales each buffer into the rect,
+    /// so visuals always agree with the geometry-sized touch hit-box; a
+    /// buffer that actually mismatches the rect is warned about at the
+    /// commit boundary (see `LayerEntry::warn_on_buffer_mismatch`).
     #[must_use]
     pub fn layer_render_items(&self) -> Vec<(WlBuffer, Rectangle<i32, Logical>)> {
         use crate::compositor::layer_surface::{layer_rank, paint_order};
@@ -911,9 +914,7 @@ impl CompositorState {
         }
 
         if needs_configure {
-            layer_surface.with_pending_state(|state| {
-                state.size = Some(geometry.size);
-            });
+            layer_surface.with_pending_state(|state| state.size = Some(geometry.size));
             layer_surface.send_configure();
         }
 
@@ -933,12 +934,14 @@ impl CompositorState {
 
             had_damage = !attributes.damage.is_empty();
             drained_callbacks.append(&mut attributes.frame_callbacks);
+            let buffer_scale = attributes.buffer_scale;
 
             if let Some(assignment) = attributes.buffer.take() {
                 had_buffer_change = true;
                 let entry = &mut self.layer_surfaces[idx];
                 match assignment {
                     BufferAssignment::NewBuffer(buffer) => {
+                        entry.warn_on_buffer_mismatch(&buffer, geometry, buffer_scale);
                         let new_id = buffer.id();
                         let (old_buf, old_id) = replace_buffer(
                             &mut entry.buffer,

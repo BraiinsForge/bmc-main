@@ -292,7 +292,11 @@ impl OverlayTexture {
 }
 
 /// Blit a texture at a logical top-left placement, applying the panel's scanout
-/// transform. Logs a warning on failure without aborting the frame.
+/// transform. The destination is `size` when given — the texture scales into
+/// it — and texture-sized (no scaling) when `None`. Layer surfaces pass their
+/// configured geometry so a mismatched buffer keeps agreeing with the
+/// geometry-sized touch hit-box (the mismatch itself is warned at the commit
+/// boundary). Logs a warning on failure without aborting the frame.
 #[expect(
     clippy::too_many_arguments,
     reason = "mirrors place_widget's explicit geometry inputs"
@@ -302,14 +306,16 @@ fn blit_texture_on_frame(
     texture: &GlesTexture,
     logical_x: i32,
     logical_y: i32,
+    size: Option<Size<i32, Logical>>,
     output_w: i32,
     output_h: i32,
     transform: DisplayTransform,
     label: &str,
 ) {
     let tex_size = texture.size();
+    let dst_size = size.map_or((tex_size.w, tex_size.h), |s| (s.w, s.h));
     let dst = place_widget(
-        logical_x, logical_y, tex_size.w, tex_size.h, output_w, output_h, transform,
+        logical_x, logical_y, dst_size.0, dst_size.1, output_w, output_h, transform,
     );
     let src: Rectangle<f64, BufferCoord> =
         Rectangle::from_loc_and_size((0.0, 0.0), (f64::from(tex_size.w), f64::from(tex_size.h)));
@@ -384,6 +390,7 @@ fn draw_logo_scenes(
             logo,
             logo_x,
             logo_y,
+            None,
             output_w,
             output_h,
             transform,
@@ -402,6 +409,7 @@ fn draw_logo_scenes(
                 caption,
                 caption_x,
                 caption_y,
+                None,
                 output_w,
                 output_h,
                 transform,
@@ -854,34 +862,17 @@ impl SceneRenderer {
             let Some(texture) = self.texture_cache.get(&buffer.id()) else {
                 continue;
             };
-            let tex_size = texture.size();
-            let dst = place_widget(
+            blit_texture_on_frame(
+                &mut frame,
+                texture,
                 geo.loc.x,
                 geo.loc.y,
-                geo.size.w,
-                geo.size.h,
+                Some(geo.size),
                 output_w,
                 output_h,
                 self.scanout_transform,
+                "layer surface",
             );
-            let src: Rectangle<f64, BufferCoord> = Rectangle::from_loc_and_size(
-                (0.0, 0.0),
-                (f64::from(tex_size.w), f64::from(tex_size.h)),
-            );
-            let damage = texture_damage_rect(dst);
-            if let Err(e) = frame.render_texture_from_to(
-                texture,
-                src,
-                dst,
-                &[damage],
-                &[],
-                scanout_transform(self.scanout_transform),
-                1.0,
-                None,
-                &[],
-            ) {
-                tracing::warn!("Failed to render layer surface: {:?}", e);
-            }
         }
         ii_stopwatch::stopwatch_stop!(self.compose_w);
 

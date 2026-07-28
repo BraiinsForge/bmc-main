@@ -22,7 +22,7 @@ use std::collections::HashMap;
 
 use smithay::reexports::wayland_server::backend::ObjectId;
 use smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer;
-use smithay::utils::{Logical, Rectangle, Size};
+use smithay::utils::{Buffer as BufferCoord, Logical, Rectangle, Size};
 use smithay::wayland::shell::wlr_layer::{Anchor, Layer, LayerSurface, Margins};
 
 use super::widget_tracker::LifecycleState;
@@ -161,6 +161,45 @@ pub fn layer_commit_effects(
     }
 }
 
+/// True when a committed buffer's size disagrees with the geometry the
+/// compositor configured for the surface. See
+/// [`LayerEntry::warn_on_buffer_mismatch`] for what that disagreement means and
+/// why it is worth a warn. An indeterminable buffer size (`None`) is not a
+/// mismatch.
+///
+/// `buffer_size` is in buffer pixels and `geometry` is logical, so the
+/// comparison happens in buffer pixels: a `wl_surface.set_buffer_scale(2)`
+/// client attaching a double-size buffer has a surface size that matches
+/// exactly, and must not warn. Scaling geometry up rather than the buffer down
+/// keeps the check exact — a buffer that is not a whole multiple of the scale
+/// stays a mismatch instead of truncating into agreement.
+///
+/// `wl_surface.set_buffer_transform` is deliberately not folded in: the
+/// renderer ignores it, so a rotated buffer really does render wrong and should
+/// keep warning.
+#[must_use]
+pub fn layer_buffer_mismatch(
+    buffer_size: Option<Size<i32, BufferCoord>>,
+    geometry: Rectangle<i32, Logical>,
+    buffer_scale: i32,
+) -> bool {
+    buffer_size.is_some_and(|s| {
+        (s.w, s.h)
+            != (
+                geometry.size.w.saturating_mul(buffer_scale),
+                geometry.size.h.saturating_mul(buffer_scale),
+            )
+    })
+}
+
+/// Gate the mismatch warning to once per episode: fire only on the
+/// transition into mismatch, stay silent while it persists, and re-arm when
+/// a matching buffer arrives. Returns `(warn_now, warned_state_after)`.
+#[must_use]
+pub fn mismatch_warn_transition(already_warned: bool, mismatch: bool) -> (bool, bool) {
+    (mismatch && !already_warned, mismatch)
+}
+
 /// Swap a tracked buffer for a new one (or `None` to clear), returning the
 /// previous buffer and its id so the caller can release the buffer and
 /// invalidate the texture. Pure: the real types are filled in by the caller.
@@ -192,6 +231,10 @@ pub struct LayerEntry {
     /// Invariant: set whenever `buffer` is set; both are updated together in the
     /// NewBuffer commit path.
     pub last_geometry: Option<Rectangle<i32, Logical>>,
+    /// True after warning about a mismatched buffer commit; cleared by a
+    /// matching commit, so the warn fires once per mismatch episode instead
+    /// of once per commit (see [`mismatch_warn_transition`]).
+    pub buffer_mismatch_warned: bool,
 }
 
 impl LayerEntry {
@@ -202,11 +245,45 @@ impl LayerEntry {
             buffer: None,
             buffer_id: None,
             last_geometry: None,
+            buffer_mismatch_warned: false,
         }
     }
 
     pub fn is_mapped(&self) -> bool {
         self.buffer.is_some()
+    }
+
+    /// Warn when a layer client commits a buffer that disagrees with its
+    /// configured geometry. This asserts a local invariant, not protocol
+    /// conformance: the layer-shell configure size is a hint the client may
+    /// legally ignore, and a standard compositor would draw the surface at its
+    /// own size and centre it in the configured box. We draw at the configure
+    /// size instead, so `geometry` stays the one source of truth for the blit,
+    /// the touch hit-box, the hide-damage rect and [`is_fullscreen_blocker`] —
+    /// at the cost that a disagreement shows as blur rather than as a misplaced
+    /// surface, leaving this warn as its only symptom. Every in-tree layer
+    /// client commits at its configure size. Fires once per mismatch episode
+    /// (see [`mismatch_warn_transition`]); a matching commit re-arms it.
+    pub fn warn_on_buffer_mismatch(
+        &mut self,
+        buffer: &WlBuffer,
+        geometry: Rectangle<i32, Logical>,
+        buffer_scale: i32,
+    ) {
+        let buffer_size = smithay::backend::renderer::buffer_dimensions(buffer);
+        let mismatch = layer_buffer_mismatch(buffer_size, geometry, buffer_scale);
+        let (warn_now, warned) = mismatch_warn_transition(self.buffer_mismatch_warned, mismatch);
+        self.buffer_mismatch_warned = warned;
+        if warn_now {
+            tracing::warn!(
+                ?buffer_size,
+                ?geometry,
+                buffer_scale,
+                "layer surface committed a buffer whose surface size does not match \
+                 its configured geometry; it is stretched into the geometry and will \
+                 show blurred - size the buffer from the configure event"
+            );
+        }
     }
 }
 
@@ -220,6 +297,80 @@ mod tests {
             anchor,
             margin: Margins::default(),
         }
+    }
+
+    #[test]
+    fn matching_buffer_is_not_a_mismatch() {
+        let geometry = Rectangle::from_loc_and_size((10, 20), (420, 180));
+        assert!(!layer_buffer_mismatch(
+            Some(Size::from((420, 180))),
+            geometry,
+            1
+        ));
+    }
+
+    #[test]
+    fn wrong_size_buffer_is_a_mismatch() {
+        let geometry = Rectangle::from_loc_and_size((10, 20), (420, 180));
+        assert!(layer_buffer_mismatch(
+            Some(Size::from((420, 179))),
+            geometry,
+            1
+        ));
+    }
+
+    #[test]
+    fn indeterminable_buffer_size_is_not_a_mismatch() {
+        let geometry = Rectangle::from_loc_and_size((10, 20), (420, 180));
+        assert!(!layer_buffer_mismatch(None, geometry, 1));
+    }
+
+    #[test]
+    fn scaled_buffer_matching_its_scale_is_not_a_mismatch() {
+        // A scale-2 client attaching a double-size buffer is protocol-correct.
+        let geometry = Rectangle::from_loc_and_size((10, 20), (420, 180));
+        assert!(!layer_buffer_mismatch(
+            Some(Size::from((840, 360))),
+            geometry,
+            2
+        ));
+    }
+
+    #[test]
+    fn unscaled_buffer_at_scale_two_is_a_mismatch() {
+        let geometry = Rectangle::from_loc_and_size((10, 20), (420, 180));
+        assert!(layer_buffer_mismatch(
+            Some(Size::from((420, 180))),
+            geometry,
+            2
+        ));
+    }
+
+    #[test]
+    fn buffer_off_by_one_from_its_scale_is_a_mismatch() {
+        // Scaling geometry up instead of the buffer down keeps this exact:
+        // 841 / 2 would truncate to 420 and hide the disagreement.
+        let geometry = Rectangle::from_loc_and_size((10, 20), (420, 180));
+        assert!(layer_buffer_mismatch(
+            Some(Size::from((841, 360))),
+            geometry,
+            2
+        ));
+    }
+
+    #[test]
+    fn mismatch_warns_once_per_episode_and_rearms_on_match() {
+        // First mismatched commit warns; the episode then stays silent,
+        // a matching commit re-arms, and a new episode warns again.
+        assert_eq!(mismatch_warn_transition(false, true), (true, true));
+        assert_eq!(mismatch_warn_transition(true, true), (false, true));
+        assert_eq!(mismatch_warn_transition(true, false), (false, false));
+        assert_eq!(mismatch_warn_transition(false, true), (true, true));
+    }
+
+    #[test]
+    fn matching_commits_never_warn() {
+        assert_eq!(mismatch_warn_transition(false, false), (false, false));
     }
 
     #[test]
