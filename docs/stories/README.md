@@ -87,6 +87,13 @@ with per-category counts.
 The backend can discover available-but-not-installed widget packages and install them through the shared upgrade flow.
 The frontend picker integration and interactive installation experience will be delivered in a future change.
 
+### [Credential Accounts](credential-accounts.md)
+
+Saved accounts hold a service credential — a Braiins Pool token, an API key, a username and password — that the user
+enters once and binds to any widget needing one. The widget sees only that a credential is available and which account
+it came from; the device attaches the secret to the widget's outgoing requests itself, and refuses to send a
+service-tied credential anywhere but its own service.
+
 ### [Widgets](widgets/README.md)
 
 Information about all implemented official widgets.

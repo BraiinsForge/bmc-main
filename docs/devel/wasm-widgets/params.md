@@ -3,9 +3,23 @@
 Params are per-widget-instance values chosen by the operator. They belong in the widget's `manifest.json`, are edited in
 the scene/widget UI, and are delivered to the running widget as complete snapshots.
 
-Use params for widget-specific display choices, API endpoints, account IDs, locations, labels, thresholds, and toggles.
-Do not use params for deck-wide values such as the device timezone or night mode; read those from
-[system settings](system-settings.md).
+Use params for widget-specific display choices, API endpoints, public account identifiers, locations, labels,
+thresholds, and toggles. Do not use params for deck-wide values such as the device timezone or night mode; read those
+from [system settings](system-settings.md). Never use params for secrets; declare a [credential slot](credentials.md)
+instead.
+
+## Never Put a Secret in a Param
+
+A param is not a private channel, in three separate ways:
+
+- its value is stored in the device configuration file, which the support archive collects — the archive censors only
+  the one historical `api_key` shape, so a token under any other key is bundled verbatim and mailed to support;
+- its value is delivered into the widget's own memory, so it is readable by whoever wrote the widget;
+- nothing constrains where the widget then sends it.
+
+Declare a [credential slot](credentials.md) instead. The operator binds a saved account to the slot, and the device
+substitutes the secret into outbound requests at the moment they leave, so the widget never holds it and a
+service-pinned credential cannot be sent anywhere else.
 
 ## Declare Params
 
