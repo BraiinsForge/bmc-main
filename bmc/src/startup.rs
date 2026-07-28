@@ -438,6 +438,18 @@ where
                 .await;
         }
 
+        {
+            let scenes_rx = config_handle.read().await.subscribe_scenes_change();
+            let accounts_rx = secret_store.read().await.subscribe_accounts_change();
+            crate::widget::coordinator::start_credential_listener(
+                compositor.clone(),
+                config_handle.clone(),
+                secret_store.clone(),
+                scenes_rx,
+                accounts_rx,
+            );
+        }
+
         crate::widget::coordinator::start_brightness_listener(
             compositor.clone(),
             config_handle.clone(),

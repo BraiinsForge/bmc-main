@@ -68,6 +68,14 @@ pub struct FixtureHeader {
     /// failing fixture load.
     #[serde(default)]
     pub initial_system: SystemSnapshot,
+    /// Which credential slots are bound at the start of replay,
+    /// in the same JSON shape the `credentials` wayland event carries.
+    ///
+    /// The guest-visible half only — a fixture is a committed file,
+    /// and nothing a widget renders depends on the secret values,
+    /// so they have no reason to be here and cannot leak in.
+    #[serde(default, skip_serializing_if = "serde_json::Map::is_empty")]
+    pub initial_credentials: serde_json::Map<String, serde_json::Value>,
 }
 
 // ── Body encoding ───────────────────────────────────────────────────
@@ -178,6 +186,15 @@ pub enum UnifiedEvent {
     /// on the widget.
     SystemDelivery {
         system: SystemSnapshot,
+    },
+    /// Operator bound or unbound an account.
+    /// Replay calls `WasmWidgetRuntime::deliver_credentials_update`,
+    /// which fires `on_credentials_update` on the widget.
+    ///
+    /// Carries the guest-visible view only; replay pairs it
+    /// with empty secrets, since no rendering can depend on them.
+    CredentialDelivery {
+        credentials: serde_json::Map<String, serde_json::Value>,
     },
 
     // ── HTTP fetch ──────────────────────────────────────────────
@@ -346,6 +363,7 @@ pub fn validate_fixture(fixture: &UnifiedFixture) -> Result<()> {
             UnifiedEvent::Fetch { .. }
             | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SystemDelivery { .. }
+            | UnifiedEvent::CredentialDelivery { .. }
             | UnifiedEvent::SsdpFound { .. }
             | UnifiedEvent::SsdpRemoved { .. }
             | UnifiedEvent::MdnsFound { .. }
@@ -432,6 +450,7 @@ mod tests {
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![TimelineEvent {
                 at_ms: 0,
@@ -466,6 +485,7 @@ mod tests {
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![TimelineEvent {
                 at_ms: 0,
@@ -486,6 +506,7 @@ mod tests {
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -516,6 +537,7 @@ mod tests {
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -545,6 +567,7 @@ mod tests {
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -575,6 +598,7 @@ mod tests {
                 kv: HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -605,6 +629,7 @@ mod tests {
                 kv: HashMap::from([("theme".into(), "dark".into())]),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {
@@ -787,6 +812,7 @@ mod tests {
                 kv: HashMap::from([("theme".into(), "dark".into())]),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {

@@ -134,7 +134,8 @@ pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use network::NetworkInfo;
 pub use runtime::{
-    RenderStatus, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, WasmWidgetRuntime,
+    BoundCredential, CredentialView, RenderStatus, RuntimeConfig, RuntimeDisplayInfo,
+    RuntimeResourceLimits, WasmWidgetRuntime,
 };
 pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
@@ -158,6 +159,38 @@ pub enum ParseParamsError {
         #[source]
         source: bmc_widget_manifest::ParamValueConversionError,
     },
+}
+
+/// Parse the wayland `deck_widget_v1.credentials` map into the typed view.
+///
+/// Unlike [`parse_params_json`] a malformed entry is skipped
+/// instead of rejecting the whole map: to the widget an unreadable slot
+/// looks exactly like an unbound one, and dropping the rest
+/// would blind slots that are perfectly resolvable.
+#[must_use]
+pub fn parse_credentials_json(
+    object: &serde_json::Map<String, serde_json::Value>,
+) -> CredentialView {
+    let mut slots = std::collections::BTreeMap::new();
+    for (slot, entry) in object {
+        let field = |name: &str| entry.get(name).and_then(serde_json::Value::as_str);
+        if let (Some(type_id), Some(account_name)) = (field("type"), field("account")) {
+            slots.insert(
+                slot.clone(),
+                BoundCredential {
+                    type_id: type_id.to_owned(),
+                    account_name: account_name.to_owned(),
+                },
+            );
+        } else {
+            tracing::warn!(
+                slot,
+                "credential entry missing type/account — slot reads unbound"
+            );
+        }
+    }
+
+    CredentialView::new(slots)
 }
 
 /// Parse the wayland `deck_widget_v1.params` map into the typed `BTreeMap` shape
@@ -214,4 +247,39 @@ pub fn manifest_default_params(
             )
         })
         .collect()
+}
+
+#[cfg(test)]
+mod credential_parse_tests {
+    use super::*;
+
+    fn object(json: &serde_json::Value) -> serde_json::Map<String, serde_json::Value> {
+        json.as_object()
+            .expect("BUG: json! literal is an object")
+            .clone()
+    }
+
+    #[test]
+    fn a_well_formed_entry_becomes_a_bound_slot() {
+        let view = parse_credentials_json(&object(&serde_json::json!({
+            "pool": { "type": "braiins-pool", "account": "My pool" }
+        })));
+
+        assert_eq!(view.slot_count(), 1);
+    }
+
+    #[test]
+    fn a_malformed_entry_is_skipped_without_losing_its_neighbours() {
+        let view = parse_credentials_json(&object(&serde_json::json!({
+            "pool": { "type": "braiins-pool", "account": "My pool" },
+            "broken": { "type": "generic-token" },
+            "alsobroken": "not-an-object"
+        })));
+
+        assert_eq!(
+            view.slot_count(),
+            1,
+            "one bad slot must not blind the slots that parse"
+        );
+    }
 }

@@ -202,6 +202,7 @@ fn synth_online_fixture() -> UnifiedFixture {
             kv: HashMap::new(),
             initial_params: serde_json::Map::new(),
             initial_system,
+            initial_credentials: serde_json::Map::new(),
         },
         events: vec![TimelineEvent {
             at_ms: 500,
@@ -358,6 +359,7 @@ fn run_unified_capture(
         hermetic: !ctx.online,
         params: initial_params,
         system: initial_system,
+        credentials: bmc_wasm_runtime::parse_credentials_json(&fixture.header.initial_credentials),
         ..RuntimeConfig::default()
     };
     if !fetch_interceptor.is_empty() {
@@ -402,6 +404,7 @@ fn run_unified_capture(
                     | UnifiedEvent::Drag { .. }
                     | UnifiedEvent::ParamDelivery { .. }
                     | UnifiedEvent::SystemDelivery { .. }
+                    | UnifiedEvent::CredentialDelivery { .. }
             )
         })
         .collect();
@@ -744,6 +747,15 @@ fn run_unified_capture(
                 // of `on_params_update`).
                 UnifiedEvent::SystemDelivery { system } => {
                     runtime.deliver_system_update(system.clone());
+                }
+                // Operator bound or unbound an account.
+                // Paired with empty secrets: a fixture never carries them,
+                // and no rendering can read them anyway.
+                UnifiedEvent::CredentialDelivery { credentials } => {
+                    runtime.deliver_credentials_update(
+                        bmc_wasm_runtime::parse_credentials_json(credentials),
+                        bmc_widget_protocol::CredentialSecrets::default(),
+                    );
                 }
                 // Network events are handled by inject_fixture_events/fetch_interceptor
                 UnifiedEvent::Fetch { .. }
@@ -1131,6 +1143,7 @@ fn split_unified_events(
             | UnifiedEvent::Drag { .. }
             | UnifiedEvent::ParamDelivery { .. }
             | UnifiedEvent::SystemDelivery { .. }
+            | UnifiedEvent::CredentialDelivery { .. }
             | UnifiedEvent::AudioPlay { .. }
             | UnifiedEvent::LedSetEndless { .. }
             | UnifiedEvent::LedSetTemporary { .. }
@@ -1711,6 +1724,7 @@ mod tests {
                 kv: std::collections::HashMap::new(),
                 initial_params: serde_json::Map::new(),
                 initial_system: SystemSnapshot::default(),
+                initial_credentials: serde_json::Map::new(),
             },
             events: vec![
                 TimelineEvent {

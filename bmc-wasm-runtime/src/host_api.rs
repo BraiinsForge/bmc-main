@@ -50,7 +50,7 @@ use bmc_wasm_protocol::{
 
 use crate::audio_registry::AudioRegistry;
 use crate::network::NetworkInfo;
-use crate::runtime::ParamsSnapshot;
+use crate::runtime::{CredentialView, ParamsSnapshot};
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
 use crate::xml::XmlDocumentIndex;
@@ -214,6 +214,10 @@ pub(crate) enum Lifecycle {
     /// `on_system_update` is on the stack. Same import surface as [`Self::ParamsUpdate`],
     /// but a separate phase so traps and logs name the right hook.
     SystemUpdate,
+    /// `on_credentials_update` is on the stack.
+    /// Shares [`Self::ParamsUpdate`]'s import surface,
+    /// and is separate for the same reason.
+    CredentialsUpdate,
     /// `on_touch` is on the stack. Fired once per Wayland drain that delivered
     /// touch activity. `request_frame` is legal (and is how the widget asks to
     /// re-render in response); submitting a tree and touch readback are not —
@@ -734,6 +738,17 @@ pub(crate) struct HostState {
     /// Set by the embedder; unversioned, since it rarely changes and no hook reads it.
     pub network_info: NetworkInfo,
 
+    /// Third channel of the same shape as `params` and `system`.
+    pub credentials: VersionedSnapshotCache<CredentialView>,
+
+    /// The secret values behind those slots.
+    ///
+    /// Deliberately a bare field — no version, no cache, no encoder,
+    /// because no import may hand these to the guest.
+    /// The runtime spends them itself when substituting
+    /// into an outbound request.
+    pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
+
     /// Per-frame timing breakdown from the last rendered frame.
     pub last_timings: FrameTimings,
 
@@ -877,6 +892,8 @@ impl HostState {
             recorded_events: Vec::new(),
             system: VersionedSnapshotCache::new(SystemSnapshot::default()),
             network_info: NetworkInfo::default(),
+            credentials: VersionedSnapshotCache::new(CredentialView::default()),
+            credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             last_timings: FrameTimings::default(),
             profile_sections: BTreeMap::new(),
             taffy: TaffyTree::with_capacity(64),

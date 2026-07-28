@@ -239,6 +239,78 @@ impl std::fmt::Debug for Coordinator {
     }
 }
 
+/// Configured widgets that currently have a surface,
+/// paired with their instance id.
+///
+/// A widget on a disabled scene has no surface to push to,
+/// and its next spawn resolves from scratch anyway.
+/// Pushing to one would only warn about a record
+/// the compositor does not hold.
+fn running_widgets<'a>(
+    scenes: &'a IndexMap<SceneId, Scene>,
+    running: &'a std::collections::BTreeSet<crate::compositor::InstanceId>,
+) -> impl Iterator<Item = (String, &'a Widget)> {
+    scenes
+        .values()
+        .flat_map(|scene| scene.widgets.values())
+        .filter_map(move |widget| {
+            let instance_id = widget.id.as_uuid().to_string();
+            running
+                .contains(&instance_id)
+                .then_some((instance_id, widget))
+        })
+}
+
+/// Re-resolve every running widget's credentials whenever a binding
+/// or an account changes, and push the result to the compositor.
+///
+/// Both wakes are bare hints: a scene save fires for any edit,
+/// not just a rebind, and an account save fires for any account.
+///
+/// Re-resolving from the handles is cheap and the compositor drops
+/// a push that changes nothing, so over-firing costs nothing
+/// and a missed nuance cannot leave a widget stale.
+pub fn start_credential_listener(
+    compositor: Arc<dyn Compositor>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+    secret_store: Arc<RwLock<SecretStoreHandle>>,
+    mut scenes_change_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
+    mut accounts_change_rx: broadcast::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                res = scenes_change_rx.recv() => match res {
+                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+                res = accounts_change_rx.recv() => match res {
+                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(broadcast::error::RecvError::Closed) => break,
+                },
+            }
+
+            let running = compositor.connected_widgets_watch().borrow().clone();
+            if running.is_empty() {
+                continue;
+            }
+
+            let config = config_handle.read().await;
+            let store = secret_store.read().await;
+            for (instance_id, widget) in running_widgets(config.scenes(), &running) {
+                let resolved = credential::resolve(&widget.credential_bindings, store.accounts());
+                if let Err(err) = compositor.update_widget_credentials(
+                    &instance_id,
+                    resolved.view,
+                    resolved.secrets,
+                ) {
+                    warn!(%instance_id, error = %err, "failed to push credentials to widget");
+                }
+            }
+        }
+    });
+}
+
 /// Broadcast the effective display brightness to the settings-tray overlay
 /// whenever it changes (a manual change or a night-mode transition). Effective
 /// brightness mirrors `system_manager::set_current_brightness`: the night-mode
@@ -901,6 +973,7 @@ mod tests {
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
+    use uuid::Uuid;
 
     fn bmc100_capabilities() -> HardwareCapabilities {
         HardwareCapabilities {
@@ -915,6 +988,47 @@ mod tests {
                 rows: 2,
             }),
         }
+    }
+
+    fn scenes_of(scenes: Vec<Scene>) -> IndexMap<SceneId, Scene> {
+        scenes.into_iter().map(|scene| (scene.id, scene)).collect()
+    }
+
+    fn instance_ids(scene: &Scene) -> Vec<String> {
+        scene
+            .widgets
+            .values()
+            .map(|w| w.id.as_uuid().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn a_widget_without_a_surface_is_not_pushed_to() {
+        let scene = Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
+        let scenes = scenes_of(vec![scene]);
+
+        let refreshed: Vec<String> = running_widgets(&scenes, &std::collections::BTreeSet::new())
+            .map(|(id, _)| id)
+            .collect();
+
+        assert!(
+            refreshed.is_empty(),
+            "an unconnected widget has no surface, so a push could only warn"
+        );
+    }
+
+    #[test]
+    fn only_the_connected_widgets_are_pushed_to() {
+        let first = Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
+        let second = Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
+        let connected = instance_ids(&first);
+        let scenes = scenes_of(vec![first, second]);
+
+        let refreshed: Vec<String> = running_widgets(&scenes, &connected.iter().cloned().collect())
+            .map(|(id, _)| id)
+            .collect();
+
+        assert_eq!(refreshed, connected);
     }
 
     #[test]

@@ -21,6 +21,7 @@
 //! Guest import registration for the WASM runtime.
 
 mod audio;
+pub(crate) mod credentials;
 mod data;
 mod eviction;
 mod guards;
@@ -45,6 +46,7 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     led::register(linker)?;
     eviction::register(linker)?;
     params::register(linker)?;
+    credentials::register(linker)?;
     Ok(())
 }
 

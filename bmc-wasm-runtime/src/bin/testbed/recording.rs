@@ -138,6 +138,9 @@ pub(super) struct RecordingState {
     /// `SystemDelivery` event diffs against the actual starting state
     /// rather than the `SystemSnapshot::default()` fallback.
     pub(super) system_snapshot: bmc_wasm_runtime::SystemSnapshot,
+    /// Bound credential slots at recording start.
+    /// Same role [`Self::params_snapshot`] plays for the params channel.
+    pub(super) credentials_snapshot: serde_json::Map<String, serde_json::Value>,
     /// Start time (ISO 8601) captured at recording start.
     pub(super) start_time_iso: String,
     /// When true, a Capture event is auto-inserted after each user action.
@@ -172,6 +175,9 @@ fn format_event_label(event: &UnifiedEvent) -> String {
         }
         UnifiedEvent::ParamDelivery { params } => format!("params Δ{} key(s)", params.len()),
         UnifiedEvent::SystemDelivery { .. } => "system Δ".to_owned(),
+        UnifiedEvent::CredentialDelivery { credentials } => {
+            format!("credentials Δ{} slot(s)", credentials.len())
+        }
         UnifiedEvent::Fetch {
             method,
             url,
@@ -455,6 +461,7 @@ impl TestbedApp {
                 kv: rec.kv_snapshot,
                 initial_params: rec.params_snapshot,
                 initial_system: rec.system_snapshot,
+                initial_credentials: rec.credentials_snapshot,
             },
             events: merged,
         };

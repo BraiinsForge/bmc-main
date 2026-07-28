@@ -93,6 +93,9 @@ impl TestbedApp {
         let mut working_params = self.params.clone();
         let manifest_params = self.manifest.params.clone();
         let mut working_system = self.system.clone();
+        let mut working_credentials = self.credentials.clone();
+        let credential_slots = self.credential_slots();
+        let mut credentials_changed = false;
         let mut working_offline = self.offline;
         let mut working_offset_ms = self.clock.offset_ms;
         let mut working_monotonic_offset_ms = self.clock.monotonic_offset_ms;
@@ -150,6 +153,11 @@ impl TestbedApp {
                                     Self::paint_system_section(inner, &mut working_system);
                             });
                         scroll.add_space(12.0);
+                        credentials_changed = Self::paint_credentials_section(
+                            scroll,
+                            &credential_slots,
+                            &mut working_credentials,
+                        );
                         section_header_bar(scroll, "Simulation", SYSTEM_ACCENT);
                         egui::Frame::NONE
                             .inner_margin(egui::Margin::same(8))
@@ -169,6 +177,9 @@ impl TestbedApp {
         }
         if system_changed {
             self.apply_system_update(working_system);
+        }
+        if credentials_changed {
+            self.apply_credentials_update(working_credentials);
         }
         self.offline = working_offline;
         self.clock.offset_ms = working_offset_ms;
@@ -213,7 +224,7 @@ impl TestbedApp {
 // can depend on without dragging the host into the wasmi-wire protocol's dep tree.
 // The hex values below mirror those two palette swatches verbatim.
 const PARAMS_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xFE, 0x84, 0x31);
-const SYSTEM_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x00, 0xBA, 0xC5);
+pub(super) const SYSTEM_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x00, 0xBA, 0xC5);
 
 /// Render a section header as a full-width horizontal accent banner with
 /// black text — no left stripe.

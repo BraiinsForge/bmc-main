@@ -42,6 +42,7 @@
               placed next to where they're used — all intentional in this testbed binary"
 )]
 
+mod credentials_ui;
 mod paint;
 mod params_ui;
 mod platforms;
@@ -1097,6 +1098,10 @@ pub(crate) struct TestbedApp {
     /// on each change. Pre-recording UI changes are captured into `RecordingState::system_snapshot`;
     /// subsequent changes produce `UnifiedEvent::SystemDelivery` entries in the timeline.
     pub(crate) system: SystemSnapshot,
+    /// Current credential view, in the wire JSON shape.
+    /// Mutated by the Credentials sidebar section; tile runtimes
+    /// are kept in sync via `deliver_credentials_update`.
+    pub(crate) credentials: serde_json::Map<String, serde_json::Value>,
     gl: Arc<eframe::glow::Context>,
     pub(crate) tiles: Vec<PreviewTile>,
     gpu_pool: Vec<TileGpu>,
@@ -1250,6 +1255,8 @@ impl TestbedApp {
                 // `params_snapshot`. Replay installs this directly into
                 // `RuntimeConfig::system`.
                 system_snapshot: pending_system.clone(),
+                // Nothing is bound until the operator binds it in the sidebar.
+                credentials_snapshot: serde_json::Map::new(),
                 start_time_iso,
                 auto_capture: true,
             }
@@ -1266,6 +1273,7 @@ impl TestbedApp {
             manifest,
             params,
             system: pending_system,
+            credentials: serde_json::Map::new(),
             gl,
             tiles: Vec::new(),
             gpu_pool: Vec::new(),

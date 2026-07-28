@@ -173,6 +173,8 @@ pub struct WidgetSlot {
     /// Last connectivity snapshot version pushed to the runtime as `NetworkInfo`;
     /// version-gated so an unchanged network re-polls free.
     pub snapshot_version: Option<bmc_system_overlay::SnapshotVersion>,
+    pub credentials: bmc_wasm_runtime::CredentialView,
+    pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     pub peer_pid: libc::pid_t,
     pub wasm_basename: String,
     /// Asset-cache bucket token, published to the host's GC-root file so the
@@ -230,6 +232,8 @@ impl WidgetSlot {
         for setting in &initial.settings {
             apply_setting_update(&mut pending_system, setting);
         }
+        let credentials = bmc_wasm_runtime::parse_credentials_json(&initial.credentials);
+        let credential_secrets = initial.credential_secrets.clone();
         let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
         let token = initial.token.clone();
@@ -249,6 +253,8 @@ impl WidgetSlot {
                     },
                 ),
                 system: pending_system.clone(),
+                credentials: credentials.clone(),
+                credential_secrets: credential_secrets.clone(),
                 led_request_sender: Some(led_tx),
                 asset_cache: Some(DiskCache::new(
                     PathBuf::from(WIDGET_CACHE_DIR).join(&token),
@@ -279,6 +285,8 @@ impl WidgetSlot {
             initial_params: initial.params,
             pending_system,
             snapshot_version: None,
+            credentials,
+            credential_secrets,
             peer_pid,
             wasm_basename: wasm_path
                 .file_name()
@@ -337,6 +345,8 @@ impl WidgetSlot {
         // to the latest event — never merged.
         let mut system_dirty = false;
         let mut latest_params: Option<serde_json::Map<String, Value>> = None;
+        let mut latest_credentials: Option<serde_json::Map<String, Value>> = None;
+        let mut latest_secrets: Option<bmc_widget_protocol::CredentialSecrets> = None;
         // Touch is coalesced like Setting/ParamUpdate: every event is queued for
         // the next render during the drain, and `on_touch` fires once afterwards.
         // A widget without an `on_touch` export is non-interactive — the host no
@@ -385,13 +395,8 @@ impl WidgetSlot {
                         .push_touch_event(bmc_render::interaction::TouchEvent::Cancel);
                     touch_dirty = true;
                 }
-                // Slot counts only: the secrets payload must not reach a log.
-                WidgetEvent::CredentialsUpdate(view) => {
-                    tracing::debug!(slots = view.len(), "credential resolution received");
-                }
-                WidgetEvent::SecretsUpdate(secrets) => {
-                    tracing::debug!(slots = secrets.slot_count(), "credential secrets received");
-                }
+                WidgetEvent::CredentialsUpdate(view) => latest_credentials = Some(view),
+                WidgetEvent::SecretsUpdate(secrets) => latest_secrets = Some(secrets),
                 event @ (WidgetEvent::Lifecycle(_)
                 | WidgetEvent::TransitionIncoming
                 | WidgetEvent::Shutdown) => {
@@ -400,6 +405,7 @@ impl WidgetSlot {
             }
         }
         self.deliver_coalesced_snapshots(system_dirty, latest_params);
+        self.deliver_credentials(latest_credentials, latest_secrets);
         if touch_dirty {
             // No `mark_needs_render` here: the widget decides whether to re-render
             // by calling `request_frame()` from `on_touch`, which the main loop's
@@ -847,6 +853,37 @@ impl WidgetSlot {
             self.runtime.deliver_params_update(table);
             self.surface.mark_needs_render();
         }
+    }
+
+    /// Deliver a re-resolved credential set,
+    /// keeping whichever half this drain did not carry.
+    ///
+    /// Nothing is logged but the slot count:
+    /// the secret values stop here and must not reach a log line.
+    fn deliver_credentials(
+        &mut self,
+        view: Option<serde_json::Map<String, Value>>,
+        secrets: Option<bmc_widget_protocol::CredentialSecrets>,
+    ) {
+        if view.is_none() && secrets.is_none() {
+            return;
+        }
+        if let Some(view) = view {
+            self.credentials = bmc_wasm_runtime::parse_credentials_json(&view);
+        }
+        if let Some(secrets) = secrets {
+            self.credential_secrets = secrets;
+        }
+
+        tracing::info!(
+            peer_pid = self.peer_pid,
+            wasm = %self.wasm_basename,
+            slots = self.credentials.slot_count(),
+            "credential update received"
+        );
+        self.runtime
+            .deliver_credentials_update(self.credentials.clone(), self.credential_secrets.clone());
+        self.surface.mark_needs_render();
     }
 
     fn on_wayland_event(&mut self, event: &WidgetEvent) {

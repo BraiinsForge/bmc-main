@@ -40,7 +40,7 @@ use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle};
 use crate::network::NetworkInfo;
 use crate::system::SystemSnapshot;
 
-use super::ParamsSnapshot;
+use super::{CredentialView, ParamsSnapshot};
 
 /// Logical display geometry handed to [`WasmWidgetRuntime::new`].
 ///
@@ -252,6 +252,10 @@ pub struct RuntimeConfig {
     /// deliveries through [`WasmWidgetRuntime::deliver_params_update`]).
     pub params:
         std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    /// Which credential slots are bound, staged before `init`
+    /// so the widget's first frame renders live rather than degraded.
+    pub credentials: CredentialView,
+    pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     /// Per-instance asset cache, curried to this widget's bucket; `None` disables it.
     pub asset_cache: Option<crate::disk_cache::DiskCache>,
     /// Compositor token for asset-tag namespacing; `None` → synthetic `dev-N`.
@@ -281,6 +285,8 @@ impl Default for RuntimeConfig {
             led_request_sender: None,
             animation_frame_delay_ms: Self::DEFAULT_ANIMATION_FRAME_DELAY_MS,
             params: std::collections::BTreeMap::new(),
+            credentials: CredentialView::default(),
+            credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             asset_cache: None,
             instance_token: None,
         }
@@ -320,6 +326,8 @@ pub struct WasmWidgetRuntime {
     /// risking a stale read on the params channel (which doesn't rotate
     /// on a system-only delivery).
     on_system_update_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Sibling of the two above for the credential channel.
+    on_credentials_update_func: Option<wasmi::TypedFunc<(), ()>>,
     /// Optional guest export fired once per Wayland drain that delivered touch
     /// activity. A widget that wants to respond to touch must export this and
     /// call `request_frame()` from it — the host no longer force-renders on
@@ -392,6 +400,8 @@ impl WasmWidgetRuntime {
             led_request_sender,
             animation_frame_delay_ms,
             params,
+            credentials,
+            credential_secrets,
             asset_cache,
             instance_token,
             ..
@@ -455,6 +465,8 @@ impl WasmWidgetRuntime {
         // which bumps again and fires `on_params_update`.
         state.params.replace(ParamsSnapshot::new(params));
         state.system.replace(system);
+        state.credentials.replace(credentials);
+        state.credential_secrets = credential_secrets;
         if !event_fixtures.is_empty() {
             state.event_fixtures = Some(crate::host_api::FixtureEventState {
                 events: event_fixtures,
@@ -478,6 +490,9 @@ impl WasmWidgetRuntime {
             .ok();
         let on_system_update_func = instance
             .get_typed_func::<(), ()>(&store, "on_system_update")
+            .ok();
+        let on_credentials_update_func = instance
+            .get_typed_func::<(), ()>(&store, "on_credentials_update")
             .ok();
         let on_touch_func = instance.get_typed_func::<(), ()>(&store, "on_touch").ok();
         let on_wake_func = instance.get_typed_func::<(), ()>(&store, "on_wake").ok();
@@ -509,6 +524,7 @@ impl WasmWidgetRuntime {
             unload_func,
             on_params_update_func,
             on_system_update_func,
+            on_credentials_update_func,
             on_touch_func,
             on_wake_func,
             on_sleep_func,
@@ -931,6 +947,25 @@ impl WasmWidgetRuntime {
     /// (the slot marks one on change).
     pub fn set_network_info(&mut self, info: NetworkInfo) {
         self.store.data_mut().network_info = info;
+    }
+
+    /// The hook observes the view only, so a rotated secret fires it
+    /// without the guest being able to tell what changed.
+    ///
+    /// No rollback on trap (by design); see [`Self::deliver_params_update`].
+    pub fn deliver_credentials_update(
+        &mut self,
+        view: CredentialView,
+        secrets: bmc_widget_protocol::CredentialSecrets,
+    ) -> bool {
+        let data = self.store.data_mut();
+        data.credentials.replace(view);
+        data.credential_secrets = secrets;
+        self.fire_update_hook(
+            self.on_credentials_update_func,
+            "on_credentials_update",
+            Lifecycle::CredentialsUpdate,
+        )
     }
 
     /// Whether the widget exported `on_touch`.

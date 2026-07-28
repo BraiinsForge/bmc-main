@@ -35,6 +35,7 @@ pub(crate) use background::build_fetch_agent;
 // The underlying `encode_params` stays module-private — it's reached
 // through `<ParamsSnapshot as WireEncode>::encode` from production code,
 // and through `super::encode_params` from this module's tests.
+pub use imports::credentials::{BoundCredential, CredentialView};
 pub(crate) use imports::params::ParamsSnapshot;
 
 pub use backend::DisplayInfo as RuntimeDisplayInfo;

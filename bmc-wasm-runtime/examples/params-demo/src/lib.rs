@@ -80,6 +80,11 @@ const DECAY_MS: u32 = 800;
 /// Decays linearly to 0 over `DECAY_MS`.
 const TINT_PEAK_ALPHA: f32 = 0.45;
 
+/// The credential slots this widget's manifest declares, in manifest order.
+/// Every layout renders all three so an unbound slot is visibly unbound
+/// rather than simply absent.
+const CREDENTIAL_SLOTS: [&str; 3] = ["media", "pool", "weather"];
+
 /// Lifecycle hook fired by the host on every params-snapshot delivery
 /// after the first. Diffs `Params::current()` against `Params::previous()`
 /// and stamps every changed key with a fresh decay window so the matching
@@ -94,6 +99,17 @@ pub extern "C" fn on_params_update() {
         return;
     };
     stamp_decay(Params::current().changed_keys(&previous));
+}
+
+/// Lifecycle hook fired on every credential delivery after the first.
+///
+/// Without it the widget would still pick up a rebind,
+/// but only at its next data tick.
+/// The point of the hook is that binding an account
+/// changes the display immediately.
+#[unsafe(no_mangle)]
+pub extern "C" fn on_credentials_update() {
+    request_frame();
 }
 
 /// Lifecycle hook fired by the host on every system-snapshot delivery
@@ -295,6 +311,7 @@ fn render_compact(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         sizes,
     ));
     rows.push(kv_line("next_alarm", format_next_alarm(&sys), sizes));
+    rows.extend(credential_rows(sizes));
     let _ = render_ui(
         w,
         h,
@@ -314,6 +331,7 @@ fn render_two_pane(w: u32, h: u32, p: &Params, sizes: &Sizes) {
         props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding);
     let mut right_rows = system_rows(sizes);
     right_rows.extend(geometry_rows(sizes));
+    right_rows.extend(credential_rows(sizes));
     let _ = render_ui(
         w,
         h,
@@ -519,6 +537,43 @@ fn kv_line(key: &str, value: impl Into<String>, sizes: &Sizes) -> Node {
     )
 }
 
+/// One row per credential slot this widget declares, showing
+/// the bound account's name, or [`MISSING_LABEL`] when nothing is bound.
+///
+/// This is the whole of what a widget can learn about its credentials
+/// — enough to say "no account yet" instead of failing silently.
+///
+/// The secrets themselves only ever exist host-side,
+/// behind the placeholders in `manifest_params`.
+fn credential_rows(sizes: &Sizes) -> Vec<Node> {
+    let bound = credentials::current();
+    CREDENTIAL_SLOTS
+        .into_iter()
+        .map(|slot| {
+            let account = bound
+                .get(slot)
+                .map_or(MISSING_LABEL, |b| b.account_name.as_str());
+            kv_line(slot, account, sizes)
+        })
+        .collect()
+}
+
+/// Grid-variant cells for the same slots, with the resolved credential type
+/// as the hint subtitle. The type is what the host keys the egress policy off,
+/// so it belongs next to the account name.
+fn credential_cells(sizes: &Sizes) -> Vec<Node> {
+    let bound = credentials::current();
+    CREDENTIAL_SLOTS
+        .into_iter()
+        .map(|slot| {
+            let (hint, account) = bound.get(slot).map_or(("unbound", MISSING_LABEL), |b| {
+                (b.type_id.as_str(), b.account_name.as_str())
+            });
+            kv(slot, hint, account, sizes)
+        })
+        .collect()
+}
+
 fn kv_line_opt_str(key: &str, value: Option<&str>, sizes: &Sizes) -> Node {
     kv_line(key, value.unwrap_or("(unset)"), sizes)
 }
@@ -613,24 +668,29 @@ fn render_grid(w: u32, h: u32, p: &Params, sizes: &Sizes) {
     // The header speaks of 14 keys because the typed struct mirrors
     // the manifest one-to-one; the optional cells fall back to `(unset)`
     // when the host delivered null.
+    let mut optional_cells = vec![
+        section_header("Optional, no default (null-on-wire)", sizes),
+        kv_opt_str("optional_string", "", p.optional_string.as_deref(), sizes),
+        kv_opt_i32("optional_integer", "", p.optional_integer, sizes),
+        kv_opt_f64("optional_double", "", p.optional_double, sizes),
+        kv_opt_bool("optional_boolean", "", p.optional_boolean, sizes),
+        section_header("Credentials (bound account)", sizes),
+    ];
+    optional_cells.extend(credential_cells(sizes));
+    optional_cells.extend([
+        spacer(1.0),
+        text(
+            "Snapshot carries 14 key(s)",
+            style!(size: sizes.footer_size, color: GRAY_50),
+        ),
+        text(
+            "(unset) means the host delivered null or the key was absent.",
+            style!(size: sizes.footer_size, color: GRAY_50),
+        ),
+    ]);
     let optional = col(
         props!(flex: 1.0, gap: sizes.cell_gap, background: PANE_BG, padding: sizes.col_padding),
-        [
-            section_header("Optional, no default (null-on-wire)", sizes),
-            kv_opt_str("optional_string", "", p.optional_string.as_deref(), sizes),
-            kv_opt_i32("optional_integer", "", p.optional_integer, sizes),
-            kv_opt_f64("optional_double", "", p.optional_double, sizes),
-            kv_opt_bool("optional_boolean", "", p.optional_boolean, sizes),
-            spacer(1.0),
-            text(
-                "Snapshot carries 14 key(s)",
-                style!(size: sizes.footer_size, color: GRAY_50),
-            ),
-            text(
-                "(unset) means the host delivered null or the key was absent.",
-                style!(size: sizes.footer_size, color: GRAY_50),
-            ),
-        ],
+        optional_cells,
     );
 
     // Third column for the deck-wide system snapshot

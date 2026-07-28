@@ -179,7 +179,10 @@ impl TestbedApp {
 ///
 /// `control` receives the cell `Ui`, its width, and the label's `Response` —
 /// so it can wire label-click to focus / toggle the adjacent widget.
-fn row<R>(
+/// One label + control row with the sidebar's shared geometry.
+/// The control takes the full remaining width at one interact-height,
+/// so every section's rows line up whatever control they hold.
+pub(super) fn row<R>(
     grid: &mut egui::Ui,
     key: &str,
     control: impl FnOnce(&mut egui::Ui, f32, &egui::Response) -> R,
