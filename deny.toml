@@ -44,12 +44,6 @@ skip = [
     { crate = "read-fonts@0.35" },
     { crate = "skrifa@0.37" },
     { crate = "roxmltree@0.20" },
-    { crate = "ttf-parser@0.21" },
-
-    # prost ecosystem (tooling-std uses 0.12, tonic/bmc-grpc uses 0.13)
-    { crate = "prost@0.12" },
-    { crate = "prost-derive@0.12" },
-    { crate = "prost-types@0.12" },
 
     # bmc-svg-compiler pins usvg 0.45 while resvg pulls the 0.47 line
     { crate = "usvg@0.45" },
@@ -73,11 +67,6 @@ skip = [
     { crate = "calloop@0.13" },
     { crate = "gbm@0.17" },
     { crate = "gbm-sys@0.3" },
-    { crate = "wayland-client@0.31" },
-    { crate = "wayland-cursor@0.31" },
-    { crate = "wayland-protocols@0.29" },
-    { crate = "wayland-scanner@0.31" },
-    { crate = "wayland-sys@0.31" },
 
     # Apple/ObjC framework splits (winit vs softbuffer vs egui)
     { crate = "block2@0.5" },
@@ -88,7 +77,6 @@ skip = [
     { crate = "objc2-ui-kit@0.2" },
 
     # eframe/egui ecosystem splits
-    { crate = "foldhash@0.1" },
     { crate = "glow@0.16" },
     { crate = "jni@0.21" },
     { crate = "jni-sys@0.3" },
@@ -98,26 +86,20 @@ skip = [
     { crate = "bitflags@1" },
 
     { crate = "hashbrown@0.14" },
-    { crate = "hashbrown@0.15" },
     { crate = "itertools@0.12" },
     { crate = "linux-raw-sys@0.4" },
     { crate = "linux-raw-sys@0.6" },
     { crate = "memoffset@0.6" },
     { crate = "nix@0.23" },
-    { crate = "nix@0.24" },
     { crate = "nix@0.26" },
     { crate = "nix@0.29" },
-    { crate = "png@0.17" },
     { crate = "redox_syscall@0.4" },
     { crate = "regex-automata@0.1" },
     { crate = "regex-syntax@0.6" },
-    { crate = "rustc-hash@1" },
     { crate = "rustix@0.38" },
     { crate = "smol_str@0.2" },
     { crate = "thiserror@1" },
     { crate = "thiserror-impl@1" },
-    { crate = "toml_datetime@0.6" },
-    { crate = "toml_edit@0.22" },
     { crate = "hermit-abi@0.3" },
     { crate = "hermit-abi@0.4" },
     { crate = "r-efi@5" },
