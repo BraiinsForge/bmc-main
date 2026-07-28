@@ -343,6 +343,7 @@ When multiple valid approaches exist, choose based on:
 - **NEVER** Commit code that doesn't compile
 - **NEVER** Make assumptions - verify with existing code
 - **NEVER** introduce new tools without strong justification
+- **NEVER** settle a standardised-format parser on your own — surface the choice and let the developer decide
 
 **ALWAYS**:
 
@@ -362,3 +363,29 @@ When multiple valid approaches exist, choose based on:
 - treat `bmc-netsim` profiles and the widget's family adapters (`widgets-wasm/fleet-management/src/families/`) as
   deliberate **subsets** of the upstream device APIs (BOS+ boser REST, uBOS, ESP-Miner) — a field missing from them does
   not mean upstream lacks it; verify against the upstream openapi/firmware before concluding a field is unavailable
+- ask the developer which parser a standardised format should use — see below
+
+## Standardised formats — ask before parsing one by hand
+
+When you need to parse a format that has an international standard — URLs and IRIs (RFC 3986, WHATWG), IP addresses and
+CIDR ranges (RFC 4632/4291), IDNA and punycode (UTS-46), dates and times (RFC 3339, ISO 8601), MIME types, character
+encodings, semantic versions — **stop and ask the developer which way to go** rather than deciding on your own. Say
+which authoritative parser exists, what pulling it in would cost, and what a hand-rolled version would have to get
+right. Then let them choose.
+
+Do not treat "it's only thirty lines" or "it avoids a dependency" as settling it by itself. Weigh it against "never
+introduce new tools": for a standardised format, the standard parser may well *be* the strong justification that rule
+asks for — but that is the developer's call, not a default to assume in either direction.
+
+What makes it worth asking is not tidiness. These formats are adversarial in ways a hand-rolled splitter never
+anticipates — userinfo before an `@`, backslashes, percent-encoded separators, bracketed IPv6 literals, IDN homographs —
+and a bespoke parser that disagrees with the one downstream is not merely buggy. Where the disagreement decides a
+security question, such as which host an egress pin approves versus which host the HTTP client actually dials, the gap
+between the two parses *is* the vulnerability. Flag that consequence when you ask.
+
+Two cases that do not need asking:
+
+- a grammar this repo defines itself (the `{{ credential.… }}` substitution subset) has no authoritative parser by
+  definition, and a deliberately restricted subset must not be widened into a general engine just to reuse one;
+- a convention with no canonical implementation (matching a host against a `*.example.com` pattern) may be written by
+  hand — but it should operate on input an authoritative parser has already normalised.
