@@ -375,6 +375,14 @@ pub extern "C" fn render(delta_ms: u32) {
                     || (d.devices_seq != seq && elapsed >= DERIVE_INTERVAL_MS)
             }
         };
+        // A fold the interval held back still has to happen. Once the poller parks,
+        // nothing else asks for the frame that would run it, so the last change
+        // before an empty fleet would sit on screen until something unrelated arrives.
+        // A running rotation already asks on every poll result, so this stays quiet.
+        let fold_pending = cell.as_ref().is_some_and(|d| d.devices_seq != seq);
+        if !stale && fold_pending && !session::is_polling() {
+            request_frame_after(DERIVE_INTERVAL_MS.saturating_sub(elapsed));
+        }
 
         if stale {
             DERIVE_ELAPSED_MS.with(|e| e.set(0));

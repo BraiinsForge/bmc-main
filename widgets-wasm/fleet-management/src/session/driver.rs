@@ -475,6 +475,12 @@ fn park_idle() {
     });
 }
 
+/// Whether a rotation is still running — and so whether a poll result
+/// is still due to ask for a frame. Parked, nothing here asks again.
+pub fn is_polling() -> bool {
+    with_poller(|p| p.active)
+}
+
 /// Fire every still-pending (`None`) endpoint of the current device.
 fn fire_pending(
     id: &DeviceId,
