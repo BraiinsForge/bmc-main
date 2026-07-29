@@ -125,6 +125,11 @@ wat.workspace = true
 glutin.workspace = true
 # Temp dirs for the image-cache round-trip tests.
 tempfile.workspace = true
+# Integration tests are separate crates and cannot reach the normal
+# dependencies, so `tests/credential_egress.rs` needs these listed again
+# to seed `RuntimeConfig` and to name credential types by their enum.
+bmc-widget-manifest.workspace = true
+bmc-widget-protocol.workspace = true
 
 [lints]
 workspace = true

