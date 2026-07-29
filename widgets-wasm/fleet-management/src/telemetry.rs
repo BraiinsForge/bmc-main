@@ -60,9 +60,38 @@ pub struct TelemetrySnapshot {
     pub reading: TelemetryReading,
 }
 
+/// A wire figure as a usable measurement, or `None` when it is not one.
+/// Checked after the narrowing, since a magnitude beyond `f32::MAX`
+/// only becomes infinite there — and an infinite reading walks the
+/// chart's axis maths off the number line instead of scaling to anything.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "narrowing is the point here; the result is checked on the next line"
+)]
+pub fn measurement(value: f64) -> Option<f32> {
+    let narrowed = value as f32;
+    (narrowed.is_finite() && narrowed >= 0.0).then_some(narrowed)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn measurement_keeps_a_figure_that_survives_narrowing() {
+        assert_eq!(measurement(4.5), Some(4.5));
+        assert_eq!(measurement(0.0), Some(0.0));
+    }
+
+    #[test]
+    fn measurement_drops_what_is_not_a_reading() {
+        // 1e300 is finite as f64 and only saturates once narrowed, which is why
+        // the check has to come after the cast rather than on the wire figure.
+        for bad in [1e300, f64::INFINITY, f64::NEG_INFINITY, f64::NAN, -1.0] {
+            assert_eq!(measurement(bad), None, "{bad} is not a measurement");
+        }
+    }
 
     #[test]
     fn default_reading_keeps_all_fields_none() {

@@ -528,12 +528,13 @@ fn gap_threshold(series: &[HistoryDatum]) -> i64 {
     (median + (median >> 1)).max(median + 1)
 }
 
-// Round axis ceiling ≥ `raw` and gridline step (1/2/5 × 10ⁿ); `None` if raw <= 0.
+// Round axis ceiling ≥ `raw` and gridline step (1/2/5 × 10ⁿ).
+// `None` unless `raw` is a finite, positive figure the axis can span.
 fn nice_scale(raw: f32) -> Option<(f32, f32)> {
-    if raw <= 0.0 {
+    if !raw.is_finite() || raw <= 0.0 {
         return None;
     }
-    let step = nice_step(raw / 3.0);
+    let step = nice_step(raw / 3.0)?;
     let ceiling = (raw / step).ceil() * step;
     Some((ceiling, step))
 }
@@ -541,19 +542,23 @@ fn nice_scale(raw: f32) -> Option<(f32, f32)> {
 // Axis fitted to the plotted peak: a hair of headroom above it (so the peak
 // marker isn't clipped at the top edge) with nice, readable gridline steps
 // within. The ceiling is continuous in the peak, so it tracks the data instead
-// of snapping between round numbers as the value ramps. `None` if `max` <= 0.
+// of snapping between round numbers as the value ramps.
+// `None` unless `max` is a finite, positive peak the axis can fit.
 fn data_fit_scale(max: f32) -> Option<(f32, f32)> {
     const HEADROOM: f32 = 1.08;
     const GRIDLINES: f32 = 4.0;
-    if max <= 0.0 {
+    if !max.is_finite() || max <= 0.0 {
         return None;
     }
     let ceiling = max * HEADROOM;
-    Some((ceiling, nice_step(ceiling / GRIDLINES)))
+    Some((ceiling, nice_step(ceiling / GRIDLINES)?))
 }
 
-fn nice_step(rough: f32) -> f32 {
-    let mag = pow10_floor(rough);
+// `None` when no usable step exists, which the gridline loop needs: it advances
+// by `step`, so a zero leaves it walking in place. Snapping a `rough` near the
+// f32 ceiling up to the next power of ten overflows, hence the finite check.
+fn nice_step(rough: f32) -> Option<f32> {
+    let mag = pow10_floor(rough)?;
     let norm = rough / mag; // [1, 10)
     let snapped = if norm <= 1.0 {
         1.0
@@ -564,11 +569,18 @@ fn nice_step(rough: f32) -> f32 {
     } else {
         10.0
     };
-    snapped * mag
+    let step = snapped * mag;
+    (step.is_finite() && step > 0.0).then_some(step)
 }
 
 // Largest power of ten ≤ `v`, sans `log10`/int casts.
-fn pow10_floor(v: f32) -> f32 {
+// `None` unless `v` is finite and positive: infinity never falls below the
+// climbing power, a negative never rises above the shrinking one,
+// and either way the loop spins.
+fn pow10_floor(v: f32) -> Option<f32> {
+    if !v.is_finite() || v <= 0.0 {
+        return None;
+    }
     let mut p = 1.0_f32;
     while p * 10.0 <= v {
         p *= 10.0;
@@ -576,7 +588,7 @@ fn pow10_floor(v: f32) -> f32 {
     while p > v {
         p /= 10.0;
     }
-    p
+    Some(p)
 }
 
 // Sample a Catmull-Rom spline through `pts` into a dense polyline.
@@ -686,4 +698,44 @@ fn pager_button(svg: &Svg, enabled: bool, click_id: &str) -> Node {
 )]
 fn idx_f32(i: usize) -> f32 {
     i as f32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_scale_spans_a_figure_the_axis_cannot_hold() {
+        // Infinity reached these through a `<= 0.0` guard and hung the search
+        // for a power of ten; a device reporting an absurd hashrate is enough.
+        for bad in [f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 0.0, -1.0] {
+            assert_eq!(nice_scale(bad), None, "nice_scale({bad})");
+            assert_eq!(data_fit_scale(bad), None, "data_fit_scale({bad})");
+        }
+    }
+
+    #[test]
+    fn a_real_peak_scales_to_a_step_the_gridlines_can_climb() {
+        for (ceiling, step) in [
+            nice_scale(37.0).expect("BUG: 37 is spannable"),
+            data_fit_scale(37.0).expect("BUG: 37 is fittable"),
+        ] {
+            assert!(step > 0.0, "step {step} would stall the gridline loop");
+            assert!(ceiling >= 37.0, "ceiling {ceiling} clips the peak");
+        }
+    }
+
+    #[test]
+    fn a_peak_too_small_to_halve_leaves_no_step_to_climb_by() {
+        // `raw / 3.0` underflows to zero here, and zero has no power of ten.
+        let smallest = f32::from_bits(1);
+        assert_eq!(pow10_floor(0.0), None);
+        assert_eq!(nice_scale(smallest), None);
+    }
+
+    #[test]
+    fn a_peak_near_the_f32_ceiling_leaves_no_finite_step() {
+        // Snapping the magnitude up to the next power of ten runs past f32::MAX.
+        assert_eq!(nice_step(f32::MAX), None);
+    }
 }

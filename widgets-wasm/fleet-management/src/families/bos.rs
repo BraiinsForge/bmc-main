@@ -24,7 +24,7 @@ use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
-use crate::telemetry::{DeviceTemp, TelemetryReading};
+use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
 
 const EP_STATS: &str = "/miner/stats";
 const EP_HASHBOARDS: &str = "/miner/hw/hashboards";
@@ -55,12 +55,8 @@ fn platform_slug(platform: i64) -> Option<&'static str> {
     }
 }
 
-#[expect(
-    clippy::cast_possible_truncation,
-    reason = "TH/s fits in f32 for realistic hashrates"
-)]
-fn ths_from_ghs(ghs: f64) -> f32 {
-    (ghs / 1_000.0) as f32
+fn ths_from_ghs(ghs: f64) -> Option<f32> {
+    measurement(ghs / 1_000.0)
 }
 
 /// BOS advertises `_http._tcp` with the `_bos` subtype.
@@ -125,9 +121,8 @@ impl FamilyAdapter for BosAdapter {
     }
 
     #[expect(
-        clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
-        reason = "sensor values fit f32; the tiny board count is exact in f64"
+        reason = "the tiny board count is exact in f64"
     )]
     fn parse_telemetry(
         &self,
@@ -141,10 +136,10 @@ impl FamilyAdapter for BosAdapter {
                 if let Some(ghs) =
                     json.f64("/miner_stats/real_hashrate/last_1m/gigahash_per_second")
                 {
-                    reading.current_hashrate_ths = Some(ths_from_ghs(ghs));
+                    reading.current_hashrate_ths = ths_from_ghs(ghs);
                 }
                 if let Some(watt) = json.f64("/power_stats/approximated_consumption/watt") {
-                    reading.power_w = Some(watt as f32);
+                    reading.power_w = measurement(watt);
                 }
             }
             EP_HASHBOARDS => {
@@ -183,7 +178,7 @@ impl FamilyAdapter for BosAdapter {
                     reading.uptime_s = Some(uptime);
                 }
                 if let Some(ghs) = json.f64("/sticker_hashrate/gigahash_per_second") {
-                    reading.nominal_hashrate_ths = Some(ths_from_ghs(ghs));
+                    reading.nominal_hashrate_ths = ths_from_ghs(ghs);
                 }
                 reading.mac = json.str("/mac_address").filter(|s| !s.is_empty());
             }

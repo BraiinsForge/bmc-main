@@ -24,7 +24,7 @@ use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::{MinerModel, ModelAccumulator};
-use crate::telemetry::{DeviceTemp, TelemetryReading};
+use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
 
 const EP_INFO: &str = "/info";
 
@@ -93,9 +93,8 @@ impl FamilyAdapter for BitaxeAdapter {
     }
 
     #[expect(
-        clippy::cast_possible_truncation,
         clippy::cast_precision_loss,
-        reason = "sensor values fit f32; the sensor count is exact in f64"
+        reason = "the sensor count is exact in f64"
     )]
     fn parse_telemetry(
         &self,
@@ -106,17 +105,16 @@ impl FamilyAdapter for BitaxeAdapter {
         self.reset_telemetry(endpoint, reading);
         if endpoint == EP_INFO {
             // AxeOS reports -1 for a sensor it has not yet read, notably right
-            // after boot ("not yet known"). Drop negatives so the sentinel does
-            // not pollute the fleet totals. This quirk is specific to Bitaxe;
-            // BOS and uBOS report no such sentinel and need no guard.
-            if let Some(ghs) = json.f64("/hashRate").filter(|v| *v >= 0.0) {
-                reading.current_hashrate_ths = Some((ghs / 1_000.0) as f32);
+            // after boot ("not yet known"); `measurement` drops that sentinel
+            // with the rest of the unusable figures, so it never reaches a total.
+            if let Some(ghs) = json.f64("/hashRate") {
+                reading.current_hashrate_ths = measurement(ghs / 1_000.0);
             }
-            if let Some(ghs) = json.f64("/expectedHashrate").filter(|v| *v >= 0.0) {
-                reading.nominal_hashrate_ths = Some((ghs / 1_000.0) as f32);
+            if let Some(ghs) = json.f64("/expectedHashrate") {
+                reading.nominal_hashrate_ths = measurement(ghs / 1_000.0);
             }
-            if let Some(watts) = json.f64("/power").filter(|v| *v >= 0.0) {
-                reading.power_w = Some(watts as f32);
+            if let Some(watts) = json.f64("/power") {
+                reading.power_w = measurement(watts);
             }
             // ASIC temp, plus temp2 on multi-sensor boards.
             let mut min = f64::MAX;

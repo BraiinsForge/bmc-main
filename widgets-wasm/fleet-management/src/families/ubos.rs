@@ -25,7 +25,7 @@ use crate::adapter::{DiscoveredDevice, FamilyAdapter};
 use crate::device::{DeviceFamily, DeviceId, DeviceIdentity};
 use crate::discovery::{JsonLookup, extract_endpoint};
 use crate::model::ModelAccumulator;
-use crate::telemetry::{DeviceTemp, TelemetryReading};
+use crate::telemetry::{DeviceTemp, TelemetryReading, measurement};
 
 // Legacy endpoint. Stale against the firmware's move to `/api/system/info`;
 // retarget once that endpoint settles. See BDK-625.
@@ -78,10 +78,6 @@ impl FamilyAdapter for UbosAdapter {
         status == 401 || status == 403
     }
 
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "sensor values fit in f32 for realistic readings"
-    )]
     fn parse_telemetry(
         &self,
         endpoint: &str,
@@ -91,10 +87,10 @@ impl FamilyAdapter for UbosAdapter {
         self.reset_telemetry(endpoint, reading);
         if endpoint == EP_INFO {
             if let Some(hs) = json.f64("/hashrate") {
-                reading.current_hashrate_ths = Some((hs / 1e12) as f32);
+                reading.current_hashrate_ths = measurement(hs / 1e12);
             }
             if let Some(mw) = json.f64("/power_out_mw") {
-                reading.power_w = Some((mw / 1_000.0) as f32);
+                reading.power_w = measurement(mw / 1_000.0);
             }
             // uBOS has one board sensor.
             if let Some(c) = json.f64("/temperature") {
