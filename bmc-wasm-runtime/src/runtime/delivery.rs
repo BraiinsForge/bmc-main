@@ -1031,22 +1031,33 @@ impl WasmWidgetRuntime {
             else {
                 let _ = state.fetch_tx.send(CompletedFetch {
                     request_id,
-                    status: 0,
+                    status: FetchOutcome::Refused.to_wire(),
                     body: Vec::new(),
                 });
                 continue;
             };
-            let super::imports::credentials::SpentRequest { url, headers, body } = spent;
+            let super::imports::credentials::SpentRequest {
+                url: resolved,
+                headers,
+                body,
+            } = spent;
 
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
-                let (status, resp_body) =
-                    do_fetch(&agent, &method, &url, &headers, body.as_deref(), timeout);
+                let (status, resp_body) = do_fetch(
+                    &agent,
+                    &method,
+                    &resolved,
+                    &headers,
+                    body.as_deref(),
+                    timeout,
+                );
                 tracing::info!(
                     request_id = request_id.to_wire(),
                     status,
                     body_len = resp_body.len(),
+                    // The guest's form, not `resolved`, which carries the secret.
                     %url,
                     "fetch completed"
                 );

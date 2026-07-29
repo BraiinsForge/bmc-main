@@ -20,6 +20,7 @@
 
 """Single `deck` entry point: dispatch to a procedure subcommand."""
 
+from bmc_tui.procedures.check_credential_egress import CheckCredentialEgress
 from bmc_tui.procedures.deploy import Deploy
 from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
 from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
@@ -42,7 +43,8 @@ def main(
     | E2eSysupgrade
     | E2eGrpcSysupgrade
     | ImageFormats
-    | E2eSysupgradeFaults,
+    | E2eSysupgradeFaults
+    | CheckCredentialEgress,
 ) -> None:
     command.run()
 

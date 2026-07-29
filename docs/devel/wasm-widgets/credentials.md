@@ -85,6 +85,14 @@ sending it half-built:
 - the slot is unbound, or the placeholder names a field the account kind does not have;
 - the destination lies outside the type's egress pin — a `braiins-pool` token sent anywhere but `api.braiins.com`.
 
+A refused request comes back as `FetchOutcome::Refused`, not the `Network` failure a widget would retry — neither cause
+becomes true on a second attempt. Rebinding the slot or fixing the placeholder is what clears it.
+
+In a request that spends a credential, `{{` is reserved: anything between braces that is not a credential reference is
+an error, not text passed through, and the request is refused rather than sent half-built. Write `{{{{` for a literal
+`{{`. A request naming no credential is never examined, so a widget templating its own URL — the image widget's
+`{{width}}` — is unaffected until it also spends a credential.
+
 Everything the device logs about the request — diagnostics, recorded fixtures, hermetic-run reports — shows the
 placeholder, never the resolved value.
 

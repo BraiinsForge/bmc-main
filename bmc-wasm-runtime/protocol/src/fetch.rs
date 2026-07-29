@@ -32,6 +32,9 @@
 /// First wire value reserved for host outcomes, above every HTTP status code.
 const HOST_OUTCOME_BASE: u32 = 1_000;
 
+/// A match pattern cannot do arithmetic, so each outcome past the first is named.
+const WIRE_REFUSED: u32 = HOST_OUTCOME_BASE + 1;
+
 /// Widest range `http::StatusCode` accepts. A narrower cap would misread
 /// a genuine origin status as an unknown host outcome.
 const HTTP_STATUS_MAX: u32 = 999;
@@ -51,6 +54,9 @@ pub enum FetchOutcome {
     Network,
     /// The host stopped reading: the body outgrew its cap. Retrying is futile.
     BodyTooLarge,
+    /// The host never sent it: a credential would not resolve,
+    /// or its type pins egress away from this destination. Retrying is futile.
+    Refused,
 }
 
 impl FetchOutcome {
@@ -60,6 +66,7 @@ impl FetchOutcome {
             Self::Http(code) => code as u32,
             Self::Network => 0,
             Self::BodyTooLarge => HOST_OUTCOME_BASE,
+            Self::Refused => WIRE_REFUSED,
         }
     }
 
@@ -74,6 +81,7 @@ impl FetchOutcome {
             0 => Some(Self::Network),
             HTTP_STATUS_MIN..=HTTP_STATUS_MAX => Some(Self::Http(raw as u16)),
             HOST_OUTCOME_BASE => Some(Self::BodyTooLarge),
+            WIRE_REFUSED => Some(Self::Refused),
             _ => None,
         }
     }
@@ -98,6 +106,7 @@ mod tests {
             FetchOutcome::Http(600),
             FetchOutcome::Network,
             FetchOutcome::BodyTooLarge,
+            FetchOutcome::Refused,
         ] {
             assert_eq!(FetchOutcome::from_wire(outcome.to_wire()), Some(outcome));
         }
@@ -123,8 +132,17 @@ mod tests {
 
     #[test]
     fn unknown_outcomes_decode_to_none() {
-        assert_eq!(FetchOutcome::from_wire(HOST_OUTCOME_BASE + 1), None);
+        assert_eq!(FetchOutcome::from_wire(HOST_OUTCOME_BASE + 2), None);
         assert_eq!(FetchOutcome::from_wire(u32::MAX), None);
+    }
+
+    #[test]
+    fn a_refusal_is_not_a_network_failure() {
+        assert_ne!(
+            FetchOutcome::Refused.to_wire(),
+            FetchOutcome::Network.to_wire(),
+            "a widget retries a network failure; a refusal can never succeed"
+        );
     }
 
     #[test]

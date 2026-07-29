@@ -226,9 +226,11 @@ fn a_pinned_credential_is_refused_before_it_can_leave_for_another_host() {
         Some(1),
         "an off-pin request must be answered immediately, not dispatched",
     );
+    let refused = i32::try_from(bmc_wasm_protocol::FetchOutcome::Refused.to_wire())
+        .expect("BUG: the refusal wire value fits an i32");
     assert_eq!(
         runtime.call_export_i32("last_status"),
-        Some(0),
+        Some(refused),
         "the widget must see a refusal, not a response",
     );
     assert!(

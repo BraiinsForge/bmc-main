@@ -172,7 +172,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(spent) = super::credentials::spend(state, &url, &headers, body) else {
                 let _ = state.fetch_tx.send(CompletedFetch {
                     request_id,
-                    status: 0,
+                    status: FetchOutcome::Refused.to_wire(),
                     body: Vec::new(),
                 });
                 return request_id.to_wire();

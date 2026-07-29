@@ -123,6 +123,12 @@ inputs that probe the pixel and allocation budgets from both sides. Covers the J
 high-precision formats hit the ceiling sooner, the on-device scene-cycling procedure, and the log greps that show which
 formats decoded.
 
+### [Credential Egress Testing](credential-egress-testing.md)
+
+How `deck check-credential-egress` proves on a real Deck that a resolved credential reaches the wire only where its type
+allows: the three cases, why the image widget carries the placeholder, why bindings are written past the API's
+validation, and the guards that stop a run where nothing fetched from reporting that the pin held.
+
 ### [WASM Widgets](wasm-widgets/)
 
 How WASM widgets consume host-delivered inputs. Covers per-widget params generated from `manifest.json`, hardcoded
