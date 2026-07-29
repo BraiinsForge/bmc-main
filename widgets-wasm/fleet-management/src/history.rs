@@ -145,8 +145,16 @@ impl ChartWindow {
 struct Ring(VecDeque<HistoryDatum>);
 
 impl Ring {
+    /// A ring of restored samples, keeping only the newest [`POINTS`].
+    /// The blob is decoded, not trusted: a longer series would sit over capacity
+    /// forever, since evicting one per push holds the length rather than lowering it.
+    fn restored(samples: Vec<HistoryDatum>) -> Self {
+        let excess = samples.len().saturating_sub(POINTS);
+        Self(samples.into_iter().skip(excess).collect())
+    }
+
     fn push(&mut self, sample: HistoryDatum) {
-        if self.0.len() == POINTS {
+        if self.0.len() >= POINTS {
             self.0.pop_front();
         }
         self.0.push_back(sample);
@@ -159,6 +167,16 @@ impl Ring {
         match self.0.back_mut() {
             Some(last) if !new_slot => last.value = value,
             _ => self.push(HistoryDatum { at, value }),
+        }
+    }
+
+    /// End the series with a valueless sample, so whatever follows
+    /// starts a new run rather than joining the last one.
+    /// Only ever breaks after real data: a series that is empty, or already
+    /// ends on a break, would otherwise spend a slot on every restart.
+    fn mark_break(&mut self, at: i64) {
+        if self.0.back().is_some_and(|last| last.value.is_some()) {
+            self.push(HistoryDatum { at, value: None });
         }
     }
 
@@ -398,7 +416,7 @@ impl HashrateHistory {
             if now.saturating_sub(saved_at) >= range_secs {
                 continue; // fully stale — leave empty, refills live
             }
-            tier.restore(snap);
+            tier.restore(snap, saved_at);
         }
         true
     }
@@ -419,18 +437,27 @@ impl Tier {
         }
     }
 
-    fn restore(&mut self, snap: TierSnapshot) {
+    fn restore(&mut self, snap: TierSnapshot, saved_at: i64) {
         // `current_slot` stays unset, so the first live fold after a restore
         // opens a fresh bucket instead of refreshing a restored one.
-        self.total = Ring(snap.total.into_iter().collect());
+        // That is also what keeps the break below from being overwritten.
+        self.total = Ring::restored(snap.total);
         self.models = snap
             .models
             .into_iter()
             .map(|(fam, label, series)| {
                 let fam = fam.map(|i| i as usize);
-                ((fam, label), Ring(series.into_iter().collect()))
+                ((fam, label), Ring::restored(series))
             })
             .collect();
+        // Close every restored series with an explicit break at the snapshot time.
+        // Downtime is a gap in the data, and leaving the chart's spacing heuristic
+        // to infer it fails exactly when it matters: until a few live samples land,
+        // the outage is the only spacing there is, so the line runs straight through.
+        self.total.mark_break(saved_at);
+        for ring in self.models.values_mut() {
+            ring.mark_break(saved_at);
+        }
     }
 }
 
@@ -737,9 +764,10 @@ mod tests {
 
         let mut restored = HashrateHistory::default();
         assert!(restored.restore(&blob, 15, 20), "fresh blob restores");
+        // The trailing `None` is the restart break; live samples land after it.
         assert_eq!(
             vals(&restored.view(ChartSpan::FifteenMinutes).total_series()),
-            vec![Some(10.0), Some(12.0)]
+            vec![Some(10.0), Some(12.0), None]
         );
         assert_eq!(
             vals(
@@ -747,7 +775,7 @@ mod tests {
                     .view(ChartSpan::FifteenMinutes)
                     .model_series(Some(DeviceFamily::Bos), "BOS BMM")
             ),
-            vec![Some(4.0), Some(5.0)]
+            vec![Some(4.0), Some(5.0), None]
         );
         // Per-device series are RAM-only: never persisted.
         assert!(
@@ -778,8 +806,53 @@ mod tests {
         );
         assert_eq!(
             vals(&restored.view(ChartSpan::OneHour).total_series()),
-            vec![Some(10.0)],
+            vec![Some(10.0), None],
+            "1-h tier still in range, closed by the restart break"
+        );
+    }
+
+    #[test]
+    fn a_restored_series_ends_on_a_break_the_live_samples_cannot_join() {
+        let mut h = HashrateHistory::default();
+        h.record(0, &summary(10.0, 4.0), &DeviceList::new());
+        let blob = h.take_snapshot(0).expect("BUG: snapshot fires");
+
+        // Back an hour later: one cached point, then live ones.
+        // The outage is the only spacing in the series, so a median-of-deltas
+        // rule would take it for the norm and draw straight through it.
+        let mut restored = HashrateHistory::default();
+        let downtime = 55 * 60;
+        assert!(
+            restored.restore(&blob, 0, downtime),
             "1-h tier still in range"
+        );
+        restored.record(downtime, &summary(12.0, 5.0), &DeviceList::new());
+
+        let series = restored.view(ChartSpan::OneHour).total_series();
+        assert_eq!(
+            vals(&series),
+            vec![Some(10.0), None, Some(12.0)],
+            "the break separates cached data from live"
+        );
+    }
+
+    #[test]
+    fn a_restored_series_longer_than_the_ring_is_cut_to_the_newest() {
+        // A blob this long can't come from our own snapshot — corrupted flash,
+        // or a build with a bigger ring — which is why the bound belongs on the
+        // way in, before every later push inherits the excess.
+        let over: Vec<HistoryDatum> = (0..POINTS + 10)
+            .map(|i| HistoryDatum {
+                at: i64::try_from(i).expect("BUG: loop index fits i64"),
+                value: None,
+            })
+            .collect();
+        let ring = Ring::restored(over);
+        assert_eq!(ring.0.len(), POINTS, "cut to capacity");
+        assert_eq!(
+            ring.0.front().map(|d| d.at),
+            Some(10),
+            "the oldest ten were dropped, not the newest"
         );
     }
 
