@@ -37,7 +37,7 @@ function stringField(key: string, name: string, description: string, secret: boo
     });
 }
 
-const credentialTypes = [
+const credentialTypeList = [
     pb.create(pb.CredentialTypeSchema, {
         id: 'braiins-pool',
         name: 'Braiins Pool',
@@ -61,6 +61,8 @@ const credentialTypes = [
         ],
     }),
 ];
+
+const credentialTypes = new Map(credentialTypeList.map(t => [t.id, t]));
 
 export default {
     title: 'Accounts/AccountForm',

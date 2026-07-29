@@ -6,7 +6,13 @@ license = "GPL-3.0-or-later"
 authors = ["Braiins Forge s.r.o."]
 description = "Schema-driven form field vocabulary (param/field definitions, kinds, values)"
 
+# The built-in credential-type artwork, read by `include_str!`;
+# the nix source filter keeps only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/*.svg"]
+
 [dependencies]
+base64.workspace = true
 indexmap.workspace = true
 ipnet.workspace = true
 schemars = { workspace = true, features = ["indexmap2"] }

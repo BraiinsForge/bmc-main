@@ -18,27 +18,35 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import IconBraiinsPool from './braiins-pool.svg';
-import { Password as IconToken, User as IconUserpass } from '@carbon/react/icons';
-
-export { IconBraiinsPool };
+import { Password as IconGeneric } from '@carbon/react/icons';
+import type * as pb from '@/proto';
 
 export interface AccountIconProps {
-    typeId: string;
+    // Artwork the backend may supply with the credential type
+    icon?: pb.Icon;
     size: number;
 
     className?: string;
     style?: CSSProperties;
 }
 
-// Braiins Pool keeps its brand mark; the generic types split by shape — a key for a lone token, a
-// person for a username & password. Unknown/user-defined types fall back to the key.
-export function AccountIcon({ typeId, size, style, className }: AccountIconProps) {
-    if (typeId === 'braiins-pool') {
-        return <IconBraiinsPool width={size} style={style} className={className} />;
-    }
-    if (typeId === 'generic-userpass') {
-        return <IconUserpass size={size} style={style} className={className} />;
-    }
-    return <IconToken size={size} style={style} className={className} />;
+// A type ships its own artwork, so a new one needs no change here.
+// The fallback is a state the backend declares, not one this component guesses at:
+// the key means "a credential", never a particular type,
+// so it cannot render as the wrong one.
+//
+// Decorative — every caller puts the type or account name beside it.
+export function AccountIcon({ icon, size, style, className }: AccountIconProps) {
+    return !icon ? (
+        <IconGeneric size={size} style={style} className={className} />
+    ) : (
+        <img
+            src={`data:${icon.mimeType};base64,${icon.data}`}
+            alt=""
+            width={size}
+            height={size}
+            style={style}
+            className={className}
+        />
+    );
 }

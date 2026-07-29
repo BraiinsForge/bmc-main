@@ -16,7 +16,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_credential_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Ch93ZWIvY3JlZGVudGlhbF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIiqAEKDkNyZWRlbnRpYWxUeXBlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSOAoGZmllbGRzGAQgAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uEi0KBmVncmVzcxgFIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5FZ3Jlc3NQb2xpY3kiIwoMRWdyZXNzUG9saWN5EhMKC2FsbG93X2hvc3RzGAEgAygJIlcKGkdldENyZWRlbnRpYWxUeXBlc1Jlc3BvbnNlEjkKEGNyZWRlbnRpYWxfdHlwZXMYASADKAsyHy5icmFpaW5zLmJtYy53ZWIuQ3JlZGVudGlhbFR5cGUyeAobQ3JlZGVudGlhbE1hbmFnZW1lbnRTZXJ2aWNlElkKEkdldENyZWRlbnRpYWxUeXBlcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRorLmJyYWlpbnMuYm1jLndlYi5HZXRDcmVkZW50aWFsVHlwZXNSZXNwb25zZWIGcHJvdG8z',
+        'Ch93ZWIvY3JlZGVudGlhbF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIi2wEKDkNyZWRlbnRpYWxUeXBlEgoKAmlkGAEgASgJEgwKBG5hbWUYAiABKAkSEwoLZGVzY3JpcHRpb24YAyABKAkSOAoGZmllbGRzGAQgAygLMiguYnJhaWlucy5ibWMud2ViLk1hbmlmZXN0UGFyYW1EZWZpbml0aW9uEi0KBmVncmVzcxgFIAEoCzIdLmJyYWlpbnMuYm1jLndlYi5FZ3Jlc3NQb2xpY3kSKAoEaWNvbhgGIAEoCzIVLmJyYWlpbnMuYm1jLndlYi5JY29uSACIAQFCBwoFX2ljb24iJwoESWNvbhIRCgltaW1lX3R5cGUYASABKAkSDAoEZGF0YRgCIAEoCSIjCgxFZ3Jlc3NQb2xpY3kSEwoLYWxsb3dfaG9zdHMYASADKAkiVwoaR2V0Q3JlZGVudGlhbFR5cGVzUmVzcG9uc2USOQoQY3JlZGVudGlhbF90eXBlcxgBIAMoCzIfLmJyYWlpbnMuYm1jLndlYi5DcmVkZW50aWFsVHlwZTJ4ChtDcmVkZW50aWFsTWFuYWdlbWVudFNlcnZpY2USWQoSR2V0Q3JlZGVudGlhbFR5cGVzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GisuYnJhaWlucy5ibWMud2ViLkdldENyZWRlbnRpYWxUeXBlc1Jlc3BvbnNlYgZwcm90bzM',
         [file_google_protobuf_empty, file_web_field_schema],
     );
 
@@ -53,6 +53,13 @@ export type CredentialType = Message<'braiins.bmc.web.CredentialType'> & {
      * @generated from field: braiins.bmc.web.EgressPolicy egress = 5;
      */
     egress?: EgressPolicy | undefined;
+
+    /**
+     * Absent means the frontend renders its own generic glyph.
+     *
+     * @generated from field: optional braiins.bmc.web.Icon icon = 6;
+     */
+    icon?: Icon | undefined;
 };
 
 /**
@@ -62,6 +69,35 @@ export type CredentialType = Message<'braiins.bmc.web.CredentialType'> & {
 export const CredentialTypeSchema: GenMessage<CredentialType> =
     /*@__PURE__*/
     messageDesc(file_web_credential_management, 0);
+
+/**
+ * Artwork carried inline rather than behind a URL, so it does not depend on the type having a
+ * directory to be served from. Firmware bakes its own; a type admitted from elsewhere can carry
+ * one the same way, whatever produced the bytes.
+ *
+ * @generated from message braiins.bmc.web.Icon
+ */
+export type Icon = Message<'braiins.bmc.web.Icon'> & {
+    /**
+     * IANA media type of `data`, e.g. "image/svg+xml".
+     *
+     * @generated from field: string mime_type = 1;
+     */
+    mimeType: string;
+
+    /**
+     * Base64 of the icon bytes, so any format the frontend can render travels unchanged.
+     *
+     * @generated from field: string data = 2;
+     */
+    data: string;
+};
+
+/**
+ * Describes the message braiins.bmc.web.Icon.
+ * Use `create(IconSchema)` to create a new message.
+ */
+export const IconSchema: GenMessage<Icon> = /*@__PURE__*/ messageDesc(file_web_credential_management, 1);
 
 /**
  * @generated from message braiins.bmc.web.EgressPolicy
@@ -79,7 +115,7 @@ export type EgressPolicy = Message<'braiins.bmc.web.EgressPolicy'> & {
  */
 export const EgressPolicySchema: GenMessage<EgressPolicy> =
     /*@__PURE__*/
-    messageDesc(file_web_credential_management, 1);
+    messageDesc(file_web_credential_management, 2);
 
 /**
  * @generated from message braiins.bmc.web.GetCredentialTypesResponse
@@ -97,7 +133,7 @@ export type GetCredentialTypesResponse = Message<'braiins.bmc.web.GetCredentialT
  */
 export const GetCredentialTypesResponseSchema: GenMessage<GetCredentialTypesResponse> =
     /*@__PURE__*/
-    messageDesc(file_web_credential_management, 2);
+    messageDesc(file_web_credential_management, 3);
 
 /**
  * @generated from service braiins.bmc.web.CredentialManagementService

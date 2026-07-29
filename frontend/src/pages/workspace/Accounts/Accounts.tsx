@@ -66,7 +66,7 @@ type FormState = {
 
 interface State {
     accounts: pb.Account[];
-    credentialTypes: pb.CredentialType[];
+    credentialTypes: pb.CredentialTypeLookup;
     isLoading: boolean;
     isSaving: boolean;
     dialog: Dialog;
@@ -76,7 +76,7 @@ interface State {
 const emptyForm = (): FormState => ({ values: { type: '', name: '' }, errors: null, fieldValues: {} });
 const getInitialState = (): State => ({
     accounts: [],
-    credentialTypes: [],
+    credentialTypes: new Map(),
     isLoading: false,
     isSaving: false,
     dialog: null,
@@ -119,7 +119,7 @@ class View extends Component<Props, State> {
             ]);
             this.setState({
                 accounts: accountsResponse.accounts,
-                credentialTypes: typesResponse.credentialTypes,
+                credentialTypes: new Map(typesResponse.credentialTypes.map(t => [t.id, t])),
             });
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -137,7 +137,7 @@ class View extends Component<Props, State> {
     //
 
     #openCreate = (): void => {
-        const first = this.state.credentialTypes.at(0);
+        const first = this.state.credentialTypes.values().next().value;
         this.setState({
             dialog: { mode: 'create' },
             form: { ...emptyForm(), values: { type: first?.id ?? '', name: '' } },

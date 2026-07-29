@@ -772,6 +772,7 @@ dependencies = [
 name = "bmc-field-schema"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "indexmap",
  "ipnet",
  "schemars",

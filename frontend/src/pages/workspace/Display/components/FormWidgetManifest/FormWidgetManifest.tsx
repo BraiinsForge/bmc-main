@@ -46,9 +46,8 @@ export interface WidgetManifestFormProps {
     onSizeChange?(size: pb.WidgetSize): void;
 
     accounts?: pb.Account[];
-    /** Slot key to bound account id; a slot missing here is unbound. */
+    credentialTypes?: pb.CredentialTypeLookup;
     credentialBindings?: Record<string, string>;
-    /** An empty `accountId` unbinds the slot. */
     onCredentialBindingChange?(slotKey: string, accountId: string): void;
 }
 
@@ -61,37 +60,42 @@ export interface FormWidgetManifestProps extends WidgetManifestFormProps {
 // The dropdown drops a null selection, so "no account" has to be a real item.
 const UNBOUND = pb.create(pb.AccountSchema, { id: '', name: '' });
 
-function AccountOption(account: pb.Account) {
-    if (!account.id) return <span children={account.name} />;
+// Every option in one dropdown is filtered to the slot's type, so they share its artwork.
+function accountOption(icon?: pb.Icon) {
+    return function AccountOption(account: pb.Account) {
+        if (!account.id) return <span children={account.name} />;
 
-    return (
-        <div className={css.accountElement}>
-            <div className={css.accountElementName}>
-                <AccountIcon typeId={account.typeId} size={18} />
-                <span children={account.name} />
+        return (
+            <div className={css.accountElement}>
+                <div className={css.accountElementName}>
+                    <AccountIcon icon={icon} size={18} />
+                    <span children={account.name} />
+                </div>
+                <div className={css.accountElementDate}>
+                    <IconCalendar size={16} />
+                    <Datetime value={account.createdAt} format="%d.%m.%Y" />
+                </div>
             </div>
-            <div className={css.accountElementDate}>
-                <IconCalendar size={16} />
-                <Datetime value={account.createdAt} format="%d.%m.%Y" />
-            </div>
-        </div>
-    );
+        );
+    };
 }
 
 interface CredentialSlotFieldProps {
     slot: pb.CredentialSlotDefinition;
     accounts: pb.Account[];
+    credentialTypes: pb.CredentialTypeLookup;
     boundAccountId: string;
     error?: string;
     onChange(slotKey: string, accountId: string): void;
 }
 
 function CredentialSlotField(props: CredentialSlotFieldProps) {
-    const { slot, accounts, boundAccountId, error, onChange } = props;
+    const { slot, accounts, credentialTypes, boundAccountId, error, onChange } = props;
     const { formatMessage } = useIntl();
 
     const none = { ...UNBOUND, name: formatMessage({ defaultMessage: '— None —' }) };
     const eligible = accounts.filter(a => a.typeId === slot.typeId);
+    const icon = credentialTypes.get(slot.typeId)?.icon;
     const items = [none, ...eligible];
 
     // A deleted account must read as broken, not as "— None —": the id still saves.
@@ -114,7 +118,7 @@ function CredentialSlotField(props: CredentialSlotFieldProps) {
                 error={error}
                 onChange={account => onChange(slot.key, account.id)}
                 itemToString={a => a?.name ?? ''}
-                itemToElement={AccountOption}
+                itemToElement={accountOption(icon)}
             />
 
             {isDangling ? (
@@ -156,6 +160,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
         sizeOptions,
         onSizeChange,
         accounts = [],
+        credentialTypes = new Map(),
         credentialBindings = {},
         onCredentialBindingChange,
     } = props;
@@ -183,6 +188,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                           key={slot.key}
                           slot={slot}
                           accounts={accounts}
+                          credentialTypes={credentialTypes}
                           boundAccountId={credentialBindings[slot.key] ?? ''}
                           error={errors?.credentials?.[slot.key]?.[0]}
                           onChange={onCredentialBindingChange}

@@ -33,7 +33,7 @@ import css from './AccountForm.scss';
 
 export interface AccountFormProps {
     mode: 'create' | 'edit';
-    credentialTypes: pb.CredentialType[];
+    credentialTypes: pb.CredentialTypeLookup;
 
     type: iField<string>;
     name: iField<string>;
@@ -58,7 +58,7 @@ export function AccountForm(props: AccountFormProps) {
     const { formatMessage } = useIntl();
 
     const isEdit = mode === 'edit';
-    const selectedType = credentialTypes.find(t => t.id === type.value);
+    const selectedType = type.value ? credentialTypes.get(type.value) : undefined;
 
     return (
         <Form className={css.form}>
@@ -78,7 +78,7 @@ export function AccountForm(props: AccountFormProps) {
                 onChange={value => type.onChange?.(String(value))}
                 invalid={!!type.error}
                 invalidText={type.error}
-                children={credentialTypes.map(t => (
+                children={Array.from(credentialTypes.values(), t => (
                     <RadioButton
                         key={t.id}
                         value={t.id}
@@ -87,7 +87,7 @@ export function AccountForm(props: AccountFormProps) {
                         disabled={type.disabled || (isEdit && type.value !== t.id)}
                         labelText={
                             <div className={css.radioLabel}>
-                                <AccountIcon size={20} typeId={t.id} />
+                                <AccountIcon size={20} icon={t.icon} />
                                 <span children={t.name} />
                             </div>
                         }

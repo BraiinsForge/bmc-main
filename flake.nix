@@ -157,14 +157,14 @@
           '';
         };
 
-        # Format SVGs under bmc-virt and bmc-wasm-runtime using the shared svgo
-        # config. fd honors .gitignore so node_modules/target/.venv are skipped.
+        # Format SVGs with the shared svgo config.
+        # fd honors .gitignore, so node_modules/target/.venv are skipped.
         fmt-svg = pkgs.writeShellApplication {
           name = "fmt-svg";
           runtimeInputs = with pkgs; [ fd svgo ];
           text = ''
             fd --extension svg --type f \
-               '.' 'bmc-virt' 'bmc-wasm-runtime' 'widgets-wasm' \
+               '.' 'bmc-virt' 'bmc-wasm-runtime' 'widgets-wasm' 'bmc-field-schema' \
                --exec-batch svgo --quiet --config svgo.config.js {}
           '';
         };

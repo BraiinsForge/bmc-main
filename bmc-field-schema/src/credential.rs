@@ -25,6 +25,7 @@
 //! Here rather than in the firmware crate so `bmc-widget-codegen` can read each type's fields.
 
 use std::net::IpAddr;
+use std::sync::LazyLock;
 
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,23 @@ pub struct CredentialType {
     /// Absent means the secret may be sent anywhere.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub egress: Option<EgressPolicy>,
+    /// Absent means the frontend renders its own generic glyph.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icon: Option<Icon>,
+}
+
+/// Artwork carried as bytes rather than as a path or URL.
+///
+/// A built-in has no directory to be served from the way a widget package does,
+/// and a type admitted from elsewhere would have a different one again.
+/// Carrying the bytes makes every source look the same to a reader,
+/// whether they were baked into the binary, encoded at build time or read from disk.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Icon {
+    /// IANA media type of `data`, e.g. `image/svg+xml`.
+    pub mime_type: String,
+    /// Base64 of the icon bytes, so any renderable format travels unchanged.
+    pub data: String,
 }
 
 /// Hosts a credential type's secrets may be sent to.
@@ -181,6 +199,28 @@ pub fn builtins() -> Vec<CredentialType> {
         .collect()
 }
 
+/// Encode a checked-in SVG for the wire.
+///
+/// The asset stays a plain file, so a change to it shows up
+/// as artwork in review rather than as a wall of base64.
+fn svg_icon(source: &str) -> Icon {
+    use base64::Engine as _;
+    Icon {
+        mime_type: "image/svg+xml".to_owned(),
+        data: base64::engine::general_purpose::STANDARD.encode(source),
+    }
+}
+
+/// Encoded once rather than per [`BuiltinType::schema`] call:
+/// [`BuiltinType::egress`] builds a whole schema to read one field,
+/// and that runs for every outbound request spending a credential.
+static BRAIINS_POOL_ICON: LazyLock<Icon> =
+    LazyLock::new(|| svg_icon(include_str!("../assets/braiins-pool.svg")));
+static GENERIC_TOKEN_ICON: LazyLock<Icon> =
+    LazyLock::new(|| svg_icon(include_str!("../assets/generic-token.svg")));
+static GENERIC_USERPASS_ICON: LazyLock<Icon> =
+    LazyLock::new(|| svg_icon(include_str!("../assets/generic-userpass.svg")));
+
 fn secret_field(name: &str, description: &str) -> ParamDefinition {
     string_field(name, description, Some(StringFormat::Password))
 }
@@ -221,6 +261,7 @@ fn generic_token() -> CredentialType {
             secret_field("Token", "The API token or bearer secret."),
         )]),
         egress: None,
+        icon: Some(GENERIC_TOKEN_ICON.clone()),
     }
 }
 
@@ -240,6 +281,7 @@ fn generic_userpass() -> CredentialType {
             ),
         ]),
         egress: None,
+        icon: Some(GENERIC_USERPASS_ICON.clone()),
     }
 }
 
@@ -255,6 +297,7 @@ fn braiins_pool() -> CredentialType {
         egress: Some(EgressPolicy {
             allow_hosts: vec!["api.braiins.com".to_owned()],
         }),
+        icon: Some(BRAIINS_POOL_ICON.clone()),
     }
 }
 
@@ -402,6 +445,31 @@ mod tests {
         ids.sort();
         ids.dedup();
         assert_eq!(count, ids.len(), "duplicate builtin credential type id");
+    }
+
+    /// A type without artwork falls back to a glyph meaning "some credential",
+    /// so a new built-in that forgot one would render plausibly rather than fail.
+    #[test]
+    fn every_builtin_ships_artwork_that_reaches_the_wire_as_its_own_bytes() {
+        use base64::Engine as _;
+
+        for builtin in BuiltinType::ALL {
+            let id = builtin.id();
+            let icon = builtin
+                .schema()
+                .icon
+                .unwrap_or_else(|| panic!("BUG: builtin {id:?} must ship its own artwork"));
+            assert_eq!(icon.mime_type, "image/svg+xml", "for {id:?}");
+
+            let decoded = base64::engine::general_purpose::STANDARD
+                .decode(&icon.data)
+                .unwrap_or_else(|_| panic!("BUG: the encoded asset for {id:?} must decode"));
+            let svg = String::from_utf8(decoded).expect("BUG: an SVG asset is UTF-8");
+            assert!(
+                svg.contains("<svg") && svg.contains("</svg>"),
+                "the wire form for {id:?} must carry the asset itself, not a path to it"
+            );
+        }
     }
 
     #[test]

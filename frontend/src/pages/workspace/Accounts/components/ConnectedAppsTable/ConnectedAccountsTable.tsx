@@ -43,7 +43,7 @@ import css from './ConnectedAppsTable.scss';
 
 export interface ConnectedAccountsTableProps {
     accounts: pb.Account[];
-    credentialTypes: pb.CredentialType[];
+    credentialTypes: pb.CredentialTypeLookup;
     onEdit(acc: pb.Account): void;
     onDelete(acc: pb.Account): void;
 }
@@ -60,8 +60,12 @@ type TableCol = 'type' | 'name' | 'createdAt' | 'actions';
 const $ = getID('accounts-table').get;
 
 class View extends Component<Props> {
+    #type(typeId: string): pb.CredentialType | undefined {
+        return this.props.credentialTypes.get(typeId);
+    }
+
     #typeName(typeId: string): string {
-        return this.props.credentialTypes.find(t => t.id === typeId)?.name ?? typeId;
+        return this.#type(typeId)?.name ?? typeId;
     }
 
     get #headers(): Array<DataTableHeader<TableCol>> {
@@ -119,7 +123,7 @@ class View extends Component<Props> {
                 cells: {
                     type: (
                         <div className={css.typeColContent}>
-                            <AccountIcon size={24} typeId={x.typeId} />
+                            <AccountIcon size={24} icon={this.#type(x.typeId)?.icon} />
                             <span children={this.#typeName(x.typeId)} />
                         </div>
                     ),

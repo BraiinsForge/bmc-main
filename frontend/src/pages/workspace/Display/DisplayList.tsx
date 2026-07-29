@@ -86,6 +86,7 @@ interface State {
     timezones: pb.Timezone[];
     hardwareCapabilities: null | pb.HardwareCapabilities;
     accounts: pb.Account[];
+    credentialTypes: pb.CredentialTypeLookup;
 
     cycle: {
         isOpen: boolean;
@@ -108,6 +109,7 @@ const getInitialState = (): State => ({
     timezones: [],
     hardwareCapabilities: null,
     accounts: [],
+    credentialTypes: new Map(),
 
     cycle: {
         isOpen: false,
@@ -156,6 +158,7 @@ class View extends Component<Props, State> {
         this.#loadTimezones();
         this.#loadHardwareCapabilities();
         this.#loadAccounts();
+        this.#loadCredentialTypes();
     }
     componentWillUnmount() {
         this.#windowClickUnsubscribe();
@@ -206,6 +209,22 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to load accounts!' });
+            toast.error(msg);
+        }
+    };
+
+    private abortLoadCredentialTypes = pb.abort.get();
+    #loadCredentialTypes = async (): Promise<void> => {
+        const { formatMessage } = this.props.intl;
+
+        try {
+            const { signal } = this.abortLoadCredentialTypes.replace();
+            const { credentialTypes } = await pb.rpc.credentials.getCredentialTypes({}, { signal });
+            this.setState({ credentialTypes: new Map(credentialTypes.map(t => [t.id, t])) });
+        } catch ($) {
+            if (pb.abort.is($)) return;
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= formatMessage({ defaultMessage: 'Failed to load credential types!' });
             toast.error(msg);
         }
     };
@@ -540,6 +559,7 @@ class View extends Component<Props, State> {
                     onParamChange={this.#handleManifestParamChange}
                     timezones={this.state.timezones}
                     accounts={this.state.accounts}
+                    credentialTypes={this.state.credentialTypes}
                     credentialBindings={this.state.manifestForm.credentialBindings}
                     onCredentialBindingChange={this.#handleCredentialBindingChange}
                 />

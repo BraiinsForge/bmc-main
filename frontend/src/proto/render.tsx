@@ -410,6 +410,9 @@ export function numberFormatToString(x: Maybe<pb.NumberFormat>): null | string {
 
 export type ManifestLookup = Map<string, pb.WidgetManifest>;
 
+/** Credential types keyed by id, so resolving a slot's type costs nothing per render. */
+export type CredentialTypeLookup = Map<pb.CredentialType['id'], pb.CredentialType>;
+
 /** Display title for a widget — prefers the manifest's human-readable name. */
 export function widgetTitle(widget: Maybe<pb.Widget>, manifests: Maybe<ManifestLookup>): null | string {
     if (!widget) return null;

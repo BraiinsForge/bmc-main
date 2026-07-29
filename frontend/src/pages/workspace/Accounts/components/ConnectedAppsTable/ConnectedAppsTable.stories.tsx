@@ -24,11 +24,13 @@ import { action } from 'storybook/actions';
 import * as pb from '@/proto';
 import { ConnectedAccountsTable, type ConnectedAccountsTableProps } from './index';
 
-const credentialTypes = [
-    pb.create(pb.CredentialTypeSchema, { id: 'braiins-pool', name: 'Braiins Pool' }),
-    pb.create(pb.CredentialTypeSchema, { id: 'generic-token', name: 'Token' }),
-    pb.create(pb.CredentialTypeSchema, { id: 'generic-userpass', name: 'Username & password' }),
-];
+const credentialTypes = new Map(
+    [
+        pb.create(pb.CredentialTypeSchema, { id: 'braiins-pool', name: 'Braiins Pool' }),
+        pb.create(pb.CredentialTypeSchema, { id: 'generic-token', name: 'Token' }),
+        pb.create(pb.CredentialTypeSchema, { id: 'generic-userpass', name: 'Username & password' }),
+    ].map(t => [t.id, t]),
+);
 
 const accounts = [
     pb.create(pb.AccountSchema, { id: '1', typeId: 'braiins-pool', name: 'Primary pool' }),

@@ -58,6 +58,10 @@ fn credential_type_to_proto(t: &credential::CredentialType) -> web::CredentialTy
         egress: t.egress.as_ref().map(|e| web::EgressPolicy {
             allow_hosts: e.allow_hosts.clone(),
         }),
+        icon: t.icon.as_ref().map(|i| web::Icon {
+            mime_type: i.mime_type.clone(),
+            data: i.data.clone(),
+        }),
     }
 }
 
