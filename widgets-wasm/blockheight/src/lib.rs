@@ -19,8 +19,6 @@
 // the grant above.
 
 //! Blockheight widget — Bitcoin block height + timestamp, four sizes.
-//! Visual parity with `bmc-display/ui/widgets/categories/block-height.slint`
-//! on `bmc/stable-26.02`.
 
 mod manifest_params;
 
@@ -51,8 +49,10 @@ mod wasm_glue {
         caption_font_size: u32,
         padding_left: f32,
         padding_top: f32,
-        /// Gap between the height numeral and the "Found at" block.
-        stack_gap: f32,
+        /// Gap from the bottom edge to the last timestamp line.
+        /// The compact faces share `nameday`'s 16px date inset.
+        /// Fullscreen keeps the timestamp up near the numeral.
+        timestamp_pad_bottom: f32,
     }
 
     const SMALL: SizeParams = SizeParams {
@@ -61,7 +61,7 @@ mod wasm_glue {
         caption_font_size: 18,
         padding_left: 16.0,
         padding_top: 8.0,
-        stack_gap: 8.0,
+        timestamp_pad_bottom: 16.0,
     };
     const MEDIUM: SizeParams = SizeParams {
         number_font_size: 96,
@@ -69,7 +69,7 @@ mod wasm_glue {
         caption_font_size: 18,
         padding_left: 16.0,
         padding_top: 8.0,
-        stack_gap: 8.0,
+        timestamp_pad_bottom: 16.0,
     };
     const LARGE: SizeParams = SizeParams {
         number_font_size: 120,
@@ -77,7 +77,7 @@ mod wasm_glue {
         caption_font_size: 22,
         padding_left: 16.0,
         padding_top: 8.0,
-        stack_gap: 12.0,
+        timestamp_pad_bottom: 16.0,
     };
     const FULL: SizeParams = SizeParams {
         number_font_size: 200,
@@ -85,7 +85,7 @@ mod wasm_glue {
         caption_font_size: 32,
         padding_left: 24.0,
         padding_top: 16.0,
-        stack_gap: 16.0,
+        timestamp_pad_bottom: 60.0,
     };
 
     fn size_params(variant: SizeVariant) -> &'static SizeParams {
@@ -101,6 +101,10 @@ mod wasm_glue {
     const CUBE_PX: f32 = 24.0;
     const HEADER_GAP_PX: f32 = 12.0;
     const HEADER_FONT_PX: u32 = 24;
+    /// Header weight and color track `nameday` / `random-facts`
+    /// rather than this widget's Figma frame (semibold Gray/40).
+    /// The faces sit side by side on the Deck, so they have to match each other.
+    const HEADER_WEIGHT: FontWeight = FontWeight::BOLD;
     const HEADER_COLOR: Color = GRAY_60;
     const HEIGHT_COLOR: Color = WHITE;
     const TIMESTAMP_COLOR: Color = GRAY_60;
@@ -114,14 +118,20 @@ mod wasm_glue {
     const ROUND_CAPTION_PX: u32 = 18;
     const ROUND_STACK_GAP_PX: f32 = 16.0;
 
-    /// The "Found at" caption stacked over the formatted block time.
     fn timestamp_block(caption_size: u32, timestamp_size: u32, gap: f32) -> Node {
         col(
             props!(gap: gap, cross_align: CrossAlign::Center),
             [
                 text(
                     FOUND_AT_CAPTION,
-                    style!(size: caption_size, weight: FontWeight::REGULAR, color: TIMESTAMP_COLOR),
+                    style!(
+                        size: caption_size,
+                        weight: FontWeight::REGULAR,
+                        color: TIMESTAMP_COLOR,
+                        // Tight line box keeps the caption on its date;
+                        // the default 1.4 drifts them apart as the font grows.
+                        line_height: 0.8,
+                    ),
                 ),
                 text(
                     format_timestamp(),
@@ -144,9 +154,8 @@ mod wasm_glue {
         height: u32,
         /// Block header time, unix seconds (nexus normalizes it server-side).
         timestamp_unix: i64,
-        /// `format_date + ", " + format_time` against the current host
-        /// snapshot. `None` until first computed in `render`, and cleared by
-        /// `on_system_update` when the snapshot may have changed.
+        /// Cached `format_date + ", " + format_time` against the host snapshot.
+        /// Cleared whenever that snapshot may have changed.
         formatted_timestamp: Option<String>,
     }
 
@@ -245,8 +254,8 @@ mod wasm_glue {
         let _ = render_ui(ws.width, ws.height, root);
     }
 
-    /// Rectangular layout: header pinned top-left; the height and its "Found at"
-    /// timestamp stack as one vertically-centered group.
+    /// Rectangular layout: header pinned top-left, the height numeral centered
+    /// on the face, and the "Found at" timestamp pinned near the bottom edge.
     fn view_rect(size: &SizeParams, params: &manifest_params::Params) -> Node {
         let header_overlay = row(
             props!(
@@ -269,7 +278,7 @@ mod wasm_glue {
                 ),
                 text(
                     "Block Height",
-                    style!(size: HEADER_FONT_PX, weight: FontWeight::REGULAR, color: HEADER_COLOR),
+                    style!(size: HEADER_FONT_PX, weight: HEADER_WEIGHT, color: HEADER_COLOR),
                 ),
             ],
         );
@@ -281,34 +290,32 @@ mod wasm_glue {
                 weight: font_weight(params.numbers_font_style),
                 color: HEIGHT_COLOR,
                 family: FontFamily::DeckSans,
-                // Tight line box: the numerals have no descenders, so the default
-                // 1.4 multiplier would pad the group with empty space.
+                // Tight line box: the numerals have no descenders,
+                // so the default 1.4 multiplier would leave the box mostly empty.
                 line_height: 0.8,
             ),
         );
 
-        // Stack the height over its "Found at" timestamp with a gap so a tall
-        // numeral can't overlap the caption, and center the group as a whole.
-        let content = if params.show_timestamp {
-            col(
-                props!(gap: size.stack_gap, cross_align: CrossAlign::Center),
-                [
-                    number,
-                    timestamp_block(
-                        size.caption_font_size,
-                        size.timestamp_font_size,
-                        CAPTION_GAP_PX,
-                    ),
-                ],
-            )
-        } else {
-            number
-        };
+        let mut layers = vec![header_overlay, center(props!(flex: 1.0), [number])];
 
-        col(
-            props!(background: BLACK),
-            [header_overlay, center(props!(flex: 1.0), [content])],
-        )
+        // Anchored to the bottom edge, not to the numeral, which owns the center.
+        // Pinning by the block's bottom holds the date as the caption grows.
+        if params.show_timestamp {
+            layers.push(center(
+                props!(
+                    inset_bottom: size.timestamp_pad_bottom,
+                    inset_left: 0.0,
+                    inset_right: 0.0,
+                ),
+                [timestamp_block(
+                    size.caption_font_size,
+                    size.timestamp_font_size,
+                    CAPTION_GAP_PX,
+                )],
+            ));
+        }
+
+        col(props!(background: BLACK), layers)
     }
 
     /// Round layout: a vertically-centered header · height · timestamp stack.
@@ -336,7 +343,7 @@ mod wasm_glue {
                     "Block Height",
                     style!(
                         size: scale_font(HEADER_FONT_PX, scale),
-                        weight: FontWeight::REGULAR,
+                        weight: HEADER_WEIGHT,
                         color: HEADER_COLOR,
                     ),
                 ),
