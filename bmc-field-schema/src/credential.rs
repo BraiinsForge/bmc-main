@@ -125,10 +125,60 @@ fn split_port(entry: &str) -> (&str, Option<u16>) {
     }
 }
 
+/// Storage and the wire keep a plain string id,
+/// because user-defined types are planned
+/// and a string is what those will carry;
+/// an id matching no variant is simply not a built-in.
+///
+/// Naming the known ones anyway keeps [`builtins`] derived from [`Self::ALL`],
+/// so a new type cannot be left out of it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BuiltinType {
+    GenericToken,
+    GenericUserpass,
+    BraiinsPool,
+}
+
+impl BuiltinType {
+    /// In catalog order: [`builtins`] preserves it, and the picker follows.
+    pub const ALL: [Self; 3] = [Self::GenericToken, Self::GenericUserpass, Self::BraiinsPool];
+
+    #[must_use]
+    pub fn id(self) -> &'static str {
+        match self {
+            Self::GenericToken => "generic-token",
+            Self::GenericUserpass => "generic-userpass",
+            Self::BraiinsPool => "braiins-pool",
+        }
+    }
+
+    #[must_use]
+    pub fn from_id(id: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|builtin| builtin.id() == id)
+    }
+
+    #[must_use]
+    pub fn schema(self) -> CredentialType {
+        match self {
+            Self::GenericToken => generic_token(),
+            Self::GenericUserpass => generic_userpass(),
+            Self::BraiinsPool => braiins_pool(),
+        }
+    }
+
+    #[must_use]
+    pub fn egress(self) -> Option<EgressPolicy> {
+        self.schema().egress
+    }
+}
+
 /// The fixed set of firmware-provided credential types.
 #[must_use]
 pub fn builtins() -> Vec<CredentialType> {
-    vec![generic_token(), generic_userpass(), braiins_pool()]
+    BuiltinType::ALL
+        .into_iter()
+        .map(BuiltinType::schema)
+        .collect()
 }
 
 fn secret_field(name: &str, description: &str) -> ParamDefinition {
@@ -163,7 +213,7 @@ fn field_map<const N: usize>(
 
 fn generic_token() -> CredentialType {
     CredentialType {
-        id: "generic-token".to_owned(),
+        id: BuiltinType::GenericToken.id().to_owned(),
         name: "Token".to_owned(),
         description: "A single API token or bearer secret.".to_owned(),
         fields: field_map([(
@@ -176,7 +226,7 @@ fn generic_token() -> CredentialType {
 
 fn generic_userpass() -> CredentialType {
     CredentialType {
-        id: "generic-userpass".to_owned(),
+        id: BuiltinType::GenericUserpass.id().to_owned(),
         name: "Username & password".to_owned(),
         description: "A username and password pair.".to_owned(),
         fields: field_map([
@@ -195,7 +245,7 @@ fn generic_userpass() -> CredentialType {
 
 fn braiins_pool() -> CredentialType {
     CredentialType {
-        id: "braiins-pool".to_owned(),
+        id: BuiltinType::BraiinsPool.id().to_owned(),
         name: "Braiins Pool".to_owned(),
         description: "A Braiins Pool API token used to fetch your worker stats.".to_owned(),
         fields: field_map([(
