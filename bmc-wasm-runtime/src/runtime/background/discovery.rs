@@ -81,6 +81,16 @@ struct TypeSubscribers {
     /// so a transient reject doesn't drop the subscriber for the process.
     events: Option<mdns_sd::Receiver<mdns_sd::ServiceEvent>>,
     subscribers: Vec<(u64, std::sync::mpsc::Sender<MdnsEvent>)>,
+    /// The latest `Found` per instance still believed present, so a subscriber
+    /// joining a running browse learns what the earlier ones already heard.
+    ///
+    /// mdns-sd replays its cache only when a browse starts, and one is started
+    /// per type, not per subscriber — without this a joiner sees nothing until
+    /// the network happens to speak again.
+    ///
+    /// Dropped on the matching `Removed`, the same signal
+    /// every subscriber already relies on to retire a service.
+    resolved: std::collections::HashMap<String, MdnsEvent>,
     /// When this type's browse first started; survives daemon recreates
     /// so the first-resolution latency is measured from the original browse.
     started: Instant,
@@ -111,6 +121,20 @@ impl TypeSubscribers {
     /// Whether a rejected browse is due for another attempt.
     fn browse_due(&self, now: Instant) -> bool {
         self.events.is_none() && now >= self.next_browse
+    }
+
+    /// Fold one event into the record a joining subscriber is sent.
+    /// Keyed by instance, so a device that re-announces replaces
+    /// its entry rather than doubling up, and a departure takes it out.
+    fn record(&mut self, instance: String, event: &MdnsEvent) {
+        match event {
+            MdnsEvent::Found(_) => {
+                self.resolved.insert(instance, event.clone());
+            }
+            MdnsEvent::Removed(_) => {
+                self.resolved.remove(&instance);
+            }
+        }
     }
 }
 
@@ -166,14 +190,24 @@ impl MdnsHub {
         for st in service_types {
             match inner.types.entry(st.clone()) {
                 Entry::Occupied(mut e) => {
-                    e.get_mut().subscribers.push((id, tx.clone()));
-                    tracing::debug!("mDNS: subscriber {id} joined the {st} browse");
+                    let subs = e.get_mut();
+                    // Catch the joiner up before it sees anything live,
+                    // so its view starts where the running browse already is.
+                    for found in subs.resolved.values() {
+                        let _ = tx.send(found.clone());
+                    }
+                    let replayed = subs.resolved.len();
+                    subs.subscribers.push((id, tx.clone()));
+                    tracing::debug!(
+                        "mDNS: subscriber {id} joined the {st} browse, replayed {replayed} service(s)"
+                    );
                 }
                 Entry::Vacant(e) => {
                     let now = Instant::now();
                     let mut subs = TypeSubscribers {
                         events: None,
                         subscribers: vec![(id, tx.clone())],
+                        resolved: std::collections::HashMap::new(),
                         started: now,
                         first_resolved: false,
                         silent_warned: false,
@@ -266,9 +300,10 @@ impl MdnsHub {
         for (st, subs) in &mut inner.types {
             while let Some(event) = subs.events.as_ref().and_then(|e| e.try_recv().ok()) {
                 events_heard += 1;
-                let Some(msg) = to_mdns_event(event) else {
+                let Some((instance, msg)) = to_mdns_event(event) else {
                     continue;
                 };
+                subs.record(instance, &msg);
                 if matches!(msg, MdnsEvent::Found(_)) {
                     resolved = true;
                     if !subs.first_resolved {
@@ -395,9 +430,10 @@ impl HubInner {
     }
 }
 
-/// Convert an mdns-sd event into a WASM-facing [`MdnsEvent`], or `None` for the
-/// lifecycle events the guest doesn't consume.
-fn to_mdns_event(event: mdns_sd::ServiceEvent) -> Option<MdnsEvent> {
+/// Convert an mdns-sd event into a WASM-facing [`MdnsEvent`] and the instance
+/// it concerns, or `None` for the lifecycle events the guest doesn't consume.
+/// The instance name keys the per-type record a joining subscriber is sent.
+fn to_mdns_event(event: mdns_sd::ServiceEvent) -> Option<(String, MdnsEvent)> {
     use mdns_sd::ServiceEvent;
 
     match event {
@@ -431,9 +467,11 @@ fn to_mdns_event(event: mdns_sd::ServiceEvent) -> Option<MdnsEvent> {
                 port,
                 txt_json,
             );
-            Some(MdnsEvent::Found(json))
+            Some((name, MdnsEvent::Found(json)))
         }
-        ServiceEvent::ServiceRemoved(_, fullname) => Some(MdnsEvent::Removed(fullname)),
+        ServiceEvent::ServiceRemoved(_, fullname) => {
+            Some((fullname.clone(), MdnsEvent::Removed(fullname)))
+        }
         ServiceEvent::SearchStarted(_)
         | ServiceEvent::ServiceFound(_, _)
         | ServiceEvent::SearchStopped(_)
@@ -870,12 +908,61 @@ mod tests {
         TypeSubscribers {
             events: None,
             subscribers: Vec::new(),
+            resolved: std::collections::HashMap::new(),
             started: now,
             first_resolved: false,
             silent_warned: false,
             browse_failures: 0,
             next_browse: now,
         }
+    }
+
+    /// A resolved instance as the hub records it: the key,
+    /// and the payload a joining subscriber would be sent.
+    fn found(instance: &str, host: &str) -> (String, MdnsEvent) {
+        (
+            instance.to_owned(),
+            MdnsEvent::Found(format!("{{\"name\":\"{instance}\",\"host\":\"{host}\"}}")),
+        )
+    }
+
+    #[test]
+    fn the_record_holds_what_a_joining_subscriber_has_missed() {
+        let mut subs = deferred_type(Instant::now());
+        for (instance, event) in [
+            found("a._http._tcp.local.", "10.0.0.1"),
+            found("b._http._tcp.local.", "10.0.0.2"),
+        ] {
+            subs.record(instance, &event);
+        }
+        assert_eq!(subs.resolved.len(), 2, "both are still present");
+
+        // A departure retires it, so a later joiner never hears of it at all.
+        subs.record(
+            "a._http._tcp.local.".to_owned(),
+            &MdnsEvent::Removed("a._http._tcp.local.".to_owned()),
+        );
+        assert_eq!(
+            subs.resolved.keys().collect::<Vec<_>>(),
+            vec!["b._http._tcp.local."]
+        );
+    }
+
+    #[test]
+    fn re_resolving_an_instance_replaces_it_rather_than_doubling_up() {
+        // Devices re-announce, and mdns-sd resolves again on a cache refresh;
+        // a joiner must get one entry per device, carrying the latest address.
+        let mut subs = deferred_type(Instant::now());
+        let (instance, first) = found("a._http._tcp.local.", "10.0.0.1");
+        let (_, moved) = found("a._http._tcp.local.", "10.0.0.9");
+        subs.record(instance.clone(), &first);
+        subs.record(instance.clone(), &moved);
+
+        assert_eq!(subs.resolved.len(), 1);
+        let MdnsEvent::Found(json) = &subs.resolved[&instance] else {
+            panic!("BUG: a resolved instance records a Found");
+        };
+        assert!(json.contains("10.0.0.9"), "kept the stale address: {json}");
     }
 
     #[test]
