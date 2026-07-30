@@ -1733,10 +1733,18 @@ impl GrpcSceneManagementService for SceneManagementService {
 mod tests {
     use super::*;
 
+    type CredentialPush = (
+        crate::compositor::InstanceId,
+        serde_json::Map<String, serde_json::Value>,
+        bmc_widget_protocol::CredentialSecrets,
+    );
+
     #[derive(Default)]
     struct RecordingCompositor {
         scene_cycling_configs: std::sync::Mutex<Vec<SceneCycling>>,
         scene_cycling_lists: std::sync::Mutex<Vec<Vec<crate::compositor::SceneLayout>>>,
+        credential_pushes: std::sync::Mutex<Vec<CredentialPush>>,
+        connected: std::sync::Mutex<std::collections::BTreeSet<crate::compositor::InstanceId>>,
     }
 
     impl crate::compositor::Compositor for RecordingCompositor {
@@ -1842,10 +1850,14 @@ mod tests {
 
         fn update_widget_credentials(
             &self,
-            _instance_id: &crate::compositor::InstanceId,
-            _credentials: serde_json::Map<String, serde_json::Value>,
-            _secrets: bmc_widget_protocol::CredentialSecrets,
+            instance_id: &crate::compositor::InstanceId,
+            credentials: serde_json::Map<String, serde_json::Value>,
+            secrets: bmc_widget_protocol::CredentialSecrets,
         ) -> Result<(), crate::compositor::CompositorError> {
+            self.credential_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .push((instance_id.clone(), credentials, secrets));
             Ok(())
         }
 
@@ -1895,7 +1907,12 @@ mod tests {
             &self,
         ) -> tokio::sync::watch::Receiver<std::collections::BTreeSet<crate::compositor::InstanceId>>
         {
-            let (_tx, rx) = tokio::sync::watch::channel(std::collections::BTreeSet::new());
+            let connected = self
+                .connected
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .clone();
+            let (_tx, rx) = tokio::sync::watch::channel(connected);
             rx
         }
 
@@ -2276,6 +2293,265 @@ mod tests {
             created_at: chrono::Utc::now(),
         };
         (id, account)
+    }
+
+    /// Build a coordinator whose registry holds exactly one widget, declaring `slots`.
+    async fn coordinator_declaring(
+        widget_type_id: Uuid,
+        slots: &[(&str, &str, bool)],
+        secret_store: Arc<RwLock<SecretStoreHandle>>,
+    ) -> Coordinator {
+        let mut manifest = manifest_with_credentials(slots);
+        manifest.uid = widget_type_id;
+        let registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
+            manifest,
+            widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
+            binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+            icon_path: None,
+        }]));
+        let compositor: Arc<dyn crate::compositor::Compositor> =
+            Arc::new(RecordingCompositor::default());
+        Coordinator::new(
+            crate::widget::WidgetManager::init(Vec::new(), false).await,
+            compositor,
+            registry,
+            bmc100_caps(None),
+            secret_store,
+        )
+    }
+
+    async fn store_holding(id: &str, type_id: &str) -> (Arc<RwLock<SecretStoreHandle>>, AccountId) {
+        let store = empty_secret_store().await;
+        let (account_id, account) = account_of_type(id, type_id);
+        store
+            .write()
+            .await
+            .accounts_mut()
+            .insert(account_id.clone(), account);
+        (store, account_id)
+    }
+
+    fn widget_bound_to(widget_type_id: Uuid, slot: &str, account_id: &AccountId) -> scene::Widget {
+        let mut widget = scene::Scene::fullscreen(widget_type_id, BTreeMap::new())
+            .widgets
+            .into_values()
+            .next()
+            .expect("BUG: a fullscreen scene holds one widget");
+        let key: CredentialKey =
+            serde_json::from_str(&format!("\"{slot}\"")).expect("BUG: valid key");
+        widget.credential_bindings.insert(key, account_id.clone());
+        widget
+    }
+
+    /// The pair matters: without the positive case, a resolver that always yielded
+    /// nothing would satisfy the negative one.
+    #[tokio::test]
+    async fn resolution_honours_a_slot_the_installed_manifest_declares() {
+        let widget_type_id = Uuid::new_v4();
+        let (store, account_id) = store_holding("a-1", "braiins-pool").await;
+        let coordinator =
+            coordinator_declaring(widget_type_id, &[("pool", "braiins-pool", true)], store).await;
+
+        let resolved = coordinator
+            .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
+            .await;
+
+        assert_eq!(resolved.secrets.slot_count(), 1);
+    }
+
+    /// Stored config outlives the manifest that authorised it, so the check has to
+    /// run where resolution does and not only at the write path.
+    #[tokio::test]
+    async fn resolution_withholds_a_slot_the_installed_manifest_dropped() {
+        let widget_type_id = Uuid::new_v4();
+        let (store, account_id) = store_holding("a-1", "braiins-pool").await;
+        let coordinator = coordinator_declaring(widget_type_id, &[], store).await;
+
+        let resolved = coordinator
+            .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
+            .await;
+
+        assert_eq!(
+            resolved.secrets.slot_count(),
+            0,
+            "a widget must not be handed a secret for a slot its manifest no longer declares"
+        );
+        assert!(resolved.view.is_empty());
+    }
+
+    /// An account whose type no longer matches the redeclared slot is the other half:
+    /// the slot still exists, so only the type comparison can reject it.
+    #[tokio::test]
+    async fn resolution_withholds_a_slot_redeclared_with_another_type() {
+        let widget_type_id = Uuid::new_v4();
+        let (store, account_id) = store_holding("a-1", "braiins-pool").await;
+        let coordinator =
+            coordinator_declaring(widget_type_id, &[("pool", "generic-token", true)], store).await;
+
+        let resolved = coordinator
+            .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
+            .await;
+
+        assert_eq!(resolved.secrets.slot_count(), 0);
+    }
+
+    /// Drive `start_credential_listener` end to end:
+    /// a scene holding one widget bound to `pool`, woken by an account save.
+    /// `connected` controls whether the widget's surface has attached yet.
+    /// Returns the compositor and the widget's instance id;
+    /// assert on that instance's recorded push — the default scenes push too.
+    async fn hot_push_through_listener(
+        declared_slots: &[(&str, &str, bool)],
+        connected: bool,
+    ) -> (Arc<RecordingCompositor>, String) {
+        let widget_type_id = Uuid::new_v4();
+        let (store, account_id) =
+            store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
+
+        let mut manifest = manifest_with_credentials(declared_slots);
+        manifest.uid = widget_type_id;
+        let registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
+            manifest,
+            widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
+            binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+            icon_path: None,
+        }]));
+
+        let mut scene = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
+        let widget = scene
+            .widgets
+            .values_mut()
+            .next()
+            .expect("BUG: a fullscreen scene holds one widget");
+        let key: CredentialKey = serde_json::from_str("\"pool\"").expect("BUG: valid key");
+        widget.credential_bindings.insert(key, account_id);
+        let instance_id = widget.id.as_uuid().to_string();
+
+        let compositor = Arc::new(RecordingCompositor::default());
+        if connected {
+            compositor
+                .connected
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .insert(instance_id.clone());
+        }
+        let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
+        let coordinator = Arc::new(Coordinator::new(
+            crate::widget::WidgetManager::init(Vec::new(), false).await,
+            compositor_for_coordinator,
+            registry,
+            bmc100_caps(None),
+            store,
+        ));
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
+        let config_handle = Arc::new(RwLock::new(
+            ConfigHandle::init(
+                tmp.path().join("bmc-config.json"),
+                50,
+                50,
+                50,
+                50,
+                bmc_platform::Product::Bmc100,
+            )
+            .await
+            .0,
+        ));
+        config_handle
+            .write()
+            .await
+            .scenes_mut()
+            .insert(scene.id, scene);
+
+        let (_scenes_tx, scenes_rx) = tokio::sync::broadcast::channel(4);
+        let (accounts_tx, accounts_rx) = tokio::sync::broadcast::channel(4);
+        crate::widget::coordinator::start_credential_listener(
+            coordinator,
+            config_handle,
+            scenes_rx,
+            accounts_rx,
+        );
+        accounts_tx
+            .send(())
+            .expect("BUG: the listener must be receiving");
+
+        for _ in 0..100 {
+            if compositor
+                .credential_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .iter()
+                .any(|(id, _, _)| *id == instance_id)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        (compositor, instance_id)
+    }
+
+    /// The recorded push for `instance_id`, or a panic naming the miss.
+    fn push_for(
+        compositor: &RecordingCompositor,
+        instance_id: &str,
+    ) -> (
+        serde_json::Map<String, serde_json::Value>,
+        bmc_widget_protocol::CredentialSecrets,
+    ) {
+        compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .iter()
+            .find(|(id, _, _)| id == instance_id)
+            .map(|(_, view, secrets)| (view.clone(), secrets.clone()))
+            .expect("BUG: the save must trigger a push for the bound widget")
+    }
+
+    /// The pair below mirrors the resolve pair above, but through the listener:
+    /// without the positive case, a push that always withheld
+    /// would satisfy the negative one.
+    #[tokio::test]
+    async fn a_save_hot_push_delivers_a_slot_the_manifest_still_declares() {
+        let (compositor, instance_id) = hot_push_through_listener(
+            &[("pool", credential::BuiltinType::BraiinsPool.id(), true)],
+            true,
+        )
+        .await;
+
+        let (view, secrets) = push_for(&compositor, &instance_id);
+        assert_eq!(secrets.slot_count(), 1);
+        assert!(!view.is_empty());
+    }
+
+    /// A package update can shrink a manifest under a running widget;
+    /// the next save must not re-deliver the secret spawn would withhold.
+    #[tokio::test]
+    async fn a_save_hot_push_withholds_a_slot_the_manifest_dropped() {
+        let (compositor, instance_id) = hot_push_through_listener(&[], true).await;
+
+        let (view, secrets) = push_for(&compositor, &instance_id);
+        assert_eq!(
+            secrets.slot_count(),
+            0,
+            "a hot push must not deliver a secret for a slot the installed manifest dropped"
+        );
+        assert!(view.is_empty());
+    }
+
+    /// An account change between `register_widget` and the surface attaching
+    /// must still reach the compositor — the handshake replays the stored config,
+    /// so a dropped push here delivers a stale secret.
+    #[tokio::test]
+    async fn a_save_hot_push_reaches_a_widget_whose_surface_has_not_attached_yet() {
+        let (compositor, instance_id) = hot_push_through_listener(
+            &[("pool", credential::BuiltinType::BraiinsPool.id(), true)],
+            false,
+        )
+        .await;
+
+        let (_, secrets) = push_for(&compositor, &instance_id);
+        assert_eq!(secrets.slot_count(), 1);
     }
 
     fn binding_violations(

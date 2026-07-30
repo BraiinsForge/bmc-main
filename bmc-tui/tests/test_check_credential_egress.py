@@ -34,18 +34,21 @@ def _case(name: str) -> ce.Case:
     return next(c for c in ce.CASES if c.name == name)
 
 
-def _request(case: ce.Case, *, token: str = SECRET) -> Request:
-    return Request(
-        method="GET",
-        path=case.path,
-        query={ce.FIELD: [token]},
-        headers={},
-        body=b"",
-    )
+def _request(case: ce.Case, *, value: str = SECRET) -> Request:
+    return Request(method="GET", path=case.path, query={"v": [value]}, headers={}, body=b"")
 
 
 def _refusal(text: str) -> str:
     return f"WARN bmc_wasm_runtime: refusing fetch: {text}"
+
+
+def _no_secret(slot: str) -> str:
+    err = f'no secret available for credential slot "{slot}"'
+    return _refusal(f"credential placeholder unresolved err={err}")
+
+
+def _withheld(slot: str) -> str:
+    return f'WARN bmc: {ce._WITHHELD} widget_id=w slot="{slot}" reason=x'
 
 
 def _delivered() -> ce.Outcome:
@@ -53,34 +56,67 @@ def _delivered() -> ce.Outcome:
     return ce.Outcome(case=case, served=_request(case))
 
 
+def _all_refusals_satisfied() -> list[ce.Outcome]:
+    return [
+        ce.Outcome(case=_case("pinned"), refusal=ce._PIN_REFUSAL),
+        ce.Outcome(case=_case("unbound"), refusal=ce._NO_SECRET_REFUSAL),
+        ce.Outcome(case=_case("undeclared"), withheld=_withheld("api")),
+    ]
+
+
 def test_url_embeds_the_placeholder_without_inner_spaces() -> None:
     """The log splits on whitespace, so a spaced placeholder would truncate."""
     url = _case("permitted").url(BASE)
-    assert "{{credential.api.token}}" in url
+    assert "{{credential.weather.token}}" in url
     assert " " not in url
 
 
+def test_every_case_owns_a_distinct_slot() -> None:
+    """Refusals are attributed by slot, so a shared one would cross-credit cases."""
+    slots = [c.slot for c in ce.CASES]
+    assert len(slots) == len(set(slots))
+
+
+def test_only_the_pinned_case_uses_a_pinned_credential_type() -> None:
+    """A corpus that drifted to unpinned types everywhere would prove nothing."""
+    pinned = [c.name for c in ce.CASES if c.account_type == "braiins-pool"]
+    assert pinned == ["pinned"]
+    assert _case("unbound").account_type is None
+
+
+def test_the_undeclared_case_binds_a_slot_params_demo_does_not_declare() -> None:
+    """Its whole point: config names a real account on a slot the manifest lacks."""
+    case = _case("undeclared")
+    assert case.account_type is not None
+    assert case.slot not in {"pool", "weather", "media"}
+
+
 def test_collect_attributes_each_request_to_its_own_case() -> None:
-    permitted, pinned = _case("permitted"), _case("pinned")
-    outcomes = {o.case.name: o for o in ce._collect("", [_request(permitted)])}
+    permitted = _case("permitted")
+    outcomes = {o.case.name: o for o in ce._collect("", "", [_request(permitted)])}
     assert outcomes["permitted"].served is not None
     assert outcomes["pinned"].served is None, "a request must not credit another case"
-    assert pinned.path != permitted.path
 
 
-def test_collect_reads_each_refusal_kind_into_the_case_that_expects_it() -> None:
-    window = "\n".join([_refusal(ce._PIN_REFUSAL), _refusal(ce._UNRESOLVED_REFUSAL)])
-    outcomes = {o.case.name: o for o in ce._collect(window, [])}
-    assert ce._PIN_REFUSAL in outcomes["pinned"].refusal
-    assert ce._UNRESOLVED_REFUSAL in outcomes["unbound"].refusal
-    assert ce._PIN_REFUSAL not in outcomes["unbound"].refusal
-    assert not outcomes["permitted"].refusal, "the delivered case has no refusal to explain"
+def test_collect_separates_two_no_secret_refusals_by_slot() -> None:
+    """`unbound` and `undeclared` both surface as a secretless slot."""
+    host = "\n".join([_no_secret("media"), _no_secret("api")])
+    outcomes = {o.case.name: o for o in ce._collect(host, "", [])}
+    assert '"media"' in outcomes["unbound"].refusal
+    assert '"api"' in outcomes["undeclared"].refusal
 
 
-def test_a_refusal_of_the_wrong_kind_does_not_satisfy_a_case() -> None:
-    """Both refusals name the same slot; only the message tells them apart."""
-    outcomes = {o.case.name: o for o in ce._collect(_refusal(ce._UNRESOLVED_REFUSAL), [])}
-    assert outcomes["pinned"].failed
+def test_collect_reads_the_withholding_decision_from_the_compositor_log() -> None:
+    """The host cannot say why a slot was empty; only the compositor can."""
+    outcomes = {o.case.name: o for o in ce._collect("", _withheld("api"), [])}
+    assert outcomes["undeclared"].withheld
+    assert not outcomes["unbound"].withheld
+
+
+def test_the_undeclared_case_is_not_satisfied_by_the_host_refusal_alone() -> None:
+    """Otherwise it would pass on a never-bound slot, proving nothing about R1."""
+    outcomes = {o.case.name: o for o in ce._collect(_no_secret("api"), "", [])}
+    assert outcomes["undeclared"].failed
 
 
 def test_failed_flags_a_secret_that_left_for_a_pinned_host() -> None:
@@ -92,42 +128,24 @@ def test_failed_flags_a_secret_that_left_for_a_pinned_host() -> None:
 def test_judge_refuses_to_pass_a_run_where_nothing_fetched() -> None:
     """Every refusal case passes for free when the device never fetched at all."""
     silent = [ce.Outcome(case=c) for c in ce.CASES]
-    refusals = [o for o in silent if o.case.expect != "deliver"]
     assert not any(o.served for o in silent)
     with pytest.raises(Abort, match="nothing was proven"):
         ce._judge(silent, "", SECRET)
-    assert refusals, "the guard exists because these would otherwise look green"
 
 
 def test_judge_rejects_a_request_carrying_the_placeholder_instead_of_the_secret() -> None:
     case = _case("permitted")
-    unresolved = ce.Outcome(case=case, served=_request(case, token="{{credential.api.token}}"))
+    unresolved = ce.Outcome(case=case, served=_request(case, value="{{credential.weather.token}}"))
     with pytest.raises(Abort, match="not the resolved secret"):
-        ce._judge([unresolved, *_refused_cases()], "", SECRET)
+        ce._judge([unresolved, *_all_refusals_satisfied()], "", SECRET)
 
 
 def test_judge_rejects_a_secret_that_reached_the_log() -> None:
     """The log must carry the placeholder form; the resolved one is a leak."""
-    window = f"fetch completed status=200 body_len=70 url=http://host/x?token={SECRET}"
+    host = f"fetch completed status=200 body_len=70 url=http://host/x?v={SECRET}"
     with pytest.raises(Abort, match="appeared in the wasm-host log"):
-        ce._judge([_delivered(), *_refused_cases()], window, SECRET)
+        ce._judge([_delivered(), *_all_refusals_satisfied()], host, SECRET)
 
 
 def test_judge_passes_a_run_where_only_the_permitted_case_was_sent() -> None:
-    window = "\n".join([_refusal(ce._PIN_REFUSAL), _refusal(ce._UNRESOLVED_REFUSAL)])
-    ce._judge([_delivered(), *_refused_cases()], window, SECRET)
-
-
-def _refused_cases() -> list[ce.Outcome]:
-    return [
-        ce.Outcome(case=_case("pinned"), refusal=ce._PIN_REFUSAL),
-        ce.Outcome(case=_case("unbound"), refusal=ce._UNRESOLVED_REFUSAL),
-    ]
-
-
-def test_only_the_pinned_case_uses_a_pinned_credential_type() -> None:
-    """A run proves nothing if every case happens to use an unpinned type."""
-    pinned = [c.name for c in ce.CASES if c.type_id == ce.PINNED_TYPE]
-    assert pinned == ["pinned"]
-    assert _case("permitted").type_id == ce.UNPINNED_TYPE
-    assert _case("unbound").type_id is None
+    ce._judge([_delivered(), *_all_refusals_satisfied()], "", SECRET)

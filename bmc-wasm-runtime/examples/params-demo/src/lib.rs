@@ -101,6 +101,26 @@ pub extern "C" fn on_params_update() {
     stamp_decay(Params::current().changed_keys(&previous));
 }
 
+/// Spend the declared credentials on a real request, so the exemplar exercises
+/// host-side substitution and the egress pin rather than only describing them.
+///
+/// The URL is the `string_uri` param, which is where a `{{ credential.… }}`
+/// placeholder goes to aim one slot's secret at a destination.
+///
+/// The response is dropped deliberately.
+/// This screen showcases params and credential bindings, and rendering
+/// an outcome would tie its capture baselines to the request.
+/// Where the request went, and whether the host refused it,
+/// shows up in the host log instead.
+#[unsafe(no_mangle)]
+pub extern "C" fn init() {
+    let url = Params::current().string_uri;
+    // The host must not be handed something that is not a request.
+    if url.starts_with("http://") || url.starts_with("https://") {
+        let _ = net::fetch(&url, None, |_| {});
+    }
+}
+
 /// Lifecycle hook fired on every credential delivery after the first.
 ///
 /// Without it the widget would still pick up a rebind,

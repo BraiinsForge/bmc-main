@@ -25,7 +25,7 @@
 
 use std::collections::BTreeMap;
 
-use bmc_widget_manifest::CredentialKey;
+use bmc_widget_manifest::{CredentialKey, CredentialSlot};
 use bmc_widget_protocol::CredentialSecrets;
 use indexmap::IndexMap;
 use serde_json::{Map, Value};
@@ -42,6 +42,67 @@ pub struct Resolution {
     /// the whole of what the guest may learn.
     pub view: Map<String, Value>,
     pub secrets: CredentialSecrets,
+}
+
+/// Why the installed manifest no longer authorises a stored binding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unauthorised {
+    SlotUndeclared,
+    TypeMismatch,
+}
+
+impl Unauthorised {
+    #[must_use]
+    pub fn reason(self) -> &'static str {
+        match self {
+            Self::SlotUndeclared => "the installed manifest no longer declares this slot",
+            Self::TypeMismatch => "the slot is now declared with a different credential type",
+        }
+    }
+}
+
+/// Split stored bindings by whether the installed manifest still authorises them.
+///
+/// The slots a widget can ever receive are fixed by its manifest,
+/// and that has to hold for config written earlier:
+/// a package can update under the same uid and drop a slot or redeclare its type,
+/// and nothing re-runs the write-path validation over config already on disk.
+///
+/// Absent `slots` means the manifest could not be read, and then nothing is filtered.
+/// Discovery replaces the registry wholesale from a scan that cannot fail,
+/// and a missing path or a walk error yields a partial set that looks complete.
+/// Reading absence as "the slot is gone" would therefore strip the credentials
+/// of a running widget during an unrelated package operation,
+/// with no discovery wake to restore them.
+#[must_use]
+pub fn authorised_bindings(
+    bindings: &BTreeMap<CredentialKey, AccountId>,
+    slots: Option<&IndexMap<CredentialKey, CredentialSlot>>,
+    accounts: &IndexMap<AccountId, Account>,
+) -> (
+    BTreeMap<CredentialKey, AccountId>,
+    Vec<(CredentialKey, Unauthorised)>,
+) {
+    let Some(slots) = slots else {
+        return (bindings.clone(), Vec::new());
+    };
+
+    let mut authorised = BTreeMap::new();
+    let mut rejected = Vec::new();
+    for (slot, id) in bindings {
+        match (slots.get(slot), accounts.get(id)) {
+            (None, _) => rejected.push((slot.clone(), Unauthorised::SlotUndeclared)),
+            (Some(declared), Some(account)) if account.type_id != declared.type_id => {
+                rejected.push((slot.clone(), Unauthorised::TypeMismatch));
+            }
+            // A binding naming an account that is gone cannot be type-checked;
+            // it already reads as unbound through `effective_bindings`.
+            (Some(_), _) => {
+                authorised.insert(slot.clone(), id.clone());
+            }
+        }
+    }
+    (authorised, rejected)
 }
 
 /// Bindings whose account still exists, in slot order.
@@ -146,6 +207,94 @@ mod tests {
 
     fn pool_account() -> Account {
         account("a-1", "braiins-pool", "My pool", "token", "s3cr3t")
+    }
+
+    fn declares(pairs: &[(&str, &str)]) -> IndexMap<CredentialKey, CredentialSlot> {
+        pairs
+            .iter()
+            .map(|(key, type_id)| {
+                (
+                    slot(key),
+                    CredentialSlot {
+                        type_id: (*type_id).to_owned(),
+                        label: "Pool account".to_owned(),
+                        description: None,
+                        required: false,
+                    },
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_slot_the_manifest_still_declares_is_authorised() {
+        let (authorised, rejected) = authorised_bindings(
+            &bound(&[("pool", "a-1")]),
+            Some(&declares(&[("pool", "braiins-pool")])),
+            &store(vec![pool_account()]),
+        );
+
+        assert_eq!(authorised, bound(&[("pool", "a-1")]));
+        assert!(rejected.is_empty());
+    }
+
+    #[test]
+    fn a_slot_the_updated_manifest_dropped_is_withheld() {
+        let (authorised, rejected) = authorised_bindings(
+            &bound(&[("pool", "a-1")]),
+            Some(&declares(&[])),
+            &store(vec![pool_account()]),
+        );
+
+        assert!(
+            authorised.is_empty(),
+            "a widget must not be handed a secret for a slot it no longer declares"
+        );
+        assert_eq!(rejected, vec![(slot("pool"), Unauthorised::SlotUndeclared)]);
+    }
+
+    #[test]
+    fn a_slot_redeclared_with_another_type_is_withheld() {
+        let (authorised, rejected) = authorised_bindings(
+            &bound(&[("pool", "a-1")]),
+            Some(&declares(&[("pool", "generic-token")])),
+            &store(vec![pool_account()]),
+        );
+
+        assert!(
+            authorised.is_empty(),
+            "a pool token must not satisfy a slot redeclared as a generic one"
+        );
+        assert_eq!(rejected, vec![(slot("pool"), Unauthorised::TypeMismatch)]);
+    }
+
+    /// Discovery cannot distinguish a half-failed scan from a complete one,
+    /// so an unreadable manifest must not read as "every slot was removed".
+    #[test]
+    fn an_unreadable_manifest_withholds_nothing() {
+        let (authorised, rejected) = authorised_bindings(
+            &bound(&[("pool", "a-1")]),
+            None,
+            &store(vec![pool_account()]),
+        );
+
+        assert_eq!(authorised, bound(&[("pool", "a-1")]));
+        assert!(rejected.is_empty());
+    }
+
+    /// A missing account cannot be type-checked. Withholding it here would report it
+    /// as a manifest problem, when it is the already-handled unbound case.
+    #[test]
+    fn a_binding_whose_account_vanished_is_left_to_the_unbound_path() {
+        let (authorised, rejected) = authorised_bindings(
+            &bound(&[("pool", "a-1")]),
+            Some(&declares(&[("pool", "braiins-pool")])),
+            &store(vec![]),
+        );
+
+        assert_eq!(authorised, bound(&[("pool", "a-1")]));
+        assert!(rejected.is_empty());
+        assert_eq!(effective(&authorised, &store(vec![])).len(), 0);
     }
 
     fn effective(

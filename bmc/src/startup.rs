@@ -414,6 +414,19 @@ where
             compositor.clone(),
         );
 
+        // Before the initial spawn, so an account or scene change
+        // landing mid-spawn is buffered rather than never observed.
+        {
+            let scenes_rx = config_handle.read().await.subscribe_scenes_change();
+            let accounts_rx = secret_store.read().await.subscribe_accounts_change();
+            crate::widget::coordinator::start_credential_listener(
+                widget_coordinator.clone(),
+                config_handle.clone(),
+                scenes_rx,
+                accounts_rx,
+            );
+        }
+
         {
             let config_guard = config_handle.read().await;
             let localization = config_guard.localization_config();
@@ -436,18 +449,6 @@ where
                     next_alarm,
                 )
                 .await;
-        }
-
-        {
-            let scenes_rx = config_handle.read().await.subscribe_scenes_change();
-            let accounts_rx = secret_store.read().await.subscribe_accounts_change();
-            crate::widget::coordinator::start_credential_listener(
-                compositor.clone(),
-                config_handle.clone(),
-                secret_store.clone(),
-                scenes_rx,
-                accounts_rx,
-            );
         }
 
         crate::widget::coordinator::start_brightness_listener(

@@ -239,41 +239,21 @@ impl std::fmt::Debug for Coordinator {
     }
 }
 
-/// Configured widgets that currently have a surface,
-/// paired with their instance id.
-///
-/// A widget on a disabled scene has no surface to push to,
-/// and its next spawn resolves from scratch anyway.
-/// Pushing to one would only warn about a record
-/// the compositor does not hold.
-fn running_widgets<'a>(
-    scenes: &'a IndexMap<SceneId, Scene>,
-    running: &'a std::collections::BTreeSet<crate::compositor::InstanceId>,
-) -> impl Iterator<Item = (String, &'a Widget)> {
-    scenes
-        .values()
-        .flat_map(|scene| scene.widgets.values())
-        .filter_map(move |widget| {
-            let instance_id = widget.id.as_uuid().to_string();
-            running
-                .contains(&instance_id)
-                .then_some((instance_id, widget))
-        })
-}
-
-/// Re-resolve every running widget's credentials whenever a binding
+/// Re-resolve every configured widget's credentials whenever a binding
 /// or an account changes, and push the result to the compositor.
 ///
 /// Both wakes are bare hints: a scene save fires for any edit,
 /// not just a rebind, and an account save fires for any account.
 ///
-/// Re-resolving from the handles is cheap and the compositor drops
-/// a push that changes nothing, so over-firing costs nothing
-/// and a missed nuance cannot leave a widget stale.
+/// Deliberately unfiltered by liveness: a registered widget
+/// whose surface has not attached yet must still see the change,
+/// because the handshake replays the stored config —
+/// and the compositor skips an instance it holds no record of.
+/// Re-resolving is cheap and a no-change push is dropped,
+/// so over-firing costs nothing.
 pub fn start_credential_listener(
-    compositor: Arc<dyn Compositor>,
+    coordinator: Arc<Coordinator>,
     config_handle: Arc<RwLock<ConfigHandle>>,
-    secret_store: Arc<RwLock<SecretStoreHandle>>,
     mut scenes_change_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
     mut accounts_change_rx: broadcast::Receiver<()>,
 ) {
@@ -290,21 +270,14 @@ pub fn start_credential_listener(
                 },
             }
 
-            let running = compositor.connected_widgets_watch().borrow().clone();
-            if running.is_empty() {
-                continue;
-            }
-
             let config = config_handle.read().await;
-            let store = secret_store.read().await;
-            for (instance_id, widget) in running_widgets(config.scenes(), &running) {
-                let resolved = credential::resolve(&widget.credential_bindings, store.accounts());
-                if let Err(err) = compositor.update_widget_credentials(
-                    &instance_id,
-                    resolved.view,
-                    resolved.secrets,
-                ) {
-                    warn!(%instance_id, error = %err, "failed to push credentials to widget");
+            for widget in config
+                .scenes()
+                .values()
+                .flat_map(|scene| scene.widgets.values())
+            {
+                if let Err(err) = coordinator.update_widget_credentials(widget).await {
+                    warn!(widget_id = %widget.id, error = %err, "failed to push credentials to widget");
                 }
             }
         }
@@ -795,13 +768,40 @@ impl Coordinator {
             .update_widget_params(&instance_id.to_owned(), params_to_json_map(params))
     }
 
-    /// Resolve the widget's bindings against the stored accounts,
-    /// warning about any slot whose account has since disappeared.
+    /// Resolve the widget's bindings against the installed manifest
+    /// and the stored accounts.
+    ///
+    /// Warns for any slot the manifest no longer authorises,
+    /// and any whose account has since disappeared.
+    ///
+    /// Both spawn and hot-push resolve here.
+    /// Neither can drift into checking the manifest while the other does not.
     pub(crate) async fn resolve_credentials(&self, widget: &Widget) -> credential::Resolution {
         let store = self.secret_store.read().await;
-        for (slot, account) in
-            credential::dangling_bindings(&widget.credential_bindings, store.accounts())
-        {
+        let installed = self.widget_registry.get(&widget.widget_type_id);
+        if installed.is_none() && !widget.credential_bindings.is_empty() {
+            warn!(
+                widget_id = %widget.id,
+                widget_type_id = %widget.widget_type_id,
+                "widget is not in the registry; honouring its stored bindings unchecked"
+            );
+        }
+
+        let (authorised, unauthorised) = credential::authorised_bindings(
+            &widget.credential_bindings,
+            installed.as_ref().map(|info| &info.manifest.credentials),
+            store.accounts(),
+        );
+        for (slot, why) in unauthorised {
+            warn!(
+                widget_id = %widget.id,
+                slot = slot.as_str(),
+                reason = why.reason(),
+                "withholding a credential the installed manifest no longer authorises"
+            );
+        }
+
+        for (slot, account) in credential::dangling_bindings(&authorised, store.accounts()) {
             warn!(
                 widget_id = %widget.id,
                 slot = slot.as_str(),
@@ -810,7 +810,7 @@ impl Coordinator {
             );
         }
 
-        credential::resolve(&widget.credential_bindings, store.accounts())
+        credential::resolve(&authorised, store.accounts())
     }
 
     pub async fn update_widget_credentials(&self, widget: &Widget) -> Result<(), CompositorError> {
@@ -973,7 +973,6 @@ mod tests {
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
-    use uuid::Uuid;
 
     fn bmc100_capabilities() -> HardwareCapabilities {
         HardwareCapabilities {
@@ -988,47 +987,6 @@ mod tests {
                 rows: 2,
             }),
         }
-    }
-
-    fn scenes_of(scenes: Vec<Scene>) -> IndexMap<SceneId, Scene> {
-        scenes.into_iter().map(|scene| (scene.id, scene)).collect()
-    }
-
-    fn instance_ids(scene: &Scene) -> Vec<String> {
-        scene
-            .widgets
-            .values()
-            .map(|w| w.id.as_uuid().to_string())
-            .collect()
-    }
-
-    #[test]
-    fn a_widget_without_a_surface_is_not_pushed_to() {
-        let scene = Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
-        let scenes = scenes_of(vec![scene]);
-
-        let refreshed: Vec<String> = running_widgets(&scenes, &std::collections::BTreeSet::new())
-            .map(|(id, _)| id)
-            .collect();
-
-        assert!(
-            refreshed.is_empty(),
-            "an unconnected widget has no surface, so a push could only warn"
-        );
-    }
-
-    #[test]
-    fn only_the_connected_widgets_are_pushed_to() {
-        let first = Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
-        let second = Scene::fullscreen(Uuid::new_v4(), BTreeMap::new());
-        let connected = instance_ids(&first);
-        let scenes = scenes_of(vec![first, second]);
-
-        let refreshed: Vec<String> = running_widgets(&scenes, &connected.iter().cloned().collect())
-            .map(|(id, _)| id)
-            .collect();
-
-        assert_eq!(refreshed, connected);
     }
 
     #[test]

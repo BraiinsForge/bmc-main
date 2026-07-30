@@ -113,8 +113,12 @@ fn push_str(out: &mut Vec<u8>, s: &str) {
 /// because the widget author is the one who has to fix it.
 #[derive(Debug, PartialEq, Eq, thiserror::Error)]
 pub enum SubstitutionError {
-    #[error("no account is bound to credential slot {slot:?}")]
-    UnboundSlot { slot: String },
+    /// Deliberately silent on why. The host is handed the resolved secrets
+    /// and cannot see whether a slot arrived empty because nothing was bound,
+    /// or because the coordinator withheld a binding the manifest no longer
+    /// authorises. That decision is logged where it is taken, in `bmc.log`.
+    #[error("no secret available for credential slot {slot:?}")]
+    NoSecretForSlot { slot: String },
     #[error("credential slot {slot:?} has no field {field:?}")]
     UnknownField { slot: String, field: String },
     #[error(
@@ -181,10 +185,12 @@ fn resolve_variable<'a>(
         return Err(unknown());
     };
 
-    // An unbound slot and a mistyped field are different mistakes:
-    // the first is the operator's to fix, the second the widget author's.
+    // A secretless slot and a mistyped field are different mistakes,
+    // and only the second is certainly the widget author's:
+    // a slot arrives empty either because nothing is bound,
+    // or because the manifest no longer authorises what is.
     if !secrets.has_slot(slot) {
-        return Err(SubstitutionError::UnboundSlot {
+        return Err(SubstitutionError::NoSecretForSlot {
             slot: slot.to_owned(),
         });
     }
@@ -775,13 +781,16 @@ mod tests {
         );
     }
 
+    /// The slot has to be named, because the operator's next move depends on
+    /// which one. The error deliberately does not say *why* it has no secret —
+    /// the host cannot tell an unbound slot from a withheld one.
     #[test]
-    fn an_unbound_slot_is_named_in_the_error() {
+    fn a_secretless_slot_is_named_in_the_error() {
         let err = substitute("{{ credential.weather.token }}", &pool_secrets());
 
         assert_eq!(
             err,
-            Err(SubstitutionError::UnboundSlot {
+            Err(SubstitutionError::NoSecretForSlot {
                 slot: "weather".to_owned()
             })
         );

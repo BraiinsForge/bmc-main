@@ -423,6 +423,8 @@ impl DeckWidgetProtocolState {
     }
 
     /// Also refreshes the stored config, so a reconnect replays the resolution.
+    /// Callers push without checking liveness,
+    /// so a missing record or surface is the designed skip, not an anomaly.
     pub fn update_widget_credentials(
         &mut self,
         instance_id: &InstanceId,
@@ -430,7 +432,7 @@ impl DeckWidgetProtocolState {
         secrets: bmc_widget_protocol::CredentialSecrets,
     ) {
         let Some(widget_data) = self.widgets.get_mut(instance_id) else {
-            tracing::warn!("update_widget_credentials: no widget record for {instance_id}");
+            tracing::debug!("update_widget_credentials: no widget record for {instance_id}");
             return;
         };
         if !credentials_changed(&widget_data.config, &credentials, &secrets) {
@@ -440,7 +442,7 @@ impl DeckWidgetProtocolState {
         widget_data.config.credential_secrets = secrets;
 
         let Some(surface) = widget_data.protocol_surface.as_ref() else {
-            tracing::warn!("update_widget_credentials: widget {instance_id} has no surface yet");
+            tracing::debug!("update_widget_credentials: widget {instance_id} has no surface yet");
             return;
         };
 
