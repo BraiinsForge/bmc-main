@@ -213,7 +213,7 @@ def _offer_stale_firmware_cleanup(dev: Device, available: int) -> int:
 
 def _tmp_firmware(dev: Device) -> list[str]:
     """Firmware tars currently in the device's /tmp, newest listing order."""
-    listed = dev.read("ls -1 /tmp/*.tar 2>/dev/null")
+    listed = dev.read("ls -1 /tmp/*.tar 2>/dev/null || true")
     return [line for line in listed.splitlines() if line.strip()]
 
 

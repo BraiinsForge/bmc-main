@@ -251,6 +251,20 @@ def test_memory_aborts_when_insufficient() -> None:
         catalog.ensure_memory(dev, 200_000_000)
 
 
+def test_memory_shortfall_without_stale_firmware_reports_memory_error() -> None:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "MemAvailable" in cmd:
+            return _cp(argv, "102924")
+        if "ls -1 /tmp" in cmd:
+            assert cmd.endswith("|| true"), "an empty glob must not abort the memory check"
+        return _cp(argv)
+
+    dev = Device("h", backend=_Exec(respond))
+    with pytest.raises(Abort, match="free RAM"):
+        catalog.ensure_memory(dev, 200_000_000)
+
+
 def test_memory_shortfall_reports_stale_firmware_before_asking(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
