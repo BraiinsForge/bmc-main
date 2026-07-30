@@ -92,10 +92,13 @@ impl SecretStoreHandle {
     }
 
     /// Fold in accounts a config migration extracted, persisting them.
-    /// Reports whether anything was written, so the caller only drops the accounts
-    /// from the config once they are safely in the store.
-    /// Extracted entries overwrite same-id ones,
-    /// so a crash between the two writes converges on the next boot.
+    /// Reports whether the store now holds them,
+    /// so the caller drops the config's copy only once they are safely stored.
+    ///
+    /// A stored entry wins: the store is the only writer of accounts,
+    /// so a same-id entry is never the staler of the two.
+    /// Overwriting would let a boot whose config save failed
+    /// re-extract a pre-rotation secret over the rotated one.
     pub async fn merge_extracted(
         &mut self,
         extracted: IndexMap<AccountId, Account>,
@@ -103,8 +106,13 @@ impl SecretStoreHandle {
         if extracted.is_empty() {
             return Ok(false);
         }
-        self.accounts.extend(extracted);
-        self.save().await?;
+        let known = self.accounts.len();
+        for (id, account) in extracted {
+            self.accounts.entry(id).or_insert(account);
+        }
+        if self.accounts.len() != known {
+            self.save().await?;
+        }
         Ok(true)
     }
 
@@ -176,10 +184,16 @@ impl SecretStoreHandle {
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
 
+    use bmc_field_schema::ParamKey;
+
     use super::*;
 
     fn account(name: &str) -> Account {
         Account::new("generic-token".to_owned(), name.to_owned(), IndexMap::new())
+    }
+
+    fn key(field: &str) -> ParamKey {
+        ParamKey::try_new(field.to_owned()).expect("BUG: identifier-shaped field key")
     }
 
     fn config_path(dir: &tempfile::TempDir) -> PathBuf {
@@ -285,27 +299,39 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_re_run_extraction_overwrites_a_same_id_entry() {
+    async fn a_re_extraction_does_not_undo_a_rotation() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
-        let account = account("original");
-        let id = account.id.clone();
+        let legacy = account("original");
+        let id = legacy.id.clone();
 
+        // Boot one extracts the account, but the config save that would drop
+        // it only warns on failure, so the config keeps its pre-rotation copy.
         let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
         handle
-            .merge_extracted(IndexMap::from([(id.clone(), account.clone())]))
+            .merge_extracted(IndexMap::from([(id.clone(), legacy.clone())]))
             .await
             .expect("BUG: first merge must succeed");
 
-        // A crash before the config was rewritten leaves the accounts in both files,
-        // so the next boot re-extracts them and the fresh copy has to win.
-        let mut renamed = account;
-        renamed.name = "renamed".to_owned();
-        let mut reloaded = SecretStoreHandle::init(&config_path(&dir)).await;
-        reloaded
-            .merge_extracted(IndexMap::from([(id.clone(), renamed)]))
-            .await
-            .expect("BUG: re-run merge must succeed");
+        let mut rotated = legacy.clone();
+        rotated
+            .field_values
+            .insert(key("token"), "rotated".to_owned());
+        handle.accounts_mut().insert(id.clone(), rotated);
+        handle.save().await.expect("BUG: rotation must persist");
 
-        assert_eq!(reloaded.accounts()[&id].name, "renamed");
+        let mut reloaded = SecretStoreHandle::init(&config_path(&dir)).await;
+        assert!(
+            reloaded
+                .merge_extracted(IndexMap::from([(id.clone(), legacy)]))
+                .await
+                .expect("BUG: re-run merge must succeed"),
+            "the config copy may be dropped whenever the store already holds the account"
+        );
+
+        assert_eq!(
+            reloaded.accounts()[&id].field_values.get(&key("token")),
+            Some(&"rotated".to_owned()),
+            "a stale config copy must not overwrite a rotated secret"
+        );
     }
 }
