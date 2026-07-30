@@ -248,6 +248,17 @@ def spinner(msg: str) -> Status:
     return out.status(f"[dim]{msg}[/dim]", spinner="dots")
 
 
+def countdown(label: str, seconds: int) -> None:
+    """Block for `seconds`, ticking the remainder into a spinner label.
+
+    A minute-long wait behind a fixed label reads as a hang.
+    """
+    with out.status("", spinner="dots") as status:
+        for remaining in range(seconds, 0, -1):
+            status.update(f"[dim]{label} ({remaining}s)[/dim]")
+            time.sleep(1)
+
+
 @contextmanager
 def progress(label: str, total: int) -> Generator[Callable[[int], None], None, None]:
     """Byte-count progress bar; yields an ``advance(n)`` callback.

@@ -43,7 +43,6 @@ here is exactly that.
 import json
 import re
 import tempfile
-import time
 import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -90,6 +89,10 @@ _ARRIVAL_JUDGED = ("deliver", "deliver-no-follow")
 # Where the `redirect` case's 302 points. A request here means the client
 # followed a redirect on a secret-bearing request, which it must not.
 LANDED_PATH = "/landed.png"
+
+# `bmc_wasm_sdk::net::DEFAULT_FETCH_TIMEOUT`, which `params-demo` takes
+# by passing no timeout of its own. A fetch is resolved or failed by then.
+_SDK_FETCH_TIMEOUT_SECS = 10
 
 _REFUSAL = re.compile(r"refusing fetch: (.+?)(?:\s{2,}|$)")
 _PIN_REFUSAL = "destination is outside the credential type's egress pin"
@@ -191,7 +194,7 @@ class Outcome:
 @dataclass
 class CheckCredentialEgress:
     device: str  # IP or host of the target Deck
-    dwell_seconds: int = 15  # scene cycling duration; also paces the wait
+    dwell_seconds: int = 15  # scene cycling duration in the pushed config
     keep_config: bool = False  # leave the test config and accounts on the device
     restore: bool = False  # put the backed-up config and accounts back, then exit
 
@@ -227,7 +230,7 @@ class CheckCredentialEgress:
                 dev.log_window(COMPOSITOR_LOG) as compositor_window,
             ):
                 catalog.restart_compositor(dev)
-                _settle(len(CASES), self.dwell_seconds)
+                _settle(len(CASES))
 
         outcomes = _collect(host_window.text, compositor_window.text, seen)
         _report(outcomes)
@@ -379,11 +382,15 @@ def _restore(dev: Device) -> None:
     console.ok("previous config and accounts restored")
 
 
-def _settle(scenes: int, dwell: int) -> None:
-    """One full cycle plus a scene, so the last entry has fetched."""
-    wait = (scenes + 1) * dwell
-    with console.spinner(f"cycling {scenes} scenes ({wait}s)"):
-        time.sleep(wait)
+def _settle(scenes: int) -> None:
+    """Wait for the fetches, which do not queue behind the scene cycling.
+
+    Widgets for every scene spawn when the compositor starts, so all of them
+    fetch at once rather than as their scene comes up — one fetch's worth of
+    waiting covers the whole corpus. Twice the SDK's 10s default, so even a
+    fetch that times out has reached the log before it is read.
+    """
+    console.countdown(f"waiting for {scenes} fetches", 2 * _SDK_FETCH_TIMEOUT_SECS)
 
 
 def _collect(host_log: str, compositor_log: str, seen: list[Request]) -> list[Outcome]:

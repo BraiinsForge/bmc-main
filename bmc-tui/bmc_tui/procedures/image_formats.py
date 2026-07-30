@@ -39,7 +39,6 @@ import re
 import struct
 import subprocess
 import tempfile
-import time
 import urllib.error
 import urllib.request
 import uuid
@@ -484,9 +483,7 @@ def _restore(dev: Device) -> None:
 
 def _settle(scenes: int, dwell: int) -> None:
     """One full cycle plus a scene, so the last entry has fetched and rendered."""
-    wait = (scenes + 1) * dwell
-    with console.spinner(f"cycling {scenes} scenes ({wait}s)"):
-        time.sleep(wait)
+    console.countdown(f"cycling {scenes} scenes", (scenes + 1) * dwell)
 
 
 def _report_drops(assets: ServerHandle) -> None:
