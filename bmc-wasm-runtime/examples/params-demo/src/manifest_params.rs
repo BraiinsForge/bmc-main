@@ -277,6 +277,13 @@ pub mod credentials {
         ///Placeholder for this slot's `token` field.
         pub const TOKEN: &str = "{{ credential.pool.token }}";
     }
+    ///Backup pool account — a `braiins-pool` account. Optional.
+    ///
+    ///A second slot of one type — a widget may hold more than one account of it
+    pub mod pool_backup {
+        ///Placeholder for this slot's `token` field.
+        pub const TOKEN: &str = "{{ credential.pool_backup.token }}";
+    }
     ///Weather service — a `generic-token` account. Optional.
     ///
     ///Single-token type, no egress pin

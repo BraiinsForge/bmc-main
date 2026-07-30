@@ -207,6 +207,7 @@ pub(in crate::runtime) struct SpentRequest {
     pub url: String,
     pub headers: Vec<(String, String)>,
     pub body: Option<Vec<u8>>,
+    pub carries_secret: bool,
 }
 
 /// Substitute the widget's credential placeholders into one outbound request.
@@ -236,17 +237,8 @@ pub(in crate::runtime) fn spend(
             url: url.to_owned(),
             headers: headers.to_vec(),
             body,
+            carries_secret: false,
         });
-    }
-
-    // Parse before substituting, so the pin reads the destination
-    // the guest wrote, not one a resolved secret could have reshaped.
-    let Ok(destination) = url::Url::parse(url) else {
-        tracing::warn!("refusing fetch: destination is not a parsable URL");
-        return None;
-    };
-    if !egress_permitted(state, &destination, &spent) {
-        return None;
     }
 
     let resolve = |text: &str| match substitute(text, secrets) {
@@ -257,7 +249,21 @@ pub(in crate::runtime) fn spend(
         }
     };
 
+    // Substitute first: the pin must judge the URL that will be dialled.
+    // A secret is inserted verbatim, so one containing `/` ends the authority
+    // early and slides the approved host into the path.
     let url = resolve(url)?;
+    // Never logged with the URL: it now carries the secret.
+    let Ok(destination) = url::Url::parse(&url) else {
+        tracing::warn!("refusing fetch: destination is not a parsable URL");
+        return None;
+    };
+    if !egress_permitted(state, &destination, &spent) {
+        return None;
+    }
+    if !client_reads_the_same_host(&destination, &url) {
+        return None;
+    }
     let headers = headers
         .iter()
         .map(|(name, value)| Some((resolve(name)?, resolve(value)?)))
@@ -272,7 +278,38 @@ pub(in crate::runtime) fn spend(
         None => None,
     };
 
-    Some(SpentRequest { url, headers, body })
+    Some(SpentRequest {
+        url,
+        headers,
+        body,
+        carries_secret: true,
+    })
+}
+
+/// Whether the client's own parser reads the same host the pin approved.
+///
+/// The pin parses with `url::Url` (WHATWG), ureq with `http::Uri` (RFC 3986).
+/// Where two parsers disagree about the host, the disagreement is the hole,
+/// so this refuses rather than dial.
+///
+/// Hosts only: `http::Uri` does not model a scheme's default port,
+/// and a port divergence on an agreed host reaches no other server.
+fn client_reads_the_same_host(destination: &url::Url, sent: &str) -> bool {
+    let Ok(uri) = sent.parse::<ureq::http::Uri>() else {
+        tracing::warn!("refusing fetch: the client cannot parse the destination");
+        return false;
+    };
+    // `authority_of` renders IPv6 bare, `http::Uri` keeps the brackets.
+    let client_host = uri
+        .host()
+        .map(|host| host.trim_start_matches('[').trim_end_matches(']'));
+    let approved = authority_of(destination).map(|(host, _)| host);
+
+    if client_host != approved.as_deref() {
+        tracing::warn!("refusing fetch: the pin and the client disagree on the host");
+        return false;
+    }
+    true
 }
 
 /// Credential slots the request refers to, by scanning for their placeholders.
@@ -355,10 +392,11 @@ fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool
         };
         let permitted = builtin.egress().is_none_or(|p| p.allows(&host, port));
         if !permitted {
+            // Unnamed on purpose: the host comes from the substituted URL,
+            // so a reshaped authority would put the secret in the log.
             tracing::warn!(
                 slot,
                 type_id,
-                host,
                 "refusing fetch: destination is outside the credential type's egress pin"
             );
         }
@@ -366,10 +404,11 @@ fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool
     })
 }
 
-/// Host and explicit port of a parsed URL.
+/// Host and effective port of a parsed URL.
 ///
-/// A pin is worth something only if it sees the host the request dials,
-/// so this reads the same parse the client will.
+/// The port is the one connected to, not the one spelled: an entry
+/// spelling `api.example.com:443` matches `https://api.example.com/`.
+/// Comparing written ports left that spelling inert while the grammar offered it.
 ///
 /// Goes through the typed [`url::Host`] rather than `host_str`,
 /// which keeps the brackets around an IPv6 literal.
@@ -383,7 +422,7 @@ fn authority_of(url: &url::Url) -> Option<(String, Option<u16>)> {
         url::Host::Ipv6(addr) => addr.to_string(),
     };
 
-    Some((host, url.port()))
+    Some((host, url.port_or_known_default()))
 }
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
@@ -545,10 +584,8 @@ mod tests {
 
     #[test]
     fn a_placeholder_in_the_host_cannot_smuggle_a_pinned_secret_out() {
-        // Either the placeholder leaves the URL unparsable,
-        // or the host it spells fails the pin — both refuse.
-        // Substituting first would instead hand the token
-        // to whoever resolves what it turns into.
+        // The pin judges the resolved host, and no token spells
+        // the pinned host — whole authority or subdomain alike.
         let state = host_state_with("braiins-pool");
 
         for url in [
@@ -630,20 +667,101 @@ mod tests {
         authority_of(&url::Url::parse(url).expect("BUG: test url must parse"))
     }
 
+    fn secrets_with_token(token: &str) -> bmc_widget_protocol::CredentialSecrets {
+        let mut slots = serde_json::Map::new();
+        slots.insert("pool".to_owned(), serde_json::json!({ "token": token }));
+        bmc_widget_protocol::CredentialSecrets::new(slots)
+    }
+
+    #[test]
+    fn a_secret_that_reshapes_the_authority_is_refused() {
+        let mut state = host_state_with("braiins-pool");
+        // Base64 tokens contain `/`, and the value goes in verbatim,
+        // so this resolves to `https://ab/cd@api.braiins.com/x` — authority `ab`.
+        state.credential_secrets = secrets_with_token("ab/cd");
+
+        assert!(
+            spend(
+                &state,
+                "https://{{ credential.pool.token }}@api.braiins.com/x",
+                &[],
+                None,
+            )
+            .is_none(),
+            "the pin must judge the dialled URL, not the template it grew from"
+        );
+    }
+
+    #[test]
+    fn an_authority_carries_the_port_the_request_will_connect_to() {
+        for (url, expected) in [
+            (
+                "https://api.braiins.com/pool",
+                ("api.braiins.com", Some(443)),
+            ),
+            ("http://api.braiins.com/pool", ("api.braiins.com", Some(80))),
+            (
+                "https://api.braiins.com:8443/pool",
+                ("api.braiins.com", Some(8443)),
+            ),
+        ] {
+            let (host, port) = parsed_authority(url).expect("BUG: url has an authority");
+            assert_eq!((host.as_str(), port), expected, "parsing {url}");
+        }
+    }
+
+    #[test]
+    fn a_host_the_client_reads_differently_is_refused() {
+        let approved = url::Url::parse("https://api.braiins.com/x").expect("BUG: must parse");
+
+        assert!(client_reads_the_same_host(
+            &approved,
+            "https://api.braiins.com/x"
+        ));
+        assert!(
+            !client_reads_the_same_host(&approved, "https://evil.example/x"),
+            "where the two parsers disagree on the host, that disagreement is the hole"
+        );
+    }
+
+    #[test]
+    fn only_a_request_that_spent_a_secret_is_barred_from_redirecting() {
+        let state = host_state_with("braiins-pool");
+
+        let plain = spend(&state, "https://attacker.example/x", &[], None)
+            .expect("BUG: a request spending nothing is unpinned");
+        assert!(!plain.carries_secret);
+
+        let spent = spend(
+            &state,
+            "https://api.braiins.com/?t={{ credential.pool.token }}",
+            &[],
+            None,
+        )
+        .expect("BUG: the pinned host must be permitted");
+        assert!(spent.carries_secret);
+    }
+
     #[test]
     fn an_authority_is_split_from_scheme_path_and_userinfo() {
         for (url, expected) in [
-            ("https://api.braiins.com/pool/v2", ("api.braiins.com", None)),
+            (
+                "https://api.braiins.com/pool/v2",
+                ("api.braiins.com", Some(443)),
+            ),
             (
                 "https://api.braiins.com:8443/x",
                 ("api.braiins.com", Some(8443)),
             ),
-            ("http://10.1.2.3", ("10.1.2.3", None)),
+            ("http://10.1.2.3", ("10.1.2.3", Some(80))),
             ("http://10.1.2.3:4028/api", ("10.1.2.3", Some(4028))),
-            ("https://api.braiins.com?q=1", ("api.braiins.com", None)),
+            (
+                "https://api.braiins.com?q=1",
+                ("api.braiins.com", Some(443)),
+            ),
             (
                 "https://user:pw@api.braiins.com/x",
-                ("api.braiins.com", None),
+                ("api.braiins.com", Some(443)),
             ),
         ] {
             let (host, port) = parsed_authority(url).expect("BUG: url has an authority");
@@ -655,7 +773,7 @@ mod tests {
     fn an_ipv6_authority_loses_its_brackets_so_a_range_can_match_it() {
         assert_eq!(
             parsed_authority("http://[fd00::1]/api"),
-            Some(("fd00::1".to_owned(), None))
+            Some(("fd00::1".to_owned(), Some(80)))
         );
         assert_eq!(
             parsed_authority("http://[fd00::1]:4028/api"),
@@ -664,14 +782,12 @@ mod tests {
     }
 
     #[test]
-    fn a_url_still_carrying_a_placeholder_parses_to_its_real_host() {
-        // The pin runs before substitution, so it sees braces and spaces
-        // in the query. Were those to fail the parse,
-        // every pin test would pass by refusing unparsable input
-        // rather than by pinning.
+    fn a_resolved_url_parses_to_its_real_host() {
+        // Were a resolved URL to fail the parse, every pin test would pass
+        // by refusing unparsable input rather than by pinning.
         assert_eq!(
-            parsed_authority("https://attacker.test/?t={{ credential.pool.token }}"),
-            Some(("attacker.test".to_owned(), None))
+            parsed_authority("https://attacker.test/?t=s3cr3t"),
+            Some(("attacker.test".to_owned(), Some(443)))
         );
     }
 

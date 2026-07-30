@@ -34,6 +34,26 @@ pub(crate) fn build_fetch_agent() -> Agent {
     Agent::config_builder().build().into()
 }
 
+/// Whether a request may follow redirects.
+#[derive(Clone, Copy)]
+pub(in crate::runtime) enum Redirects {
+    Follow,
+    /// ureq strips only `authorization` across a redirect, so a secret
+    /// in a custom header, the query or the body would be replayed
+    /// to the target — and the guest picked the path.
+    Refuse,
+}
+
+impl Redirects {
+    pub(in crate::runtime) fn for_request(carries_secret: bool) -> Self {
+        if carries_secret {
+            Self::Refuse
+        } else {
+            Self::Follow
+        }
+    }
+}
+
 /// Perform an HTTP request, returning a [`FetchOutcome`] wire value and a body.
 /// For host-decided outcomes the body carries a reason string; it is empty when
 /// the origin never answered.
@@ -48,7 +68,14 @@ pub(in crate::runtime) fn do_fetch(
     headers: &[(String, String)],
     body: Option<&[u8]>,
     timeout: Duration,
+    redirects: Redirects,
 ) -> (u32, Vec<u8>) {
+    // Zero returns the 3xx unfollowed rather than erroring,
+    // so refusing costs a redirect the guest cannot use, not the request.
+    let max_redirects = match redirects {
+        Redirects::Follow => agent.config().max_redirects(),
+        Redirects::Refuse => 0,
+    };
     let result = match method {
         "POST" | "PUT" | "PATCH" => {
             let mut req = match method {
@@ -58,6 +85,7 @@ pub(in crate::runtime) fn do_fetch(
             }
             .config()
             .timeout_global(Some(timeout))
+            .max_redirects(max_redirects)
             .build();
             for (k, v) in headers {
                 req = req.header(k, v);
@@ -75,6 +103,7 @@ pub(in crate::runtime) fn do_fetch(
             }
             .config()
             .timeout_global(Some(timeout))
+            .max_redirects(max_redirects)
             .build();
             for (k, v) in headers {
                 req = req.header(k, v);
@@ -111,7 +140,7 @@ mod tests {
 
     use bmc_wasm_protocol::FetchOutcome;
 
-    use super::{MAX_FETCH_BODY_BYTES, build_fetch_agent, do_fetch};
+    use super::{MAX_FETCH_BODY_BYTES, Redirects, build_fetch_agent, do_fetch};
 
     #[test]
     fn per_call_timeout_trips_on_a_stalled_server() {
@@ -128,7 +157,15 @@ mod tests {
         let agent = build_fetch_agent();
         let url = format!("http://{addr}/");
         let start = Instant::now();
-        let (status, body) = do_fetch(&agent, "GET", &url, &[], None, Duration::from_millis(300));
+        let (status, body) = do_fetch(
+            &agent,
+            "GET",
+            &url,
+            &[],
+            None,
+            Duration::from_millis(300),
+            Redirects::Follow,
+        );
         let elapsed = start.elapsed();
 
         assert_eq!(
@@ -167,7 +204,15 @@ mod tests {
 
         let agent = build_fetch_agent();
         let url = format!("http://{addr}/");
-        let (status, body) = do_fetch(&agent, "GET", &url, &[], None, Duration::from_secs(30));
+        let (status, body) = do_fetch(
+            &agent,
+            "GET",
+            &url,
+            &[],
+            None,
+            Duration::from_secs(30),
+            Redirects::Follow,
+        );
 
         assert_eq!(
             FetchOutcome::from_wire(status),

@@ -27,7 +27,7 @@ mod socket;
 
 pub(super) use discovery::{mdns_browse_thread, ssdp_search_thread, udp_broadcast_thread};
 pub(crate) use fetch::build_fetch_agent;
-pub(super) use fetch::do_fetch;
+pub(super) use fetch::{Redirects, do_fetch};
 pub(super) use http::http_listener_thread;
 pub(super) use socket::{
     TlsVerificationMode, host_tls_connect_impl, tcp_background_thread, ws_background_thread,

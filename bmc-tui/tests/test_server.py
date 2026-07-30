@@ -112,6 +112,19 @@ def test_view_can_force_status_and_content_type() -> None:
     assert caught.value.status == 418
 
 
+def test_view_headers_reach_the_client() -> None:
+    """A redirect is only a redirect if `Location` actually lands on the wire."""
+    views = {
+        "/bounce": View(response=b"", status=302, headers={"Location": "/elsewhere"}),
+        "/elsewhere": b"arrived",
+    }
+    with server(views) as handle:
+        # urllib follows a 302, so the body proves the header was both sent and used.
+        status, body, _ = _get(handle.url("/bounce"))
+
+    assert (status, body) == (200, b"arrived")
+
+
 def test_unlisted_path_is_404() -> None:
     with server({"/known": b"x"}) as handle, pytest.raises(urllib.error.HTTPError) as caught:
         _get(handle.url("/missing"))

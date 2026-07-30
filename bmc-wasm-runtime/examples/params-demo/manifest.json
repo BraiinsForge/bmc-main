@@ -169,6 +169,11 @@
       "description": "Egress-pinned type — its secret may only be sent to api.braiins.com",
       "required": true
     },
+    "pool_backup": {
+      "type": "braiins-pool",
+      "label": "Backup pool account",
+      "description": "A second slot of one type — a widget may hold more than one account of it"
+    },
     "weather": {
       "type": "generic-token",
       "label": "Weather service",

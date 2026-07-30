@@ -92,11 +92,12 @@ Response = ResponseValue | Callable[[Request], "Response"]
 
 @dataclass(frozen=True)
 class View:
-    """A response with a non-200 status or a forced content type."""
+    """A response with a non-200 status, a forced content type or extra headers."""
 
     response: Response
     status: int = 200
     content_type: str | None = None
+    headers: Mapping[str, str] = field(default_factory=dict)
 
 
 ViewConfig = View | Response
@@ -246,19 +247,36 @@ class _Handler(BaseHTTPRequestHandler):
                     return self._views[prefix], target
         return None
 
-    def _headers(self, *, status: int, length: int, content_type: str) -> None:
+    def _headers(
+        self,
+        *,
+        status: int,
+        length: int,
+        content_type: str,
+        extra: Mapping[str, str] | None = None,
+    ) -> None:
         self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.send_header("Content-Length", str(length))
+        for key, value in (extra or {}).items():
+            self.send_header(key, value)
         self.end_headers()
 
-    def _respond(self, *, status: int, body: bytes, content_type: str, head: bool) -> None:
+    def _respond(
+        self,
+        *,
+        status: int,
+        body: bytes,
+        content_type: str,
+        head: bool,
+        extra: Mapping[str, str] | None = None,
+    ) -> None:
         """Ranged like `_respond_file`, so sampling a header costs 16 bytes."""
         size = len(body)
         ranged = status == HTTPStatus.OK
         span = _byte_range(self.headers.get("Range"), size) if ranged else None
         if span is None:
-            self._headers(status=status, length=size, content_type=content_type)
+            self._headers(status=status, length=size, content_type=content_type, extra=extra)
         else:
             start, end = span
             body = body[start : end + 1]
@@ -266,6 +284,8 @@ class _Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
             self.send_header("Content-Length", str(len(body)))
+            for key, value in (extra or {}).items():
+                self.send_header(key, value)
             self.end_headers()
         if not head:
             # One socket operation per chunk. `timeout` bounds each of them, and
@@ -275,7 +295,15 @@ class _Handler(BaseHTTPRequestHandler):
             for start in range(0, len(view), CHUNK_BYTES):
                 self.wfile.write(view[start : start + CHUNK_BYTES])
 
-    def _respond_file(self, *, status: int, path: Path, content_type: str, head: bool) -> None:
+    def _respond_file(
+        self,
+        *,
+        status: int,
+        path: Path,
+        content_type: str,
+        head: bool,
+        extra: Mapping[str, str] | None = None,
+    ) -> None:
         """Stream a file rather than buffering it — the package rig serves
         firmware tarballs and a whole store closure through here.
 
@@ -286,7 +314,7 @@ class _Handler(BaseHTTPRequestHandler):
         span = _byte_range(self.headers.get("Range"), size)
         with path.open("rb") as handle:
             if span is None:
-                self._headers(status=status, length=size, content_type=content_type)
+                self._headers(status=status, length=size, content_type=content_type, extra=extra)
             else:
                 start, end = span
                 handle.seek(start)
@@ -294,6 +322,8 @@ class _Handler(BaseHTTPRequestHandler):
                 self.send_header("Content-Type", content_type)
                 self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
                 self.send_header("Content-Length", str(end - start + 1))
+                for key, value in (extra or {}).items():
+                    self.send_header(key, value)
                 self.end_headers()
             if head:
                 return
@@ -325,6 +355,7 @@ class _Handler(BaseHTTPRequestHandler):
                     path=value,
                     content_type=view.content_type or guessed or "application/octet-stream",
                     head=head,
+                    extra=view.headers,
                 )
                 return
             body, guessed = _encode(value)
@@ -337,6 +368,7 @@ class _Handler(BaseHTTPRequestHandler):
             body=body,
             content_type=view.content_type or guessed,
             head=head,
+            extra=view.headers,
         )
 
     def do_GET(self) -> None:

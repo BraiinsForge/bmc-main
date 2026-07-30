@@ -80,10 +80,12 @@ const DECAY_MS: u32 = 800;
 /// Decays linearly to 0 over `DECAY_MS`.
 const TINT_PEAK_ALPHA: f32 = 0.45;
 
-/// The credential slots this widget's manifest declares, in manifest order.
-/// Every layout renders all three so an unbound slot is visibly unbound
-/// rather than simply absent.
-const CREDENTIAL_SLOTS: [&str; 3] = ["media", "pool", "weather"];
+/// Every credential slot this widget's manifest declares,
+/// sorted by key the way codegen emits them.
+///
+/// All are rendered, so an unbound slot
+/// shows as unbound rather than simply absent.
+const CREDENTIAL_SLOTS: [&str; 4] = ["media", "pool", "pool_backup", "weather"];
 
 /// Lifecycle hook fired by the host on every params-snapshot delivery
 /// after the first. Diffs `Params::current()` against `Params::previous()`
@@ -247,7 +249,7 @@ const SIZES_FULL: Sizes = Sizes {
     value: 14,
     col_padding: 14.0,
     col_gap: 10.0,
-    cell_gap: 8.0,
+    cell_gap: 4.0,
     label_width: 140.0,
     footer_size: 12,
 };

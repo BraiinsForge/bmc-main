@@ -20,11 +20,16 @@
 
 """Unit tests for the credential-egress verdicts and their anti-vacuity guard."""
 
+from typing import TYPE_CHECKING, cast
+
 import pytest
 
 from bmc_tui.procedures import check_credential_egress as ce
-from bmc_tui.server import Request
+from bmc_tui.server import Request, View
 from bmc_tui.stage import Abort
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 BASE = "http://host:8000"
 SECRET = "canary-deadbeef"
@@ -57,10 +62,13 @@ def _delivered() -> ce.Outcome:
 
 
 def _all_refusals_satisfied() -> list[ce.Outcome]:
+    redirect = _case("redirect")
     return [
         ce.Outcome(case=_case("pinned"), refusal=ce._PIN_REFUSAL),
         ce.Outcome(case=_case("unbound"), refusal=ce._NO_SECRET_REFUSAL),
         ce.Outcome(case=_case("undeclared"), withheld=_withheld("api")),
+        ce.Outcome(case=redirect, served=_request(redirect)),
+        ce.Outcome(case=_case("reshaped"), refusal=ce._PIN_REFUSAL),
     ]
 
 
@@ -71,16 +79,26 @@ def test_url_embeds_the_placeholder_without_inner_spaces() -> None:
     assert " " not in url
 
 
-def test_every_case_owns_a_distinct_slot() -> None:
-    """Refusals are attributed by slot, so a shared one would cross-credit cases."""
-    slots = [c.slot for c in ce.CASES]
+def test_every_refusal_judged_case_owns_a_distinct_slot() -> None:
+    """A refusal names a slot, not a URL, so two of them sharing one would
+    cross-credit. Cases judged on what arrived are attributed by path instead,
+    and may share — `redirect` shares `media` with `unbound`."""
+    slots = [c.slot for c in ce.CASES if c.expect not in ce._ARRIVAL_JUDGED]
     assert len(slots) == len(set(slots))
 
 
-def test_only_the_pinned_case_uses_a_pinned_credential_type() -> None:
-    """A corpus that drifted to unpinned types everywhere would prove nothing."""
+def test_only_the_unbound_case_leaves_its_shared_slot_secretless() -> None:
+    """`unbound`'s refusal names `media`, so nothing else on `media` may lack a
+    binding, or the two would be indistinguishable in the log."""
+    secretless = [c.name for c in ce.CASES if c.slot == "media" and c.account_type is None]
+    assert secretless == ["unbound"]
+
+
+def test_the_pinned_type_is_exercised_by_exactly_these_cases() -> None:
+    """A corpus that drifted to unpinned types everywhere would prove nothing.
+    Spelled out rather than counted, so gaining a pinned case is a decision."""
     pinned = [c.name for c in ce.CASES if c.account_type == "braiins-pool"]
-    assert pinned == ["pinned"]
+    assert pinned == ["pinned", "reshaped"]
     assert _case("unbound").account_type is None
 
 
@@ -149,3 +167,68 @@ def test_judge_rejects_a_secret_that_reached_the_log() -> None:
 
 def test_judge_passes_a_run_where_only_the_permitted_case_was_sent() -> None:
     ce._judge([_delivered(), *_all_refusals_satisfied()], "", SECRET)
+
+
+def test_a_followed_redirect_fails_the_case() -> None:
+    """Reaching the redirect target means the secret went where we never sent it."""
+    case = _case("redirect")
+    followed = ce.Outcome(
+        case=case,
+        served=_request(case),
+        followed=Request(
+            method="GET", path=ce.LANDED_PATH, query={"v": [SECRET]}, headers={}, body=b""
+        ),
+    )
+    assert followed.failed
+
+
+def test_an_unfollowed_redirect_still_has_to_have_been_fetched() -> None:
+    """Otherwise the case passes on a device that never made the request."""
+    case = _case("redirect")
+    assert ce.Outcome(case=case).failed
+    assert not ce.Outcome(case=case, served=_request(case)).failed
+
+
+def test_the_redirect_view_points_at_the_landing_path() -> None:
+    """A 302 the client must not follow, carrying the secret it was sent."""
+    seen: list[Request] = []
+    case = _case("redirect")
+    view = cast("Callable[[Request], View]", ce._views(seen)[case.path])
+
+    bounced = view(_request(case))
+
+    assert bounced.status == 302
+    assert bounced.headers["Location"] == f"{ce.LANDED_PATH}?v={SECRET}"
+    assert [r.path for r in seen] == [case.path], "the first hop must be recorded"
+
+
+def test_the_reshaped_case_aims_the_pinned_template_at_the_pinned_host() -> None:
+    """A pin reading the template would approve, which is the premise."""
+    url = _case("reshaped").url(BASE)
+    assert url.startswith("http://{{credential.pool_backup.token}}@api.braiins.com")
+
+
+def test_the_reshaped_secret_lands_the_request_on_a_recorded_view() -> None:
+    """Non-vacuity: a leak has to be a request we can actually see, so the token
+    ends the authority early and points the rest at this case's own path."""
+    case = _case("reshaped")
+    resolved = case.url(BASE).replace(
+        f"{{{{credential.{case.slot}.{case.field}}}}}",
+        case.secret(SECRET, "host:8000"),
+    )
+
+    assert resolved == "http://host:8000/reshaped.png?v=@api.braiins.com/x"
+    assert case.path in ce._views([]), "the path a leak would arrive on must record"
+
+
+def test_the_reshaped_case_does_not_spend_the_canary() -> None:
+    """Its secret is an authority, so the run's leak check still means something."""
+    assert _case("reshaped").secret(SECRET, "host:8000") != SECRET
+    assert _case("pinned").secret(SECRET, "host:8000") == SECRET
+
+
+def test_collect_reads_a_landing_request_as_a_follow() -> None:
+    landed = Request(method="GET", path=ce.LANDED_PATH, query={"v": [SECRET]}, headers={}, body=b"")
+    outcomes = {o.case.name: o for o in ce._collect("", "", [landed])}
+    assert outcomes["redirect"].followed is landed
+    assert outcomes["unbound"].followed is None, "only the redirect case tracks a follow"

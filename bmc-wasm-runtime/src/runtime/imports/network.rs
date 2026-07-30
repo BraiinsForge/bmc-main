@@ -40,8 +40,9 @@ use crate::host_api::{
 };
 
 use super::super::background::{
-    TlsVerificationMode, do_fetch, host_tls_connect_impl, http_listener_thread, mdns_browse_thread,
-    ssdp_search_thread, tcp_background_thread, udp_broadcast_thread, ws_background_thread,
+    Redirects, TlsVerificationMode, do_fetch, host_tls_connect_impl, http_listener_thread,
+    mdns_browse_thread, ssdp_search_thread, tcp_background_thread, udp_broadcast_thread,
+    ws_background_thread,
 };
 use super::super::memory::{parse_headers, read_bytes, read_optional_bytes, read_string};
 
@@ -177,13 +178,26 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 });
                 return request_id.to_wire();
             };
-            let super::credentials::SpentRequest { url, headers, body } = spent;
+            let super::credentials::SpentRequest {
+                url,
+                headers,
+                body,
+                carries_secret,
+            } = spent;
+            let redirects = Redirects::for_request(carries_secret);
 
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
-                let (status, resp_body) =
-                    do_fetch(&agent, &method, &url, &headers, body.as_deref(), timeout);
+                let (status, resp_body) = do_fetch(
+                    &agent,
+                    &method,
+                    &url,
+                    &headers,
+                    body.as_deref(),
+                    timeout,
+                    redirects,
+                );
                 let _ = tx.send(CompletedFetch {
                     request_id,
                     status,

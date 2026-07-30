@@ -39,7 +39,7 @@ use crate::host_api::{
 };
 
 use super::backend::WasmWidgetRuntime;
-use super::background::do_fetch;
+use super::background::{Redirects, do_fetch};
 use super::memory::alloc_and_copy_to_guest;
 
 type DelayedFetchRequest = (
@@ -1040,7 +1040,9 @@ impl WasmWidgetRuntime {
                 url: resolved,
                 headers,
                 body,
+                carries_secret,
             } = spent;
+            let redirects = Redirects::for_request(carries_secret);
 
             let tx = state.fetch_tx.clone();
             let agent = state.fetch_agent.clone();
@@ -1052,6 +1054,7 @@ impl WasmWidgetRuntime {
                     &headers,
                     body.as_deref(),
                     timeout,
+                    redirects,
                 );
                 tracing::info!(
                     request_id = request_id.to_wire(),

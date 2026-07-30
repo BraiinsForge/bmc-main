@@ -27,10 +27,12 @@ wayland, wasm host — and still stops at the right hosts.
 The destination is a server this run owns, so the evidence is what the device
 actually sent us rather than what it says it sent.
 
-The carrier is `params-demo`, because its manifest declares one slot per built-in
-credential type and it fetches whatever `string_uri` holds. That matters: a slot
-has to be declared for resolution to authorise it, so a widget declaring none
-cannot carry a credential at all.
+The carrier is `params-demo`, which fetches whatever its `string_uri` param holds.
+Its manifest declares one slot per credential type the firmware knows,
+plus a second pinned slot.
+
+That matters: a slot has to be declared for resolution to authorise it,
+so a widget declaring none cannot carry a credential at all.
 
 Bindings are written straight into the config, past the gRPC validation that
 would refuse a slot the manifest never declared. That is not a shortcut around
@@ -51,7 +53,7 @@ from typing import Literal
 
 from bmc_tui import catalog, console
 from bmc_tui.device import Device, RemotePath
-from bmc_tui.server import Request, ServerHandle, ViewConfig, server
+from bmc_tui.server import Request, ServerHandle, View, ViewConfig, server
 from bmc_tui.stage import Abort, entrypoint, require
 
 # Two logs, because two components decide. The host reports that a slot had no
@@ -77,7 +79,17 @@ PIXEL_PNG = bytes.fromhex(
     "890000000d4944415478da63f8cfc0500f0002870180a1a4fa6b0000000049454e44ae426082"
 )
 
-Expect = Literal["deliver", "refuse-pin", "refuse-no-secret", "refuse-withheld"]
+Expect = Literal[
+    "deliver", "deliver-no-follow", "refuse-pin", "refuse-no-secret", "refuse-withheld"
+]
+
+# The expectations judged from what arrived rather than from a refusal line.
+# Only the rest need a slot of their own, since a refusal names a slot, not a URL.
+_ARRIVAL_JUDGED = ("deliver", "deliver-no-follow")
+
+# Where the `redirect` case's 302 points. A request here means the client
+# followed a redirect on a secret-bearing request, which it must not.
+LANDED_PATH = "/landed.png"
 
 _REFUSAL = re.compile(r"refusing fetch: (.+?)(?:\s{2,}|$)")
 _PIN_REFUSAL = "destination is outside the credential type's egress pin"
@@ -89,13 +101,20 @@ _WITHHELD = "withholding a credential the installed manifest no longer authorise
 class Case:
     name: str
     expect: Expect
-    # The slot the placeholder names, and the field on it. One slot per case, so
-    # a refusal naming a slot belongs to exactly one of them.
+    # The slot the placeholder names, and the field on it.
+    # Distinct among the refusal-judged cases, so a refusal naming a slot
+    # belongs to just one of them.
     slot: str
     field: str
     # None binds nothing, which is the refusal an operator causes rather than one
     # the pin or the manifest does.
     account_type: str | None
+    # A URL shape other than "our server, secret in the query". `{placeholder}`
+    # is this slot's reference and `{base}` our server's root.
+    url_form: str | None = None
+    # A secret other than the run's canary, for a case whose point is what the
+    # value does to the URL once substituted. `{authority}` is our host:port.
+    secret_form: str | None = None
 
     @property
     def path(self) -> str:
@@ -104,7 +123,15 @@ class Case:
     def url(self, base: str) -> str:
         # No spaces inside the braces: the URL travels through a log line that
         # is split on whitespace, and `substitute` trims either way.
-        return f"{base}{self.path}?v={{{{credential.{self.slot}.{self.field}}}}}"
+        placeholder = f"{{{{credential.{self.slot}.{self.field}}}}}"
+        if self.url_form is not None:
+            return self.url_form.format(base=base, placeholder=placeholder)
+        return f"{base}{self.path}?v={placeholder}"
+
+    def secret(self, canary: str, authority: str) -> str:
+        if self.secret_form is None:
+            return canary
+        return self.secret_form.format(authority=authority, path=self.path)
 
 
 CASES: tuple[Case, ...] = (
@@ -114,6 +141,23 @@ CASES: tuple[Case, ...] = (
     # `api` is not in params-demo's manifest, so resolution must withhold the
     # binding even though the config names one and the account exists.
     Case("undeclared", "refuse-withheld", "api", "token", "generic-token"),
+    # Shares `media` with `unbound`: this instance binds an account, that one
+    # does not, so the secretless refusal still names exactly one of them.
+    Case("redirect", "deliver-no-follow", "media", "password", "generic-userpass"),
+    # The template names the pinned host, so a pin reading it would approve. The
+    # token then ends the authority early and aims the request at us instead —
+    # judged by whether it arrives, since a leak here is a request we can see.
+    Case(
+        "reshaped",
+        "refuse-pin",
+        "pool_backup",
+        "token",
+        "braiins-pool",
+        # http, not https: the reshaped request has to reach our plain server,
+        # or it would fail the handshake and pass this case for the wrong reason.
+        url_form="http://{placeholder}@api.braiins.com/x",
+        secret_form="{authority}{path}?v=",
+    ),
 )
 
 
@@ -123,11 +167,16 @@ class Outcome:
     served: Request | None = None
     refusal: str = ""
     withheld: str = ""
+    followed: Request | None = None
 
     @property
     def failed(self) -> bool:
         if self.case.expect == "deliver":
             return self.served is None
+        if self.case.expect == "deliver-no-follow":
+            # Both halves matter: no arrival proves nothing, and reaching
+            # the redirect target is the secret going where we never sent it.
+            return self.served is None or self.followed is not None
         if self.served is not None:
             return True
         if self.case.expect == "refuse-pin":
@@ -197,7 +246,18 @@ def _views(seen: list[Request]) -> dict[str, ViewConfig]:
         seen.append(request)
         return PIXEL_PNG
 
-    return {case.path: record for case in CASES}
+    def bounce(request: Request) -> View:
+        seen.append(request)
+        # The secret rides the query, so it reaches the target only when
+        # the client follows. Relative — ureq resolves it against the request.
+        sent = request.query.get("v", [""])[0]
+        return View(response=b"", status=302, headers={"Location": f"{LANDED_PATH}?v={sent}"})
+
+    views: dict[str, ViewConfig] = {
+        case.path: bounce if case.expect == "deliver-no-follow" else record for case in CASES
+    }
+    views[LANDED_PATH] = record
+    return views
 
 
 def _device_facing(assets: ServerHandle) -> str:
@@ -221,12 +281,12 @@ def _default_params() -> dict[str, object]:
     }
 
 
-def _account(account_id: str, case: Case, secret: str) -> dict[str, object]:
+def _account(account_id: str, case: Case, secret: str, authority: str) -> dict[str, object]:
     return {
         "id": account_id,
         "type_id": case.account_type,
         "name": f"Egress test ({case.name})",
-        "field_values": {case.field: secret},
+        "field_values": {case.field: case.secret(secret, authority)},
         "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
@@ -274,7 +334,8 @@ def _push(
             "transition": "slide",
         },
     }
-    stored = [_account(accounts[c.name], c, secret) for c in CASES if c.name in accounts]
+    authority = base_url.split("://", 1)[-1]
+    stored = [_account(accounts[c.name], c, secret, authority) for c in CASES if c.name in accounts]
     _push_json(dev, config, CONFIG)
     _push_json(dev, {"version": 1, "accounts": stored}, SECRETS)
     # The store writes its own file at 0600; a pushed one would otherwise
@@ -340,9 +401,12 @@ def _collect(host_log: str, compositor_log: str, seen: list[Request]) -> list[Ou
     ]
     withheld = [line for line in compositor_log.splitlines() if _WITHHELD in line]
 
+    landed = next((r for r in seen if r.path == LANDED_PATH), None)
     for outcome in by_path.values():
         case = outcome.case
-        if case.expect == "deliver":
+        if case.expect == "deliver-no-follow":
+            outcome.followed = landed
+        if case.expect in _ARRIVAL_JUDGED:
             continue
         # A refusal names no URL, so it is attributed by the slot it names —
         # which is why each case owns one.
@@ -379,11 +443,23 @@ def _judge(outcomes: list[Outcome], host_log: str, secret: str) -> None:
         raise Abort(f"{len(broken)} case(s) failed on the device: {names}")
 
 
+def _arrival_verdict(out: Outcome) -> str:
+    if out.served is None:
+        return "NOT DELIVERED"
+
+    if out.followed is not None:
+        return "FOLLOWED — the secret was replayed to the redirect target"
+
+    return "delivered" if out.case.expect == "deliver" else "delivered, redirect not followed"
+
+
 def _verdict(out: Outcome) -> str:
-    if out.case.expect == "deliver":
-        return "delivered" if out.served is not None else "NOT DELIVERED"
+    if out.case.expect in _ARRIVAL_JUDGED:
+        return _arrival_verdict(out)
+
     if out.served is not None:
         return "SENT — the secret left for a host its type forbids"
+
     if out.case.expect == "refuse-withheld":
         return "withheld by the manifest check" if out.withheld else "NOT WITHHELD"
     return f"refused: {out.refusal}" if out.refusal else "NO REFUSAL RECORDED"

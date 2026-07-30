@@ -47,9 +47,24 @@ an unpinned generic.
 usable, so there is no reason to spell one; treating the empty list as deny-all would only turn a typo into a type that
 silently never authenticates. Filtering is opt-in: a type gets a pin by listing somewhere to send its secret.
 
-The authority is read through the same URL parser the HTTP client uses. Where an egress check and the client disagree
-about which host a URL names, that disagreement *is* the vulnerability — which is why neither the authority nor the CIDR
-containment is hand-parsed.
+**The pin reads the URL that will be dialled**, not the template it grew from. Substitution runs first, so a resolved
+secret cannot reshape the destination behind the pin's back — a token containing `/` in userinfo position otherwise ends
+the authority early and slides the approved host into the path.
+
+Two parsers still see that URL: `url::Url` (WHATWG) decides the authority, and ureq re-parses the request target with
+`http::Uri` (RFC 3986). Where an egress check and the client disagree about which host a URL names, that disagreement
+*is* the vulnerability — which is why neither the authority nor the CIDR containment is hand-parsed, and why a request
+whose host the two read differently is refused rather than sent. Agreement is enforced, not assumed.
+
+**Ports are compared as connected, not as written.** An entry spelling `api.example.com:443` matches
+`https://api.example.com/`, because comparing written ports left that spelling permanently inert while the grammar still
+offered it, and its refusal was indistinguishable from a genuinely out-of-pin host.
+
+**A request that spent a secret does not follow redirects.** The pin governs where *we* send, and what the destination
+does afterwards is its own business — but ureq strips only `authorization` across a redirect, so a secret in a custom
+header, the query or the body would be replayed to the target. The guest picks the path, so an open redirect on a pinned
+host would turn "the widget cannot learn the secret" into "the widget has it". Zero redirects returns the 3xx unfollowed
+rather than erroring, so the cost is a redirect the guest cannot use.
 
 ## Cut: per-account egress override
 
