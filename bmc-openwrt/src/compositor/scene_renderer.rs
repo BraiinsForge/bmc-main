@@ -27,6 +27,7 @@ use bmc::compositor::ScenePlaceholder;
 use bmc::scene::WidgetPosition;
 use bmc_gpu_render_lock::GpuRenderLock;
 use bmc_platform::{DisplayPixelFormat, DisplayTransform, Product};
+use bmc_shared_utils::include_png;
 use smithay::{
     backend::allocator::Fourcc,
     backend::renderer::{
@@ -53,7 +54,7 @@ const SEPARATOR_COLOR: Color32F = Color32F::new(0.15, 0.15, 0.15, 1.0);
 
 /// DECK logo shown as the screen background when a scene has no rendered
 /// content. Embedded so there is no runtime file dependency.
-const DECK_LOGO_PNG: &[u8] = include_bytes!("../assets/deck_logo.png");
+const DECK_LOGO_PNG: &[u8] = include_png!("../assets/deck_logo.png");
 
 /// Branding logo a product shows in scenes with no rendered content, or
 /// `None` to keep the plain cleared background (which also drops the
@@ -69,7 +70,7 @@ pub fn logo_for_product(product: Product) -> Option<&'static [u8]> {
 
 /// "Loading scene…" caption drawn below the logo while a configured scene has
 /// not painted its first frame yet.
-const LOADING_SCENE_TEXT_PNG: &[u8] = include_bytes!("../assets/loading_scene_text.png");
+const LOADING_SCENE_TEXT_PNG: &[u8] = include_png!("../assets/loading_scene_text.png");
 
 /// Logical-pixel gap between the logo and the caption below it.
 const LOGO_TEXT_GAP_PX: i32 = 42;

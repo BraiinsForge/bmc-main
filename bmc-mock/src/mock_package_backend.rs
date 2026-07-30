@@ -30,6 +30,7 @@ use bmc_nix::index::merge_indexes;
 use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::{FetchedIndex, MergedIndex, PackageIndex};
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
+use bmc_shared_utils::include_png;
 use bmc_upgrade::packages::{
     ApplyError, EstimateMode, InstallableCategory, InstallablePreview, InstallableWidget,
     PackageBackend, PackageProbe, PackageProbeError, PackagesPreview, SystemPackageChange,
@@ -53,23 +54,23 @@ static PLACEHOLDER_PREVIEWS: LazyLock<Vec<InstallablePreview>> = LazyLock::new(|
     const IMAGES: [(&str, &[u8]); 5] = [
         (
             "full",
-            include_bytes!("../../assets/mock-widget-previews/weather-full.png"),
+            include_png!("../../assets/mock-widget-previews/weather-full.png"),
         ),
         (
             "large",
-            include_bytes!("../../assets/mock-widget-previews/weather-large.png"),
+            include_png!("../../assets/mock-widget-previews/weather-large.png"),
         ),
         (
             "medium",
-            include_bytes!("../../assets/mock-widget-previews/weather-medium.png"),
+            include_png!("../../assets/mock-widget-previews/weather-medium.png"),
         ),
         (
             "small_left",
-            include_bytes!("../../assets/mock-widget-previews/weather-small_left.png"),
+            include_png!("../../assets/mock-widget-previews/weather-small_left.png"),
         ),
         (
             "small_right",
-            include_bytes!("../../assets/mock-widget-previews/weather-small_right.png"),
+            include_png!("../../assets/mock-widget-previews/weather-small_right.png"),
         ),
     ];
     IMAGES

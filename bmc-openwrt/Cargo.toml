@@ -31,6 +31,7 @@ bmc-platform = { workspace = true, features = ["backlight", "linux-input"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true
 bmc-shared-time.workspace = true
+bmc-shared-utils.workspace = true
 bmc-support.workspace = true
 bmc-upgrade.workspace = true
 bmc-widget-protocol.workspace = true

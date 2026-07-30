@@ -23,6 +23,7 @@ bmc-nix.workspace = true
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
+bmc-shared-utils.workspace = true
 bmc-support.workspace = true
 bmc-upgrade.workspace = true
 bmc-widget-manifest.workspace = true
