@@ -129,8 +129,11 @@ class _FakeNix:
     def discover_widgets(self) -> list[str]:
         return []
 
-    def list_packages(self) -> list[str]:
+    def list_packages(self, prefix: str = "") -> list[str]:
         return []
+
+    def dirty_tree(self) -> bool:
+        return False
 
     def resolve(self, attr: Attr) -> Pkg:
         raise NotImplementedError
@@ -456,19 +459,29 @@ class _Nix:
     """Fake Nix: resolve names from the attr leaf, build to a fake store path."""
 
     def __init__(
-        self, widgets: tuple[str, ...] = (), out_dir: str = "", packages: tuple[str, ...] = ()
+        self,
+        widgets: tuple[str, ...] = (),
+        out_dir: str = "",
+        packages: tuple[str, ...] = (),
+        dirty: bool = False,
     ) -> None:
         self.widgets = list(widgets)
         self.packages = list(packages) or ["core", *self.widgets]
+        self.dirty = dirty
         self.built: list[Pkg] = []
         self.copied: list[tuple[list[StorePath], str]] = []
         self.out_dir = out_dir
+        self.listed_prefixes: list[str] = []
 
     def discover_widgets(self) -> list[str]:
         return list(self.widgets)
 
-    def list_packages(self) -> list[str]:
+    def list_packages(self, prefix: str = "") -> list[str]:
+        self.listed_prefixes.append(prefix)
         return list(self.packages)
+
+    def dirty_tree(self) -> bool:
+        return self.dirty
 
     def build_out(self, attr: Attr) -> StorePath:
         return StorePath(self.out_dir)
@@ -518,25 +531,111 @@ def test_resolve_uses_explicit_packages() -> None:
     assert [p.name for p in plan.resolved] == ["core"]
 
 
-def test_resolve_aborts_with_suggestion_on_unknown_package() -> None:
+# Verbatim from `nix eval` on this repo — the classifier keys off these words, so a
+# paraphrase here would test nothing.
+_ABSENT_STDERR = (
+    "error: flake 'git+file:///repo' does not provide attribute "
+    "'packages.x86_64-linux.deck-packages.image'"
+)
+_LFS_STDERR = (
+    'error: bad json from /info/lfs/objects/batch: {"error":{"code":404,'
+    '"message":"Object does not exist on the server"},'
+    '"oid":"75a6f686f8bbcb4f132d6ab7240822269d52146114aadf5d668270b0493badb9","size":1596}'
+)
+
+
+def _failing_nix(
+    stderr: str, *, widgets: tuple[str, ...] = (), packages: tuple[str, ...] = ()
+) -> _Nix:
+    """A fake whose `resolve` dies the way `_eval_raw` does, stderr included."""
+
     class _BadNix(_Nix):
         def resolve(self, attr: Attr) -> Pkg:
-            raise subprocess.CalledProcessError(1, ["nix", "eval", attr])
+            raise subprocess.CalledProcessError(1, ["nix", "eval", attr], stderr=stderr)
 
+    return _BadNix(widgets=widgets, packages=packages)
+
+
+def test_resolve_aborts_with_suggestion_on_unknown_package() -> None:
     plan = catalog.Deployment(attrs=[Attr(".#deck-packages.image")])
+    nix = _failing_nix(_ABSENT_STDERR, widgets=("widget-image", "widget-clock"))
     with pytest.raises(Abort, match="widget-image"):
-        catalog.resolve_packages(_BadNix(widgets=("widget-image", "widget-clock")), plan)
+        catalog.resolve_packages(nix, plan)
 
 
 def test_resolve_suggests_non_widget_packages() -> None:
-    class _BadNix(_Nix):
-        def resolve(self, attr: Attr) -> Pkg:
-            raise subprocess.CalledProcessError(1, ["nix", "eval", attr])
-
     plan = catalog.Deployment(attrs=[Attr(".#deck-packages.frontend")])
-    nix = _BadNix(packages=("core", "bmc-frontend", "widget-image"))
+    nix = _failing_nix(_ABSENT_STDERR, packages=("core", "bmc-frontend", "widget-image"))
     with pytest.raises(Abort, match="bmc-frontend"):
         catalog.resolve_packages(nix, plan)
+
+
+def test_resolve_suggests_from_the_profile_being_deployed() -> None:
+    """A release-set suggestion under a debug prefix can name the rejected attr back."""
+    plan = catalog.Deployment(attrs=[Attr("image")], prefix=catalog.package_prefix("debug"))
+    nix = _failing_nix(_ABSENT_STDERR, widgets=("widget-image",))
+    with pytest.raises(Abort):
+        catalog.resolve_packages(nix, plan)
+    assert nix.listed_prefixes == [".#deck-packages-debug"]
+
+
+def test_resolve_panels_an_unpushed_lfs_object_with_its_oid(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """The eval failure is about a missing object, not a missing package."""
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.core")])
+    with pytest.raises(Abort, match="git-LFS") as caught:
+        catalog.resolve_packages(_failing_nix(_LFS_STDERR), plan)
+    panel = capsys.readouterr().out
+    assert "75a6f686" in panel
+    assert "git lfs push" in panel
+    assert "does not exist" not in str(caught.value), "must not read as a typo"
+
+
+def test_resolve_panels_an_unrecognised_nix_error_verbatim(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Inventing a diagnosis for an unclassified failure is what hid the last one."""
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.core")])
+    with pytest.raises(Abort, match="failed to evaluate"):
+        catalog.resolve_packages(_failing_nix("error: cannot connect to the daemon"), plan)
+    assert "daemon" in capsys.readouterr().out
+
+
+def test_resolve_keeps_nix_warnings_out_of_the_panel(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A dirty tree prefixes every nix stderr; padding the report with it buries it."""
+    stderr = "warning: Git tree '/repo' has uncommitted changes\nerror: no space left"
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.core")])
+    with pytest.raises(Abort):
+        catalog.resolve_packages(_failing_nix(stderr), plan)
+    panel = capsys.readouterr().out
+    assert "space" in panel
+    assert "uncommitted" not in panel
+
+
+def test_resolve_does_not_let_rich_eat_a_bracketed_nix_span(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """nix's errors carry `[json.exception…]` spans that rich would read as markup."""
+    plan = catalog.Deployment(attrs=[Attr(".#deck-packages.core")])
+    with pytest.raises(Abort):
+        catalog.resolve_packages(_failing_nix("error: bad [json.exception.out_of_range.403]"), plan)
+    assert "json.exception" in capsys.readouterr().out
+
+
+def test_resolve_states_a_dirty_worktree_once(capsys: pytest.CaptureFixture[str]) -> None:
+    """The build calls suppress nix's own notice, so the TUI owes the user this."""
+    catalog.resolve_packages(_Nix(dirty=True), catalog.Deployment(attrs=[Attr("core")]))
+    assert capsys.readouterr().err.count("uncommitted changes") == 1
+
+
+def test_resolve_says_nothing_when_the_worktree_is_clean(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    catalog.resolve_packages(_Nix(), catalog.Deployment(attrs=[Attr("core")]))
+    assert "uncommitted" not in capsys.readouterr().err
 
 
 def test_resolve_qualifies_bare_package_names() -> None:

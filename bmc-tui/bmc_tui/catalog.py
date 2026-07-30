@@ -49,11 +49,13 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, NewType, Protocol
 
+from rich.markup import escape
+
 from bmc_tui import console, nix_progress, rig
 from bmc_tui.bos_version import BosVersion, VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
-from bmc_tui.nix import Attr, Built, Nix, Pkg, StorePath
+from bmc_tui.nix import ABSENT_ATTR, Attr, Built, Nix, Pkg, StorePath
 from bmc_tui.stage import Abort, done_if, dry_run, ensure, require, stage
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
@@ -341,6 +343,48 @@ def ensure_nix_cli(nix: Nix, dev: Device) -> None:
     ensure(present, bootstrap, "bmc-nix-cli bootstrap did not take")
 
 
+# The flake sets `lfs = true`, so nix resolves LFS pointers from the remote
+# while it evaluates. A committed but unpushed object 404s, and only the attrs
+# whose derivations read the file fail — `.version` still evaluates.
+_LFS_404 = "lfs/objects/batch"
+_OID = re.compile(r'"oid"\s*:\s*"([0-9a-f]{64})"')
+
+_FAILURE_TITLE = "Cannot resolve packages"
+_LFS_SUMMARY = "nix could not fetch a git-LFS object this tree references"
+
+
+def _resolve_failure(attr: str, stderr: str, nix: Nix, prefix: str) -> str:
+    """Panel the diagnosis where a single line cannot hold it,
+    and return the line to abort on.
+
+    Reporting every failure as "does not exist" sends the reader hunting
+    a typo whatever actually broke.
+    """
+    if _LFS_404 in stderr:
+        found = _OID.search(stderr)
+        named = f"\n\n  {console.lit(found.group(1))}" if found else ""
+        console.panel(
+            f"{_LFS_SUMMARY}:{named}\n\n"
+            "The flake resolves LFS from the remote as it evaluates, so an object that "
+            "is committed but not yet pushed is invisible to it.\n\n"
+            f"To fix:  {console.lit('git lfs push origin HEAD')}",
+            title=_FAILURE_TITLE,
+            style="red",
+        )
+        return _LFS_SUMMARY
+    if ABSENT_ATTR in stderr:
+        return _unknown_package_hint(attr, nix.list_packages(prefix), prefix)
+    # Escaped: nix's errors carry bracketed spans that rich would read as markup.
+    console.panel(escape(_without_warnings(stderr)), title=_FAILURE_TITLE, style="red")
+    return f"nix failed to evaluate {console.lit(attr)}"
+
+
+def _without_warnings(stderr: str) -> str:
+    """Drop nix's own `warning:` lines so the error reads as just the error."""
+    kept = (line for line in stderr.splitlines() if not line.startswith("warning:"))
+    return "\n".join(kept).strip()
+
+
 def _unknown_package_hint(attr: str, packages: list[str], prefix: str) -> str:
     """Clean 'does not exist' hint, suggesting the closest deck package."""
     leaf = attr.rsplit(".", 1)[-1]
@@ -369,9 +413,12 @@ def resolve_packages(nix: Nix, plan: Deployment) -> str:
     for attr in plan.attrs:
         try:
             resolved.append(nix.resolve(attr))
-        except subprocess.CalledProcessError:
-            raise Abort(_unknown_package_hint(attr, nix.list_packages(), plan.prefix)) from None
+        except subprocess.CalledProcessError as e:
+            raise Abort(_resolve_failure(attr, e.stderr or "", nix, plan.prefix)) from None
     plan.resolved = resolved
+    # nix's own notice is switched off on the build calls, so say it here, once.
+    if nix.dirty_tree():
+        console.warn("worktree has uncommitted changes — this build is not in git")
     return ", ".join(console.lit(pkg.name) for pkg in plan.resolved)
 
 

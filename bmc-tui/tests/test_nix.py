@@ -34,8 +34,69 @@ def _cp(argv: list[str], stdout: str = "") -> "subprocess.CompletedProcess[str]"
     return subprocess.CompletedProcess(argv, 0, stdout=stdout, stderr="")
 
 
+def _failed(argv: list[str], stderr: str) -> "subprocess.CompletedProcess[str]":
+    return subprocess.CompletedProcess(argv, 1, stdout="", stderr=stderr)
+
+
+def test_eval_present_reads_a_missing_attribute_as_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stderr = f"error: flake 'git+file:///repo' {nix.ABSENT_ATTR} 'x'"
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _failed(list(a[0]), stderr))
+    assert not nix._eval_present("x")
+
+
+def test_eval_present_raises_when_evaluation_itself_broke(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unpushed LFS object fails `.pkg.name` while `.version` still evaluates.
+
+    Swallowing that as absent had `resolve` fall through to the raw-nixpkgs
+    branch and blame a nonexistent package.
+    """
+    stderr = "error: bad json from /info/lfs/objects/batch: 404"
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _failed(list(a[0]), stderr))
+    with pytest.raises(subprocess.CalledProcessError) as caught:
+        nix._eval_present("x")
+    assert caught.value.stderr == stderr, "the catalog classifies on this text"
+
+
+def test_dirty_tree_reads_the_flake_metadata(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`dirtyRevision` is present only for a dirty tree, whatever `warn-dirty` says."""
+    meta = '{"revision":"abc","dirtyRevision":"abc-dirty"}'
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), meta))
+    assert nix.real().dirty_tree()
+
+
+def test_a_clean_tree_has_no_dirty_revision(monkeypatch: pytest.MonkeyPatch) -> None:
+    clean = '{"revision":"abc"}'
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _cp(list(a[0]), clean))
+    assert not nix.real().dirty_tree()
+
+
+def test_dirty_tree_says_nothing_when_the_query_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cosmetic notice must not be able to fail a deploy."""
+    monkeypatch.setattr(nix.subprocess, "run", lambda *a, **_: _failed(list(a[0]), "error: boom"))
+    assert not nix.real().dirty_tree()
+
+
+def test_build_switches_off_the_dirty_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`build` inherits stderr for nix's progress bar, so the warning would land
+    in the middle of the TUI's own output."""
+    seen: list[list[str]] = []
+
+    def run(argv: list[str], **_: object) -> "subprocess.CompletedProcess[str]":
+        seen.append(argv)
+        return _cp(argv, "/nix/store/one\n")
+
+    monkeypatch.setattr(nix.subprocess, "run", run)
+    nix.real().build([Pkg("one", "1.0", Attr(".#deck-packages.one.pkg^out"))])
+    nix.real().build_out(Attr(".#init-tarball"))
+    assert all("--no-warn-dirty" in argv for argv in seen)
+
+
 def test_resolve_index_package(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix, "_eval_ok", lambda _expr: True)
+    monkeypatch.setattr(nix, "_eval_present", lambda _expr: True)
     monkeypatch.setattr(nix, "_eval_raw", lambda _expr: "2.0")
     assert nix.real().resolve(Attr(".#deck-packages.core")) == Pkg(
         "core", "2.0", Attr(".#deck-packages.core.pkg^out")
@@ -43,7 +104,7 @@ def test_resolve_index_package(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_resolve_raw_nixpkgs(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(nix, "_eval_ok", lambda _expr: False)
+    monkeypatch.setattr(nix, "_eval_present", lambda _expr: False)
     monkeypatch.setattr(
         nix, "_eval_raw", lambda expr: "9.0" if expr.endswith(".version") else "file"
     )
@@ -68,7 +129,17 @@ def test_build_maps_paths_to_packages_in_order(monkeypatch: pytest.MonkeyPatch) 
         Built("clock", "2.0", Attr(".#clock^out"), StorePath("/nix/store/clock")),
     ]
     # One invocation for the whole set, both installables passed through.
-    assert seen == [["nix", "build", "--no-link", "--print-out-paths", ".#core^out", ".#clock^out"]]
+    assert seen == [
+        [
+            "nix",
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            "--no-warn-dirty",
+            ".#core^out",
+            ".#clock^out",
+        ]
+    ]
 
 
 def test_build_passes_max_jobs_when_set(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -94,7 +165,16 @@ def test_build_out_returns_the_lone_path(monkeypatch: pytest.MonkeyPatch) -> Non
         lambda argv, **_: seen.append(argv) or _cp(argv, "/nix/store/init-tarball\n"),
     )
     assert nix.real().build_out(Attr(".#init-tarball-armv7")) == "/nix/store/init-tarball"
-    assert seen == [["nix", "build", "--no-link", "--print-out-paths", ".#init-tarball-armv7"]]
+    assert seen == [
+        [
+            "nix",
+            "build",
+            "--no-link",
+            "--print-out-paths",
+            "--no-warn-dirty",
+            ".#init-tarball-armv7",
+        ]
+    ]
 
 
 def test_build_out_rejects_multiple_paths(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -45,6 +45,16 @@ _WIDGET_FILTER = (
     'ps: builtins.filter (n: (ps.${n}.category or "") == "widget") (builtins.attrNames ps)'
 )
 
+# nix's wording when a flake genuinely lacks an attribute, as opposed
+# to holding one it could not evaluate. The two need different diagnoses.
+ABSENT_ATTR = "does not provide attribute"
+
+# nix repeats a dirty-worktree warning on every flake invocation, and the build calls
+# inherit stderr so nix can draw its progress bar. They switch it off and the TUI
+# states the fact once itself — read from the flake metadata, not from the warning,
+# so `warn-dirty = false` in nix.conf cannot silence our notice too.
+_NO_WARN_DIRTY = "--no-warn-dirty"
+
 
 # An absolute `/nix/store/…` path. Two equal ones mean the same build,
 # so they stay distinct from the device paths they are compared with.
@@ -77,12 +87,20 @@ class Nix(Protocol):
         """Leaf names of every `category == "widget"` deck package."""
         ...
 
-    def list_packages(self) -> list[str]:
-        """Leaf names of every deck package."""
+    def list_packages(self, prefix: str = _DECK_PACKAGES) -> list[str]:
+        """Leaf names of every deck package in `prefix`'s set.
+
+        Each profile holds its own set, so a suggestion drawn from the release
+        one while deploying a debug one can name the very package it rejected.
+        """
         ...
 
     def resolve(self, attr: Attr) -> Pkg:
         """Detect index-vs-raw package and read its name, version, installable."""
+        ...
+
+    def dirty_tree(self) -> bool:
+        """Whether the flake is being built from an uncommitted worktree."""
         ...
 
     def build(self, pkgs: list[Pkg]) -> list[Built]:
@@ -135,15 +153,15 @@ class _RealNix:
             return []
         return sorted(str(name) for name in out)
 
-    def list_packages(self) -> list[str]:
-        out = _eval_json(_DECK_PACKAGES, "builtins.attrNames")
+    def list_packages(self, prefix: str = _DECK_PACKAGES) -> list[str]:
+        out = _eval_json(prefix, "builtins.attrNames")
         if not isinstance(out, list):
             return []
         return sorted(str(name) for name in out)
 
     def resolve(self, attr: Attr) -> Pkg:
         version = _eval_raw(f"{attr}.version")
-        if _eval_ok(f"{attr}.pkg.name"):  # index package — build its .pkg output
+        if _eval_present(f"{attr}.pkg.name"):  # index package — build its .pkg output
             return Pkg(
                 name=attr.rsplit(".", 1)[-1], version=version, installable=Attr(f"{attr}.pkg^out")
             )
@@ -153,6 +171,20 @@ class _RealNix:
             version=version,
             installable=Attr(f"{attr}^out"),
         )
+
+    def dirty_tree(self) -> bool:
+        # `dirtyRevision` is present only for a dirty tree. A cosmetic notice
+        # must not be able to fail a deploy, so a query that fails says nothing.
+        proc = subprocess.run(
+            ["nix", "flake", "metadata", "--json", _NO_WARN_DIRTY, "."],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode != 0:
+            return False
+        meta = json.loads(proc.stdout)
+        return isinstance(meta, dict) and "dirtyRevision" in meta
 
     def build(self, pkgs: list[Pkg]) -> list[Built]:
         # One `nix build` for the whole set so nix schedules the derivations
@@ -166,6 +198,7 @@ class _RealNix:
                 "build",
                 "--no-link",
                 "--print-out-paths",
+                _NO_WARN_DIRTY,
                 *max_jobs,
                 *(p.installable for p in pkgs),
             ],
@@ -189,7 +222,7 @@ class _RealNix:
         # Single `nix build` of one attr; capture stdout for the out-path, let
         # nix draw its own progress on the inherited stderr.
         proc = subprocess.run(
-            ["nix", "build", "--no-link", "--print-out-paths", attr],
+            ["nix", "build", "--no-link", "--print-out-paths", _NO_WARN_DIRTY, attr],
             stdout=subprocess.PIPE,
             text=True,
             check=True,
@@ -266,8 +299,23 @@ def real(*, max_jobs: int | None = None) -> Nix:
     return _RealNix(max_jobs=max_jobs)
 
 
-def _eval_ok(expr: str) -> bool:
-    return subprocess.run(["nix", "eval", expr], capture_output=True, check=False).returncode == 0
+def _eval_present(expr: str) -> bool:
+    """Whether `expr` exists, distinguishing an absent attribute
+    from an evaluation that broke for some other reason.
+
+    An unpushed git-LFS object makes `.pkg.name` fail while `.version`
+    still evaluates; reading that as "absent" made `resolve` take the package
+    for a raw nixpkgs derivation, and report the wrong problem two calls later.
+    """
+    proc = subprocess.run(["nix", "eval", expr], capture_output=True, text=True, check=False)
+
+    if proc.returncode == 0:
+        return True
+
+    if ABSENT_ATTR in proc.stderr:
+        return False
+
+    raise subprocess.CalledProcessError(proc.returncode, proc.args, proc.stdout, proc.stderr)
 
 
 def _eval_raw(expr: str) -> str:

@@ -137,8 +137,11 @@ class _FakeCacheNix:
     def discover_widgets(self) -> list[str]:
         return []
 
-    def list_packages(self) -> list[str]:
+    def list_packages(self, prefix: str = "") -> list[str]:
         return []
+
+    def dirty_tree(self) -> bool:
+        return False
 
     def resolve(self, attr: Attr) -> Pkg:
         raise NotImplementedError
