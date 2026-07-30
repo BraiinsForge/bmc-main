@@ -131,10 +131,10 @@
           ]);
         }).overrideAttrs (prev: {
           # numpy/matplotlib (pulled in by the harness Python tests via uv)
-          # dlopen libstdc++ at import time; prepend it to the existing loader
-          # path so `just python` works in the pure-nix CI shell.
+          # dlopen libstdc++ and libz at import time; prepend them to the
+          # existing loader path so `just python` works in the pure-nix CI shell.
           LD_LIBRARY_PATH =
-            pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib ]
+            pkgs.lib.makeLibraryPath [ pkgs.stdenv.cc.cc.lib pkgs.zlib ]
             + ":"
             + (prev.LD_LIBRARY_PATH or "");
         });

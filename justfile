@@ -35,7 +35,7 @@ validate: format clippy python validate-wasm
 format:
     nix fmt
     nix run .#fmt-svg
-    ruff format bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} ruff format bmc-tui bmc-virt/harness
 
 # Cargo clippy with the workspace's pedantic lints (mem-box caps memory).
 clippy:
@@ -51,12 +51,12 @@ clippy:
 # ruff/ty are nix-provided (PyPI binaries don't run in the pure-nix CI); pytest
 # runs through uv. `uv sync` first so ty sees the workspace .venv.
 python:
-    uv sync
-    ruff check bmc-tui bmc-virt/harness
-    ruff format --check bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} uv sync
+    {{ NIX_DEV }} ruff check bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} ruff format --check bmc-tui bmc-virt/harness
     # Fail on @deprecated APIs; must be a CLI flag — ty ignores [tool.ty.rules] here.
-    ty check --error deprecated bmc-tui bmc-virt/harness
-    uv run pytest
+    {{ NIX_DEV }} ty check --error deprecated bmc-tui bmc-virt/harness
+    {{ NIX_DEV }} uv run pytest
 
 # Run nextest for a single crate with mem-box caps (auto-enters nix shell).
 test crate:
