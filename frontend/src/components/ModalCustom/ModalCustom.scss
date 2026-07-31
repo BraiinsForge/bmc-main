@@ -46,6 +46,9 @@
 .body {
     padding: 1rem;
 
+    // Carbon highlights the focused body, but we don't want that here.
+    outline: none !important;
+
     &.cancelBodyOverflowShadow {
         // Carbon now adds some kind of overflow-shadow mask
         // to the modal mody, but we don't want that here.

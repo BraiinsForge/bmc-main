@@ -261,7 +261,7 @@ impl Params {
 }
 /// Credential slots this widget declares, one module per slot.
 pub mod credentials {
-    ///Media server — a `generic-userpass` account. Optional.
+    ///Media server — a `generic-userpass` account. Required — the widget cannot work until an account is bound.
     ///
     ///Two-field type — exercises more than one placeholder per slot
     pub mod media {
@@ -277,14 +277,14 @@ pub mod credentials {
         ///Placeholder for this slot's `token` field.
         pub const TOKEN: &str = "{{ credential.pool.token }}";
     }
-    ///Backup pool account — a `braiins-pool` account. Optional.
+    ///Backup pool account — a `braiins-pool` account. Required — the widget cannot work until an account is bound.
     ///
     ///A second slot of one type — a widget may hold more than one account of it
     pub mod pool_backup {
         ///Placeholder for this slot's `token` field.
         pub const TOKEN: &str = "{{ credential.pool_backup.token }}";
     }
-    ///Weather service — a `generic-token` account. Optional.
+    ///Weather service — a `generic-token` account. Required — the widget cannot work until an account is bound.
     ///
     ///Single-token type, no egress pin
     pub mod weather {

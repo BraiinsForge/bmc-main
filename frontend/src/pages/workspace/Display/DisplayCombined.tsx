@@ -63,7 +63,6 @@ interface ManifestFormState {
     originalSize: pb.WidgetSize;
     isNewWidget: boolean;
     credentialBindings: Record<string, string>;
-    originalCredentialBindings: Record<string, string>;
 }
 
 interface Props {
@@ -114,7 +113,6 @@ const getInitialState = (): State => ({
         originalSize: pb.WidgetSize.UNSPECIFIED,
         isNewWidget: false,
         credentialBindings: {},
-        originalCredentialBindings: {},
     },
 });
 
@@ -385,7 +383,6 @@ class View extends Component<Props, State> {
                 originalSize: widget.size,
                 isNewWidget: false,
                 credentialBindings: { ...bindings },
-                originalCredentialBindings: { ...bindings },
             },
         });
     };
@@ -468,7 +465,6 @@ class View extends Component<Props, State> {
                     originalSize: pb.WidgetSize.UNSPECIFIED,
                     isNewWidget: true,
                     credentialBindings: {},
-                    originalCredentialBindings: {},
                 },
             });
             this.#loadSceneDebounced();
@@ -629,8 +625,7 @@ class View extends Component<Props, State> {
 
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
-        const { widgetID, position, originalSize, originalParams, originalCredentialBindings, isNewWidget, manifest } =
-            this.state.manifestForm;
+        const { widgetID, position, originalSize, originalParams, isNewWidget, manifest } = this.state.manifestForm;
         this.setState({ openDialogKind: null, addPosition: null });
         if (!widgetID) return;
         this.#livePreviewWidget.cancel();
@@ -658,7 +653,9 @@ class View extends Component<Props, State> {
                 position,
                 size: originalSize,
                 params: built.value,
-                credentialBindings: { bindings: originalCredentialBindings },
+                // Bindings are left out: only params are pushed live, so only params need reverting.
+                // Sending them back would re-validate a binding this dialog never touched,
+                // and cancelling out of a bad one would then be impossible.
             });
             this.#loadSceneDebounced();
         } catch ($) {

@@ -68,7 +68,6 @@ interface ManifestFormState {
     isNewScene: boolean;
     originalParams: FormifiedParams;
     credentialBindings: Record<string, string>;
-    originalCredentialBindings: Record<string, string>;
 }
 
 interface Props {
@@ -128,7 +127,6 @@ const getInitialState = (): State => ({
         isNewScene: false,
         originalParams: {},
         credentialBindings: {},
-        originalCredentialBindings: {},
     },
 });
 
@@ -340,7 +338,6 @@ class View extends Component<Props, State> {
                         isNewScene: true,
                         originalParams: {},
                         credentialBindings: {},
-                        originalCredentialBindings: {},
                     },
                 },
                 () => this.#previewOpen(sceneID),
@@ -367,7 +364,7 @@ class View extends Component<Props, State> {
     #openDialogCancel = async (): Promise<void> => {
         const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
-        const { sceneID, widgetID, manifest, originalParams, originalCredentialBindings, isNewScene } = manifestForm;
+        const { sceneID, widgetID, manifest, originalParams, isNewScene } = manifestForm;
         this.#liveUpdateWidget.cancel();
         this.abortPreview.abort();
         this.setState({ openDialogKind: null });
@@ -395,7 +392,9 @@ class View extends Component<Props, State> {
                 position: { row: 0, col: 0 },
                 size: pb.WidgetSize.FULL,
                 params: built.value,
-                credentialBindings: { bindings: originalCredentialBindings },
+                // Bindings are left out: only params are pushed live, so only params need reverting.
+                // Sending them back would re-validate a binding this dialog never touched,
+                // and cancelling out of a bad one would then be impossible.
             });
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -784,7 +783,6 @@ class View extends Component<Props, State> {
                             isNewScene: false,
                             originalParams: { ...params },
                             credentialBindings: { ...bindings },
-                            originalCredentialBindings: { ...bindings },
                         },
                     },
                     () => this.#previewOpen(id),

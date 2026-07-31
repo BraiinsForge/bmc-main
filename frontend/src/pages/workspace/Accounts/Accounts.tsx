@@ -18,13 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-import { Component } from 'react';
+import { Component, Fragment } from 'react';
 
 // Libs
 import { Helmet } from '@dr.pogodin/react-helmet';
 import { debounce } from 'es-toolkit';
 import { FormattedMessage, type IntlShape, useIntl } from 'react-intl';
-import { useNavigate, type NavigateFunction } from 'react-router';
 
 import { setState } from '@/lib/react';
 import { toast } from '@/lib/toast';
@@ -32,7 +31,6 @@ import type { FormPropsToValuesRec, iField } from '@/lib/form';
 
 // App
 import * as pb from '@/proto';
-import { URLS } from '@/constants';
 import { getID } from './const';
 import AppContext, { type AppContextType } from '@/context';
 
@@ -46,7 +44,6 @@ import css from './Accounts.scss';
 
 interface Props {
     intl: IntlShape;
-    navigate: NavigateFunction;
 }
 
 type Dialog = null | { mode: 'create' } | { mode: 'edit'; id: string; typeId: string };
@@ -202,34 +199,79 @@ class View extends Component<Props, State> {
         }
     };
 
+    // Names for the widgets an account is bound to,
+    // resolved from the scenes and the widget catalog.
+    //
+    // Best effort: a failed lookup costs the list, not the delete.
+    // An abort rethrows, since the caller must not then open a dialog.
+    private boundWidgetsAbort = pb.abort.get();
+    #boundWidgetNames = async (ids: string[]): Promise<string[]> => {
+        const bound = new Set<string>(ids);
+        const found: string[] = [];
+
+        try {
+            const opts = this.boundWidgetsAbort.replace();
+            const [{ scenes }, { widgets }] = await Promise.all([
+                pb.rpc.scenes.getScenes({}, opts),
+                pb.rpc.scenes.getAvailableWidgets({}, opts),
+            ]);
+            const names = new Map(widgets.map(w => [w.uid, w.name]));
+
+            for (const { kind } of scenes) {
+                const placed =
+                    kind.case === 'combined'
+                        ? kind.value.widgets
+                        : kind.case === 'fullscreen' && kind.value.widget
+                          ? [kind.value.widget]
+                          : [];
+
+                for (const widget of placed) {
+                    if (!bound.has(widget.id)) continue;
+                    const name = widget.config && names.get(widget.config.widgetUid);
+                    // A widget whose type is no longer installed resolves to no name;
+                    // dropping it would leave this list shorter than the count beside it.
+                    found.push(
+                        name ||
+                            this.props.intl.formatMessage(
+                                { defaultMessage: 'Unknown widget ({id})' },
+                                { id: widget.config?.widgetUid || widget.id },
+                            ),
+                    );
+                }
+            }
+        } catch ($) {
+            if (pb.abort.is($)) throw $;
+
+            // The count still stands, so the delete is still offered.
+            // Say why the list is missing, or its absence reads as "nothing affected".
+            let msg = pb.collectAllErrorsAsFormattedList($);
+            msg ||= this.props.intl.formatMessage({
+                defaultMessage: 'Could not list the widgets using this account.',
+            });
+            toast.error(msg);
+        }
+
+        return found;
+    };
+
     #delete = async (acc: pb.Account): Promise<void> => {
         const {
             intl: { formatMessage },
-            navigate,
         } = this.props;
         const { confirm } = this.context;
 
         const title = formatMessage({ defaultMessage: 'Delete Account' });
         const cancel = formatMessage({ defaultMessage: 'Cancel' });
         const connected = acc.connectedWidgets.length;
-
-        // A bound account can't be deleted until its widgets are freed.
+        // Deleting unbinds everywhere in one server-side step, so the dialog's job
+        // is to say what that will affect rather than to send the operator away.
+        let names: string[] = [];
         if (connected > 0) {
-            const answer = await confirm({
-                size: 'sm',
-                danger: false,
-                title,
-                cancelLabel: cancel,
-                confirmLabel: formatMessage({ defaultMessage: 'Go to display widgets' }),
-                message: (
-                    <FormattedMessage
-                        defaultMessage="This account is linked to <b>{count, plural, one {1 widget} other {# widgets}}</b>. To delete it, please remove or edit {count, plural, one {that widget} other {those widgets}}."
-                        values={{ b: ch => <strong children={ch} />, count: connected }}
-                    />
-                ),
-            });
-            if (answer) navigate(URLS.pages.display.list);
-            return;
+            try {
+                names = await this.#boundWidgetNames(acc.connectedWidgets);
+            } catch ($) {
+                if (pb.abort.is($)) return;
+            }
         }
 
         const confirmed = await confirm({
@@ -238,12 +280,31 @@ class View extends Component<Props, State> {
             title,
             cancelLabel: cancel,
             confirmLabel: title,
-            message: (
-                <FormattedMessage
-                    defaultMessage="This account isn’t used in any display widgets. You can safely delete {name} now."
-                    values={{ name: <strong children={acc.name} /> }}
-                />
-            ),
+            message:
+                connected > 0 ? (
+                    <Fragment>
+                        <FormattedMessage
+                            defaultMessage="Deleting {name} will unbind it from <b>{count, plural, one {1 widget} other {# widgets}}</b>, which will stop using it."
+                            values={{
+                                b: ch => <strong children={ch} />,
+                                name: <strong children={acc.name} />,
+                                count: connected,
+                            }}
+                        />
+                        {names.length > 0 ? (
+                            <ul
+                                className={css.affectedWidgets}
+                                // Indexed: two widgets of one type share a name.
+                                children={names.map((n, i) => <li key={`${n}-${i}`} children={n} />)}
+                            />
+                        ) : null}
+                    </Fragment>
+                ) : (
+                    <FormattedMessage
+                        defaultMessage="This account isn’t used in any display widgets. You can safely delete {name} now."
+                        values={{ name: <strong children={acc.name} /> }}
+                    />
+                ),
         });
         if (!confirmed) return;
 
@@ -366,7 +427,6 @@ class View extends Component<Props, State> {
 
 export default function ApiPage() {
     const intl = useIntl();
-    const navigate = useNavigate();
 
-    return <View intl={intl} navigate={navigate} />;
+    return <View intl={intl} />;
 }

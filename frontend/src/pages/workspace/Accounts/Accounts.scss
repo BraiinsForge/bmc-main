@@ -64,6 +64,13 @@
     gap: mini-units(2);
 }
 
+// The widgets a delete will unbind.
+.affectedWidgets {
+    margin-block-start: mini-units(2);
+    padding-inline-start: mini-units(3);
+    list-style: disc;
+}
+
 //
 // Main
 //

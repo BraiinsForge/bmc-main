@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,13 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-export * from './collection';
-export * from './generics';
-export * from './intl';
-export * from './net';
-export * from './number';
-export * from './proto';
-export * from './router';
-export * from './static';
-export * from './string';
-export * from './time';
+import type { ReactNode } from 'react';
+import { MemoryRouter } from 'react-router';
+
+/// Router context for a subtree under test: `useNavigate` throws without one,
+/// and the house `Link` calls it on every render.
+///
+/// Deliberately no router-*prop* mock beside it: this app reaches for the hooks,
+/// and a prop mock belongs with a `withRouter` HOC that this app does not have.
+export const withRouter = (ui: ReactNode) => <MemoryRouter>{ui}</MemoryRouter>;

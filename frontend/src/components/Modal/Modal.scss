@@ -51,6 +51,7 @@
 }
 
 .root :global {
+    // Carbon outlines the focused modal content, but we don't want that here.
     .cds--modal-content {
         outline: none !important;
     }

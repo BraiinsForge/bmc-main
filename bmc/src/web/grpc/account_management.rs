@@ -173,26 +173,30 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         }
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
-        // Lock order forces the scan ahead of the existence check.
-        // Both facts are gathered first,
-        // and only the reporting order is chosen.
-        let bound = bindings_by_account(self.config_handle.read().await.scenes());
-        let bound_count = bound.get(&id).map_or(0, Vec::len);
-        let exists = self.secret_store.read().await.accounts().contains_key(&id);
-        match decide_remove_account(exists, bound_count) {
-            RemoveAccountOutcome::NotFound => return Err(Status::not_found("Account not found")),
-            RemoveAccountOutcome::Bound(count) => {
-                let noun = if count == 1 { "widget" } else { "widgets" };
-                return Err(Status::failed_precondition(format!(
-                    "account is bound to {count} {noun}; unbind it there first"
-                )));
-            }
-            RemoveAccountOutcome::Remove => {}
+        if !self.secret_store.read().await.accounts().contains_key(&id) {
+            return Err(Status::not_found("Account not found"));
         }
 
+        // Unbind and delete under one config write lock,
+        // so a binding written in between cannot outlive the account it names.
+        // Both locks sit inside the task: a dropped `JoinHandle` does not cancel it,
+        // so a guard held out here would fall to a client hanging up mid-delete.
+        //
+        // Config before secrets, per the lock order.
+        // A failed delete leaves the account merely unbound, which a retry finishes;
+        // the reverse order would leave bindings pointing at an account that is gone.
         let join_handle = tokio::spawn({
+            let config_handle = self.config_handle.clone();
             let secret_store = self.secret_store.clone();
             async move {
+                let mut config = config_handle.write().await;
+                if unbind_account(config.scenes_mut(), &id) {
+                    config
+                        .save()
+                        .await
+                        .map_err(|e| Status::internal(format!("failed to save config: {e}")))?;
+                }
+
                 let mut store = secret_store.write().await;
                 let mut temp = store.clone();
                 temp.accounts_mut()
@@ -347,28 +351,18 @@ fn bindings_by_account(scenes: &IndexMap<SceneId, Scene>) -> HashMap<AccountId, 
     bound
 }
 
-/// What `RemoveAccount` does once both preconditions are known.
-#[derive(Debug, PartialEq, Eq)]
-enum RemoveAccountOutcome {
-    NotFound,
-    /// Refused; the count is widgets, not slots.
-    Bound(usize),
-    Remove,
-}
-
-/// A missing account outranks a stale binding,
-/// because `secrets.json` is hand-editable:
-/// a binding can name an account that is gone,
-/// and "unbind it first" would then send the operator
-/// chasing something that no longer exists.
-fn decide_remove_account(exists: bool, bound_count: usize) -> RemoveAccountOutcome {
-    if !exists {
-        RemoveAccountOutcome::NotFound
-    } else if bound_count > 0 {
-        RemoveAccountOutcome::Bound(bound_count)
-    } else {
-        RemoveAccountOutcome::Remove
+/// Drop every binding naming `id`, reporting whether anything changed
+/// so an unaffected config is not rewritten.
+fn unbind_account(scenes: &mut IndexMap<SceneId, Scene>, id: &AccountId) -> bool {
+    let mut unbound = false;
+    for scene in scenes.values_mut() {
+        for widget in scene.widgets.values_mut() {
+            let before = widget.credential_bindings.len();
+            widget.credential_bindings.retain(|_, bound| bound != id);
+            unbound |= widget.credential_bindings.len() != before;
+        }
     }
+    unbound
 }
 
 fn map_account_to_proto(account: Account, connected_widgets: Vec<String>) -> web::Account {
@@ -621,33 +615,155 @@ mod tests {
         assert_eq!(bound.get(&id), Some(&vec![first_id, second_id]));
     }
 
-    #[test]
-    fn an_existing_unbound_account_is_removed() {
-        assert_eq!(decide_remove_account(true, 0), RemoveAccountOutcome::Remove);
+    /// A service over a real config and secret store, seeded with `scenes`
+    /// and one `generic-token` account per id in `accounts`.
+    async fn seeded_service(
+        tmp: &tempfile::TempDir,
+        scenes: Vec<Scene>,
+        accounts: &[&str],
+    ) -> (
+        AccountManagementService,
+        Arc<RwLock<ConfigHandle>>,
+        Arc<RwLock<SecretStoreHandle>>,
+    ) {
+        let config_path = tmp.path().join("bmc-config.json");
+        let config_handle = Arc::new(RwLock::new(
+            ConfigHandle::init(
+                config_path.clone(),
+                50,
+                50,
+                50,
+                50,
+                bmc_platform::Product::Bmc100,
+            )
+            .await
+            .0,
+        ));
+        {
+            let mut config = config_handle.write().await;
+            for scene in scenes {
+                config.scenes_mut().insert(scene.id, scene);
+            }
+            config.save().await.expect("BUG: seed config must save");
+        }
+
+        let mut store = SecretStoreHandle::init(&config_path).await;
+        for raw in accounts {
+            let id = AccountId::from_str(raw).expect("BUG: non-empty id");
+            store.accounts_mut().insert(
+                id.clone(),
+                Account {
+                    id,
+                    type_id: "generic-token".to_owned(),
+                    name: (*raw).to_owned(),
+                    field_values: values(&[("token", "s3cr3t")]),
+                    created_at: chrono::Utc::now(),
+                },
+            );
+        }
+        store.save().await.expect("BUG: seed store must save");
+        let secret_store = Arc::new(RwLock::new(store));
+
+        let service =
+            AccountManagementService::new(Arc::clone(&config_handle), Arc::clone(&secret_store));
+        (service, config_handle, secret_store)
     }
 
-    #[test]
-    fn an_account_that_was_never_there_is_not_found() {
-        assert_eq!(
-            decide_remove_account(false, 0),
-            RemoveAccountOutcome::NotFound
+    #[tokio::test]
+    async fn removing_a_bound_account_unbinds_it_everywhere_then_deletes_it() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let (scene, _) = scene_binding(&["acct-1"]);
+        let (service, config_handle, secret_store) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+
+        service
+            .remove_account(Request::new("acct-1".to_owned()))
+            .await
+            .expect("BUG: a bound account must now cascade rather than refuse");
+
+        assert!(
+            bindings_by_account(config_handle.read().await.scenes()).is_empty(),
+            "a surviving binding would point at an account that is gone"
+        );
+        assert!(secret_store.read().await.accounts().is_empty());
+    }
+
+    #[tokio::test]
+    async fn removing_an_account_that_is_not_there_leaves_the_bindings_alone() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let (scene, _) = scene_binding(&["acct-1"]);
+        let (service, config_handle, _store) = seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+
+        let err = service
+            .remove_account(Request::new("acct-gone".to_owned()))
+            .await
+            .expect_err("BUG: an unknown account must not report success");
+
+        assert_eq!(err.code(), tonic::Code::NotFound);
+        assert!(
+            !bindings_by_account(config_handle.read().await.scenes()).is_empty(),
+            "a delete that found nothing must not cascade over the accounts still bound"
         );
     }
 
     #[test]
-    fn a_bound_account_is_refused_with_its_widget_count() {
-        assert_eq!(
-            decide_remove_account(true, 2),
-            RemoveAccountOutcome::Bound(2)
+    fn unbinding_clears_every_widget_that_named_the_account() {
+        let (first, _) = scene_binding(&["acct-1"]);
+        let (second, _) = scene_binding(&["acct-1"]);
+        let mut scenes = scenes_of(vec![first, second]);
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+
+        assert!(unbind_account(&mut scenes, &id));
+        assert!(
+            !bindings_by_account(&scenes).contains_key(&id),
+            "a cascade that leaves one binding behind would dangle it"
         );
     }
 
     #[test]
-    fn a_stale_binding_does_not_mask_a_missing_account() {
-        assert_eq!(
-            decide_remove_account(false, 1),
-            RemoveAccountOutcome::NotFound,
-            "a binding left over from a hand-edited store must not read as still bound"
+    fn unbinding_reaches_every_widget_of_one_scene() {
+        // The cascade walks scenes and then the widgets within each.
+        // Every other case puts one widget in a scene, so only a combined scene
+        // exercises the inner walk.
+        let (scene, _) = combined_scene(&[&["acct-1"], &["acct-1"], &["acct-2"]]);
+        let mut scenes = scenes_of(vec![scene]);
+        let doomed = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        let kept = AccountId::from_str("acct-2").expect("BUG: non-empty id");
+
+        assert!(unbind_account(&mut scenes, &doomed));
+
+        let remaining = bindings_by_account(&scenes);
+        assert!(
+            !remaining.contains_key(&doomed),
+            "stopping at the first widget of a scene would leave the second bound"
+        );
+        assert!(remaining.contains_key(&kept));
+    }
+
+    #[test]
+    fn unbinding_leaves_other_accounts_alone() {
+        let (scene, _) = scene_binding(&["acct-1", "acct-2"]);
+        let mut scenes = scenes_of(vec![scene]);
+        let doomed = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        let kept = AccountId::from_str("acct-2").expect("BUG: non-empty id");
+
+        assert!(unbind_account(&mut scenes, &doomed));
+        assert!(bindings_by_account(&scenes).contains_key(&kept));
+    }
+
+    #[test]
+    fn unbinding_an_unbound_account_rewrites_nothing() {
+        let (scene, _) = scene_binding(&["acct-1"]);
+        let mut scenes = scenes_of(vec![scene]);
+        let absent = AccountId::from_str("acct-9").expect("BUG: non-empty id");
+
+        assert!(
+            !unbind_account(&mut scenes, &absent),
+            "reporting a change would save a config nothing touched"
         );
     }
 

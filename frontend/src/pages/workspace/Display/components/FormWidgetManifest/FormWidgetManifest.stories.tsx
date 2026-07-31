@@ -149,12 +149,14 @@ const MANIFEST = pb.create(pb.WidgetManifestSchema, {
     ],
 });
 
-// `backup` is left unbound and `stale` points at a deleted account, so the
-// required-slot warning and the dangling-binding error are both on screen.
+// `backup` is left unbound and `stale` holds an account of the wrong type,
+// so the required-slot warning and the misbound-slot error are both on screen.
+// A binding whose account is *gone* would render the same, but never arrives:
+// the server drops it, where a type mismatch survives to reach the editor.
 const INITIAL_BINDINGS: Record<string, string> = {
     pool: 'acct-pool-1',
     api: 'acct-token',
-    stale: 'acct-deleted-long-ago',
+    stale: 'acct-pool-1',
 };
 
 function invalidErrors(): ParamsFormErrors {

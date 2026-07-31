@@ -1,4 +1,4 @@
-// Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,13 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-export * from './collection';
-export * from './generics';
-export * from './intl';
-export * from './net';
-export * from './number';
-export * from './proto';
-export * from './router';
-export * from './static';
-export * from './string';
-export * from './time';
+import { createIntl, type IntlShape } from 'react-intl';
+
+const noop = () => {};
+
+/// react-intl's own shape rather than a stub, so a spec sees what the app does:
+/// values substituted and rich-text chunks rendered as elements.
+// Carrying no messages leaves every lookup on its `defaultMessage`,
+// and the silenced handlers keep that fallback from warning on each one.
+export const fakeIntlProp: IntlShape = createIntl({ onWarn: noop, onError: noop, locale: 'en', messages: {} });

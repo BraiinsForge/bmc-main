@@ -119,11 +119,11 @@ later without a format change.
 
 ## Tolerated rather than repaired
 
-**A binding can outlive the account it names.** `RemoveAccount` refuses to delete a bound account, but `secrets.json` is
-a plain file an operator can edit, so config can legitimately reference an account that is gone. Resolution treats such
-a binding as no binding: the slot reads unbound, the widget degrades visibly, and a `warn!` names the widget, slot and
-missing id. `effective_bindings` is the single definition of that subset and the read path uses it too, so the editor
-never shows a slot bound to nothing.
+**A binding can outlive the account it names.** `RemoveAccount` cascade-unbinds a bound account's slots after a prompt,
+but `secrets.json` is a plain file an operator can edit, so config can legitimately reference an account that is gone.
+Resolution treats such a binding as no binding: the slot reads unbound, the widget degrades visibly, and a `warn!` names
+the widget, slot and missing id. `effective_bindings` is the single definition of that subset and the read path uses it
+too, so the editor never shows a slot bound to nothing.
 
 **Pruning at load would be actively harmful.** A store that failed to load, or a config restored from a backup, would
 have its bindings silently rewritten to empty — turning a recoverable mismatch into data loss.

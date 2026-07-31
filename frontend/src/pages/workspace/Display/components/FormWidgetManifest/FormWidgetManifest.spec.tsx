@@ -19,35 +19,28 @@
 // the grant above.
 
 import { beforeEach, describe, expect, test } from '@rstest/core';
-import { cleanup, render, fireEvent } from '@testing-library/react/pure';
+import { cleanup, render as renderBare, fireEvent } from '@testing-library/react/pure';
 import { IntlContext } from 'react-intl';
+
 import * as pb from '@/proto';
+import { URLS } from '@/constants';
+import { fakeIntlProp } from '@/mocks/intl';
+import { withRouter } from '@/mocks/router';
+
 import type { FormifiedValue, ParamsFormErrors } from '../../fn';
 import { paramDef } from '../../fn/test-helpers';
 import { FormWidgetManifest } from './FormWidgetManifest';
 
-if (typeof ResizeObserver === 'undefined') {
-    global.ResizeObserver = class ResizeObserver {
-        observe() {}
-        unobserve() {}
-        disconnect() {}
-    };
-}
-
 beforeEach(cleanup);
 
-const fakeIntl = {
-    formatMessage: ({ defaultMessage }: { defaultMessage?: string; id?: string }) => defaultMessage ?? '',
-    locale: 'en',
-    defaultLocale: 'en',
-    timeZone: undefined,
-    formats: {},
-    defaultFormats: {},
-    messages: {},
-    onError: () => {},
-} as unknown as ReturnType<typeof import('react-intl').useIntl>;
+const wrapped = (ui: ReactElement) => <IntlContext.Provider value={fakeIntlProp} children={withRouter(ui)} />;
 
-const wrap = (ui: ReactElement) => <IntlContext.Provider value={fakeIntl}>{ui}</IntlContext.Provider>;
+/// `rerender` is wrapped too: handed a bare tree it would drop the providers
+/// and remount, where a test watching a prop change needs the same tree updated.
+const render = (ui: ReactElement) => {
+    const result = renderBare(wrapped(ui));
+    return { ...result, rerender: (next: ReactElement) => result.rerender(wrapped(next)) };
+};
 
 describe('FormWidgetManifest', () => {
     const manifest = pb.create(pb.WidgetManifestSchema, {
@@ -59,18 +52,16 @@ describe('FormWidgetManifest', () => {
 
     test('renders per-field error from errors.fields[key]', () => {
         const { getByText } = render(
-            wrap(
-                <FormWidgetManifest
-                    isOpen
-                    onSave={() => {}}
-                    onCancel={() => {}}
-                    manifest={manifest}
-                    params={{ count: 'abc' }}
-                    errors={{ global: [], fields: { count: ['Not an integer'] } }}
-                    onParamChange={() => {}}
-                    timezones={[]}
-                />,
-            ),
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={manifest}
+                params={{ count: 'abc' }}
+                errors={{ global: [], fields: { count: ['Not an integer'] } }}
+                onParamChange={() => {}}
+                timezones={[]}
+            />,
         );
         expect(getByText('Not an integer')).toBeTruthy();
     });
@@ -78,20 +69,18 @@ describe('FormWidgetManifest', () => {
     test('onParamChange propagates numeric input as a string', () => {
         let captured: [string, FormifiedValue] | null = null;
         render(
-            wrap(
-                <FormWidgetManifest
-                    isOpen
-                    onSave={() => {}}
-                    onCancel={() => {}}
-                    manifest={manifest}
-                    params={{ count: '' }}
-                    errors={null}
-                    onParamChange={(k, v) => {
-                        captured = [k, v];
-                    }}
-                    timezones={[]}
-                />,
-            ),
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={manifest}
+                params={{ count: '' }}
+                errors={null}
+                onParamChange={(k, v) => {
+                    captured = [k, v];
+                }}
+                timezones={[]}
+            />,
         );
         const input = document.body.querySelector<HTMLInputElement>('input[type="number"]');
         expect(input).toBeTruthy();
@@ -144,24 +133,23 @@ describe('FormWidgetManifest credential slots', () => {
         required?: boolean;
         bindings?: Record<string, string>;
         errors?: ParamsFormErrors;
+        accounts?: pb.Account[];
         onChange?(slotKey: string, accountId: string): void;
     }) =>
         render(
-            wrap(
-                <FormWidgetManifest
-                    isOpen
-                    onSave={() => {}}
-                    onCancel={() => {}}
-                    manifest={slotManifest(props.required ?? false)}
-                    params={{}}
-                    errors={props.errors ?? null}
-                    onParamChange={() => {}}
-                    timezones={[]}
-                    accounts={ACCOUNTS}
-                    credentialBindings={props.bindings ?? {}}
-                    onCredentialBindingChange={props.onChange ?? (() => {})}
-                />,
-            ),
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={slotManifest(props.required ?? false)}
+                params={{}}
+                errors={props.errors ?? null}
+                onParamChange={() => {}}
+                timezones={[]}
+                accounts={props.accounts ?? ACCOUNTS}
+                credentialBindings={props.bindings ?? {}}
+                onCredentialBindingChange={props.onChange ?? (() => {})}
+            />,
         );
 
     test('offers only accounts whose type matches the slot, plus an unbind entry', () => {
@@ -219,26 +207,64 @@ describe('FormWidgetManifest credential slots', () => {
             />
         );
 
-        const { getByRole, rerender } = render(wrap(props({ pool: 'a1' })));
+        const { getByRole, rerender } = render(props({ pool: 'a1' }));
         expect(getByRole('combobox').textContent).toContain('Pool One');
 
-        rerender(wrap(props({ pool: 'a2' })));
+        rerender(props({ pool: 'a2' }));
         expect(getByRole('combobox').textContent).toContain('Pool Two');
 
-        rerender(wrap(props({})));
+        rerender(props({}));
         expect(getByRole('combobox').textContent).toContain('— None —');
     });
 
-    test('a binding whose account is gone reads as broken, not as unbound', () => {
-        const { queryByText, getByRole } = renderSlots({ bindings: { pool: 'deleted-account' } });
+    test('an account of the wrong type never satisfies a slot binding', () => {
+        // Reachable from a hand-edited config: `effective_bindings` drops a binding
+        // whose account is gone, but keeps one that is merely mistyped.
+        const { queryByText, getByRole } = renderSlots({ bindings: { pool: 't1' } });
 
-        expect(queryByText('Bound account is gone')).toBeTruthy();
-        expect(getByRole('combobox').textContent).not.toContain('deleted-account');
+        expect(queryByText('Takes a braiins-pool account — pick another, or clear it.')).toBeTruthy();
+        expect(getByRole('combobox').textContent).not.toContain('Some Token');
     });
 
-    test('an account of the wrong type never satisfies a slot binding', () => {
-        const { queryByText } = renderSlots({ bindings: { pool: 't1' } });
-        expect(queryByText('Bound account is gone')).toBeTruthy();
+    test('a mistyped binding blocks saving', () => {
+        // Unlike an unbound slot, which saves deliberately, this one the server refuses —
+        // so offering the click only earns a toast after the fact.
+        const { getByText } = renderSlots({ bindings: { pool: 't1' } });
+        const done = getByText('Done').closest('button');
+        expect(done?.disabled).toBe(true);
+    });
+
+    test('the stand-in for a mistyped binding is not dressed as an account', () => {
+        // It carries the bound id so it can be selected on its own,
+        // which is exactly what made it render with an icon and a blank created-at.
+        const { getByRole } = renderSlots({ bindings: { pool: 't1' } });
+        fireEvent.click(getByRole('combobox'));
+
+        const option = optionByName('— Invalid —');
+        if (!option) throw new Error('stand-in option not found');
+        expect(option.querySelector('[class*="accountElement"]')).toBeNull();
+    });
+
+    test('a mistyped binding can be cleared', () => {
+        // Without an item of its own it would share `— None —`,
+        // so picking that would re-select what is already showing and never fire,
+        // leaving an id that only fails on save.
+        let captured: [string, string] | null = null;
+        const { getByRole } = renderSlots({
+            bindings: { pool: 't1' },
+            onChange: (slotKey, accountId) => {
+                captured = [slotKey, accountId];
+            },
+        });
+        fireEvent.click(getByRole('combobox'));
+
+        expect(optionNames()).toContain('— Invalid —');
+
+        const option = optionByName('— None —');
+        if (!option) throw new Error('unbind option not found');
+        fireEvent.click(option);
+
+        expect(captured).toEqual(['pool', '']);
     });
 
     test('a server violation for the slot shows on its picker', () => {
@@ -254,9 +280,9 @@ describe('FormWidgetManifest credential slots', () => {
         const { queryByText } = renderSlots({ required: true });
 
         expect(queryByText('No account bound')).toBeTruthy();
-        // `fakeIntl` hands back the template unsubstituted, which is the part worth
-        // pinning: the sentence must not repeat a noun the slot label already carries.
-        expect(queryByText('Bind a {label} for this widget to work.')).toBeTruthy();
+        // Substituted, so the label lands in the sentence exactly once:
+        // the wording must not repeat a noun the slot label already carries.
+        expect(queryByText('Bind a Pool Account for this widget to work.')).toBeTruthy();
     });
 
     test('drops the warning once a required slot is bound', () => {
@@ -268,5 +294,62 @@ describe('FormWidgetManifest credential slots', () => {
         const { getByText } = renderSlots({ required: true });
         const done = getByText('Done').closest('button');
         expect(done?.disabled).toBe(false);
+    });
+
+    test('points at the accounts page when no account fits the slot', () => {
+        const { queryByText, getByText } = renderSlots({ accounts: [account('t1', 'Some Token', 'generic-token')] });
+
+        expect(queryByText('No matching account')).toBeTruthy();
+        expect(getByText('add one in Accounts').closest('a')?.getAttribute('href')).toBe(URLS.pages.accounts);
+    });
+
+    test('the empty state outranks the unbound-required warning', () => {
+        // Both apply at once on a fresh device; "bind one" is useless advice
+        // while there is nothing to bind.
+        const { queryByText } = renderSlots({ required: true, accounts: [] });
+
+        expect(queryByText('No matching account')).toBeTruthy();
+        expect(queryByText('No account bound')).toBeNull();
+    });
+
+    test('two slots of one type say it once, and the second stays quiet', () => {
+        const twoPools = pb.create(pb.WidgetManifestSchema, {
+            uid: 'w',
+            name: 'W',
+            supportedSizes: [pb.WidgetSize.FULL],
+            credentials: [
+                pb.create(pb.CredentialSlotDefinitionSchema, {
+                    key: 'pool',
+                    typeId: 'braiins-pool',
+                    label: 'Pool Account',
+                    required: true,
+                }),
+                pb.create(pb.CredentialSlotDefinitionSchema, {
+                    key: 'pool_backup',
+                    typeId: 'braiins-pool',
+                    label: 'Backup Pool Account',
+                    required: true,
+                }),
+            ],
+        });
+        const { queryAllByText } = render(
+            <FormWidgetManifest
+                isOpen
+                onSave={() => {}}
+                onCancel={() => {}}
+                manifest={twoPools}
+                params={{}}
+                errors={null}
+                onParamChange={() => {}}
+                timezones={[]}
+                accounts={[]}
+                credentialBindings={{}}
+                onCredentialBindingChange={() => {}}
+            />,
+        );
+
+        expect(queryAllByText('No matching account')).toHaveLength(1);
+        // Nor may the second fall back to "bind one" — there is still nothing to bind.
+        expect(queryAllByText('No account bound')).toHaveLength(0);
     });
 });

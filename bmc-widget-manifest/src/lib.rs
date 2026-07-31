@@ -60,6 +60,8 @@ pub type CredentialKey = ParamKey;
 const MAX_NAME_LENGTH: usize = 50;
 const MAX_SUBNAME_LENGTH: usize = 30;
 const MAX_DESCRIPTION_LENGTH: usize = 200;
+/// Shorter than the widget's own name: a slot label sits inline beside a picker.
+const MAX_CREDENTIAL_LABEL_LENGTH: usize = 40;
 const MAX_CONFIG_HELP_LENGTH: usize = 2_000;
 
 /// Errors produced by [`Manifest::from_str`] and the structural / semantic
@@ -100,6 +102,14 @@ pub enum ManifestError {
     /// The `description` field exceeded the declared length cap.
     #[error("description exceeds maximum length of {max} characters")]
     DescriptionTooLong { max: usize },
+
+    /// A credential slot's `label` exceeded the declared length cap.
+    #[error("credential slot {slot:?}: label exceeds maximum length of {max} characters")]
+    CredentialLabelTooLong { slot: String, max: usize },
+
+    /// A credential slot's `description` exceeded the declared length cap.
+    #[error("credential slot {slot:?}: description exceeds maximum length of {max} characters")]
+    CredentialDescriptionTooLong { slot: String, max: usize },
 
     /// The `config_help` field exceeded the declared length cap.
     #[error("config_help exceeds maximum length of {max} characters")]
@@ -181,18 +191,32 @@ where
 /// sees it in the picker.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct CredentialSlot {
-    /// Id of the credential type this slot accepts, from the firmware catalog
-    /// ([`credential::builtins`]).
+    /// Id of the credential type this slot accepts,
+    /// from the firmware catalog ([`credential::builtins`]).
     #[serde(rename = "type")]
     pub type_id: String,
-    /// Operator-facing slot label, shown beside the account picker. Must not be blank.
+    /// Operator-facing slot label, shown beside the account picker.
+    /// Must not be blank, and is capped like the widget's own name
+    /// — it reaches the editor's picker unabridged.
+    #[schemars(length(max = 40))]
     pub label: String,
-    /// Help text shown under the picker.
+    /// Help text shown under the picker, for a slot whose label leaves something unsaid.
+    /// Optional on purpose: requiring it only buys descriptions that restate the label.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(length(max = 200))]
     pub description: Option<String>,
     /// Whether the widget cannot work without this slot bound.
-    #[serde(default, skip_serializing_if = "core::ops::Not::not")]
+    ///
+    /// Defaults to true: an omitted key means the author did not consider it,
+    /// and the cautious reading warns an operator about an unbound slot
+    /// rather than staying silent.
+    #[serde(default = "required_by_default")]
     pub required: bool,
+}
+
+/// `serde(default)` would give `false`, inverting the documented default.
+fn required_by_default() -> bool {
+    true
 }
 
 impl CredentialSlot {
@@ -200,6 +224,24 @@ impl CredentialSlot {
         if self.label.trim().is_empty() {
             return Err(ManifestError::EmptyCredentialLabel {
                 slot: slot.to_owned(),
+            });
+        }
+
+        if self.label.len() > MAX_CREDENTIAL_LABEL_LENGTH {
+            return Err(ManifestError::CredentialLabelTooLong {
+                slot: slot.to_owned(),
+                max: MAX_CREDENTIAL_LABEL_LENGTH,
+            });
+        }
+
+        if self
+            .description
+            .as_ref()
+            .is_some_and(|d| d.len() > MAX_DESCRIPTION_LENGTH)
+        {
+            return Err(ManifestError::CredentialDescriptionTooLong {
+                slot: slot.to_owned(),
+                max: MAX_DESCRIPTION_LENGTH,
             });
         }
 
@@ -573,7 +615,8 @@ mod tests {
                 },
                 "media": {
                     "type": "generic-userpass",
-                    "label": "Media server"
+                    "label": "Media server",
+                    "required": false
                 }
             }
         }"#
@@ -799,7 +842,7 @@ mod tests {
                 ("weather", "generic-token", true),
                 ("media", "generic-userpass", false),
             ],
-            "credential slots keep manifest order, and `required` defaults to false"
+            "credential slots keep manifest order; an omitted `required` reads true, an explicit false is kept"
         );
 
         assert_eq!(
@@ -1377,6 +1420,43 @@ mod tests {
             err.to_string().contains("label"),
             "error must mention the label: {err}"
         );
+    }
+
+    #[test]
+    fn manifest_rejects_an_over_long_credential_label() {
+        let label = "l".repeat(MAX_CREDENTIAL_LABEL_LENGTH + 1);
+        let json = manifest_with_credentials(&format!(
+            r#"{{"pool": {{"type": "braiins-pool", "label": "{label}"}}}}"#
+        ));
+        let err = Manifest::from_str(&json).expect_err("an over-long label must fail");
+        assert!(
+            err.to_string().contains("pool") && err.to_string().contains("label"),
+            "error must name the slot and the field: {err}"
+        );
+    }
+
+    #[test]
+    fn manifest_rejects_an_over_long_credential_description() {
+        let description = "d".repeat(MAX_DESCRIPTION_LENGTH + 1);
+        let json = manifest_with_credentials(&format!(
+            r#"{{"pool": {{"type": "braiins-pool", "label": "Pool", "description": "{description}"}}}}"#
+        ));
+        let err = Manifest::from_str(&json).expect_err("an over-long description must fail");
+        assert!(
+            err.to_string().contains("description"),
+            "error must mention the description: {err}"
+        );
+    }
+
+    #[test]
+    fn a_slot_that_omits_required_is_required() {
+        // The opposite default would drop the editor's unbound warning
+        // for exactly the manifests whose author never considered the field.
+        let json =
+            manifest_with_credentials(r#"{"pool": {"type": "braiins-pool", "label": "Pool"}}"#);
+        let manifest = Manifest::from_str(&json).expect("BUG: should parse");
+
+        assert!(manifest.credentials["pool"].required);
     }
 
     #[test]

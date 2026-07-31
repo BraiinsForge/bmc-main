@@ -135,22 +135,25 @@
       "type": "object",
       "properties": {
         "description": {
-          "description": "Help text shown under the picker.",
+          "description": "Help text shown under the picker, for a slot whose label leaves something unsaid.\nOptional on purpose: requiring it only buys descriptions that restate the label.",
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "maxLength": 200
         },
         "label": {
-          "description": "Operator-facing slot label, shown beside the account picker. Must not be blank.",
-          "type": "string"
+          "description": "Operator-facing slot label, shown beside the account picker.\nMust not be blank, and is capped like the widget's own name\n— it reaches the editor's picker unabridged.",
+          "type": "string",
+          "maxLength": 40
         },
         "required": {
-          "description": "Whether the widget cannot work without this slot bound.",
-          "type": "boolean"
+          "description": "Whether the widget cannot work without this slot bound.\n\nDefaults to true: an omitted key means the author did not consider it,\nand the cautious reading warns an operator about an unbound slot\nrather than staying silent.",
+          "type": "boolean",
+          "default": true
         },
         "type": {
-          "description": "Id of the credential type this slot accepts, from the firmware catalog\n([`credential::builtins`]).",
+          "description": "Id of the credential type this slot accepts,\nfrom the firmware catalog ([`credential::builtins`]).",
           "type": "string"
         }
       },

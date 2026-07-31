@@ -19,15 +19,16 @@
 // the grant above.
 
 import { Fragment } from 'react';
-import { useIntl } from 'react-intl';
+import { FormattedMessage, useIntl } from 'react-intl';
 import * as pb from '@/proto';
+import { URLS } from '@/constants';
 import { Form, hasFormErrors } from '@/lib/form';
 import { getID } from '../const';
 import type { FormifiedParams, FormifiedValue, ParamsFormErrors } from '../../fn';
 
 import { ParamField } from '@/components/ParamField';
 import { BoundDropdown, CheckYourScreenForPreview, WidgetSizeSelector } from '../shared';
-import { AccountIcon, Datetime, ModalCustom, Button, InlineNotification, Markdown } from '@/components';
+import { AccountIcon, Datetime, ModalCustom, Button, InlineNotification, Link, Markdown } from '@/components';
 import { Calendar as IconCalendar } from '@carbon/react/icons';
 import { WidgetName } from '../WidgetName';
 import css from '../shared.scss';
@@ -60,10 +61,19 @@ export interface FormWidgetManifestProps extends WidgetManifestFormProps {
 // The dropdown drops a null selection, so "no account" has to be a real item.
 const UNBOUND = pb.create(pb.AccountSchema, { id: '', name: '' });
 
+// A binding whose account is *gone* never arrives — `effective_bindings` drops it server-side.
+// One whose account is the wrong type does: existence is all that filter checks,
+// and a hand-edited config can mismatch a slot.
+function isMisbound(slot: pb.CredentialSlotDefinition, accounts: pb.Account[], boundAccountId: string) {
+    return !!boundAccountId && !accounts.some(a => a.id === boundAccountId && a.typeId === slot.typeId);
+}
+
 // Every option in one dropdown is filtered to the slot's type, so they share its artwork.
-function accountOption(icon?: pb.Icon) {
+// `plainId` opts one out: the stand-in for a misbound slot needs an id to be selectable,
+// and rendering it like a real account is what made it read as one.
+function accountOption(icon: pb.Icon | undefined, plainId?: string) {
     return function AccountOption(account: pb.Account) {
-        if (!account.id) return <span children={account.name} />;
+        if (!account.id || account.id === plainId) return <span children={account.name} />;
 
         return (
             <div className={css.accountElement}>
@@ -87,20 +97,35 @@ interface CredentialSlotFieldProps {
     boundAccountId: string;
     error?: string;
     onChange(slotKey: string, accountId: string): void;
+    /// False for a later slot of a type already covered,
+    // so a widget declaring two of one type does not say
+    // the same thing about it twice.
+    firstOfType: boolean;
 }
 
 function CredentialSlotField(props: CredentialSlotFieldProps) {
-    const { slot, accounts, credentialTypes, boundAccountId, error, onChange } = props;
+    const { slot, accounts, credentialTypes, boundAccountId, error, onChange, firstOfType } = props;
     const { formatMessage } = useIntl();
 
     const none = { ...UNBOUND, name: formatMessage({ defaultMessage: '— None —' }) };
     const eligible = accounts.filter(a => a.typeId === slot.typeId);
     const icon = credentialTypes.get(slot.typeId)?.icon;
-    const items = [none, ...eligible];
+    const typeName = credentialTypes.get(slot.typeId)?.name ?? slot.typeId;
 
-    // A deleted account must read as broken, not as "— None —": the id still saves.
     const bound = boundAccountId ? eligible.find(a => a.id === boundAccountId) : undefined;
-    const isDangling = !!boundAccountId && !bound;
+    const isMismatched = isMisbound(slot, accounts, boundAccountId);
+
+    // The mismatched id needs an item of its own, or selecting `— None —`
+    // would re-select the object already showing, onChange would never fire,
+    // and the stale id would save — which the server then rejects.
+    const mismatched = { ...UNBOUND, id: boundAccountId, name: formatMessage({ defaultMessage: '— Invalid —' }) };
+    const items = isMismatched ? [none, mismatched, ...eligible] : [none, ...eligible];
+
+    // On the control rather than in a notification below it:
+    // the value shown *is* the error, and saving stays blocked until it is fixed.
+    const mismatchError = isMismatched
+        ? formatMessage({ defaultMessage: 'Takes a {type} account — pick another, or clear it.' }, { type: typeName })
+        : undefined;
 
     return (
         <Fragment>
@@ -114,25 +139,33 @@ function CredentialSlotField(props: CredentialSlotFieldProps) {
                 placeholderText={none.name}
                 helperText={slot.description}
                 items={items}
-                value={bound ?? none}
-                error={error}
+                value={bound ?? (isMismatched ? mismatched : none)}
+                error={error ?? mismatchError}
                 onChange={account => onChange(slot.key, account.id)}
                 itemToString={a => a?.name ?? ''}
-                itemToElement={accountOption(icon)}
+                itemToElement={accountOption(icon, isMismatched ? boundAccountId : undefined)}
             />
 
-            {isDangling ? (
+            {eligible.length === 0 && firstOfType ? (
+                // Outranks the required-but-unbound warning: telling the operator
+                // to bind one is no use while the only control is an empty dropdown.
                 <InlineNotification
-                    kind="error"
+                    kind="info"
                     theme="inverse"
                     stretch
                     hideCloseButton
-                    title={formatMessage({ defaultMessage: 'Bound account is gone' })}
-                    children={formatMessage({
-                        defaultMessage: 'The account this slot pointed at no longer exists. Pick a replacement.',
-                    })}
+                    title={formatMessage({ defaultMessage: 'No matching account' })}
+                    children={
+                        <FormattedMessage
+                            defaultMessage="No {type} account exists yet — <a>add one in Accounts</a>."
+                            values={{
+                                type: typeName,
+                                a: ch => <Link href={URLS.pages.accounts} children={ch} />,
+                            }}
+                        />
+                    }
                 />
-            ) : slot.required && !boundAccountId ? (
+            ) : slot.required && !boundAccountId && eligible.length > 0 ? (
                 <InlineNotification
                     kind="warning"
                     theme="inverse"
@@ -183,7 +216,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
             ) : null}
 
             {onCredentialBindingChange
-                ? manifest.credentials.map(slot => (
+                ? manifest.credentials.map((slot, i) => (
                       <CredentialSlotField
                           key={slot.key}
                           slot={slot}
@@ -192,6 +225,7 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
                           boundAccountId={credentialBindings[slot.key] ?? ''}
                           error={errors?.credentials?.[slot.key]?.[0]}
                           onChange={onCredentialBindingChange}
+                          firstOfType={manifest.credentials.findIndex(s => s.typeId === slot.typeId) === i}
                       />
                   ))
                 : null}
@@ -226,10 +260,18 @@ export function WidgetManifestForm(props: WidgetManifestFormProps) {
 
 export function FormWidgetManifest(props: FormWidgetManifestProps) {
     const { isOpen, onSave, onCancel, ...formProps } = props;
-    const { manifest, errors } = formProps;
+    const { manifest, errors, accounts = [], credentialBindings = {}, onCredentialBindingChange } = formProps;
     const { formatMessage } = useIntl();
 
     if (!manifest) return null;
+
+    // An unbound slot still saves, deliberately — the operator may configure the rest
+    // and go find the credentials.
+    // A binding that fits no account is wrong rather than incomplete;
+    // the server refuses it, so offering the click only earns a toast after the fact.
+    const misbound =
+        !!onCredentialBindingChange &&
+        manifest.credentials.some(slot => isMisbound(slot, accounts, credentialBindings[slot.key] ?? ''));
 
     return (
         <ModalCustom
@@ -248,7 +290,7 @@ export function FormWidgetManifest(props: FormWidgetManifestProps) {
                     kind="primary"
                     children={formatMessage({ defaultMessage: 'Done' })}
                     onClick={onSave}
-                    disabled={hasFormErrors(errors ?? undefined)}
+                    disabled={hasFormErrors(errors ?? undefined) || misbound}
                 />
             }
         />
