@@ -236,9 +236,16 @@ header.cds--header {
     padding-inline: 0 1.5rem;
 }
 
-// Custom scrollbars in menus
+// Custom scrollbars in menus, and an edge for the open overlay.
 .cds--list-box__menu {
     @include interaction.scrollbar;
+
+    // Outline, not border: it draws outside the box, so it neither
+    // changes the scroll geometry nor gets painted over by item rows.
+    // Shadows also improve contrast when overlaying content
+    // like text fields that would otherwise visually collide.
+    outline: 1px solid $border-subtle;
+    box-shadow: shadows.$elevation-16dp;
 }
 
 .cds--overflow-menu--divider {
