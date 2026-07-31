@@ -26,7 +26,7 @@ use crate::types::{
     StrategySummary, UpgradePlan,
 };
 use crate::{activation, gc, manifest, profile, store};
-use tracing::warn;
+use tracing::{debug, warn};
 
 /// Errors that can occur during an install/upgrade operation.
 #[derive(Debug, thiserror::Error)]
@@ -451,7 +451,8 @@ async fn run_gc(
     // it. The freshly built generation is the latest and is already
     // retained by `cleanup_generations`.
     let keep_extra: Vec<usize> = previous_generation.into_iter().collect();
-    gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
+    let removed = gc::cleanup_generations(profile_dir, gc_config, &keep_extra)?;
+    debug!(removed, "Removed old profile entries after activation");
     let gc_progress = progress.map(UpgradeCollectGarbageProgress);
     store
         .collect_garbage(

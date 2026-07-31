@@ -27,7 +27,10 @@ use tracing::{info, warn};
 use crate::store::CommandRunner;
 use crate::types::GcConfig;
 
-/// Errors that can occur when cleaning up generations.
+/// Marker file written by the superseded interval-driven design. Nothing
+/// writes it any more; cleanup removes it wherever it is still found.
+pub const LAST_GC_MARKER: &str = ".last-gc";
+
 #[derive(Debug, thiserror::Error)]
 pub enum CleanupGenerationsError {
     #[error("generation cleanup failed: {0}")]
@@ -37,12 +40,27 @@ pub enum CleanupGenerationsError {
          first failure was {first_entry}: {first_error}"
     )]
     RemovalFailures {
+        /// Entries removed before the run gave up. They are already gone, so
+        /// no later cleanup can rediscover them as a reason to sweep.
+        removed: usize,
         attempted: usize,
         failed: usize,
         first_entry: String,
         #[source]
         first_error: std::io::Error,
     },
+}
+
+impl CleanupGenerationsError {
+    /// Entries this failed cleanup nonetheless removed.
+    #[must_use]
+    pub fn removed(&self) -> usize {
+        match self {
+            // Enumeration and metadata failures precede every removal.
+            Self::Cleanup(_) => 0,
+            Self::RemovalFailures { removed, .. } => *removed,
+        }
+    }
 }
 
 /// Errors that can occur when running `nix-collect-garbage`.
@@ -272,54 +290,26 @@ fn next_generation_numbers(profile_dir: &Path) -> Result<Vec<usize>, std::io::Er
     Ok(numbers)
 }
 
-/// Remove old profile generations according to GC policy.
+/// Drop the marker file left behind by the superseded interval-driven design.
 ///
-/// Keeps:
-/// - the current generation (pointed to by the `current` symlink);
-/// - next-boot generations (pointed to by deferred-activation markers);
-/// - the latest numbered generation, even when it is not current yet
-///   (preserves generations built for deferred activation);
-/// - protected generations from `gc_config.protected_generations`;
-/// - the most recent `gc_config.keep_generations` generations by number;
-/// - generations whose directory mtime is newer than `keep_days` days when
-///   `gc_config.keep_days` is `Some`; `None` disables age-based retention;
-/// - any generation listed in `keep_extra` (transient per-call protection,
-///   e.g. the previous generation the orchestration layer still needs to
-///   read after activation).
-///
-/// Removes everything else by deleting the generation directory, along
-/// with any leftover `*.tmp` entries orphaned by a failed build, staging,
-/// or activation swap. Returns `Ok(())` when `profile_dir` does not exist.
-pub fn cleanup_generations(
+/// It roots nothing, so failing to remove it is not a reason to fail the
+/// cleanup that found it.
+fn remove_stale_gc_marker(profile_dir: &Path) {
+    let path = profile_dir.join(LAST_GC_MARKER);
+    info!(path = %path.display(), "removing stale gc marker");
+    if let Err(e) = std::fs::remove_file(&path) {
+        warn!(path = %path.display(), "failed to remove stale gc marker: {e}");
+    }
+}
+
+/// Generation numbers [`cleanup_generations`] must not remove, per the
+/// retention rules documented there. `generations` is sorted ascending.
+fn generations_to_keep(
     profile_dir: &Path,
     gc_config: &GcConfig,
     keep_extra: &[usize],
-) -> Result<(), CleanupGenerationsError> {
-    if !profile_dir.exists() {
-        return Ok(());
-    }
-
-    let entries = std::fs::read_dir(profile_dir).map_err(CleanupGenerationsError::Cleanup)?;
-
-    let mut generations: Vec<usize> = Vec::new();
-    let mut leftover_tmp: Vec<String> = Vec::new();
-    for entry in entries {
-        let entry = entry.map_err(CleanupGenerationsError::Cleanup)?;
-        let name = entry.file_name();
-        let name = name.to_string_lossy();
-        if let Some(num) = crate::profile::parse_generation_link_name(&name) {
-            generations.push(num);
-        } else if is_leftover_tmp_name(&name) {
-            leftover_tmp.push(name.into_owned());
-        }
-    }
-
-    if generations.is_empty() && leftover_tmp.is_empty() {
-        return Ok(());
-    }
-
-    generations.sort_unstable();
-
+    generations: &[usize],
+) -> Result<HashSet<usize>, CleanupGenerationsError> {
     let mut keep: HashSet<usize> = HashSet::new();
 
     if let Some(current) =
@@ -350,7 +340,7 @@ pub fn cleanup_generations(
         let cutoff =
             SystemTime::now() - std::time::Duration::from_secs((days as u64) * 24 * 60 * 60);
 
-        for &gen_num in &generations {
+        for &gen_num in generations {
             let gen_dir = profile_dir.join(crate::profile::generation_link_name(gen_num));
             let metadata = std::fs::metadata(&gen_dir).map_err(CleanupGenerationsError::Cleanup)?;
             let mtime = metadata
@@ -362,6 +352,73 @@ pub fn cleanup_generations(
         }
     }
 
+    Ok(keep)
+}
+
+/// Remove old profile generations according to GC policy.
+///
+/// Keeps:
+/// - the current generation (pointed to by the `current` symlink);
+/// - next-boot generations (pointed to by deferred-activation markers);
+/// - the latest numbered generation, even when it is not current yet
+///   (preserves generations built for deferred activation);
+/// - protected generations from `gc_config.protected_generations`;
+/// - the most recent `gc_config.keep_generations` generations by number;
+/// - generations whose directory mtime is newer than `keep_days` days when
+///   `gc_config.keep_days` is `Some`; `None` disables age-based retention;
+/// - any generation listed in `keep_extra` (transient per-call protection,
+///   e.g. the previous generation the orchestration layer still needs to
+///   read after activation).
+///
+/// Removes everything else by deleting the generation directory, along
+/// with any leftover `*.tmp` entries orphaned by a failed build, staging,
+/// or activation swap.
+///
+/// Returns the number of removed entries — generation directories plus
+/// leftover `*.tmp` entries — since either can hold the last reference to a
+/// store path. Returns `Ok(0)` when `profile_dir` does not exist.
+pub fn cleanup_generations(
+    profile_dir: &Path,
+    gc_config: &GcConfig,
+    keep_extra: &[usize],
+) -> Result<usize, CleanupGenerationsError> {
+    if !profile_dir.exists() {
+        return Ok(0);
+    }
+
+    let entries = std::fs::read_dir(profile_dir).map_err(CleanupGenerationsError::Cleanup)?;
+
+    let mut generations: Vec<usize> = Vec::new();
+    let mut leftover_tmp: Vec<String> = Vec::new();
+    let mut stale_marker = false;
+    for entry in entries {
+        let entry = entry.map_err(CleanupGenerationsError::Cleanup)?;
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if let Some(num) = crate::profile::parse_generation_link_name(&name) {
+            generations.push(num);
+        } else if is_leftover_tmp_name(&name) {
+            leftover_tmp.push(name.into_owned());
+        } else if name == LAST_GC_MARKER {
+            stale_marker = true;
+        }
+    }
+
+    // Left behind by the superseded interval-driven design. It roots nothing,
+    // so its removal is not a reason to sweep, and failing to remove it is not
+    // a reason to fail the cleanup.
+    if stale_marker {
+        remove_stale_gc_marker(profile_dir);
+    }
+
+    if generations.is_empty() && leftover_tmp.is_empty() {
+        return Ok(0);
+    }
+
+    generations.sort_unstable();
+
+    let keep = generations_to_keep(profile_dir, gc_config, keep_extra, &generations)?;
+
     // Remove generations not in keep set. Track failures so the caller can
     // detect partial cleanup; do not abort on the first failure (a
     // permissions glitch on one generation must not leave later
@@ -369,6 +426,7 @@ pub fn cleanup_generations(
     let mut attempted: usize = 0;
     let mut first_failure: Option<(String, std::io::Error)> = None;
     let mut failed: usize = 0;
+    let mut removed: usize = 0;
     for &gen_num in &generations {
         if keep.contains(&gen_num) {
             continue;
@@ -378,15 +436,18 @@ pub fn cleanup_generations(
         let gen_name = crate::profile::generation_link_name(gen_num);
         let gen_dir = profile_dir.join(&gen_name);
         info!(generation = gen_num, path = %gen_dir.display(), "removing old generation");
-        if let Err(e) = std::fs::remove_dir_all(&gen_dir) {
-            warn!(
-                generation = gen_num,
-                path = %gen_dir.display(),
-                "failed to remove generation: {e}"
-            );
-            failed += 1;
-            if first_failure.is_none() {
-                first_failure = Some((gen_name, e));
+        match std::fs::remove_dir_all(&gen_dir) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                warn!(
+                    generation = gen_num,
+                    path = %gen_dir.display(),
+                    "failed to remove generation: {e}"
+                );
+                failed += 1;
+                if first_failure.is_none() {
+                    first_failure = Some((gen_name, e));
+                }
             }
         }
     }
@@ -399,17 +460,21 @@ pub fn cleanup_generations(
         attempted += 1;
         let path = profile_dir.join(name);
         info!(path = %path.display(), "removing leftover temp entry");
-        if let Err(e) = remove_leftover_tmp(&path) {
-            warn!(path = %path.display(), "failed to remove leftover temp entry: {e}");
-            failed += 1;
-            if first_failure.is_none() {
-                first_failure = Some((name.clone(), e));
+        match remove_leftover_tmp(&path) {
+            Ok(()) => removed += 1,
+            Err(e) => {
+                warn!(path = %path.display(), "failed to remove leftover temp entry: {e}");
+                failed += 1;
+                if first_failure.is_none() {
+                    first_failure = Some((name.clone(), e));
+                }
             }
         }
     }
 
     if let Some((first_entry, first_error)) = first_failure {
         return Err(CleanupGenerationsError::RemovalFailures {
+            removed,
             attempted,
             failed,
             first_entry,
@@ -417,7 +482,7 @@ pub fn cleanup_generations(
         });
     }
 
-    Ok(())
+    Ok(removed)
 }
 
 /// Run `nix-collect-garbage` to remove unreachable store paths.
@@ -484,6 +549,11 @@ pub async fn collect_garbage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn default_gc_config_keeps_two_generations() {
+        assert_eq!(GcConfig::default().keep_generations, 2);
+    }
 
     fn create_generation(profile_dir: &Path, number: usize) {
         let gen_dir = profile_dir.join(format!("{number}-link"));
@@ -1191,5 +1261,112 @@ mod tests {
             .await
             .expect_err("BUG: non-zero exit must surface an error");
         assert!(matches!(err, CollectGarbageError::NixCommand(_)));
+    }
+
+    #[test]
+    fn cleanup_generations_counts_removed_generations_and_tmp_entries() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        // Generations 1..=4 with `current` on 4; keep_generations = 2 keeps 3 and 4.
+        for number in 1..=4 {
+            create_generation(&profile_dir, number);
+        }
+        set_current(&profile_dir, 4);
+        std::fs::create_dir_all(profile_dir.join("5-link.tmp")).expect("BUG: create leftover tmp");
+
+        let config = GcConfig {
+            keep_generations: 2,
+            ..GcConfig::default()
+        };
+
+        let removed =
+            cleanup_generations(&profile_dir, &config, &[]).expect("BUG: cleanup succeeds");
+
+        // Generations 1 and 2, plus the leftover tmp entry.
+        assert_eq!(removed, 3);
+        assert!(!generation_exists(&profile_dir, 1));
+        assert!(!profile_dir.join("5-link.tmp").exists());
+    }
+
+    #[test]
+    fn cleanup_generations_reports_zero_when_nothing_is_removable() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+
+        let removed = cleanup_generations(&profile_dir, &GcConfig::default(), &[])
+            .expect("BUG: cleanup succeeds");
+
+        assert_eq!(removed, 0);
+    }
+
+    #[test]
+    fn cleanup_generations_removes_a_stale_last_gc_marker_without_counting_it() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+        let marker_path = profile_dir.join(LAST_GC_MARKER);
+        std::fs::write(&marker_path, b"").expect("BUG: write marker");
+
+        let removed = cleanup_generations(&profile_dir, &GcConfig::default(), &[])
+            .expect("BUG: cleanup succeeds");
+
+        assert_eq!(
+            removed, 0,
+            "the marker roots nothing, so it is not a sweep reason"
+        );
+        assert!(!marker_path.exists());
+    }
+
+    #[test]
+    fn a_partial_cleanup_reports_what_it_did_remove() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        // `1-link` is a regular file, so `remove_dir_all` fails on it while
+        // the other removable entry succeeds. A real failure, not a hand-built
+        // error: this is what catches a `removed` counter that stops
+        // incrementing.
+        std::fs::write(profile_dir.join("1-link"), b"not a directory")
+            .expect("BUG: write bogus generation");
+        for number in 2..=4 {
+            create_generation(&profile_dir, number);
+        }
+        set_current(&profile_dir, 4);
+
+        let config = GcConfig {
+            keep_generations: 2,
+            ..GcConfig::default()
+        };
+
+        let error = cleanup_generations(&profile_dir, &config, &[])
+            .expect_err("BUG: the failed removal must surface");
+
+        // Generations 1 and 2 are droppable; 2 goes, 1 fails.
+        assert_eq!(error.removed(), 1);
+        assert!(matches!(
+            error,
+            CleanupGenerationsError::RemovalFailures {
+                attempted: 2,
+                failed: 1,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn an_enumeration_failure_reports_no_removals() {
+        let error = CleanupGenerationsError::Cleanup(std::io::Error::other("boom"));
+
+        assert_eq!(
+            error.removed(),
+            0,
+            "enumeration failures happen before any removal"
+        );
     }
 }

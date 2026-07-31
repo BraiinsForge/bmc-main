@@ -438,7 +438,7 @@ pub struct GcConfig {
 impl Default for GcConfig {
     fn default() -> Self {
         Self {
-            keep_generations: 3,
+            keep_generations: 2,
             keep_days: None,
             protected_generations: Vec::new(),
         }
