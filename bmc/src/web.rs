@@ -33,6 +33,7 @@ use crate::led::LedController;
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::secret_store::SecretStoreHandle;
 use crate::session::Manager as SessionManager;
+use crate::shutdown::{DRAIN_DEADLINE, DRAIN_QUIET};
 use crate::sound::SoundController;
 use crate::system_manager::SystemManager;
 use crate::widget::{Coordinator, WidgetRegistry};
@@ -41,11 +42,12 @@ use anyhow::Result;
 use axum::{ServiceExt, extract::Request, http::header::CONTENT_TYPE};
 use bmc_platform::HardwareCapabilities;
 use bmc_upgrade::firmware::FirmwareIndex;
-use std::{net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{io, net::SocketAddr, path::PathBuf, sync::Arc};
 use tokio::net::TcpListener;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, oneshot};
 use tower::{Layer, steer::Steer};
 use tower_http::normalize_path::NormalizePathLayer;
+use tracing::warn;
 
 pub(crate) struct WebService<
     T: BmcManager,
@@ -159,11 +161,51 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
         let service =
             ServiceExt::<Request>::into_make_service_with_connect_info::<SocketAddr>(service);
 
-        axum::serve(listener, service)
-            .with_graceful_shutdown(async move { self.manager.handle_graceful_shutdown().await })
-            .await?;
+        let (signalled_tx, signalled) = oneshot::channel();
+        let server = axum::serve(listener, service)
+            .with_graceful_shutdown(async move {
+                self.manager.handle_graceful_shutdown().await;
+                let _ = signalled_tx.send(());
+            })
+            .into_future();
+
+        serve_until_drained(server, signalled).await?;
 
         Ok(())
+    }
+}
+
+/// Serves until the shutdown signal, then drains on a leash.
+///
+/// An idle HTTP keep-alive counts as open until the peer hangs up,
+/// so one parked browser tab keeps a graceful drain pending forever.
+/// An unbounded drain only trades a clean exit for a killed one,
+/// with nothing in the log to say why; [`crate::shutdown`] holds the budget.
+async fn serve_until_drained(
+    server: impl Future<Output = io::Result<()>>,
+    shutdown_signalled: oneshot::Receiver<()>,
+) -> io::Result<()> {
+    tokio::pin!(server);
+
+    tokio::select! {
+        result = &mut server => return result,
+        _ = shutdown_signalled => {}
+    }
+
+    tokio::select! {
+        result = &mut server => return result,
+        () = tokio::time::sleep(DRAIN_QUIET) => {}
+    }
+    warn!(
+        "shutdown is waiting for open connections to close; an idle browser tab is the usual cause"
+    );
+
+    tokio::select! {
+        result = &mut server => result,
+        () = tokio::time::sleep(DRAIN_DEADLINE.saturating_sub(DRAIN_QUIET)) => {
+            warn!("connections still open after {DRAIN_DEADLINE:?}, exiting without them");
+            Ok(())
+        }
     }
 }
 
@@ -205,5 +247,48 @@ impl Default for ServerConfig {
             www_assets_path: PathBuf::from(DEFAULT_ROOT).join("assets"),
             www_var_path: PathBuf::from(DEFAULT_ROOT).join("var"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::{future::pending, time::Duration};
+    use tokio::time::Instant;
+
+    #[tokio::test(start_paused = true)]
+    async fn a_drain_that_never_finishes_is_cut_at_the_deadline() {
+        let (tx, rx) = oneshot::channel();
+        tx.send(()).expect("BUG: the receiver is alive below");
+
+        let started = Instant::now();
+        serve_until_drained(pending(), rx)
+            .await
+            .expect("BUG: giving up on a drain is not an error");
+
+        assert_eq!(
+            started.elapsed(),
+            DRAIN_DEADLINE,
+            "a connection held open must not delay exit past the deadline"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_server_error_is_reported_without_waiting_for_a_signal() {
+        // `_tx` stays bound: dropping it resolves the receiver and starts a drain.
+        let (_tx, rx) = oneshot::channel();
+        let failed = async { Err(io::Error::other("listener died")) };
+
+        let started = Instant::now();
+        let error = serve_until_drained(failed, rx)
+            .await
+            .expect_err("BUG: the server future yielded an error");
+
+        assert_eq!(error.to_string(), "listener died");
+        assert_eq!(
+            started.elapsed(),
+            Duration::ZERO,
+            "no drain is owed before a shutdown signal"
+        );
     }
 }

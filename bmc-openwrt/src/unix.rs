@@ -23,9 +23,9 @@ use std::{
     net::IpAddr,
     process::{Output, Stdio},
     sync::atomic::{AtomicBool, Ordering},
-    time::Duration,
 };
 
+use bmc::shutdown::UPGRADE_HOLD;
 use bmc::utils::read_to_string;
 use bmc_support::SupportArchiveFormat;
 use get_if_addrs::IfAddr;
@@ -36,7 +36,6 @@ use crate::{signal, sys};
 
 const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
 const REBOOT_COMMAND: &str = "reboot";
-const SHUTDOWN_SLEEP_DURATION: Duration = Duration::from_secs(5);
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
@@ -123,9 +122,9 @@ pub async fn handle_graceful_shutdown(upgrade_in_progress: &AtomicBool) {
     info!(
         "{:?} signal received. Waiting for {:?}s, then shutting down",
         signal,
-        SHUTDOWN_SLEEP_DURATION.as_secs()
+        UPGRADE_HOLD.as_secs()
     );
-    tokio::time::sleep(SHUTDOWN_SLEEP_DURATION).await;
+    tokio::time::sleep(UPGRADE_HOLD).await;
     info!("Timeout reached. Forcefully shutting down...");
 }
 

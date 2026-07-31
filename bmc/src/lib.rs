@@ -39,6 +39,7 @@ mod night_mode;
 pub mod scene;
 pub mod secret_store;
 pub mod session;
+pub mod shutdown;
 mod sound;
 mod startup;
 mod system_manager;
