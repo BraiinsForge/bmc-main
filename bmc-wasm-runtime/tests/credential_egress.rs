@@ -119,7 +119,10 @@ fn config_with(type_id: &str, token: &str) -> RuntimeConfig {
     );
 
     let mut secrets = serde_json::Map::new();
-    secrets.insert("pool".to_owned(), serde_json::json!({ "token": token }));
+    secrets.insert(
+        "pool".to_owned(),
+        serde_json::json!({ "fields": { "token": token } }),
+    );
 
     RuntimeConfig {
         credentials: CredentialView::new(view),

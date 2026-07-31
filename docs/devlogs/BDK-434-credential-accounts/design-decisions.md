@@ -66,19 +66,23 @@ header, the query or the body would be replayed to the target. The guest picks t
 host would turn "the widget cannot learn the secret" into "the widget has it". Zero redirects returns the 3xx unfollowed
 rather than erroring, so the cost is a redirect the guest cannot use.
 
-## Cut: per-account egress override
+## Per-account egress: replacement, not narrowing
 
-The idea was an optional `Account.allow_hosts` narrowing its type's pin.
+An account carries an optional `allow_hosts`. Where it is non-empty it **is** the pin, and the type's own list is not
+consulted; where it is empty the type decides, as before. The form only offers it for a type that declares no pin of its
+own, which is the case it exists for: a generic token may otherwise be sent anywhere, and this is the only pin one can
+ever get.
 
-It is cut because the two operations are not the same job. A pin needs **matching** — does this authority satisfy this
-rule. An override needs **containment** — does the account's list permit only what the type's list does. Once the
-grammar gained wildcards and CIDR, containment became a second and harder algorithm whose cross-form pairs have to be
-defined rather than falling out: `10.0.0.0/16` ⊂ `10.0.0.0/8` holds, `api.example.com` ⊂ `*.example.com` holds,
-`*.a.example.com` ⊂ `*.example.com` does **not** under the one-label rule, and `10.0.0.5` ⊂ `*.example.com` is a
-category error.
+An earlier draft of this document recorded the feature as cut. That was written against a different reading — an account
+**narrowing** its type's pin — which needs **containment** rather than matching: does the account's list permit only
+what the type's does. Under wildcards and CIDR that is a second and harder algorithm whose cross-form pairs have to be
+defined rather than falling out (`*.a.example.com` ⊂ `*.example.com` does **not** hold under the one-label rule;
+`10.0.0.5` ⊂ `*.example.com` is a category error). Replacement needs none of it: the list is matched by the algorithm
+already shipped.
 
-Nothing needs it meanwhile: the safety property already rides on the type, so a Braiins token cannot leave
-`api.braiins.com` whatever an account says.
+A list written against a pinned type is refused by the API for that reason — it would read as narrowing when it does
+not. The store is hand-editable and one written there is honoured as-is: whoever can write a root-owned `0600` file
+already owns the device, so the pin is what the operator wrote.
 
 ## At-rest encryption is out of scope for v1
 

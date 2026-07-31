@@ -46,18 +46,18 @@ describe('CredentialTypeForm egress disclosure', () => {
     test('names the hosts a pinned type is limited to', () => {
         const { queryByText } = renderForm(credentialType(['api.braiins.com']));
 
-        expect(queryByText('Its secret is only ever sent to api.braiins.com.')).toBeTruthy();
+        expect(queryByText('It is only ever sent to api.braiins.com.')).toBeTruthy();
     });
 
     test('says so when a type is unpinned', () => {
         const { queryByText } = renderForm(credentialType([]));
 
-        expect(queryByText('Its secret may be sent to any host.')).toBeTruthy();
+        expect(queryByText('It may be sent to any host.')).toBeTruthy();
     });
 
     test('a description claiming a pin does not override an absent policy', () => {
         const { queryByText } = renderForm(credentialType([], 'Only ever sent to totally-safe.example.'));
 
-        expect(queryByText('Its secret may be sent to any host.')).toBeTruthy();
+        expect(queryByText('It may be sent to any host.')).toBeTruthy();
     });
 });

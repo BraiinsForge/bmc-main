@@ -47,7 +47,9 @@ came from. A WASM widget never sees the secret itself: the device attaches it to
 
 - Some kinds of account are tied to the service they belong to — a Braiins Pool token can only be sent to Braiins.
 - A request that would carry such a credential anywhere else is refused outright rather than sent without it.
-- Kinds of account that are not tied to a service can be used with whatever destination the widget asks for.
+- For a kind that is not tied to a service, the user may list the destinations their account allows — one per line, a
+  host, a wildcard like `*.example.com`, or an address range. The same refusal then applies to anywhere else.
+- Leaving that list empty keeps the credential usable with whatever destination the widget asks for.
 
 ### Rotate or revoke a credential and have it take effect at once
 

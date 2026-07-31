@@ -71,9 +71,11 @@ export const CredentialTypeSchema: GenMessage<CredentialType> =
     messageDesc(file_web_credential_management, 0);
 
 /**
- * Artwork carried inline rather than behind a URL, so it does not depend on the type having a
- * directory to be served from. Firmware bakes its own; a type admitted from elsewhere can carry
- * one the same way, whatever produced the bytes.
+ * Artwork carried inline rather than behind a URL, so it does not
+ * depend on the type having a directory to be served from.
+ *
+ * Firmware bakes its own; a type admitted from elsewhere
+ * can carry one the same way, whatever produced the bytes.
  *
  * @generated from message braiins.bmc.web.Icon
  */
@@ -86,7 +88,8 @@ export type Icon = Message<'braiins.bmc.web.Icon'> & {
     mimeType: string;
 
     /**
-     * Base64 of the icon bytes, so any format the frontend can render travels unchanged.
+     * Base64 of the icon bytes, so any format
+     * the frontend can render travels unchanged.
      *
      * @generated from field: string data = 2;
      */

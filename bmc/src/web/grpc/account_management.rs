@@ -22,10 +22,11 @@
 use std::collections::{HashMap, HashSet};
 use std::panic;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
 use bmc_field_schema::ParamKey;
+use bmc_field_schema::credential::BRAIINS_POOL_HOST;
 use bmc_grpc::web;
 use indexmap::IndexMap;
 use prost_types::Timestamp;
@@ -35,6 +36,7 @@ use tokio::sync::RwLock;
 use tonic::{Code, Request, Response, Status};
 use tonic_types::{ErrorDetails, StatusExt};
 use tracing::{error, warn};
+use url::Url;
 
 use crate::config::ConfigHandle;
 use crate::credential;
@@ -44,8 +46,13 @@ use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::{FieldViolations, ParseOutput, unchecked_field_violations_status};
 
-const POOL_API_URL: &str = "https://api.braiins.com/pool/v2";
-const POOL_API_ENDPOINT: &str = "/user/hashrate/current";
+/// Where the Braiins Pool token check goes.
+static POOL_ENDPOINT: LazyLock<Url> = LazyLock::new(|| {
+    Url::parse(&format!(
+        "https://{BRAIINS_POOL_HOST}/pool/v2/user/hashrate/current"
+    ))
+    .expect("BUG: the pinned host must form a valid endpoint URL")
+});
 const API_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) struct AccountManagementService {
@@ -129,6 +136,15 @@ impl web::account_management_service_server::AccountManagementService for Accoun
             validate_account(&type_id, &field_values).await?;
         }
 
+        let allow_hosts = req.allow_hosts;
+        {
+            let mut violations = FieldViolations::new();
+            validate_allow_hosts(&type_id, &allow_hosts, &mut violations);
+            if !violations.is_empty() {
+                return Err(bad_request(violations));
+            }
+        }
+
         let join_handle = tokio::spawn({
             let secret_store = self.secret_store.clone();
             async move {
@@ -144,9 +160,14 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                     if replace_values {
                         account.field_values = field_values;
                     }
+
+                    // Replaced wholesale, unlike field_values: the list is not
+                    // secret, so the form always carries the current one.
+                    account.allow_hosts = allow_hosts;
                     id
                 } else {
-                    let account = Account::new(type_id, name, field_values);
+                    let mut account = Account::new(type_id, name, field_values);
+                    account.allow_hosts = allow_hosts;
                     let id = account.id.clone();
                     temp.accounts_mut().insert(id.clone(), account);
                     id
@@ -272,7 +293,7 @@ async fn validate_upstream(
     type_id: &str,
     field_values: &IndexMap<ParamKey, String>,
 ) -> Result<(), Status> {
-    if type_id != "braiins-pool" {
+    if type_id != credential::BuiltinType::BraiinsPool.id() {
         return Ok(());
     }
     let token = field_values.get("token").map_or("", String::as_str);
@@ -307,8 +328,12 @@ async fn check_braiins_pool_token(token: &str) -> Result<(), CredentialCheckErro
         return Err(CredentialCheckError::ClientInitFailed);
     };
 
-    let endpoint = format!("{POOL_API_URL}{POOL_API_ENDPOINT}");
-    let status = match client.get(endpoint).header("X-API-Key", token).send().await {
+    let status = match client
+        .get(POOL_ENDPOINT.clone())
+        .header("X-API-Key", token)
+        .send()
+        .await
+    {
         Ok(response) => response.status(),
         Err(err) => {
             warn!("Failed to reach pool API: {err}");
@@ -375,6 +400,34 @@ fn map_account_to_proto(account: Account, connected_widgets: Vec<String>) -> web
             nanos: 0,
         }),
         connected_widgets,
+        allow_hosts: account.allow_hosts,
+    }
+}
+
+/// Reject a list on a pinned type, and any entry the pin grammar cannot use.
+/// Runs against the request even though a hand-edited store is honoured as-is:
+/// the API is the form's contract, and the form must learn of a dead line now
+/// rather than ship it.
+fn validate_allow_hosts(type_id: &str, entries: &[String], violations: &mut FieldViolations) {
+    const FIELD: &str = "allow_hosts";
+
+    if entries.is_empty() {
+        return;
+    }
+    let pinned = credential::BuiltinType::from_id(type_id)
+        .and_then(credential::BuiltinType::egress)
+        .is_some();
+    if pinned {
+        violations.push(
+            FIELD.to_owned(),
+            "This credential type already pins where its secret may go",
+        );
+        return;
+    }
+    for (index, entry) in entries.iter().enumerate() {
+        if let Err(reason) = credential::check_entry(entry) {
+            violations.push(FIELD.to_owned(), format!("Line {}: {reason}", index + 1));
+        }
     }
 }
 
@@ -467,6 +520,50 @@ mod tests {
         violations.into()
     }
 
+    fn allow_hosts_violations(type_id: &str, entries: &[&str]) -> Vec<FieldViolation> {
+        let entries: Vec<String> = entries.iter().map(|e| (*e).to_owned()).collect();
+        let mut violations = FieldViolations::new();
+        validate_allow_hosts(type_id, &entries, &mut violations);
+        violations.into()
+    }
+
+    #[test]
+    fn a_host_list_on_a_pinned_type_is_refused() {
+        let violations = allow_hosts_violations(
+            credential::BuiltinType::BraiinsPool.id(),
+            &["api.example.com"],
+        );
+
+        assert_eq!(violations.len(), 1);
+        assert_eq!(violations[0].field, "allow_hosts");
+    }
+
+    #[test]
+    fn a_bad_line_is_named_by_its_position() {
+        let violations = allow_hosts_violations(
+            credential::BuiltinType::GenericToken.id(),
+            &["api.example.com", "not a host"],
+        );
+
+        assert_eq!(violations.len(), 1);
+        assert!(
+            violations[0].description.starts_with("Line 2:"),
+            "the form has one textarea, so the message must point into it: {}",
+            violations[0].description
+        );
+    }
+
+    #[test]
+    fn a_clean_list_on_an_unpinned_type_passes() {
+        assert!(
+            allow_hosts_violations(
+                credential::BuiltinType::GenericToken.id(),
+                &["api.example.com", "*.example.org", "10.0.0.0/8"],
+            )
+            .is_empty()
+        );
+    }
+
     fn violation_fields(status: &Status) -> Vec<String> {
         status
             .get_error_details()
@@ -482,10 +579,19 @@ mod tests {
 
     #[test]
     fn schema_accepts_matching_values() {
-        assert!(schema_violations("generic-token", &[("token", "abc")]).is_empty());
         assert!(
-            schema_violations("generic-userpass", &[("username", "u"), ("password", "p")])
-                .is_empty()
+            schema_violations(
+                credential::BuiltinType::GenericToken.id(),
+                &[("token", "abc")]
+            )
+            .is_empty()
+        );
+        assert!(
+            schema_violations(
+                credential::BuiltinType::GenericUserpass.id(),
+                &[("username", "u"), ("password", "p")]
+            )
+            .is_empty()
         );
     }
 
@@ -498,7 +604,7 @@ mod tests {
     fn schema_keys_each_missing_field_to_its_own_path() {
         // Both fields missing → one violation each, keyed under the field's own path so the web UI
         // can attach them to the right inputs.
-        let violations = schema_violations("generic-userpass", &[]);
+        let violations = schema_violations(credential::BuiltinType::GenericUserpass.id(), &[]);
         let fields: Vec<&str> = violations.iter().map(|v| v.field.as_str()).collect();
         assert_eq!(
             fields,
@@ -509,11 +615,16 @@ mod tests {
     #[test]
     fn schema_flags_empty_and_unknown_field() {
         assert_eq!(
-            schema_violations("generic-token", &[("token", "")])[0].field,
+            schema_violations(credential::BuiltinType::GenericToken.id(), &[("token", "")])[0]
+                .field,
             r#"field_values["token"]"#,
         );
         assert_eq!(
-            schema_violations("generic-token", &[("token", "abc"), ("extra", "x")])[0].field,
+            schema_violations(
+                credential::BuiltinType::GenericToken.id(),
+                &[("token", "abc"), ("extra", "x")]
+            )[0]
+            .field,
             r#"field_values["extra"]"#,
         );
     }
@@ -654,9 +765,10 @@ mod tests {
                 id.clone(),
                 Account {
                     id,
-                    type_id: "generic-token".to_owned(),
+                    type_id: credential::BuiltinType::GenericToken.id().to_owned(),
                     name: (*raw).to_owned(),
                     field_values: values(&[("token", "s3cr3t")]),
+                    allow_hosts: Vec::new(),
                     created_at: chrono::Utc::now(),
                 },
             );

@@ -28,7 +28,7 @@ import { getID } from '../const';
 
 import { AccountIcon, type FieldValue, InlineNotification } from '@/components';
 import { CredentialTypeForm } from '../CredentialTypeForm';
-import { RadioButton, RadioButtonGroup, TextInput } from '@carbon/react';
+import { RadioButton, RadioButtonGroup, TextArea, TextInput } from '@carbon/react';
 import css from './AccountForm.scss';
 
 export interface AccountFormProps {
@@ -44,6 +44,10 @@ export interface AccountFormProps {
     fieldErrors?: Record<string, string[] | undefined>;
     onFieldChange(key: string, value: FieldValue): void;
 
+    // Raw textarea text, one destination per line; the parent splits it on save.
+    // Only rendered for a type without its own egress pin.
+    allowHosts: iField<string>;
+
     // Top-level error (a non-field failure).
     error?: null | string;
 }
@@ -54,11 +58,12 @@ const br: ReactNode = <br />;
 // Fully controlled, presentational account form: the credential-type picker, the account name, the
 // secret-disclosure notice, and the type's masked fields. The parent owns all state and submission.
 export function AccountForm(props: AccountFormProps) {
-    const { mode, credentialTypes, type, name, fieldValues, fieldErrors, onFieldChange, error } = props;
+    const { mode, credentialTypes, type, name, fieldValues, fieldErrors, onFieldChange, allowHosts, error } = props;
     const { formatMessage } = useIntl();
 
     const isEdit = mode === 'edit';
     const selectedType = type.value ? credentialTypes.get(type.value) : undefined;
+    const typePin = selectedType?.egress?.allowHosts ?? [];
 
     return (
         <Form className={css.form}>
@@ -116,33 +121,26 @@ export function AccountForm(props: AccountFormProps) {
                 />
             ) : null}
 
-            {isEdit ? (
-                <InlineNotification
-                    theme="inverse"
-                    kind="info"
-                    stretch
-                    hideCloseButton
-                    children={formatMessage({
-                        defaultMessage:
-                            'Leave the secret fields blank to keep the stored values, or fill them in to replace.',
-                    })}
-                />
-            ) : (
-                <InlineNotification
-                    stretch
-                    theme="inverse"
-                    kind="info"
-                    hideCloseButton
-                    title={formatMessage({ defaultMessage: 'Save your secret now' })}
-                    children={formatMessage(
+            {selectedType && typePin.length === 0 ? (
+                <TextArea
+                    id={$('allow-hosts')}
+                    rows={3}
+                    labelText={formatMessage({ defaultMessage: 'Allowed destinations (optional)' })}
+                    helperText={formatMessage(
                         {
                             defaultMessage:
-                                'This is the only time it is shown.{br}Copy it somewhere safe — you cannot view it again after saving.',
+                                'One per line: host / "*.example.com" wildcard / CIDR range.{br}Leave empty to allow any destination.',
                         },
                         { br },
                     )}
+                    placeholder={'api.example.com\n*.example.com\n10.0.0.0/8'}
+                    value={allowHosts.value ?? ''}
+                    onChange={e => allowHosts.onChange?.(e.target.value)}
+                    disabled={allowHosts.disabled}
+                    invalid={!!allowHosts.error}
+                    invalidText={allowHosts.error}
                 />
-            )}
+            ) : null}
         </Form>
     );
 }

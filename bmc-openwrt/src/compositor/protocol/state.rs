@@ -1103,7 +1103,7 @@ mod tests {
         let view = as_object(
             serde_json::json!({ "pool": { "type": "braiins-pool", "account": "My pool" } }),
         );
-        let secrets = as_object(serde_json::json!({ "pool": { "token": "s3cr3t" } }));
+        let secrets = as_object(serde_json::json!({ "pool": { "fields": { "token": "s3cr3t" } } }));
 
         (view, CredentialSecrets::new(secrets))
     }
@@ -1146,7 +1146,7 @@ mod tests {
         stored.credential_secrets = secrets;
 
         let rotated = CredentialSecrets::new(
-            serde_json::json!({ "pool": { "token": "rotated" } })
+            serde_json::json!({ "pool": { "fields": { "token": "rotated" } } })
                 .as_object()
                 .expect("BUG: json! literal is an object")
                 .clone(),

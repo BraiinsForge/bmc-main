@@ -101,6 +101,12 @@ pub struct Account {
     pub type_id: String,
     pub name: String,
     pub field_values: IndexMap<ParamKey, String>,
+    /// Hosts this account's secret may be sent to, in the egress-pin grammar.
+    /// Non-empty, it is the authoritative pin for the account — deliberately,
+    /// even if the type carries one: whoever writes this store owns the device.
+    /// Empty defers to the type's pin, or to none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub allow_hosts: Vec<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -113,6 +119,7 @@ impl std::fmt::Debug for Account {
             .field("type_id", &self.type_id)
             .field("name", &self.name)
             .field("field_values", &RedactedKeys(&self.field_values))
+            .field("allow_hosts", &self.allow_hosts)
             .field("created_at", &self.created_at)
             .finish()
     }
@@ -136,6 +143,7 @@ impl Account {
             type_id,
             name,
             field_values,
+            allow_hosts: Vec::new(),
             created_at: Utc::now(),
         }
     }

@@ -104,7 +104,7 @@ fn reshape_legacy_account(raw: &Value) -> Option<Value> {
     let token = object.get("authentication")?.get("api_key")?.as_str()?;
     Some(json!({
         "id": id,
-        "type_id": "braiins-pool",
+        "type_id": crate::credential::BuiltinType::BraiinsPool.id(),
         "name": name,
         "field_values": { "token": token },
         "created_at": created_at,

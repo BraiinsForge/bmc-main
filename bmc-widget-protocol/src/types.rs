@@ -98,10 +98,23 @@ impl CredentialSecrets {
     }
 
     /// One field's value, for the host to substitute at egress.
-    /// The only way out of this type, and it hands back one field at a time.
+    /// The only way at a secret, and it hands back one field at a time.
     #[must_use]
     pub fn field(&self, slot: &str, field: &str) -> Option<&str> {
-        self.0.get(slot)?.get(field)?.as_str()
+        self.0.get(slot)?.get("fields")?.get(field)?.as_str()
+    }
+
+    /// The account's own egress pin for this slot, empty when it has none.
+    /// Not secret; it rides this channel because the channel already stops
+    /// at the host, which is the one place the pin is enforced.
+    #[must_use]
+    pub fn allow_hosts(&self, slot: &str) -> Vec<&str> {
+        self.0
+            .get(slot)
+            .and_then(|v| v.get("allow_hosts"))
+            .and_then(|v| v.as_array())
+            .map(|entries| entries.iter().filter_map(|e| e.as_str()).collect())
+            .unwrap_or_default()
     }
 
     /// The JSON text emitted on the `credential_secrets` event.
@@ -389,15 +402,40 @@ mod tests {
     use super::*;
 
     fn secrets_of(slot: &str, field: &str, value: &str) -> CredentialSecrets {
-        let mut fields = serde_json::Map::new();
-        fields.insert(
-            field.to_owned(),
-            serde_json::Value::String(value.to_owned()),
-        );
         let mut slots = serde_json::Map::new();
-        slots.insert(slot.to_owned(), serde_json::Value::Object(fields));
+        slots.insert(
+            slot.to_owned(),
+            serde_json::json!({ "fields": { field: value } }),
+        );
 
         CredentialSecrets::new(slots)
+    }
+
+    fn pin_of(value: &serde_json::Value) -> CredentialSecrets {
+        let mut slots = serde_json::Map::new();
+        slots.insert(
+            "pool".to_owned(),
+            serde_json::json!({ "allow_hosts": value }),
+        );
+
+        CredentialSecrets::new(slots)
+    }
+
+    #[test]
+    fn a_pin_reads_back_as_the_hosts_it_lists() {
+        assert_eq!(
+            pin_of(&serde_json::json!(["a.example", "b.example"])).allow_hosts("pool"),
+            vec!["a.example", "b.example"]
+        );
+    }
+
+    #[test]
+    fn an_account_without_a_pin_lists_no_hosts() {
+        assert!(
+            secrets_of("pool", "token", "s3cr3t")
+                .allow_hosts("pool")
+                .is_empty()
+        );
     }
 
     #[test]

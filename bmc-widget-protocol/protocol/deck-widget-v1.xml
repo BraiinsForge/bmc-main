@@ -361,8 +361,11 @@
     <event name="credential_secrets" since="2">
       <description summary="secret field values for the bound slots">
         The secret field values behind each bound slot, as a JSON-encoded
-        object keyed by manifest slot name: {"SLOT": {"FIELD": "VALUE"}}.
-        Slot keys match the credentials event exactly.
+        object keyed by manifest slot name: {"SLOT": {"fields": {"FIELD":
+        "VALUE"}, "allow_hosts": ["HOST", …]}}. Slot keys match the
+        credentials event exactly. allow_hosts is the account's own egress
+        pin in the catalog's pin grammar; absent or empty, the slot's
+        credential type decides.
 
         This event carries live secrets and must never be forwarded to
         guest WASM, written to a log, or persisted. The widget process is

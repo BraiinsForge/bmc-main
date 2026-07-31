@@ -83,7 +83,9 @@ The host resolves the placeholder as the request leaves. Two things can stop it,
 sending it half-built:
 
 - the slot is unbound, or the placeholder names a field the account kind does not have;
-- the destination lies outside the type's egress pin — a `braiins-pool` token sent anywhere but `api.braiins.com`.
+- the destination lies outside the credential's egress pin — a `braiins-pool` token sent anywhere but `api.braiins.com`.
+  An account of a kind with no pin of its own may carry one the operator wrote, so a widget cannot assume a generic
+  credential reaches every host: treat a refusal as configuration, not as a bug to code around.
 
 A refused request comes back as `FetchOutcome::Refused`, not the `Network` failure a widget would retry — neither cause
 becomes true on a second attempt. Rebinding the slot or fixing the placeholder is what clears it.

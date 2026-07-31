@@ -147,16 +147,16 @@ pub fn resolve(
             slot.as_str().to_owned(),
             serde_json::json!({ "type": account.type_id, "account": account.name }),
         );
-        secrets.insert(
-            slot.as_str().to_owned(),
-            Value::Object(
-                account
-                    .field_values
-                    .iter()
-                    .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
-                    .collect(),
-            ),
-        );
+        let fields: Map<String, Value> = account
+            .field_values
+            .iter()
+            .map(|(field, value)| (field.as_str().to_owned(), Value::String(value.clone())))
+            .collect();
+        let mut slot_value = serde_json::json!({ "fields": fields });
+        if !account.allow_hosts.is_empty() {
+            slot_value["allow_hosts"] = serde_json::json!(account.allow_hosts);
+        }
+        secrets.insert(slot.as_str().to_owned(), slot_value);
     }
 
     Resolution {
@@ -178,6 +178,11 @@ mod tests {
         AccountId::from_str(id).expect("BUG: non-empty id")
     }
 
+    /// Slot keys for the widget these tests bind against.
+    /// Arbitrary names, shared so a reader sees the same two slots throughout.
+    const POOL: &str = "pool";
+    const SPARE: &str = "spare";
+
     fn account(id: &str, type_id: &str, name: &str, field: &str, value: &str) -> Account {
         let mut field_values = IndexMap::new();
         field_values.insert(slot(field), value.to_owned());
@@ -187,6 +192,7 @@ mod tests {
             type_id: type_id.to_owned(),
             name: name.to_owned(),
             field_values,
+            allow_hosts: Vec::new(),
             created_at: chrono::Utc::now(),
         }
     }
@@ -206,7 +212,13 @@ mod tests {
     }
 
     fn pool_account() -> Account {
-        account("a-1", "braiins-pool", "My pool", "token", "s3cr3t")
+        account(
+            "a-1",
+            BuiltinType::BraiinsPool.id(),
+            "My pool",
+            "token",
+            "s3cr3t",
+        )
     }
 
     fn declares(pairs: &[(&str, &str)]) -> IndexMap<CredentialKey, CredentialSlot> {
@@ -229,19 +241,19 @@ mod tests {
     #[test]
     fn a_slot_the_manifest_still_declares_is_authorised() {
         let (authorised, rejected) = authorised_bindings(
-            &bound(&[("pool", "a-1")]),
-            Some(&declares(&[("pool", "braiins-pool")])),
+            &bound(&[(POOL, "a-1")]),
+            Some(&declares(&[(POOL, BuiltinType::BraiinsPool.id())])),
             &store(vec![pool_account()]),
         );
 
-        assert_eq!(authorised, bound(&[("pool", "a-1")]));
+        assert_eq!(authorised, bound(&[(POOL, "a-1")]));
         assert!(rejected.is_empty());
     }
 
     #[test]
     fn a_slot_the_updated_manifest_dropped_is_withheld() {
         let (authorised, rejected) = authorised_bindings(
-            &bound(&[("pool", "a-1")]),
+            &bound(&[(POOL, "a-1")]),
             Some(&declares(&[])),
             &store(vec![pool_account()]),
         );
@@ -250,14 +262,14 @@ mod tests {
             authorised.is_empty(),
             "a widget must not be handed a secret for a slot it no longer declares"
         );
-        assert_eq!(rejected, vec![(slot("pool"), Unauthorised::SlotUndeclared)]);
+        assert_eq!(rejected, vec![(slot(POOL), Unauthorised::SlotUndeclared)]);
     }
 
     #[test]
     fn a_slot_redeclared_with_another_type_is_withheld() {
         let (authorised, rejected) = authorised_bindings(
-            &bound(&[("pool", "a-1")]),
-            Some(&declares(&[("pool", "generic-token")])),
+            &bound(&[(POOL, "a-1")]),
+            Some(&declares(&[(POOL, BuiltinType::GenericToken.id())])),
             &store(vec![pool_account()]),
         );
 
@@ -265,20 +277,17 @@ mod tests {
             authorised.is_empty(),
             "a pool token must not satisfy a slot redeclared as a generic one"
         );
-        assert_eq!(rejected, vec![(slot("pool"), Unauthorised::TypeMismatch)]);
+        assert_eq!(rejected, vec![(slot(POOL), Unauthorised::TypeMismatch)]);
     }
 
     /// Discovery cannot distinguish a half-failed scan from a complete one,
     /// so an unreadable manifest must not read as "every slot was removed".
     #[test]
     fn an_unreadable_manifest_withholds_nothing() {
-        let (authorised, rejected) = authorised_bindings(
-            &bound(&[("pool", "a-1")]),
-            None,
-            &store(vec![pool_account()]),
-        );
+        let (authorised, rejected) =
+            authorised_bindings(&bound(&[(POOL, "a-1")]), None, &store(vec![pool_account()]));
 
-        assert_eq!(authorised, bound(&[("pool", "a-1")]));
+        assert_eq!(authorised, bound(&[(POOL, "a-1")]));
         assert!(rejected.is_empty());
     }
 
@@ -287,12 +296,12 @@ mod tests {
     #[test]
     fn a_binding_whose_account_vanished_is_left_to_the_unbound_path() {
         let (authorised, rejected) = authorised_bindings(
-            &bound(&[("pool", "a-1")]),
-            Some(&declares(&[("pool", "braiins-pool")])),
+            &bound(&[(POOL, "a-1")]),
+            Some(&declares(&[(POOL, BuiltinType::BraiinsPool.id())])),
             &store(vec![]),
         );
 
-        assert_eq!(authorised, bound(&[("pool", "a-1")]));
+        assert_eq!(authorised, bound(&[(POOL, "a-1")]));
         assert!(rejected.is_empty());
         assert_eq!(effective(&authorised, &store(vec![])).len(), 0);
     }
@@ -308,11 +317,11 @@ mod tests {
 
     #[test]
     fn a_bound_slot_yields_its_account() {
-        let bindings = bound(&[("pool", "a-1")]);
+        let bindings = bound(&[(POOL, "a-1")]);
 
         assert_eq!(
             effective(&bindings, &store(vec![pool_account()])),
-            vec![("pool".to_owned(), "My pool".to_owned())]
+            vec![(POOL.to_owned(), "My pool".to_owned())]
         );
     }
 
@@ -324,29 +333,61 @@ mod tests {
     #[test]
     fn a_binding_naming_a_missing_account_counts_as_unbound() {
         assert!(
-            effective(&bound(&[("pool", "gone")]), &store(vec![])).is_empty(),
+            effective(&bound(&[(POOL, "gone")]), &store(vec![])).is_empty(),
             "a hand-edited store must leave the slot unbound, not half-resolved"
         );
     }
 
     #[test]
     fn a_missing_account_does_not_hide_the_slots_around_it() {
-        let bindings = bound(&[("pool", "a-1"), ("spare", "gone")]);
+        let bindings = bound(&[(POOL, "a-1"), (SPARE, "gone")]);
 
         assert_eq!(
             effective(&bindings, &store(vec![pool_account()])),
-            vec![("pool".to_owned(), "My pool".to_owned())]
+            vec![(POOL.to_owned(), "My pool".to_owned())]
         );
     }
 
     #[test]
     fn one_account_on_two_slots_yields_both() {
-        let bindings = bound(&[("pool", "a-1"), ("spare", "a-1")]);
+        let bindings = bound(&[(POOL, "a-1"), (SPARE, "a-1")]);
         let yielded = effective(&bindings, &store(vec![pool_account()]));
 
         assert_eq!(
             yielded.iter().map(|(slot, _)| slot).collect::<Vec<_>>(),
-            vec!["pool", "spare"]
+            vec![POOL, SPARE]
+        );
+    }
+
+    #[test]
+    fn resolve_carries_the_accounts_own_pin_and_omits_an_empty_one() {
+        let mut pinned = pool_account();
+        pinned.allow_hosts = vec!["api.example.com".to_owned()];
+        let plain = account("a-2", BuiltinType::GenericToken.id(), "T", "token", "x");
+        let bindings = bound(&[(POOL, "a-1"), (SPARE, "a-2")]);
+
+        let resolution = resolve(&bindings, &store(vec![pinned, plain]));
+
+        assert_eq!(
+            resolution.secrets.allow_hosts(POOL),
+            vec!["api.example.com"]
+        );
+        let wire: serde_json::Value = serde_json::from_str(&resolution.secrets.to_json_string())
+            .expect("BUG: the secrets payload must be valid JSON");
+        assert!(
+            wire[SPARE].get("allow_hosts").is_none(),
+            "an account without a pin must not grow an empty list on the wire"
+        );
+        assert_eq!(
+            resolution.secrets.field(POOL, "token"),
+            Some("s3cr3t"),
+            "field access must reach through the nested shape"
+        );
+        assert!(
+            !serde_json::Value::Object(resolution.view.clone())
+                .to_string()
+                .contains("allow_hosts"),
+            "the guest-visible view must not carry the pin"
         );
     }
 }

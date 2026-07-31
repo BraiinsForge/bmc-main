@@ -48,13 +48,13 @@ const credentialTypeList = [
     pb.create(pb.CredentialTypeSchema, {
         id: 'generic-token',
         name: 'Token',
-        description: 'A single API token or bearer secret.\n\n**The widget may send them to any host.**',
+        description: 'A single API token or bearer secret.',
         fields: [stringField('token', 'Token', 'The API token or bearer secret.', true)],
     }),
     pb.create(pb.CredentialTypeSchema, {
         id: 'generic-userpass',
         name: 'Username & password',
-        description: '**The widget may send them to any host.**',
+        description: 'A username and password pair.',
         fields: [
             stringField('username', 'Username', 'The account username.', false),
             stringField('password', 'Password', 'The account password.', true),
@@ -74,15 +74,18 @@ function Demo({
     typeId,
     error,
     fieldErrors,
+    allowHostsError,
 }: {
     mode: 'create' | 'edit';
     typeId: string;
     error?: string;
     fieldErrors?: Record<string, string[]>;
+    allowHostsError?: string;
 }) {
     const [type, setType] = useState(typeId);
     const [name, setName] = useState(mode === 'edit' ? 'My account' : '');
     const [values, setValues] = useState<Record<string, FieldValue>>({});
+    const [allowHosts, setAllowHosts] = useState('');
 
     return (
         <div className="ui-box" style={{ minWidth: 600, maxWidth: '32rem' }}>
@@ -94,6 +97,7 @@ function Demo({
                 fieldValues={values}
                 onFieldChange={(key, value) => setValues(prev => ({ ...prev, [key]: value }))}
                 fieldErrors={fieldErrors}
+                allowHosts={{ value: allowHosts, onChange: setAllowHosts, error: allowHostsError }}
                 error={error}
             />
         </div>
@@ -105,4 +109,10 @@ export const CreateUsernamePassword = () => <Demo mode="create" typeId="generic-
 export const Edit = () => <Demo mode="edit" typeId="braiins-pool" />;
 export const WithError = () => (
     <Demo mode="create" typeId="generic-token" fieldErrors={{ token: ['Invalid API key.'] }} />
+);
+// The two halves of the destination control: a pinned type states where its secret
+// goes, an unpinned one lets the operator say — and can reject what they wrote.
+export const PinnedDestination = () => <Demo mode="create" typeId="braiins-pool" />;
+export const RejectedDestination = () => (
+    <Demo mode="create" typeId="generic-token" allowHostsError="Line 2: an entry cannot contain spaces" />
 );

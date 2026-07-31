@@ -18,7 +18,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_account_management: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'Chx3ZWIvYWNjb3VudF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIifwoHQWNjb3VudBIKCgJpZBgBIAEoCRIPCgd0eXBlX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSLgoKY3JlYXRlZF9hdBgEIAEoCzIaLmdvb2dsZS5wcm90b2J1Zi5UaW1lc3RhbXASGQoRY29ubmVjdGVkX3dpZGdldHMYBSADKAkiRAoWR2V0QWxsQWNjb3VudHNSZXNwb25zZRIqCghhY2NvdW50cxgBIAMoCzIYLmJyYWlpbnMuYm1jLndlYi5BY2NvdW50IsMBChRVcHNlcnRBY2NvdW50UmVxdWVzdBIKCgJpZBgBIAEoCRIPCgd0eXBlX2lkGAIgASgJEgwKBG5hbWUYAyABKAkSTAoMZmllbGRfdmFsdWVzGAQgAygLMjYuYnJhaWlucy5ibWMud2ViLlVwc2VydEFjY291bnRSZXF1ZXN0LkZpZWxkVmFsdWVzRW50cnkaMgoQRmllbGRWYWx1ZXNFbnRyeRILCgNrZXkYASABKAkSDQoFdmFsdWUYAiABKAk6AjgBMooCChhBY2NvdW50TWFuYWdlbWVudFNlcnZpY2USUQoOR2V0QWxsQWNjb3VudHMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QWxsQWNjb3VudHNSZXNwb25zZRJUCg1VcHNlcnRBY2NvdW50EiUuYnJhaWlucy5ibWMud2ViLlVwc2VydEFjY291bnRSZXF1ZXN0GhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlEkUKDVJlbW92ZUFjY291bnQSHC5nb29nbGUucHJvdG9idWYuU3RyaW5nVmFsdWUaFi5nb29nbGUucHJvdG9idWYuRW1wdHliBnByb3RvMw',
+        'Chx3ZWIvYWNjb3VudF9tYW5hZ2VtZW50LnByb3RvEg9icmFpaW5zLmJtYy53ZWIilAEKB0FjY291bnQSCgoCaWQYASABKAkSDwoHdHlwZV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEi4KCmNyZWF0ZWRfYXQYBCABKAsyGi5nb29nbGUucHJvdG9idWYuVGltZXN0YW1wEhkKEWNvbm5lY3RlZF93aWRnZXRzGAUgAygJEhMKC2FsbG93X2hvc3RzGAYgAygJIkQKFkdldEFsbEFjY291bnRzUmVzcG9uc2USKgoIYWNjb3VudHMYASADKAsyGC5icmFpaW5zLmJtYy53ZWIuQWNjb3VudCLYAQoUVXBzZXJ0QWNjb3VudFJlcXVlc3QSCgoCaWQYASABKAkSDwoHdHlwZV9pZBgCIAEoCRIMCgRuYW1lGAMgASgJEkwKDGZpZWxkX3ZhbHVlcxgEIAMoCzI2LmJyYWlpbnMuYm1jLndlYi5VcHNlcnRBY2NvdW50UmVxdWVzdC5GaWVsZFZhbHVlc0VudHJ5EhMKC2FsbG93X2hvc3RzGAUgAygJGjIKEEZpZWxkVmFsdWVzRW50cnkSCwoDa2V5GAEgASgJEg0KBXZhbHVlGAIgASgJOgI4ATKKAgoYQWNjb3VudE1hbmFnZW1lbnRTZXJ2aWNlElEKDkdldEFsbEFjY291bnRzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5GicuYnJhaWlucy5ibWMud2ViLkdldEFsbEFjY291bnRzUmVzcG9uc2USVAoNVXBzZXJ0QWNjb3VudBIlLmJyYWlpbnMuYm1jLndlYi5VcHNlcnRBY2NvdW50UmVxdWVzdBocLmdvb2dsZS5wcm90b2J1Zi5TdHJpbmdWYWx1ZRJFCg1SZW1vdmVBY2NvdW50EhwuZ29vZ2xlLnByb3RvYnVmLlN0cmluZ1ZhbHVlGhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5YgZwcm90bzM',
         [file_google_protobuf_empty, file_google_protobuf_timestamp, file_google_protobuf_wrappers],
     );
 
@@ -57,6 +57,14 @@ export type Account = Message<'braiins.bmc.web.Account'> & {
      * @generated from field: repeated string connected_widgets = 5;
      */
     connectedWidgets: string[];
+
+    /**
+     * Hosts this account's secret may be sent to; empty means unrestricted.
+     * Only accepted for types without an egress pin of their own.
+     *
+     * @generated from field: repeated string allow_hosts = 6;
+     */
+    allowHosts: string[];
 };
 
 /**
@@ -113,6 +121,14 @@ export type UpsertAccountRequest = Message<'braiins.bmc.web.UpsertAccountRequest
      * @generated from field: map<string, string> field_values = 4;
      */
     fieldValues: { [key: string]: string };
+
+    /**
+     * Replaces the stored list (see Account.allow_hosts).
+     * Refused for a type carrying its own egress pin.
+     *
+     * @generated from field: repeated string allow_hosts = 5;
+     */
+    allowHosts: string[];
 };
 
 /**

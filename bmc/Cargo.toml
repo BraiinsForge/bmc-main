@@ -97,6 +97,7 @@ tracing.workspace = true
 # Used by the `bmc-migrate-config` bin to surface the migration's
 # per-widget `warn!` output; also by the widget-capture test harness.
 tracing-subscriber = { workspace = true, features = ["env-filter"] }
+url.workspace = true
 uuid.workspace = true
 walkdir.workspace = true
 

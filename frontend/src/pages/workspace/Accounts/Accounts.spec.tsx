@@ -19,7 +19,7 @@
 // the grant above.
 
 import { afterEach, describe, expect, it } from '@rstest/core';
-import { cleanup, render, screen } from '@testing-library/react/pure';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
 import { IntlProvider } from 'react-intl';
 import { MemoryRouter } from 'react-router';
@@ -76,5 +76,74 @@ describe('Accounts page', () => {
         renderPage();
 
         expect(await screen.findByText('No Connected Accounts Yet.')).toBeTruthy();
+    });
+
+    const oneGenericType = () => {
+        registerMocks(pb.services.CredentialManagementService, {
+            getCredentialTypes: () => ({
+                credentialTypes: [pb.create(pb.CredentialTypeSchema, { id: 'generic-token', name: 'Generic token' })],
+            }),
+        });
+    };
+
+    const allowHostsTextarea = async (): Promise<HTMLTextAreaElement> => {
+        renderPage();
+        // The header and the empty state both offer the button; either opens the dialog.
+        fireEvent.click((await screen.findAllByText('Add New Account'))[0]);
+        // Pick the type explicitly rather than racing the types fetch,
+        // whose result seeds the default only if it arrives before the click.
+        fireEvent.click(await screen.findByText('Generic token'));
+        return (await screen.findByLabelText('Allowed destinations (optional)')) as HTMLTextAreaElement;
+    };
+
+    // In create mode the modal submit repeats the "Add New Account" label
+    // of the page buttons, so it is found by its place in the modal footer
+    // rather than by text; the close cross is the other primary button.
+    const submitDialog = () => {
+        const submit = document.body.querySelector('.cds--modal .cds--btn--primary:not(.cds--btn--icon-only)');
+        if (!submit) throw new Error('BUG: the dialog submit must render');
+        fireEvent.click(submit);
+    };
+
+    /// The server reports allow-hosts violations as "Line N" against the list it
+    /// received, and that number is the operator's only pointer. Normalizing the
+    /// textarea before the send — and freezing it while the save is in flight —
+    /// makes the visible text the very list the server numbered.
+    it('normalizes the allow-hosts textarea and freezes it while the save is in flight', async () => {
+        oneGenericType();
+        let sent: string[] | undefined;
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({ accounts: [] }),
+            upsertAccount: ({ req, conf }) => {
+                conf({ delay: 80 });
+                sent = req.allowHosts;
+                return { value: 'a-1' };
+            },
+        });
+
+        const textarea = await allowHostsTextarea();
+        fireEvent.change(textarea, { target: { value: ' a.example.com\n\nb.example.com\n' } });
+        submitDialog();
+
+        await waitFor(() => expect(textarea.disabled).toBe(true));
+        expect(textarea.value).toBe('a.example.com\nb.example.com');
+        expect(sent).toEqual(['a.example.com', 'b.example.com']);
+    });
+
+    it('unfreezes the normalized textarea when the save fails', async () => {
+        oneGenericType();
+        registerMocks(pb.services.AccountManagementService, {
+            getAllAccounts: () => ({ accounts: [] }),
+            upsertAccount: () => {
+                throw new Error('backend says no');
+            },
+        });
+
+        const textarea = await allowHostsTextarea();
+        fireEvent.change(textarea, { target: { value: ' a.example.com\n\nb.example.com\n' } });
+        submitDialog();
+
+        await waitFor(() => expect(textarea.disabled).toBe(false));
+        expect(textarea.value).toBe('a.example.com\nb.example.com');
     });
 });

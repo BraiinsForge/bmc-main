@@ -37,6 +37,9 @@ message Account {
   google.protobuf.Timestamp created_at = 4;
   // Widget instances currently bound to this account.
   repeated string connected_widgets = 5;
+  // Hosts this account's secret may be sent to; empty means unrestricted.
+  // Only accepted for types without an egress pin of their own.
+  repeated string allow_hosts = 6;
 }
 
 message GetAllAccountsResponse {
@@ -52,6 +55,9 @@ message UpsertAccountRequest {
   // Secret values keyed by the credential type's field key.
   // On update, leave empty to keep the stored values.
   map<string, string> field_values = 4;
+  // Replaces the stored list (see Account.allow_hosts).
+  // Refused for a type carrying its own egress pin.
+  repeated string allow_hosts = 5;
 }
 
 service AccountManagementService {

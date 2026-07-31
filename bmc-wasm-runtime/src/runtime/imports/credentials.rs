@@ -355,8 +355,9 @@ fn slots_referenced(url: &str, headers: &[(String, String)], body: Option<&[u8]>
 
 /// Whether every credential the request spends may travel to this destination.
 ///
-/// A slot's policy comes from its credential type in the firmware catalog,
-/// so the pin cannot be widened by anything the guest or the operator says.
+/// An account carrying its own `allow_hosts` is pinned by that list alone;
+/// without one, its credential type decides from the firmware catalog.
+/// Nothing the *guest* says moves the pin either way.
 fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool {
     let Some((host, port)) = authority_of(url) else {
         tracing::warn!("refusing fetch: destination has no host to check against the egress pin");
@@ -390,14 +391,22 @@ fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool
             tracing::warn!(slot, type_id, "refusing fetch: unknown credential type");
             return false;
         };
-        let permitted = builtin.egress().is_none_or(|p| p.allows(&host, port));
+        let account_hosts = state.credential_secrets.allow_hosts(slot);
+        let permitted = if account_hosts.is_empty() {
+            builtin.egress().is_none_or(|p| p.allows(&host, port))
+        } else {
+            let policy = bmc_widget_manifest::credential::EgressPolicy {
+                allow_hosts: account_hosts.iter().map(|&e| e.to_owned()).collect(),
+            };
+            policy.allows(&host, port)
+        };
         if !permitted {
             // Unnamed on purpose: the host comes from the substituted URL,
             // so a reshaped authority would put the secret in the log.
             tracing::warn!(
                 slot,
                 type_id,
-                "refusing fetch: destination is outside the credential type's egress pin"
+                "refusing fetch: destination is outside the credential's egress pin"
             );
         }
         permitted
@@ -477,6 +486,7 @@ fn register_credentials_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
 mod tests {
     use super::*;
     use bmc_wasm_protocol::versioned_snapshot::WireEncode;
+    use bmc_widget_manifest::credential::BuiltinType;
 
     fn view_of(pairs: &[(&str, &str, &str)]) -> CredentialView {
         CredentialView::new(
@@ -519,7 +529,7 @@ mod tests {
 
     #[test]
     fn the_secret_reaches_the_request_the_network_thread_is_handed() {
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
 
         let spent = spend(
             &state,
@@ -534,7 +544,7 @@ mod tests {
 
     #[test]
     fn headers_and_body_are_substituted_too() {
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
 
         let spent = spend(
             &state,
@@ -553,7 +563,7 @@ mod tests {
 
     #[test]
     fn a_destination_outside_the_pin_gets_no_request_at_all() {
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
 
         assert!(
             spend(
@@ -567,9 +577,79 @@ mod tests {
         );
     }
 
+    /// Like [`host_state_with`], with the account carrying its own egress pin.
+    fn host_state_with_account_pin(type_id: &str, pin: &[&str]) -> HostState {
+        let mut state = host_state_with(type_id);
+        let mut slots = serde_json::Map::new();
+        slots.insert(
+            "pool".to_owned(),
+            serde_json::json!({
+                "fields": { "token": "s3cr3t", "username": "miner" },
+                "allow_hosts": pin,
+            }),
+        );
+        state.credential_secrets = bmc_widget_protocol::CredentialSecrets::new(slots);
+        state
+    }
+
+    #[test]
+    fn an_account_pin_restricts_an_otherwise_unpinned_type() {
+        let state =
+            host_state_with_account_pin(BuiltinType::GenericToken.id(), &["api.example.com"]);
+
+        assert!(
+            spend(
+                &state,
+                "https://api.example.com/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .is_some(),
+            "the listed host must stay reachable"
+        );
+        assert!(
+            spend(
+                &state,
+                "https://anywhere.example/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .is_none(),
+            "an account pin must bite where the type alone would not"
+        );
+    }
+
+    #[test]
+    fn an_account_pin_replaces_the_types_rather_than_narrowing_it() {
+        // Reachable only by hand-editing the store, since the API refuses
+        // a list on a pinned type. See `Account::allow_hosts` for why it wins.
+        let state =
+            host_state_with_account_pin(BuiltinType::BraiinsPool.id(), &["api.other.example"]);
+
+        assert!(
+            spend(
+                &state,
+                "https://api.other.example/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .is_some(),
+        );
+        assert!(
+            spend(
+                &state,
+                "https://api.braiins.com/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .is_none(),
+            "replacement, not union: the type's host is no longer pinned in"
+        );
+    }
+
     #[test]
     fn an_unpinned_type_may_spend_its_secret_anywhere() {
-        let state = host_state_with("generic-token");
+        let state = host_state_with(BuiltinType::GenericToken.id());
 
         let spent = spend(
             &state,
@@ -586,7 +666,7 @@ mod tests {
     fn a_placeholder_in_the_host_cannot_smuggle_a_pinned_secret_out() {
         // The pin judges the resolved host, and no token spells
         // the pinned host — whole authority or subdomain alike.
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
 
         for url in [
             "https://{{ credential.pool.token }}/x",
@@ -621,7 +701,7 @@ mod tests {
     fn a_secret_whose_slot_has_no_type_is_never_spent() {
         // Only a momentary disagreement between the two halves gets here,
         // and that is exactly when the pin must not be skipped.
-        let mut state = host_state_with("braiins-pool");
+        let mut state = host_state_with(BuiltinType::BraiinsPool.id());
         state.credentials.replace(CredentialView::default());
 
         assert!(
@@ -638,7 +718,7 @@ mod tests {
 
     #[test]
     fn a_request_spending_nothing_is_neither_substituted_nor_pinned() {
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
         let plain = "https://attacker.example/harmless";
 
         let spent = spend(&state, plain, &[], None)
@@ -649,7 +729,7 @@ mod tests {
 
     #[test]
     fn an_unresolvable_placeholder_stops_the_request() {
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
 
         assert!(
             spend(
@@ -669,13 +749,16 @@ mod tests {
 
     fn secrets_with_token(token: &str) -> bmc_widget_protocol::CredentialSecrets {
         let mut slots = serde_json::Map::new();
-        slots.insert("pool".to_owned(), serde_json::json!({ "token": token }));
+        slots.insert(
+            "pool".to_owned(),
+            serde_json::json!({ "fields": { "token": token } }),
+        );
         bmc_widget_protocol::CredentialSecrets::new(slots)
     }
 
     #[test]
     fn a_secret_that_reshapes_the_authority_is_refused() {
-        let mut state = host_state_with("braiins-pool");
+        let mut state = host_state_with(BuiltinType::BraiinsPool.id());
         // Base64 tokens contain `/`, and the value goes in verbatim,
         // so this resolves to `https://ab/cd@api.braiins.com/x` — authority `ab`.
         state.credential_secrets = secrets_with_token("ab/cd");
@@ -726,7 +809,7 @@ mod tests {
 
     #[test]
     fn only_a_request_that_spent_a_secret_is_barred_from_redirecting() {
-        let state = host_state_with("braiins-pool");
+        let state = host_state_with(BuiltinType::BraiinsPool.id());
 
         let plain = spend(&state, "https://attacker.example/x", &[], None)
             .expect("BUG: a request spending nothing is unpinned");
@@ -837,7 +920,7 @@ mod tests {
         let mut slots = serde_json::Map::new();
         slots.insert(
             "pool".to_owned(),
-            serde_json::json!({ "token": "s3cr3t", "username": "miner" }),
+            serde_json::json!({ "fields": { "token": "s3cr3t", "username": "miner" } }),
         );
 
         bmc_widget_protocol::CredentialSecrets::new(slots)
@@ -886,7 +969,7 @@ mod tests {
         let mut slots = serde_json::Map::new();
         slots.insert(
             "pool".to_owned(),
-            serde_json::json!({ "token": "{{ credential.pool.token }}" }),
+            serde_json::json!({ "fields": { "token": "{{ credential.pool.token }}" } }),
         );
         let secrets = bmc_widget_protocol::CredentialSecrets::new(slots);
 
@@ -954,11 +1037,11 @@ mod tests {
     /// The test pins it against someone later giving the secrets one.
     #[test]
     fn the_encoded_view_cannot_carry_a_secret() {
-        let view = view_of(&[("pool", "braiins-pool", "My pool")]);
+        let view = view_of(&[("pool", BuiltinType::BraiinsPool.id(), "My pool")]);
         let mut secrets = serde_json::Map::new();
         secrets.insert(
             "pool".to_owned(),
-            serde_json::json!({ "token": "s3cr3t-do-not-leak" }),
+            serde_json::json!({ "fields": { "token": "s3cr3t-do-not-leak" } }),
         );
         let secrets = bmc_widget_protocol::CredentialSecrets::new(secrets);
 
@@ -990,12 +1073,12 @@ mod tests {
     #[test]
     fn encoding_is_byte_identical_for_equal_content() {
         let a = view_of(&[
-            ("pool", "braiins-pool", "Mine"),
-            ("api", "generic-token", "T"),
+            ("pool", BuiltinType::BraiinsPool.id(), "Mine"),
+            ("api", BuiltinType::GenericToken.id(), "T"),
         ]);
         let b = view_of(&[
-            ("api", "generic-token", "T"),
-            ("pool", "braiins-pool", "Mine"),
+            ("api", BuiltinType::GenericToken.id(), "T"),
+            ("pool", BuiltinType::BraiinsPool.id(), "Mine"),
         ]);
 
         assert_eq!(a.encode(), b.encode());
@@ -1024,13 +1107,13 @@ mod tests {
 
     #[test]
     fn a_multibyte_account_name_survives_the_round_trip() {
-        let encoded = view_of(&[("pool", "braiins-pool", "Můj účet")]).encode();
+        let encoded = view_of(&[("pool", BuiltinType::BraiinsPool.id(), "Můj účet")]).encode();
 
         assert_eq!(
             decode(&encoded),
             vec![(
                 "pool".to_owned(),
-                "braiins-pool".to_owned(),
+                BuiltinType::BraiinsPool.id().to_owned(),
                 "Můj účet".to_owned()
             )]
         );
@@ -1039,8 +1122,8 @@ mod tests {
     #[test]
     fn every_bound_slot_reaches_the_guest() {
         let encoded = view_of(&[
-            ("pool", "braiins-pool", "Mine"),
-            ("api", "generic-token", "T"),
+            ("pool", BuiltinType::BraiinsPool.id(), "Mine"),
+            ("api", BuiltinType::GenericToken.id(), "T"),
         ])
         .encode();
 

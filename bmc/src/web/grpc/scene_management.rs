@@ -2290,6 +2290,7 @@ mod tests {
             type_id: type_id.to_owned(),
             name: "Test".into(),
             field_values: indexmap::IndexMap::new(),
+            allow_hosts: Vec::new(),
             created_at: chrono::Utc::now(),
         };
         (id, account)
@@ -2348,9 +2349,14 @@ mod tests {
     #[tokio::test]
     async fn resolution_honours_a_slot_the_installed_manifest_declares() {
         let widget_type_id = Uuid::new_v4();
-        let (store, account_id) = store_holding("a-1", "braiins-pool").await;
-        let coordinator =
-            coordinator_declaring(widget_type_id, &[("pool", "braiins-pool", true)], store).await;
+        let (store, account_id) =
+            store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
+        let coordinator = coordinator_declaring(
+            widget_type_id,
+            &[("pool", credential::BuiltinType::BraiinsPool.id(), true)],
+            store,
+        )
+        .await;
 
         let resolved = coordinator
             .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
@@ -2364,7 +2370,8 @@ mod tests {
     #[tokio::test]
     async fn resolution_withholds_a_slot_the_installed_manifest_dropped() {
         let widget_type_id = Uuid::new_v4();
-        let (store, account_id) = store_holding("a-1", "braiins-pool").await;
+        let (store, account_id) =
+            store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
         let coordinator = coordinator_declaring(widget_type_id, &[], store).await;
 
         let resolved = coordinator
@@ -2384,9 +2391,14 @@ mod tests {
     #[tokio::test]
     async fn resolution_withholds_a_slot_redeclared_with_another_type() {
         let widget_type_id = Uuid::new_v4();
-        let (store, account_id) = store_holding("a-1", "braiins-pool").await;
-        let coordinator =
-            coordinator_declaring(widget_type_id, &[("pool", "generic-token", true)], store).await;
+        let (store, account_id) =
+            store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
+        let coordinator = coordinator_declaring(
+            widget_type_id,
+            &[("pool", credential::BuiltinType::GenericToken.id(), true)],
+            store,
+        )
+        .await;
 
         let resolved = coordinator
             .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
@@ -2571,8 +2583,9 @@ mod tests {
 
     #[test]
     fn credential_binding_of_a_matching_account_is_stored_typed() {
-        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
-        let (id, account) = account_of_type("acct-1", "braiins-pool");
+        let manifest =
+            manifest_with_credentials(&[("pool", credential::BuiltinType::BraiinsPool.id(), true)]);
+        let (id, account) = account_of_type("acct-1", credential::BuiltinType::BraiinsPool.id());
         let accounts = indexmap::indexmap! { id.clone() => account };
 
         let typed = validate_credential_bindings(
@@ -2590,7 +2603,8 @@ mod tests {
 
     #[test]
     fn credential_binding_of_an_unknown_account_is_rejected() {
-        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let manifest =
+            manifest_with_credentials(&[("pool", credential::BuiltinType::BraiinsPool.id(), true)]);
         let violations = binding_violations(&manifest, &[("pool", "acct-gone")], &IndexMap::new());
 
         assert_eq!(violations.len(), 1);
@@ -2600,8 +2614,9 @@ mod tests {
 
     #[test]
     fn credential_binding_of_a_wrong_type_account_is_rejected() {
-        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
-        let (id, account) = account_of_type("acct-1", "generic-token");
+        let manifest =
+            manifest_with_credentials(&[("pool", credential::BuiltinType::BraiinsPool.id(), true)]);
+        let (id, account) = account_of_type("acct-1", credential::BuiltinType::GenericToken.id());
         let accounts = indexmap::indexmap! { id => account };
         let violations = binding_violations(&manifest, &[("pool", "acct-1")], &accounts);
 
@@ -2614,7 +2629,11 @@ mod tests {
 
     #[test]
     fn credential_binding_of_a_slot_the_manifest_does_not_declare_is_rejected() {
-        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", false)]);
+        let manifest = manifest_with_credentials(&[(
+            "pool",
+            credential::BuiltinType::BraiinsPool.id(),
+            false,
+        )]);
         let violations = binding_violations(&manifest, &[("mystery", "acct-1")], &IndexMap::new());
 
         assert_eq!(violations.len(), 1);
@@ -2624,8 +2643,9 @@ mod tests {
 
     #[test]
     fn an_empty_credential_binding_unbinds_the_slot() {
-        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
-        let (id, account) = account_of_type("acct-1", "braiins-pool");
+        let manifest =
+            manifest_with_credentials(&[("pool", credential::BuiltinType::BraiinsPool.id(), true)]);
+        let (id, account) = account_of_type("acct-1", credential::BuiltinType::BraiinsPool.id());
         let accounts = indexmap::indexmap! { id => account };
 
         let typed = validate_credential_bindings(
@@ -2640,7 +2660,8 @@ mod tests {
 
     #[test]
     fn a_required_credential_slot_may_stay_unbound() {
-        let manifest = manifest_with_credentials(&[("pool", "braiins-pool", true)]);
+        let manifest =
+            manifest_with_credentials(&[("pool", credential::BuiltinType::BraiinsPool.id(), true)]);
         let typed = validate_credential_bindings(&manifest, &HashMap::new(), &IndexMap::new())
             .expect("BUG: a required slot must never block saving");
 
@@ -3154,9 +3175,10 @@ mod tests {
                 let id = AccountId::from_str(id).expect("BUG: non-empty id");
                 let account = Account {
                     id: id.clone(),
-                    type_id: "generic-token".to_owned(),
+                    type_id: credential::BuiltinType::GenericToken.id().to_owned(),
                     name: "Token".to_owned(),
                     field_values: IndexMap::new(),
+                    allow_hosts: Vec::new(),
                     created_at: chrono::Utc::now(),
                 };
                 (id, account)
@@ -3207,19 +3229,20 @@ mod tests {
     fn widget_info_to_proto_emits_declared_credential_slots() {
         use std::str::FromStr as _;
 
+        let uid = uuid::Uuid::new_v4();
+        let pool_type = credential::BuiltinType::BraiinsPool.id();
         let json = format!(
             r#"{{
-                "uid": "{}",
+                "uid": "{uid}",
                 "version": "1.0.0",
                 "name": "T",
                 "description": "T",
                 "binary": "bin/test",
                 "credentials": {{
-                    "pool": {{"type": "braiins-pool", "label": "Pool", "required": true}}
+                    "pool": {{"type": "{pool_type}", "label": "Pool", "required": true}}
                 }},
                 "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
-            }}"#,
-            uuid::Uuid::new_v4()
+            }}"#
         );
         let info = crate::widget::WidgetInfo {
             manifest: bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
@@ -3234,7 +3257,7 @@ mod tests {
             slots,
             vec![web::CredentialSlotDefinition {
                 key: "pool".to_owned(),
-                type_id: "braiins-pool".to_owned(),
+                type_id: credential::BuiltinType::BraiinsPool.id().to_owned(),
                 label: "Pool".to_owned(),
                 description: None,
                 required: true,

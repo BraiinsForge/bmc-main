@@ -54,12 +54,23 @@ type AccountErrors = {
     name: string;
     typeId: string;
     fieldValues: Record<string, string>;
+    allowHosts: string;
 };
 type FormState = {
-    values: FormPropsToValuesRec<Pick<Comp.AccountFormProps, 'type' | 'name'>>;
+    values: FormPropsToValuesRec<Pick<Comp.AccountFormProps, 'type' | 'name' | 'allowHosts'>>;
     fieldValues: Record<string, FieldValue>;
     errors: null | pb.FormErrors<AccountErrors>;
 };
+
+/// One destination per line, blank lines dropped — the server rejects an
+/// empty entry, and a stray newline is not something to fail a save over.
+/// The submit writes the normalized text back into the textarea before
+/// sending, so the server's per-line errors number the lines on screen.
+const splitAllowHosts = (text: string): string[] =>
+    text
+        .split('\n')
+        .map(line => line.trim())
+        .filter(Boolean);
 
 interface State {
     accounts: pb.Account[];
@@ -70,7 +81,11 @@ interface State {
     form: FormState;
 }
 
-const emptyForm = (): FormState => ({ values: { type: '', name: '' }, errors: null, fieldValues: {} });
+const emptyForm = (): FormState => ({
+    values: { type: '', name: '', allowHosts: '' },
+    errors: null,
+    fieldValues: {},
+});
 const getInitialState = (): State => ({
     accounts: [],
     credentialTypes: new Map(),
@@ -137,23 +152,36 @@ class View extends Component<Props, State> {
         const first = this.state.credentialTypes.values().next().value;
         this.setState({
             dialog: { mode: 'create' },
-            form: { ...emptyForm(), values: { type: first?.id ?? '', name: '' } },
+            form: { ...emptyForm(), values: { type: first?.id ?? '', name: '', allowHosts: '' } },
         });
     };
     #openEdit = (acc: pb.Account): void => {
         this.setState({
             dialog: { mode: 'edit', id: acc.id, typeId: acc.typeId },
-            form: { ...emptyForm(), values: { type: acc.typeId, name: acc.name } },
+            form: {
+                ...emptyForm(),
+                // Unlike the secrets, the stored list comes back on read,
+                // so the textarea opens on what is actually in force.
+                values: { type: acc.typeId, name: acc.name, allowHosts: acc.allowHosts.join('\n') },
+            },
         });
     };
     #close = (): void => this.setState({ dialog: null });
 
+    // Destinations reset with the fields: a pinned type renders no control to clear them.
     #onType = (type: string): void =>
         this.setState(s => ({
-            form: { ...s.form, errors: null, values: { ...s.form.values, type }, fieldValues: {} },
+            form: {
+                ...s.form,
+                errors: null,
+                values: { ...s.form.values, type, allowHosts: '' },
+                fieldValues: {},
+            },
         }));
     #onName = (name: string): void =>
         this.setState(s => ({ form: { ...s.form, errors: null, values: { ...s.form.values, name } } }));
+    #onAllowHosts = (allowHosts: string): void =>
+        this.setState(s => ({ form: { ...s.form, errors: null, values: { ...s.form.values, allowHosts } } }));
     #onField = (key: string, value: FieldValue): void =>
         this.setState(s => ({
             form: { ...s.form, errors: null, fieldValues: { ...s.form.fieldValues, [key]: value } },
@@ -165,7 +193,14 @@ class View extends Component<Props, State> {
         const { dialog, form } = this.state;
         if (!dialog) return;
 
-        await setState(this, { isSaving: true });
+        // Covers a hand-edited store, whose list never passed through the form.
+        const pinned = !!this.state.credentialTypes.get(form.values.type ?? '')?.egress?.allowHosts.length;
+        const hosts = pinned ? [] : splitAllowHosts(form.values.allowHosts ?? '');
+
+        await setState(this, {
+            isSaving: true,
+            form: pinned ? form : { ...form, values: { ...form.values, allowHosts: hosts.join('\n') } },
+        });
 
         try {
             const opts = this.submitAbort.replace();
@@ -182,6 +217,7 @@ class View extends Component<Props, State> {
                 typeId: dialog.mode === 'create' ? (form.values.type ?? '') : '',
                 name: form.values.name ?? '',
                 fieldValues,
+                allowHosts: hosts,
             });
             await pb.rpc.accounts.upsertAccount(request, opts);
 
@@ -192,7 +228,7 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            const errors = pb.parseFormErrors<AccountErrors>($, ['name', 'typeId', 'fieldValues']);
+            const errors = pb.parseFormErrors<AccountErrors>($, ['name', 'typeId', 'fieldValues', 'allowHosts']);
             this.setState(s => ({ form: { ...s.form, errors } }));
         } finally {
             this.setState({ isSaving: false }, this.#fetch);
@@ -353,6 +389,14 @@ class View extends Component<Props, State> {
             onChange: this.#onName,
             error: pb.renderFieldErrorsAsList(errors?.fields?.name),
         };
+        const allowHosts: iField<string> = {
+            value: form.values.allowHosts ?? '',
+            onChange: this.#onAllowHosts,
+            // Frozen while a save is in flight, so a server "Line N" error
+            // cannot arrive numbering lines the operator has since moved.
+            disabled: this.state.isSaving,
+            error: pb.renderFieldErrorsAsList(errors?.fields?.allowHosts),
+        };
 
         return (
             <Modal
@@ -360,7 +404,7 @@ class View extends Component<Props, State> {
                 open
                 size="sm"
                 modalHeading={isEdit ? txt.edit : txt.add}
-                selectorPrimaryFocus="input"
+                selectorPrimaryFocus="input[type='radio']|input[type='text']"
                 onRequestSubmit={this.#submit}
                 primaryButtonText={isEdit ? txt.save : txt.add}
                 primaryButtonDisabled={isSaving}
@@ -376,6 +420,7 @@ class View extends Component<Props, State> {
                     fieldValues={form.fieldValues}
                     fieldErrors={errors?.fields?.fieldValues}
                     onFieldChange={this.#onField}
+                    allowHosts={allowHosts}
                     error={pb.renderFieldErrorsAsList(errors?.global)}
                 />
             </Modal>

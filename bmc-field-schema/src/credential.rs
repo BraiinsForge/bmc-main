@@ -24,7 +24,7 @@
 //!
 //! Here rather than in the firmware crate so `bmc-widget-codegen` can read each type's fields.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, Ipv6Addr};
 use std::sync::LazyLock;
 
 use indexmap::IndexMap;
@@ -77,7 +77,10 @@ pub struct EgressPolicy {
     ///     - Omitting the port allows any port
     /// - a subdomain wildcard `*.example.com`, matching exactly one label
     ///   and never the apex, as TLS and cookies do;
-    /// - a CIDR range `10.0.0.0/8`, `fd00::/8`.
+    /// - a CIDR range `10.0.0.0/8`, `fd00::/8`;
+    /// - an IP address, in any equivalent spelling; IPv6 is written bare
+    ///   (`fd00::1`) or bracketed, and brackets are how a port attaches:
+    ///   `[fd00::1]:8443`.
     ///
     /// An empty list allows everything, exactly as omitting the policy does.
     pub allow_hosts: Vec<String>,
@@ -131,22 +134,110 @@ fn entry_allows(entry: &str, host: &str, port: Option<u16>) -> bool {
             // would mean the bare domain,
             // a dotted one would reach deeper than the entry declared.
             .is_some_and(|label| !label.is_empty() && !label.contains('.')),
-        None => entry_host.eq_ignore_ascii_case(host),
+        // Numerically as well as textually: the request host arrives canonicalised,
+        // and an operator's equivalent IPv6 spelling must not die on the difference.
+        None => {
+            entry_host.eq_ignore_ascii_case(host)
+                || matches!(
+                    (entry_host.parse::<IpAddr>(), host.parse::<IpAddr>()),
+                    (Ok(entry_addr), Ok(host_addr)) if entry_addr == host_addr
+                )
+        }
     }
 }
 
 /// Split a trailing `:port`, ignoring the colons inside an IPv6 literal.
+/// A bracketed literal comes back unbracketed, matching the bare form
+/// the caller extracts from the request URL.
+/// A malformed bracket spelling comes back whole, and so matches nothing.
 fn split_port(entry: &str) -> (&str, Option<u16>) {
+    if let Some(inner) = entry.strip_prefix('[') {
+        return match inner.split_once(']') {
+            Some((host, "")) => (host, None),
+            Some((host, tail)) => match tail.strip_prefix(':') {
+                Some(port) => (host, port.parse().ok()),
+                None => (entry, None),
+            },
+            None => (entry, None),
+        };
+    }
     match entry.rsplit_once(':') {
         Some((host, port)) if !host.contains(':') => (host, port.parse().ok()),
         _ => (entry, None),
     }
 }
 
-/// Storage and the wire keep a plain string id,
-/// because user-defined types are planned
-/// and a string is what those will carry;
-/// an id matching no variant is simply not a built-in.
+/// Why an operator-written egress entry is unusable, in words the form can echo.
+///
+/// [`entry_allows`] never fails — an entry that matches nothing
+/// simply allows nothing — so saving runs this instead,
+/// rejecting a line that would sit in the list silently dead.
+///
+/// # Errors
+///
+/// A static English sentence naming what is wrong with the entry.
+pub fn check_entry(entry: &str) -> Result<(), &'static str> {
+    if entry.is_empty() {
+        return Err("an entry cannot be empty");
+    }
+    if entry.chars().any(char::is_whitespace) {
+        return Err("an entry cannot contain spaces");
+    }
+    if entry.contains('/') {
+        return match entry.parse::<ipnet::IpNet>() {
+            Ok(_) => Ok(()),
+            Err(_) => Err("\"/\" makes this a CIDR range, and it does not parse as one"),
+        };
+    }
+    if entry.contains('[') || entry.contains(']') {
+        return check_bracketed_entry(entry);
+    }
+
+    let (host, port) = split_port(entry);
+    // The matcher drops a `:suffix` that is not a port, then matches
+    // the bare host on any port; a save must not inherit that lenience.
+    if port.is_none() && host != entry {
+        return Err("the part after \":\" is not a port number");
+    }
+    if host.is_empty() {
+        return Err("there is no host before the \":\"");
+    }
+    match host.strip_prefix("*.") {
+        Some(suffix) if suffix.is_empty() || suffix.starts_with('.') => {
+            Err("a wildcard needs a domain right after \"*.\"")
+        }
+        Some(suffix) if suffix.contains('*') => {
+            Err("one leading \"*.\" is the only wildcard there is")
+        }
+        None if host.contains('*') => Err("\"*\" is only valid as a leading \"*.\" label"),
+        Some(_) | None => Ok(()),
+    }
+}
+
+/// The bracketed spelling is IPv6-only,
+/// and the sole way to pin an IPv6 address to a port.
+fn check_bracketed_entry(entry: &str) -> Result<(), &'static str> {
+    let Some(inner) = entry.strip_prefix('[') else {
+        return Err("brackets can only open an IPv6 literal");
+    };
+    let Some((host, tail)) = inner.split_once(']') else {
+        return Err("the \"[\" is never closed");
+    };
+    if host.parse::<Ipv6Addr>().is_err() {
+        return Err("brackets must hold an IPv6 address");
+    }
+    match tail.strip_prefix(':') {
+        None if tail.is_empty() => Ok(()),
+        None => Err("only \":port\" may follow the \"]\""),
+        Some(port) => match port.parse::<u16>() {
+            Ok(_) => Ok(()),
+            Err(_) => Err("the part after \":\" is not a port number"),
+        },
+    }
+}
+
+/// Storage and the wire keep a plain string id, because user-defined types are planned
+/// and a string is what those will carry; an id matching no variant is simply not a built-in.
 ///
 /// Naming the known ones anyway keeps [`builtins`] derived from [`Self::ALL`],
 /// so a new type cannot be left out of it.
@@ -285,6 +376,12 @@ fn generic_userpass() -> CredentialType {
     }
 }
 
+/// The one host a Braiins Pool token may reach.
+///
+/// Shared so the egress pin and the firmware's own token check cannot drift:
+/// moving one alone leaves the pin refusing the very API it exists to permit.
+pub const BRAIINS_POOL_HOST: &str = "api.braiins.com";
+
 fn braiins_pool() -> CredentialType {
     CredentialType {
         id: BuiltinType::BraiinsPool.id().to_owned(),
@@ -295,7 +392,7 @@ fn braiins_pool() -> CredentialType {
             secret_field("API token", "Your Braiins Pool API token."),
         )]),
         egress: Some(EgressPolicy {
-            allow_hosts: vec!["api.braiins.com".to_owned()],
+            allow_hosts: vec![BRAIINS_POOL_HOST.to_owned()],
         }),
         icon: Some(BRAIINS_POOL_ICON.clone()),
     }
@@ -497,5 +594,77 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn every_matchable_entry_form_passes_the_check() {
+        for entry in [
+            "api.example.com",
+            "api.example.com:8443",
+            "*.example.com",
+            "*.example.com:8443",
+            "10.0.0.0/8",
+            "fd00::/8",
+            "fd00::1",
+            "[fd00::1]",
+            "[fd00::1]:8443",
+            "192.0.2.7",
+        ] {
+            assert!(check_entry(entry).is_ok(), "{entry:?} must validate");
+        }
+    }
+
+    #[test]
+    fn nonsense_entries_are_named_not_swallowed() {
+        for entry in [
+            "",
+            "two words",
+            "http://api.example.com",
+            "10.0.0.0/99",
+            "*.",
+            "*..example.com",
+            "*.*.example.com",
+            "api.*.example.com",
+            "*",
+            ":8443",
+            "[fd00::1",
+            "fd00::1]",
+            "[]",
+            "[not-an-ip]",
+            "[10.0.0.1]",
+            "[fd00::1]x",
+            "[fd00::1]:notaport",
+            "[fd00::1]:99999",
+        ] {
+            assert!(check_entry(entry).is_err(), "{entry:?} must be rejected");
+        }
+    }
+
+    #[test]
+    fn bracketed_ipv6_entries_match_their_bare_authority() {
+        // `authority_of` hands the host over unbracketed,
+        // so the entry's brackets must not reach the comparison.
+        assert!(policy(&["[fd00::1]"]).allows("fd00::1", None));
+        assert!(policy(&["[fd00::1]"]).allows("fd00::1", Some(8443)));
+        assert!(policy(&["[fd00::1]:8443"]).allows("fd00::1", Some(8443)));
+        assert!(!policy(&["[fd00::1]:8443"]).allows("fd00::1", Some(9000)));
+        assert!(!policy(&["[fd00::1]:8443"]).allows("fd00::1", None));
+        assert!(!policy(&["[fd00::1]"]).allows("fd00::2", None));
+    }
+
+    #[test]
+    fn ip_entries_compare_numerically_not_textually() {
+        // The request host arrives canonicalised,
+        // so the operator's spelling must not have to match it letter for letter.
+        assert!(policy(&["fd00:0:0:0:0:0:0:1"]).allows("fd00::1", None));
+        assert!(policy(&["[fd00:0:0:0:0:0:0:1]:8443"]).allows("fd00::1", Some(8443)));
+    }
+
+    #[test]
+    fn a_port_that_does_not_parse_is_rejected_not_dropped() {
+        // The matcher's split treats `host:notaport` as a bare host on any port,
+        // so letting it through would save an entry meaning more than was written.
+        assert!(check_entry("api.example.com:notaport").is_err());
+        assert!(check_entry("api.example.com:99999").is_err());
     }
 }

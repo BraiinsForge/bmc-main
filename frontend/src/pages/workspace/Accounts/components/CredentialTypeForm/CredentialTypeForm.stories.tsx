@@ -40,14 +40,14 @@ function stringField(key: string, name: string, description: string, secret: boo
 const genericToken = pb.create(pb.CredentialTypeSchema, {
     id: 'generic-token',
     name: 'Token',
-    description: 'A single API token or bearer secret.\n\n**The widget may send them to any host.**',
+    description: 'A single API token or bearer secret.',
     fields: [stringField('token', 'Token', 'The API token or bearer secret.', true)],
 });
 
 const genericUserpass = pb.create(pb.CredentialTypeSchema, {
     id: 'generic-userpass',
     name: 'Username & password',
-    description: '**The widget may send them to any host.**',
+    description: 'A username and password pair.',
     fields: [
         stringField('username', 'Username', 'The account username.', false),
         stringField('password', 'Password', 'The account password.', true),

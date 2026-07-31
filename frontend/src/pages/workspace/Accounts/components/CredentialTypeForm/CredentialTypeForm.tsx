@@ -21,7 +21,7 @@
 import { useIntl } from 'react-intl';
 import type * as pb from '@/proto';
 import css from './CredentialTypeForm.scss';
-import { Markdown, ParamField, type FieldValue } from '@/components';
+import { Markdown, ParamField, type FieldValue, InlineNotification } from '@/components';
 
 export interface CredentialTypeFormProps {
     type: pb.CredentialType;
@@ -39,16 +39,24 @@ export function CredentialTypeForm({ type, values, onChange, errors }: Credentia
     // Derived from the structured policy rather than the type's own prose,
     // so it stays truthful for a type whose description someone else wrote.
     const hosts = type.egress?.allowHosts ?? [];
-    const egress = hosts.length
-        ? formatMessage({ defaultMessage: 'Its secret is only ever sent to {hosts}.' }, { hosts: hosts.join(', ') })
-        : formatMessage({ defaultMessage: 'Its secret may be sent to any host.' });
+    const egress =
+        hosts.length > 0
+            ? formatMessage({ defaultMessage: 'It is only ever sent to {hosts}.' }, { hosts: hosts.join(', ') })
+            : formatMessage({ defaultMessage: 'It may be sent to any host.' });
 
     return (
         <div className={css.root}>
             <div className={css.intro}>
-                <h4 className={css.title} children={type.name} />
+                <h4 className={css.title} children={formatMessage({ defaultMessage: 'Credentials' })} />
                 <Markdown className={css.description} source={type.description} />
-                <p className={css.egress} children={egress} />
+                <InlineNotification
+                    theme="inverse"
+                    kind="info"
+                    stretch
+                    hideCloseButton
+                    className={css.egress}
+                    children={egress}
+                />
             </div>
 
             <section

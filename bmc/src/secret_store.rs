@@ -189,7 +189,11 @@ mod tests {
     use super::*;
 
     fn account(name: &str) -> Account {
-        Account::new("generic-token".to_owned(), name.to_owned(), IndexMap::new())
+        Account::new(
+            crate::credential::BuiltinType::GenericToken.id().to_owned(),
+            name.to_owned(),
+            IndexMap::new(),
+        )
     }
 
     fn key(field: &str) -> ParamKey {
