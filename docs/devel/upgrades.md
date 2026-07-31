@@ -251,13 +251,37 @@ The device must always have enough free space for the next upgrade, including th
 changes (glibc or compiler bumps). `bmc-nix::gc` reclaims space in two stages:
 
 - **Generation cleanup.** Old generation directories are removed according to `/etc/nix-upgrade/gc.json`
-  (`keep_generations`, `keep_days`, `protected_generations`). The current and the latest generations are always kept, as
-  is any generation pointed to by a deferred-activation marker; `protected_generations` is empty by default.
+  (`keep_generations`, `keep_days`, `protected_generations`). By default, the two highest numbered generations are kept.
+  The current and latest generations, every generation referenced by a deferred-activation marker, explicitly protected
+  generations, generations covered by `keep_days`, and transient generations protected by the caller can retain more
+  than that default.
 - **Nix store GC.** `nix-collect-garbage` removes store paths no longer referenced by any surviving generation.
 
-GC runs via the `bmc-nix-cli gc` subcommand, intended for a periodic timer or for when disk space runs low — it is not
-part of the upgrade flow. A pre-flight free-space check that triggers GC opportunistically before an upgrade is planned
-but not implemented yet. Progress is reported so a long GC does not look like a hang.
+`bmc` collects Nix garbage every two hours. The schedule is a cron job on the shared scheduler, and its offset inside
+the two-hour period is drawn randomly at each startup, so devices booted together are unlikely to collect together. The
+first collection lands between 30 minutes and two hours after startup, keeping it clear of the boot window; a clock
+correction or a DST fall-back can defer it by one further occurrence.
+
+Each run cleans up profile generations, then runs `nix-collect-garbage` only when that cleanup actually removed
+something, so an idle device does no store scan. When a run removes generations but the store sweep then fails, the next
+run sweeps unconditionally — those generations are already gone, so no later cleanup would count them again.
+
+Automatic upgrades collect unconditionally after claiming an available upgrade and before firmware or package work
+begins, so a sequence of automatic upgrades cannot accumulate store paths. The collection is best-effort — what decides
+the attempt is the free-space check after it: a package upgrade aborts before download when the estimated unpacked size
+plus 10% headroom exceeds the free space on the store filesystem. Without an estimate (the dry-run timed out) or a
+free-space reading, the attempt proceeds and the realization itself fails if space runs out. Firmware images download to
+tmpfs and skip the check. Manual UI-driven upgrades run the same free-space check but never the collection.
+`bmc-nix-cli gc` also forces collection and reports progress so a long collection does not look like a hang.
+
+To stop periodic collection while debugging on a device, set `periodic` in `/etc/nix-upgrade/gc.json`:
+
+```json
+{ "periodic": "disabled" }
+```
+
+The next occurrence honors it — no restart needed — and the file survives a sysupgrade. The toggle covers only the
+periodic path: collection before an automatic upgrade and `bmc-nix-cli gc` both still run.
 
 ## Initialization and Factory Reset
 
