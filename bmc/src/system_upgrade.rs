@@ -19,6 +19,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+mod periodic_gc;
+
 use crate::BmcManager;
 use anyhow::anyhow;
 use bmc_scheduler::JobScheduler;
@@ -871,6 +873,18 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 }
             }
         });
+    }
+
+    pub(crate) async fn gc_init(&self, started: tokio::time::Instant, gc_config_path: PathBuf) {
+        let gc = Arc::new(periodic_gc::PeriodicGc::new(
+            started,
+            Arc::clone(&self.run_gate),
+            Arc::clone(&self.package_backend),
+            gc_config_path,
+        ));
+        if let Err(err) = gc.schedule(&self.scheduler).await {
+            error!(error = %err, "Failed to schedule periodic garbage collection");
+        }
     }
 
     async fn retry_autoupgrade_with_backoff(service: &Self) {

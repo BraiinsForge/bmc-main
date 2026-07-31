@@ -725,6 +725,7 @@ dependencies = [
  "mime_guess",
  "proptest",
  "prost-types",
+ "rand 0.9.1",
  "reqwest",
  "semver",
  "serde",

@@ -201,6 +201,11 @@ where
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
         compositor: Arc<dyn Compositor>,
     ) -> Result<Self> {
+        // Captured here, not where the collection job is registered: the
+        // startup floor measures the boot window, and registration happens
+        // hundreds of lines of service construction later.
+        let started = tokio::time::Instant::now();
+
         let listener = TcpListener::bind(config.address).await?;
 
         let hardware_capabilities = compositor.hardware_capabilities();
@@ -277,6 +282,9 @@ where
 
         system_upgrade_service
             .autoupgrade_init(autoupgrade_config)
+            .await;
+        system_upgrade_service
+            .gc_init(started, config.nix_gc_config_path.clone())
             .await;
 
         let sound_controller =
