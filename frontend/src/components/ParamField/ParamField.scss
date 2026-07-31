@@ -19,6 +19,23 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+// The param form is one full-width column, and Carbon pins the single-date
+// input to a fixed width, so stretch the whole picker chain — locally, since
+// other DatePicker placements have no business being full-width.
+.datePicker {
+    :global(.cds--date-picker),
+    :global(.cds--date-picker-container),
+    // flatpickr's bare wrapper span shrinks to content,
+    // and the input's 100% resolves against it.
+    :global(.cds--date-picker-input__wrapper) > span,
+    // Nested like Carbon's own pin, plus this class: one specificity point above it.
+    :global(.cds--date-picker--single) :global(.cds--date-picker__input.cds--date-picker__input) {
+        width: 100%;
+        min-width: 100%;
+        inline-size: 100%;
+    }
+}
+
 .comboBox {
     input {
         padding-inline-end: 5.5rem !important;

@@ -23,7 +23,17 @@
 
 import { useMemo, type ReactNode } from 'react';
 import { useIntl } from 'react-intl';
-import { ComboBox, NumberInput, PasswordInput, Select, SelectItem, TextInput, Toggle } from '@carbon/react';
+import {
+    ComboBox,
+    DatePicker,
+    DatePickerInput,
+    NumberInput,
+    PasswordInput,
+    Select,
+    SelectItem,
+    TextInput,
+    Toggle,
+} from '@carbon/react';
 import * as pb from '@/proto';
 import type { iField } from '@/lib/form';
 import { useIsTouchDevice } from '@/lib/react';
@@ -131,8 +141,7 @@ export function BoundToggle(props: BoundToggleProps) {
 
 function stringFormatToInputType(format: pb.StringFormat | undefined): string {
     switch (format) {
-        case pb.StringFormat.DATE:
-            return 'date';
+        // DATE is handled by `DatePicker` before this is reached.
         case pb.StringFormat.TIME:
             return 'time';
         case pb.StringFormat.EMAIL:
@@ -184,6 +193,31 @@ export function ParamField(props: {
                         value={asString(value) || null}
                         onChange={v => onChange(definition.key, v)}
                     />
+                );
+            }
+            if (format === pb.StringFormat.DATE) {
+                return (
+                    // Carbon draws its own calendar and indicator, so the control
+                    // follows the theme — native date chrome ignores it.
+                    //
+                    // flatpickr's second argument is the value already formatted
+                    // to `dateFormat`, which keeps the wire value ISO.
+                    <DatePicker
+                        className={css.datePicker}
+                        datePickerType="single"
+                        dateFormat="Y-m-d"
+                        value={asString(value)}
+                        onChange={(_dates, dateStr) => onChange(definition.key, dateStr)}
+                    >
+                        <DatePickerInput
+                            id={id}
+                            labelText={labelText}
+                            helperText={definition.description}
+                            invalid={!!error}
+                            invalidText={error}
+                            placeholder="yyyy-mm-dd"
+                        />
+                    </DatePicker>
                 );
             }
             if (format === pb.StringFormat.PASSWORD) {
