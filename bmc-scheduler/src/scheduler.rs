@@ -249,6 +249,15 @@ impl JobScheduler {
         Ok(job_id)
     }
 
+    /// Timezone this scheduler evaluates cron patterns in.
+    ///
+    /// Callers deriving a pattern from a wall-clock instant must read that
+    /// instant in this zone, not the system-local one.
+    #[must_use]
+    pub fn timezone(&self) -> Tz {
+        *self.timezone_receiver.borrow().chrono()
+    }
+
     // CONVENIENCE METHODS - Simple cases
     pub async fn schedule_cron(&self, cron: Cron, task: Task) -> Result<Uuid> {
         self.schedule(Schedule::Cron(cron), task, JobConfig::default())
