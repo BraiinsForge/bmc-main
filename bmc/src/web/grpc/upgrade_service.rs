@@ -338,6 +338,7 @@ impl From<SystemUpgradeError> for Status {
             | SystemUpgradeError::UnableToCheckForUpgrade(_)
             | SystemUpgradeError::UpgradeFailed
             | SystemUpgradeError::PackageUpgradeFailed(_)
+            | SystemUpgradeError::PackageGcFailed(_)
             | SystemUpgradeError::PendingInstallWriteFailed(_) => {
                 Status::internal(value.to_string())
             }

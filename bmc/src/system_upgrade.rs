@@ -28,7 +28,10 @@ pub(crate) use bmc_upgrade::arbitration::Disruption;
 use bmc_upgrade::arbitration::arbitrate;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
-use bmc_upgrade::packages::{EstimateMode, PackageBackend, PackageProbe, PackageProbeError};
+use bmc_upgrade::packages::{
+    EstimateMode, PackageBackend, PackageGcError, PackageGcOutcome, PackageGcRequest, PackageProbe,
+    PackageProbeError,
+};
 pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
@@ -380,6 +383,47 @@ async fn claim_upgrade(
     Ok((gate, upgrade))
 }
 
+async fn automatic_gc_preflight(
+    gate: tokio::sync::OwnedMutexGuard<()>,
+    package_backend: &Arc<dyn PackageBackend>,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, UpgradeRunStream> {
+    // Unconditional: an upgrade needs the space whether or not a periodic
+    // collection ran recently, so the periodic job's schedule and its
+    // configured opt-out play no part here.
+    let request = PackageGcRequest {
+        on_busy: bmc_nix::gc::OnBusy::Wait,
+        sweep: bmc_nix::gc::Sweep::Always,
+    };
+    // Only a completed sweep clears the way. This request cannot produce the
+    // other outcomes — it waits for the lock and sweeps regardless of what
+    // cleanup removed — so treating them as failures reports a broken backend
+    // instead of dispatching on a collection that never happened.
+    let outcome = match package_backend.gc(request).await {
+        Ok(outcome) => outcome,
+        Err(err) => {
+            error!(error = %err, "Garbage collection before automatic upgrade failed");
+            return Err(one_shot(UpgradeRunState::Failed(
+                SystemUpgradeError::PackageGcFailed(err),
+            )));
+        }
+    };
+
+    match outcome {
+        PackageGcOutcome::Collected | PackageGcOutcome::SweptDespiteCleanupFailure => Ok(gate),
+        PackageGcOutcome::NothingToCollect | PackageGcOutcome::Busy => {
+            error!(
+                ?outcome,
+                "Garbage collection before automatic upgrade did not run"
+            );
+            Err(one_shot(UpgradeRunState::Failed(
+                SystemUpgradeError::PackageGcFailed(PackageGcError::Operational(format!(
+                    "BUG: forced collection reported {outcome:?}"
+                ))),
+            )))
+        }
+    }
+}
+
 fn spawn_packages_run(
     gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: Arc<dyn PackageBackend>,
@@ -596,6 +640,14 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Err(stream) => return stream,
             };
 
+        self.dispatch_claimed_upgrade(gate, upgrade)
+    }
+
+    fn dispatch_claimed_upgrade(
+        &self,
+        gate: tokio::sync::OwnedMutexGuard<()>,
+        upgrade: AvailableSystemUpgrade,
+    ) -> UpgradeRunStream {
         let run = match upgrade {
             AvailableSystemUpgrade::Firmware { detail, install } => {
                 self.spawn_firmware_run(gate, detail, install)
@@ -615,6 +667,19 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             ),
         };
         forward_led_events(self.state_service.clone(), run)
+    }
+
+    async fn start_automatic_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
+        let (gate, upgrade) =
+            match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
+                Ok(claimed) => claimed,
+                Err(stream) => return stream,
+            };
+        let gate = match automatic_gc_preflight(gate, &self.package_backend).await {
+            Ok(gate) => gate,
+            Err(stream) => return stream,
+        };
+        self.dispatch_claimed_upgrade(gate, upgrade)
     }
 
     #[expect(clippy::too_many_lines)]
@@ -850,7 +915,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         };
 
         info!(upgrade_id, "Auto-upgrade found an upgrade, starting");
-        let mut run = self.start_upgrade(upgrade_id).await;
+        let mut run = self.start_automatic_upgrade(upgrade_id).await;
         while let Some(state) = run.next().await {
             match state {
                 UpgradeRunState::Phase(phase) => debug!(?phase, "Auto-upgrade phase"),
@@ -966,6 +1031,8 @@ pub(crate) enum SystemUpgradeError {
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
     PackageUpgradeFailed(String),
+    #[error("Package garbage collection failed: {0}")]
+    PackageGcFailed(PackageGcError),
     #[error("Failed to record the pending widget install: {0}")]
     PendingInstallWriteFailed(String),
     #[error("Cannot check for upgrade: {0}.")]
@@ -988,6 +1055,9 @@ impl From<FirmwareUpgradeError> for SystemUpgradeError {
 
 impl SystemUpgradeError {
     fn is_retriable(&self) -> bool {
+        if let Self::PackageGcFailed(err) = self {
+            return err.is_retriable();
+        }
         if let Self::PackageCheckFailed(err) = self {
             return err.is_transient();
         }
@@ -1009,7 +1079,6 @@ impl SystemUpgradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome, PackageGcRequest};
     use futures::StreamExt;
 
     fn test_upgrade_detail() -> UpgradeDetail {
@@ -1292,6 +1361,204 @@ mod tests {
         }
     }
 
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    enum BackendEvent {
+        ForcedGc,
+        Apply,
+    }
+
+    #[derive(Debug)]
+    struct RecordingGcBackend {
+        gc_results:
+            std::sync::Mutex<std::collections::VecDeque<Result<PackageGcOutcome, PackageGcError>>>,
+        requests: std::sync::Mutex<Vec<PackageGcRequest>>,
+        events: std::sync::Mutex<Vec<BackendEvent>>,
+    }
+
+    impl RecordingGcBackend {
+        fn new(
+            results: impl IntoIterator<Item = Result<PackageGcOutcome, PackageGcError>>,
+        ) -> Self {
+            Self {
+                gc_results: std::sync::Mutex::new(results.into_iter().collect()),
+                requests: std::sync::Mutex::new(Vec::new()),
+                events: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl PackageBackend for RecordingGcBackend {
+        async fn gc(&self, request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
+            self.requests
+                .lock()
+                .expect("BUG: recording backend requests mutex poisoned")
+                .push(request);
+            // What "forced" now means: sweep regardless.
+            if request.sweep == bmc_nix::gc::Sweep::Always {
+                self.events
+                    .lock()
+                    .expect("BUG: recording backend events mutex poisoned")
+                    .push(BackendEvent::ForcedGc);
+            }
+            self.gc_results
+                .lock()
+                .expect("BUG: recording backend results mutex poisoned")
+                .pop_front()
+                .unwrap_or(Ok(PackageGcOutcome::Collected))
+        }
+
+        async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
+            PackageProbe::UpToDate
+        }
+
+        async fn apply(
+            &self,
+            _merged: bmc_nix::types::MergedIndex,
+            _install: Vec<String>,
+            _progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
+        ) -> Result<(), bmc_upgrade::packages::ApplyError> {
+            self.events
+                .lock()
+                .expect("BUG: recording backend events mutex poisoned")
+                .push(BackendEvent::Apply);
+            Ok(())
+        }
+
+        async fn list_installable_widgets(
+            &self,
+        ) -> Result<
+            Vec<bmc_upgrade::packages::InstallableWidget>,
+            bmc_upgrade::packages::PackageProbeError,
+        > {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn automatic_upgrade_forces_gc_before_package_dispatch() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::new([]));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+        let Ok(gate) = automatic_gc_preflight(gate, &backend_dyn).await else {
+            panic!("BUG: successful forced GC must preserve the gate");
+        };
+
+        let run = spawn_packages_run(
+            gate,
+            backend_dyn,
+            Arc::new(RecordingLifecycle::default()),
+            empty_merged_index(),
+            Vec::new(),
+            None,
+            StateService::new(),
+        );
+        assert!(matches!(drain(run).await, Some(UpgradeRunState::Finished)));
+        assert_eq!(
+            *backend
+                .events
+                .lock()
+                .expect("BUG: recording backend events mutex poisoned"),
+            [BackendEvent::ForcedGc, BackendEvent::Apply]
+        );
+    }
+
+    #[tokio::test]
+    async fn automatic_gc_failure_prevents_dispatch_and_releases_gate() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::new([Err(PackageGcError::Operational(
+            "store failure".to_owned(),
+        ))]));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
+        let Err(mut run) = automatic_gc_preflight(gate, &backend_dyn).await else {
+            panic!("BUG: a forced GC failure must stop dispatch");
+        };
+        assert!(matches!(
+            run.next().await,
+            Some(UpgradeRunState::Failed(
+                SystemUpgradeError::PackageGcFailed(PackageGcError::Operational(_))
+            ))
+        ));
+        assert!(
+            run_gate.try_lock().is_ok(),
+            "GC failure must release the run gate"
+        );
+        assert!(
+            backend
+                .events
+                .lock()
+                .expect("BUG: recording backend events mutex poisoned")
+                .iter()
+                .all(|event| *event != BackendEvent::Apply)
+        );
+    }
+
+    #[tokio::test]
+    async fn automatic_upgrade_does_not_dispatch_when_gc_reports_it_did_not_run() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::new([Ok(PackageGcOutcome::Busy)]));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
+        let Err(mut run) = automatic_gc_preflight(gate, &backend_dyn).await else {
+            panic!("BUG: an upgrade must never dispatch on a collection that did not happen");
+        };
+        assert!(matches!(
+            run.next().await,
+            Some(UpgradeRunState::Failed(
+                SystemUpgradeError::PackageGcFailed(PackageGcError::Operational(_))
+            ))
+        ));
+        assert!(
+            run_gate.try_lock().is_ok(),
+            "a collection that did not run must release the run gate"
+        );
+        assert!(
+            backend
+                .events
+                .lock()
+                .expect("BUG: recording backend events mutex poisoned")
+                .iter()
+                .all(|event| *event != BackendEvent::Apply)
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_upgrade_does_not_run_forced_gc() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::new([]));
+
+        let run = spawn_packages_run(
+            gate,
+            Arc::clone(&backend) as Arc<dyn PackageBackend>,
+            Arc::new(RecordingLifecycle::default()),
+            empty_merged_index(),
+            Vec::new(),
+            None,
+            StateService::new(),
+        );
+        assert!(matches!(drain(run).await, Some(UpgradeRunState::Finished)));
+        assert_eq!(
+            *backend
+                .events
+                .lock()
+                .expect("BUG: recording backend events mutex poisoned"),
+            [BackendEvent::Apply]
+        );
+    }
+
     async fn drain(mut run: UpgradeRunStream) -> Option<UpgradeRunState> {
         let mut last = None;
         while let Some(state) = run.next().await {
@@ -1490,6 +1757,18 @@ mod tests {
         assert!(!SystemUpgradeError::UpgradeFailed.is_retriable());
         // A rejected image is permanent: retrying the same one is futile.
         assert!(!SystemUpgradeError::InvalidImage.is_retriable());
+        assert!(
+            SystemUpgradeError::PackageGcFailed(PackageGcError::ConfigRead(
+                "temporary read failure".to_owned()
+            ))
+            .is_retriable()
+        );
+        assert!(
+            !SystemUpgradeError::PackageGcFailed(PackageGcError::ConfigParse(
+                "invalid JSON".to_owned()
+            ))
+            .is_retriable()
+        );
     }
 
     #[test]
