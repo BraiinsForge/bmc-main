@@ -367,7 +367,7 @@ where
         + DeckWidgetHandler
         + 'static,
 {
-    display.create_global::<D, DeckWidgetManagerV1, ()>(1, ());
+    display.create_global::<D, DeckWidgetManagerV1, ()>(2, ());
 }
 
 #[cfg(test)]

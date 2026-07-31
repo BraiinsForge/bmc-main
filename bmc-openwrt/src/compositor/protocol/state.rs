@@ -113,7 +113,13 @@ trait WidgetSurface {
     fn credential_secrets(&self, secrets_json: String);
     fn emit_setting(&self, setting: &SettingUpdate);
     fn configure_done(&self);
+    /// Negotiated interface version, which decides what may be sent at all.
+    fn version(&self) -> u32;
 }
+
+/// Interface version that introduced the two credential events.
+/// Mirrors `since="2"` in `deck-widget-v1.xml`.
+const CREDENTIAL_EVENTS_SINCE: u32 = 2;
 
 impl WidgetSurface for DeckWidgetSurfaceV1 {
     fn configure(
@@ -154,6 +160,10 @@ impl WidgetSurface for DeckWidgetSurfaceV1 {
 
     fn configure_done(&self) {
         self.configure_done();
+    }
+
+    fn version(&self) -> u32 {
+        Resource::version(self)
     }
 }
 
@@ -503,10 +513,18 @@ impl DeckWidgetProtocolState {
         &self,
         instance_id: &str,
     ) -> Option<RecordedEvents> {
+        self.test_emit_initial_state_events_into(instance_id, RecordingSurface::default())
+    }
+
+    #[cfg(test)]
+    pub(super) fn test_emit_initial_state_events_into(
+        &self,
+        instance_id: &str,
+        sink: RecordingSurface,
+    ) -> Option<RecordedEvents> {
         if !self.widgets.contains_key(instance_id) {
             return None;
         }
-        let sink = RecordingSurface::default();
         self.emit_initial_state_into(&instance_id.to_owned(), &sink);
         Some(sink.into_events())
     }
@@ -609,7 +627,13 @@ fn credentials_changed(
 
 /// Emit the guest-visible view and then the secrets, always as a pair:
 /// a widget that saw a slot appear must be able to spend it.
+///
+/// Both events are `since="2"`. A version-1 peer is not merely uninterested:
+/// sending it an event it has no opcode for would desynchronise the stream.
 fn emit_credentials<S: WidgetSurface>(surface: &S, config: &WidgetInitialConfig) {
+    if surface.version() < CREDENTIAL_EVENTS_SINCE {
+        return;
+    }
     surface.credentials(serde_json::Value::Object(config.credentials.clone()).to_string());
     surface.credential_secrets(config.credential_secrets.to_json_string());
 }
@@ -702,9 +726,30 @@ enum RecordedEvent {
 }
 
 #[cfg(test)]
-#[derive(Default)]
-struct RecordingSurface {
+pub(super) struct RecordingSurface {
     events: std::cell::RefCell<Vec<RecordedEvent>>,
+    version: u32,
+}
+
+#[cfg(test)]
+impl Default for RecordingSurface {
+    fn default() -> Self {
+        Self {
+            events: std::cell::RefCell::default(),
+            version: CREDENTIAL_EVENTS_SINCE,
+        }
+    }
+}
+
+#[cfg(test)]
+impl RecordingSurface {
+    /// A peer that negotiated an older interface version.
+    fn at_version(version: u32) -> Self {
+        Self {
+            version,
+            ..Self::default()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -758,6 +803,10 @@ impl WidgetSurface for RecordingSurface {
 
     fn configure_done(&self) {
         self.events.borrow_mut().push(RecordedEvent::ConfigureDone);
+    }
+
+    fn version(&self) -> u32 {
+        self.version
     }
 }
 
@@ -1023,6 +1072,22 @@ mod tests {
                 bmc_widget_protocol::DisplayShape::Rectangular,
                 217
             )),
+        );
+    }
+
+    #[test]
+    fn a_version_1_peer_gets_the_batch_without_credential_events() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+
+        let events = state
+            .test_emit_initial_state_events_into("alpha", RecordingSurface::at_version(1))
+            .expect("BUG: alpha must be registered");
+
+        assert_eq!(
+            events.names(),
+            ["configure", "display_info", "params", "configure_done"],
+            "an event a v1 peer has no opcode for would desynchronise its stream"
         );
     }
 

@@ -5,7 +5,7 @@
     SPDX-License-Identifier: MIT
   </copyright>
 
-  <interface name="deck_widget_manager_v1" version="1">
+  <interface name="deck_widget_manager_v1" version="2">
     <description summary="Deck widget manager">
       Global interface for Deck widget management. Widgets bind to this
       interface to obtain a deck_widget_surface_v1 for their wl_surface.
@@ -37,7 +37,7 @@
     </enum>
   </interface>
 
-  <interface name="deck_widget_surface_v1" version="1">
+  <interface name="deck_widget_surface_v1" version="2">
     <description summary="Deck widget surface">
       Interface for a widget surface. On surface creation, the compositor
       emits initial configuration as a sequence of events, terminated by
@@ -187,43 +187,6 @@
       <arg name="json" type="string" summary="JSON-encoded params object"/>
     </event>
 
-    <event name="credentials">
-      <description summary="which credential slots are bound, and to what">
-        The widget's credential slots that currently resolve to a saved
-        account, as a JSON-encoded object keyed by manifest slot name:
-        {"SLOT": {"type": "CREDENTIAL-TYPE-ID", "account":
-        "OPERATOR-CHOSEN-NAME"}}. A slot absent from the object is
-        unbound, whether the operator never bound it or bound it to an
-        account that no longer exists.
-
-        Carries no secret material and is safe to log. This is the whole
-        of what a widget may learn about its credentials; the values
-        themselves arrive on credential_secrets and stop at the widget
-        process.
-
-        Emitted on surface creation as part of the initial configure
-        batch, and re-emitted whenever the resolution changes. An empty
-        JSON object ("{}") is sent when nothing is bound.
-      </description>
-      <arg name="json" type="string" summary="JSON-encoded slot-to-account object"/>
-    </event>
-
-    <event name="credential_secrets">
-      <description summary="secret field values for the bound slots">
-        The secret field values behind each bound slot, as a JSON-encoded
-        object keyed by manifest slot name: {"SLOT": {"FIELD": "VALUE"}}.
-        Slot keys match the credentials event exactly.
-
-        This event carries live secrets and must never be forwarded to
-        guest WASM, written to a log, or persisted. The widget process is
-        trusted to hold it and to substitute the values into outbound
-        requests on the widget's behalf; the widget itself never sees them.
-
-        Emitted alongside credentials, on the same occasions.
-      </description>
-      <arg name="json" type="string" summary="JSON-encoded slot-to-field-values object"/>
-    </event>
-
     <event name="configure_done">
       <description summary="initial configuration batch complete">
         Terminates the initial configure batch. After this event the
@@ -369,6 +332,46 @@
       </description>
       <arg name="request_id" type="uint" summary="echoed widget request id"/>
       <arg name="status" type="uint" enum="led_request_status"/>
+    </event>
+
+    <event name="credentials" since="2">
+      <description summary="which credential slots are bound, and to what">
+        The widget's credential slots that currently resolve to a saved
+        account, as a JSON-encoded object keyed by manifest slot name:
+        {"SLOT": {"type": "CREDENTIAL-TYPE-ID", "account":
+        "OPERATOR-CHOSEN-NAME"}}. A slot absent from the object is
+        unbound, whether the operator never bound it or bound it to an
+        account that no longer exists.
+
+        Carries no secret material and is safe to log. This is the whole
+        of what a widget may learn about its credentials; the values
+        themselves arrive on credential_secrets and stop at the widget
+        process.
+
+        Emitted on surface creation as part of the initial configure
+        batch, and re-emitted whenever the resolution changes. An empty
+        JSON object ("{}") is sent when nothing is bound.
+
+        A version-1 peer never receives this event, and reads every slot
+        as unbound.
+      </description>
+      <arg name="json" type="string" summary="JSON-encoded slot-to-account object"/>
+    </event>
+
+    <event name="credential_secrets" since="2">
+      <description summary="secret field values for the bound slots">
+        The secret field values behind each bound slot, as a JSON-encoded
+        object keyed by manifest slot name: {"SLOT": {"FIELD": "VALUE"}}.
+        Slot keys match the credentials event exactly.
+
+        This event carries live secrets and must never be forwarded to
+        guest WASM, written to a log, or persisted. The widget process is
+        trusted to hold it and to substitute the values into outbound
+        requests on the widget's behalf; the widget itself never sees them.
+
+        Emitted alongside credentials, on the same occasions.
+      </description>
+      <arg name="json" type="string" summary="JSON-encoded slot-to-field-values object"/>
     </event>
 
     <!-- Touch input is handled via standard wl_seat/wl_touch rather than

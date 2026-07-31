@@ -170,7 +170,10 @@ impl WidgetProtocolClient {
         // Bind to wl_compositor and deck_widget_manager_v1
         let qh = event_queue.handle();
         let compositor: WlCompositor = globals.bind(&qh, 1..=1, ())?;
-        let manager: DeckWidgetManagerV1 = globals.bind(&qh, 1..=1, ())?;
+        // Range, not a pin: an older compositor still binds at 1,
+        // where the credential events simply never arrive
+        // and every slot reads unbound.
+        let manager: DeckWidgetManagerV1 = globals.bind(&qh, 1..=2, ())?;
         state.compositor = Some(compositor);
         state.manager = Some(manager);
 

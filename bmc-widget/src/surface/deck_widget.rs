@@ -867,9 +867,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                     state.compositor = Some(compositor);
                 }
                 "deck_widget_manager_v1" => {
+                    // 2 is where the credential events arrive; an older
+                    // compositor still offers 1 and every slot reads unbound.
                     let widget_manager =
-                        registry.bind::<DeckWidgetManagerV1, _, _>(name, version.min(1), qh, ());
-                    tracing::debug!("Bound deck_widget_manager_v1 v{}", version.min(1));
+                        registry.bind::<DeckWidgetManagerV1, _, _>(name, version.min(2), qh, ());
+                    tracing::debug!("Bound deck_widget_manager_v1 v{}", version.min(2));
                     state.widget_manager = Some(widget_manager);
                 }
                 "zwp_linux_dmabuf_v1" => {

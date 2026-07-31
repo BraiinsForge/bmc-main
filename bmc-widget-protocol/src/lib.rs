@@ -30,6 +30,17 @@
 //! - Graceful shutdown signaling
 //! - Action requests (sound, LED control)
 
+// The scanner macros read the XML during expansion,
+// which rustc's dep-info never records — so a compile cache
+// keyed on dep-info (CI's sccache) returns a stale object
+// for an XML-only change.
+//
+// Observed as `wl_global_create: 2 > 1` in job 10001931
+// after the version bump. `include_str!` puts the file's
+// content into dep-info, so an XML change misses the cache
+// like any source edit.
+const _TRACK_PROTOCOL_XML: &str = include_str!("../protocol/deck-widget-v1.xml");
+
 /// Server-side protocol bindings (for the compositor).
 pub mod server {
     #![allow(
