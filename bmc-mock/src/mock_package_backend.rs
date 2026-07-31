@@ -33,8 +33,8 @@ use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
 use bmc_shared_utils::include_png;
 use bmc_upgrade::packages::{
     ApplyError, EstimateMode, InstallableCategory, InstallablePreview, InstallableWidget,
-    PackageBackend, PackageProbe, PackageProbeError, PackagesPreview, SystemPackageChange,
-    installable_widgets_from,
+    PackageBackend, PackageGcError, PackageGcOutcome, PackageGcRequest, PackageProbe,
+    PackageProbeError, PackagesPreview, SystemPackageChange, installable_widgets_from,
 };
 use bmc_widget_manifest::Manifest;
 use tokio::sync::Notify;
@@ -264,6 +264,10 @@ fn inline_widget_icon(mut widget: InstallableWidget) -> InstallableWidget {
 
 #[async_trait::async_trait]
 impl PackageBackend for MockPackageBackend {
+    async fn gc(&self, _request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
+        Ok(PackageGcOutcome::Collected)
+    }
+
     async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
         let scenario = scenario::read(&self.scenario_path);
         if scenario.packages == PackagesScenario::FetchFailed {

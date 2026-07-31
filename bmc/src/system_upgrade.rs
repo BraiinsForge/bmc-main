@@ -1009,6 +1009,7 @@ impl SystemUpgradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome, PackageGcRequest};
     use futures::StreamExt;
 
     fn test_upgrade_detail() -> UpgradeDetail {
@@ -1217,6 +1218,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for StubBackend {
+        async fn gc(&self, _request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
+            Ok(PackageGcOutcome::Collected)
+        }
+
         async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
             PackageProbe::UpToDate
         }
@@ -1245,6 +1250,10 @@ mod tests {
 
     #[async_trait::async_trait]
     impl PackageBackend for FailingBackend {
+        async fn gc(&self, _request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
+            Ok(PackageGcOutcome::Collected)
+        }
+
         async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
             PackageProbe::UpToDate
         }

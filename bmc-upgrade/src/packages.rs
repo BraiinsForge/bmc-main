@@ -40,6 +40,7 @@ const ESTIMATE_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Clone, Debug)]
 pub struct NixUpgradeConfig {
     pub servers_config_path: PathBuf,
+    pub gc_config_path: PathBuf,
     pub profile_dir: PathBuf,
     pub hooks_dir: String,
     pub hooks_override_path: Option<PathBuf>,
@@ -228,10 +229,44 @@ impl std::fmt::Display for PackagePlanFailure {
 #[error("{0}")]
 pub struct ApplyError(pub String);
 
+pub type PackageGcOutcome = bmc_nix::gc::ProfileGcOutcome;
+pub type PackageGcRequest = bmc_nix::gc::GcRequest;
+
+#[derive(Clone, Debug, thiserror::Error, PartialEq, Eq)]
+pub enum PackageGcError {
+    #[error("failed to read gc configuration: {0}")]
+    ConfigRead(String),
+    #[error("failed to parse gc configuration: {0}")]
+    ConfigParse(String),
+    /// Cleanup removed entries and the run then failed before a sweep
+    /// completed, so the next run must sweep unconditionally.
+    #[error("garbage collection failed after removing {removed} profile entries: {message}")]
+    UnsweptRemovals { removed: usize, message: String },
+    #[error("garbage collection failed: {0}")]
+    Operational(String),
+}
+
+impl PackageGcError {
+    #[must_use]
+    pub fn is_retriable(&self) -> bool {
+        !matches!(self, Self::ConfigParse(_))
+    }
+
+    /// Entries removed that no completed sweep accounted for.
+    #[must_use]
+    pub fn unswept_removals(&self) -> usize {
+        match self {
+            Self::ConfigRead(_) | Self::ConfigParse(_) | Self::Operational(_) => 0,
+            Self::UnsweptRemovals { removed, .. } => *removed,
+        }
+    }
+}
+
 /// Mockability seam for the package half of system upgrades: probing for
 /// available package changes and applying them.
 #[async_trait::async_trait]
 pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
+    async fn gc(&self, request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError>;
     async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe;
     async fn apply(
         &self,
@@ -362,6 +397,38 @@ impl<N> PackageUpgrader<N> {
 
 #[async_trait::async_trait]
 impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
+    async fn gc(&self, request: PackageGcRequest) -> Result<PackageGcOutcome, PackageGcError> {
+        // Loaded per call, so a retention policy edit applies to the next
+        // collection without a restart.
+        let config =
+            bmc_nix::gc::load_gc_config(&self.config.gc_config_path).map_err(|err| match err {
+                bmc_nix::gc::LoadGcConfigError::Read { .. } => {
+                    PackageGcError::ConfigRead(err.to_string())
+                }
+                bmc_nix::gc::LoadGcConfigError::Parse { .. } => {
+                    PackageGcError::ConfigParse(err.to_string())
+                }
+            })?;
+
+        bmc_nix::gc::collect_profile_garbage(
+            &self.nix,
+            &self.config.profile_dir,
+            &config,
+            request,
+            None,
+        )
+        .await
+        .map_err(|err| {
+            let removed = err.unswept_removals();
+            let message = err.to_string();
+            if removed > 0 {
+                PackageGcError::UnsweptRemovals { removed, message }
+            } else {
+                PackageGcError::Operational(message)
+            }
+        })
+    }
+
     async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
         let (merged, base) = match self.fetch_index_and_manifest().await {
             Ok(pair) => pair,
@@ -670,6 +737,7 @@ pub fn build_packages_preview(
 mod tests {
     use super::*;
     use std::path::Path;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn unsubstitutable_estimate_is_unrealizable() {
@@ -699,10 +767,301 @@ mod tests {
     fn test_nix_config(root: &Path, servers: &Path) -> NixUpgradeConfig {
         NixUpgradeConfig {
             servers_config_path: servers.to_path_buf(),
+            gc_config_path: root.join("gc.json"),
             profile_dir: root.join("profile"),
             hooks_dir: "hooks".to_owned(),
             hooks_override_path: None,
         }
+    }
+
+    #[derive(Debug)]
+    struct GcStore {
+        collect_calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl GcStore {
+        fn successful() -> (Self, Arc<AtomicUsize>) {
+            Self::new(false)
+        }
+
+        fn failing() -> (Self, Arc<AtomicUsize>) {
+            Self::new(true)
+        }
+
+        fn new(fail: bool) -> (Self, Arc<AtomicUsize>) {
+            let collect_calls = Arc::new(AtomicUsize::new(0));
+            (
+                Self {
+                    collect_calls: Arc::clone(&collect_calls),
+                    fail,
+                },
+                collect_calls,
+            )
+        }
+    }
+
+    impl bmc_nix::store::StoreOperations for GcStore {
+        async fn estimate_realization(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<bmc_nix::store::RealizeEstimate, bmc_nix::store::StorePathError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
+        }
+
+        async fn realize_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+            _progress: Option<&dyn bmc_nix::store::RealizeProgress>,
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
+        }
+
+        async fn verify_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
+        }
+
+        async fn collect_garbage(
+            &self,
+            _progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
+        ) -> Result<(), bmc_nix::gc::CollectGarbageError> {
+            self.collect_calls.fetch_add(1, Ordering::SeqCst);
+            if self.fail {
+                Err(bmc_nix::gc::CollectGarbageError::NixCommand(
+                    std::io::Error::other("store gc failed"),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    /// What the periodic job asks for: give up on a busy profile and sweep
+    /// only when cleanup freed something.
+    fn periodic_request() -> PackageGcRequest {
+        PackageGcRequest {
+            on_busy: bmc_nix::gc::OnBusy::Skip,
+            sweep: bmc_nix::gc::Sweep::WhenGenerationsRemoved,
+        }
+    }
+
+    /// What the upgrade preflight asks for: wait for the profile and sweep
+    /// unconditionally.
+    fn forced_request() -> PackageGcRequest {
+        PackageGcRequest {
+            on_busy: bmc_nix::gc::OnBusy::Wait,
+            sweep: bmc_nix::gc::Sweep::Always,
+        }
+    }
+
+    /// Three generations with the newest current: the default policy keeps two
+    /// and so has exactly one generation to remove.
+    fn profile_with_a_removable_generation(profile_dir: &Path) {
+        for number in 1..=3_usize {
+            let generation = profile_dir.join(format!("{number}-link"));
+            std::fs::create_dir_all(&generation).expect("BUG: create generation");
+            std::fs::write(generation.join("manifest"), r#"{"packages":{}}"#)
+                .expect("BUG: write manifest");
+        }
+        std::os::unix::fs::symlink("3-link", profile_dir.join("current"))
+            .expect("BUG: link current generation");
+    }
+
+    #[tokio::test]
+    async fn gc_missing_config_uses_defaults() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+
+        let outcome = upgrader
+            .gc(forced_request())
+            .await
+            .expect("missing gc config must use default policy");
+
+        assert_eq!(outcome, PackageGcOutcome::Collected);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gc_forwards_a_conditional_sweep() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+
+        let outcome = upgrader
+            .gc(periodic_request())
+            .await
+            .expect("an empty profile is a successful gc outcome");
+
+        assert_eq!(outcome, PackageGcOutcome::NothingToCollect);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn gc_sweeps_when_cleanup_removed_a_generation() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let config = test_nix_config(dir.path(), &servers);
+        std::fs::create_dir(&config.profile_dir).expect("BUG: create profile");
+        profile_with_a_removable_generation(&config.profile_dir);
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(config, store);
+
+        let outcome = upgrader
+            .gc(periodic_request())
+            .await
+            .expect("a removed generation must trigger the sweep");
+
+        assert_eq!(outcome, PackageGcOutcome::Collected);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gc_forwards_an_unconditional_sweep() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+        upgrader
+            .gc(forced_request())
+            .await
+            .expect("the first forced gc must collect");
+
+        let outcome = upgrader
+            .gc(forced_request())
+            .await
+            .expect("a forced gc must collect with nothing to remove");
+
+        assert_eq!(outcome, PackageGcOutcome::Collected);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn a_disabling_configuration_does_not_stop_backend_collection() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        std::fs::write(dir.path().join("gc.json"), r#"{"periodic":"disabled"}"#)
+            .expect("BUG: write gc config");
+        let config = test_nix_config(dir.path(), &servers);
+        std::fs::create_dir(&config.profile_dir).expect("BUG: create profile");
+        profile_with_a_removable_generation(&config.profile_dir);
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(config, store);
+
+        let outcome = upgrader
+            .gc(periodic_request())
+            .await
+            .expect("a disabling configuration must not fail the request");
+
+        assert_eq!(
+            outcome,
+            PackageGcOutcome::Collected,
+            "the toggle is enforced by the periodic job, not the backend"
+        );
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gc_classifies_config_read_failure_as_retriable() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        std::fs::create_dir(dir.path().join("gc.json")).expect("BUG: create config directory");
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+
+        let err = upgrader
+            .gc(forced_request())
+            .await
+            .expect_err("a directory passed as config must fail to read");
+
+        assert!(matches!(err, PackageGcError::ConfigRead(_)));
+        assert!(err.is_retriable());
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn gc_classifies_config_parse_failure_as_non_retriable() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        std::fs::write(dir.path().join("gc.json"), "{").expect("BUG: write malformed config");
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+
+        let err = upgrader
+            .gc(forced_request())
+            .await
+            .expect_err("malformed gc config must fail to parse");
+
+        assert!(matches!(err, PackageGcError::ConfigParse(_)));
+        assert!(!err.is_retriable());
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn gc_returns_busy_without_collecting() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let config = test_nix_config(dir.path(), &servers);
+        let _lock = bmc_nix::profile::try_lock_profile(&config.profile_dir)
+            .expect("profile lock attempt must succeed")
+            .expect("profile lock must be available");
+        let (store, collect_calls) = GcStore::successful();
+        let upgrader = PackageUpgrader::with_store(config, store);
+
+        let outcome = upgrader
+            .gc(periodic_request())
+            .await
+            .expect("busy profile is a successful gc outcome");
+
+        assert_eq!(outcome, PackageGcOutcome::Busy);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn gc_classifies_store_failure_as_retriable_operational_error() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let (store, collect_calls) = GcStore::failing();
+        let upgrader = PackageUpgrader::with_store(test_nix_config(dir.path(), &servers), store);
+
+        let err = upgrader
+            .gc(forced_request())
+            .await
+            .expect_err("store collection failure must be reported");
+
+        assert!(matches!(err, PackageGcError::Operational(_)));
+        assert!(err.is_retriable());
+        assert_eq!(err.unswept_removals(), 0);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn gc_reports_removals_left_unswept_by_a_store_failure() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let config = test_nix_config(dir.path(), &servers);
+        std::fs::create_dir(&config.profile_dir).expect("BUG: create profile");
+        profile_with_a_removable_generation(&config.profile_dir);
+        let (store, collect_calls) = GcStore::failing();
+        let upgrader = PackageUpgrader::with_store(config, store);
+
+        let err = upgrader
+            .gc(forced_request())
+            .await
+            .expect_err("store collection failure must be reported");
+
+        assert!(matches!(
+            err,
+            PackageGcError::UnsweptRemovals { removed: 1, .. }
+        ));
+        assert!(err.is_retriable());
+        assert_eq!(err.unswept_removals(), 1);
+        assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
     }
 
     use std::collections::BTreeMap;

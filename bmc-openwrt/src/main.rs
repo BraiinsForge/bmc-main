@@ -185,6 +185,7 @@ async fn main() -> Result<()> {
 
     let package_backend = Arc::new(PackageUpgrader::new(NixUpgradeConfig {
         servers_config_path: config.nix_servers_config_path.clone(),
+        gc_config_path: config.nix_gc_config_path.clone(),
         profile_dir: config.nix_profile_dir.clone(),
         hooks_dir: config.nix_hooks_dir.clone(),
         hooks_override_path: config.nix_hooks_override_path.clone(),

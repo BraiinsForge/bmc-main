@@ -549,6 +549,7 @@ pub struct Configuration {
     pub widgets_paths: Vec<PathBuf>,
     pub capture_widget_output: bool,
     pub nix_servers_config_path: PathBuf,
+    pub nix_gc_config_path: PathBuf,
     pub nix_profile_dir: PathBuf,
     pub pending_install_path: PathBuf,
     pub nix_hooks_dir: String,
@@ -568,6 +569,7 @@ impl Configuration {
     };
     const CRONTAB_PATH: &str = "/etc/crontabs/root";
     const NIX_SERVERS_CONFIG_PATH: &str = "/etc/nix-upgrade/servers.json";
+    const NIX_GC_CONFIG_PATH: &str = "/etc/nix-upgrade/gc.json";
     const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
     // Handoff for a firmware-carried widget install: bmc writes it here, the
     // sysupgrade sequence consumes it via `bmc-nix-cli upgrade --install-from`
@@ -593,6 +595,7 @@ impl Default for Configuration {
             widgets_paths: vec![],
             capture_widget_output: false,
             nix_servers_config_path: PathBuf::from(Self::NIX_SERVERS_CONFIG_PATH),
+            nix_gc_config_path: PathBuf::from(Self::NIX_GC_CONFIG_PATH),
             nix_profile_dir: PathBuf::from(Self::NIX_PROFILE_DIR),
             pending_install_path: PathBuf::from(Self::PENDING_INSTALL_PATH),
             nix_hooks_dir: Self::NIX_HOOKS_DIR.to_owned(),
