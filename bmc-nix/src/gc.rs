@@ -19,18 +19,189 @@
 // the grant above.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 use tracing::{info, warn};
 
-use crate::store::CommandRunner;
+use crate::store::{CommandRunner, StoreOperations};
 use crate::types::GcConfig;
 
 /// Marker file written by the superseded interval-driven design. Nothing
 /// writes it any more; cleanup removes it wherever it is still found.
 pub const LAST_GC_MARKER: &str = ".last-gc";
 
+#[derive(Debug, thiserror::Error)]
+pub enum LoadGcConfigError {
+    #[error("failed to read gc config at {path}: {source}")]
+    Read {
+        path: PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("failed to parse gc config at {path}: {source}")]
+    Parse {
+        path: PathBuf,
+        #[source]
+        source: serde_json::Error,
+    },
+}
+
+pub fn load_gc_config(path: &Path) -> Result<GcConfig, LoadGcConfigError> {
+    let contents = match std::fs::read_to_string(path) {
+        Ok(contents) => contents,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(GcConfig::default());
+        }
+        Err(source) => {
+            return Err(LoadGcConfigError::Read {
+                path: path.to_path_buf(),
+                source,
+            });
+        }
+    };
+    serde_json::from_str(&contents).map_err(|source| LoadGcConfigError::Parse {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// What to do when another writer holds the profile lock.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OnBusy {
+    /// Block until the lock is free. For callers that must collect.
+    Wait,
+    /// Give up and report [`ProfileGcOutcome::Busy`].
+    Skip,
+}
+
+/// When to run the expensive `nix-collect-garbage` sweep.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sweep {
+    Always,
+    /// Only when generation cleanup unrooted something, so an idle device
+    /// does not scan the whole store for nothing.
+    WhenGenerationsRemoved,
+}
+
+/// The two independent decisions collection callers differ on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GcRequest {
+    /// What to do when another writer holds the profile lock.
+    pub on_busy: OnBusy,
+    /// When to run the store sweep.
+    pub sweep: Sweep,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileGcOutcome {
+    Collected,
+    /// The sweep completed but cleanup failed on some entries: what was
+    /// unrooted is reclaimed, and the failed entries stay for a later retry.
+    SweptDespiteCleanupFailure,
+    /// Cleanup unrooted nothing and the request did not force a sweep.
+    NothingToCollect,
+    /// Another writer holds the profile lock.
+    Busy,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub enum ProfileGcError {
+    #[error("failed to lock the profile: {0}")]
+    Lock(#[source] crate::profile::BuildProfileError),
+    #[error(transparent)]
+    Cleanup(#[from] CleanupGenerationsError),
+    #[error("store collection failed after removing {removed} profile entries: {source}")]
+    Sweep {
+        removed: usize,
+        #[source]
+        source: CollectGarbageError,
+    },
+}
+
+impl ProfileGcError {
+    /// Entries this run removed that no completed sweep accounted for.
+    ///
+    /// Nonzero means store garbage is left that no later cleanup can
+    /// rediscover — the generations rooting it are already gone — so the next
+    /// run must sweep unconditionally.
+    #[must_use]
+    pub fn unswept_removals(&self) -> usize {
+        match self {
+            Self::Lock(_) => 0,
+            Self::Cleanup(err) => err.removed(),
+            Self::Sweep { removed, .. } => *removed,
+        }
+    }
+}
+
+/// Clean up profile generations and, depending on `request`, sweep the store.
+///
+/// Holds the profile lock across both steps: no build, staging, or
+/// activation can be mid-swap while entries are removed, and the sweep
+/// cannot delete a concurrent upgrade's realized but not-yet-rooted
+/// store paths.
+pub async fn collect_profile_garbage(
+    store: &impl StoreOperations,
+    profile_dir: &Path,
+    config: &GcConfig,
+    request: GcRequest,
+    progress: Option<&dyn CollectGarbageProgress>,
+) -> Result<ProfileGcOutcome, ProfileGcError> {
+    let _lock = match request.on_busy {
+        OnBusy::Skip => {
+            let Some(lock) =
+                crate::profile::try_lock_profile(profile_dir).map_err(ProfileGcError::Lock)?
+            else {
+                return Ok(ProfileGcOutcome::Busy);
+            };
+            lock
+        }
+        OnBusy::Wait => crate::profile::lock_profile(profile_dir)
+            .await
+            .map_err(ProfileGcError::Lock)?,
+    };
+
+    // A failed cleanup does not abort collection: the generations it removed
+    // are already unrooted, and only a sweep can reclaim what they rooted.
+    // Entries that resisted removal still root their own paths,
+    // so sweeping past them is safe; they stay for the next run to retry.
+    let (removed, cleanup_failure) = {
+        let profile_dir = profile_dir.to_path_buf();
+        let config = config.clone();
+        tokio::task::spawn_blocking(
+            move || match cleanup_generations(&profile_dir, &config, &[]) {
+                Ok(removed) => (removed, None),
+                Err(err) => (err.removed(), Some(err)),
+            },
+        )
+        .await
+        .expect("BUG: cleanup task should not panic")
+    };
+
+    if matches!(request.sweep, Sweep::WhenGenerationsRemoved) && removed == 0 {
+        return match cleanup_failure {
+            Some(err) => Err(err.into()),
+            None => Ok(ProfileGcOutcome::NothingToCollect),
+        };
+    }
+
+    if let Some(err) = &cleanup_failure {
+        warn!(error = %err, removed, "generation cleanup failed; sweeping what it unrooted");
+    }
+
+    store
+        .collect_garbage(progress)
+        .await
+        .map_err(|source| ProfileGcError::Sweep { removed, source })?;
+
+    Ok(match cleanup_failure {
+        Some(_) => ProfileGcOutcome::SweptDespiteCleanupFailure,
+        None => ProfileGcOutcome::Collected,
+    })
+}
+
+/// Errors that can occur when cleaning up generations.
 #[derive(Debug, thiserror::Error)]
 pub enum CleanupGenerationsError {
     #[error("generation cleanup failed: {0}")]
@@ -549,6 +720,140 @@ pub async fn collect_garbage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Debug, Default)]
+    struct RecordingStore {
+        collect_calls: std::sync::atomic::AtomicUsize,
+        fail_collection: std::sync::atomic::AtomicBool,
+    }
+
+    impl RecordingStore {
+        fn failing() -> Self {
+            Self {
+                fail_collection: std::sync::atomic::AtomicBool::new(true),
+                ..Self::default()
+            }
+        }
+
+        fn collect_calls(&self) -> usize {
+            self.collect_calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    impl StoreOperations for RecordingStore {
+        async fn estimate_realization(
+            &self,
+            _packages: &[crate::types::ResolvedPackage],
+        ) -> Result<crate::store::RealizeEstimate, crate::store::StorePathError> {
+            unreachable!("BUG: profile gc never estimates realization")
+        }
+
+        async fn realize_store_paths(
+            &self,
+            _packages: &[crate::types::ResolvedPackage],
+            _progress: Option<&dyn crate::store::RealizeProgress>,
+        ) -> Result<(), crate::store::StorePathError> {
+            unreachable!("BUG: profile gc never realizes store paths")
+        }
+
+        async fn verify_store_paths(
+            &self,
+            _packages: &[crate::types::ResolvedPackage],
+        ) -> Result<(), crate::store::StorePathError> {
+            unreachable!("BUG: profile gc never verifies store paths")
+        }
+
+        fn collect_garbage(
+            &self,
+            _progress: Option<&dyn CollectGarbageProgress>,
+        ) -> impl std::future::Future<Output = Result<(), CollectGarbageError>> + Send {
+            let call = self
+                .collect_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let fail = self
+                .fail_collection
+                .load(std::sync::atomic::Ordering::SeqCst);
+            async move {
+                if fail {
+                    Err(CollectGarbageError::NixCommand(std::io::Error::other(
+                        format!("collection {call} failed"),
+                    )))
+                } else {
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn load_gc_config_missing_uses_defaults() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let config = load_gc_config(&tmp.path().join("missing.json"))
+            .expect("BUG: missing config uses defaults");
+
+        assert_eq!(
+            config.keep_generations,
+            GcConfig::default().keep_generations
+        );
+        assert_eq!(config.keep_days, GcConfig::default().keep_days);
+        assert_eq!(
+            config.protected_generations,
+            GcConfig::default().protected_generations
+        );
+    }
+
+    #[test]
+    fn load_gc_config_partial_uses_field_defaults() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let path = tmp.path().join("gc.json");
+        std::fs::write(&path, r#"{"keep_generations":9}"#).expect("BUG: write config");
+
+        let config = load_gc_config(&path).expect("BUG: load partial config");
+
+        assert_eq!(config.keep_generations, 9);
+        assert_eq!(config.keep_days, GcConfig::default().keep_days);
+        assert_eq!(
+            config.protected_generations,
+            GcConfig::default().protected_generations
+        );
+    }
+
+    #[test]
+    fn load_gc_config_reads_valid_file() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let path = tmp.path().join("gc.json");
+        std::fs::write(
+            &path,
+            r#"{"keep_generations":7,"keep_days":14,"protected_generations":[2,5]}"#,
+        )
+        .expect("BUG: write config");
+
+        let config = load_gc_config(&path).expect("BUG: load valid config");
+
+        assert_eq!(config.keep_generations, 7);
+        assert_eq!(config.keep_days, Some(14));
+        assert_eq!(config.protected_generations, vec![2, 5]);
+    }
+
+    #[test]
+    fn load_gc_config_read_failure_is_distinct() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+
+        let error = load_gc_config(tmp.path()).expect_err("BUG: directory cannot be config file");
+
+        assert!(matches!(error, LoadGcConfigError::Read { .. }));
+    }
+
+    #[test]
+    fn load_gc_config_parse_failure_is_distinct() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let path = tmp.path().join("gc.json");
+        std::fs::write(&path, "not json").expect("BUG: write malformed config");
+
+        let error = load_gc_config(&path).expect_err("BUG: malformed config must fail");
+
+        assert!(matches!(error, LoadGcConfigError::Parse { .. }));
+    }
 
     #[test]
     fn default_gc_config_keeps_two_generations() {
@@ -1261,6 +1566,309 @@ mod tests {
             .await
             .expect_err("BUG: non-zero exit must surface an error");
         assert!(matches!(err, CollectGarbageError::NixCommand(_)));
+    }
+
+    fn periodic_request() -> GcRequest {
+        GcRequest {
+            on_busy: OnBusy::Skip,
+            sweep: Sweep::WhenGenerationsRemoved,
+        }
+    }
+
+    fn forced_request() -> GcRequest {
+        GcRequest {
+            on_busy: OnBusy::Wait,
+            sweep: Sweep::Always,
+        }
+    }
+
+    /// Three generations with `current` on the last, so a `keep_generations`
+    /// of one leaves two removable.
+    fn profile_with_removable_generations(profile_dir: &Path) {
+        std::fs::create_dir(profile_dir).expect("BUG: create profile");
+        for number in 1..=3 {
+            create_generation(profile_dir, number);
+        }
+        set_current(profile_dir, 3);
+    }
+
+    fn keep_one() -> GcConfig {
+        GcConfig {
+            keep_generations: 1,
+            ..GcConfig::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn a_store_sweep_failure_surfaces() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        let store = RecordingStore::failing();
+
+        let error = collect_profile_garbage(
+            &store,
+            &profile_dir,
+            &GcConfig::default(),
+            forced_request(),
+            None,
+        )
+        .await
+        .expect_err("BUG: store failure must surface");
+
+        assert!(matches!(error, ProfileGcError::Sweep { .. }));
+        assert_eq!(store.collect_calls(), 1);
+    }
+
+    /// A generation whose removal fails: `remove_dir_all` on a regular file
+    /// errors while the entry still parses as a generation.
+    fn create_unremovable_generation(profile_dir: &Path, number: usize) {
+        std::fs::write(
+            profile_dir.join(format!("{number}-link")),
+            b"not a directory",
+        )
+        .expect("BUG: write bogus generation");
+    }
+
+    #[tokio::test]
+    async fn a_partial_cleanup_failure_still_sweeps_what_it_unrooted() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_unremovable_generation(&profile_dir, 1);
+        create_generation(&profile_dir, 2);
+        create_generation(&profile_dir, 3);
+        set_current(&profile_dir, 3);
+        let store = RecordingStore::default();
+
+        let outcome =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), periodic_request(), None)
+                .await
+                .expect("BUG: a partial cleanup failure must not abort collection");
+
+        assert_eq!(outcome, ProfileGcOutcome::SweptDespiteCleanupFailure);
+        assert_eq!(
+            store.collect_calls(),
+            1,
+            "generation 2 was unrooted, so only a sweep can reclaim what it rooted"
+        );
+        assert!(!generation_exists(&profile_dir, 2));
+        assert!(generation_exists(&profile_dir, 1));
+    }
+
+    #[tokio::test]
+    async fn a_cleanup_failure_that_unrooted_nothing_surfaces_without_a_sweep() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_unremovable_generation(&profile_dir, 1);
+        create_generation(&profile_dir, 2);
+        set_current(&profile_dir, 2);
+        let store = RecordingStore::default();
+
+        let error =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), periodic_request(), None)
+                .await
+                .expect_err("BUG: a cleanup that removed nothing has nothing to sweep");
+
+        assert!(matches!(error, ProfileGcError::Cleanup(_)));
+        assert_eq!(
+            error.unswept_removals(),
+            0,
+            "the failed entry is still in place for the next run to retry"
+        );
+        assert_eq!(store.collect_calls(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_forced_sweep_runs_past_a_cleanup_failure() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_unremovable_generation(&profile_dir, 1);
+        create_generation(&profile_dir, 2);
+        set_current(&profile_dir, 2);
+        let store = RecordingStore::default();
+
+        let outcome =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), forced_request(), None)
+                .await
+                .expect("BUG: a forced sweep must not be blocked by cleanup");
+
+        assert_eq!(outcome, ProfileGcOutcome::SweptDespiteCleanupFailure);
+        assert_eq!(
+            store.collect_calls(),
+            1,
+            "a persistent cleanup failure must not block forced collection"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sweep_failure_after_partial_cleanup_reports_the_removals() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_unremovable_generation(&profile_dir, 1);
+        create_generation(&profile_dir, 2);
+        create_generation(&profile_dir, 3);
+        set_current(&profile_dir, 3);
+        let store = RecordingStore::failing();
+
+        let error =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), periodic_request(), None)
+                .await
+                .expect_err("BUG: store failure must surface");
+
+        assert!(matches!(error, ProfileGcError::Sweep { .. }));
+        assert_eq!(
+            error.unswept_removals(),
+            1,
+            "generation 2 is gone and no later cleanup will count it again, \
+             so the next occurrence must sweep unconditionally"
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_sweep_is_skipped_when_cleanup_removed_nothing() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        create_generation(&profile_dir, 1);
+        set_current(&profile_dir, 1);
+        let store = RecordingStore::default();
+
+        let outcome = collect_profile_garbage(
+            &store,
+            &profile_dir,
+            &GcConfig::default(),
+            periodic_request(),
+            None,
+        )
+        .await
+        .expect("BUG: gc succeeds");
+
+        assert_eq!(outcome, ProfileGcOutcome::NothingToCollect);
+        assert_eq!(
+            store.collect_calls(),
+            0,
+            "an idle device runs no store sweep"
+        );
+    }
+
+    #[tokio::test]
+    async fn conditional_sweep_runs_when_cleanup_removed_something() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        profile_with_removable_generations(&profile_dir);
+        let store = RecordingStore::default();
+
+        let outcome =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), periodic_request(), None)
+                .await
+                .expect("BUG: gc succeeds");
+
+        assert_eq!(outcome, ProfileGcOutcome::Collected);
+        assert_eq!(store.collect_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn unconditional_sweep_runs_with_nothing_removed() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        let store = RecordingStore::default();
+
+        let outcome = collect_profile_garbage(
+            &store,
+            &profile_dir,
+            &GcConfig::default(),
+            forced_request(),
+            None,
+        )
+        .await
+        .expect("BUG: gc succeeds");
+
+        assert_eq!(outcome, ProfileGcOutcome::Collected);
+        assert_eq!(store.collect_calls(), 1);
+    }
+
+    #[tokio::test]
+    async fn skip_on_busy_reports_busy_while_the_profile_lock_is_held() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        let store = RecordingStore::default();
+        let held = crate::profile::lock_profile(&profile_dir)
+            .await
+            .expect("BUG: lock profile");
+
+        let outcome = collect_profile_garbage(
+            &store,
+            &profile_dir,
+            &GcConfig::default(),
+            periodic_request(),
+            None,
+        )
+        .await
+        .expect("BUG: gc succeeds");
+
+        assert_eq!(outcome, ProfileGcOutcome::Busy);
+        assert_eq!(store.collect_calls(), 0);
+        drop(held);
+    }
+
+    #[tokio::test]
+    async fn wait_on_busy_collects_once_the_profile_lock_is_released() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        let store = RecordingStore::default();
+        let held = crate::profile::lock_profile(&profile_dir)
+            .await
+            .expect("BUG: lock profile");
+
+        let config = GcConfig::default();
+        let mut gc = Box::pin(collect_profile_garbage(
+            &store,
+            &profile_dir,
+            &config,
+            forced_request(),
+            None,
+        ));
+
+        // Deterministic, not timing-based: with the lock held the future
+        // cannot finish, and it must finish once the lock is gone.
+        assert!(
+            futures::poll!(&mut gc).is_pending(),
+            "waiting must not collect while another writer holds the profile"
+        );
+        assert_eq!(store.collect_calls(), 0);
+
+        drop(held);
+
+        assert_eq!(
+            gc.await.expect("BUG: gc succeeds"),
+            ProfileGcOutcome::Collected
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_sweep_reports_the_removals_it_left_unswept() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        profile_with_removable_generations(&profile_dir);
+        let store = RecordingStore::failing();
+
+        let error =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), periodic_request(), None)
+                .await
+                .expect_err("BUG: gc must fail");
+
+        assert_eq!(
+            error.unswept_removals(),
+            2,
+            "the removed generations are gone; only an escalated sweep can reclaim them"
+        );
     }
 
     #[test]

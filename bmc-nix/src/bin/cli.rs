@@ -648,20 +648,6 @@ fn resolve_default_config_path(servers_config: &Path, explicit: Option<PathBuf>)
     })
 }
 
-/// Load the GC config from `path`, falling back to defaults when absent.
-///
-/// A present-but-unparseable file is fatal: it signals a provisioning
-/// error rather than an unconfigured device.
-fn load_gc_config(path: &Path) -> anyhow::Result<GcConfig> {
-    if !path.exists() {
-        return Ok(GcConfig::default());
-    }
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read gc config at {}", path.display()))?;
-    serde_json::from_str(&contents)
-        .with_context(|| format!("failed to parse gc config at {}", path.display()))
-}
-
 /// Apply CLI overrides onto a loaded [`GcConfig`].
 ///
 /// Each `Some` scalar replaces the loaded value; `None` keeps it. A
@@ -1191,7 +1177,7 @@ async fn cmd_gc(
     log_format: LogFormat,
 ) -> anyhow::Result<()> {
     let config_path = gc_config.unwrap_or_else(|| PathBuf::from("/etc/nix-upgrade/gc.json"));
-    let mut config = load_gc_config(&config_path)?;
+    let mut config = bmc_nix::gc::load_gc_config(&config_path)?;
     apply_gc_overrides(
         &mut config,
         keep_generations,
@@ -1199,14 +1185,35 @@ async fn cmd_gc(
         protected_generations,
     );
 
-    // Hold the profile lock across both mutations: the profiles.md invariant
-    // requires every profile mutation to take the lock, and it keeps gc from
-    // pruning generations or store paths a concurrent upgrade is realizing.
-    let _lock = bmc_nix::profile::lock_profile(&profile_dir).await?;
-    bmc_nix::gc::cleanup_generations(&profile_dir, &config, &[])?;
     let progress = progress::CliProgress::new(log_format);
-    bmc_nix::gc::collect_garbage(&bmc_nix::store::TokioCommandRunner, Some(&progress)).await?;
+    run_gc(
+        &bmc_nix::store::Nix,
+        &profile_dir,
+        &config,
+        forced_gc_request(),
+        Some(&progress),
+    )
+    .await?;
     Ok(())
+}
+
+/// An operator asking for collection means it: wait for the profile and
+/// sweep regardless of what cleanup removed.
+fn forced_gc_request() -> bmc_nix::gc::GcRequest {
+    bmc_nix::gc::GcRequest {
+        on_busy: bmc_nix::gc::OnBusy::Wait,
+        sweep: bmc_nix::gc::Sweep::Always,
+    }
+}
+
+async fn run_gc(
+    store: &impl bmc_nix::store::StoreOperations,
+    profile_dir: &Path,
+    config: &GcConfig,
+    request: bmc_nix::gc::GcRequest,
+    progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
+) -> Result<bmc_nix::gc::ProfileGcOutcome, bmc_nix::gc::ProfileGcError> {
+    bmc_nix::gc::collect_profile_garbage(store, profile_dir, config, request, progress).await
 }
 
 fn cmd_mount(source: &Path, target: &Path) -> anyhow::Result<()> {
@@ -1674,6 +1681,72 @@ mod tests {
     use super::*;
     use clap::Parser;
 
+    #[derive(Debug, Default)]
+    struct RecordingGcStore {
+        collect_calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl bmc_nix::store::StoreOperations for RecordingGcStore {
+        async fn estimate_realization(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<bmc_nix::store::RealizeEstimate, bmc_nix::store::StorePathError> {
+            unreachable!("BUG: gc command never estimates realization")
+        }
+
+        async fn realize_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+            _progress: Option<&dyn bmc_nix::store::RealizeProgress>,
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: gc command never realizes store paths")
+        }
+
+        async fn verify_store_paths(
+            &self,
+            _packages: &[bmc_nix::types::ResolvedPackage],
+        ) -> Result<(), bmc_nix::store::StorePathError> {
+            unreachable!("BUG: gc command never verifies store paths")
+        }
+
+        fn collect_garbage(
+            &self,
+            _progress: Option<&dyn bmc_nix::gc::CollectGarbageProgress>,
+        ) -> impl std::future::Future<Output = Result<(), bmc_nix::gc::CollectGarbageError>> + Send
+        {
+            self.collect_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            async { Ok(()) }
+        }
+    }
+
+    #[tokio::test]
+    async fn gc_command_collects_even_with_nothing_to_unroot() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        let store = RecordingGcStore::default();
+
+        let outcome = run_gc(
+            &store,
+            &profile_dir,
+            &GcConfig::default(),
+            forced_gc_request(),
+            None,
+        )
+        .await
+        .expect("BUG: forced gc command succeeds");
+
+        assert_eq!(outcome, bmc_nix::gc::ProfileGcOutcome::Collected);
+        assert_eq!(
+            store
+                .collect_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "an operator asking for gc gets a store sweep regardless"
+        );
+    }
+
     #[test]
     fn upgrade_accepts_next_boot_flag() {
         let cli = Cli::try_parse_from([
@@ -2072,56 +2145,6 @@ mod tests {
         assert!(
             !is_store_mounted(&store_dir, &tmp.path().join("missing")),
             "a missing mount point must not count as mounted"
-        );
-    }
-
-    #[test]
-    fn load_gc_config_missing_file_falls_back_to_defaults() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("absent.json");
-        let config = load_gc_config(&path).expect("BUG: missing file must default, not fail");
-        let default = GcConfig::default();
-        assert_eq!(config.keep_generations, default.keep_generations);
-        assert_eq!(config.keep_days, default.keep_days);
-        assert_eq!(config.protected_generations, default.protected_generations);
-    }
-
-    #[test]
-    fn load_gc_config_reads_valid_file() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("gc.json");
-        std::fs::write(
-            &path,
-            r#"{"keep_generations":7,"keep_days":14,"protected_generations":[2,5]}"#,
-        )
-        .expect("BUG: write gc.json");
-
-        let config = load_gc_config(&path).expect("BUG: valid config should load");
-        assert_eq!(config.keep_generations, 7);
-        assert_eq!(config.keep_days, Some(14));
-        assert_eq!(config.protected_generations, vec![2, 5]);
-    }
-
-    #[test]
-    fn load_gc_config_partial_file_fills_missing_fields_from_defaults() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("gc.json");
-        std::fs::write(&path, r#"{"keep_generations":9}"#).expect("BUG: write gc.json");
-
-        let config = load_gc_config(&path).expect("BUG: partial config should load");
-        let default = GcConfig::default();
-        assert_eq!(config.keep_generations, 9);
-        assert_eq!(config.protected_generations, default.protected_generations);
-    }
-
-    #[test]
-    fn load_gc_config_unparseable_present_file_is_fatal() {
-        let dir = tempfile::tempdir().expect("BUG: temp dir");
-        let path = dir.path().join("gc.json");
-        std::fs::write(&path, "this is not json").expect("BUG: write garbage");
-        assert!(
-            load_gc_config(&path).is_err(),
-            "a present-but-unparseable config must be a fatal error"
         );
     }
 
