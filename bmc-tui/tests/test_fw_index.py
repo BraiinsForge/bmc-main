@@ -271,4 +271,11 @@ def test_server_reports_active_transfer_until_handler_finishes(
             release.set()
         request.join(timeout=5)
         assert not request.is_alive()
+
+        # The client returns once it has the whole body; end_transfer runs on
+        # the server's handler thread after that, so poll rather than race it.
+        deadline = time.monotonic() + 5
+        while server.active_transfers() and time.monotonic() < deadline:
+            time.sleep(0.01)
+
         assert server.active_transfers() == 0
