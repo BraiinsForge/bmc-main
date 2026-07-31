@@ -1747,6 +1747,28 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn gc_command_ignores_a_disabling_configuration() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        let store = RecordingGcStore::default();
+        let config = GcConfig {
+            periodic: bmc_nix::types::PeriodicGcMode::Disabled,
+            ..GcConfig::default()
+        };
+
+        let outcome = run_gc(&store, &profile_dir, &config, forced_gc_request(), None)
+            .await
+            .expect("BUG: forced gc command succeeds");
+
+        assert_eq!(
+            outcome,
+            bmc_nix::gc::ProfileGcOutcome::Collected,
+            "the toggle covers the periodic path, not an explicit request"
+        );
+    }
+
     #[test]
     fn upgrade_accepts_next_boot_flag() {
         let cli = Cli::try_parse_from([
@@ -2154,6 +2176,7 @@ mod tests {
             keep_generations: 3,
             keep_days: None,
             protected_generations: vec![1],
+            ..GcConfig::default()
         };
         apply_gc_overrides(&mut config, Some(8), Some(30), vec![4, 6]);
         assert_eq!(config.keep_generations, 8);
@@ -2167,6 +2190,7 @@ mod tests {
             keep_generations: 3,
             keep_days: Some(10),
             protected_generations: vec![1, 2],
+            ..GcConfig::default()
         };
         apply_gc_overrides(&mut config, None, None, Vec::new());
         assert_eq!(config.keep_generations, 3);

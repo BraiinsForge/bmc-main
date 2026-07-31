@@ -420,6 +420,19 @@ pub struct MergedPackageEntry {
     pub metadata: BTreeMap<String, serde_json::Value>,
 }
 
+/// Whether the application's periodic collection path runs.
+///
+/// An escape hatch for developers debugging on a device, where a collection
+/// landing mid-session perturbs what they are looking at. It does not affect
+/// collection before an automatic upgrade or `bmc-nix-cli gc`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PeriodicGcMode {
+    #[default]
+    Enabled,
+    Disabled,
+}
+
 /// GC configuration (`/etc/nix-upgrade/gc.json`).
 ///
 /// `#[serde(default)]` lets a partial file fill any missing field from
@@ -433,6 +446,7 @@ pub struct GcConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keep_days: Option<usize>,
     pub protected_generations: Vec<usize>,
+    pub periodic: PeriodicGcMode,
 }
 
 impl Default for GcConfig {
@@ -441,6 +455,7 @@ impl Default for GcConfig {
             keep_generations: 2,
             keep_days: None,
             protected_generations: Vec::new(),
+            periodic: PeriodicGcMode::Enabled,
         }
     }
 }

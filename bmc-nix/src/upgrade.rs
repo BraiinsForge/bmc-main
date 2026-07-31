@@ -950,6 +950,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         // `keep_extra = [2]` is the pre-activation current that the
         // orchestration layer still needs after activation.

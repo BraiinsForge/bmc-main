@@ -901,6 +901,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         let err = cleanup_generations(&profile_dir, &gc_config, &[])
             .expect_err("BUG: an unreadable current symlink must abort GC");
@@ -931,6 +932,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![1],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -955,6 +957,7 @@ mod tests {
             keep_generations: 2,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -986,6 +989,7 @@ mod tests {
             keep_generations: 0,
             keep_days: Some(30),
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         let err = cleanup_generations(&profile_dir, &gc_config, &[])
             .expect_err("BUG: a stat failure in the keep_days pass must abort GC");
@@ -1018,6 +1022,7 @@ mod tests {
             keep_generations: 0,
             keep_days: Some(30),
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -1049,6 +1054,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -1074,6 +1080,7 @@ mod tests {
             keep_generations: 0,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -1105,6 +1112,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -1139,6 +1147,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[])
             .expect("BUG: a non-symlink next marker must not abort cleanup");
@@ -1175,6 +1184,7 @@ mod tests {
             keep_generations: 0,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -1211,6 +1221,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[2]).expect("BUG: cleanup failed");
 
@@ -1257,6 +1268,7 @@ mod tests {
             keep_generations: 2,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
 
@@ -1294,6 +1306,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[]).expect("BUG: cleanup failed");
     }
@@ -1327,6 +1340,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         let result = cleanup_generations(&profile_dir, &gc_config, &[]);
 
@@ -1364,6 +1378,7 @@ mod tests {
             keep_generations: 1,
             keep_days: None,
             protected_generations: vec![],
+            ..GcConfig::default()
         };
         cleanup_generations(&profile_dir, &gc_config, &[2]).expect("BUG: cleanup failed");
 
@@ -1793,6 +1808,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_disabling_configuration_does_not_stop_collection() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        profile_with_removable_generations(&profile_dir);
+        let store = RecordingStore::default();
+        let config = GcConfig {
+            periodic: crate::types::PeriodicGcMode::Disabled,
+            ..keep_one()
+        };
+
+        let outcome =
+            collect_profile_garbage(&store, &profile_dir, &config, periodic_request(), None)
+                .await
+                .expect("BUG: gc succeeds");
+
+        assert_eq!(
+            outcome,
+            ProfileGcOutcome::Collected,
+            "the toggle is the periodic job's decision, not this function's"
+        );
+    }
+
+    #[tokio::test]
     async fn skip_on_busy_reports_busy_while_the_profile_lock_is_held() {
         let tmp = tempfile::tempdir().expect("BUG: temp dir");
         let profile_dir = tmp.path().join("profile");
@@ -1965,6 +2003,34 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn gc_config_without_the_periodic_field_stays_enabled() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let path = tmp.path().join("gc.json");
+        std::fs::write(&path, br#"{"keep_generations": 3}"#).expect("BUG: write config");
+
+        let config = load_gc_config(&path).expect("BUG: load config");
+
+        assert_eq!(config.keep_generations, 3);
+        assert_eq!(config.periodic, crate::types::PeriodicGcMode::Enabled);
+    }
+
+    #[test]
+    fn gc_config_can_disable_periodic_collection() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let path = tmp.path().join("gc.json");
+        std::fs::write(&path, br#"{"periodic": "disabled"}"#).expect("BUG: write config");
+
+        let config = load_gc_config(&path).expect("BUG: load config");
+
+        assert_eq!(config.periodic, crate::types::PeriodicGcMode::Disabled);
+        assert_eq!(
+            config.keep_generations,
+            GcConfig::default().keep_generations,
+            "an unrelated field keeps its default"
+        );
     }
 
     #[test]
