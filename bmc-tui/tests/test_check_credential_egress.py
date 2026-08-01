@@ -20,6 +20,7 @@
 
 """Unit tests for the credential-egress verdicts and their anti-vacuity guard."""
 
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -63,12 +64,17 @@ def _delivered() -> ce.Outcome:
 
 def _all_refusals_satisfied() -> list[ce.Outcome]:
     redirect = _case("redirect")
+    pin = _case("account_pin")
+    replaces = _case("account_pin_replaces")
     return [
         ce.Outcome(case=_case("pinned"), refusal=ce._PIN_REFUSAL),
         ce.Outcome(case=_case("unbound"), refusal=ce._NO_SECRET_REFUSAL),
         ce.Outcome(case=_case("undeclared"), withheld=_withheld("api")),
         ce.Outcome(case=redirect, served=_request(redirect)),
         ce.Outcome(case=_case("reshaped"), refusal=ce._PIN_REFUSAL),
+        ce.Outcome(case=pin, served=_request(pin)),
+        ce.Outcome(case=_case("account_pin_denied"), refusal=ce._PIN_REFUSAL),
+        ce.Outcome(case=replaces, served=_request(replaces)),
     ]
 
 
@@ -77,6 +83,52 @@ def test_url_embeds_the_placeholder_without_inner_spaces() -> None:
     url = _case("permitted").url(BASE)
     assert "{{credential.weather.token}}" in url
     assert " " not in url
+
+
+def test_every_judged_message_still_exists_in_the_rust_sources() -> None:
+    """Each verdict substring-matches a log line the firmware writes.
+    A reworded message therefore blinds the harness silently, since these tests
+    hold the constants symbolically and stay green either way.
+    `_PIN_REFUSAL` drifted exactly so when the pin stopped being the type's alone."""
+    root = Path(__file__).resolve().parents[2]
+    skip = {"target", ".git", "node_modules", "result"}
+    sources = [
+        path.read_text(encoding="utf-8", errors="ignore")
+        for path in root.rglob("*.rs")
+        if not skip & set(path.parts)
+    ]
+    assert sources, f"no Rust sources under {root}; this guard would pass vacuously"
+
+    for name in ("_PIN_REFUSAL", "_NO_SECRET_REFUSAL", "_WITHHELD"):
+        message = cast("str", getattr(ce, name))
+        assert any(message in source for source in sources), (
+            f"{name} matches no Rust source: {message!r} was reworded or removed"
+        )
+
+
+def test_an_account_pin_reaches_the_stored_account_resolved() -> None:
+    """`{authority}` has to resolve to our real host:port, or the pin would name
+    a server the request never reaches and the case would pass for the wrong reason."""
+    case = _case("account_pin")
+    account = ce._account("acc-1", case, SECRET, "host:8000")
+
+    assert account["allow_hosts"] == ["host:8000"]
+
+
+def test_an_account_without_a_pin_stores_no_allow_hosts_key() -> None:
+    """The firmware omits an empty list, so writing one would exercise a shape
+    the device never produces."""
+    assert "allow_hosts" not in ce._account("acc-1", _case("permitted"), SECRET, "host:8000")
+
+
+def test_the_replacing_pin_case_targets_a_type_that_pins_elsewhere() -> None:
+    """Its whole point is that the account overrides a type with a pin of its own;
+    on an unpinned type it would prove only what `account_pin` already does."""
+    case = _case("account_pin_replaces")
+
+    assert case.account_type == "braiins-pool"
+    assert case.expect == "deliver"
+    assert case.allow_hosts("host:8000") == ["host:8000"]
 
 
 def test_every_refusal_judged_case_owns_a_distinct_slot() -> None:
@@ -98,7 +150,7 @@ def test_the_pinned_type_is_exercised_by_exactly_these_cases() -> None:
     """A corpus that drifted to unpinned types everywhere would prove nothing.
     Spelled out rather than counted, so gaining a pinned case is a decision."""
     pinned = [c.name for c in ce.CASES if c.account_type == "braiins-pool"]
-    assert pinned == ["pinned", "reshaped"]
+    assert pinned == ["pinned", "reshaped", "account_pin_replaces"]
     assert _case("unbound").account_type is None
 
 

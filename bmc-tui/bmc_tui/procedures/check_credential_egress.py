@@ -18,7 +18,10 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Drive a real Deck to prove a credential reaches the wire only where its type allows.
+"""Drive a real Deck to prove a credential reaches the wire only where it is allowed.
+
+What allows it is the account's own pin where it has one, the credential type's
+otherwise. An account pin replaces the type's rather than narrowing it.
 
 The runtime tests decide the same rules in isolation. This one answers what they
 cannot: whether the secret survives the whole chain — secret store, coordinator,
@@ -95,7 +98,7 @@ LANDED_PATH = "/landed.png"
 _SDK_FETCH_TIMEOUT_SECS = 10
 
 _REFUSAL = re.compile(r"refusing fetch: (.+?)(?:\s{2,}|$)")
-_PIN_REFUSAL = "destination is outside the credential type's egress pin"
+_PIN_REFUSAL = "destination is outside the credential's egress pin"
 _NO_SECRET_REFUSAL = "no secret available for credential slot"
 _WITHHELD = "withholding a credential the installed manifest no longer authorises"
 
@@ -118,6 +121,10 @@ class Case:
     # A secret other than the run's canary, for a case whose point is what the
     # value does to the URL once substituted. `{authority}` is our host:port.
     secret_form: str | None = None
+    # The account's own pin, replacing the type's wherever it is non-empty.
+    # `{authority}` becomes our host:port, so a case can pin the same server
+    # it will be judged against.
+    allow_hosts_form: tuple[str, ...] = ()
 
     @property
     def path(self) -> str:
@@ -135,6 +142,9 @@ class Case:
         if self.secret_form is None:
             return canary
         return self.secret_form.format(authority=authority, path=self.path)
+
+    def allow_hosts(self, authority: str) -> list[str]:
+        return [entry.format(authority=authority) for entry in self.allow_hosts_form]
 
 
 CASES: tuple[Case, ...] = (
@@ -160,6 +170,37 @@ CASES: tuple[Case, ...] = (
         # or it would fail the handshake and pass this case for the wrong reason.
         url_form="http://{placeholder}@api.braiins.com/x",
         secret_form="{authority}{path}?v=",
+    ),
+    # On a type that pins nothing of its own, the account pins the very server
+    # it is about to reach: the pin is honoured, not merely tolerated.
+    Case(
+        "account_pin",
+        "deliver",
+        "weather",
+        "token",
+        "generic-token",
+        allow_hosts_form=("{authority}",),
+    ),
+    # The same type, pinned elsewhere. Where the type alone would have allowed
+    # this request, the account's pin refuses it.
+    Case(
+        "account_pin_denied",
+        "refuse-pin",
+        "weather",
+        "token",
+        "generic-token",
+        allow_hosts_form=("api.example.invalid",),
+    ),
+    # The account pin replaces the type's rather than narrowing it: `braiins-pool`
+    # admits only its own API, yet this reaches us because the account says so.
+    # Only the store can express it — the API refuses a list on a pinned type.
+    Case(
+        "account_pin_replaces",
+        "deliver",
+        "pool_backup",
+        "token",
+        "braiins-pool",
+        allow_hosts_form=("{authority}",),
     ),
 )
 
@@ -239,7 +280,7 @@ class CheckCredentialEgress:
             _restore(dev)
 
         _judge(outcomes, host_window.text, secret)
-        console.ok("the secret travelled only where its type allows")
+        console.ok("every secret travelled only where its account, or its type, allows")
 
 
 def _views(seen: list[Request]) -> dict[str, ViewConfig]:
@@ -285,13 +326,18 @@ def _default_params() -> dict[str, object]:
 
 
 def _account(account_id: str, case: Case, secret: str, authority: str) -> dict[str, object]:
-    return {
+    account: dict[str, object] = {
         "id": account_id,
         "type_id": case.account_type,
         "name": f"Egress test ({case.name})",
         "field_values": {case.field: case.secret(secret, authority)},
         "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
+    # Omitted rather than written empty, matching what the firmware serialises,
+    # so an account without a pin exercises the absent-key path.
+    if pin := case.allow_hosts(authority):
+        account["allow_hosts"] = pin
+    return account
 
 
 def _scene(
