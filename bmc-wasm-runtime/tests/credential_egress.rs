@@ -108,7 +108,11 @@ fn fetch_wat(url: &str) -> String {
 }
 
 /// The slot is named `pool`, matching the placeholder both guests embed.
-fn config_with(type_id: &str, token: &str) -> RuntimeConfig {
+///
+/// `allow_hosts` is the account's own pin, and replaces the type's where set.
+/// It is omitted when empty, as the firmware writes it, so an unpinned test
+/// exercises the absent-key path rather than an empty list.
+fn config_with(type_id: &str, token: &str, allow_hosts: &[&str]) -> RuntimeConfig {
     let mut view = BTreeMap::new();
     view.insert(
         "pool".to_owned(),
@@ -118,11 +122,14 @@ fn config_with(type_id: &str, token: &str) -> RuntimeConfig {
         },
     );
 
+    let mut slot = serde_json::Map::new();
+    slot.insert("fields".to_owned(), serde_json::json!({ "token": token }));
+    if !allow_hosts.is_empty() {
+        slot.insert("allow_hosts".to_owned(), serde_json::json!(allow_hosts));
+    }
+
     let mut secrets = serde_json::Map::new();
-    secrets.insert(
-        "pool".to_owned(),
-        serde_json::json!({ "fields": { "token": token } }),
-    );
+    secrets.insert("pool".to_owned(), serde_json::Value::Object(slot));
 
     RuntimeConfig {
         credentials: CredentialView::new(view),
@@ -186,6 +193,7 @@ fn a_permitted_destination_receives_the_resolved_secret() {
     let config = config_with(
         credential::BuiltinType::GenericToken.id(),
         "s3cr3t-on-the-wire",
+        &[],
     );
     let _runtime = runtime_for(&url, config, &gl);
 
@@ -216,6 +224,7 @@ fn a_pinned_credential_is_refused_before_it_can_leave_for_another_host() {
     let config = config_with(
         credential::BuiltinType::BraiinsPool.id(),
         "s3cr3t-must-not-travel",
+        &[],
     );
     let mut runtime = runtime_for(&url, config, &gl);
 
@@ -239,5 +248,34 @@ fn a_pinned_credential_is_refused_before_it_can_leave_for_another_host() {
     assert!(
         received.try_recv().is_err(),
         "a pinned credential reached a host outside its policy",
+    );
+}
+
+#[test]
+fn an_account_pin_carries_a_credential_its_type_would_have_refused() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let (port, received) = capturing_listener();
+    let url = format!("http://127.0.0.1:{port}/?t={{{{ credential.pool.token }}}}");
+
+    // The inverse of the test above, on the same type.
+    // `BraiinsPool` admits nothing but its own API;
+    // the account's pin sends this request here regardless.
+    // The pair is what holds replace-not-narrow to the real dispatch.
+    let config = config_with(
+        credential::BuiltinType::BraiinsPool.id(),
+        "s3cr3t-the-account-allows",
+        &[&format!("127.0.0.1:{port}")],
+    );
+    let _runtime = runtime_for(&url, config, &gl);
+
+    let request = received
+        .recv_timeout(ARRIVAL_TIMEOUT)
+        .expect("BUG: the account's own pin must admit its destination");
+
+    assert!(
+        request.contains("t=s3cr3t-the-account-allows"),
+        "an admitted request still has to carry the substituted value: {request}"
     );
 }

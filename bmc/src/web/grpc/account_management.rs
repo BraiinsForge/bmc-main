@@ -554,6 +554,31 @@ mod tests {
     }
 
     #[test]
+    fn clearing_the_list_stays_legal_on_a_pinned_type() {
+        // The refusal is of *setting* a list, not of the field existing.
+        // An account that once carried one must still be able to drop it,
+        // and reordering the two guards would break that silently.
+        assert!(allow_hosts_violations(credential::BuiltinType::BraiinsPool.id(), &[]).is_empty());
+    }
+
+    #[test]
+    fn every_bad_line_is_reported_not_just_the_first() {
+        // One textarea, so the operator fixes what the list tells them.
+        // Stopping at the first would make them submit once per mistake.
+        let violations = allow_hosts_violations(
+            credential::BuiltinType::GenericToken.id(),
+            &["not a host", "api.example.com", "also bad"],
+        );
+
+        let lines: Vec<&str> = violations
+            .iter()
+            .map(|v| v.description.as_str())
+            .filter_map(|d| d.split(':').next())
+            .collect();
+        assert_eq!(lines, ["Line 1", "Line 3"]);
+    }
+
+    #[test]
     fn a_clean_list_on_an_unpinned_type_passes() {
         assert!(
             allow_hosts_violations(
@@ -779,6 +804,48 @@ mod tests {
         let service =
             AccountManagementService::new(Arc::clone(&config_handle), Arc::clone(&secret_store));
         (service, config_handle, secret_store)
+    }
+
+    #[tokio::test]
+    async fn an_account_pin_is_stored_then_replaced_wholesale_including_by_nothing() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let (service, _config, store) = seeded_service(&tmp, vec![], &[]).await;
+
+        let upsert = async |id: &str, hosts: &[&str]| {
+            service
+                .upsert_account(Request::new(web::UpsertAccountRequest {
+                    id: id.to_owned(),
+                    type_id: credential::BuiltinType::GenericToken.id().to_owned(),
+                    name: "Mine".to_owned(),
+                    field_values: HashMap::from([("token".to_owned(), "s3cr3t".to_owned())]),
+                    allow_hosts: hosts.iter().map(|h| (*h).to_owned()).collect(),
+                }))
+                .await
+                .expect("BUG: a clean upsert must succeed")
+                .into_inner()
+        };
+        let stored = async |id: &str| {
+            let id = AccountId::from_str(id).expect("BUG: the returned id parses");
+            store.read().await.accounts()[&id].allow_hosts.clone()
+        };
+
+        let id = upsert("", &["a.example", "b.example"]).await;
+        assert_eq!(stored(&id).await, ["a.example", "b.example"]);
+
+        upsert(&id, &["c.example"]).await;
+        assert_eq!(
+            stored(&id).await,
+            ["c.example"],
+            "the list is replaced, not merged — a dropped host must really be gone"
+        );
+
+        upsert(&id, &[]).await;
+        assert!(
+            stored(&id).await.is_empty(),
+            "an empty list has to clear the pin, unlike field_values which keeps on empty"
+        );
     }
 
     #[tokio::test]

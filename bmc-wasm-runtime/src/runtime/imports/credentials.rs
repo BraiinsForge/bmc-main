@@ -648,6 +648,97 @@ mod tests {
     }
 
     #[test]
+    fn an_account_pin_reads_the_same_grammar_a_type_pin_does() {
+        // Well covered on a type's policy, never on an account's.
+        // The effective port is the part that could have diverged.
+        for (pin, host, permitted) in [
+            ("*.example.com", "https://api.example.com/", true),
+            ("*.example.com", "https://example.com/", false),
+            ("10.0.0.0/8", "https://10.1.2.3/", true),
+            ("10.0.0.0/8", "https://11.1.2.3/", false),
+            (
+                "api.example.com:8443",
+                "https://api.example.com:8443/",
+                true,
+            ),
+            ("api.example.com:8443", "https://api.example.com/", false),
+        ] {
+            let state = host_state_with_account_pin(BuiltinType::GenericToken.id(), &[pin]);
+            let url = format!("{host}?t={{{{ credential.pool.token }}}}");
+
+            assert_eq!(
+                spend(&state, &url, &[], None).is_some(),
+                permitted,
+                "pin {pin} against {host}"
+            );
+        }
+    }
+
+    /// Two bound slots, the first pinned and the second not, so a request
+    /// spending both has to satisfy each of them.
+    fn host_state_with_two_slots(first_pin: &[&str]) -> HostState {
+        let mut view = BTreeMap::new();
+        for slot in ["pool", "spare"] {
+            view.insert(
+                slot.to_owned(),
+                BoundCredential {
+                    type_id: BuiltinType::GenericToken.id().to_owned(),
+                    account_name: "An account".to_owned(),
+                },
+            );
+        }
+
+        let mut slots = serde_json::Map::new();
+        slots.insert(
+            "pool".to_owned(),
+            serde_json::json!({ "fields": { "token": "s3cr3t" }, "allow_hosts": first_pin }),
+        );
+        slots.insert(
+            "spare".to_owned(),
+            serde_json::json!({ "fields": { "token": "spare-s3cr3t" } }),
+        );
+
+        let mut state = HostState::new(
+            crate::runtime_limits::RuntimeResourceLimits::default(),
+            chrono::DateTime::parse_from_rfc3339("2026-01-01T00:00:00Z")
+                .expect("BUG: fixed test timestamp must parse"),
+        );
+        state.credentials.replace(CredentialView::new(view));
+        state.credential_secrets = bmc_widget_protocol::CredentialSecrets::new(slots);
+
+        state
+    }
+
+    #[test]
+    fn one_pinned_slot_vetoes_a_request_that_also_spends_an_unpinned_one() {
+        // The `all` over spent slots has only ever run with one of them,
+        // so a veto arriving from the second was unproven.
+        let state = host_state_with_two_slots(&["api.example.com"]);
+        let both = "?a={{ credential.pool.token }}&b={{ credential.spare.token }}";
+
+        assert!(
+            spend(
+                &state,
+                &format!("https://anywhere.example/{both}"),
+                &[],
+                None
+            )
+            .is_none(),
+            "the pinned slot has to refuse the whole request, not just its own value"
+        );
+        assert!(
+            spend(
+                &state,
+                &format!("https://api.example.com/{both}"),
+                &[],
+                None
+            )
+            .is_some(),
+            "a destination both slots admit must still go out"
+        );
+    }
+
+    #[test]
     fn an_unpinned_type_may_spend_its_secret_anywhere() {
         let state = host_state_with(BuiltinType::GenericToken.id());
 
