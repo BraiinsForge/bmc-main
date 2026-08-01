@@ -99,6 +99,10 @@ in
       EGL_PLATFORM = "surfaceless";
       MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe";
       LIBGL_ALWAYS_SOFTWARE = "1";
+      # This profile supplies Mesa, so failing to reach EGL means the profile
+      # is broken rather than the machine lacking a GPU. Without the marker
+      # those tests skip, and a skip passes.
+      BMC_REQUIRE_HEADLESS_EGL = "1";
     } // rustflags.makeRustflagsEnv {
       # Libraries needed for compositor tests.
       runtimePackages = with ciPkgs; [
