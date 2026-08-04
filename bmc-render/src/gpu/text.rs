@@ -21,8 +21,15 @@
 //! Paragraph layout (cosmic-text) and rendering (FemtoVG).
 //!
 //! cosmic-text handles shaping + line-breaking, FemtoVG renders on the GPU.
-//! Both use rustybuzz internally with the same font binaries (Braiins Sans
-//! + Braiins Deck Sans), so glyph advances match per family.
+//! Both use rustybuzz internally with the same font binaries (Braiins Sans and
+//! Braiins Deck Sans), so glyph advances agree — with one measured exception:
+//! for a pair the font kerns, cosmic-text applies the kern and FemtoVG does
+//! not, which leaves cosmic-text the tighter of the two.
+//!
+//! [`ParagraphLayoutCache::draw`] takes each segment's origin from cosmic-text
+//! but lets FemtoVG lay out the glyphs inside it, so every additional draw call
+//! is a point where the two can disagree by up to a pixel. Do not read a span
+//! boundary's spacing as evidence about shaping.
 //!
 //! # Coordinate model
 //!
@@ -40,13 +47,13 @@
 //!
 //! [`LayoutRun`]: cosmic_text::LayoutRun
 
-#![expect(clippy::cast_precision_loss, clippy::string_slice)]
+#![expect(clippy::cast_precision_loss)]
 
 use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use cosmic_text::{
-    Align, Attrs, Buffer, Color, Family, FontSystem, Metrics, Shaping, Style, Weight,
+    Align, Attrs, Buffer, Color, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style, Weight,
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 
@@ -104,13 +111,7 @@ struct ParagraphLayoutEntry {
     buffer: Buffer,
     width: f32,
     height: f32,
-    #[expect(dead_code)]
-    max_width: f32,
     last_used_frame: u64,
-    /// Concatenated span text (precomputed to avoid per-draw allocation).
-    full_text: String,
-    /// Byte-offset → span-index lookup (precomputed).
-    span_offsets: Vec<(usize, usize, usize)>,
 }
 
 /// Frame-based paragraph layout cache. Evicts entries not accessed in the last 2 frames.
@@ -170,16 +171,11 @@ impl ParagraphLayoutCache {
         let entry = self.entries.entry(key).or_insert_with(|| {
             let (buffer, width, height) =
                 shape_paragraph(font_system, base_style, spans, max_width);
-            let full_text: String = spans.iter().map(|s| s.text.as_str()).collect();
-            let span_offsets = build_span_offsets(spans);
             ParagraphLayoutEntry {
                 buffer,
                 width,
                 height,
-                max_width: max_width.unwrap_or(width),
                 last_used_frame: frame,
-                full_text,
-                span_offsets,
             }
         });
         entry.last_used_frame = frame;
@@ -199,70 +195,82 @@ impl ParagraphLayoutCache {
         y: f32,
         max_width: f32,
     ) {
-        // Ensure layout is cached (also precomputes full_text + span_offsets)
+        // Nothing to draw, and every `spans[..]` below — including
+        // `span_for_glyph`'s first-span fallback — would be out of bounds.
+        if spans.is_empty() {
+            return;
+        }
+
+        // Ensure layout is cached
         self.measure(font_system, base_style, spans, Some(max_width));
         let key = cache_key(base_style, spans, Some(max_width));
         let entry = &self.entries[&key];
 
-        let full_text = &entry.full_text;
-        let span_offsets = &entry.span_offsets;
+        let flush_segment = |canvas: &mut Canvas<OpenGl>,
+                             span_idx: usize,
+                             text: &str,
+                             start_x: f32,
+                             baseline_y: f32| {
+            let style = spans[span_idx].resolve_style(base_style);
+            draw_text_segment(canvas, fonts, text, x + start_x, baseline_y, &style);
+            let w = segment_width(canvas, fonts, text, &style);
+            draw_decorations_for_segment(canvas, x + start_x, baseline_y, w, &style);
+        };
 
         for run in entry.buffer.layout_runs() {
             // run.line_y is the alphabetic baseline (not line top — see module docs)
             let baseline_y = y + run.line_y;
 
-            let mut current_span = usize::MAX;
+            // `Some` exactly while a segment is in flight — set and cleared
+            // together with `segment_text`.
+            let mut current_span: Option<usize> = None;
             let mut segment_start_x = 0.0_f32;
             let mut segment_text = String::new();
 
             for glyph in run.glyphs {
-                let span_idx = find_span(glyph.start, span_offsets);
+                let span_idx = span_for_glyph(glyph, spans.len());
 
-                if span_idx != current_span && !segment_text.is_empty() {
-                    // Flush previous segment
-                    let style = spans[current_span].resolve_style(base_style);
-                    draw_text_segment(
+                if let Some(prev_span) = current_span
+                    && prev_span != span_idx
+                    && !segment_text.is_empty()
+                {
+                    flush_segment(
                         canvas,
-                        fonts,
+                        prev_span,
                         &segment_text,
-                        x + segment_start_x,
+                        segment_start_x,
                         baseline_y,
-                        &style,
-                    );
-                    let w = segment_width(canvas, fonts, &segment_text, &style);
-                    draw_decorations_for_segment(
-                        canvas,
-                        x + segment_start_x,
-                        baseline_y,
-                        w,
-                        &style,
                     );
                     segment_text.clear();
                 }
 
                 if segment_text.is_empty() {
                     segment_start_x = glyph.x;
-                    current_span = span_idx;
+                    current_span = Some(span_idx);
                 }
 
-                if glyph.end <= full_text.len() {
-                    segment_text.push_str(&full_text[glyph.start..glyph.end]);
+                // `get` rejects an out-of-range *or* non-char-boundary range, so a
+                // bad offset drops one glyph instead of panicking. Checking only
+                // the length would miss a range landing inside a multi-byte
+                // character, which panics and tears down the widget slot.
+                if let Some(text) = run.text.get(glyph.start..glyph.end) {
+                    segment_text.push_str(text);
+                } else {
+                    tracing::error!(
+                        "text: glyph range {}..{} does not slice line {} (len {})",
+                        glyph.start,
+                        glyph.end,
+                        run.line_i,
+                        run.text.len(),
+                    );
                 }
             }
 
             // Flush last segment
-            if !segment_text.is_empty() && current_span != usize::MAX {
-                let style = spans[current_span].resolve_style(base_style);
-                draw_text_segment(
-                    canvas,
-                    fonts,
-                    &segment_text,
-                    x + segment_start_x,
-                    baseline_y,
-                    &style,
-                );
-                let w = segment_width(canvas, fonts, &segment_text, &style);
-                draw_decorations_for_segment(canvas, x + segment_start_x, baseline_y, w, &style);
+            if let Some(span_idx) = current_span
+                && !segment_text.is_empty()
+            {
+                flush_segment(canvas, span_idx, &segment_text, segment_start_x, baseline_y);
             }
         }
     }
@@ -297,7 +305,27 @@ fn cache_key(base_style: &TextStyle, spans: &[SpanData], max_width: Option<f32>)
     hasher.finish()
 }
 
+/// Metadata value on the paragraph's default attrs. Every span carries its own
+/// index instead, so no glyph should ever come back tagged with this.
+///
+/// Deliberately not `0`, for detectability rather than correctness.
+/// `set_rich_text` records a span only when its attrs differ from the defaults,
+/// and `Attrs` equality covers `metadata`, so a `0` default could only ever skip
+/// span 0 styled exactly like the base — whose glyphs then inherit `0` and
+/// resolve back to span 0 anyway. What the distinct default buys is that an
+/// untagged glyph surfaces as `NO_SPAN` and gets logged, instead of
+/// masquerading as span 0.
+const NO_SPAN: usize = usize::MAX;
+
 /// Shape a paragraph using cosmic-text. Returns (buffer, width, height).
+///
+/// Each span is tagged with its own index through [`Attrs::metadata`], which
+/// cosmic-text copies into every glyph it shapes from that span. That is what
+/// lets [`ParagraphLayoutCache::draw`] recover a glyph's span directly, instead
+/// of mapping the glyph's line-relative byte offset back into the concatenated
+/// span text — a mapping that needs a per-line start table and cannot be derived
+/// from the line endings, because `set_rich_text` stamps every line with
+/// `LineEnding::default()` whatever separator actually split it.
 fn shape_paragraph(
     font_system: &mut FontSystem,
     base_style: &TextStyle,
@@ -311,16 +339,17 @@ fn shape_paragraph(
 
     let rich_spans: Vec<_> = spans
         .iter()
-        .map(|span| {
+        .enumerate()
+        .map(|(i, span)| {
             let resolved = span.resolve_style(base_style);
-            (span.text.as_str(), build_attrs(&resolved))
+            (span.text.as_str(), build_attrs(&resolved).metadata(i))
         })
         .collect();
 
     buffer.set_rich_text(
         font_system,
         rich_spans,
-        &build_attrs(base_style),
+        &build_attrs(base_style).metadata(NO_SPAN),
         Shaping::Advanced,
         None,
     );
@@ -371,25 +400,23 @@ pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
     ))
 }
 
-/// Build byte-offset → span-index lookup table.
-fn build_span_offsets(spans: &[SpanData]) -> Vec<(usize, usize, usize)> {
-    let mut offsets = Vec::with_capacity(spans.len());
-    let mut pos = 0;
-    for (i, span) in spans.iter().enumerate() {
-        let end = pos + span.text.len();
-        offsets.push((pos, end, i));
-        pos = end;
+/// Span owning `glyph`, as tagged by [`shape_paragraph`].
+///
+/// A glyph outside `0..span_count` — [`NO_SPAN`] included — would mean it was
+/// shaped from attrs we never tagged. Report it and fall back to the first span:
+/// a panic here tears down the widget slot, and dropping the glyph would lose
+/// text rather than just mis-style it.
+///
+/// Kept as its own function so `span_attribution_tests` can exercise the draw
+/// path's span lookup without a GL context.
+fn span_for_glyph(glyph: &LayoutGlyph, span_count: usize) -> usize {
+    if glyph.metadata < span_count {
+        return glyph.metadata;
     }
-    offsets
-}
-
-/// Find which span a byte offset belongs to.
-fn find_span(byte_offset: usize, span_offsets: &[(usize, usize, usize)]) -> usize {
-    for &(start, end, idx) in span_offsets {
-        if byte_offset >= start && byte_offset < end {
-            return idx;
-        }
-    }
+    tracing::error!(
+        "text: glyph metadata {} is not one of the {span_count} span indices",
+        glyph.metadata,
+    );
     0
 }
 
