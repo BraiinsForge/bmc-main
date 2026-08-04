@@ -169,8 +169,11 @@ impl ParagraphLayoutCache {
         }
 
         let entry = self.entries.entry(key).or_insert_with(|| {
+            // Styles still come from `spans` — normalizing only edits text, never
+            // the span count or order, so a glyph's span index stays valid.
+            let normalized = normalize_carriage_returns(spans);
             let (buffer, width, height) =
-                shape_paragraph(font_system, base_style, spans, max_width);
+                shape_paragraph(font_system, base_style, &normalized, max_width);
             ParagraphLayoutEntry {
                 buffer,
                 width,
@@ -398,6 +401,66 @@ pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
         style.color.blue(),
         style.color.alpha(),
     ))
+}
+
+/// Rewrite `\r` and `\r\n` to a single `\n` before shaping, so a carriage return
+/// breaks the line the same way whichever cosmic-text code path the text takes.
+///
+/// CR is the one separator cosmic-text is inconsistent about. `BidiParagraphs`'
+/// ASCII fast path splits only on `\n`, so a bare CR renders inline as a glyph on
+/// one line — while the same text plus one non-ASCII character takes the
+/// `BidiInfo` path and does break. `\r\n` is worse: ASCII gets one break,
+/// non-ASCII gets a break plus a spurious empty line.
+///
+/// Borrows unchanged when there is no CR, which is the common case. Span count
+/// and order are preserved, so span indices stay valid for styling.
+fn normalize_carriage_returns(spans: &[SpanData]) -> std::borrow::Cow<'_, [SpanData]> {
+    if !spans.iter().any(|s| s.text.contains('\r')) {
+        return std::borrow::Cow::Borrowed(spans);
+    }
+
+    // A `\r\n` split across a span boundary must still collapse to one break,
+    // so the trailing-CR state carries into the next span.
+    let mut pending_cr = false;
+    let normalized = spans
+        .iter()
+        .map(|span| {
+            let mut chars = span.text.chars().peekable();
+            if pending_cr && chars.peek() == Some(&'\n') {
+                chars.next();
+            }
+            // If there's an empty span between one trailing \r and one
+            // with leading \n, there'll be a spurious blank line:
+            //
+            // spans = ["a\r", "", "\nb"]
+            // normalized full_text = "a\n\nb"
+            // buffer lines         = ["a", "", "b"] // expected ["a", "b"]
+            //
+            // Hence, we ignore empty spans.
+            if !span.text.is_empty() {
+                pending_cr = span.text.ends_with('\r');
+            }
+
+            let mut text = String::with_capacity(span.text.len());
+            while let Some(c) = chars.next() {
+                match c {
+                    '\r' => {
+                        text.push('\n');
+                        // Consume the LF of a CRLF pair: one break, not two.
+                        if chars.peek() == Some(&'\n') {
+                            chars.next();
+                        }
+                    }
+                    _ => text.push(c),
+                }
+            }
+            SpanData {
+                text,
+                ..span.clone()
+            }
+        })
+        .collect();
+    std::borrow::Cow::Owned(normalized)
 }
 
 /// Span owning `glyph`, as tagged by [`shape_paragraph`].
