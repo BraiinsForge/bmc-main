@@ -51,11 +51,23 @@ fn collect_svgs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         let entry = entry.expect("BUG: read entry");
         let path = entry.path();
         if path.is_dir() {
-            collect_svgs(&path, out);
+            if !is_cache_dir(&path) {
+                collect_svgs(&path, out);
+            }
         } else if path.extension().is_some_and(|ext| ext == "svg") {
             out.push(path);
         }
     }
+}
+
+/// Cache Directory Tagging spec (bford.info/cachedir) signature — the MD5
+/// of ".IsCacheDirectory", hardcoded identically by cargo, GNU tar, and
+/// backup tools. Cargo tags every target dir; local doc builds drop rustdoc
+/// favicons there whose DOCTYPE roxmltree refuses to parse.
+const CACHEDIR_SIGNATURE: &[u8] = b"Signature: 8a477f597d28d172789f06886806bc55";
+
+fn is_cache_dir(dir: &std::path::Path) -> bool {
+    std::fs::read(dir.join("CACHEDIR.TAG")).is_ok_and(|tag| tag.starts_with(CACHEDIR_SIGNATURE))
 }
 
 /// Walk the parsed tree, returning one description per forbidden element or

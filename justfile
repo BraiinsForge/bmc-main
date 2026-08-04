@@ -57,7 +57,7 @@ validate: format clippy python
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.
     # Left unwrapped like the clippy runs above: `nix develop` swaps the toolchain
     # and the sccache wrapper, and two rustc setups over one target dir do not link.
-    cargo nextest run -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-wasm-thin -p bmc-wasm-thin-protocol
+    cargo nextest run -p bmc-wasm-runtime -p bmc-wasm-sdk -p bmc-wasm-sdk-macros -p bmc-wasm-protocol -p bmc-svg-compiler -p bmc-wasm-thin -p bmc-wasm-thin-protocol
 
     # Widget logic has native tests; the wasm32 builds below can't run them.
     (cd widgets-wasm && cargo nextest run --workspace)
