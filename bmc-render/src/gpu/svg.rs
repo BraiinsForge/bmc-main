@@ -255,6 +255,7 @@ pub fn draw_svg(
                 .or(tint)
                 .unwrap_or_else(|| to_femtovg_color(stroke_color));
             let mut paint = Paint::color(paint_color);
+            paint.set_anti_alias(anti_alias);
             paint.set_line_width(icon_path.stroke_width);
             canvas.stroke_path(&icon_path.path, &paint);
         }
