@@ -50,6 +50,18 @@ impl Renderer for TestRenderer {
     ) {
     }
 
+    fn stroke_rounded_rect(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _w: f32,
+        _h: f32,
+        _radius: f32,
+        _border_width: f32,
+        _color: Color,
+    ) {
+    }
+
     fn fill_circle(&mut self, _cx: f32, _cy: f32, _r: f32, _color: Color) {}
 
     fn fill_rect_paint(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _fill: &Fill) {}

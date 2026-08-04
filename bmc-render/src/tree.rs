@@ -1628,6 +1628,11 @@ pub struct SliderSkinData {
 #[derive(Clone, Default, Debug)]
 pub struct NodeContext {
     background: Color,
+    /// CSS-modeled box decoration: radius rounds background
+    /// and border alike, a zero width paints no border.
+    border_radius: f32,
+    border_width: f32,
+    border_color: Color,
     bg_nine_patch: BgNinePatch,
     paragraph: Option<ParagraphData>,
     button: Option<ButtonContext>,
@@ -1902,11 +1907,17 @@ pub(crate) fn build_taffy_node(
             };
 
             let id = taffy.new_with_children(style, &child_ids)?;
-            if props.background != Color::default() || props.bg_np_id.is_some() {
+            if props.background != Color::default()
+                || props.bg_np_id.is_some()
+                || props.border_width > 0.0
+            {
                 taffy.set_node_context(
                     id,
                     Some(NodeContext {
                         background: props.background,
+                        border_radius: props.border_radius,
+                        border_width: props.border_width,
+                        border_color: props.border_color,
                         bg_nine_patch: bg_np_from_props(props),
                         ..Default::default()
                     }),
@@ -2491,8 +2502,28 @@ pub(crate) fn render_taffy_node(
         if let Some(bitmap_id) = ctx.bg_nine_patch.bitmap_id {
             let np = &ctx.bg_nine_patch;
             renderer.draw_nine_patch(x, y, w, h, bitmap_id, np.left, np.top, np.right, np.bottom);
-        } else if ctx.background != Color::default() {
-            renderer.fill_rect(x, y, w, h, ctx.background);
+        } else {
+            if ctx.background != Color::default() {
+                if ctx.border_radius > 0.0 {
+                    renderer.fill_rounded_rect(x, y, w, h, ctx.border_radius, ctx.background);
+                } else {
+                    renderer.fill_rect(x, y, w, h, ctx.background);
+                }
+            }
+            // The border strokes inside the box, over the background's edge,
+            // as CSS paints a border-box border.
+            if ctx.border_width > 0.0 {
+                let inset = ctx.border_width / 2.0;
+                renderer.stroke_rounded_rect(
+                    x + inset,
+                    y + inset,
+                    w - ctx.border_width,
+                    h - ctx.border_width,
+                    (ctx.border_radius - inset).max(0.0),
+                    ctx.border_width,
+                    ctx.border_color,
+                );
+            }
         }
 
         // Tag pill + leading icon, painted behind the content child.

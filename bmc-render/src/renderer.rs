@@ -80,6 +80,22 @@ pub trait Renderer {
 
     fn stroke_rect(&mut self, x: f32, y: f32, w: f32, h: f32, border_width: f32, color: Color);
 
+    /// Stroke a rounded rectangle outline.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "rect + radius + stroke geometry is irreducible"
+    )]
+    fn stroke_rounded_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        border_width: f32,
+        color: Color,
+    );
+
     fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color);
 
     // -- Transform stack --

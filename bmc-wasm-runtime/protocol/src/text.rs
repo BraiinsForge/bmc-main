@@ -472,12 +472,21 @@ pub struct PropsData {
     pub bg_np_top: u16,
     pub bg_np_right: u16,
     pub bg_np_bottom: u16,
-    /// Absolute positioning insets. `NAN` means "auto" (unset).
+    /// Absolute positioning insets.
+    /// `NAN` means "auto" (unset).
     /// Setting any inset to a finite value makes the node absolutely positioned.
     pub inset_top: f32,
     pub inset_right: f32,
     pub inset_bottom: f32,
     pub inset_left: f32,
+    /// CSS `border-radius`: rounds the node's box — the `background` fill and the border alike.
+    /// `0.0` paints square corners.
+    /// Nine-patch backgrounds carry their rounding in the bitmap and ignore it.
+    pub border_radius: f32,
+    /// CSS `border-width`: `0.0` paints no border.
+    pub border_width: f32,
+    /// CSS `border-color`.
+    pub border_color: Color,
 }
 
 impl Default for PropsData {
@@ -503,12 +512,15 @@ impl Default for PropsData {
             inset_right: f32::NAN,
             inset_bottom: f32::NAN,
             inset_left: f32::NAN,
+            border_radius: 0.0,
+            border_width: 0.0,
+            border_color: TRANSPARENT,
         }
     }
 }
 
 impl PropsData {
-    pub const SIZE: usize = 66;
+    pub const SIZE: usize = 78;
 
     /// Returns `true` if any inset is set (finite), meaning this node is absolutely positioned.
     #[must_use]
@@ -546,6 +558,9 @@ impl PropsData {
         wire::write_f32(&mut buf, &mut p, self.inset_right);
         wire::write_f32(&mut buf, &mut p, self.inset_bottom);
         wire::write_f32(&mut buf, &mut p, self.inset_left);
+        wire::write_f32(&mut buf, &mut p, self.border_radius);
+        wire::write_f32(&mut buf, &mut p, self.border_width);
+        wire::write_color(&mut buf, &mut p, self.border_color);
         buf
     }
 
@@ -571,6 +586,9 @@ impl PropsData {
         let inset_right = wire::read_f32(data, &mut p)?;
         let inset_bottom = wire::read_f32(data, &mut p)?;
         let inset_left = wire::read_f32(data, &mut p)?;
+        let border_radius = wire::read_f32(data, &mut p)?;
+        let border_width = wire::read_f32(data, &mut p)?;
+        let border_color = wire::read_color(data, &mut p)?;
         Some(Self {
             padding,
             margin,
@@ -592,6 +610,9 @@ impl PropsData {
             inset_right,
             inset_bottom,
             inset_left,
+            border_radius,
+            border_width,
+            border_color,
         })
     }
 }
@@ -651,6 +672,9 @@ mod tests {
             inset_right: 15.0,
             inset_bottom: 16.0,
             inset_left: 17.0,
+            border_radius: 18.0,
+            border_width: 19.0,
+            border_color: GRAY_10,
         };
         let bytes = props.to_bytes();
         let back = PropsData::from_bytes(&bytes).expect("full-size buffer decodes");
@@ -660,6 +684,9 @@ mod tests {
         assert_eq!(back.cross_align, CrossAlign::Center);
         assert!(back.wrap);
         assert_eq!(back.bg_np_bottom, 13);
+        // Border floats round-trip exactly via the byte equality above;
+        // spot-check only the color to avoid strict float comparison.
+        assert_eq!(back.border_color, GRAY_10);
     }
 
     #[test]

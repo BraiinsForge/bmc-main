@@ -66,6 +66,17 @@ impl ProbeRenderer {
 impl Renderer for ProbeRenderer {
     fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {}
     fn fill_rounded_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _r: f32, _color: Color) {}
+    fn stroke_rounded_rect(
+        &mut self,
+        _x: f32,
+        _y: f32,
+        _w: f32,
+        _h: f32,
+        _r: f32,
+        _border_width: f32,
+        _color: Color,
+    ) {
+    }
     fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, _color: Color) {
         self.record_circle(cx, cy, r);
     }

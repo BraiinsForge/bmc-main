@@ -532,6 +532,23 @@ impl Renderer for FemtoVgRenderer {
         self.canvas.stroke_path(&path, &paint);
     }
 
+    fn stroke_rounded_rect(
+        &mut self,
+        x: f32,
+        y: f32,
+        w: f32,
+        h: f32,
+        radius: f32,
+        border_width: f32,
+        color: Color,
+    ) {
+        let mut path = Path::new();
+        path.rounded_rect(x, y, w, h, radius);
+        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
+        paint.set_line_width(border_width);
+        self.canvas.stroke_path(&path, &paint);
+    }
+
     fn draw_line(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, width: f32, color: Color) {
         let mut path = Path::new();
         path.move_to(x1, y1);
