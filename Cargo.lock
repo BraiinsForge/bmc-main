@@ -1190,6 +1190,7 @@ dependencies = [
  "bmc-storybook-macros",
  "bmc-system-overlay",
  "bmc-wasm-sdk",
+ "braiins-pool",
  "eframe",
  "egui",
  "egui_extras",
@@ -1247,6 +1248,7 @@ dependencies = [
  "bmc-storybook-api",
  "bmc-system-overlay",
  "bmc-wasm-sdk",
+ "braiins-pool",
  "fleet-management",
  "inventory",
  "toml",
@@ -1630,6 +1632,15 @@ name = "borrow-or-share"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dc0b364ead1874514c8c2855ab558056ebfeb775653e7ae45ff72f28f8f3166c"
+
+[[package]]
+name = "braiins-pool"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "form_urlencoded",
+ "units",
+]
 
 [[package]]
 name = "brotli"

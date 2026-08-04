@@ -14,6 +14,7 @@ workspace = true
 resolver = "3"
 members = [
     "blockheight",
+    "braiins-pool",
     "clock",
     "fleet-management",
     "halving-countdown",
@@ -45,6 +46,7 @@ unwrap_used = "warn"
 base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 # Serde-free: bincode 2's native `Encode`/`Decode` derive keeps `serde` out of the wasm graph
 bincode = { version = "2.0.0", default-features = false, features = ["alloc", "derive"] }
+form_urlencoded = { version = "1.2", default-features = false, features = ["alloc"] }
 sgp4 = { version = "2.4", default-features = false, features = ["std"] }
 
 # Shared profiles — all widgets are tiny WASM binaries optimized for size

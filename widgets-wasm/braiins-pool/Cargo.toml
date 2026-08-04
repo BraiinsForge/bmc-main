@@ -1,0 +1,23 @@
+[package]
+name = "braiins-pool"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+# SVG assets embedded at compile time via the SDK include_svg! macro;
+# the nix source filter keeps only rust/toml/lock unless opted in here.
+[package.metadata.nix]
+include = ["assets/**"]
+
+[lib]
+# `lib` (native rlib) in addition to the wasm `cdylib` so the storybook
+# can depend on this crate and render its `screens::*` view fns as stories.
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+form_urlencoded.workspace = true
+units = { path = "../lib/units" }
+
+[lints]
+workspace = true

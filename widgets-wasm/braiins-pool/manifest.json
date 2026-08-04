@@ -1,0 +1,83 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "b4e0608d-d38c-4494-8bee-7df2a030c9b1",
+  "version": "0.1.0",
+  "name": "Braiins Pool",
+  "description": "Real-time hashrate, worker, and payout stats for your Braiins Pool account",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/braiins-pool",
+  "icon": "assets/icon.svg",
+  "category": "mining",
+  "settings": [
+    "localization",
+    "timezone"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "style": {
+      "name": "Scene style",
+      "description": "Overview shows payout and worker stats; Big Chart fills the widget with the hashrate chart",
+      "type": "string",
+      "default_value": "overview",
+      "enum_values": [
+        {
+          "value": "overview",
+          "label": "Overview"
+        },
+        {
+          "value": "big_chart",
+          "label": "Big Chart"
+        }
+      ]
+    },
+    "chart_frame": {
+      "name": "Chart frame",
+      "description": "Time span of the hashrate chart",
+      "type": "string",
+      "default_value": "hours_12",
+      "enum_values": [
+        {
+          "value": "hours_4",
+          "label": "4 hours"
+        },
+        {
+          "value": "hours_12",
+          "label": "12 hours"
+        },
+        {
+          "value": "hours_24",
+          "label": "24 hours"
+        },
+        {
+          "value": "days_7",
+          "label": "7 days"
+        }
+      ]
+    },
+    "worker_states": {
+      "name": "Worker states",
+      "description": "Show the workers-by-state breakdown",
+      "type": "boolean",
+      "default_value": true
+    }
+  },
+  "credentials": {
+    "pool": {
+      "type": "braiins-pool",
+      "label": "Pool account",
+      "description": "Used to fetch your hashrate, worker, and payout stats from Braiins Pool",
+      "required": true
+    }
+  }
+}
