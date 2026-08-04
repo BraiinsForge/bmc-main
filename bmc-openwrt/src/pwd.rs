@@ -26,6 +26,7 @@ use std::path::Path;
 use std::str::FromStr;
 
 pub const SHADOW_PATH: &str = "/etc/shadow";
+pub const SHADOW_FILE_MODE: u32 = 0o600;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {

@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use crate::pwd::{PasswordHashType, SHADOW_PATH, ShadowFile};
+use crate::pwd::{PasswordHashType, SHADOW_FILE_MODE, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
 use crate::uboot_env::UbootEnvManager;
 use crate::unix::system_reboot;
@@ -426,10 +426,12 @@ impl BmcManager for Manager {
         let mut shadow_file = ShadowFile::from_file(SHADOW_PATH)?;
         shadow_file.set_password(ROOT_USERNAME, password, PasswordHashType::Md5)?;
 
-        let temp_shadow_file_path = format!("{SHADOW_PATH}.tmp");
-
-        fs::write(&temp_shadow_file_path, shadow_file.to_string()).await?;
-        fs::rename(&temp_shadow_file_path, SHADOW_PATH).await?;
+        bmc::utils::replace_file_with_mode(
+            SHADOW_PATH,
+            shadow_file.to_string().as_bytes(),
+            Some(SHADOW_FILE_MODE),
+        )
+        .await?;
 
         info!(username = ROOT_USERNAME, "System password updated");
 
