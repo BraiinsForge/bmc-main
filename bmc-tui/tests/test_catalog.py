@@ -1392,14 +1392,14 @@ def _pushed_plan(tmp_path: Path) -> catalog.Provisioning:
 def test_run_cli_init_accepts_exact_profile_path(tmp_path: Path) -> None:
     plan = _pushed_plan(tmp_path)
     dev = Device("h", backend=_Exec(_routes({" init ": plan.profile_path or ""})))
-    catalog.run_cli_init(dev, plan)
+    catalog.run_cli_init(dev, plan, "/dev/mmcblk0p4")
 
 
 def test_run_cli_init_aborts_on_stdout_mismatch(tmp_path: Path) -> None:
     plan = _pushed_plan(tmp_path)
     dev = Device("h", backend=_Exec(_routes({" init ": "/nix/somewhere/else"})))
     with pytest.raises(Abort, match="expected"):
-        catalog.run_cli_init(dev, plan)
+        catalog.run_cli_init(dev, plan, "/dev/mmcblk0p4")
 
 
 def test_activate_aborts_when_mount_identity_fails(tmp_path: Path) -> None:
@@ -1444,6 +1444,23 @@ def test_init_procedure_succeeds_over_identical_empty_bind(tmp_path: Path) -> No
     rmdir = next(i for i, c in enumerate(joined) if "rmdir /mnt/data/nix" in c)
     assert umount < rmdir, "the stale bind must be released before its backing dir is removed"
     assert any("entrypoint" in c for c in joined), "activation must run after the re-init"
+
+
+def test_init_procedure_threads_data_partition(tmp_path: Path) -> None:
+    # Boards like the BCB119 keep the data partition elsewhere than the
+    # CLI's /dev/mmcblk0p4 default, so both partition-touching CLI calls
+    # must carry the chosen device.
+    responder = _BindMountedEmptyStore("/nix/var/nix/gcroots/profiles/bmc")
+    exec_ = _Exec(responder)
+    Init(device="h", data_partition="/dev/mmcblk1p5").run(
+        dev=Device("h", backend=exec_),
+        backend=_fake_nix(tmp_path),
+    )
+    joined = [" ".join(argv) for argv in exec_.runs]
+    prepare = next(c for c in joined if "prepare-data-partition" in c)
+    cli_init = next(c for c in joined if " init " in c and "--tarball" in c)
+    assert "--data-partition /dev/mmcblk1p5" in prepare
+    assert "--data-partition /dev/mmcblk1p5" in cli_init
 
 
 def test_init_procedure_cleans_up_on_stage_failure(tmp_path: Path) -> None:

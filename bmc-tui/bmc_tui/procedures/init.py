@@ -38,6 +38,8 @@ from bmc_tui.stage import dry_run, entrypoint
 @dataclass
 class Init:
     device: str  # IP or host of the target Deck
+    # Keep in sync with the Init and PrepareDataPartition defaults in bmc-nix/src/bin/cli.rs.
+    data_partition: str = "/dev/mmcblk0p4"
     dry_run: bool = False  # run read-only checks; log mutations without executing
 
     def run(self, dev: Device | None = None, backend: Nix | None = None) -> None:
@@ -55,10 +57,10 @@ class Init:
         catalog.build_nix_cli(backend, plan)
         try:
             catalog.push_nix_cli(dev, plan)
-            catalog.prepare_data_partition(dev)
+            catalog.prepare_data_partition(dev, self.data_partition)
             catalog.ensure_store_absent(dev)
             catalog.push_init_tarball(dev, plan)
-            catalog.run_cli_init(dev, plan)
+            catalog.run_cli_init(dev, plan, self.data_partition)
             catalog.activate_profile(dev, plan)
         finally:
             catalog.cleanup_remote_artifacts(dev, plan)

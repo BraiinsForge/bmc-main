@@ -839,11 +839,14 @@ def push_debugfs(dev: Device, plan: Provisioning) -> str:
 
 
 @stage("Prepare data partition")
-def prepare_data_partition(dev: Device) -> str:
+def prepare_data_partition(dev: Device, data_partition: str) -> str:
     """Fsck/format/mount /mnt/data via the pushed CLI; a healthy running
     Deck makes this a mount-state no-op."""
 
-    dev.run(f"{shlex.quote(_REMOTE_CLI)} prepare-data-partition")
+    dev.run(
+        f"{shlex.quote(_REMOTE_CLI)} prepare-data-partition "
+        f"--data-partition {shlex.quote(data_partition)}"
+    )
     return f"{console.lit('/mnt/data')} ready"
 
 
@@ -906,14 +909,15 @@ def push_init_tarball(dev: Device, plan: Provisioning) -> str:
 
 
 @stage("Initialise store")
-def run_cli_init(dev: Device, plan: Provisioning) -> str:
+def run_cli_init(dev: Device, plan: Provisioning, data_partition: str) -> str:
     remote, profile_path = plan.remote_tarball, plan.profile_path
     if remote is None or profile_path is None:
         msg = "BUG: tarball was not pushed before the init stage"
         raise RuntimeError(msg)
     out = dev.run(
         f"{shlex.quote(_REMOTE_CLI)} init --tarball {shlex.quote(remote)} "
-        f"--profile-path {shlex.quote(profile_path)}"
+        f"--profile-path {shlex.quote(profile_path)} "
+        f"--data-partition {shlex.quote(data_partition)}"
     )
     if out is not None:  # dry-run logs the command and returns None
         # A fresh init prints exactly the promoted profile path; a no-op
