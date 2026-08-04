@@ -2862,9 +2862,9 @@ fn progress_bar_node(media: &MediaState) -> Node {
     let mode = if is_continuous {
         ProgressMode::Indeterminate
     } else if dur > 0 {
-        ProgressMode::Fraction((pos as f32 / dur as f32).clamp(0.0, 1.0))
+        ProgressMode::Slider((pos as f32 / dur as f32).clamp(0.0, 1.0))
     } else {
-        ProgressMode::Fraction(0.0)
+        ProgressMode::Slider(0.0)
     };
 
     progress_bar!(mode,
@@ -2936,7 +2936,7 @@ fn render_controls(media: &MediaState) -> Node {
             vdn,
             vup,
             mute,
-            progress_bar!(ProgressMode::Fraction(cd.vol_frac),
+            progress_bar!(ProgressMode::Slider(cd.vol_frac),
                 touch_key: "volume", track_h: BAR_TRACK_H,
                 fill_color: GRAY_30, track_color: GRAY_70, bg_color: TRANSPARENT,
                 skin: active_slider_skin(),
@@ -2974,7 +2974,7 @@ fn render_controls_stacked(media: &MediaState) -> Node {
                     vdn,
                     vup,
                     mute,
-                    progress_bar!(ProgressMode::Fraction(cd.vol_frac),
+                    progress_bar!(ProgressMode::Slider(cd.vol_frac),
                         touch_key: "volume", track_h: BAR_TRACK_H,
                         fill_color: GRAY_30, track_color: GRAY_70, bg_color: TRANSPARENT,
                         skin: active_slider_skin(),

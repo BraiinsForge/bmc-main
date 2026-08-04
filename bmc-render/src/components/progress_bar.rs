@@ -26,7 +26,7 @@
     clippy::cast_sign_loss
 )]
 
-use bmc_wasm_protocol::Color;
+use bmc_wasm_protocol::{Color, ProgressKind};
 
 use crate::renderer::Renderer;
 use crate::tree::{AnimationContext, SliderSkinData};
@@ -37,8 +37,7 @@ use crate::tree::{AnimationContext, SliderSkinData};
 #[derive(Clone, Default, Debug)]
 pub(crate) struct ProgressBarData {
     pub track_h: f32,
-    /// 0 = Fraction, 1 = Indeterminate
-    pub mode: u8,
+    pub mode: ProgressKind,
     pub fraction: f32,
     pub active: bool,
     pub fill_color: Color,
@@ -68,7 +67,7 @@ pub(crate) fn render_progress_bar(
     if let Some(skin) = &pb.skin {
         render_progress_bar_skinned(renderer, pb, skin, x, y, w, h)
     } else {
-        render_progress_bar_flat(renderer, pb, x, y, w, anim_ctx)
+        render_progress_bar_flat(renderer, pb, x, y, w, h, anim_ctx)
     }
 }
 
@@ -79,16 +78,31 @@ fn render_progress_bar_flat(
     x: f32,
     y: f32,
     w: f32,
+    h: f32,
     anim_ctx: &mut AnimationContext<'_>,
 ) -> bool {
     let track_h = pb.track_h;
-    let dot_radius = track_h * 2.0;
-    let bar_height = dot_radius * 2.0 + track_h;
+    let thumb_radius = track_h * 2.0;
     let half_track = track_h / 2.0;
-    let mid_y = y + bar_height / 2.0;
-    let is_indeterminate = pb.mode == 1;
+    // Center on the laid-out box, which flex may have grown or (for the
+    // thumb-less meter) shrunk past the notional bar height.
+    let mid_y = y + h / 2.0;
+    let is_indeterminate = pb.mode == ProgressKind::Indeterminate;
     let fraction = pb.fraction.clamp(0.0, 1.0);
     let fill_w = w * fraction;
+
+    // Meter: rounded track and fill, no drag thumb, no squiggle.
+    if pb.mode == ProgressKind::Meter {
+        let track_y = mid_y - half_track;
+        renderer.fill_rounded_rect(x, track_y, w, track_h, half_track, pb.track_color);
+        if fill_w > 0.0 {
+            // A fill narrower than the pill's end caps would render inverted;
+            // clamp so the smallest non-zero progress shows as a dot-sized pill.
+            let fill_w = fill_w.max(track_h);
+            renderer.fill_rounded_rect(x, track_y, fill_w, track_h, half_track, pb.fill_color);
+        }
+        return false;
+    }
 
     let mut animating = false;
 
@@ -104,16 +118,16 @@ fn render_progress_bar_flat(
             // Animated squiggle on the filled portion
             render_squiggle(renderer, x, mid_y, fill_w, track_h, pb.fill_color, anim_ctx);
 
-            // Clip rect: hide squiggle past the playhead
+            // Clip rect: hide squiggle past the drag thumb
             let clip_x = x + fill_w;
-            renderer.fill_rect(clip_x, y, w - fill_w + 1.0, bar_height, pb.bg_color);
+            renderer.fill_rect(clip_x, y, w - fill_w + 1.0, h, pb.bg_color);
 
-            // Remaining track after the playhead
-            let track_x = clip_x + dot_radius;
+            // Remaining track after the drag thumb
+            let track_x = clip_x + thumb_radius;
             renderer.fill_rect(
                 track_x,
                 mid_y - half_track,
-                (w - fill_w - dot_radius).max(0.0),
+                (w - fill_w - thumb_radius).max(0.0),
                 track_h,
                 pb.track_color,
             );
@@ -123,10 +137,10 @@ fn render_progress_bar_flat(
             renderer.fill_rect(x, mid_y - half_track, fill_w, track_h, pb.fill_color);
         }
 
-        // Playhead dot — clamp center so it never clips outside the bar
+        // Drag thumb — clamp center so it never clips outside the bar
         {
-            let dot_cx = (x + fill_w).clamp(x + dot_radius, x + w - dot_radius);
-            renderer.fill_circle(dot_cx, mid_y, dot_radius, pb.fill_color);
+            let thumb_cx = (x + fill_w).clamp(x + thumb_radius, x + w - thumb_radius);
+            renderer.fill_circle(thumb_cx, mid_y, thumb_radius, pb.fill_color);
         }
     }
 
@@ -156,7 +170,7 @@ fn render_progress_bar_skinned(
 
     // Draw thumb at progress position (scale down when bar is narrow)
     if let Some(thumb_id) = skin.thumb_id
-        && pb.mode == 0
+        && pb.mode == ProgressKind::Slider
     {
         let fraction = pb.fraction.clamp(0.0, 1.0);
         let thumb_w = f32::from(skin.thumb_w);

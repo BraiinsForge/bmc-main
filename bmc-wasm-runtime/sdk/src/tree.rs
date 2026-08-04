@@ -43,9 +43,9 @@ use bmc_wasm_protocol::{
     DRAW_QR, DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX,
     Dash, Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
     NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW,
-    NODE_SCROLL, NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, RelTimeClamp, RelTimeFormat,
-    SvgId, TagIconMode, TagKind, WHITE, encode_arc_cap, encode_arc_fill, encode_arc_segments,
-    encode_fill,
+    NODE_SCROLL, NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, ProgressKind, RelTimeClamp,
+    RelTimeFormat, SvgId, TagIconMode, TagKind, WHITE, encode_arc_cap, encode_arc_fill,
+    encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -417,13 +417,17 @@ impl TreeBuffer {
         self.write_bytes(key_bytes);
         self.write_f32(track_h);
         match mode {
-            ProgressMode::Fraction(f) => {
-                self.write_u8(0);
+            ProgressMode::Slider(f) => {
+                self.write_u8(ProgressKind::Slider.into());
                 self.write_f32(*f);
             }
             ProgressMode::Indeterminate => {
-                self.write_u8(1);
+                self.write_u8(ProgressKind::Indeterminate.into());
                 self.write_f32(0.0); // unused, keeps format fixed-size
+            }
+            ProgressMode::Meter(f) => {
+                self.write_u8(ProgressKind::Meter.into());
+                self.write_f32(*f);
             }
         }
         self.write_u8(u8::from(active));
@@ -1534,9 +1538,9 @@ pub enum Node {
         footer_secondary_label: String,
         footer_danger: bool,
     },
-    /// Host-rendered progress bar — seek/volume slider.
+    /// Host-rendered progress bar — slider, meter, or indeterminate.
     ///
-    /// Rendered entirely host-side: track, fill, animated squiggle, playhead dot.
+    /// Rendered entirely host-side: track, fill, animated squiggle, drag thumb.
     /// Uses `flex: 1.0` layout. Touch interaction via `touch_key`.
     ProgressBar {
         touch_key: String,

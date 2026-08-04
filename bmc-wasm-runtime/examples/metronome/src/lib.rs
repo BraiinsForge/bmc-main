@@ -348,7 +348,7 @@ fn beat_indicators(beat: u32, playing: bool, max_r: f32) -> Node {
 /// Playhead dot radius = track_h * 2, so keep track_h small on tight layouts.
 fn bpm_slider(bpm: u32, track_h: f32) -> Node {
     let frac = (bpm - MIN_BPM) as f32 / (MAX_BPM - MIN_BPM) as f32;
-    progress_bar!(ProgressMode::Fraction(frac),
+    progress_bar!(ProgressMode::Slider(frac),
         touch_key: "bpm_slider", track_h: track_h,
         fill_color: GREEN_50, track_color: GRAY_80, bg_color: TRANSPARENT,
     )

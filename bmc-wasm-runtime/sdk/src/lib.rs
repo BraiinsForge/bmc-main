@@ -619,9 +619,9 @@ macro_rules! button {
 ///
 /// # Examples
 /// ```ignore
-/// progress_bar!(ProgressMode::Fraction(0.5))
+/// progress_bar!(ProgressMode::Slider(0.5))
 /// progress_bar!(ProgressMode::Indeterminate, active: true)
-/// progress_bar!(ProgressMode::Fraction(vol), touch_key: "volume", skin: slider_skin)
+/// progress_bar!(ProgressMode::Slider(vol), touch_key: "volume", skin: slider_skin)
 /// ```
 #[macro_export]
 macro_rules! progress_bar {

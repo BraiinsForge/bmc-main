@@ -153,7 +153,7 @@ mod tests {
         TreeNode::ProgressBar {
             touch_key: Some("brightness".to_owned()),
             track_h: 8.0,
-            mode: 0,
+            mode: bmc_wasm_protocol::ProgressKind::Slider,
             fraction: 0.0,
             active: true,
             fill_color: Color::from_rgba(0, 255, 0, 255),

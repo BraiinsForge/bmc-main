@@ -28,21 +28,25 @@ use crate::tree::Node;
 /// Progress bar mode.
 #[derive(Clone, Copy, Debug)]
 pub enum ProgressMode {
-    /// Known progress as a fraction (0.0–1.0). Shows fill + playhead dot.
-    Fraction(f32),
+    /// A draggable slider at a fraction (0.0–1.0): fill plus drag thumb,
+    /// the HTML `<input type=range>` of the family.
+    Slider(f32),
     /// Unknown duration — animated indicator across full width.
     Indeterminate,
+    /// A passive meter at a fraction (0.0–1.0): plain bar,
+    /// no drag thumb or squiggle — the HTML `<progress>` of the family.
+    Meter(f32),
 }
 
 /// Create a progress bar node.
 ///
 /// - `touch_key`: interaction key for slider drag.
 /// - `track_h`: track thickness in pixels (also controls squiggle amplitude).
-/// - `mode`: `ProgressMode::Fraction(0.0..=1.0)` or `ProgressMode::Indeterminate`.
+/// - `mode`: see [`ProgressMode`].
 /// - `active`: when true, filled portion uses animated squiggle.
-/// - `fill_color`: fill, playhead dot, and squiggle color.
+/// - `fill_color`: fill, drag thumb, and squiggle color.
 /// - `track_color`: background track color.
-/// - `bg_color`: used to clip squiggle past the playhead. Pass `0` when not active.
+/// - `bg_color`: used to clip squiggle past the drag thumb. Pass `0` when not active.
 #[expect(clippy::too_many_arguments)]
 #[must_use]
 pub fn progress_bar(

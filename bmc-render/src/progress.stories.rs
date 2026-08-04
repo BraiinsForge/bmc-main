@@ -27,12 +27,12 @@ story_meta! { title: "ProgressBar" }
 #[story(default)]
 fn progress_bar_variants(ctx: &mut StoryCtx) -> Node {
     let fraction = ctx.slider("Progress", 0.6, 0.0, 1.0);
+    let track_h = ctx.slider("Track height", 4.0, 2.0, 16.0);
     let drag_key = ctx.action("Drag");
     ctx.bind_drag(&drag_key, fraction);
 
     let skin_drag_key = ctx.action("SkinnedDrag");
-    let skin_fraction = ctx.slider("SkinnedProgress", 0.4, 0.0, 1.0);
-    ctx.bind_drag(&skin_drag_key, skin_fraction);
+    ctx.bind_drag(&skin_drag_key, fraction);
 
     let track = STORYBOOK_SLIDER_SKIN
         .get_nine_patch("slider_track")
@@ -51,19 +51,25 @@ fn progress_bar_variants(ctx: &mut StoryCtx) -> Node {
     col(
         props!(gap: 16, padding: 16, max_width: 400),
         [
+            text("Slider (drag to change)", style!(size: 14, color: GRAY_30)),
+            progress_bar!(
+                ProgressMode::Slider(fraction.get()),
+                touch_key: &drag_key,
+                track_h: track_h.get(),
+            ),
+            text("Indeterminate", style!(size: 14, color: GRAY_30)),
+            progress_bar!(ProgressMode::Indeterminate, active: true, track_h: track_h.get()),
             text(
-                "Determinate (drag to change)",
+                "Meter (no drag thumb, rounded caps)",
                 style!(size: 14, color: GRAY_30),
             ),
-            progress_bar!(ProgressMode::Fraction(fraction.get()), touch_key: &drag_key),
-            text("Indeterminate", style!(size: 14, color: GRAY_30)),
-            progress_bar!(ProgressMode::Indeterminate, active: true),
+            progress_bar!(ProgressMode::Meter(fraction.get()), track_h: track_h.get()),
             text(
                 "Slider with custom skin (track + thumb)",
                 style!(size: 14, color: GRAY_30),
             ),
             progress_bar!(
-                ProgressMode::Fraction(skin_fraction.get()),
+                ProgressMode::Slider(fraction.get()),
                 touch_key: &skin_drag_key,
                 track_h: f32::from(skinned.track_h),
                 skin: Some(skinned),

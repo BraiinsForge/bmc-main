@@ -676,7 +676,7 @@ impl StoryCtx {
     /// let fraction = ctx.slider("Progress", 0.6, 0.0, 1.0);
     /// let key = ctx.action("Drag");
     /// ctx.bind_drag(&key, fraction);
-    /// progress_bar!(ProgressMode::Fraction(fraction.get()), touch_key: &key)
+    /// progress_bar!(ProgressMode::Slider(fraction.get()), touch_key: &key)
     /// ```
     pub fn bind_drag(&mut self, action_key: &str, slider: SliderKnob) {
         self.drag_bindings.push(DragBinding {

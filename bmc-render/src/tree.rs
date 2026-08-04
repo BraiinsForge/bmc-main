@@ -391,8 +391,7 @@ pub enum TreeNode {
     ProgressBar {
         touch_key: Option<String>,
         track_h: f32,
-        /// 0 = Fraction, 1 = Indeterminate
-        mode: u8,
+        mode: ProgressKind,
         fraction: f32,
         active: bool,
         fill_color: Color,
@@ -875,7 +874,7 @@ impl<'a> TreeReader<'a> {
                     None
                 };
                 let track_h = self.read_f32()?;
-                let mode = self.read_u8()?;
+                let mode = ProgressKind::try_from(self.read_u8()?)?;
                 let fraction = self.read_f32()?;
                 let active = self.read_u8()? != 0;
                 let fill_color = Color::from_raw(self.read_u32()?);
@@ -2296,6 +2295,9 @@ pub(crate) fn build_taffy_node(
                 // Skinned: thumb may be taller than track
                 let thumb_h = skin.as_ref().map_or(0.0, |s| f32::from(s.thumb_h));
                 effective_h.max(thumb_h)
+            } else if *mode == ProgressKind::Meter {
+                // No drag thumb to budget for — the meter is just its track.
+                effective_h
             } else {
                 dot_radius * 2.0 + effective_h
             };
