@@ -129,10 +129,6 @@ export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
     return (
         <Dropdown<T>
             id={id}
-            // This little shit seems to really need thrashing because otherwise
-            // it remembers the last selected value even when it's on a different
-            // parent entity and it should be nullified by the new one.
-            key={`${id}-${value}`}
             autoAlign
             // className={css.dropdown}
             onChange={x => {
@@ -143,7 +139,11 @@ export function BoundDropdown<T>(props: BoundDropdownProps<T>) {
             itemToElement={itemToElement}
             renderSelectedItem={itemToElement}
             items={items}
-            selectedItem={value ?? undefined}
+            // `null`, not `undefined`: an undefined selectedItem goes uncontrolled
+            // and keeps the previous selection when the editor switches
+            // to a widget whose slot is unbound. Carbon's prop type omits null,
+            // but downshift defines it as the controlled empty selection.
+            selectedItem={(value ?? null) as T | undefined}
             titleText={labelText}
             label={placeholderText}
             decorator={decorator}
@@ -168,16 +168,13 @@ export function BoundRadioGroup<T extends string | number>(props: BoundRadioGrou
     return (
         <RadioButtonGroup
             id={id}
-            // This little shit seems to really need thrashing because otherwise
-            // it remembers the last selected value even when it's on a different
-            // parent entity and it should be nullified by the new one.
-            key={`${id}-${value}`}
             name={id}
-            value={value ?? undefined}
+            // '' keeps the group controlled when nothing is selected:
+            // an undefined valueSelected goes uncontrolled, and a clicked radio
+            // would then outlive the switch to another widget.
+            valueSelected={value ?? ''}
             legendText={labelText}
-            children={items.map(x => (
-                <RadioButton key={x.value} value={x.value} labelText={x.label} checked={value === x.value} />
-            ))}
+            children={items.map(x => <RadioButton key={x.value} value={x.value} labelText={x.label} />)}
             onChange={v => onChange?.(v as T)}
             invalid={!!error}
             invalidText={error}
