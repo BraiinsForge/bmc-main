@@ -159,3 +159,135 @@ pub(crate) fn create_real_texture(gl: &glow::Context) -> glow::Texture {
     }
     tex
 }
+
+/// Offscreen render target for pixel-level tests: a colour texture plus the
+/// stencil attachment FemtoVG needs for concave fills. Returns the framebuffer
+/// and its raw GL name, which is what [`crate::gpu::FemtoVgRenderer::new`] takes
+/// as its screen target.
+///
+/// Like the `create_real_*` helpers above, the returned objects are not owned by
+/// anything — the texture and renderbuffer live until the harness's context goes
+/// away with the test. Nothing here is meant to outlive one `GlHarness`.
+#[expect(clippy::cast_possible_wrap)]
+pub(crate) fn create_readback_fbo(
+    gl: &glow::Context,
+    width: u32,
+    height: u32,
+) -> (glow::Framebuffer, u32) {
+    use glow::HasContext as _;
+    unsafe {
+        let texture = gl.create_texture().expect("BUG: create_texture failed");
+        gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+        gl.tex_image_2d(
+            glow::TEXTURE_2D,
+            0,
+            glow::RGBA8 as i32,
+            width as i32,
+            height as i32,
+            0,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelUnpackData::Slice(None),
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MIN_FILTER,
+            glow::NEAREST as i32,
+        );
+        gl.tex_parameter_i32(
+            glow::TEXTURE_2D,
+            glow::TEXTURE_MAG_FILTER,
+            glow::NEAREST as i32,
+        );
+        let fbo = gl
+            .create_framebuffer()
+            .expect("BUG: create_framebuffer failed");
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.framebuffer_texture_2d(
+            glow::FRAMEBUFFER,
+            glow::COLOR_ATTACHMENT0,
+            glow::TEXTURE_2D,
+            Some(texture),
+            0,
+        );
+        // FemtoVG needs a stencil attachment for concave fills.
+        let rbo = gl
+            .create_renderbuffer()
+            .expect("BUG: create_renderbuffer failed");
+        gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+        gl.renderbuffer_storage(
+            glow::RENDERBUFFER,
+            glow::DEPTH24_STENCIL8,
+            width as i32,
+            height as i32,
+        );
+        gl.framebuffer_renderbuffer(
+            glow::FRAMEBUFFER,
+            glow::DEPTH_STENCIL_ATTACHMENT,
+            glow::RENDERBUFFER,
+            Some(rbo),
+        );
+        gl.bind_renderbuffer(glow::RENDERBUFFER, None);
+        let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+        assert_eq!(
+            status,
+            glow::FRAMEBUFFER_COMPLETE,
+            "FBO incomplete: {status:#x}"
+        );
+        (fbo, fbo.0.get())
+    }
+}
+
+/// Read `fbo` back as row-major RGBA with row 0 = top. `glReadPixels` uses a
+/// bottom-left origin, so the rows are flipped here and callers can index by
+/// screen row directly.
+///
+/// Binds the plain `FRAMEBUFFER` target, like [`create_readback_fbo`]. There is
+/// no blit here, so a `glReadPixels` off `FRAMEBUFFER` reads identically to one
+/// off `READ_FRAMEBUFFER` — and `READ_FRAMEBUFFER` is core only from GLES 3.0,
+/// which is more than [`GlHarness::new`] asks the driver for.
+#[expect(clippy::cast_possible_wrap)]
+pub(crate) fn read_pixels_top_down(
+    gl: &glow::Context,
+    fbo: glow::Framebuffer,
+    width: u32,
+    height: u32,
+) -> Vec<[u8; 4]> {
+    use glow::HasContext as _;
+    let (w, h) = (width as usize, height as usize);
+    let mut raw = vec![0_u8; w * h * 4];
+    unsafe {
+        assert_eq!(
+            gl.get_error(),
+            glow::NO_ERROR,
+            "BUG: GL error predates the readback, so the render under test already failed",
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+        gl.read_pixels(
+            0,
+            0,
+            width as i32,
+            height as i32,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut raw)),
+        );
+        // A rejected bind is a silent no-op that reads whatever was bound
+        // before, which would pass the caller's assertions on wrong pixels.
+        assert_eq!(
+            gl.get_error(),
+            glow::NO_ERROR,
+            "BUG: framebuffer bind or readback was rejected",
+        );
+        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+    }
+    let mut out = vec![[0_u8; 4]; w * h];
+    for y in 0..h {
+        let src = (h - 1 - y) * w;
+        for x in 0..w {
+            let i = (src + x) * 4;
+            out[y * w + x] = [raw[i], raw[i + 1], raw[i + 2], raw[i + 3]];
+        }
+    }
+    out
+}

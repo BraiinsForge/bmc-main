@@ -1612,6 +1612,224 @@ mod tests {
     }
 }
 
+/// Regressions for hard-separated multiline text. cosmic-text reports each
+/// glyph's byte offset relative to its own hard line, so a later line's offsets
+/// must be shifted by that line's start before they can index the concatenated
+/// span text or the span-style table — otherwise a later line slices a
+/// multi-byte char boundary (panic), renders the first line's characters, or
+/// inherits an earlier span's style. These exercise the real `FemtoVgRenderer`
+/// GL path end to end (shape → draw → read back pixels).
+#[cfg(test)]
+#[cfg(target_os = "linux")]
+mod multiline_text_tests {
+    use super::FemtoVgRenderer;
+    use crate::renderer::Renderer;
+    use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
+    use crate::tree::{SpanData, TextStyle};
+    use bmc_wasm_protocol::{AutoFit, Color};
+
+    const W: u32 = 240;
+    const H: u32 = 110;
+    /// Text origin of every render below. The box is inset by this much on all
+    /// four sides, giving `MAX_W` × `BOX_H`.
+    const TEXT_INSET: f32 = 2.0;
+    const MAX_W: f32 = 236.0;
+    const BOX_H: f32 = 106.0;
+
+    fn span(text: &str, color: Option<Color>) -> SpanData {
+        SpanData {
+            text: text.to_owned(),
+            weight: None,
+            color,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    fn white_style() -> TextStyle {
+        TextStyle {
+            size: 28,
+            color: Color::from_rgb(255, 255, 255),
+            ..TextStyle::default()
+        }
+    }
+
+    /// Row bands that isolate each line's ink: rows `0..line1_max` carry only
+    /// the first line, `line2_min..H` only the second.
+    ///
+    /// Derived from the style the tests actually draw with rather than
+    /// hand-computed, so a change to `TextStyle::default().line_height` moves
+    /// the bands instead of leaving every assertion below silently measuring
+    /// the wrong rows. cosmic-text centres the glyph box inside the line box,
+    /// so the blank gap between the two lines' ink is exactly the leading —
+    /// half above the line boundary and half below.
+    #[expect(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss
+    )]
+    fn line_bands() -> (usize, usize) {
+        let style = white_style();
+        let font = style.size as f32;
+        let line_height = font * style.line_height;
+        let half_leading = (line_height - font) / 2.0;
+        (
+            (TEXT_INSET + half_leading + font) as usize,
+            (TEXT_INSET + line_height + half_leading) as usize,
+        )
+    }
+
+    /// Run `draw` against a fresh headless renderer targeting an offscreen FBO
+    /// and return the rendered pixels (row 0 = top). Each call is a full,
+    /// independent GL context — deterministic under Mesa llvmpipe.
+    fn render(draw: impl FnOnce(&mut FemtoVgRenderer)) -> Vec<[u8; 4]> {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, W, H);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        renderer.begin_frame(W, H, 1.0);
+        draw(&mut renderer);
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, W, H);
+        drop(renderer);
+        pixels
+    }
+
+    fn lit(px: [u8; 4]) -> bool {
+        u16::from(px[0]) + u16::from(px[1]) + u16::from(px[2]) > 96
+    }
+
+    fn is_reddish(px: [u8; 4]) -> bool {
+        px[0] > 150 && px[1] < 100 && px[2] < 100
+    }
+
+    fn is_greenish(px: [u8; 4]) -> bool {
+        px[1] > 140 && px[0] < 120 && px[2] < 120
+    }
+
+    /// Count pixels matching `pred` within rows `[y0, y1)`.
+    fn count_rows(px: &[[u8; 4]], y0: usize, y1: usize, pred: impl Fn([u8; 4]) -> bool) -> usize {
+        let w = W as usize;
+        px[y0 * w..y1 * w].iter().filter(|p| pred(**p)).count()
+    }
+
+    /// Both text rows must carry real glyph coverage. Guards the pixel-equality
+    /// and colour-absence assertions below, which all hold trivially if a line
+    /// renders nothing at all. Measured coverage is 468–1019 lit px per line, so
+    /// this floor sits ~5× below the real values.
+    fn assert_both_lines_rendered(px: &[[u8; 4]]) {
+        const MIN_LIT: usize = 100;
+        let (line1_max, line2_min) = line_bands();
+        let first = count_rows(px, 0, line1_max, lit);
+        let second = count_rows(px, line2_min, H as usize, lit);
+        assert!(
+            first > MIN_LIT,
+            "BUG: first line rendered nothing ({first} lit px)",
+        );
+        assert!(
+            second > MIN_LIT,
+            "BUG: second line rendered nothing ({second} lit px)",
+        );
+    }
+
+    /// Count pixels that differ between two renders within rows `[y0, y1)`.
+    fn diff_rows(a: &[[u8; 4]], b: &[[u8; 4]], y0: usize, y1: usize) -> usize {
+        let w = W as usize;
+        a[y0 * w..y1 * w]
+            .iter()
+            .zip(&b[y0 * w..y1 * w])
+            .filter(|(pa, pb)| pa != pb)
+            .count()
+    }
+
+    /// A multi-byte grapheme near the start, followed by a hard break, once made
+    /// a later line's glyph offsets slice the concatenated span text on a
+    /// non-char boundary — a panic that tears down the widget slot. Both the
+    /// paragraph and autofit paths must survive it.
+    #[test]
+    fn multibyte_hard_break_does_not_panic() {
+        let style = white_style();
+        let spans = [span("“Fact”\nSecond line", None)];
+        let px = render(|r| r.draw_paragraph(&style, &spans, TEXT_INSET, TEXT_INSET, MAX_W));
+        // Per line, not per frame: a whole-frame check passes when only the first
+        // line survives, which is the very regression this guards.
+        assert_both_lines_rendered(&px);
+
+        // Autofit funnels through the same paragraph draw; must not panic either.
+        let _ = render(|r| {
+            r.draw_autofit_text(
+                TEXT_INSET,
+                TEXT_INSET,
+                MAX_W,
+                BOX_H,
+                "“Fact”\nSecond line",
+                &style,
+                AutoFit::Shrink,
+                8,
+                28,
+            );
+        });
+    }
+
+    /// The second line must render its own characters, not the bytes sitting at
+    /// the same offsets in the first line. Two paragraphs share an identical
+    /// second line but differ on the first; with the bug the second line copies
+    /// the first line's glyphs, so the bottom region diverges.
+    #[test]
+    fn later_line_renders_its_own_characters() {
+        let style = white_style();
+        let first = [span("AAAA\nZZZZ", None)];
+        let second = [span("MMMM\nZZZZ", None)];
+        let a = render(|r| r.draw_paragraph(&style, &first, TEXT_INSET, TEXT_INSET, MAX_W));
+        let b = render(|r| r.draw_paragraph(&style, &second, TEXT_INSET, TEXT_INSET, MAX_W));
+
+        // Sanity: both lines actually rendered, and the first lines really do
+        // differ. Without this the equality check below passes vacuously if the
+        // second line disappears from both renders.
+        assert_both_lines_rendered(&a);
+        assert_both_lines_rendered(&b);
+        let (line1_max, line2_min) = line_bands();
+        assert!(
+            diff_rows(&a, &b, 0, line1_max) > 20,
+            "BUG: test setup — first lines should differ",
+        );
+        // The shared second line must be pixel-identical (small AA slack).
+        let diffs = diff_rows(&a, &b, line2_min, H as usize);
+        assert!(
+            diffs < 20,
+            "BUG: second line depends on the first line's text ({diffs} px differ)",
+        );
+    }
+
+    /// Span styling must follow the text across a hard break. First span is red
+    /// and ends with the newline; the second span (green) owns the second line.
+    /// With the bug the second line inherits the first span's red.
+    #[test]
+    fn span_style_survives_hard_break() {
+        let style = white_style();
+        let red = Color::from_rgb(255, 40, 40);
+        let green = Color::from_rgb(40, 220, 40);
+        let spans = [span("Red\n", Some(red)), span("Green", Some(green))];
+        let px = render(|r| r.draw_paragraph(&style, &spans, TEXT_INSET, TEXT_INSET, MAX_W));
+
+        let (line1_max, line2_min) = line_bands();
+        assert!(
+            count_rows(&px, 0, line1_max, is_reddish) > 10,
+            "BUG: first line should be red",
+        );
+        assert!(
+            count_rows(&px, line2_min, H as usize, is_greenish) > 10,
+            "BUG: second line should render its own (green) span",
+        );
+        let leaked = count_rows(&px, line2_min, H as usize, is_reddish);
+        assert_eq!(
+            leaked, 0,
+            "BUG: second line leaked the first span's red color ({leaked} px)",
+        );
+    }
+}
+
 #[cfg(test)]
 mod gradient_geometry_tests {
     use super::linear_endpoints;
