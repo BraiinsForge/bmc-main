@@ -748,7 +748,8 @@ macro_rules! ws {
 /// Positional and captured args interleave by their position in the format string,
 /// so `fmt!("{year}-{}", month)` prints `year-month` (not `month-year`).
 /// Format specs are limited to what `ufmt` accepts (`{:?}`, `{:#?}`, `{:x}`,
-/// `{:X}`, `{:b}`, `{:o}`); width / fill / precision are not supported.
+/// `{:X}`, `{:b}`, `{:o}`); width / fill / precision are not supported,
+/// except zero-pad widths on hex (`{:02x}`) — decimal `{:02}` is rejected.
 #[macro_export]
 macro_rules! fmt {
     ($($arg:tt)*) => {

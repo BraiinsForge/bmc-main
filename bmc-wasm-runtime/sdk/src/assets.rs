@@ -201,6 +201,18 @@ pub fn init_mesh_registrar(f: MeshRegistrar) {
     mesh_native::MESH_REGISTRAR.with(|r| *r.borrow_mut() = f);
 }
 
+/// Install dummy-id registrars for widget unit tests,
+/// which assemble asset-bearing nodes without rendering them.
+///
+/// Per-thread, so call it at the top of each test.
+/// Anything actually rendering (the storybook shell) must install real registrars instead.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn init_test_registrars() {
+    init_icon_registrar(|_, _| SvgId::from_wire(1));
+    init_bitmap_registrar(|_, _| BitmapId::from_wire(1));
+    init_mesh_registrar(|_, _| MeshId::from_wire(1));
+}
+
 /// Register a mesh (host-side dedup by `mesh.name`) and return its ID.
 #[must_use]
 pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {

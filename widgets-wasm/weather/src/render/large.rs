@@ -377,7 +377,8 @@ mod tests {
         manifest_params::{Params, TimeZone},
         model::{Current, Daily, DayForecast, Location, Weather},
     };
-    use bmc_wasm_sdk::{Node, SvgId, TextOverflow, WidgetSize, assets::init_icon_registrar};
+    use bmc_wasm_sdk::assets::init_test_registrars;
+    use bmc_wasm_sdk::{Node, TextOverflow, WidgetSize};
     use units::{availability::Availability, units::DegreeCelsius};
 
     #[test]
@@ -435,7 +436,7 @@ mod tests {
     #[test]
     fn bmm101_current_condition_moves_right_of_icon() {
         let size = WidgetSize::from_dimensions(480, 320);
-        init_icon_registrar(|_, _| SvgId::from_wire(1));
+        init_test_registrars();
         let params = Params {
             location: "Prague".to_string(),
             time_zone: TimeZone::System,
@@ -467,7 +468,7 @@ mod tests {
     #[test]
     fn canonical_large_keeps_current_condition_stacked_below_icon() {
         let size = WidgetSize::from_dimensions(638, 480);
-        init_icon_registrar(|_, _| SvgId::from_wire(1));
+        init_test_registrars();
         let params = Params {
             location: "Prague".to_string(),
             time_zone: TimeZone::System,
@@ -493,7 +494,7 @@ mod tests {
     #[test]
     fn bmm101_location_uses_full_non_wrapping_row() {
         let size = WidgetSize::from_dimensions(480, 320);
-        init_icon_registrar(|_, _| SvgId::from_wire(1));
+        init_test_registrars();
         let metrics = LargeMetrics::for_size(size);
         let params = Params {
             location: "Prague".to_string(),
