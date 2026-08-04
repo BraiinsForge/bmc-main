@@ -63,6 +63,28 @@ const FONT_DECK_BOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsDeckS
 /// Fallback font for glyphs not covered by the Braiins faces (Greek, symbols, etc.).
 const FONT_FALLBACK: &[u8] = include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf");
 
+/// cosmic-text `FontSystem` holding the embedded faces and nothing else.
+///
+/// Paragraphs request "Braiins Sans" or "Braiins Deck Sans" by family name (see
+/// [`super::text::build_attrs`]), so cosmic-text always prefers them; Noto Sans
+/// covers only the glyphs the Braiins faces don't (Greek, Cyrillic, …).
+///
+/// Deliberately not `FontSystem::new()`, which scans the host's installed fonts:
+/// shaping would then vary with whatever the machine happens to have, and the
+/// Nix build sandbox has nothing at all — cosmic-text panics there with "no
+/// default font found". Tests shape through this for the same reason.
+pub(crate) fn build_font_system() -> cosmic_text::FontSystem {
+    let mut db = fontdb::Database::new();
+    db.load_font_data(FONT_REGULAR.to_vec());
+    db.load_font_data(FONT_SEMIBOLD.to_vec());
+    db.load_font_data(FONT_BOLD.to_vec());
+    db.load_font_data(FONT_DECK_REGULAR.to_vec());
+    db.load_font_data(FONT_DECK_SEMIBOLD.to_vec());
+    db.load_font_data(FONT_DECK_BOLD.to_vec());
+    db.load_font_data(FONT_FALLBACK.to_vec());
+    cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db)
+}
+
 /// Offscreen textures for `drop_shadow`, kept alive across frames
 /// so the two textures aren't reallocated every frame;
 /// resized only on a size change.
@@ -316,20 +338,7 @@ impl FemtoVgRenderer {
         };
         let font_fallback = canvas.add_font_mem(FONT_FALLBACK)?;
 
-        // Build cosmic-text FontSystem with all embedded fonts.
-        // Paragraphs request "Braiins Sans" or "Braiins Deck Sans" by family
-        // name (see text.rs build_attrs), so cosmic-text always prefers them.
-        // Noto Sans is only used as fallback for glyphs the Braiins faces
-        // don't cover (Greek, Cyrillic, etc.).
-        let mut db = fontdb::Database::new();
-        db.load_font_data(FONT_REGULAR.to_vec());
-        db.load_font_data(FONT_SEMIBOLD.to_vec());
-        db.load_font_data(FONT_BOLD.to_vec());
-        db.load_font_data(FONT_DECK_REGULAR.to_vec());
-        db.load_font_data(FONT_DECK_SEMIBOLD.to_vec());
-        db.load_font_data(FONT_DECK_BOLD.to_vec());
-        db.load_font_data(FONT_FALLBACK.to_vec());
-        let font_system = cosmic_text::FontSystem::new_with_locale_and_db("en-US".into(), db);
+        let font_system = build_font_system();
 
         let mut icon_registry = SvgRegistry::new();
         icon_registry.register_builtins();
