@@ -21,7 +21,7 @@
 
 use std::{
     net::SocketAddr,
-    path::PathBuf,
+    path::{Component, PathBuf},
     sync::Arc,
     time::{Instant, UNIX_EPOCH},
 };
@@ -107,11 +107,11 @@ impl<T: BmcManager> HttpServer<T> {
         let assets_storage = Storage::new(self.config.www_assets_path.clone());
 
         let var_router = Router::new()
-            .route("/var/{*file_path}", get(Self::file_handler))
+            .route("/var/{*file_path}", get(Storage::file_handler))
             .with_state(var_storage);
 
         let assets_router = Router::new()
-            .route("/assets/{*file_path}", get(Self::file_handler))
+            .route("/assets/{*file_path}", get(Storage::file_handler))
             .with_state(assets_storage);
 
         let index_state = IndexState::new(www_storage, self.manager.clone());
@@ -161,7 +161,7 @@ impl<T: BmcManager> HttpServer<T> {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("icon");
-        let headers = Self::get_file_headers(filename, &file).await;
+        let headers = Storage::get_file_headers(filename, &file).await;
         let body = Body::from_stream(ReaderStream::new(file));
         (headers, body).into_response()
     }
@@ -170,7 +170,7 @@ impl<T: BmcManager> HttpServer<T> {
         State(IndexState { storage, manager }): State<IndexState<T>>,
         Path(file_path): Path<String>,
     ) -> impl IntoResponse {
-        let response = Self::file_handler(State(storage.clone()), Path(file_path))
+        let response = Storage::file_handler(State(storage.clone()), Path(file_path))
             .await
             .into_response();
 
@@ -183,23 +183,8 @@ impl<T: BmcManager> HttpServer<T> {
         }
     }
 
-    async fn file_handler(
-        State(storage): State<Storage>,
-        Path(file_path): Path<String>,
-    ) -> impl IntoResponse {
-        let Ok(file) = storage.get_asset(&file_path).await else {
-            return StatusCode::NOT_FOUND.into_response();
-        };
-
-        let headers = Self::get_file_headers(&file_path, &file).await;
-
-        let stream = ReaderStream::new(file);
-        let body = Body::from_stream(stream);
-        (headers, body).into_response()
-    }
-
     async fn index_handler(State(IndexState { storage, .. }): State<IndexState<T>>) -> Response {
-        let mut resp = Self::file_handler(State(storage), Path(Self::INDEX_PATH.to_owned()))
+        let mut resp = Storage::file_handler(State(storage), Path(Self::INDEX_PATH.to_owned()))
             .await
             .into_response();
 
@@ -227,7 +212,7 @@ impl<T: BmcManager> HttpServer<T> {
                 .into_response();
         }
 
-        Self::file_handler(
+        Storage::file_handler(
             State(storage),
             Path(Self::INITIAL_SETUP_INDEX_FILENAME.to_owned()),
         )
@@ -246,9 +231,115 @@ impl<T: BmcManager> HttpServer<T> {
                 .into_response();
         }
 
-        Self::file_handler(State(storage), Path(Self::INDEX_PATH.to_owned()))
+        Storage::file_handler(State(storage), Path(Self::INDEX_PATH.to_owned()))
             .await
             .into_response()
+    }
+
+    async fn log_request(request: Request, next: Next) -> Response {
+        let method = request.method().to_string();
+        let uri = request.uri().to_string();
+        let version = format!("{:?}", request.version());
+
+        let client_ip = request
+            .extensions()
+            .get::<ConnectInfo<SocketAddr>>()
+            .map(|ConnectInfo(addr)| addr.to_string())
+            .unwrap_or_default();
+
+        let instant = Instant::now();
+        let response = next.run(request).await;
+        let latency = instant.elapsed().as_secs_f64();
+
+        let status_code = response.status().as_u16();
+        let response_size = response
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or(ZERO)
+            .to_owned();
+
+        let formatted_latency = format!("{latency:.6}");
+
+        info!(
+            "{} {} {} {} {} {} - {}",
+            client_ip, method, uri, version, status_code, response_size, formatted_latency,
+        );
+
+        response
+    }
+
+    async fn handle_support_archive(State(manager): State<Arc<T>>) -> impl IntoResponse {
+        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%z").to_string();
+        let filename = format!(
+            "{}_{}{}",
+            SUPPORT_ARCHIVE_FILENAME_PREFIX,
+            timestamp.as_str(),
+            SUPPORT_ARCHIVE_FILENAME_SUFFIX
+        );
+
+        match manager.support_archive(SUPPORT_ARCHIVE_FORMAT).await {
+            Ok(data) => {
+                let content_disposition = format!("attachment; filename=\"{filename}\"");
+                let headers = [
+                    (CONTENT_TYPE, "application/octet-stream"),
+                    (CONTENT_DISPOSITION, content_disposition.as_str()),
+                ];
+                (StatusCode::OK, headers, data).into_response()
+            }
+            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        }
+    }
+}
+
+#[derive(Clone)]
+struct Storage {
+    mount_path: PathBuf,
+}
+
+impl Storage {
+    fn new(mount_path: PathBuf) -> Self {
+        Self { mount_path }
+    }
+
+    fn error_status(error: &std::io::Error) -> StatusCode {
+        if error.kind() == std::io::ErrorKind::InvalidInput {
+            StatusCode::BAD_REQUEST
+        } else {
+            StatusCode::NOT_FOUND
+        }
+    }
+
+    async fn get_asset(&self, file_name: &str) -> std::io::Result<File> {
+        let file_path = std::path::Path::new(file_name);
+        if !file_path
+            .components()
+            .all(|component| matches!(component, Component::Normal(_)))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "asset path must contain only normal components",
+            ));
+        }
+
+        let path = self.mount_path.join(file_path);
+        File::open(path).await
+    }
+
+    async fn file_handler(
+        State(storage): State<Storage>,
+        Path(file_path): Path<String>,
+    ) -> impl IntoResponse {
+        let file = match storage.get_asset(&file_path).await {
+            Ok(file) => file,
+            Err(error) => return Self::error_status(&error).into_response(),
+        };
+
+        let headers = Self::get_file_headers(&file_path, &file).await;
+
+        let stream = ReaderStream::new(file);
+        let body = Body::from_stream(stream);
+        (headers, body).into_response()
     }
 
     async fn get_file_headers(filename: &str, file: &File) -> HeaderMap {
@@ -318,77 +409,6 @@ impl<T: BmcManager> HttpServer<T> {
             )
         })
     }
-
-    async fn log_request(request: Request, next: Next) -> Response {
-        let method = request.method().to_string();
-        let uri = request.uri().to_string();
-        let version = format!("{:?}", request.version());
-
-        let client_ip = request
-            .extensions()
-            .get::<ConnectInfo<SocketAddr>>()
-            .map(|ConnectInfo(addr)| addr.to_string())
-            .unwrap_or_default();
-
-        let instant = Instant::now();
-        let response = next.run(request).await;
-        let latency = instant.elapsed().as_secs_f64();
-
-        let status_code = response.status().as_u16();
-        let response_size = response
-            .headers()
-            .get(CONTENT_LENGTH)
-            .and_then(|v| v.to_str().ok())
-            .unwrap_or(ZERO)
-            .to_owned();
-
-        let formatted_latency = format!("{latency:.6}");
-
-        info!(
-            "{} {} {} {} {} {} - {}",
-            client_ip, method, uri, version, status_code, response_size, formatted_latency,
-        );
-
-        response
-    }
-
-    async fn handle_support_archive(State(manager): State<Arc<T>>) -> impl IntoResponse {
-        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%z").to_string();
-        let filename = format!(
-            "{}_{}{}",
-            SUPPORT_ARCHIVE_FILENAME_PREFIX,
-            timestamp.as_str(),
-            SUPPORT_ARCHIVE_FILENAME_SUFFIX
-        );
-
-        match manager.support_archive(SUPPORT_ARCHIVE_FORMAT).await {
-            Ok(data) => {
-                let content_disposition = format!("attachment; filename=\"{filename}\"");
-                let headers = [
-                    (CONTENT_TYPE, "application/octet-stream"),
-                    (CONTENT_DISPOSITION, content_disposition.as_str()),
-                ];
-                (StatusCode::OK, headers, data).into_response()
-            }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct Storage {
-    mount_path: PathBuf,
-}
-
-impl Storage {
-    fn new(mount_path: PathBuf) -> Self {
-        Self { mount_path }
-    }
-
-    async fn get_asset(&self, file_name: &str) -> std::io::Result<File> {
-        let path = self.mount_path.join(file_name);
-        File::open(path).await
-    }
 }
 
 struct IndexState<T: BmcManager> {
@@ -417,6 +437,62 @@ mod tests {
 
     use super::*;
     use crate::widget::{WidgetInfo, WidgetRegistry};
+    use tower::ServiceExt as _;
+
+    #[tokio::test]
+    async fn file_router_rejects_traversal_as_bad_request() {
+        let temp = tempfile::tempdir().expect("BUG: create temporary directory");
+        let router = Router::new()
+            .route("/{*file_path}", get(Storage::file_handler))
+            .with_state(Storage::new(temp.path().to_path_buf()));
+
+        for uri in [
+            "/../../secret",
+            "/%2e%2e/%2e%2e/secret",
+            "/%2e%2e%2f%2e%2e%2fsecret",
+        ] {
+            let request = Request::get(uri)
+                .body(Body::empty())
+                .expect("BUG: build traversal request");
+            let response = router
+                .clone()
+                .oneshot(request)
+                .await
+                .expect("BUG: router should respond");
+
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "URI: {uri}");
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_rejects_paths_outside_mount() {
+        let temp = tempfile::tempdir().expect("BUG: create temporary directory");
+        let mount = temp.path().join("www");
+        let nested = mount.join("nested");
+        std::fs::create_dir_all(&nested).expect("BUG: create nested asset directory");
+        std::fs::write(nested.join("asset"), "asset").expect("BUG: write nested asset");
+
+        let outside = temp.path().join("secret");
+        std::fs::write(&outside, "secret").expect("BUG: write file outside web root");
+
+        let storage = Storage::new(mount);
+        storage
+            .get_asset("nested/asset")
+            .await
+            .expect("nested asset should open");
+
+        for path in [
+            "../secret".to_owned(),
+            "nested/../../secret".to_owned(),
+            outside.to_string_lossy().into_owned(),
+        ] {
+            let error = storage
+                .get_asset(&path)
+                .await
+                .expect_err("path outside web root must be rejected");
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
 
     fn registry_with_icon(uid: Uuid, icon_path: Option<PathBuf>) -> WidgetRegistry {
         let json = format!(
