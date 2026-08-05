@@ -10,8 +10,8 @@ individual topics.
 ### [Best Practices](best-practices.md)
 
 The conventions and host behaviors every widget should follow: the pure-logic/wasm split, formatting numbers through the
-host so `number_format` applies, layout with flex instead of main-axis alignment, stable typography, explicit handling
-of missing data, and the pre-commit verification checklist. Read this first.
+host so `number_format` applies, CSS-style alignment on both axes, stable typography, explicit handling of missing data,
+and the pre-commit verification checklist. Read this first.
 
 ### [Params](params.md)
 

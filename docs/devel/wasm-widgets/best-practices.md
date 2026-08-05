@@ -37,15 +37,18 @@ Read `system::current()` on the render path. Because values are formatted from r
 shows on the next frame. Export `on_system_update` and call `request_frame()` when a change should appear immediately
 instead of waiting for the next data tick. See [System Settings](system-settings.md).
 
-## Lay out with flex, not main-axis alignment
+## Align both axes CSS-style
 
-The layout engine has cross-axis alignment (`CrossAlign`) but no main-axis justify (there is no `space-between`).
-Achieve those effects with `flex` and `spacer(...)`:
+The layout engine mirrors CSS flexbox on both axes: `cross_align` (`CrossAlign`) across the container, and
+`justify_content` (`Justify::Start`/`Center`/`End`/`SpaceBetween`) along it — e.g.
+`props!(justify_content: Justify::Center)` vertically centers a column's content.
+
+`flex` and `spacer(...)` still compose well where a single stretching cell reads better than container-level
+distribution:
 
 - Right-align a value in a label/value row: give the label `flex: 1.0` and set the value's `align: TextAlign::Right`.
   The label grows and pushes the value to the trailing edge.
-- Fill the viewport vertically (the equivalent of Slint `alignment: space-between`): insert `spacer(1.0)` between rows
-  instead of packing them at the top with a fixed gap.
+- Push one row of many to the bottom: a single `spacer(1.0)` above it, where `SpaceBetween` would spread all rows.
 
 ```rust
 row(props!(cross_align: CrossAlign::Center), [

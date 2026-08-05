@@ -73,8 +73,8 @@ pub use crate::components::notification::{
     measure_notification_banner, render_notification_banner,
 };
 pub use bmc_wasm_protocol::{
-    AutoFit, CrossAlign, FontFamily, FontWeight, PropsData, TextAlign, TextOverflow, TextStyle,
-    VerticalAlign,
+    AutoFit, CrossAlign, FontFamily, FontWeight, Justify, PropsData, TextAlign, TextOverflow,
+    TextStyle, VerticalAlign,
 };
 
 /// A text span with style overrides
@@ -1863,7 +1863,12 @@ pub(crate) fn build_taffy_node(
                 justify_content: if is_center || props.wrap {
                     Some(JustifyContent::Center)
                 } else {
-                    None
+                    match props.justify_content {
+                        Justify::Start => None,
+                        Justify::Center => Some(JustifyContent::Center),
+                        Justify::End => Some(JustifyContent::End),
+                        Justify::SpaceBetween => Some(JustifyContent::SpaceBetween),
+                    }
                 },
                 align_items: match props.cross_align {
                     CrossAlign::Center => Some(AlignItems::Center),

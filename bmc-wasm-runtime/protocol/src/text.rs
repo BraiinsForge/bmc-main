@@ -161,6 +161,24 @@ pub enum CrossAlign {
     End = 3,
 }
 
+/// Main-axis distribution of a container's children — CSS `justify-content`.
+///
+/// - Row: controls horizontal placement of children
+/// - Column: controls vertical placement of children
+#[derive(Clone, Copy, Default, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Justify {
+    /// Children pack to the main-axis start (default; CSS `flex-start`).
+    #[default]
+    Start = 0,
+    /// Children are centered along the main axis.
+    Center = 1,
+    /// Children are packed to the end of the main axis.
+    End = 2,
+    /// First and last children pin to the edges, the rest spread evenly.
+    SpaceBetween = 3,
+}
+
 /// Packed layout flags occupying 4 bytes (offset 36–40) in `PropsData` wire
 /// format. Bit allocation is documented here so future flags add a named
 /// constant + accessor instead of reaching into the bits ad-hoc.
@@ -169,20 +187,24 @@ pub enum CrossAlign {
 /// |-----------|--------------------------------------|
 /// | `0..8`    | `CrossAlign` discriminant            |
 /// | `8`       | `wrap` (bool)                        |
-/// | `9..32`   | reserved — must remain zero          |
+/// | `9..17`   | `Justify` discriminant               |
+/// | `17..32`  | reserved — must remain zero          |
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct LayoutFlags(u32);
 
 impl LayoutFlags {
     const CROSS_ALIGN_MASK: u32 = 0xFF;
     const FLAG_WRAP: u32 = 1 << 8;
+    const JUSTIFY_SHIFT: u32 = 9;
+    const JUSTIFY_MASK: u32 = 0xFF << Self::JUSTIFY_SHIFT;
 
     #[must_use]
-    pub fn new(cross_align: CrossAlign, wrap: bool) -> Self {
+    pub fn new(cross_align: CrossAlign, wrap: bool, justify_content: Justify) -> Self {
         let mut bits = (cross_align as u32) & Self::CROSS_ALIGN_MASK;
         if wrap {
             bits |= Self::FLAG_WRAP;
         }
+        bits |= (justify_content as u32) << Self::JUSTIFY_SHIFT;
         Self(bits)
     }
 
@@ -209,6 +231,16 @@ impl LayoutFlags {
     #[must_use]
     pub fn wrap(self) -> bool {
         self.0 & Self::FLAG_WRAP != 0
+    }
+
+    #[must_use]
+    pub fn justify_content(self) -> Justify {
+        match (self.0 & Self::JUSTIFY_MASK) >> Self::JUSTIFY_SHIFT {
+            1 => Justify::Center,
+            2 => Justify::End,
+            3 => Justify::SpaceBetween,
+            _ => Justify::Start,
+        }
     }
 }
 
@@ -463,6 +495,8 @@ pub struct PropsData {
     pub max_width: f32,
     pub max_height: f32,
     pub cross_align: CrossAlign,
+    /// CSS `justify-content`: main-axis distribution of children.
+    pub justify_content: Justify,
     /// Enable flex wrapping: children wrap to the next line when they exceed
     /// the container's main-axis size. Equivalent to CSS `flex-wrap: wrap`.
     pub wrap: bool,
@@ -502,6 +536,7 @@ impl Default for PropsData {
             max_width: 0.0,
             max_height: 0.0,
             cross_align: CrossAlign::Stretch,
+            justify_content: Justify::Start,
             wrap: false,
             bg_np_id: None,
             bg_np_left: 0,
@@ -547,7 +582,7 @@ impl PropsData {
         wire::write_u32(
             &mut buf,
             &mut p,
-            LayoutFlags::new(self.cross_align, self.wrap).bits(),
+            LayoutFlags::new(self.cross_align, self.wrap, self.justify_content).bits(),
         );
         wire::write_u16(&mut buf, &mut p, self.bg_np_id.map_or(0, BitmapId::to_wire));
         wire::write_u16(&mut buf, &mut p, self.bg_np_left);
@@ -600,6 +635,7 @@ impl PropsData {
             max_width,
             max_height,
             cross_align: layout.cross_align(),
+            justify_content: layout.justify_content(),
             wrap: layout.wrap(),
             bg_np_id,
             bg_np_left,
@@ -662,6 +698,7 @@ mod tests {
             max_width: 7.0,
             max_height: 8.0,
             cross_align: CrossAlign::Center,
+            justify_content: Justify::SpaceBetween,
             wrap: true,
             bg_np_id: BitmapId::from_wire(42),
             bg_np_left: 10,
