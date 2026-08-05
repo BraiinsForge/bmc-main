@@ -104,6 +104,13 @@ Workflow:
    appended to the timeline. A `Capture` event marks where the visual snapshot is taken.
 4. Stop recording. The testbed writes `capture/fixtures/<size>.jsonl.gz` next to the widget.
 
+For a widget with a credential slot, bind an account in the sidebar's Credentials section and pass the real secret via
+`just wasm::record <widget> <size> --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`, kept
+gitignored at the repo root; the path is relative to `bmc-wasm-runtime/`, where `just` module recipes run) — the
+recording session needs one real authenticated egress pass. The fixture stays secret-free by construction: recording
+sees only the placeholder form, and substitution happens at the wire hop. Replay never needs the secret — recorded
+fetches are served by method + URL before substitution would run.
+
 Repeat per declared size. Each size produces an independent fixture file; sizes do not share state.
 
 If the widget makes outbound HTTP/WebSocket calls during the recording, the testbed records the real responses into the

@@ -105,8 +105,8 @@ docs:
 
 # === Recording ===
 
-# Record an interactive session. SIZE = full | small | etc.
-record WIDGET SIZE="full":
+# Record an interactive session. SIZE = full | small | etc.; extra args reach the testbed (e.g. --secrets).
+record WIDGET SIZE="full" *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -118,7 +118,7 @@ record WIDGET SIZE="full":
     cargo build --manifest-path "$root/$name/Cargo.toml" --release --target {{ wasm_target }}
 
     # No --cache-dir: recording stays hermetic so the fixture is reproducible.
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --record={{ SIZE }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --record={{ SIZE }} {{ ARGS }}
 
 # === Visual regression ===
 

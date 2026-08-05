@@ -30,8 +30,10 @@
 //! for a slot whose type it cannot change.
 //!
 //! Only the guest-visible view is editable here.
-//! The host substitutes the secret half at egress,
-//! and no widget can read it, so the testbed never holds one.
+//! The host substitutes the secret half at egress, and no widget can read it.
+//! The testbed holds secrets only when `--secrets` supplies them — recording
+//! a fetch-backed widget needs one real egress pass;
+//!  without the flag every substitution refuses before the wire.
 
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
@@ -54,9 +56,6 @@ const LABEL_COL_WIDTH: f32 = 118.0;
 impl TestbedApp {
     /// Push a new credential view to every tile, cache it,
     /// and record a `CredentialDelivery` when recording is active.
-    ///
-    /// Paired with empty secrets: the testbed holds none,
-    /// and no rendering depends on them.
     pub(super) fn apply_credentials_update(
         &mut self,
         new_credentials: serde_json::Map<String, serde_json::Value>,
@@ -67,10 +66,7 @@ impl TestbedApp {
         let view = bmc_wasm_runtime::parse_credentials_json(&new_credentials);
         for tile in &mut self.tiles {
             if let Some(runtime) = tile.runtime.as_mut() {
-                runtime.deliver_credentials_update(
-                    view.clone(),
-                    bmc_widget_protocol::CredentialSecrets::default(),
-                );
+                runtime.deliver_credentials_update(view.clone(), self.secrets.clone());
             }
         }
         self.credentials = new_credentials;

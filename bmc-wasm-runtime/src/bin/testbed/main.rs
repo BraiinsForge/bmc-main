@@ -429,16 +429,59 @@ struct CliArgs {
     /// the device wires its own, this brings the same to live `wasm::dev`.
     #[arg(long)]
     cache_dir: Option<PathBuf>,
+    /// Credential secrets as JSON (`{"<slot>": {"<field>": "…"}}`), so a bound slot
+    /// can reach its live API — recording a fetch-backed widget needs one real egress pass.
+    /// A slot the widget does not declare is rejected at startup.
+    /// Keep the file gitignored (`secrets.local.json`); substitution happens
+    /// at the wire hop only, so no fixture, log, or diagnostic ever holds a secret.
+    #[arg(long)]
+    secrets: Option<PathBuf>,
 }
 
 /// Per-tag bucket cap for the dev blob cache, matching the device's flash cap.
 const DEV_CACHE_MAX_BYTES: u64 = 16 * 1_024 * 1_024;
+
+/// A deterministic stand-in for the Deck's network info, so widgets that
+/// render bind hints or QR codes show them in the testbed and recordings
+/// stay reproducible. Deliberately fake — there is no web app to reach.
+fn stub_network() -> bmc_wasm_runtime::NetworkInfo {
+    bmc_wasm_runtime::NetworkInfo {
+        ssid: "Braiins-Guest".to_owned(),
+        ip: "192.168.1.42".to_owned(),
+    }
+}
 
 impl CliArgs {
     fn resolved_widget_root(&self) -> Option<PathBuf> {
         self.widget_root
             .clone()
             .or_else(|| find_widget_root(&self.wasm_path))
+    }
+
+    /// The secrets behind `--secrets`, empty without the flag.
+    ///
+    /// Reading and parsing are this side's errors; the map's shape is
+    /// [`bmc_widget_protocol::CredentialSecrets::from_editable`]'s to judge
+    /// against the manifest's slots.
+    fn credential_secrets(
+        &self,
+        declared: &[String],
+    ) -> Result<bmc_widget_protocol::CredentialSecrets> {
+        let Some(path) = &self.secrets else {
+            return Ok(bmc_widget_protocol::CredentialSecrets::default());
+        };
+        // `just` module recipes run from `bmc-wasm-runtime/`, a directory
+        // above where developers keep the file — name the cwd so a wrong
+        // relative path diagnoses itself.
+        let raw = std::fs::read_to_string(path).with_context(|| {
+            let cwd = std::env::current_dir()
+                .map_or_else(|_| "?".to_owned(), |dir| dir.display().to_string());
+            format!("read secrets file {} (cwd {cwd})", path.display())
+        })?;
+        let parsed: serde_json::Map<String, serde_json::Value> = serde_json::from_str(&raw)
+            .with_context(|| format!("parse secrets file {}", path.display()))?;
+        bmc_widget_protocol::CredentialSecrets::from_editable(parsed, declared)
+            .with_context(|| format!("secrets file {}", path.display()))
     }
 
     /// The disk-backed blob cache for `--cache-dir`, creating the directory
@@ -1102,6 +1145,9 @@ pub(crate) struct TestbedApp {
     /// Mutated by the Credentials sidebar section; tile runtimes
     /// are kept in sync via `deliver_credentials_update`.
     pub(crate) credentials: serde_json::Map<String, serde_json::Value>,
+    /// Secrets from `--secrets`, handed to the runtime with each credential
+    /// delivery; empty by default, so fetches refuse before egress.
+    pub(crate) secrets: bmc_widget_protocol::CredentialSecrets,
     gl: Arc<eframe::glow::Context>,
     pub(crate) tiles: Vec<PreviewTile>,
     gpu_pool: Vec<TileGpu>,
@@ -1263,8 +1309,15 @@ impl TestbedApp {
         });
 
         let now = std::time::Instant::now();
+        let declared: Vec<String> = manifest
+            .credentials
+            .keys()
+            .map(|key| key.as_str().to_owned())
+            .collect();
+        let secrets = cli.credential_secrets(&declared)?;
         Ok(Self {
             cli,
+            secrets,
             requested_size,
             // 30 attempts at ~16ms = ~0.5 s of negotiation.
             // More than enough for any compositor to settle,
@@ -1349,6 +1402,11 @@ impl TestbedApp {
         };
         let params = self.params.clone();
         let system = self.system.clone();
+        // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
+        // are re-delivered below — without that, a hot reload drops
+        // a credential-fed widget back to its unbound state.
+        let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
+        let secrets = self.secrets.clone();
         for idx in 0..self.tiles.len() {
             let placed_shape = self.layout.tiles[idx].shape;
             let tile = &mut self.tiles[idx];
@@ -1379,7 +1437,9 @@ impl TestbedApp {
                 chrono::Local::now().fixed_offset(),
                 rt_config,
             ) {
-                Ok(rt) => {
+                Ok(mut rt) => {
+                    rt.set_network_info(stub_network());
+                    rt.deliver_credentials_update(credentials.clone(), secrets.clone());
                     tile.runtime = Some(rt);
                     tile.led_rx = led_rx;
                     tile.led_scene = None;
@@ -1534,18 +1594,18 @@ impl TestbedApp {
             // A runtime only for a supported size: constructing one runs the guest's
             // `init` (and its discovery), so placeholders stay wasm-free.
             let runtime = if viewport_supported(placed, &self.manifest.supported_viewports) {
-                Some(
-                    WasmWidgetRuntime::new(
-                        &wasm_bytes,
-                        w,
-                        h,
-                        geometry.viewport_shape,
-                        geometry.display,
-                        chrono::Local::now().fixed_offset(),
-                        rt_config,
-                    )
-                    .with_context(|| format!("create runtime for {label}"))?,
+                let mut rt = WasmWidgetRuntime::new(
+                    &wasm_bytes,
+                    w,
+                    h,
+                    geometry.viewport_shape,
+                    geometry.display,
+                    chrono::Local::now().fixed_offset(),
+                    rt_config,
                 )
+                .with_context(|| format!("create runtime for {label}"))?;
+                rt.set_network_info(stub_network());
+                Some(rt)
             } else {
                 None
             };

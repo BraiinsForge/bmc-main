@@ -10,6 +10,9 @@ result**
 .claude/*.local.*
 .agents/*.local.*
 
+# Per-user secrets (testbed --secrets)
+secrets.local.json
+
 # Scratch areas
 .ai/scratch/
 .cache/
