@@ -393,9 +393,10 @@ fn is_leftover_tmp_name(name: &str) -> bool {
         .is_some_and(|ext| ext.eq_ignore_ascii_case("tmp"))
 }
 
-/// Remove a leftover temp entry, which may be a directory tree
-/// (`<N>-link.tmp`) or a bare symlink (`.next.tmp`).
-fn remove_leftover_tmp(path: &Path) -> Result<(), std::io::Error> {
+/// Remove a profile entry, which may be a directory tree (`<N>-link`,
+/// `<N>-link.tmp`) or something else — a bare symlink (`.next.tmp`)
+/// or a stray regular file squatting on a generation name.
+fn remove_profile_entry(path: &Path) -> Result<(), std::io::Error> {
     if std::fs::symlink_metadata(path)?.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
@@ -513,12 +514,30 @@ fn generations_to_keep(
 
         for &gen_num in generations {
             let gen_dir = profile_dir.join(crate::profile::generation_link_name(gen_num));
-            let metadata = std::fs::metadata(&gen_dir).map_err(CleanupGenerationsError::Cleanup)?;
-            let mtime = metadata
-                .modified()
-                .map_err(CleanupGenerationsError::Cleanup)?;
-            if mtime > cutoff {
-                keep.insert(gen_num);
+            match std::fs::metadata(&gen_dir).and_then(|meta| meta.modified()) {
+                Ok(mtime) => {
+                    if mtime > cutoff {
+                        keep.insert(gen_num);
+                    }
+                }
+                // Failing to date one entry must not fail the whole sweep,
+                // and a generation is always a directory. Only an entry
+                // proven not to be one — a stray dangling link squatting on
+                // a generation name — forfeits its age protection here;
+                // anything undatable for any other reason keeps it.
+                Err(e) => {
+                    let stray =
+                        std::fs::symlink_metadata(&gen_dir).is_ok_and(|meta| !meta.is_dir());
+                    if !stray {
+                        keep.insert(gen_num);
+                    }
+                    warn!(
+                        generation = gen_num,
+                        path = %gen_dir.display(),
+                        stray,
+                        "cannot read generation mtime: {e}"
+                    );
+                }
             }
         }
     }
@@ -607,7 +626,7 @@ pub fn cleanup_generations(
         let gen_name = crate::profile::generation_link_name(gen_num);
         let gen_dir = profile_dir.join(&gen_name);
         info!(generation = gen_num, path = %gen_dir.display(), "removing old generation");
-        match std::fs::remove_dir_all(&gen_dir) {
+        match remove_profile_entry(&gen_dir) {
             Ok(()) => removed += 1,
             Err(e) => {
                 warn!(
@@ -631,7 +650,7 @@ pub fn cleanup_generations(
         attempted += 1;
         let path = profile_dir.join(name);
         info!(path = %path.display(), "removing leftover temp entry");
-        match remove_leftover_tmp(&path) {
+        match remove_profile_entry(&path) {
             Ok(()) => removed += 1,
             Err(e) => {
                 warn!(path = %path.display(), "failed to remove leftover temp entry: {e}");
@@ -970,18 +989,24 @@ mod tests {
     }
 
     #[test]
-    fn cleanup_aborts_when_keep_days_stat_fails() {
+    fn cleanup_prunes_around_an_undatable_generation() {
         let tmp = tempfile::tempdir().expect("BUG: temp dir");
         let profile_dir = tmp.path().join("bmc");
         std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
 
-        for n in 1..=2 {
+        for n in [1, 2, 5] {
             create_generation(&profile_dir, n);
         }
-        set_current(&profile_dir, 2);
-        // A dangling generation symlink: the keep_days pass stats every listed
-        // generation, and stat on this entry fails with NotFound. That error
-        // must propagate rather than being silently swallowed.
+        set_current(&profile_dir, 5);
+        let old = SystemTime::now() - std::time::Duration::from_secs(60 * 24 * 60 * 60);
+        let times = std::fs::FileTimes::new().set_modified(old);
+        let gen1 = std::fs::File::open(profile_dir.join("1-link")).expect("BUG: open gen 1");
+        gen1.set_times(times).expect("BUG: set mtime");
+
+        // A dangling generation symlink is listed like any other generation,
+        // so the keep_days pass has to survive one it cannot date.
+        // Were it to abort, every scheduled cleanup would fail
+        // for as long as the stray entry sat there.
         std::os::unix::fs::symlink("missing", profile_dir.join("4-link"))
             .expect("BUG: symlink dangling gen");
 
@@ -991,11 +1016,22 @@ mod tests {
             protected_generations: vec![],
             ..GcConfig::default()
         };
-        let err = cleanup_generations(&profile_dir, &gc_config, &[])
-            .expect_err("BUG: a stat failure in the keep_days pass must abort GC");
+        let removed = cleanup_generations(&profile_dir, &gc_config, &[])
+            .expect("BUG: an undatable generation must not abort cleanup");
+
+        assert_eq!(removed, 2, "the aged generation and the stray entry go");
         assert!(
-            matches!(err, CleanupGenerationsError::Cleanup(_)),
-            "got {err:?}"
+            !generation_exists(&profile_dir, 1),
+            "gen 1 is older than keep_days and not otherwise protected -> removed"
+        );
+        assert!(
+            generation_exists(&profile_dir, 2),
+            "gen 2 is within keep_days -> kept by age-based retention"
+        );
+        assert!(generation_exists(&profile_dir, 5), "current gen is kept");
+        assert!(
+            std::fs::symlink_metadata(profile_dir.join("4-link")).is_err(),
+            "the undatable stray earns no age protection, so it is swept"
         );
     }
 
@@ -1635,14 +1671,45 @@ mod tests {
         assert_eq!(store.collect_calls(), 1);
     }
 
-    /// A generation whose removal fails: `remove_dir_all` on a regular file
-    /// errors while the entry still parses as a generation.
+    /// A generation whose removal fails: a read-only subdirectory forbids
+    /// unlinking the file inside it. `TempDir` cleanup ignores the leftovers.
     fn create_unremovable_generation(profile_dir: &Path, number: usize) {
-        std::fs::write(
-            profile_dir.join(format!("{number}-link")),
-            b"not a directory",
-        )
-        .expect("BUG: write bogus generation");
+        use std::os::unix::fs::PermissionsExt as _;
+        create_generation(profile_dir, number);
+        let poison = profile_dir.join(format!("{number}-link")).join("poison");
+        std::fs::create_dir(&poison).expect("BUG: create poison dir");
+        std::fs::write(poison.join("file"), b"x").expect("BUG: write poison file");
+        std::fs::set_permissions(&poison, std::fs::Permissions::from_mode(0o555))
+            .expect("BUG: chmod poison");
+    }
+
+    #[tokio::test]
+    async fn cleanup_removes_generation_entries_that_are_not_directories() {
+        let tmp = tempfile::tempdir().expect("BUG: temp dir");
+        let profile_dir = tmp.path().join("profile");
+        std::fs::create_dir(&profile_dir).expect("BUG: create profile");
+        std::fs::write(profile_dir.join("1-link"), b"not a directory")
+            .expect("BUG: write bogus generation");
+        std::os::unix::fs::symlink("nowhere", profile_dir.join("2-link"))
+            .expect("BUG: symlink bogus generation");
+        create_generation(&profile_dir, 3);
+        set_current(&profile_dir, 3);
+        let store = RecordingStore::default();
+
+        let outcome =
+            collect_profile_garbage(&store, &profile_dir, &keep_one(), periodic_request(), None)
+                .await
+                .expect("BUG: a stray entry on a generation name must not fail cleanup");
+
+        assert_eq!(outcome, ProfileGcOutcome::Collected);
+        assert!(
+            !profile_dir.join("1-link").exists(),
+            "a regular file is unlinked"
+        );
+        assert!(
+            profile_dir.join("2-link").symlink_metadata().is_err(),
+            "a dangling symlink is unlinked, not followed"
+        );
     }
 
     #[tokio::test]
@@ -1974,12 +2041,10 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: temp dir");
         let profile_dir = tmp.path().join("profile");
         std::fs::create_dir(&profile_dir).expect("BUG: create profile");
-        // `1-link` is a regular file, so `remove_dir_all` fails on it while
-        // the other removable entry succeeds. A real failure, not a hand-built
-        // error: this is what catches a `removed` counter that stops
-        // incrementing.
-        std::fs::write(profile_dir.join("1-link"), b"not a directory")
-            .expect("BUG: write bogus generation");
+        // Generation 1's removal fails while the other removable entry
+        // succeeds. A real failure, not a hand-built error: this is what
+        // catches a `removed` counter that stops incrementing.
+        create_unremovable_generation(&profile_dir, 1);
         for number in 2..=4 {
             create_generation(&profile_dir, number);
         }
