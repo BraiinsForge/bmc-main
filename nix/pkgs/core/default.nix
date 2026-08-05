@@ -57,6 +57,14 @@ let
         ${firmware-init-services}/bin/firmware-init-services
     ${testBusybox}/bin/touch $out
   '';
+  bmcCompositorServiceTest = armv7Pkgs.runCommand "bmc-compositor-service-test" { } ''
+    PATH=${testBusybox}/bin \
+      ${testBusybox}/bin/ash \
+        ${./tests/bmc-compositor-service.sh} \
+        ${bmc-compositor.service} \
+        ${testBusybox}/bin/busybox
+    ${testBusybox}/bin/touch $out
+  '';
 
   bmcNix = profile.buildCrate crates.bmc-nix { };
   selectBmcNixBin = bmc.lib.selectBmcNixBin { pkgs = armv7Pkgs; inherit bmcNix; };
@@ -96,12 +104,24 @@ let
     command = "${bmc-openwrt}/bin/bmc-openwrt";
     args = [ "--log-to-file" ];
     env = {
+      MESA_SHADER_CACHE_MAX_SIZE = "16M";
+      XDG_CACHE_HOME = "/mnt/data/bmc/cache";
       XDG_RUNTIME_DIR = "/tmp/runtime";
       # The package upgrade path spawns nix-store; procd services don't get
       # the login-shell PATH from files/profile, so mirror it here.
       PATH = "/usr/sbin:/usr/bin:/sbin:/bin:/run/current-profile/bin:/nix/var/nix/profiles/per-user/root/profile/bin";
     };
-    preStart = "mkdir -p /tmp/runtime";
+    preStart = ''
+      mkdir -p /tmp/runtime
+      rm -rf /.cache/mesa_shader_cache \
+        || logger -t bmc-compositor "failed to remove legacy Mesa shader cache"
+      if mkdir -p /mnt/data/bmc/cache; then
+        chmod 0700 /mnt/data/bmc/cache \
+          || logger -t bmc-compositor "failed to secure persistent cache directory"
+      else
+        logger -t bmc-compositor "failed to create persistent cache directory"
+      fi
+    '';
   };
 
   # Firmware-bridging activation step.
@@ -260,6 +280,7 @@ let
     passthru = (old.passthru or { }) // {
       tests.activation = nixConfActivationTest;
       tests.activator = nixActivatorTest;
+      tests.compositor-service = bmcCompositorServiceTest;
       tests.firmware-init-services = firmwareInitServicesTest;
     };
   });
