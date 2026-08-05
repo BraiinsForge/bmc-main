@@ -43,6 +43,7 @@ use crate::pacing::UpgradePacing;
 use crate::scenario::{self, PackageUpgradeAction, PackagesScenario, RunScenario};
 
 const DOWNLOAD_TOTAL_BYTES: u64 = 4_000_000;
+const UNPACKED_TOTAL_BYTES: u64 = 12_000_000;
 
 /// One hardcoded preview-image set the mock serves for every installable
 /// widget. Widget manifests carry no preview art, and previews do not yet
@@ -191,6 +192,10 @@ fn static_preview(estimate: EstimateMode) -> PackagesPreview {
             EstimateMode::Estimate => Some(DOWNLOAD_TOTAL_BYTES),
             EstimateMode::Skip => None,
         },
+        unpacked_size_bytes: match estimate {
+            EstimateMode::Estimate => Some(UNPACKED_TOTAL_BYTES),
+            EstimateMode::Skip => None,
+        },
         bmc_version: Some("26.07".to_owned()),
         bmc_changelog: Some(
             "- improve upgrade progress reporting\n- fix alarm scheduling around DST".to_owned(),
@@ -268,6 +273,10 @@ impl PackageBackend for MockPackageBackend {
         Ok(PackageGcOutcome::Collected)
     }
 
+    fn store_free_bytes(&self) -> std::io::Result<u64> {
+        Ok(u64::MAX)
+    }
+
     async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
         let scenario = scenario::read(&self.scenario_path);
         if scenario.packages == PackagesScenario::FetchFailed {
@@ -319,6 +328,10 @@ impl PackageBackend for MockPackageBackend {
                             changes,
                             download_size_bytes: match estimate {
                                 EstimateMode::Estimate => Some(DOWNLOAD_TOTAL_BYTES),
+                                EstimateMode::Skip => None,
+                            },
+                            unpacked_size_bytes: match estimate {
+                                EstimateMode::Estimate => Some(UNPACKED_TOTAL_BYTES),
                                 EstimateMode::Skip => None,
                             },
                             bmc_version: None,

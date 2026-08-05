@@ -428,6 +428,32 @@ pub struct RealizeEstimate {
     pub unpacked_bytes: u64,
 }
 
+/// Free bytes available to unprivileged users on the filesystem holding
+/// `path`, via `statvfs(2)`.
+pub fn statvfs_free_bytes(path: &Path) -> std::io::Result<u64> {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let c_path = std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|_| {
+        std::io::Error::new(std::io::ErrorKind::InvalidInput, "path contains a NUL byte")
+    })?;
+
+    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c_path.as_ptr(), &raw mut stat) } != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+
+    // Widen to u64 before multiplication to prevent overflow on 32-bit ARM
+    // where c_ulong is u32. On x86_64 these are already u64.
+    #[cfg_attr(
+        target_pointer_width = "64",
+        expect(
+            clippy::useless_conversion,
+            reason = "needed on 32-bit ARM where c_ulong is u32"
+        )
+    )]
+    Ok(u64::from(stat.f_frsize) * u64::from(stat.f_bavail))
+}
+
 /// Estimate what realising the store paths of `packages` would download,
 /// via `nix-store --realise --dry-run`. Queries the configured
 /// substituters but fetches nothing.

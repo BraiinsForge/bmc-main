@@ -63,6 +63,7 @@ mod tests {
         PackagesPreview {
             changes: Vec::new(),
             download_size_bytes: None,
+            unpacked_size_bytes: None,
             bmc_version: None,
             bmc_changelog: None,
         }

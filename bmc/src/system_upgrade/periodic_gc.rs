@@ -411,6 +411,10 @@ mod tests {
             unreachable!("BUG: the collection job never applies an upgrade")
         }
 
+        fn store_free_bytes(&self) -> std::io::Result<u64> {
+            Ok(u64::MAX)
+        }
+
         async fn list_installable_widgets(
             &self,
         ) -> Result<

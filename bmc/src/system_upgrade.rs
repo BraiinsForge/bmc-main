@@ -31,8 +31,7 @@ use bmc_upgrade::arbitration::arbitrate;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
 use bmc_upgrade::firmware::{FirmwareDownloadError, FirmwareIndex, UpgradeDetail};
 use bmc_upgrade::packages::{
-    EstimateMode, PackageBackend, PackageGcError, PackageGcOutcome, PackageGcRequest, PackageProbe,
-    PackageProbeError,
+    EstimateMode, PackageBackend, PackageGcRequest, PackageProbe, PackageProbeError,
 };
 pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
@@ -121,6 +120,7 @@ pub(crate) enum AvailableSystemUpgrade {
         merged: bmc_nix::types::MergedIndex,
         install: Vec<String>,
         download_size_bytes: Option<u64>,
+        unpacked_size_bytes: Option<u64>,
     },
 }
 
@@ -146,6 +146,7 @@ fn select_offer(
         merged,
         install: install.to_vec(),
         download_size_bytes: preview.download_size_bytes,
+        unpacked_size_bytes: preview.unpacked_size_bytes,
     })
 }
 
@@ -385,45 +386,63 @@ async fn claim_upgrade(
     Ok((gate, upgrade))
 }
 
+/// Free space the preflight requires beyond the dry-run estimate: the
+/// estimate is parsed from nix's one-decimal summary, so its rounding error
+/// alone is proportional to the printed magnitude, and the store also grows
+/// bookkeeping (database, temp files) the estimate does not count.
+fn required_with_headroom(unpacked_bytes: u64) -> u64 {
+    #[expect(clippy::integer_division, reason = "a byte of headroom is immaterial")]
+    unpacked_bytes.saturating_add(unpacked_bytes / 10)
+}
+
 async fn automatic_gc_preflight(
     gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: &Arc<dyn PackageBackend>,
+    unpacked_size_bytes: Option<u64>,
 ) -> Result<tokio::sync::OwnedMutexGuard<()>, UpgradeRunStream> {
     // Unconditional: an upgrade needs the space whether or not a periodic
     // collection ran recently, so the periodic job's schedule and its
-    // configured opt-out play no part here.
+    // configured opt-out play no part here. Best-effort: a failed collection
+    // is not what decides the upgrade — the free-space check below is.
     let request = PackageGcRequest {
         on_busy: bmc_nix::gc::OnBusy::Wait,
         sweep: bmc_nix::gc::Sweep::Always,
     };
-    // Only a completed sweep clears the way. This request cannot produce the
-    // other outcomes — it waits for the lock and sweeps regardless of what
-    // cleanup removed — so treating them as failures reports a broken backend
-    // instead of dispatching on a collection that never happened.
-    let outcome = match package_backend.gc(request).await {
-        Ok(outcome) => outcome,
+    match package_backend.gc(request).await {
+        Ok(outcome) => debug!(
+            ?outcome,
+            "Garbage collection before automatic upgrade finished"
+        ),
         Err(err) => {
-            error!(error = %err, "Garbage collection before automatic upgrade failed");
-            return Err(one_shot(UpgradeRunState::Failed(
-                SystemUpgradeError::PackageGcFailed(err),
-            )));
+            warn!(error = %err, "Garbage collection before automatic upgrade failed; continuing");
+        }
+    }
+
+    // Fail only on a certain "will not fit". Either side missing — the probe
+    // estimate timed out, or free space cannot be measured — leaves nothing
+    // to compare, and the realization itself fails loudly when space runs out.
+    let Some(unpacked_bytes) = unpacked_size_bytes else {
+        return Ok(gate);
+    };
+    let free_bytes = match package_backend.store_free_bytes() {
+        Ok(free_bytes) => free_bytes,
+        Err(err) => {
+            warn!(error = %err, "Cannot measure free store space; continuing");
+            return Ok(gate);
         }
     };
 
-    match outcome {
-        PackageGcOutcome::Collected | PackageGcOutcome::SweptDespiteCleanupFailure => Ok(gate),
-        PackageGcOutcome::NothingToCollect | PackageGcOutcome::Busy => {
-            error!(
-                ?outcome,
-                "Garbage collection before automatic upgrade did not run"
-            );
-            Err(one_shot(UpgradeRunState::Failed(
-                SystemUpgradeError::PackageGcFailed(PackageGcError::Operational(format!(
-                    "BUG: forced collection reported {outcome:?}"
-                ))),
-            )))
-        }
+    let required_bytes = required_with_headroom(unpacked_bytes);
+    if free_bytes < required_bytes {
+        error!(
+            free_bytes,
+            required_bytes, unpacked_bytes, "Not enough store space for the automatic upgrade"
+        );
+        return Err(one_shot(UpgradeRunState::Failed(
+            SystemUpgradeError::NotEnoughSpace,
+        )));
     }
+    Ok(gate)
 }
 
 fn spawn_packages_run(
@@ -658,6 +677,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 merged,
                 install,
                 download_size_bytes,
+                ..
             } => spawn_packages_run(
                 gate,
                 Arc::clone(&self.package_backend),
@@ -677,10 +697,20 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Ok(claimed) => claimed,
                 Err(stream) => return stream,
             };
-        let gate = match automatic_gc_preflight(gate, &self.package_backend).await {
-            Ok(gate) => gate,
-            Err(stream) => return stream,
+        // A firmware image downloads to tmpfs, not the store, so only the
+        // packages branch has an estimate to check the store against.
+        let unpacked_size_bytes = match &upgrade {
+            AvailableSystemUpgrade::Firmware { .. } => None,
+            AvailableSystemUpgrade::Packages {
+                unpacked_size_bytes,
+                ..
+            } => *unpacked_size_bytes,
         };
+        let gate =
+            match automatic_gc_preflight(gate, &self.package_backend, unpacked_size_bytes).await {
+                Ok(gate) => gate,
+                Err(stream) => return stream,
+            };
         self.dispatch_claimed_upgrade(gate, upgrade)
     }
 
@@ -1045,8 +1075,6 @@ pub(crate) enum SystemUpgradeError {
     UpgradeExpired,
     #[error("Package upgrade failed: {0}")]
     PackageUpgradeFailed(String),
-    #[error("Package garbage collection failed: {0}")]
-    PackageGcFailed(PackageGcError),
     #[error("Failed to record the pending widget install: {0}")]
     PendingInstallWriteFailed(String),
     #[error("Cannot check for upgrade: {0}.")]
@@ -1069,9 +1097,6 @@ impl From<FirmwareUpgradeError> for SystemUpgradeError {
 
 impl SystemUpgradeError {
     fn is_retriable(&self) -> bool {
-        if let Self::PackageGcFailed(err) = self {
-            return err.is_retriable();
-        }
         if let Self::PackageCheckFailed(err) = self {
             return err.is_transient();
         }
@@ -1093,6 +1118,7 @@ impl SystemUpgradeError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome};
     use futures::StreamExt;
 
     fn test_upgrade_detail() -> UpgradeDetail {
@@ -1237,6 +1263,7 @@ mod tests {
         PackagesPreview {
             changes: Vec::new(),
             download_size_bytes: Some(42),
+            unpacked_size_bytes: Some(84),
             bmc_version: None,
             bmc_changelog: None,
         }
@@ -1326,6 +1353,10 @@ mod tests {
         > {
             Ok(Vec::new())
         }
+
+        fn store_free_bytes(&self) -> std::io::Result<u64> {
+            Ok(u64::MAX)
+        }
     }
 
     #[derive(Debug)]
@@ -1358,6 +1389,10 @@ mod tests {
         > {
             Ok(Vec::new())
         }
+
+        fn store_free_bytes(&self) -> std::io::Result<u64> {
+            Ok(u64::MAX)
+        }
     }
 
     #[derive(Debug, Default)]
@@ -1387,16 +1422,26 @@ mod tests {
             std::sync::Mutex<std::collections::VecDeque<Result<PackageGcOutcome, PackageGcError>>>,
         requests: std::sync::Mutex<Vec<PackageGcRequest>>,
         events: std::sync::Mutex<Vec<BackendEvent>>,
+        /// `None` fails `store_free_bytes`, simulating an unmeasurable filesystem.
+        free_bytes: Option<u64>,
     }
 
     impl RecordingGcBackend {
         fn new(
             results: impl IntoIterator<Item = Result<PackageGcOutcome, PackageGcError>>,
         ) -> Self {
+            Self::with_free_bytes(results, Some(u64::MAX))
+        }
+
+        fn with_free_bytes(
+            results: impl IntoIterator<Item = Result<PackageGcOutcome, PackageGcError>>,
+            free_bytes: Option<u64>,
+        ) -> Self {
             Self {
                 gc_results: std::sync::Mutex::new(results.into_iter().collect()),
                 requests: std::sync::Mutex::new(Vec::new()),
                 events: std::sync::Mutex::new(Vec::new()),
+                free_bytes,
             }
         }
     }
@@ -1447,6 +1492,11 @@ mod tests {
         > {
             Ok(Vec::new())
         }
+
+        fn store_free_bytes(&self) -> std::io::Result<u64> {
+            self.free_bytes
+                .ok_or_else(|| std::io::Error::other("scripted statvfs failure"))
+        }
     }
 
     #[tokio::test]
@@ -1457,7 +1507,7 @@ mod tests {
             .expect("BUG: fresh gate is lockable");
         let backend = Arc::new(RecordingGcBackend::new([]));
         let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
-        let Ok(gate) = automatic_gc_preflight(gate, &backend_dyn).await else {
+        let Ok(gate) = automatic_gc_preflight(gate, &backend_dyn, Some(1_000)).await else {
             panic!("BUG: successful forced GC must preserve the gate");
         };
 
@@ -1481,7 +1531,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn automatic_gc_failure_prevents_dispatch_and_releases_gate() {
+    async fn automatic_gc_failure_still_dispatches_when_space_suffices() {
         let run_gate = Arc::new(Mutex::new(()));
         let gate = Arc::clone(&run_gate)
             .try_lock_owned()
@@ -1491,18 +1541,33 @@ mod tests {
         ))]));
         let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
 
-        let Err(mut run) = automatic_gc_preflight(gate, &backend_dyn).await else {
-            panic!("BUG: a forced GC failure must stop dispatch");
+        assert!(
+            automatic_gc_preflight(gate, &backend_dyn, Some(1_000))
+                .await
+                .is_ok(),
+            "the free-space check decides the upgrade, not the collection result"
+        );
+    }
+
+    #[tokio::test]
+    async fn insufficient_space_fails_the_upgrade_and_releases_the_gate() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::with_free_bytes([], Some(1_000)));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
+        let Err(mut run) = automatic_gc_preflight(gate, &backend_dyn, Some(10_000)).await else {
+            panic!("BUG: an estimate exceeding free space must stop dispatch");
         };
         assert!(matches!(
             run.next().await,
-            Some(UpgradeRunState::Failed(
-                SystemUpgradeError::PackageGcFailed(PackageGcError::Operational(_))
-            ))
+            Some(UpgradeRunState::Failed(SystemUpgradeError::NotEnoughSpace))
         ));
         assert!(
             run_gate.try_lock().is_ok(),
-            "GC failure must release the run gate"
+            "a failed space check must release the run gate"
         );
         assert!(
             backend
@@ -1515,34 +1580,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn automatic_upgrade_does_not_dispatch_when_gc_reports_it_did_not_run() {
+    async fn space_check_requires_headroom_beyond_the_estimate() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let backend = Arc::new(RecordingGcBackend::with_free_bytes([], Some(1_000_000)));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        assert!(
+            automatic_gc_preflight(gate, &backend_dyn, Some(950_000))
+                .await
+                .is_err(),
+            "an estimate that fits only without headroom must fail"
+        );
+
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: the failed check released the gate");
+        assert!(
+            automatic_gc_preflight(gate, &backend_dyn, Some(900_000))
+                .await
+                .is_ok(),
+            "an estimate that fits with headroom must pass"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_estimate_skips_the_space_check() {
         let run_gate = Arc::new(Mutex::new(()));
         let gate = Arc::clone(&run_gate)
             .try_lock_owned()
             .expect("BUG: fresh gate is lockable");
-        let backend = Arc::new(RecordingGcBackend::new([Ok(PackageGcOutcome::Busy)]));
+        let backend = Arc::new(RecordingGcBackend::with_free_bytes([], Some(0)));
         let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
 
-        let Err(mut run) = automatic_gc_preflight(gate, &backend_dyn).await else {
-            panic!("BUG: an upgrade must never dispatch on a collection that did not happen");
-        };
-        assert!(matches!(
-            run.next().await,
-            Some(UpgradeRunState::Failed(
-                SystemUpgradeError::PackageGcFailed(PackageGcError::Operational(_))
-            ))
-        ));
         assert!(
-            run_gate.try_lock().is_ok(),
-            "a collection that did not run must release the run gate"
+            automatic_gc_preflight(gate, &backend_dyn, None)
+                .await
+                .is_ok(),
+            "no estimate leaves nothing to compare; the realization fails loudly instead"
         );
+    }
+
+    #[tokio::test]
+    async fn unmeasurable_free_space_does_not_block_the_upgrade() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::with_free_bytes([], None));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
         assert!(
-            backend
-                .events
-                .lock()
-                .expect("BUG: recording backend events mutex poisoned")
-                .iter()
-                .all(|event| *event != BackendEvent::Apply)
+            automatic_gc_preflight(gate, &backend_dyn, Some(10_000))
+                .await
+                .is_ok(),
+            "a statvfs failure is not a certain \"will not fit\""
         );
     }
 
@@ -1771,18 +1865,6 @@ mod tests {
         assert!(!SystemUpgradeError::UpgradeFailed.is_retriable());
         // A rejected image is permanent: retrying the same one is futile.
         assert!(!SystemUpgradeError::InvalidImage.is_retriable());
-        assert!(
-            SystemUpgradeError::PackageGcFailed(PackageGcError::ConfigRead(
-                "temporary read failure".to_owned()
-            ))
-            .is_retriable()
-        );
-        assert!(
-            !SystemUpgradeError::PackageGcFailed(PackageGcError::ConfigParse(
-                "invalid JSON".to_owned()
-            ))
-            .is_retriable()
-        );
     }
 
     #[test]

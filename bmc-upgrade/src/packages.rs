@@ -59,6 +59,8 @@ pub struct SystemPackageChange {
 pub struct PackagesPreview {
     pub changes: Vec<SystemPackageChange>,
     pub download_size_bytes: Option<u64>,
+    /// Unpacked (NAR) size the realization would add to the store.
+    pub unpacked_size_bytes: Option<u64>,
     pub bmc_version: Option<String>,
     pub bmc_changelog: Option<String>,
 }
@@ -247,11 +249,6 @@ pub enum PackageGcError {
 }
 
 impl PackageGcError {
-    #[must_use]
-    pub fn is_retriable(&self) -> bool {
-        !matches!(self, Self::ConfigParse(_))
-    }
-
     /// Entries removed that no completed sweep accounted for.
     #[must_use]
     pub fn unswept_removals(&self) -> usize {
@@ -275,6 +272,8 @@ pub trait PackageBackend: Send + Sync + std::fmt::Debug + 'static {
         progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
     ) -> Result<(), ApplyError>;
     async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError>;
+    /// Free bytes on the filesystem holding the package store.
+    fn store_free_bytes(&self) -> std::io::Result<u64>;
 }
 
 /// The nix-backed [`PackageBackend`]: fetches package indexes over HTTP,
@@ -467,7 +466,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
             return PackageProbe::UpToDate;
         }
 
-        let download_size_bytes = match estimate {
+        let realize_estimate = match estimate {
             EstimateMode::Estimate => {
                 // The timeout drops the estimate future, which kills the
                 // spawned `nix-store`: the command runner sets
@@ -478,7 +477,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
                 )
                 .await
                 {
-                    Ok(Ok(realize_estimate)) => Some(realize_estimate.download_bytes),
+                    Ok(Ok(realize_estimate)) => Some(realize_estimate),
                     Ok(Err(err)) => {
                         if let Some(paths) = unrealizable_estimate(&err) {
                             warn!(%paths, "Package upgrade requires unsubstitutable store paths");
@@ -499,7 +498,7 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
             EstimateMode::Skip => None,
         };
 
-        PackageProbe::Available(merged, build_packages_preview(&plan, download_size_bytes))
+        PackageProbe::Available(merged, build_packages_preview(&plan, realize_estimate))
     }
 
     async fn apply(
@@ -537,6 +536,11 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         let (merged, base) = self.fetch_index_and_manifest().await?;
         let installed = base.packages.keys().cloned().collect();
         Ok(installable_widgets_from(&merged, &installed))
+    }
+
+    fn store_free_bytes(&self) -> std::io::Result<u64> {
+        // The profile directory lives on the same filesystem as the store.
+        bmc_nix::store::statvfs_free_bytes(&self.config.profile_dir)
     }
 }
 
@@ -658,7 +662,7 @@ pub fn resolve_installs(
 #[must_use]
 pub fn build_packages_preview(
     plan: &bmc_nix::types::UpgradePlan,
-    download_size_bytes: Option<u64>,
+    realize_estimate: Option<bmc_nix::store::RealizeEstimate>,
 ) -> PackagesPreview {
     let resolved_by_name: HashMap<&str, &bmc_nix::types::ResolvedPackage> = plan
         .packages
@@ -727,7 +731,8 @@ pub fn build_packages_preview(
 
     PackagesPreview {
         changes,
-        download_size_bytes,
+        download_size_bytes: realize_estimate.map(|estimate| estimate.download_bytes),
+        unpacked_size_bytes: realize_estimate.map(|estimate| estimate.unpacked_bytes),
         bmc_version,
         bmc_changelog,
     }
@@ -967,7 +972,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gc_classifies_config_read_failure_as_retriable() {
+    async fn gc_reports_a_config_read_failure() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let servers = dir.path().join("servers.json");
         std::fs::create_dir(dir.path().join("gc.json")).expect("BUG: create config directory");
@@ -980,12 +985,11 @@ mod tests {
             .expect_err("a directory passed as config must fail to read");
 
         assert!(matches!(err, PackageGcError::ConfigRead(_)));
-        assert!(err.is_retriable());
         assert_eq!(collect_calls.load(Ordering::SeqCst), 0);
     }
 
     #[tokio::test]
-    async fn gc_classifies_config_parse_failure_as_non_retriable() {
+    async fn gc_reports_a_config_parse_failure() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let servers = dir.path().join("servers.json");
         std::fs::write(dir.path().join("gc.json"), "{").expect("BUG: write malformed config");
@@ -998,7 +1002,6 @@ mod tests {
             .expect_err("malformed gc config must fail to parse");
 
         assert!(matches!(err, PackageGcError::ConfigParse(_)));
-        assert!(!err.is_retriable());
         assert_eq!(collect_calls.load(Ordering::SeqCst), 0);
     }
 
@@ -1023,7 +1026,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gc_classifies_store_failure_as_retriable_operational_error() {
+    async fn gc_reports_a_store_failure_as_operational() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let servers = dir.path().join("servers.json");
         let (store, collect_calls) = GcStore::failing();
@@ -1035,7 +1038,6 @@ mod tests {
             .expect_err("store collection failure must be reported");
 
         assert!(matches!(err, PackageGcError::Operational(_)));
-        assert!(err.is_retriable());
         assert_eq!(err.unswept_removals(), 0);
         assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
     }
@@ -1059,7 +1061,6 @@ mod tests {
             err,
             PackageGcError::UnsweptRemovals { removed: 1, .. }
         ));
-        assert!(err.is_retriable());
         assert_eq!(err.unswept_removals(), 1);
         assert_eq!(collect_calls.load(Ordering::SeqCst), 1);
     }

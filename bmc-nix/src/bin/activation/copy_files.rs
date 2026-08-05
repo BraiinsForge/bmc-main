@@ -60,7 +60,7 @@ fn main() -> anyhow::Result<()> {
     }
     debug!(path = %copy_dir.display(), "copy dir found");
 
-    let free_bytes = statvfs_free_bytes(Path::new("/"))?;
+    let free_bytes = bmc_nix::store::statvfs_free_bytes(Path::new("/"))?;
     apply(
         &copy_dir,
         old_gen_path.as_deref().map(|p| p.join(COPY_DIR)).as_deref(),
@@ -186,36 +186,6 @@ fn check_space(entries: &[FileEntry], target_root: &Path, free_bytes: u64) -> an
     );
 
     Ok(())
-}
-
-fn statvfs_free_bytes(path: &Path) -> anyhow::Result<u64> {
-    use std::ffi::CString;
-
-    let c_path = CString::new(
-        path.to_str()
-            .ok_or_else(|| anyhow::anyhow!("path is not valid UTF-8: {}", path.display()))?,
-    )?;
-
-    let mut stat: libc::statvfs = unsafe { std::mem::zeroed() };
-    let ret = unsafe { libc::statvfs(c_path.as_ptr(), &raw mut stat) };
-
-    anyhow::ensure!(
-        ret == 0,
-        "statvfs failed for {}: {}",
-        path.display(),
-        std::io::Error::last_os_error()
-    );
-
-    // Widen to u64 before multiplication to prevent overflow on 32-bit ARM
-    // where c_ulong is u32. On x86_64 these are already u64.
-    #[cfg_attr(
-        target_pointer_width = "64",
-        expect(
-            clippy::useless_conversion,
-            reason = "needed on 32-bit ARM where c_ulong is u32"
-        )
-    )]
-    Ok(u64::from(stat.f_frsize) * u64::from(stat.f_bavail))
 }
 
 fn copy_files(entries: &[FileEntry], target_root: &Path) -> anyhow::Result<()> {
