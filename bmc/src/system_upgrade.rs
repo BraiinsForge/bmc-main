@@ -124,6 +124,20 @@ pub(crate) enum AvailableSystemUpgrade {
     },
 }
 
+impl AvailableSystemUpgrade {
+    /// A firmware image downloads to tmpfs, not the store, so only the
+    /// packages variant has an estimate to check the store against.
+    fn store_unpacked_size_bytes(&self) -> Option<u64> {
+        match self {
+            Self::Firmware { .. } => None,
+            Self::Packages {
+                unpacked_size_bytes,
+                ..
+            } => *unpacked_size_bytes,
+        }
+    }
+}
+
 /// Select the upgrade a check offers under its minted id. Firmware wins
 /// over packages: the target firmware changes what the servers' index
 /// offers, so packages resolve in the new firmware's context and applying
@@ -403,7 +417,7 @@ async fn automatic_gc_preflight(
     // Unconditional: an upgrade needs the space whether or not a periodic
     // collection ran recently, so the periodic job's schedule and its
     // configured opt-out play no part here. Best-effort: a failed collection
-    // is not what decides the upgrade — the free-space check below is.
+    // is not what decides the upgrade — the free-space check is.
     let request = PackageGcRequest {
         on_busy: bmc_nix::gc::OnBusy::Wait,
         sweep: bmc_nix::gc::Sweep::Always,
@@ -418,9 +432,17 @@ async fn automatic_gc_preflight(
         }
     }
 
-    // Fail only on a certain "will not fit". Either side missing — the probe
-    // estimate timed out, or free space cannot be measured — leaves nothing
-    // to compare, and the realization itself fails loudly when space runs out.
+    store_space_preflight(gate, package_backend, unpacked_size_bytes)
+}
+
+/// Fail only on a certain "will not fit". Either side missing — the probe
+/// estimate timed out, or free space cannot be measured — leaves nothing
+/// to compare, and the realization itself fails loudly when space runs out.
+fn store_space_preflight(
+    gate: tokio::sync::OwnedMutexGuard<()>,
+    package_backend: &Arc<dyn PackageBackend>,
+    unpacked_size_bytes: Option<u64>,
+) -> Result<tokio::sync::OwnedMutexGuard<()>, UpgradeRunStream> {
     let Some(unpacked_bytes) = unpacked_size_bytes else {
         return Ok(gate);
     };
@@ -660,7 +682,14 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Ok(claimed) => claimed,
                 Err(stream) => return stream,
             };
-
+        let gate = match store_space_preflight(
+            gate,
+            &self.package_backend,
+            upgrade.store_unpacked_size_bytes(),
+        ) {
+            Ok(gate) => gate,
+            Err(stream) => return stream,
+        };
         self.dispatch_claimed_upgrade(gate, upgrade)
     }
 
@@ -697,20 +726,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 Ok(claimed) => claimed,
                 Err(stream) => return stream,
             };
-        // A firmware image downloads to tmpfs, not the store, so only the
-        // packages branch has an estimate to check the store against.
-        let unpacked_size_bytes = match &upgrade {
-            AvailableSystemUpgrade::Firmware { .. } => None,
-            AvailableSystemUpgrade::Packages {
-                unpacked_size_bytes,
-                ..
-            } => *unpacked_size_bytes,
+        let gate = match automatic_gc_preflight(
+            gate,
+            &self.package_backend,
+            upgrade.store_unpacked_size_bytes(),
+        )
+        .await
+        {
+            Ok(gate) => gate,
+            Err(stream) => return stream,
         };
-        let gate =
-            match automatic_gc_preflight(gate, &self.package_backend, unpacked_size_bytes).await {
-                Ok(gate) => gate,
-                Err(stream) => return stream,
-            };
         self.dispatch_claimed_upgrade(gate, upgrade)
     }
 
@@ -1637,6 +1662,36 @@ mod tests {
                 .await
                 .is_ok(),
             "a statvfs failure is not a certain \"will not fit\""
+        );
+    }
+
+    #[tokio::test]
+    async fn manual_space_preflight_aborts_without_collecting() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let backend = Arc::new(RecordingGcBackend::with_free_bytes([], Some(1_000)));
+        let backend_dyn = Arc::clone(&backend) as Arc<dyn PackageBackend>;
+
+        let Err(mut run) = store_space_preflight(gate, &backend_dyn, Some(10_000)) else {
+            panic!("BUG: an estimate exceeding free space must stop dispatch");
+        };
+        assert!(matches!(
+            run.next().await,
+            Some(UpgradeRunState::Failed(SystemUpgradeError::NotEnoughSpace))
+        ));
+        assert!(
+            run_gate.try_lock().is_ok(),
+            "a failed space check must release the run gate"
+        );
+        assert!(
+            backend
+                .requests
+                .lock()
+                .expect("BUG: recording backend requests mutex poisoned")
+                .is_empty(),
+            "the manual preflight never collects"
         );
     }
 
