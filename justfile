@@ -46,6 +46,9 @@ validate: format clippy python
     # No allocating fmt machinery in widget code.
     nix build -L ".#checks.{{ NIX_SYSTEM }}.no-fmt-in-wasm"
 
+    # Public widget asset contract (icon paths, extension allowlist).
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.public-widget-assets"
+
     # Wasm lint; production widgets are gated, examples only have to build.
     cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
     cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings

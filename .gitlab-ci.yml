@@ -97,6 +97,12 @@ content-checks:
   script:
     - nix run .#content-checks
 
+public-widget-assets:
+  stage: lint
+  needs: []
+  script:
+    - nix build -L .#checks.x86_64-linux.public-widget-assets
+
 license-headers:
   stage: lint
   needs: []

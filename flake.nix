@@ -81,6 +81,7 @@
         };
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin capture;
+          deckPackages = workspace.legacyPackages.deck-packages;
           inherit (workspace) wasmWidgets wasmWidgetCatalog;
           inherit (workspace.bmc) profiles;
         };

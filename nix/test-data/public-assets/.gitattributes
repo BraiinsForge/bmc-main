@@ -1,0 +1,5 @@
+# Keep these tiny text stand-ins as plain blobs — an LFS pointer is bigger
+# than the fixture it would replace. The root *.jpg rule matches them
+# by name only; they are not images.
+*.jpg -filter diff merge -text
+*.jpeg -filter diff merge -text

@@ -18,10 +18,15 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-{ pkgs, ty-bin, profiles, capture, wasmWidgets, wasmWidgetCatalog }:
+{ pkgs, ty-bin, profiles, capture, wasmWidgets, wasmWidgetCatalog, deckPackages }:
 
 let
   lib = pkgs.lib;
+  publicAsset = import ./public-asset.nix { inherit lib; };
+  publicAssetManifest = ./test-data/public-assets/manifest.json;
+  publicJpg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpg";
+  publicJpeg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpeg";
+  rejects = value: !(builtins.tryEval (builtins.deepSeq value true)).success;
   licenseHeaderExtensions = lib.filter (extension: extension != "")
     (lib.splitString "\n" (builtins.readFile ../scripts/license_header_extensions.txt));
 
@@ -54,6 +59,24 @@ let
   widgetChecks = lib.mapAttrs mkWidgetCheck regressionCatalog;
 in
 {
+  public-widget-assets =
+    assert builtins.readFileType publicJpg == "regular";
+    assert publicJpg == publicJpeg;
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "/icon.jpg");
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "../icon.jpg");
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "./icon.jpg");
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "nested//icon.jpg");
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "icon.exe");
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "missing.svg");
+    assert rejects (publicAsset.mkPublicIcon publicAssetManifest "icon-link.jpg");
+    let icon = deckPackages.widget-clock.metadata.assets.icon;
+    in
+    assert builtins.readFileType icon == "regular";
+    assert !(lib.hasInfix "/lib/bmc-widgets/" (toString icon));
+    pkgs.runCommand "public-widget-assets" { } ''
+      touch $out
+    '';
+
   cargo-deny = profiles.fast.mkCargoDeny {
     config = "deny.toml";
     checks = [ "bans" "sources" ];
