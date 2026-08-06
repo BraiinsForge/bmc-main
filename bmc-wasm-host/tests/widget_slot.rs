@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! `WidgetSlot`-level tests over a stub surface: the network-delivery and
+//! `WidgetSlot`-level tests over a stub surface: the update-delivery and
 //! dirty-render-gating paths as the main loop drives them, not their
 //! extracted helpers.
 
@@ -204,6 +204,23 @@ fn network_probe_widget_wat() -> String {
     )
 }
 
+fn update_probe_widget_wat(hook: &str, request_frame: bool) -> String {
+    include_str!("../../bmc-wasm-runtime/tests/fixtures/update_probe.wat")
+        .replace("__UPDATE_HOOK__", hook)
+        .replace(
+            "__SDK_VERSION__",
+            &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
+        )
+        .replace(
+            "__REQUEST_FRAME__",
+            if request_frame {
+                "call $host_request_frame"
+            } else {
+                ""
+            },
+        )
+}
+
 fn hookless_widget_wat() -> String {
     format!(
         r#"
@@ -261,6 +278,69 @@ fn dispatch_event(slot: &mut WidgetSlot<StubSurface>, event: WidgetEvent) {
 fn enter_state(slot: &mut WidgetSlot<StubSurface>, state: bmc_widget_protocol::LifecycleState) {
     dispatch_event(slot, WidgetEvent::Lifecycle(state));
     slot.apply_lifecycle(Instant::now(), &StubEgl);
+}
+
+// ── parameter updates ──────────────────────────────────────────────
+
+#[test]
+fn params_update_hook_requests_frame_without_marking_the_surface_dirty() {
+    let wat = update_probe_widget_wat("on_params_update", true);
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(&mut slot, WidgetEvent::ParamUpdate(serde_json::Map::new()));
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "parameter delivery must invoke on_params_update"
+    );
+    assert!(
+        slot.runtime.wants_next_frame(),
+        "request_frame from on_params_update must reach the runtime scheduler"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "parameter delivery must leave surface rendering under widget ownership"
+    );
+}
+
+#[test]
+fn params_update_hook_can_decline_render_without_dirtying_the_surface() {
+    let wat = update_probe_widget_wat("on_params_update", false);
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(&mut slot, WidgetEvent::ParamUpdate(serde_json::Map::new()));
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "parameter delivery must invoke on_params_update"
+    );
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "a hook that declines a frame must leave the runtime scheduler idle"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "a hook that declines a frame must not be overridden by surface dirtiness"
+    );
+}
+
+#[test]
+fn params_update_without_hook_does_not_schedule_or_dirty() {
+    let wat = hookless_widget_wat();
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(&mut slot, WidgetEvent::ParamUpdate(serde_json::Map::new()));
+
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "parameter delivery without a hook must leave the runtime scheduler idle"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "parameter delivery without a hook must not dirty the surface"
+    );
 }
 
 // ── refresh_network ─────────────────────────────────────────────────

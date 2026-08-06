@@ -1034,7 +1034,6 @@ impl<S: SlotSurface> WidgetSlot<S> {
                 "param update received"
             );
             self.runtime.deliver_params_update(table);
-            self.surface.mark_needs_render();
         }
     }
 

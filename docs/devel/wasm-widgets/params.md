@@ -143,8 +143,11 @@ stringly-typed lookups.
 The host delivers params as full snapshots, not patches. `on_params_update` fires only after the initial values have
 already been delivered; it does not fire for the initial `init` snapshot.
 
-Use the hook when a params change needs to update cached state, start debounced work, or highlight changed UI. Widgets
-that cheaply read `Params::current()` during `render` may not need the hook.
+Delivery updates the snapshot and invokes the optional hook, but does not itself schedule a render. Call
+`request_frame()` or `request_frame_after()` when the change should repaint; otherwise the new snapshot is observed on
+the next naturally scheduled render.
+
+Use the hook when a params change needs to update cached state, start debounced work, or repaint changed UI.
 
 ```rust
 #[unsafe(no_mangle)]
@@ -155,10 +158,16 @@ pub extern "C" fn on_params_update() {
 
     let changed = Params::current().changed_keys(&previous);
     if changed.contains(&"city") {
-        // Rebind local state or schedule a debounced fetch.
+        // Repaint the visible city output.
+        request_frame();
     }
 }
 ```
+
+Omitting the hook is correct only when the widget already guarantees another render cadence and accepts the resulting
+latency. A static widget whose visible output depends on params must export `on_params_update` and request a frame.
+Mining-clock, for example, exports the hook to refresh authentication state but deliberately does not request a frame:
+its existing one-second cadence displays the new values on the next tick without shifting the second hand's even steps.
 
 The operator UI can send live-preview updates before saving. Treat preview and committed updates the same way. Debounce
 network fetches and other expensive side effects triggered by params changes.
@@ -207,6 +216,6 @@ cargo run --features testbed --bin testbed \
   --manifest=widgets-wasm/<widget-name>/manifest.json
 ```
 
-Changing a value in the Params panel calls `deliver_params_update` for every previewed size. A widget that exports
-`on_params_update` should react immediately. The `params-demo` widget highlights changed rows, which makes it the best
-example to inspect when wiring update behavior.
+Changing a value in the Params panel calls `deliver_params_update` for every previewed size and immediately invokes an
+exported `on_params_update` hook. Visible changes repaint immediately only when the hook requests a frame. The
+`params-demo` widget highlights changed rows, which makes it the best example to inspect when wiring update behavior.
