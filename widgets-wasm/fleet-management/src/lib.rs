@@ -73,6 +73,19 @@ use screens::dashboard::DashboardViewData;
 #[cfg(target_arch = "wasm32")]
 use screens::table::TableViewData;
 
+#[cfg(any(target_arch = "wasm32", test))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RenderedScreen {
+    Unknown,
+    NoCredentials,
+    Other,
+}
+
+#[cfg(any(target_arch = "wasm32", test))]
+fn network_update_needs_frame(screen: RenderedScreen) -> bool {
+    !matches!(screen, RenderedScreen::Other)
+}
+
 #[cfg(target_arch = "wasm32")]
 thread_local! {
     pub(crate) static DEVICES: RefCell<DeviceList> = RefCell::new(DeviceList::new());
@@ -82,6 +95,7 @@ thread_local! {
         RefCell::new(history::HashrateHistory::default());
     static DISPLAY_FRAME_PENDING: Cell<bool> = const { Cell::new(false) };
     static DERIVE_ELAPSED_MS: Cell<u32> = const { Cell::new(0) };
+    static RENDERED_SCREEN: Cell<RenderedScreen> = const { Cell::new(RenderedScreen::Unknown) };
 }
 
 /// Coalescing window for display refreshes.
@@ -455,7 +469,7 @@ pub extern "C" fn render(delta_ms: u32) {
                     });
                 }
             }
-            let (root, page_count) = if let Some(sel) = nav.model_detail.as_ref() {
+            let (root, page_count, rendered_screen) = if let Some(sel) = nav.model_detail.as_ref() {
                 // A live selection (its group survived the fallback above); the
                 // folded device rows are cached in `derived.model_detail`.
                 let rows = &derived
@@ -489,7 +503,11 @@ pub extern "C" fn render(delta_ms: u32) {
                             })
                         });
                     if let Some(data) = detail {
-                        (screens::device_detail::device_detail_view(&data), 1)
+                        (
+                            screens::device_detail::device_detail_view(&data),
+                            1,
+                            RenderedScreen::Other,
+                        )
                     } else {
                         let data = HISTORY.with(|h| {
                             screens::model_detail::ModelDetailViewData::from_summary(
@@ -502,7 +520,11 @@ pub extern "C" fn render(delta_ms: u32) {
                             )
                         });
                         let page_count = data.page_count;
-                        (screens::model_detail::model_detail_view(&data), page_count)
+                        (
+                            screens::model_detail::model_detail_view(&data),
+                            page_count,
+                            RenderedScreen::Other,
+                        )
                     }
                 } else {
                     let data = HISTORY.with(|h| {
@@ -516,13 +538,21 @@ pub extern "C" fn render(delta_ms: u32) {
                         )
                     });
                     let page_count = data.page_count;
-                    (screens::model_detail::model_detail_view(&data), page_count)
+                    (
+                        screens::model_detail::model_detail_view(&data),
+                        page_count,
+                        RenderedScreen::Other,
+                    )
                 }
             } else if derived.summary.groups.is_empty() {
                 if let Some(data) = no_credentials(&derived.fleet_name) {
-                    (screens::no_credentials::no_credentials_view(&data), 1)
+                    (
+                        screens::no_credentials::no_credentials_view(&data),
+                        1,
+                        RenderedScreen::NoCredentials,
+                    )
                 } else {
-                    (screens::searching(), 1)
+                    (screens::searching(), 1, RenderedScreen::Other)
                 }
             } else {
                 match nav.mode {
@@ -535,7 +565,11 @@ pub extern "C" fn render(delta_ms: u32) {
                                 chart_window,
                             )
                         });
-                        (screens::dashboard::dashboard_view(&data), 1)
+                        (
+                            screens::dashboard::dashboard_view(&data),
+                            1,
+                            RenderedScreen::Other,
+                        )
                     }
                     view::ViewMode::List => {
                         let table = HISTORY.with(|h| {
@@ -548,7 +582,11 @@ pub extern "C" fn render(delta_ms: u32) {
                             )
                         });
                         let page_count = table.page_count;
-                        (screens::table::table_view(&table), page_count)
+                        (
+                            screens::table::table_view(&table),
+                            page_count,
+                            RenderedScreen::Other,
+                        )
                     }
                 }
             };
@@ -556,6 +594,7 @@ pub extern "C" fn render(delta_ms: u32) {
                 let _s = profile::span("submit");
                 render_ui(width, height, root)
             };
+            RENDERED_SCREEN.with(|screen| screen.set(rendered_screen));
             let mut changed = false;
             for id in result.clicks.keys() {
                 if let Some(action) = view::parse_click(id) {
@@ -576,6 +615,16 @@ pub extern "C" fn render(delta_ms: u32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn on_touch() {
     request_frame();
+}
+
+/// The Deck's SSID/IP changed. Only the no-credentials screen displays them,
+/// so every other screen ignores the notification.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_network_update() {
+    if RENDERED_SCREEN.with(|screen| network_update_needs_frame(screen.get())) {
+        request_frame();
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -625,4 +674,33 @@ pub extern "C" fn on_params_update() {
         }
     }
     request_frame();
+}
+
+#[cfg(test)]
+mod rendered_screen_tests {
+    use super::{RenderedScreen, network_update_needs_frame};
+
+    #[test]
+    fn network_update_before_first_render_requests_frame() {
+        assert!(
+            network_update_needs_frame(RenderedScreen::Unknown),
+            "the first render must observe network info delivered during startup"
+        );
+    }
+
+    #[test]
+    fn network_update_refreshes_no_credentials_screen() {
+        assert!(
+            network_update_needs_frame(RenderedScreen::NoCredentials),
+            "the no-credentials screen displays the Deck network"
+        );
+    }
+
+    #[test]
+    fn network_update_ignores_other_rendered_screens() {
+        assert!(
+            !network_update_needs_frame(RenderedScreen::Other),
+            "screens without Deck network data must not repaint"
+        );
+    }
 }
