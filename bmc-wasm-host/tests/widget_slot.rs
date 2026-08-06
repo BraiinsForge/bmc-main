@@ -36,7 +36,7 @@ use bmc_wasm_host::render_target::{
 use bmc_wasm_host::slot::{SlotSurface, WidgetSlot};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 use bmc_widget::surface::{PollOutcome, ReleasedBuffer, WidgetEvent, WidgetSurface};
-use bmc_widget_protocol::{ActionPayload, SettingUpdate};
+use bmc_widget_protocol::{ActionPayload, CredentialSecrets, SettingUpdate};
 
 #[derive(Default)]
 struct StubSurface {
@@ -221,6 +221,44 @@ fn update_probe_widget_wat(hook: &str, request_frame: bool) -> String {
         )
 }
 
+fn credential_snapshot_probe_widget_wat() -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_request_frame" (func $host_request_frame))
+      (import "env" "host_credentials_snapshot"
+        (func $host_credentials_snapshot (param i32 i32) (result i32)))
+
+      (memory (export "memory") 1)
+
+      (global $update_count (mut i32) (i32.const 0))
+      (global $type_first_byte (mut i32) (i32.const 0))
+
+      (func (export "__bmc_sdk_init") (result i64) i64.const {})
+      (func (export "render") (param i32))
+
+      (func (export "on_credentials_update")
+        i32.const 0
+        i32.const 64
+        call $host_credentials_snapshot
+        drop
+        ;; Packed view: count (4) + "pool" length (2) + bytes (4) + type length (2).
+        i32.const 12
+        i32.load8_u
+        global.set $type_first_byte
+        global.get $update_count
+        i32.const 1
+        i32.add
+        global.set $update_count
+        call $host_request_frame)
+
+      (func (export "update_count") (result i32) global.get $update_count)
+      (func (export "type_first_byte") (result i32) global.get $type_first_byte))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
+}
+
 fn hookless_widget_wat() -> String {
     format!(
         r#"
@@ -269,10 +307,41 @@ fn online_snapshot(ssid: &str, last_octet: u8, signal_dbm: i32) -> Snapshot {
     }
 }
 
-fn dispatch_event(slot: &mut WidgetSlot<StubSurface>, event: WidgetEvent) {
-    slot.surface.queued_events.push(event);
+fn credential_view(
+    slot: &str,
+    type_id: &str,
+    account_name: &str,
+) -> serde_json::Map<String, serde_json::Value> {
+    let mut credentials = serde_json::Map::new();
+    credentials.insert(
+        slot.to_owned(),
+        serde_json::json!({ "type": type_id, "account": account_name }),
+    );
+    credentials
+}
+
+fn credential_secrets(slot: &str, field: &str, value: &str) -> CredentialSecrets {
+    let mut fields = serde_json::Map::new();
+    fields.insert(
+        field.to_owned(),
+        serde_json::Value::String(value.to_owned()),
+    );
+    let mut secrets = serde_json::Map::new();
+    secrets.insert(slot.to_owned(), serde_json::json!({ "fields": fields }));
+    CredentialSecrets::new(secrets)
+}
+
+fn dispatch_events(
+    slot: &mut WidgetSlot<StubSurface>,
+    events: impl IntoIterator<Item = WidgetEvent>,
+) {
+    slot.surface.queued_events.extend(events);
     slot.dispatch_wayland_events()
         .expect("BUG: stub dispatch cannot fail");
+}
+
+fn dispatch_event(slot: &mut WidgetSlot<StubSurface>, event: WidgetEvent) {
+    dispatch_events(slot, [event]);
 }
 
 fn enter_state(slot: &mut WidgetSlot<StubSurface>, state: bmc_widget_protocol::LifecycleState) {
@@ -415,7 +484,188 @@ fn system_update_without_hook_does_not_schedule_or_dirty() {
     );
 }
 
-// ── refresh_network ─────────────────────────────────────────────────
+// ── credential updates ─────────────────────────────────────────────
+
+#[test]
+fn public_credential_update_hook_requests_frame_without_dirtying_the_surface() {
+    let wat = update_probe_widget_wat("on_credentials_update", true);
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::CredentialsUpdate(credential_view("pool", "braiins-pool", "Primary")),
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "public credential delivery must invoke on_credentials_update"
+    );
+    assert_eq!(slot.credentials.type_of("pool"), Some("braiins-pool"));
+    assert!(
+        slot.runtime.wants_next_frame(),
+        "request_frame from on_credentials_update must reach the runtime scheduler"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "public credential delivery must leave rendering under widget ownership"
+    );
+}
+
+#[test]
+fn secret_credential_update_hook_can_decline_render_without_dirtying_the_surface() {
+    let wat = update_probe_widget_wat("on_credentials_update", false);
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::SecretsUpdate(credential_secrets("pool", "token", "first-token")),
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "secret credential delivery must invoke on_credentials_update"
+    );
+    assert_eq!(
+        slot.credential_secrets.field("pool", "token"),
+        Some("first-token")
+    );
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "a hook that declines a frame must leave the runtime scheduler idle"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "a hook that declines a frame must not be overridden by surface dirtiness"
+    );
+}
+
+#[test]
+fn credential_update_without_hook_does_not_schedule_or_dirty() {
+    let wat = hookless_widget_wat();
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::CredentialsUpdate(credential_view("pool", "braiins-pool", "Primary")),
+    );
+
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "credential delivery without a hook must leave the runtime scheduler idle"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "credential delivery without a hook must not dirty the surface"
+    );
+}
+
+#[test]
+fn credential_events_in_one_drain_deliver_one_latest_combined_snapshot() {
+    let wat = credential_snapshot_probe_widget_wat();
+    let mut slot = test_slot(&wat);
+
+    dispatch_events(
+        &mut slot,
+        [
+            WidgetEvent::CredentialsUpdate(credential_view("pool", "generic-token", "Old account")),
+            WidgetEvent::SecretsUpdate(credential_secrets("pool", "token", "old-token")),
+            WidgetEvent::CredentialsUpdate(credential_view(
+                "pool",
+                "braiins-pool",
+                "Latest account",
+            )),
+            WidgetEvent::SecretsUpdate(credential_secrets("pool", "token", "latest-token")),
+        ],
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "one event drain must invoke on_credentials_update once"
+    );
+    assert_eq!(
+        slot.runtime.call_export_i32("type_first_byte"),
+        Some(i32::from(b'b')),
+        "the hook must observe the latest public snapshot in the runtime"
+    );
+    assert_eq!(slot.credentials.type_of("pool"), Some("braiins-pool"));
+    assert_eq!(
+        slot.credential_secrets.field("pool", "token"),
+        Some("latest-token")
+    );
+    assert!(
+        slot.runtime.wants_next_frame(),
+        "the coalesced hook's request_frame must reach the runtime scheduler"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "coalesced credential delivery must not dirty the surface"
+    );
+}
+
+#[test]
+fn secret_update_preserves_public_credentials_from_previous_drain() {
+    let wat = credential_snapshot_probe_widget_wat();
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::CredentialsUpdate(credential_view("pool", "braiins-pool", "Primary")),
+    );
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::SecretsUpdate(credential_secrets("pool", "token", "first-token")),
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(2),
+        "separate event drains must deliver each credential update"
+    );
+    assert_eq!(
+        slot.runtime.call_export_i32("type_first_byte"),
+        Some(i32::from(b'b')),
+        "a secret-only drain must preserve the public snapshot delivered earlier"
+    );
+    assert_eq!(slot.credentials.type_of("pool"), Some("braiins-pool"));
+    assert_eq!(
+        slot.credential_secrets.field("pool", "token"),
+        Some("first-token")
+    );
+    assert_eq!(slot.surface.mark_needs_render_calls, 0);
+}
+
+#[test]
+fn public_update_preserves_secrets_from_previous_drain() {
+    let wat = credential_snapshot_probe_widget_wat();
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::SecretsUpdate(credential_secrets("pool", "token", "first-token")),
+    );
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::CredentialsUpdate(credential_view("pool", "braiins-pool", "Primary")),
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(2),
+        "separate event drains must deliver each credential update"
+    );
+    assert_eq!(slot.credentials.type_of("pool"), Some("braiins-pool"));
+    assert_eq!(
+        slot.credential_secrets.field("pool", "token"),
+        Some("first-token"),
+        "a public-only drain must preserve the secret snapshot delivered earlier"
+    );
+    assert_eq!(slot.surface.mark_needs_render_calls, 0);
+}
+
+// ── refresh_network ────────────────────────────────────────────────
 
 #[test]
 fn network_change_is_delivered_without_marking_the_surface_dirty() {

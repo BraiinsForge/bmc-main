@@ -29,8 +29,11 @@
 //! — enough to render a sign-in prompt instead of a broken panel,
 //! and to name the account in the UI.
 //!
-//! Read it on the render path. Export `on_credentials_update`
-//! to react the moment a binding changes, not at the next data tick.
+//! Read it on the render path.
+//! The host invokes an exported `on_credentials_update` immediately
+//! when a binding changes, but delivery and hook invocation do not repaint.
+//! Call `request_frame()` or `request_frame_after()`
+//! when the change affects visible output.
 
 extern crate alloc;
 use alloc::string::String;

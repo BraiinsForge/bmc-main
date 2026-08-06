@@ -111,20 +111,31 @@ if bound.is_bound("pool") {
 }
 ```
 
-Export `on_credentials_update` to react the moment the operator binds, rebinds or unbinds an account, rather than at
-your next data tick:
+Delivery updates the snapshot and invokes the optional hook, but does not itself schedule a render. Call
+`request_frame()` or `request_frame_after()` when the change should repaint; otherwise the new snapshot is observed on
+the next naturally scheduled render. An immediate display update therefore requires `on_credentials_update` to request a
+frame.
+
+Request a frame only when the changed credentials affect visible output:
 
 ```rust
+use bmc_wasm_sdk::{credentials, request_frame};
+
 #[unsafe(no_mangle)]
 pub extern "C" fn on_credentials_update() {
-    request_frame();
+    let current = credentials::current();
+    let previous = credentials::previous();
+    if current != previous {
+        request_frame();
+    }
 }
 ```
 
 `credentials::previous()` holds the snapshot from immediately before, so a hook can tell a fresh binding from a swapped
 account.
 
-Rotating an account's value fires the hook without changing the view, since the values are not part of it.
+Rotating an account's value fires the hook without changing the view, since the values are not part of it. The hook can
+restart authenticated work without repainting when the visible binding is unchanged.
 
 ## Reference Example
 

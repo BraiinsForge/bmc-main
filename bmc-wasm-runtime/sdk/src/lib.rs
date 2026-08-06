@@ -51,14 +51,22 @@
 //!        │  may fire `on_system_update`         │── after each deck-wide
 //!        │      (when system version bumps)     │   `system` snapshot change
 //!        │      ↓                               │
+//!        │  may fire `on_credentials_update`    │── after each credential
+//!        │      (when its version bumps)        │   binding or secret change
+//!        │      ↓                               │
 //!        │  may fire `unload`                   │── when the widget is being torn
 //!        │      (terminal — runs once)          │   down (scene swap, hot reload)
 //!        └──────────────────────────────────────┘
 //! ```
 //!
-//! `on_params_update` and `on_system_update` are independent exports —
-//! each only fires when its own channel's version bumps. A widget can export
-//! one, both, or neither.
+//! `on_params_update`, `on_system_update`, and `on_credentials_update` are
+//! independent exports — each fires only for its own channel's delivery. A
+//! widget can export any combination of them, or none.
+//!
+//! Delivery updates the snapshot and invokes the optional hook, but does not
+//! itself schedule a render. Call `request_frame()` or `request_frame_after()`
+//! when the change should repaint; otherwise the new snapshot is observed on
+//! the next naturally scheduled render.
 //!
 //! The host always invokes hooks one at a time on the wasm thread — there
 //! is no concurrent execution inside a widget.
@@ -150,6 +158,25 @@
 //! react to mid-life changes rather than just re-reading
 //! [`system::current`] on every `render`.
 //!
+//! ### `on_credentials_update`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_credentials_update() {
+//!     let current = credentials::current();
+//!     let previous = credentials::previous();
+//!     if current != previous {
+//!         request_frame();
+//!     }
+//! }
+//! ```
+//!
+//! Optional — fires after each public binding or secret credential delivery.
+//! The guest can inspect only the public binding view through
+//! [`credentials::current`] and [`credentials::previous`]; secret rotation
+//! still fires the hook without exposing the new value. Request a frame only
+//! when the changed public view affects visible output.
+//!
 //! ### `on_touch`
 //!
 //! ```rust,ignore
@@ -236,9 +263,9 @@
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
-//! `on_params_update`, `on_system_update`, `on_touch`, `on_network_update`,
-//! `on_wake`, and `on_sleep` share the same import-legality row —
-//! state-mutation legal, tree-submission illegal.
+//! `on_params_update`, `on_system_update`, `on_credentials_update`,
+//! `on_touch`, `on_network_update`, `on_wake`, and `on_sleep` share the
+//! same import-legality row — state-mutation legal, tree-submission illegal.
 //!
 //! | Import                                              | `init` | `render` | `on_*`* | `unload` |
 //! |-----------------------------------------------------|:------:|:--------:|:-------:|:--------:|
@@ -247,8 +274,8 @@
 //! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓       | no-op²   |
 //! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓       | ✓        |
 //!
-//! \* Same gating for `on_params_update`, `on_system_update`, `on_touch`,
-//!   and `on_network_update`.
+//! \* Same gating for `on_params_update`, `on_system_update`,
+//!   `on_credentials_update`, `on_touch`, and `on_network_update`.
 //!
 //! ¹ Returns the touch-not-present sentinel after a one-time warn.
 //!   Defensive reads compose naturally — the widget gets `None`

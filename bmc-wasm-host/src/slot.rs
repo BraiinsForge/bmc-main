@@ -1064,7 +1064,6 @@ impl<S: SlotSurface> WidgetSlot<S> {
         );
         self.runtime
             .deliver_credentials_update(self.credentials.clone(), self.credential_secrets.clone());
-        self.surface.mark_needs_render();
     }
 
     fn on_wayland_event(&mut self, event: &WidgetEvent) {
