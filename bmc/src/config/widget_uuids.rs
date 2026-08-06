@@ -60,3 +60,8 @@ pub(crate) const SPACEX_LAUNCH_UID: Uuid =
 /// `widgets-wasm/braiins-pool`
 pub(crate) const BRAIINS_POOL_UID: Uuid =
     Uuid::from_u128(0xb4e0_608d_d38c_4494_8bee_7df2_a030_c9b1);
+/// `widgets-wasm/ticker-single`
+pub(crate) const TICKER_SINGLE_UID: Uuid =
+    Uuid::from_u128(0x69ed_377c_701b_4cdb_b4b6_0308_cfe5_6b64);
+/// `widgets-wasm/ticker-list`
+pub(crate) const TICKER_LIST_UID: Uuid = Uuid::from_u128(0x51f4_8290_a8fd_466d_8693_1911_b06c_68c8);

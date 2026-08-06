@@ -61,7 +61,8 @@ use uuid::Uuid;
 use super::{Report, v0};
 use crate::config::widget_uuids::{
     BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, HALVING_COUNTDOWN_UID, ISS_POSITION_UID,
-    NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, WEATHER_UID,
+    NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID,
+    TICKER_SINGLE_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings};
 use crate::data::{AccountId, SceneCycling};
@@ -114,6 +115,19 @@ const NAMEDAY_COUNTRIES: &[&str] = &[
     "at", "cz", "de", "dk", "ee", "es", "fi", "fr", "hr", "hu", "it", "lt", "lv", "pl", "se", "sk",
     "us",
 ];
+/// Ticker-single `pair` fallback — ticker-single manifest `default_value`.
+const DEFAULT_TICKER_PAIR: &str = "BTC-USD";
+/// Ticker `period` fallback — both ticker manifests' `default_value`.
+const DEFAULT_TICKER_PERIOD: &str = "7d";
+/// Ticker-list `symbol_1`..`symbol_8` fallbacks — ticker-list manifest
+/// `default_value`s, in slot order.
+const TICKER_LIST_SYMBOL_DEFAULTS: [&str; 8] =
+    ["NVDA", "AAPL", "TSLA", "MSTR", "JPM", "META", "SPY", "NFLX"];
+/// Exchange-rate `base`/`quote` fallbacks. These have no counterpart in a
+/// current manifest — they restate the legacy exchange-rate widget's own
+/// meta defaults, so a param-less legacy widget keeps showing the same pair.
+const DEFAULT_EXCHANGE_BASE: &str = "EUR";
+const DEFAULT_EXCHANGE_QUOTE: &str = "USD";
 
 #[cfg(feature = "manifest-tests")]
 pub(crate) fn manifest_test_expectations()
@@ -138,6 +152,19 @@ pub(crate) fn manifest_test_expectations()
             translate_chart_frame(frame).expect("BUG: known v0 chart frame must translate")
         }),
         pool_credential_slot: POOL_CREDENTIAL_SLOT,
+        ticker_pair: DEFAULT_TICKER_PAIR,
+        ticker_period: DEFAULT_TICKER_PERIOD,
+        ticker_list_symbols: TICKER_LIST_SYMBOL_DEFAULTS,
+        translated_ticker_periods: ["1h", "24h", "1d", "7d", "30d", "bogus"]
+            .map(|period| translate_ticker_period(Some(period))),
+        translated_btc_time_frames: [
+            "day1", "week1", "week2", "month1", "month3", "month6", "year1", "year2", "year5",
+            "all",
+        ]
+        .map(|time_frame| {
+            translate_btc_time_frame(time_frame).expect("BUG: known v0 time frame must translate")
+        }),
+        ticker_views: ["sparkline", "candlestick"],
     }
 }
 
@@ -245,6 +272,7 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
 fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
     let (widget_type_id, params, credential_bindings) = match widget.kind.as_str() {
         "clock" => with_no_bindings(dispatch_clock(widget)),
+        "ticker_btc" => with_no_bindings(dispatch_ticker_btc(widget)),
         "block_height" => with_no_bindings(dispatch_block_height(widget)),
         "halving_countdown" => with_no_bindings(dispatch_halving_countdown()),
         "remote_image" => with_no_bindings(dispatch_remote_image(widget)),
@@ -491,6 +519,46 @@ fn translate_chart_frame(frame: &str) -> Option<&'static str> {
     }
 }
 
+/// Map a v0 native `ticker_btc` widget to the current Ticker (Single)
+/// widget ([`TICKER_SINGLE_UID`]). The legacy widget always charted
+/// Bitcoin as a line graph, so the symbol uses the manifest default and
+/// the view is `sparkline`; only the time frame carries over.
+fn dispatch_ticker_btc(widget: &v0::Widget) -> (Uuid, Value) {
+    let period = widget
+        .params
+        .get("time_frame")
+        .and_then(Value::as_str)
+        .and_then(translate_btc_time_frame)
+        .unwrap_or(DEFAULT_TICKER_PERIOD);
+    (
+        TICKER_SINGLE_UID,
+        json!({
+            "pair": DEFAULT_TICKER_PAIR,
+            "period": period,
+            "view": "sparkline",
+        }),
+    )
+}
+
+/// Map a v0 `time_frame` token to the ticker manifests' period enum.
+/// `None` for a token outside the v0 set, so the caller can fall back
+/// to the manifest default.
+fn translate_btc_time_frame(time_frame: &str) -> Option<&'static str> {
+    match time_frame {
+        "day1" => Some("1d"),
+        "week1" => Some("7d"),
+        "week2" => Some("14d"),
+        "month1" => Some("1mo"),
+        "month3" => Some("3mo"),
+        "month6" => Some("6mo"),
+        "year1" => Some("1Y"),
+        "year2" => Some("2Y"),
+        "year5" => Some("5Y"),
+        "all" => Some("full"),
+        _ => None,
+    }
+}
+
 /// Read a v0 `numbers_font_style`, remap it to the current
 /// `regular`/`semi-bold`/`bold` vocabulary, and fall back to
 /// `default` when the param is absent or carries a weight outside the
@@ -635,6 +703,107 @@ fn dispatch_nameday_widget_params(params: &Value) -> Value {
     })
 }
 
+fn translate_ticker_period(period: Option<&str>) -> &'static str {
+    match period {
+        Some("1h") => "1h",
+        Some("24h" | "1d") => "1d",
+        Some("7d") => "7d",
+        Some("30d") => "1mo",
+        Some(_) | None => DEFAULT_TICKER_PERIOD,
+    }
+}
+
+/// Translate the inner `params` of a legacy `exchange-rate` remote widget
+/// into the current Ticker (Single) widget ([`TICKER_SINGLE_UID`]).
+///
+/// `base`/`quote` collapse into the widget's `pair` symbol (`EUR-USD`),
+/// which it maps back onto the same `prices/<window>/<candle>/EUR/USD`
+/// resource the legacy widget fetched. The legacy line chart carries over
+/// as the `sparkline` view.
+fn dispatch_exchange_rate_params(params: &Value) -> Value {
+    let base = params
+        .get("base")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_EXCHANGE_BASE);
+    let quote = params
+        .get("quote")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_EXCHANGE_QUOTE);
+    json!({
+        "pair": format!("{base}-{quote}"),
+        "period": translate_ticker_period(params.get("period").and_then(Value::as_str)),
+        "view": "sparkline",
+    })
+}
+
+/// Translate the inner `params` of a legacy `ticker-single-sparkline` or
+/// `ticker-single-candlestick` remote widget into the current Ticker
+/// (Single) widget ([`TICKER_SINGLE_UID`]). The two legacy widgets differ
+/// only in chart style, which the merged widget folds behind its `view`
+/// param — the slug picks the value. `pair` keeps its name and passes
+/// through; an absent or empty one falls back to the manifest default.
+fn dispatch_ticker_single_params(params: &Value, view: &'static str) -> Value {
+    let pair = params
+        .get("pair")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(DEFAULT_TICKER_PAIR);
+    json!({
+        "pair": pair,
+        "period": translate_ticker_period(params.get("period").and_then(Value::as_str)),
+        "view": view,
+    })
+}
+
+/// Translate the inner `params` of a legacy `ticker-list` remote widget
+/// into the current Financial Ticker List widget ([`TICKER_LIST_UID`]).
+///
+/// v0 stored the rows as a JSON `symbols` array; the current manifest has
+/// no array type, so each row is its own `symbol_N` param. Usable entries
+/// (strings with non-blank content) fill the eight slots in order, and the
+/// remaining optional slots stay absent, which the widget reads as skipped
+/// rows, not defaulted ones. A `symbols` that is
+/// absent, not an array, or yields no usable entry falls back to the
+/// manifest defaults, the same stance every other dispatch takes.
+fn dispatch_ticker_list_params(params: &Value) -> Value {
+    let configured: Vec<&str> = params
+        .get("symbols")
+        .and_then(Value::as_array)
+        .map(|entries| {
+            entries
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .take(TICKER_LIST_SYMBOL_DEFAULTS.len())
+                .collect()
+        })
+        .unwrap_or_default();
+    let slots: &[&str] = if configured.is_empty() {
+        &TICKER_LIST_SYMBOL_DEFAULTS
+    } else {
+        &configured
+    };
+
+    let mut out = Map::new();
+    for index in 0..TICKER_LIST_SYMBOL_DEFAULTS.len() {
+        let value = slots.get(index).copied().map_or(Value::Null, Value::from);
+        out.insert(format!("symbol_{}", index + 1), value);
+    }
+    out.insert(
+        "period".to_owned(),
+        json!(translate_ticker_period(
+            params.get("period").and_then(Value::as_str)
+        )),
+    );
+    Value::Object(out)
+}
+
 /// Map a legacy `remote_widget` to a native widget via its
 /// `widget_url` slug. Slugs with a native equivalent map to that
 /// widget's manifest UID with their inner `params` translated into
@@ -673,6 +842,19 @@ fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
         "iss-position" => Some((ISS_POSITION_UID, json!({}))),
         "random-facts" => Some((RANDOM_FACTS_UID, json!({}))),
         "spacex-launch" => Some((SPACEX_LAUNCH_UID, json!({}))),
+        "exchange-rate" => Some((
+            TICKER_SINGLE_UID,
+            dispatch_exchange_rate_params(&inner_params),
+        )),
+        "ticker-single-sparkline" => Some((
+            TICKER_SINGLE_UID,
+            dispatch_ticker_single_params(&inner_params, "sparkline"),
+        )),
+        "ticker-single-candlestick" => Some((
+            TICKER_SINGLE_UID,
+            dispatch_ticker_single_params(&inner_params, "candlestick"),
+        )),
+        "ticker-list" => Some((TICKER_LIST_UID, dispatch_ticker_list_params(&inner_params))),
         _ => {
             warn!(
                 id = %widget.id,
@@ -1039,6 +1221,28 @@ mod tests {
     }
 
     #[test]
+    fn ticker_btc_maps_to_the_default_btc_pair_as_a_sparkline() {
+        let upgraded = upgrade("ticker_btc", json!({ "time_frame": "month1" }));
+        assert_eq!(upgraded.widget_type_id, TICKER_SINGLE_UID);
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("pair", str_param(DEFAULT_TICKER_PAIR)),
+                ("period", str_param("1mo")),
+                ("view", str_param("sparkline")),
+            ])
+        );
+    }
+
+    #[test]
+    fn ticker_btc_defaults_the_period_for_unknown_time_frames() {
+        for inner in [json!(null), json!({ "time_frame": "fortnight" })] {
+            let upgraded = upgrade("ticker_btc", inner);
+            assert_eq!(upgraded.params["period"], str_param("7d"));
+        }
+    }
+
+    #[test]
     fn unknown_kind_drops() {
         let w = mk_widget("mystery_widget", json!({}));
         assert!(upgrade_widget(&w).is_none());
@@ -1310,7 +1514,7 @@ mod tests {
     fn remote_widget_slug_without_native_equivalent_drops() {
         // Braiinsforge-hosted remote widgets without a native
         // counterpart drop until they gain one.
-        for slug in ["formula-1", "exchange-rate", "ticker-list"] {
+        for slug in ["formula-1", "nasa-picture-of-the-day"] {
             let w = mk_widget(
                 "remote_widget",
                 json!({
@@ -1362,6 +1566,144 @@ mod tests {
             let upgraded = upgrade_widget(&w).expect("BUG: nameday must survive the upgrade");
             assert_eq!(upgraded.params["country"], str_param("cz"));
             assert_eq!(upgraded.params["show_date"], ParamValue::Boolean(true));
+        }
+    }
+
+    /// Upgrade a Braiinsforge remote widget of `slug` with `inner` params.
+    fn upgrade_remote(slug: &str, inner: &Value) -> Widget {
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "widget_url": format!("https://widgets.braiinsforge.com/{slug}"),
+                "params": inner,
+            }),
+        );
+        upgrade_widget(&w).unwrap_or_else(|| panic!("BUG: {slug} must survive the upgrade"))
+    }
+
+    #[test]
+    fn remote_widget_exchange_rate_collapses_base_quote_into_pair() {
+        let upgraded = upgrade_remote(
+            "exchange-rate",
+            &json!({ "base": "CZK", "quote": "USD", "period": "24h" }),
+        );
+        assert_eq!(upgraded.widget_type_id, TICKER_SINGLE_UID);
+        // `CZK-USD` maps onto the same `prices/<window>/<candle>/CZK/USD`
+        // resource the legacy widget fetched; v0 `24h` is the manifests'
+        // `1d`; the legacy line chart carries over as `sparkline`.
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("pair", str_param("CZK-USD")),
+                ("period", str_param("1d")),
+                ("view", str_param("sparkline")),
+            ])
+        );
+    }
+
+    #[test]
+    fn remote_widget_exchange_rate_defaults_when_params_are_absent() {
+        // EUR/USD restates the legacy widget's own meta defaults; the
+        // period lands on the manifest default. Whitespace-only values
+        // count as absent, or the pair would render as e.g. `-USD`.
+        for inner in [json!(null), json!({ "base": "   ", "quote": " " })] {
+            let upgraded = upgrade_remote("exchange-rate", &inner);
+            assert_eq!(upgraded.params["pair"], str_param("EUR-USD"));
+            assert_eq!(upgraded.params["period"], str_param("7d"));
+        }
+    }
+
+    #[test]
+    fn legacy_ticker_periods_preserve_their_windows() {
+        for (legacy, current) in [
+            ("1h", "1h"),
+            ("24h", "1d"),
+            ("1d", "1d"),
+            ("7d", "7d"),
+            ("30d", "1mo"),
+        ] {
+            assert_eq!(translate_ticker_period(Some(legacy)), current);
+        }
+    }
+
+    #[test]
+    fn remote_widget_ticker_singles_fold_the_slug_into_the_view_param() {
+        for (slug, view) in [
+            ("ticker-single-sparkline", "sparkline"),
+            ("ticker-single-candlestick", "candlestick"),
+        ] {
+            let upgraded = upgrade_remote(slug, &json!({ "pair": "ETH-EUR", "period": "30d" }));
+            assert_eq!(upgraded.widget_type_id, TICKER_SINGLE_UID);
+            assert_eq!(
+                upgraded.params,
+                param_map(&[
+                    ("pair", str_param("ETH-EUR")),
+                    ("period", str_param("1mo")),
+                    ("view", str_param(view)),
+                ]),
+                "wrong params for `{slug}`"
+            );
+        }
+    }
+
+    #[test]
+    fn remote_widget_ticker_single_defaults_pair_and_unknown_period() {
+        for empty_pair in ["", "   "] {
+            let upgraded = upgrade_remote(
+                "ticker-single-sparkline",
+                &json!({ "pair": empty_pair, "period": "45d" }),
+            );
+            assert_eq!(upgraded.params["pair"], str_param("BTC-USD"));
+            assert_eq!(upgraded.params["period"], str_param("7d"));
+        }
+    }
+
+    #[test]
+    fn remote_widget_ticker_list_fills_slots_in_order_and_nulls_the_rest() {
+        let upgraded = upgrade_remote(
+            "ticker-list",
+            &json!({ "symbols": ["AAPL", "  MSFT ", "", 42, "^GSPC"], "period": "1d" }),
+        );
+        assert_eq!(upgraded.widget_type_id, TICKER_LIST_UID);
+        // Usable entries compact into the leading slots; null optional slots
+        // do not grow default rows the user never configured.
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("symbol_1", str_param("AAPL")),
+                ("symbol_2", str_param("MSFT")),
+                ("symbol_3", str_param("^GSPC")),
+                ("symbol_4", ParamValue::Null),
+                ("symbol_5", ParamValue::Null),
+                ("symbol_6", ParamValue::Null),
+                ("symbol_7", ParamValue::Null),
+                ("symbol_8", ParamValue::Null),
+                ("period", str_param("1d")),
+            ])
+        );
+    }
+
+    #[test]
+    fn remote_widget_ticker_list_caps_at_eight_slots() {
+        let upgraded = upgrade_remote(
+            "ticker-list",
+            &json!({ "symbols": ["A", "B", "C", "D", "E", "F", "G", "H", "I"] }),
+        );
+        assert_eq!(upgraded.params["symbol_8"], str_param("H"));
+        assert!(!upgraded.params.contains_key("symbol_9"));
+    }
+
+    #[test]
+    fn remote_widget_ticker_list_defaults_when_symbols_are_unusable() {
+        for inner in [
+            json!(null),
+            json!({ "symbols": "AAPL" }),
+            json!({ "symbols": [""] }),
+        ] {
+            let upgraded = upgrade_remote("ticker-list", &inner);
+            assert_eq!(upgraded.params["symbol_1"], str_param("NVDA"));
+            assert_eq!(upgraded.params["symbol_8"], str_param("NFLX"));
+            assert_eq!(upgraded.params["period"], str_param("7d"));
         }
     }
 

@@ -243,3 +243,48 @@ fn migration_fallbacks_match_the_shipped_manifests() {
         "the migration binds a slot the pool manifest does not declare"
     );
 }
+
+#[test]
+fn ticker_migration_fallbacks_match_the_shipped_manifests() {
+    let expected = migration_manifest_expectations();
+    let ticker_single = load_wasm_manifest("ticker-single");
+    let ticker_list = load_wasm_manifest("ticker-list");
+
+    assert_eq!(string_default(&ticker_single, "pair"), expected.ticker_pair);
+    assert_eq!(
+        string_default(&ticker_single, "period"),
+        expected.ticker_period
+    );
+    assert_eq!(
+        string_default(&ticker_list, "period"),
+        expected.ticker_period
+    );
+    for (index, default) in expected.ticker_list_symbols.iter().enumerate() {
+        assert_eq!(
+            &string_default(&ticker_list, &format!("symbol_{}", index + 1)),
+            default
+        );
+    }
+
+    let single_periods = string_enum(&ticker_single, "period");
+    let list_periods = string_enum(&ticker_list, "period");
+    for mapped in expected.translated_ticker_periods {
+        assert!(
+            single_periods.contains(mapped) && list_periods.contains(mapped),
+            "remapped period {mapped:?} is not in the ticker period enums"
+        );
+    }
+    for mapped in expected.translated_btc_time_frames {
+        assert!(
+            single_periods.contains(mapped),
+            "remapped time frame {mapped:?} is not in the ticker-single period enum"
+        );
+    }
+    let views = string_enum(&ticker_single, "view");
+    for view in expected.ticker_views {
+        assert!(
+            views.contains(view),
+            "dispatched view {view:?} is not in the ticker-single view enum"
+        );
+    }
+}

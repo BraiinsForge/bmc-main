@@ -27,7 +27,7 @@ use uuid::Uuid;
 use crate::config::widget_uuids::{
     BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, HALVING_COUNTDOWN_UID, ISS_POSITION_UID,
     MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
-    SPACEX_LAUNCH_UID, WEATHER_UID,
+    SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
 };
 
 #[derive(Debug)]
@@ -63,7 +63,7 @@ pub fn default_widgets() -> Vec<DefaultWidget> {
 }
 
 #[must_use]
-pub fn widget_uids() -> [(&'static str, Uuid); 12] {
+pub fn widget_uids() -> [(&'static str, Uuid); 14] {
     [
         ("clock", CLOCK_UID),
         ("weather", WEATHER_UID),
@@ -77,6 +77,8 @@ pub fn widget_uids() -> [(&'static str, Uuid); 12] {
         ("random-facts", RANDOM_FACTS_UID),
         ("spacex-launch", SPACEX_LAUNCH_UID),
         ("braiins-pool", BRAIINS_POOL_UID),
+        ("ticker-single", TICKER_SINGLE_UID),
+        ("ticker-list", TICKER_LIST_UID),
     ]
 }
 
@@ -97,6 +99,12 @@ pub struct MigrationManifestExpectations {
     pub pool_styles: [&'static str; 2],
     pub translated_pool_chart_frames: [&'static str; 4],
     pub pool_credential_slot: &'static str,
+    pub ticker_pair: &'static str,
+    pub ticker_period: &'static str,
+    pub ticker_list_symbols: [&'static str; 8],
+    pub translated_ticker_periods: [&'static str; 6],
+    pub translated_btc_time_frames: [&'static str; 10],
+    pub ticker_views: [&'static str; 2],
 }
 
 #[must_use]
