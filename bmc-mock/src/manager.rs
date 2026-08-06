@@ -24,8 +24,8 @@ use crate::{MockSessionManager, mockfs::MockFs};
 use anyhow::anyhow;
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
-    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, UpgradeError, WifiData,
-    WifiEvent, WifiNetworkConfig,
+    BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, UpgradeError, UpgradeMarker,
+    WifiData, WifiEvent, WifiNetworkConfig,
 };
 use bmc_nix::progress::{ActiveDownload, ProgressEvent};
 use bmc_platform::{BosPlatform, BosVersion};
@@ -114,6 +114,17 @@ impl Manager {
             wifi_reconfig_sender,
             pacing,
             stop,
+        }
+    }
+}
+
+fn consume_upgrade_marker(marker: &Path) -> UpgradeMarker {
+    match std::fs::remove_file(marker) {
+        Ok(()) => UpgradeMarker::Consumed,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => UpgradeMarker::Absent,
+        Err(err) => {
+            warn!("failed to remove mock upgrade marker: {err}");
+            UpgradeMarker::RemovalFailed
         }
     }
 }
@@ -211,8 +222,8 @@ impl bmc::BmcManager for Manager {
         Ok(())
     }
 
-    async fn check_and_remove_upgrade_marker(&self) -> bool {
-        self.mockfs.upgrade_result().exists()
+    async fn consume_upgrade_marker(&self) -> UpgradeMarker {
+        consume_upgrade_marker(&self.mockfs.upgrade_result())
     }
 
     fn session_manager(&self) -> Self::SessionManager {
@@ -546,5 +557,38 @@ impl bmc::BmcManager for Manager {
     async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {
         info!(?config, "Bootloader config sync (no-op in mock)");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use bmc::UpgradeMarker;
+
+    use super::consume_upgrade_marker;
+
+    #[test]
+    fn consuming_mock_upgrade_marker_removes_it_once() {
+        let dir = tempfile::tempdir().expect("BUG: create temporary marker directory");
+        let marker = dir.path().join("upgrade_result");
+        fs::write(&marker, "success").expect("BUG: create mock upgrade marker");
+
+        assert_eq!(consume_upgrade_marker(&marker), UpgradeMarker::Consumed);
+        assert!(
+            !marker.exists(),
+            "consumed marker must not replay after restart"
+        );
+        assert_eq!(consume_upgrade_marker(&marker), UpgradeMarker::Absent);
+    }
+
+    #[test]
+    fn consuming_mock_upgrade_marker_reports_removal_failure() {
+        let dir = tempfile::tempdir().expect("BUG: create temporary marker directory");
+
+        assert_eq!(
+            consume_upgrade_marker(dir.path()),
+            UpgradeMarker::RemovalFailed
+        );
     }
 }

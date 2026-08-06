@@ -15,11 +15,12 @@ workspace = true
 include = ["../bmc-wasm-runtime/tests/fixtures/*.wat"]
 
 [features]
-default = ["overlay-alarm", "overlay-offline", "overlay-device-info", "overlay-settings-tray"]
+default = ["overlay-alarm", "overlay-offline", "overlay-device-info", "overlay-settings-tray", "overlay-upgrade"]
 overlay-alarm = ["dep:bmc-overlay-alarm"]
 overlay-offline = ["dep:bmc-overlay-offline"]
 overlay-device-info = ["dep:bmc-overlay-device-info"]
 overlay-settings-tray = ["dep:bmc-overlay-settings-tray"]
+overlay-upgrade = ["dep:bmc-overlay-upgrade"]
 profiling = []
 
 [dependencies]
@@ -43,6 +44,7 @@ bmc-overlay-alarm = { workspace = true, optional = true }
 bmc-overlay-device-info = { workspace = true, optional = true }
 bmc-overlay-offline = { workspace = true, optional = true }
 bmc-overlay-settings-tray = { workspace = true, optional = true }
+bmc-overlay-upgrade = { workspace = true, optional = true }
 bmc-render = { path = "../bmc-render" }
 bmc-system-overlay = { workspace = true }
 bmc-wasm-protocol = { workspace = true }

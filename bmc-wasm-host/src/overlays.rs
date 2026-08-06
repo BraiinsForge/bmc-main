@@ -22,7 +22,7 @@ use std::ptr::NonNull;
 use std::time::Instant;
 
 use bmc_render::renderer::{FrameClear, Renderer};
-use bmc_system_overlay::HostedOverlay;
+use bmc_system_overlay::{HostedOverlay, SystemOverlay};
 use bmc_widget::egl::EglContext;
 
 use crate::host::SharedHost;
@@ -43,67 +43,89 @@ pub fn overlay_enabled(name: &str) -> bool {
     }
 }
 
-/// Register one overlay entry in `build_overlays`.
+struct OverlaySpec {
+    name: &'static str,
+    make: fn() -> Box<dyn SystemOverlay>,
+}
+
+/// Add one compiled-in overlay entry to the ordered registry.
 ///
 /// Each invocation is the single source of truth for a compiled-in overlay:
 /// the Cargo feature gate, the runtime name (used for env-var lookup and
 /// logging), and the constructor expression all live here and nowhere else.
 /// Adding a new overlay = one new `register_overlay!` line.
-///
-/// Expands to: if the Cargo feature is enabled, check `overlay_enabled(name)`;
-/// if enabled push the result of `$make`, else log the disabled message.
 macro_rules! register_overlay {
-    ($overlays:expr, $egl:expr, $feature:literal, $name:literal, $make:expr) => {
+    ($specs:expr, $feature:literal, $name:literal, $make:expr) => {
         #[cfg(feature = $feature)]
         {
-            if overlay_enabled($name) {
-                match HostedOverlay::connect($make, $egl) {
-                    Ok(o) => $overlays.push(o),
-                    Err(e) => tracing::error!("failed to start {} overlay: {}", $name, e),
-                }
-            } else {
-                tracing::info!("overlay {} disabled via BMC_OVERLAY_* env var", $name);
-            }
+            $specs.push(OverlaySpec {
+                name: $name,
+                make: || $make,
+            });
         }
     };
+}
+
+fn overlay_specs() -> Vec<OverlaySpec> {
+    let mut specs = Vec::new();
+    register_overlay!(
+        specs,
+        "overlay-upgrade",
+        "upgrade-firmware",
+        Box::new(bmc_overlay_upgrade::FirmwareUpgradeOverlay::default())
+    );
+    register_overlay!(
+        specs,
+        "overlay-alarm",
+        "alarm",
+        Box::new(bmc_overlay_alarm::AlarmOverlay::default())
+    );
+    register_overlay!(
+        specs,
+        "overlay-upgrade",
+        "upgrade-packages",
+        Box::new(bmc_overlay_upgrade::PackageUpgradeOverlay::default())
+    );
+    register_overlay!(
+        specs,
+        "overlay-offline",
+        "offline",
+        Box::new(bmc_overlay_offline::OfflineOverlay::default())
+    );
+    register_overlay!(
+        specs,
+        "overlay-device-info",
+        "device-info",
+        Box::new(bmc_overlay_device_info::DeviceInfoOverlay::default())
+    );
+    register_overlay!(
+        specs,
+        "overlay-settings-tray",
+        "settings-tray",
+        Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
+    );
+    specs
 }
 
 /// Build the compiled-in system overlays. Each opens its own Wayland
 /// connection and allocates buffers from `egl`. A failure to start one overlay
 /// is logged and skipped, never fatal to the host.
 pub fn build_overlays(egl: &EglContext) -> Vec<HostedOverlay> {
-    // Stacking is by layer rank, not build order: the offline indicator is on
-    // the Bottom layer and the startup overlay on Top, so the fullscreen startup
-    // overlay occludes the offline chip regardless of the order built here.
+    // Layer rank controls cross-layer stacking. Within Top, firmware registers
+    // before alarm so a firing alarm is painted above the upgrade blocker; the
+    // package card uses Bottom and therefore remains above the Background
+    // offline indicator.
     let mut overlays = Vec::new();
-    register_overlay!(
-        overlays,
-        egl,
-        "overlay-alarm",
-        "alarm",
-        Box::new(bmc_overlay_alarm::AlarmOverlay::default())
-    );
-    register_overlay!(
-        overlays,
-        egl,
-        "overlay-offline",
-        "offline",
-        Box::new(bmc_overlay_offline::OfflineOverlay::default())
-    );
-    register_overlay!(
-        overlays,
-        egl,
-        "overlay-device-info",
-        "device-info",
-        Box::new(bmc_overlay_device_info::DeviceInfoOverlay::default())
-    );
-    register_overlay!(
-        overlays,
-        egl,
-        "overlay-settings-tray",
-        "settings-tray",
-        Box::new(bmc_overlay_settings_tray::SettingsTrayOverlay::default())
-    );
+    for spec in overlay_specs() {
+        if overlay_enabled(spec.name) {
+            match HostedOverlay::connect((spec.make)(), egl) {
+                Ok(overlay) => overlays.push(overlay),
+                Err(error) => tracing::error!("failed to start {} overlay: {}", spec.name, error),
+            }
+        } else {
+            tracing::info!("overlay {} disabled via BMC_OVERLAY_* env var", spec.name);
+        }
+    }
     overlays
 }
 
@@ -329,7 +351,31 @@ pub fn render_hosted_overlay(
 
 #[cfg(test)]
 mod tests {
-    use super::overlay_enabled;
+    use super::{overlay_enabled, overlay_specs};
+
+    #[cfg(all(
+        feature = "overlay-alarm",
+        feature = "overlay-device-info",
+        feature = "overlay-offline",
+        feature = "overlay-settings-tray",
+        feature = "overlay-upgrade"
+    ))]
+    #[test]
+    fn default_registry_keeps_alarm_above_firmware() {
+        let names: Vec<_> = overlay_specs().into_iter().map(|spec| spec.name).collect();
+
+        assert_eq!(
+            names,
+            [
+                "upgrade-firmware",
+                "alarm",
+                "upgrade-packages",
+                "offline",
+                "device-info",
+                "settings-tray",
+            ]
+        );
+    }
 
     fn with_var<R>(key: &str, val: Option<&str>, f: impl FnOnce() -> R) -> R {
         let prev = std::env::var_os(key);

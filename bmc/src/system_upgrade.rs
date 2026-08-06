@@ -875,10 +875,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         self.display_state_service.subscribe()
     }
 
-    #[expect(
-        dead_code,
-        reason = "the post-reboot startup bridge consumes this API in the next upgrade-display step"
-    )]
     pub(crate) fn publish_post_reboot_success(&self) {
         self.display_state_service.publish_post_reboot_success();
     }
@@ -2473,8 +2469,8 @@ mod tests {
         use super::*;
         use crate::bootloader_config::BootloaderConfig;
         use crate::manager::{
-            BmcState, InitialSetupError, NetworkProtocolConfig, UpgradeError, WifiData, WifiEvent,
-            WifiNetworkConfig,
+            BmcState, InitialSetupError, NetworkProtocolConfig, UpgradeError, UpgradeMarker,
+            WifiData, WifiEvent, WifiNetworkConfig,
         };
         use crate::session;
         use axum_extra::extract::cookie::Cookie;
@@ -2622,7 +2618,7 @@ mod tests {
             ) -> Result<(), UpgradeError> {
                 unimplemented!("{UNREACHABLE}")
             }
-            async fn check_and_remove_upgrade_marker(&self) -> bool {
+            async fn consume_upgrade_marker(&self) -> UpgradeMarker {
                 unimplemented!("{UNREACHABLE}")
             }
             fn session_manager(&self) -> Self::SessionManager {
