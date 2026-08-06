@@ -51,6 +51,7 @@
 }:
 let
   lib = pkgs.lib;
+  inherit (import ./public-asset.nix { inherit lib; }) mkPublicIcon;
 
   # Reference-cleaning installPhase shared by the examples-bundle and per-widget
   # wasm builds. rustc bakes panic-location strings that point into
@@ -133,8 +134,10 @@ let
     let
       # The .wasm embeds its runtime assets; only the manifest icon needs
       # installing so the BMC /widgets/{uid}/icon endpoint can serve it.
+      # mkPublicIcon owns resolution and validation, so the installed copy
+      # can't accept an icon the published index copy rejects.
       icon = (builtins.fromJSON (builtins.readFile manifest)).icon or null;
-      iconSrc = if icon == null then null else builtins.dirOf manifest + "/${icon}";
+      iconSrc = if icon == null then null else mkPublicIcon manifest icon;
     in
     pkgs.runCommand "bmc-widget-${name}" { } ''
       base=$out/lib/bmc-widgets/${name}

@@ -39,13 +39,14 @@ let
   inherit (bmc) crates;
   inherit (deps) widgetRuntimeDeps frontend;
   lib = armv7Pkgs.lib;
+  inherit (import ./public-asset.nix { inherit lib; }) mkPublicIcon;
 
   # Widget release metadata surfaced into the package index so the frontend
   # add-a-widget menu can discover installable widgets. Version, description and
   # picker fields are read from the widget's `manifest.json` at eval time
-  # (read-only file read, no IFD). The icon path points into the built package's
-  # installed assets so upstream index tooling can collect and translate it.
-  mkWidgetMetadata = { name, pkg, manifest }:
+  # (read-only file read, no IFD). The icon path identifies a standalone flat
+  # store file so upstream index tooling can collect and translate it.
+  mkWidgetMetadata = { manifest }:
     let
       m = builtins.fromJSON (builtins.readFile manifest);
       icon = m.icon or null;
@@ -63,7 +64,7 @@ let
           subname = m.subname;
         };
       } // lib.optionalAttrs (icon != null) {
-        assets.icon = "${pkg}/lib/bmc-widgets/${name}/${icon}";
+        assets.icon = mkPublicIcon manifest icon;
       };
     };
 
@@ -75,7 +76,7 @@ let
         wasmDir = wasmWidgets.${name};
         inherit (entry) wasmFile manifest;
       };
-      meta = mkWidgetMetadata { inherit name pkg; inherit (entry) manifest; };
+      meta = mkWidgetMetadata { inherit (entry) manifest; };
     in
     {
       inherit pkg;
@@ -119,8 +120,6 @@ wasmWidgetPackages // {
         features = [ "standalone" ];
       };
       meta = mkWidgetMetadata {
-        name = "flip-clock";
-        inherit pkg;
         manifest = ../widgets/flip-clock/manifest.json;
       };
     in
