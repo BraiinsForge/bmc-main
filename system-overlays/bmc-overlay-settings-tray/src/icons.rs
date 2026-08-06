@@ -23,6 +23,7 @@
 
 use bmc_render::renderer::Renderer;
 use bmc_render_macros::include_svg;
+use bmc_system_overlay::register_icon;
 use bmc_wasm_protocol::SvgId;
 use bmc_wasm_sdk::assets::Svg;
 
@@ -55,11 +56,7 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> TrayIcons {
     // renderer. Registration returning None (parse failure or ID exhaustion)
     // leaves that icon's Option unset and the slot renders empty.
     let mut reg = |icon: &Svg| -> Option<SvgId> {
-        let id = renderer.register_svg(icon.name, icon.data);
-        if id.is_none() {
-            tracing::warn!("failed to register tray icon {}", icon.name);
-        }
-        id
+        register_icon(icon.name, || renderer.register_svg(icon.name, icon.data))
     };
     TrayIcons {
         wifi: WifiIcons {

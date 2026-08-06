@@ -57,6 +57,7 @@ members = [
     "system-overlays/bmc-overlay-device-info",
     "system-overlays/bmc-overlay-offline",
     "system-overlays/bmc-overlay-settings-tray",
+    "system-overlays/bmc-overlay-upgrade",
     "system-overlays/bmc-system-overlay",
     "system-overlays/layer-shell-test-client",
     "widgets/*",

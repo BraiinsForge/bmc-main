@@ -39,8 +39,10 @@ use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView,
     render_settings_tray,
 };
+use bmc_overlay_upgrade::{PACKAGE_SURFACE_SIZE, UpgradeRenderState, UpgradeView, render_upgrade};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
+use bmc_system_overlay::{DownloadProgress, UpgradeKind, UpgradePhase};
 
 story_meta! { title: "Overlays" }
 
@@ -200,6 +202,55 @@ fn alarm_cell(
         draw_backdrop(r, w, h, checker);
         state_key.with_borrow_mut(|state| {
             render_alarm(r, (w as u32, h as u32), state, &view);
+        });
+    })
+}
+
+macro_rules! upgrade_render_states {
+    ($($state:ident),+ $(,)?) => {
+        thread_local! {
+            $(static $state: RefCell<UpgradeRenderState> =
+                RefCell::new(UpgradeRenderState::new(Instant::now()));)+
+        }
+    };
+}
+
+upgrade_render_states!(
+    FIRMWARE_PREPARING,
+    FIRMWARE_KNOWN_DOWNLOAD,
+    FIRMWARE_UNKNOWN_DOWNLOAD,
+    FIRMWARE_VERIFYING,
+    FIRMWARE_PACKAGES_REALIZING,
+    FIRMWARE_PACKAGES_VERIFYING,
+    FIRMWARE_PACKAGES_BUILDING,
+    FIRMWARE_PACKAGES_ACTIVATING,
+    FIRMWARE_APPLYING,
+    FIRMWARE_SUCCESS,
+    FIRMWARE_FAILURE,
+    PACKAGE_PREPARING,
+    PACKAGE_KNOWN_DOWNLOAD,
+    PACKAGE_UNKNOWN_DOWNLOAD,
+    PACKAGE_VERIFYING,
+    PACKAGE_BUILDING,
+    PACKAGE_ACTIVATING,
+    PACKAGE_SUCCESS,
+    PACKAGE_FAILURE,
+);
+
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "storybook frame size to logical overlay size"
+)]
+fn upgrade_cell(
+    view: UpgradeView,
+    state_key: &'static LocalKey<RefCell<UpgradeRenderState>>,
+    checker: bool,
+) -> CustomRenderFn {
+    Box::new(move |r, _interaction, w, h, _delta| {
+        draw_backdrop(r, w, h, checker);
+        state_key.with_borrow_mut(|state| {
+            render_upgrade(r, (w as u32, h as u32), state, &view, Instant::now());
         });
     })
 }
@@ -531,5 +582,169 @@ fn alarm(ctx: &mut StoryCtx) {
                 ),
             );
         });
+    });
+}
+
+#[story]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one independently retained render state per upgrade design cell"
+)]
+fn upgrade_progress(ctx: &mut StoryCtx) {
+    let checker = ctx.toggle("Backdrop", true).get();
+    let known = Some(DownloadProgress {
+        downloaded_bytes: 82_000_000,
+        total_bytes: Some(151_000_000),
+    });
+    let unknown = Some(DownloadProgress {
+        downloaded_bytes: 82_000_000,
+        total_bytes: None,
+    });
+    let firmware = |phase, progress| UpgradeView::Running {
+        kind: UpgradeKind::Firmware,
+        phase,
+        progress,
+    };
+    let packages = |phase, progress| UpgradeView::Running {
+        kind: UpgradeKind::Packages,
+        phase,
+        progress,
+    };
+    ctx.ui.grid(1, 16.0, |grid| {
+        let mut firmware_cell = |title, detail, view, state| {
+            grid.cell(|ui| {
+                ui.header(title, detail);
+                ui.div_custom((DISPLAY_W, DISPLAY_H), upgrade_cell(view, state, checker));
+            });
+        };
+        firmware_cell(
+            "Firmware",
+            "Preparing",
+            firmware(None, None),
+            &FIRMWARE_PREPARING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Known-total download",
+            firmware(Some(UpgradePhase::FirmwareDownloading), known),
+            &FIRMWARE_KNOWN_DOWNLOAD,
+        );
+        firmware_cell(
+            "Firmware",
+            "Unknown-total download",
+            firmware(Some(UpgradePhase::FirmwareDownloading), unknown),
+            &FIRMWARE_UNKNOWN_DOWNLOAD,
+        );
+        firmware_cell(
+            "Firmware",
+            "Verifying",
+            firmware(Some(UpgradePhase::FirmwareVerifying), None),
+            &FIRMWARE_VERIFYING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Package realizing",
+            firmware(Some(UpgradePhase::PackageRealizing), None),
+            &FIRMWARE_PACKAGES_REALIZING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Package verifying",
+            firmware(Some(UpgradePhase::PackageVerifying), None),
+            &FIRMWARE_PACKAGES_VERIFYING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Package building",
+            firmware(Some(UpgradePhase::PackageBuilding), None),
+            &FIRMWARE_PACKAGES_BUILDING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Package activating",
+            firmware(Some(UpgradePhase::PackageActivating), None),
+            &FIRMWARE_PACKAGES_ACTIVATING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Applying",
+            firmware(Some(UpgradePhase::FirmwareApplying), None),
+            &FIRMWARE_APPLYING,
+        );
+        firmware_cell(
+            "Firmware",
+            "Success",
+            UpgradeView::Succeeded {
+                kind: UpgradeKind::Firmware,
+            },
+            &FIRMWARE_SUCCESS,
+        );
+        firmware_cell(
+            "Firmware",
+            "Failure",
+            UpgradeView::Failed {
+                kind: UpgradeKind::Firmware,
+            },
+            &FIRMWARE_FAILURE,
+        );
+
+        let mut package_cell = |title, detail, view, state| {
+            grid.cell(|ui| {
+                ui.header(title, detail);
+                ui.div_custom(PACKAGE_SURFACE_SIZE, upgrade_cell(view, state, checker));
+            });
+        };
+        package_cell(
+            "Packages",
+            "Preparing",
+            packages(None, None),
+            &PACKAGE_PREPARING,
+        );
+        package_cell(
+            "Packages",
+            "Known-total download",
+            packages(Some(UpgradePhase::PackageRealizing), known),
+            &PACKAGE_KNOWN_DOWNLOAD,
+        );
+        package_cell(
+            "Packages",
+            "Unknown-total download",
+            packages(Some(UpgradePhase::PackageRealizing), unknown),
+            &PACKAGE_UNKNOWN_DOWNLOAD,
+        );
+        package_cell(
+            "Packages",
+            "Verifying",
+            packages(Some(UpgradePhase::PackageVerifying), None),
+            &PACKAGE_VERIFYING,
+        );
+        package_cell(
+            "Packages",
+            "Building",
+            packages(Some(UpgradePhase::PackageBuilding), None),
+            &PACKAGE_BUILDING,
+        );
+        package_cell(
+            "Packages",
+            "Activating",
+            packages(Some(UpgradePhase::PackageActivating), None),
+            &PACKAGE_ACTIVATING,
+        );
+        package_cell(
+            "Packages",
+            "Success",
+            UpgradeView::Succeeded {
+                kind: UpgradeKind::Packages,
+            },
+            &PACKAGE_SUCCESS,
+        );
+        package_cell(
+            "Packages",
+            "Failure",
+            UpgradeView::Failed {
+                kind: UpgradeKind::Packages,
+            },
+            &PACKAGE_FAILURE,
+        );
     });
 }

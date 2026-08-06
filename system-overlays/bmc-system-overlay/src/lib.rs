@@ -23,6 +23,7 @@
 mod connectivity;
 mod gpu;
 mod hosted;
+mod icon;
 mod overlay;
 mod standalone;
 mod surface;
@@ -33,6 +34,7 @@ mod tree;
 pub use connectivity::{Snapshot, SnapshotVersion, VersionedSnapshot, snapshot_if_changed};
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
+pub use icon::register_icon;
 pub use overlay::{
     AlarmEvent, AlarmRequest, DownloadProgress, InputRegion, LayerConfig, ScreenEdge, SettingsCaps,
     SettingsRequest, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase,
