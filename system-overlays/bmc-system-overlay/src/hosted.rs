@@ -26,9 +26,9 @@ use bmc_widget::egl::{DmaBufInfo, EglContext};
 use crate::gpu::OverlayRenderTarget;
 use crate::overlay::{
     AlarmEvent, FenceState, HideFenceAction, HideFenceGate, MIN_INTER_FRAME, PollGate, RenderGate,
-    SystemOverlay, hide_fence_action, hide_fence_after_tick, overlay_needs_hide,
-    overlay_needs_render, overlay_poll_timeout, resize_transition, resolved_configured_size,
-    screen_edge_visible,
+    SystemOverlay, deliver_upgrade_snapshot_and_tick, hide_fence_action, hide_fence_after_tick,
+    overlay_needs_hide, overlay_needs_render, overlay_poll_timeout, resize_transition,
+    resolved_configured_size, screen_edge_visible,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -79,8 +79,12 @@ impl HostedOverlay {
     pub fn connect(mut overlay: Box<dyn SystemOverlay>, egl: &EglContext) -> anyhow::Result<Self> {
         let config = overlay.layer_config();
         let config_size = config.size;
-        let mut client =
-            LayerSurfaceClient::connect(&config, overlay.uses_settings(), overlay.uses_alarm())?;
+        let mut client = LayerSurfaceClient::connect(
+            &config,
+            overlay.uses_settings(),
+            overlay.uses_alarm(),
+            overlay.uses_upgrade(),
+        )?;
         let size = resolved_configured_size(config_size, client.size());
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
         let wants_render = client.take_needs_render();
@@ -209,7 +213,11 @@ impl HostedOverlay {
 
     /// Run background work; updates visibility, render-want and next-wake.
     pub fn tick(&mut self, now: Instant) {
-        let outcome = self.overlay.tick(now);
+        let outcome = deliver_upgrade_snapshot_and_tick(
+            &mut *self.overlay,
+            self.client.take_upgrade_snapshot(),
+            now,
+        );
         self.visible = match self.screen_edge {
             Some(_) => screen_edge_visible(self.revealed, outcome.visible),
             None => outcome.visible,

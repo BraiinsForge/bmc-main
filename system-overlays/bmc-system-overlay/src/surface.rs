@@ -32,6 +32,8 @@
 use std::time::{Duration, Instant};
 
 use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
+use ::deck_upgrade_v1::client::deck_upgrade_v1::{self, DeckUpgradeV1, Kind, Phase};
+use ::deck_upgrade_v1::join_u64;
 use anyhow::Context;
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
@@ -53,6 +55,240 @@ use bmc_widget::surface::{
 };
 use deck_screen_edge_v1::client::deck_auto_hide_screen_edge_v1::{self, DeckAutoHideScreenEdgeV1};
 use deck_screen_edge_v1::client::deck_screen_edge_manager_v1::{self, DeckScreenEdgeManagerV1};
+
+#[derive(Debug, Clone, Copy)]
+enum UpgradeTerminal {
+    Succeeded { remaining: Duration },
+    Failed { remaining: Duration },
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UpgradeCandidate {
+    kind: crate::overlay::UpgradeKind,
+    phase: Option<crate::overlay::UpgradePhase>,
+    progress: Option<crate::overlay::DownloadProgress>,
+    terminal: Option<UpgradeTerminal>,
+}
+
+#[derive(Debug, Clone, Copy)]
+enum UpgradeCandidateState {
+    Valid(UpgradeCandidate),
+    Invalid,
+}
+
+/// Decodes one complete `deck_upgrade_v1` snapshot at a time.
+///
+/// Malformed candidates remain invalid until `snapshot_done`, which prevents a
+/// later event in the same wire sequence from becoming a partial snapshot.
+#[derive(Debug, Default)]
+struct UpgradeDecoder {
+    candidate: Option<UpgradeCandidateState>,
+}
+
+impl UpgradeDecoder {
+    fn started(&mut self, kind: WEnum<Kind>) {
+        if self.candidate.is_some() {
+            self.invalidate_active();
+            return;
+        }
+
+        self.candidate = Some(match decode_upgrade_kind(kind) {
+            Some(kind) => UpgradeCandidateState::Valid(UpgradeCandidate {
+                kind,
+                phase: None,
+                progress: None,
+                terminal: None,
+            }),
+            None => UpgradeCandidateState::Invalid,
+        });
+    }
+
+    fn phase(&mut self, phase: WEnum<Phase>) {
+        if self.candidate.is_none() {
+            return;
+        }
+        let Some(phase) = decode_upgrade_phase(phase) else {
+            self.invalidate_active();
+            return;
+        };
+        let kind = match self.candidate {
+            Some(UpgradeCandidateState::Valid(UpgradeCandidate {
+                kind,
+                phase: None,
+                progress: None,
+                terminal: None,
+                ..
+            })) => kind,
+            Some(UpgradeCandidateState::Valid(_) | UpgradeCandidateState::Invalid) | None => {
+                self.invalidate_active();
+                return;
+            }
+        };
+        if !phase_is_valid_for_kind(kind, phase) {
+            self.invalidate_active();
+            return;
+        }
+        if let Some(UpgradeCandidateState::Valid(candidate)) = &mut self.candidate {
+            candidate.phase = Some(phase);
+        }
+    }
+
+    fn download_progress(&mut self, downloaded_bytes_hi: u32, downloaded_bytes_lo: u32) {
+        self.progress(crate::overlay::DownloadProgress {
+            downloaded_bytes: join_u64(downloaded_bytes_hi, downloaded_bytes_lo),
+            total_bytes: None,
+        });
+    }
+
+    fn download_progress_with_total(
+        &mut self,
+        downloaded_bytes_hi: u32,
+        downloaded_bytes_lo: u32,
+        total_bytes_hi: u32,
+        total_bytes_lo: u32,
+    ) {
+        self.progress(crate::overlay::DownloadProgress {
+            downloaded_bytes: join_u64(downloaded_bytes_hi, downloaded_bytes_lo),
+            total_bytes: Some(join_u64(total_bytes_hi, total_bytes_lo)),
+        });
+    }
+
+    fn progress(&mut self, progress: crate::overlay::DownloadProgress) {
+        if self.candidate.is_none() {
+            return;
+        }
+        if !matches!(
+            self.candidate,
+            Some(UpgradeCandidateState::Valid(UpgradeCandidate {
+                progress: None,
+                terminal: None,
+                ..
+            }))
+        ) {
+            self.invalidate_active();
+            return;
+        }
+        if let Some(UpgradeCandidateState::Valid(candidate)) = &mut self.candidate {
+            candidate.progress = Some(progress);
+        }
+    }
+
+    fn succeeded(&mut self, remaining_ms: u32) {
+        self.terminal(UpgradeTerminal::Succeeded {
+            remaining: Duration::from_millis(u64::from(remaining_ms)),
+        });
+    }
+
+    fn failed(&mut self, remaining_ms: u32) {
+        self.terminal(UpgradeTerminal::Failed {
+            remaining: Duration::from_millis(u64::from(remaining_ms)),
+        });
+    }
+
+    fn terminal(&mut self, terminal: UpgradeTerminal) {
+        if self.candidate.is_none() {
+            return;
+        }
+        if !matches!(
+            self.candidate,
+            Some(UpgradeCandidateState::Valid(UpgradeCandidate {
+                phase: None,
+                progress: None,
+                terminal: None,
+                ..
+            }))
+        ) {
+            self.invalidate_active();
+            return;
+        }
+        if let Some(UpgradeCandidateState::Valid(candidate)) = &mut self.candidate {
+            candidate.terminal = Some(terminal);
+        }
+    }
+
+    fn snapshot_done(&mut self) -> Option<crate::overlay::UpgradeSnapshot> {
+        let UpgradeCandidateState::Valid(candidate) = self.candidate.take()? else {
+            return None;
+        };
+        let state = match candidate.terminal {
+            Some(UpgradeTerminal::Succeeded { remaining }) => {
+                crate::overlay::UpgradeState::Succeeded { remaining }
+            }
+            Some(UpgradeTerminal::Failed { remaining }) => {
+                crate::overlay::UpgradeState::Failed { remaining }
+            }
+            None => crate::overlay::UpgradeState::Running {
+                phase: candidate.phase,
+                progress: candidate.progress,
+            },
+        };
+        Some(crate::overlay::UpgradeSnapshot {
+            kind: candidate.kind,
+            state,
+        })
+    }
+
+    fn invalidate_active(&mut self) {
+        if self.candidate.is_some() {
+            self.candidate = Some(UpgradeCandidateState::Invalid);
+        }
+    }
+}
+
+fn decode_upgrade_kind(kind: WEnum<Kind>) -> Option<crate::overlay::UpgradeKind> {
+    match kind {
+        WEnum::Value(Kind::Packages) => Some(crate::overlay::UpgradeKind::Packages),
+        WEnum::Value(Kind::Firmware) => Some(crate::overlay::UpgradeKind::Firmware),
+        WEnum::Unknown(_) | WEnum::Value(_) => None,
+    }
+}
+
+fn decode_upgrade_phase(phase: WEnum<Phase>) -> Option<crate::overlay::UpgradePhase> {
+    match phase {
+        WEnum::Value(Phase::FirmwareDownloading) => {
+            Some(crate::overlay::UpgradePhase::FirmwareDownloading)
+        }
+        WEnum::Value(Phase::FirmwareVerifying) => {
+            Some(crate::overlay::UpgradePhase::FirmwareVerifying)
+        }
+        WEnum::Value(Phase::FirmwareApplying) => {
+            Some(crate::overlay::UpgradePhase::FirmwareApplying)
+        }
+        WEnum::Value(Phase::PackageRealizing) => {
+            Some(crate::overlay::UpgradePhase::PackageRealizing)
+        }
+        WEnum::Value(Phase::PackageVerifying) => {
+            Some(crate::overlay::UpgradePhase::PackageVerifying)
+        }
+        WEnum::Value(Phase::PackageBuilding) => Some(crate::overlay::UpgradePhase::PackageBuilding),
+        WEnum::Value(Phase::PackageActivating) => {
+            Some(crate::overlay::UpgradePhase::PackageActivating)
+        }
+        WEnum::Unknown(_) | WEnum::Value(_) => None,
+    }
+}
+
+#[must_use]
+fn phase_is_valid_for_kind(
+    kind: crate::overlay::UpgradeKind,
+    phase: crate::overlay::UpgradePhase,
+) -> bool {
+    match kind {
+        crate::overlay::UpgradeKind::Firmware => true,
+        crate::overlay::UpgradeKind::Packages => matches!(
+            phase,
+            crate::overlay::UpgradePhase::PackageRealizing
+                | crate::overlay::UpgradePhase::PackageVerifying
+                | crate::overlay::UpgradePhase::PackageBuilding
+                | crate::overlay::UpgradePhase::PackageActivating
+        ),
+    }
+}
+
+#[must_use]
+fn should_bind_upgrade(interface: &str, wants_upgrade: bool) -> bool {
+    interface == "deck_upgrade_v1" && wants_upgrade
+}
 
 /// Wayland protocol state for a layer-shell overlay surface.
 ///
@@ -117,6 +353,15 @@ struct State {
     /// round keeps the ring — the trailing event wins, preserving wire order.
     pending_alarm_event: Option<AlarmEvent>,
 
+    /// Whether this overlay opted into `deck_upgrade_v1` (its
+    /// `SystemOverlay::uses_upgrade`).
+    wants_upgrade: bool,
+    upgrade: Option<DeckUpgradeV1>,
+    upgrade_decoder: UpgradeDecoder,
+    /// Latest coherent `deck_upgrade_v1` snapshot, drained by the framework
+    /// before its next tick.
+    pending_upgrade_snapshot: Option<crate::overlay::UpgradeSnapshot>,
+
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
     /// Compositor-suggested size from the latest Configure.
@@ -171,6 +416,10 @@ impl Default for State {
             wants_alarm: false,
             alarm: None,
             pending_alarm_event: None,
+            wants_upgrade: false,
+            upgrade: None,
+            upgrade_decoder: UpgradeDecoder::default(),
+            pending_upgrade_snapshot: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -214,6 +463,12 @@ impl State {
     /// Record an `alarm_stopped` into the single latest-wins alarm slot.
     fn note_alarm_stop(&mut self) {
         self.pending_alarm_event = Some(AlarmEvent::Stop);
+    }
+
+    fn finish_upgrade_snapshot(&mut self) {
+        if let Some(snapshot) = self.upgrade_decoder.snapshot_done() {
+            self.pending_upgrade_snapshot = Some(snapshot);
+        }
     }
 
     fn discard_unmap_configure(&mut self, previous_size: (u32, u32)) {
@@ -323,6 +578,7 @@ impl LayerSurfaceClient {
         config: &crate::overlay::LayerConfig,
         wants_settings: bool,
         wants_alarm: bool,
+        wants_upgrade: bool,
     ) -> anyhow::Result<Self> {
         let conn =
             Connection::connect_to_env().map_err(|e| anyhow::anyhow!("wayland connect: {e}"))?;
@@ -333,6 +589,7 @@ impl LayerSurfaceClient {
         let mut state = State {
             wants_settings,
             wants_alarm,
+            wants_upgrade,
             ..State::default()
         };
         queue
@@ -604,6 +861,10 @@ impl LayerSurfaceClient {
         self.state.pending_alarm_event.take()
     }
 
+    pub fn take_upgrade_snapshot(&mut self) -> Option<crate::overlay::UpgradeSnapshot> {
+        self.state.pending_upgrade_snapshot.take()
+    }
+
     pub fn send_settings_request(
         &self,
         req: crate::overlay::SettingsRequest,
@@ -765,6 +1026,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     let alarm = registry.bind::<DeckAlarmV1, _, _>(name, version.min(1), qh, ());
                     state.alarm = Some(alarm);
                 }
+                _ if should_bind_upgrade(interface.as_str(), state.wants_upgrade) => {
+                    let upgrade =
+                        registry.bind::<DeckUpgradeV1, _, _>(name, version.min(1), qh, ());
+                    state.upgrade = Some(upgrade);
+                }
                 _ => {}
             }
         }
@@ -909,6 +1175,47 @@ impl Dispatch<DeckAlarmV1, ()> for State {
                 state.note_alarm_stop();
             }
             other => tracing::debug!(?other, "unhandled deck_alarm_v1 event"),
+        }
+    }
+}
+
+impl Dispatch<DeckUpgradeV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckUpgradeV1,
+        event: deck_upgrade_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        match event {
+            deck_upgrade_v1::Event::Started { kind } => state.upgrade_decoder.started(kind),
+            deck_upgrade_v1::Event::Phase { phase } => state.upgrade_decoder.phase(phase),
+            deck_upgrade_v1::Event::DownloadProgress {
+                downloaded_bytes_hi,
+                downloaded_bytes_lo,
+            } => state
+                .upgrade_decoder
+                .download_progress(downloaded_bytes_hi, downloaded_bytes_lo),
+            deck_upgrade_v1::Event::DownloadProgressWithTotal {
+                downloaded_bytes_hi,
+                downloaded_bytes_lo,
+                total_bytes_hi,
+                total_bytes_lo,
+            } => state.upgrade_decoder.download_progress_with_total(
+                downloaded_bytes_hi,
+                downloaded_bytes_lo,
+                total_bytes_hi,
+                total_bytes_lo,
+            ),
+            deck_upgrade_v1::Event::Succeeded { remaining_ms } => {
+                state.upgrade_decoder.succeeded(remaining_ms);
+            }
+            deck_upgrade_v1::Event::Failed { remaining_ms } => {
+                state.upgrade_decoder.failed(remaining_ms);
+            }
+            deck_upgrade_v1::Event::SnapshotDone => state.finish_upgrade_snapshot(),
+            other => tracing::debug!(?other, "unhandled deck_upgrade_v1 event"),
         }
     }
 }
@@ -1083,6 +1390,395 @@ impl Dispatch<wl_touch::WlTouch, ()> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn running_snapshot(
+        kind: crate::overlay::UpgradeKind,
+        phase: Option<crate::overlay::UpgradePhase>,
+        progress: Option<crate::overlay::DownloadProgress>,
+    ) -> crate::overlay::UpgradeSnapshot {
+        crate::overlay::UpgradeSnapshot {
+            kind,
+            state: crate::overlay::UpgradeState::Running { phase, progress },
+        }
+    }
+
+    fn assert_invalid_upgrade_sequence(build: impl FnOnce(&mut UpgradeDecoder)) {
+        let mut decoder = UpgradeDecoder::default();
+        build(&mut decoder);
+        assert_eq!(
+            decoder.snapshot_done(),
+            None,
+            "malformed sequence must not publish a partial snapshot"
+        );
+    }
+
+    #[test]
+    fn upgrade_binding_requires_explicit_opt_in() {
+        assert!(should_bind_upgrade("deck_upgrade_v1", true));
+        assert!(!should_bind_upgrade("deck_upgrade_v1", false));
+        assert!(!should_bind_upgrade("deck_alarm_v1", true));
+    }
+
+    #[test]
+    fn firmware_upgrade_decoder_accepts_every_known_phase() {
+        for (wire_phase, phase) in [
+            (
+                Phase::FirmwareDownloading,
+                crate::overlay::UpgradePhase::FirmwareDownloading,
+            ),
+            (
+                Phase::FirmwareVerifying,
+                crate::overlay::UpgradePhase::FirmwareVerifying,
+            ),
+            (
+                Phase::FirmwareApplying,
+                crate::overlay::UpgradePhase::FirmwareApplying,
+            ),
+            (
+                Phase::PackageRealizing,
+                crate::overlay::UpgradePhase::PackageRealizing,
+            ),
+            (
+                Phase::PackageVerifying,
+                crate::overlay::UpgradePhase::PackageVerifying,
+            ),
+            (
+                Phase::PackageBuilding,
+                crate::overlay::UpgradePhase::PackageBuilding,
+            ),
+            (
+                Phase::PackageActivating,
+                crate::overlay::UpgradePhase::PackageActivating,
+            ),
+        ] {
+            let mut decoder = UpgradeDecoder::default();
+            decoder.started(WEnum::Value(Kind::Firmware));
+            decoder.phase(WEnum::Value(wire_phase));
+
+            assert_eq!(
+                decoder.snapshot_done(),
+                Some(running_snapshot(
+                    crate::overlay::UpgradeKind::Firmware,
+                    Some(phase),
+                    None,
+                )),
+                "firmware upgrade must accept {wire_phase:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn package_upgrade_decoder_accepts_only_package_phases() {
+        for (wire_phase, phase) in [
+            (
+                Phase::PackageRealizing,
+                crate::overlay::UpgradePhase::PackageRealizing,
+            ),
+            (
+                Phase::PackageVerifying,
+                crate::overlay::UpgradePhase::PackageVerifying,
+            ),
+            (
+                Phase::PackageBuilding,
+                crate::overlay::UpgradePhase::PackageBuilding,
+            ),
+            (
+                Phase::PackageActivating,
+                crate::overlay::UpgradePhase::PackageActivating,
+            ),
+        ] {
+            let mut decoder = UpgradeDecoder::default();
+            decoder.started(WEnum::Value(Kind::Packages));
+            decoder.phase(WEnum::Value(wire_phase));
+            assert_eq!(
+                decoder.snapshot_done(),
+                Some(running_snapshot(
+                    crate::overlay::UpgradeKind::Packages,
+                    Some(phase),
+                    None,
+                ))
+            );
+        }
+
+        for phase in [
+            Phase::FirmwareDownloading,
+            Phase::FirmwareVerifying,
+            Phase::FirmwareApplying,
+        ] {
+            assert_invalid_upgrade_sequence(|decoder| {
+                decoder.started(WEnum::Value(Kind::Packages));
+                decoder.phase(WEnum::Value(phase));
+            });
+        }
+    }
+
+    #[test]
+    fn upgrade_decoder_ignores_events_before_started() {
+        let mut decoder = UpgradeDecoder::default();
+
+        decoder.phase(WEnum::Value(Phase::PackageRealizing));
+        decoder.download_progress(0, 3);
+        decoder.download_progress_with_total(0, 3, 0, 5);
+        decoder.succeeded(10);
+        decoder.failed(10);
+        assert_eq!(decoder.snapshot_done(), None);
+
+        decoder.started(WEnum::Value(Kind::Packages));
+        assert_eq!(
+            decoder.snapshot_done(),
+            Some(running_snapshot(
+                crate::overlay::UpgradeKind::Packages,
+                None,
+                None,
+            ))
+        );
+    }
+
+    #[test]
+    fn unknown_upgrade_enums_invalidate_the_candidate_until_done() {
+        let mut decoder = UpgradeDecoder::default();
+        decoder.started(WEnum::Unknown(99));
+        decoder.phase(WEnum::Value(Phase::PackageRealizing));
+        assert_eq!(decoder.snapshot_done(), None);
+
+        decoder.started(WEnum::Value(Kind::Firmware));
+        decoder.phase(WEnum::Unknown(99));
+        assert_eq!(decoder.snapshot_done(), None);
+    }
+
+    #[test]
+    fn upgrade_decoder_preserves_both_progress_forms_and_u64_boundaries() {
+        let boundaries = [(0, 0), (0, u32::MAX), (1, 0), (u32::MAX, u32::MAX)];
+
+        for (high, low) in boundaries {
+            let mut decoder = UpgradeDecoder::default();
+            decoder.started(WEnum::Value(Kind::Packages));
+            decoder.download_progress(high, low);
+            assert_eq!(
+                decoder.snapshot_done(),
+                Some(running_snapshot(
+                    crate::overlay::UpgradeKind::Packages,
+                    None,
+                    Some(crate::overlay::DownloadProgress {
+                        downloaded_bytes: join_u64(high, low),
+                        total_bytes: None,
+                    }),
+                )),
+                "unknown-total progress must preserve {high:#x}:{low:#x}"
+            );
+        }
+
+        let mut decoder = UpgradeDecoder::default();
+        decoder.started(WEnum::Value(Kind::Firmware));
+        decoder.download_progress_with_total(1, 0, u32::MAX, u32::MAX);
+        assert_eq!(
+            decoder.snapshot_done(),
+            Some(running_snapshot(
+                crate::overlay::UpgradeKind::Firmware,
+                None,
+                Some(crate::overlay::DownloadProgress {
+                    downloaded_bytes: u64::from(u32::MAX) + 1,
+                    total_bytes: Some(u64::MAX),
+                }),
+            ))
+        );
+
+        let mut decoder = UpgradeDecoder::default();
+        decoder.started(WEnum::Value(Kind::Packages));
+        decoder.phase(WEnum::Value(Phase::PackageRealizing));
+        decoder.download_progress_with_total(0, 3, 0, 5);
+        assert_eq!(
+            decoder.snapshot_done(),
+            Some(running_snapshot(
+                crate::overlay::UpgradeKind::Packages,
+                Some(crate::overlay::UpgradePhase::PackageRealizing),
+                Some(crate::overlay::DownloadProgress {
+                    downloaded_bytes: 3,
+                    total_bytes: Some(5),
+                }),
+            ))
+        );
+    }
+
+    #[test]
+    fn terminal_upgrade_snapshots_require_no_phase_or_progress() {
+        let mut decoder = UpgradeDecoder::default();
+        decoder.started(WEnum::Value(Kind::Firmware));
+        decoder.succeeded(1_500);
+        assert_eq!(
+            decoder.snapshot_done(),
+            Some(crate::overlay::UpgradeSnapshot {
+                kind: crate::overlay::UpgradeKind::Firmware,
+                state: crate::overlay::UpgradeState::Succeeded {
+                    remaining: Duration::from_millis(1_500),
+                },
+            })
+        );
+
+        let mut decoder = UpgradeDecoder::default();
+        decoder.started(WEnum::Value(Kind::Packages));
+        decoder.failed(250);
+        assert_eq!(
+            decoder.snapshot_done(),
+            Some(crate::overlay::UpgradeSnapshot {
+                kind: crate::overlay::UpgradeKind::Packages,
+                state: crate::overlay::UpgradeState::Failed {
+                    remaining: Duration::from_millis(250),
+                },
+            })
+        );
+    }
+
+    #[test]
+    fn duplicate_and_misordered_upgrade_events_invalidate_until_done() {
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Packages));
+            decoder.phase(WEnum::Value(Phase::PackageRealizing));
+            decoder.phase(WEnum::Value(Phase::PackageVerifying));
+        });
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Packages));
+            decoder.download_progress(0, 1);
+            decoder.download_progress_with_total(0, 1, 0, 2);
+        });
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Packages));
+            decoder.download_progress(0, 1);
+            decoder.phase(WEnum::Value(Phase::PackageRealizing));
+        });
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Firmware));
+            decoder.phase(WEnum::Value(Phase::FirmwareDownloading));
+            decoder.succeeded(1);
+        });
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Firmware));
+            decoder.failed(1);
+            decoder.download_progress(0, 1);
+        });
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Firmware));
+            decoder.succeeded(1);
+            decoder.failed(1);
+        });
+        assert_invalid_upgrade_sequence(|decoder| {
+            decoder.started(WEnum::Value(Kind::Firmware));
+            decoder.started(WEnum::Value(Kind::Packages));
+        });
+    }
+
+    #[test]
+    fn invalid_upgrade_candidate_preserves_pending_valid_snapshot() {
+        let valid = running_snapshot(
+            crate::overlay::UpgradeKind::Packages,
+            Some(crate::overlay::UpgradePhase::PackageRealizing),
+            None,
+        );
+        let mut state = State::default();
+        state.upgrade_decoder.started(WEnum::Value(Kind::Packages));
+        state
+            .upgrade_decoder
+            .phase(WEnum::Value(Phase::PackageRealizing));
+        state.finish_upgrade_snapshot();
+
+        state.upgrade_decoder.started(WEnum::Value(Kind::Firmware));
+        state.upgrade_decoder.phase(WEnum::Unknown(99));
+        state.finish_upgrade_snapshot();
+
+        assert_eq!(state.pending_upgrade_snapshot, Some(valid));
+    }
+
+    #[derive(Default)]
+    struct UpgradeObserver {
+        snapshot: Option<crate::overlay::UpgradeSnapshot>,
+        calls: Vec<&'static str>,
+    }
+
+    impl crate::overlay::SystemOverlay for UpgradeObserver {
+        fn layer_config(&self) -> crate::overlay::LayerConfig {
+            crate::overlay::LayerConfig::fullscreen("upgrade-observer")
+        }
+
+        fn tick(&mut self, _now: Instant) -> crate::overlay::TickOutcome {
+            self.calls.push("tick");
+            crate::overlay::TickOutcome::default()
+        }
+
+        fn render(
+            &mut self,
+            _renderer: &mut dyn bmc_render::renderer::Renderer,
+            _size: (u32, u32),
+        ) {
+        }
+
+        fn uses_upgrade(&self) -> bool {
+            true
+        }
+
+        fn on_upgrade_state(&mut self, snapshot: crate::overlay::UpgradeSnapshot) {
+            self.calls.push("upgrade");
+            self.snapshot = Some(snapshot);
+        }
+    }
+
+    #[test]
+    fn malformed_sequences_preserve_the_snapshot_delivered_before_tick() {
+        let valid = running_snapshot(
+            crate::overlay::UpgradeKind::Packages,
+            Some(crate::overlay::UpgradePhase::PackageRealizing),
+            None,
+        );
+        let mut state = State::default();
+        state.upgrade_decoder.started(WEnum::Value(Kind::Packages));
+        state
+            .upgrade_decoder
+            .phase(WEnum::Value(Phase::PackageRealizing));
+        state.finish_upgrade_snapshot();
+
+        state.upgrade_decoder.started(WEnum::Unknown(99));
+        state.finish_upgrade_snapshot();
+
+        state.upgrade_decoder.started(WEnum::Value(Kind::Packages));
+        state.upgrade_decoder.download_progress(0, 1);
+        state
+            .upgrade_decoder
+            .phase(WEnum::Value(Phase::PackageVerifying));
+        state.finish_upgrade_snapshot();
+
+        state.upgrade_decoder.started(WEnum::Value(Kind::Firmware));
+        state.upgrade_decoder.phase(WEnum::Unknown(99));
+        state.finish_upgrade_snapshot();
+
+        let mut observer = UpgradeObserver::default();
+        let _ = crate::overlay::deliver_upgrade_snapshot_and_tick(
+            &mut observer,
+            state.pending_upgrade_snapshot.take(),
+            Instant::now(),
+        );
+
+        assert_eq!(observer.snapshot, Some(valid));
+        assert_eq!(observer.calls, vec!["upgrade", "tick"]);
+    }
+
+    #[test]
+    fn latest_completed_upgrade_snapshot_wins_before_take() {
+        let mut state = State::default();
+        state.upgrade_decoder.started(WEnum::Value(Kind::Packages));
+        state.finish_upgrade_snapshot();
+        state.upgrade_decoder.started(WEnum::Value(Kind::Firmware));
+        state.upgrade_decoder.succeeded(500);
+        state.finish_upgrade_snapshot();
+
+        assert_eq!(
+            state.pending_upgrade_snapshot,
+            Some(crate::overlay::UpgradeSnapshot {
+                kind: crate::overlay::UpgradeKind::Firmware,
+                state: crate::overlay::UpgradeState::Succeeded {
+                    remaining: Duration::from_millis(500),
+                },
+            })
+        );
+    }
 
     #[test]
     fn screen_edge_hidden_clears_pending_reveal() {
