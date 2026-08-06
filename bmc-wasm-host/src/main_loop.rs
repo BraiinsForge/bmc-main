@@ -77,9 +77,8 @@ impl HostLifetime {
 /// Pure-function inputs that `compute_poll_timeout_from_inputs` consumes per slot.
 ///
 /// Extracted so the timeout policy can be unit-tested in isolation without standing up
-/// a real `WidgetSlot` (which needs an EGL context, a Wayland connection, and a wasmi
-/// store). The thin `compute_poll_timeout` wrapper below collects these from each slot
-/// in production.
+/// a `WidgetSlot` (which needs a wasm runtime). The thin `compute_poll_timeout` wrapper
+/// below collects these from each slot in production.
 ///
 /// `min_inter_frame_remaining` collapses the production code's two-call pattern
 /// (`has_min_inter_frame_elapsed` then `min_inter_frame_remaining`) into a single
@@ -298,7 +297,7 @@ pub fn drain_and_shutdown(
     for id in ids {
         if let Some(slot) = slots.remove(&id) {
             tracing::info!(
-                peer_pid = slot.peer_pid,
+                peer_pid = ?slot.peer_pid,
                 wasm = %slot.wasm_basename,
                 "slot drained on fatal exit",
             );
@@ -371,7 +370,7 @@ fn drain_accept_burst(
                 let peer_pid = slot.peer_pid;
                 let wasm = slot.wasm_basename.clone();
                 let slot_id = slots.insert(slot);
-                tracing::info!(slot_id, peer_pid, wasm = %wasm, "slot inserted");
+                tracing::info!(slot_id, ?peer_pid, wasm = %wasm, "slot inserted");
                 loaded += 1;
             }
             Err(e) => {
@@ -507,7 +506,7 @@ fn run_loop(
                 continue;
             }
             let now = Instant::now();
-            slot.apply_lifecycle(now, shared);
+            slot.apply_lifecycle(now, &shared.egl);
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
             slot.runtime.poll_deliveries_with_renderer(renderer_ptr);
             slot.refresh_next_runtime_frame_after_delivery(now);
@@ -547,7 +546,7 @@ fn run_loop(
             match result {
                 Ok(Ok(bmc_wasm_runtime::RenderStatus::Ok)) => {}
                 Ok(Ok(bmc_wasm_runtime::RenderStatus::FuelExhausted)) => tracing::warn!(
-                    peer_pid = slot.peer_pid, wasm = %slot.wasm_basename,
+                    peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename,
                     "widget exceeded fuel budget"
                 ),
                 Ok(Ok(bmc_wasm_runtime::RenderStatus::Dead)) => {
@@ -555,7 +554,7 @@ fn run_loop(
                         return Err(FatalError::EglContextLost);
                     }
                     tracing::error!(
-                        peer_pid = slot.peer_pid, wasm = %slot.wasm_basename,
+                        peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename,
                         "widget runtime dead; tearing down slot"
                     );
                     to_teardown.push(*id);
@@ -565,7 +564,7 @@ fn run_loop(
                         return Err(FatalError::EglContextLost);
                     }
                     tracing::error!(
-                        peer_pid = slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
+                        peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
                         "widget render failed; tearing down slot"
                     );
                     to_teardown.push(*id);
@@ -575,7 +574,7 @@ fn run_loop(
                         return Err(FatalError::EglContextLost);
                     }
                     tracing::error!(
-                        peer_pid = slot.peer_pid, wasm = %slot.wasm_basename,
+                        peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename,
                         "widget render panicked; tearing down slot"
                     );
                     to_teardown.push(*id);
@@ -642,7 +641,7 @@ fn run_loop(
         if !to_teardown.is_empty() {
             for id in to_teardown {
                 if let Some(slot) = slots.remove(&id) {
-                    tracing::info!(peer_pid = slot.peer_pid, wasm = %slot.wasm_basename, "slot teardown");
+                    tracing::info!(peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, "slot teardown");
                     slot.shutdown(shared, renderer);
                 }
             }

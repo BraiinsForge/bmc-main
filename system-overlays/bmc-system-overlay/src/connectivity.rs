@@ -245,6 +245,17 @@ impl SnapshotVersion {
     /// Version of the prober's first publish; a fixed point for test doubles
     /// that fake a single published snapshot.
     pub const FIRST: Self = Self(NonZeroU64::MIN);
+
+    /// The version after `self`, for test doubles faking a sequence
+    /// of publishes.
+    #[must_use]
+    pub fn next(self) -> Self {
+        Self(
+            self.0
+                .checked_add(1)
+                .expect("BUG: SnapshotVersion overflowed u64"),
+        )
+    }
 }
 
 /// A published [`Snapshot`] paired with its change marker.

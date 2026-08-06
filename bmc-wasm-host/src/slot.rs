@@ -34,7 +34,7 @@ use bmc_wasm_runtime::{
     RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
-use bmc_widget::surface::{DeckWidgetSurfaceClient, WidgetEvent, WidgetSurface};
+use bmc_widget::surface::{DeckWidgetSurfaceClient, ReleasedBuffer, WidgetEvent, WidgetSurface};
 use bmc_widget_protocol::{
     ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
     RgbColor, SettingUpdate,
@@ -55,8 +55,8 @@ const _: () = assert!(
 
 use crate::host::SharedHost;
 use crate::lifecycle::{
-    LifecycleHook, LifecycleState, LifecycleStateMachine, SlotApplyCtx, frame_callback_enabled,
-    lifecycle_hook, should_render,
+    LifecycleEgl, LifecycleHook, LifecycleState, LifecycleStateMachine, LifecycleSurface,
+    SlotApplyCtx, frame_callback_enabled, lifecycle_hook, should_render,
 };
 use crate::render_target::{EglRenderTarget, RenderTarget, RenderTargetFactory};
 
@@ -184,9 +184,51 @@ pub fn classify_control_socket_read(
     }
 }
 
+/// The surface operations `WidgetSlot` uses beyond [`WidgetSurface`] —
+/// the seam that lets tests drive slot logic over a stub surface.
+pub trait SlotSurface: WidgetSurface + LifecycleSurface {
+    fn request_action(&self, action: &ActionPayload) -> Result<()>;
+    fn submit_buffer_with_wl_buffer(
+        &self,
+        info: &bmc_widget::egl::DmaBufInfo,
+        buffer: &wayland_client::protocol::wl_buffer::WlBuffer,
+        request_frame: bool,
+    ) -> Result<()>;
+    fn flush(&self) -> Result<()>;
+    fn drain_released_buffers(&mut self) -> Vec<ReleasedBuffer>;
+    fn fd(&self) -> std::os::fd::BorrowedFd<'_>;
+}
+
+impl SlotSurface for DeckWidgetSurfaceClient {
+    fn request_action(&self, action: &ActionPayload) -> Result<()> {
+        DeckWidgetSurfaceClient::request_action(self, action)
+    }
+
+    fn submit_buffer_with_wl_buffer(
+        &self,
+        info: &bmc_widget::egl::DmaBufInfo,
+        buffer: &wayland_client::protocol::wl_buffer::WlBuffer,
+        request_frame: bool,
+    ) -> Result<()> {
+        DeckWidgetSurfaceClient::submit_buffer_with_wl_buffer(self, info, buffer, request_frame)
+    }
+
+    fn flush(&self) -> Result<()> {
+        DeckWidgetSurfaceClient::flush(self)
+    }
+
+    fn drain_released_buffers(&mut self) -> Vec<ReleasedBuffer> {
+        DeckWidgetSurfaceClient::drain_released_buffers(self)
+    }
+
+    fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        DeckWidgetSurfaceClient::fd(self)
+    }
+}
+
 #[expect(missing_debug_implementations)]
-pub struct WidgetSlot {
-    pub surface: DeckWidgetSurfaceClient,
+pub struct WidgetSlot<S = DeckWidgetSurfaceClient> {
+    pub surface: S,
     pub runtime: WasmWidgetRuntime,
     pub lifecycle: LifecycleStateMachine,
     pub render_target: Option<RenderTarget>,
@@ -212,7 +254,7 @@ pub struct WidgetSlot {
     pub last_network_info: NetworkInfo,
     pub credentials: bmc_wasm_runtime::CredentialView,
     pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
-    pub peer_pid: libc::pid_t,
+    pub peer_pid: Option<libc::pid_t>,
     pub wasm_basename: String,
     /// Asset-cache bucket token, published to the host's GC-root file so the
     /// cross-host cache GC keeps this bucket alive. `None` if no cache identity.
@@ -234,23 +276,34 @@ pub struct WidgetSlot {
     led_rx: mpsc::Receiver<LedRequest>,
 }
 
+#[derive(Default)]
+struct SlotIdentity {
+    initial_params: Map<String, Value>,
+    pending_system: SystemSnapshot,
+    credentials: bmc_wasm_runtime::CredentialView,
+    credential_secrets: bmc_widget_protocol::CredentialSecrets,
+    peer_pid: Option<libc::pid_t>,
+    wasm_basename: String,
+    cache_token: Option<String>,
+}
+
 impl WidgetSlot {
     pub fn from_handshake(
         wasm_path: &Path,
         wayland_fd: std::os::fd::OwnedFd,
         control_socket: UnixStream,
-        peer_pid: libc::pid_t,
+        peer_pid: Option<libc::pid_t>,
         factory: Rc<dyn RenderTargetFactory>,
     ) -> Result<Self> {
         tracing::info!(
-            peer_pid,
+            ?peer_pid,
             wasm = %wasm_path.display(),
             "connecting widget Wayland fd"
         );
         let (surface, initial) = DeckWidgetSurfaceClient::connect_with_fd(wayland_fd)
             .context("DeckWidgetSurfaceClient::connect_with_fd")?;
         tracing::info!(
-            peer_pid,
+            ?peer_pid,
             wasm = %wasm_path.display(),
             w = initial.width,
             h = initial.height,
@@ -261,7 +314,7 @@ impl WidgetSlot {
         let wasm_bytes =
             std::fs::read(wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
         tracing::info!(
-            peer_pid,
+            ?peer_pid,
             wasm = %wasm_path.display(),
             bytes = wasm_bytes.len(),
             "wasm module read"
@@ -309,14 +362,65 @@ impl WidgetSlot {
             },
         )?;
         tracing::info!(
-            peer_pid,
+            ?peer_pid,
             wasm = %wasm_path.display(),
             w = initial.width,
             h = initial.height,
             "wasm runtime initialized; waiting for lifecycle event"
         );
 
-        Ok(Self {
+        let identity = SlotIdentity {
+            initial_params: initial.params,
+            pending_system,
+            credentials,
+            credential_secrets,
+            peer_pid,
+            wasm_basename: wasm_path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default(),
+            cache_token: Some(token),
+        };
+        Ok(WidgetSlot::from_parts_with_identity(
+            surface,
+            runtime,
+            factory,
+            control_socket,
+            led_rx,
+            identity,
+        ))
+    }
+}
+
+impl<S: SlotSurface> WidgetSlot<S> {
+    /// A slot over an injected surface and runtime,
+    /// everything else at its initial state.
+    pub fn from_parts(
+        surface: S,
+        runtime: WasmWidgetRuntime,
+        factory: Rc<dyn RenderTargetFactory>,
+        control_socket: UnixStream,
+        led_rx: mpsc::Receiver<LedRequest>,
+    ) -> Self {
+        Self::from_parts_with_identity(
+            surface,
+            runtime,
+            factory,
+            control_socket,
+            led_rx,
+            SlotIdentity::default(),
+        )
+    }
+
+    fn from_parts_with_identity(
+        surface: S,
+        runtime: WasmWidgetRuntime,
+        factory: Rc<dyn RenderTargetFactory>,
+        control_socket: UnixStream,
+        led_rx: mpsc::Receiver<LedRequest>,
+        identity: SlotIdentity,
+    ) -> Self {
+        Self {
             surface,
             runtime,
             lifecycle: LifecycleStateMachine::new(),
@@ -326,25 +430,22 @@ impl WidgetSlot {
             last_render_at: None,
             monotonic_origin: Instant::now(),
             frame_count: 0,
-            initial_params: initial.params,
-            pending_system,
+            initial_params: identity.initial_params,
+            pending_system: identity.pending_system,
             snapshot_version: None,
             last_network_info: NetworkInfo::default(),
-            credentials,
-            credential_secrets,
-            peer_pid,
-            wasm_basename: wasm_path
-                .file_name()
-                .map(|s| s.to_string_lossy().into_owned())
-                .unwrap_or_default(),
-            cache_token: Some(token),
+            credentials: identity.credentials,
+            credential_secrets: identity.credential_secrets,
+            peer_pid: identity.peer_pid,
+            wasm_basename: identity.wasm_basename,
+            cache_token: identity.cache_token,
             control_socket,
             next_frame_due_at: None,
             rendered_since_acquire: false,
             forced_render_pending: false,
             touch_drop_logged: false,
             led_rx,
-        })
+        }
     }
 
     /// Drain LED requests from the runtime and forward each one as a
@@ -366,8 +467,19 @@ impl WidgetSlot {
     /// from `on_network_update` — the host never marks the surface dirty
     /// for network changes.
     pub fn refresh_network(&mut self) {
+        self.refresh_network_from(bmc_system_overlay::snapshot_if_changed);
+    }
+
+    /// [`refresh_network`](Self::refresh_network) with the prober injected,
+    /// so tests can drive this path with fake snapshots.
+    pub fn refresh_network_from(
+        &mut self,
+        snapshot_if_changed: impl FnOnce(
+            Option<bmc_system_overlay::SnapshotVersion>,
+        ) -> Option<bmc_system_overlay::VersionedSnapshot>,
+    ) {
         let Some(bmc_system_overlay::VersionedSnapshot { version, snapshot }) =
-            bmc_system_overlay::snapshot_if_changed(self.snapshot_version)
+            snapshot_if_changed(self.snapshot_version)
         else {
             return;
         };
@@ -404,7 +516,7 @@ impl WidgetSlot {
         let mut touch_dirty = false;
         let mut touch_dropped = false;
         let accepts_touch = self.runtime.exports_on_touch();
-        for event in <DeckWidgetSurfaceClient as WidgetSurface>::drain_events(&mut self.surface) {
+        for event in WidgetSurface::drain_events(&mut self.surface) {
             let is_touch = matches!(
                 event,
                 WidgetEvent::TouchDown { .. }
@@ -491,7 +603,7 @@ impl WidgetSlot {
         }
         self.touch_drop_logged = true;
         tracing::debug!(
-            peer_pid = self.peer_pid,
+            peer_pid = ?self.peer_pid,
             wasm = %self.wasm_basename,
             "dropping touch events: widget does not export on_touch"
         );
@@ -691,14 +803,14 @@ impl WidgetSlot {
         self.runtime.set_time(system_time, self.monotonic_ms(now));
     }
 
-    pub fn apply_lifecycle(&mut self, now: Instant, shared: &SharedHost) {
+    pub fn apply_lifecycle(&mut self, now: Instant, egl: &dyn LifecycleEgl) {
         let previous = self.lifecycle.current();
         let had_render_target = self.render_target.is_some();
         let w = self.surface.width();
         let h = self.surface.height();
         let mut ctx = SlotApplyCtx {
             factory: &self.factory,
-            egl: &shared.egl,
+            egl,
             surface: &mut self.surface,
             render_target: &mut self.render_target,
             retired_render_targets: &mut self.retired_render_targets,
@@ -712,7 +824,7 @@ impl WidgetSlot {
         let current = self.lifecycle.current();
         if previous != current {
             tracing::debug!(
-                peer_pid = self.peer_pid,
+                peer_pid = ?self.peer_pid,
                 wasm = %self.wasm_basename,
                 ?previous,
                 ?current,
@@ -822,7 +934,7 @@ impl WidgetSlot {
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
             tracing::info!(
-                peer_pid = self.peer_pid,
+                peer_pid = ?self.peer_pid,
                 wasm = %self.wasm_basename,
                 frame = self.frame_count,
                 delta_ms,
@@ -832,7 +944,7 @@ impl WidgetSlot {
             );
         } else {
             tracing::debug!(
-                peer_pid = self.peer_pid,
+                peer_pid = ?self.peer_pid,
                 wasm = %self.wasm_basename,
                 frame = self.frame_count,
                 delta_ms,
@@ -879,7 +991,7 @@ impl WidgetSlot {
         let evicted_renderer_assets = evict_renderer_assets(renderer, &asset_namespace);
         if evicted_renderer_assets > 0 {
             tracing::debug!(
-                peer_pid = self.peer_pid,
+                peer_pid = ?self.peer_pid,
                 wasm = %self.wasm_basename,
                 asset_namespace = %asset_namespace,
                 evicted_renderer_assets,
@@ -904,7 +1016,7 @@ impl WidgetSlot {
     ) {
         if system_dirty {
             tracing::info!(
-                peer_pid = self.peer_pid,
+                peer_pid = ?self.peer_pid,
                 wasm = %self.wasm_basename,
                 "settings drained from wayland — delivering system snapshot to runtime"
             );
@@ -916,7 +1028,7 @@ impl WidgetSlot {
             && let Ok(table) = bmc_wasm_runtime::parse_params_json(&params)
         {
             tracing::info!(
-                peer_pid = self.peer_pid,
+                peer_pid = ?self.peer_pid,
                 wasm = %self.wasm_basename,
                 params = table.len(),
                 "param update received"
@@ -947,7 +1059,7 @@ impl WidgetSlot {
         }
 
         tracing::info!(
-            peer_pid = self.peer_pid,
+            peer_pid = ?self.peer_pid,
             wasm = %self.wasm_basename,
             slots = self.credentials.slot_count(),
             "credential update received"
@@ -967,7 +1079,7 @@ impl WidgetSlot {
                     self.surface.mark_needs_render();
                 }
                 tracing::debug!(
-                    peer_pid = self.peer_pid,
+                    peer_pid = ?self.peer_pid,
                     wasm = %self.wasm_basename,
                     ?previous_target,
                     ?target,
@@ -983,7 +1095,7 @@ impl WidgetSlot {
                     self.surface.mark_needs_render();
                 }
                 tracing::debug!(
-                    peer_pid = self.peer_pid,
+                    peer_pid = ?self.peer_pid,
                     wasm = %self.wasm_basename,
                     ?current,
                     request_render,
@@ -992,7 +1104,7 @@ impl WidgetSlot {
             }
             WidgetEvent::Shutdown => {
                 tracing::info!(
-                    peer_pid = self.peer_pid,
+                    peer_pid = ?self.peer_pid,
                     wasm = %self.wasm_basename,
                     "shutdown event received"
                 );

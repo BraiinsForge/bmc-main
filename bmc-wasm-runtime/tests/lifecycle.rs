@@ -340,30 +340,9 @@ fn touch_probe_widget_wat() -> String {
 /// `host_request_frame` — the "visible on my screen, repaint" response.
 /// The counter getter lets the test assert the hook fired exactly once.
 fn network_probe_widget_wat() -> String {
-    format!(
-        r#"
-    (module
-      (import "env" "host_request_frame" (func $host_request_frame))
-
-      (memory (export "memory") 1)
-
-      (global $network_count (mut i32) (i32.const 0))
-
-      (func (export "__bmc_sdk_init") (result i64)
-        i64.const {})
-
-      (func (export "render") (param i32))
-
-      (func (export "on_network_update")
-        global.get $network_count
-        i32.const 1
-        i32.add
-        global.set $network_count
-        call $host_request_frame)
-
-      (func (export "network_count") (result i32) global.get $network_count))
-    "#,
-        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    include_str!("fixtures/network_probe.wat").replace(
+        "__SDK_VERSION__",
+        &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
     )
 }
 

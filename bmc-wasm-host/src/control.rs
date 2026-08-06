@@ -91,8 +91,8 @@ pub fn accept_and_load(
     client: UnixStream,
     _shared: &mut SharedHost,
 ) -> Result<WidgetSlot, anyhow::Error> {
-    let peer_pid = peer_pid_of(&client).unwrap_or(0);
-    tracing::info!(peer_pid, "thin control connection accepted");
+    let peer_pid = peer_pid_of(&client);
+    tracing::info!(?peer_pid, "thin control connection accepted");
     client
         .set_read_timeout(Some(Duration::from_millis(250)))
         .map_err(anyhow::Error::from)?;
@@ -105,7 +105,7 @@ pub fn accept_and_load(
     let HelloMsg::Load { wasm_path } = msg;
     let path = PathBuf::from(&wasm_path);
     tracing::info!(
-        peer_pid,
+        ?peer_pid,
         wasm = %path.display(),
         "thin requested wasm load"
     );
@@ -130,7 +130,7 @@ pub fn accept_and_load(
 
     write_ack(&client, &AckMsg::Ok)?;
     tracing::info!(
-        peer_pid,
+        ?peer_pid,
         wasm = %path.display(),
         "widget load acknowledged"
     );

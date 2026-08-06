@@ -7,6 +7,13 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+# The WAT guest fixtures `tests/widget_slot.rs` embeds from `bmc-wasm-runtime`;
+# the nix source filter keeps only rust/toml/lock otherwise. Redundant while
+# `bmc-wasm-runtime` is a dependency and carries the same glob, but this crate
+# is the one whose tests break if that ever stops being true.
+[package.metadata.nix]
+include = ["../bmc-wasm-runtime/tests/fixtures/*.wat"]
+
 [features]
 default = ["overlay-alarm", "overlay-offline", "overlay-device-info", "overlay-settings-tray"]
 overlay-alarm = ["dep:bmc-overlay-alarm"]
@@ -48,3 +55,6 @@ bmc-widget-protocol = { workspace = true }
 mdns-sd = { workspace = true }
 serial_test = "3"
 tempfile = { workspace = true }
+# WAT guest fixtures for `tests/widget_slot.rs`,
+# same pattern as `bmc-wasm-runtime/tests/lifecycle.rs`.
+wat = { workspace = true }
