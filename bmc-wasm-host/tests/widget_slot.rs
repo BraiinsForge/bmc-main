@@ -36,7 +36,7 @@ use bmc_wasm_host::render_target::{
 use bmc_wasm_host::slot::{SlotSurface, WidgetSlot};
 use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 use bmc_widget::surface::{PollOutcome, ReleasedBuffer, WidgetEvent, WidgetSurface};
-use bmc_widget_protocol::ActionPayload;
+use bmc_widget_protocol::{ActionPayload, SettingUpdate};
 
 #[derive(Default)]
 struct StubSurface {
@@ -340,6 +340,78 @@ fn params_update_without_hook_does_not_schedule_or_dirty() {
     assert_eq!(
         slot.surface.mark_needs_render_calls, 0,
         "parameter delivery without a hook must not dirty the surface"
+    );
+}
+
+// ── system-setting updates ────────────────────────────────────────────
+
+#[test]
+fn system_update_hook_requests_frame_without_marking_the_surface_dirty() {
+    let wat = update_probe_widget_wat("on_system_update", true);
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::Setting(SettingUpdate::NightMode(true)),
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "system delivery must invoke on_system_update"
+    );
+    assert!(
+        slot.runtime.wants_next_frame(),
+        "request_frame from on_system_update must reach the runtime scheduler"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "system delivery must leave surface rendering under widget ownership"
+    );
+}
+
+#[test]
+fn system_update_hook_can_decline_render_without_dirtying_the_surface() {
+    let wat = update_probe_widget_wat("on_system_update", false);
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::Setting(SettingUpdate::NightMode(true)),
+    );
+
+    assert_eq!(
+        slot.runtime.call_export_i32("update_count"),
+        Some(1),
+        "system delivery must invoke on_system_update"
+    );
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "a hook that declines a frame must leave the runtime scheduler idle"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "a hook that declines a frame must not be overridden by surface dirtiness"
+    );
+}
+
+#[test]
+fn system_update_without_hook_does_not_schedule_or_dirty() {
+    let wat = hookless_widget_wat();
+    let mut slot = test_slot(&wat);
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::Setting(SettingUpdate::NightMode(true)),
+    );
+
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "system delivery without a hook must leave the runtime scheduler idle"
+    );
+    assert_eq!(
+        slot.surface.mark_needs_render_calls, 0,
+        "system delivery without a hook must not dirty the surface"
     );
 }
 

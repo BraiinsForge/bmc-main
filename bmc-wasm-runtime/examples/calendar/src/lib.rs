@@ -223,6 +223,11 @@ pub extern "C" fn on_touch() {
 }
 
 #[unsafe(no_mangle)]
+pub extern "C" fn on_system_update() {
+    request_frame();
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn render(_delta_ms: u32) {
     let size = widget_size();
 

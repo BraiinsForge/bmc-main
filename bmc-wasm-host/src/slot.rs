@@ -496,8 +496,8 @@ impl<S: SlotSurface> WidgetSlot<S> {
     pub fn dispatch_wayland_events(&mut self) -> Result<()> {
         self.surface.poll_dispatch(0)?;
         // The compositor fans a single localization save into one per-field setting
-        // event per setting; per-event delivery would call `on_system_update`
-        // (and re-render) N times for one operator action.
+        // event per setting; per-event delivery would invoke `on_system_update`
+        // N times for one operator action.
         //
         // Collect Setting events into `pending_system` during the drain
         // and push a single `deliver_system_update` after the loop.
@@ -1022,7 +1022,6 @@ impl<S: SlotSurface> WidgetSlot<S> {
             );
             self.runtime
                 .deliver_system_update(self.pending_system.clone());
-            self.surface.mark_needs_render();
         }
         if let Some(params) = latest_params
             && let Ok(table) = bmc_wasm_runtime::parse_params_json(&params)

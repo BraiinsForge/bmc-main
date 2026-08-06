@@ -159,6 +159,11 @@ mod wasm_glue {
             IDLE_FRAME_MS
         });
     }
+
+    #[unsafe(no_mangle)]
+    pub extern "C" fn on_system_update() {
+        request_frame();
+    }
 }
 
 #[cfg(test)]

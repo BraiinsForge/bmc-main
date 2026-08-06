@@ -629,6 +629,12 @@ pub extern "C" fn on_network_update() {
 
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
+pub extern "C" fn on_system_update() {
+    request_frame();
+}
+
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
     let current = manifest_params::Params::current();
     session::refresh_params();

@@ -73,25 +73,28 @@ Keep fallbacks local to the rendering decision rather than encoding sentinel val
 `on_params_update`; params changes do not rotate `system::previous()`, and system changes do not rotate
 `params::previous()`.
 
-Use the hook when the widget caches derived values, starts work in response to a setting, or wants to highlight changed
-system fields.
+Delivery updates the snapshot and invokes the optional hook, but does not itself schedule a render. Call
+`request_frame()` or `request_frame_after()` when the change should repaint; otherwise the new snapshot is observed on
+the next naturally scheduled render.
+
+Use the hook when the widget needs to update cached state or start work in response to a setting. Request a frame from
+the hook only when the update changes visible output; otherwise the cached work can complete without repainting.
+
+For example, this widget repaints only when one of the system fields it displays has changed:
 
 ```rust
-use bmc_wasm_sdk::system;
+use bmc_wasm_sdk::{request_frame, system};
 
 #[unsafe(no_mangle)]
 pub extern "C" fn on_system_update() {
     let current = system::current();
     let previous = system::previous();
 
-    if current.timezone() != previous.timezone()
+    let visible_output_changed = current.timezone() != previous.timezone()
         || current.time_format() != previous.time_format()
-    {
-        // Recompute cached local-time labels.
-    }
-
-    if current.night_mode() != previous.night_mode() {
-        // Rebind colors or request a new frame.
+        || current.night_mode() != previous.night_mode();
+    if visible_output_changed {
+        request_frame();
     }
 }
 ```
@@ -169,6 +172,7 @@ cargo run --features testbed --bin testbed \
   --manifest=widgets-wasm/<widget-name>/manifest.json
 ```
 
-Changing a System control calls `deliver_system_update` for every previewed size. A widget that exports
-`on_system_update` should react immediately. The `params-demo` example renders system fields next to params and
-highlights changed system rows, so it is also the reference example for system-setting update behavior.
+Changing a System control calls `deliver_system_update` for every previewed size and immediately invokes an exported
+`on_system_update` hook. Visible changes repaint immediately only when the hook requests a frame. The `params-demo`
+example renders system fields next to params and highlights changed system rows, so it is also the reference example for
+system-setting update behavior.

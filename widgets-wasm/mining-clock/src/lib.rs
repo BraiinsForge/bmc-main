@@ -310,11 +310,16 @@ pub extern "C" fn render(_delta_ms: u32) {
     }
 }
 
-/// Fires after every per-widget params delivery (operator change).
-/// Re-authenticates on a credential change; the new values surface on the
-/// next 1s render tick, so no frame is requested here. As in the fetch-reply
-/// handlers, forcing a frame would paint off the 1s cadence and make the second
-/// hand skip its even steps.
+#[cfg(target_arch = "wasm32")]
+#[unsafe(no_mangle)]
+pub extern "C" fn on_system_update() {
+    request_frame();
+}
+
+/// Re-authenticates when the miner URL or password changes.
+///
+/// Deliberately requests no frame: the next 1 s tick shows the new values,
+/// and an off-cadence repaint makes the second hand skip its even steps.
 #[cfg(target_arch = "wasm32")]
 #[unsafe(no_mangle)]
 pub extern "C" fn on_params_update() {
