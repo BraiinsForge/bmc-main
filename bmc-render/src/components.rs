@@ -26,6 +26,7 @@ pub(crate) mod modal;
 pub(crate) mod notification;
 pub(crate) mod progress_bar;
 pub(crate) mod relative_time;
+pub(crate) mod skeleton;
 pub(crate) mod switcher;
 pub(crate) mod tag;
 

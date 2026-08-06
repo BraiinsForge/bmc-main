@@ -365,6 +365,7 @@ pub mod poll;
 pub mod profile;
 pub mod progress_bar;
 pub mod relative_time;
+pub mod skeleton;
 #[cfg(target_arch = "wasm32")]
 pub mod slot;
 pub mod status_overlay;

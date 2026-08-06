@@ -37,6 +37,7 @@ pub const NODE_PROGRESS_BAR: u8 = 0x0A;
 pub const NODE_RELTIME: u8 = 0x0B;
 pub const NODE_TAG: u8 = 0x0C;
 pub const NODE_SWITCHER: u8 = 0x0D;
+pub const NODE_SKELETON: u8 = 0x0E;
 
 // Button size variants (wire value for NODE_BUTTON)
 pub const BUTTON_SIZE_SMALL: u8 = 0;

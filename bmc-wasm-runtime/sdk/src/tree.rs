@@ -43,9 +43,9 @@ use bmc_wasm_protocol::{
     DRAW_QR, DRAW_RECT, DRAW_ROTATED, DRAW_SHADOW, DRAW_SPHERE, DRAW_TEXT, DROP_SHADOW_BLUR_MAX,
     Dash, Easing, Fill, LoopMode, MeshId, NODE_BUTTON, NODE_CANVAS, NODE_CENTER, NODE_COLUMN,
     NODE_MODAL, NODE_NOTIFICATION, NODE_PARAGRAPH, NODE_PROGRESS_BAR, NODE_RELTIME, NODE_ROW,
-    NODE_SCROLL, NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, ProgressKind, RelTimeClamp,
-    RelTimeFormat, SvgId, TagIconMode, TagKind, WHITE, encode_arc_cap, encode_arc_fill,
-    encode_arc_segments, encode_fill,
+    NODE_SCROLL, NODE_SKELETON, NODE_SPACER, NODE_SWITCHER, NODE_TAG, PathPaint, ProgressKind,
+    RelTimeClamp, RelTimeFormat, SkeletonKind, SvgId, TagIconMode, TagKind, WHITE, encode_arc_cap,
+    encode_arc_fill, encode_arc_segments, encode_fill,
 };
 
 use crate::PropsFieldValue;
@@ -339,6 +339,25 @@ impl TreeBuffer {
     /// [NODE_SWITCHER][active:u8][disabled:u8][tab_count:u8]
     ///   per tab: [icon:u16][click_id_len:u16][click_id_bytes...]
     /// ```
+    /// Wire format: `[NODE_SKELETON][kind:u8][chars:f32][font_size:f32][width:f32][height:f32][color:u32]`
+    pub fn write_skeleton(
+        &mut self,
+        kind: SkeletonKind,
+        chars: f32,
+        font_size: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    ) {
+        self.write_u8(NODE_SKELETON);
+        self.write_u8(kind.into());
+        self.write_f32(chars);
+        self.write_f32(font_size);
+        self.write_f32(width);
+        self.write_f32(height);
+        self.write_color(color);
+    }
+
     pub fn write_switcher(&mut self, active: usize, disabled: bool, tabs: &[SwitcherTab]) {
         self.write_u8(NODE_SWITCHER);
         self.write_u8(u8::try_from(active).expect("BUG: active tab index exceeds u8::MAX"));
@@ -1507,6 +1526,15 @@ pub enum Node {
         disabled: bool,
         tabs: Vec<SwitcherTab>,
     },
+    /// Host-rendered loading placeholder — see [`crate::skeleton`].
+    Skeleton {
+        kind: SkeletonKind,
+        chars: f32,
+        font_size: f32,
+        width: f32,
+        height: f32,
+        color: Color,
+    },
     /// Scrollable container — clips children and allows vertical scrolling.
     Scroll {
         scroll_key: String,
@@ -1924,6 +1952,16 @@ fn serialize_node(buf: &mut TreeBuffer, node: &Node) {
             tabs,
         } => {
             buf.write_switcher(*active, *disabled, tabs);
+        }
+        Node::Skeleton {
+            kind,
+            chars,
+            font_size,
+            width,
+            height,
+            color,
+        } => {
+            buf.write_skeleton(*kind, *chars, *font_size, *width, *height, *color);
         }
         Node::Modal {
             modal_id,

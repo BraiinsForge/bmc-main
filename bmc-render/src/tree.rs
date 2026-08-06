@@ -363,6 +363,8 @@ pub enum TreeNode {
         disabled: bool,
         tabs: Vec<SwitcherTabData>,
     },
+    /// Loading placeholder holding a value's slot while it loads.
+    Skeleton(SkeletonData),
     /// Modal dialog overlay
     Modal {
         modal_id: String,
@@ -866,6 +868,14 @@ impl<'a> TreeReader<'a> {
                     tabs,
                 })
             }
+            NODE_SKELETON => Ok(TreeNode::Skeleton(SkeletonData {
+                kind: SkeletonKind::try_from(self.read_u8()?)?,
+                chars: self.read_f32()?,
+                font_size: self.read_f32()?,
+                width: self.read_f32()?,
+                height: self.read_f32()?,
+                color: Color::from_raw(self.read_u32()?),
+            })),
             NODE_PROGRESS_BAR => {
                 let key_len = self.read_u16()?;
                 let touch_key = if key_len > 0 {
@@ -1529,6 +1539,7 @@ use crate::components::notification::{
     NotificationData, measure_notification, render_notification,
 };
 use crate::components::progress_bar::{ProgressBarData, render_progress_bar};
+use crate::components::skeleton::{SkeletonData, render_skeleton};
 use crate::components::switcher::{SwitcherData, SwitcherTabData, render_switcher, switcher_size};
 use crate::components::tag::{TAG_PAD_VERT, TagData, render_tag, tag_content_padding, tag_theme};
 use crate::components::{ButtonSize, ButtonStyle, draw_button};
@@ -1644,6 +1655,7 @@ pub struct NodeContext {
     progress_bar: Option<ProgressBarData>,
     tag: Option<TagData>,
     switcher: Option<SwitcherData>,
+    skeleton: Option<SkeletonData>,
 }
 
 /// Per-frame mutable state passed through the render pipeline.
@@ -2237,6 +2249,31 @@ pub(crate) fn build_taffy_node(
             Ok(id)
         }
 
+        TreeNode::Skeleton(data) => {
+            let (width, height) = data.layout_size();
+            let style = Style {
+                size: Size {
+                    width: width.map_or_else(auto, length),
+                    height: length(height),
+                },
+                // A `Fill` skeleton spans its row by growing: a childless
+                // leaf has no content to size an `auto` width from, and a
+                // percentage resolves to zero while the row's own width is
+                // still indefinite.
+                flex_grow: if width.is_none() { 1.0 } else { 0.0 },
+                ..Default::default()
+            };
+            let id = taffy.new_leaf(style)?;
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    skeleton: Some(*data),
+                    ..Default::default()
+                }),
+            )?;
+            Ok(id)
+        }
+
         TreeNode::Modal {
             modal_id,
             is_open,
@@ -2633,6 +2670,12 @@ pub(crate) fn render_taffy_node(
         && let Some(ref sw) = ctx.switcher
     {
         render_switcher(sw, x, y, w, h, renderer, interaction, result);
+    }
+
+    if let Some(ctx) = taffy.get_node_context(node_id)
+        && let Some(ref sk) = ctx.skeleton
+    {
+        render_skeleton(renderer, sk, x, y, w, h);
     }
 
     let Ok(children) = taffy.children(node_id) else {

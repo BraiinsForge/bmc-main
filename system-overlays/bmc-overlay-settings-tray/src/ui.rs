@@ -1361,7 +1361,8 @@ mod tests {
             | TreeNode::RelTime { .. }
             | TreeNode::Modal { .. }
             | TreeNode::ProgressBar { .. }
-            | TreeNode::Switcher { .. } => None,
+            | TreeNode::Switcher { .. }
+            | TreeNode::Skeleton(_) => None,
         }
     }
 
