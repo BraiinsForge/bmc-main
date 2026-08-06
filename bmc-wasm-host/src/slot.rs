@@ -93,6 +93,23 @@ pub fn slot_needs_render_from_inputs(inputs: SlotRenderInputs) -> bool {
         .is_none_or(|remaining| remaining.is_zero())
 }
 
+/// Whether a dirty surface may drive a render in `state`.
+///
+/// Off-screen states (Prepared neighbours, Entering/Leaving during a swipe)
+/// keep presenting their last committed buffer; the dirty flag holds
+/// and the deferred render happens on the transition to Visible.
+/// Two exceptions: no frame was committed since the render target was acquired
+/// (the warm-up frame must paint), and the compositor explicitly demanded
+/// a pre-transition frame via `transition_incoming`.
+#[must_use]
+pub fn dirty_render_allowed(
+    state: LifecycleState,
+    rendered_since_acquire: bool,
+    forced_render_pending: bool,
+) -> bool {
+    matches!(state, LifecycleState::Visible) || !rendered_since_acquire || forced_render_pending
+}
+
 /// Project the connectivity snapshot onto the widget-visible `NetworkInfo`.
 /// The snapshot also carries the Wi-Fi signal level, which widgets cannot observe;
 /// comparing this projection instead of the snapshot version
@@ -202,6 +219,13 @@ pub struct WidgetSlot {
     pub cache_token: Option<String>,
     pub control_socket: UnixStream,
     pub next_frame_due_at: Option<Instant>,
+    /// A frame was committed since the current render target was acquired.
+    /// While set, a dirty surface drives a render only under [`dirty_render_allowed`];
+    /// a fresh target's warm-up frame is always allowed.
+    pub rendered_since_acquire: bool,
+    /// The compositor demanded a pre-transition frame (`transition_incoming`);
+    /// lets the next dirty render through regardless of lifecycle state.
+    pub forced_render_pending: bool,
     /// One-time diagnostic latch: set after logging that touch events were
     /// dropped because the widget does not export `on_touch`.
     pub touch_drop_logged: bool,
@@ -316,6 +340,8 @@ impl WidgetSlot {
             cache_token: Some(token),
             control_socket,
             next_frame_due_at: None,
+            rendered_since_acquire: false,
+            forced_render_pending: false,
             touch_drop_logged: false,
             led_rx,
         })
@@ -540,12 +566,13 @@ impl WidgetSlot {
         frame_callback_enabled(self.lifecycle.current())
     }
 
-    /// Spec § 7 / BDK-437 § States table: Entering renders **once** in response to a
-    /// dirty surface (lifecycle / params / touch), no animation, no frame callbacks.
-    /// Visible widgets run the full animation loop; Leaving widgets keep their render
-    /// target for scene transitions but no longer drive runtime animation frames. Gate
-    /// animation-driven renders on `frame_callback_enabled` so inactive slots whose
-    /// runtime returns `wants_next_frame() == true` do NOT spin a continuous render loop.
+    /// Spec § 7 / BDK-437 § States table: a fresh render target paints its
+    /// warm-up frame **once**; after that a dirty surface renders only under
+    /// [`dirty_render_allowed`] (Visible, or a compositor-demanded pre-transition
+    /// frame), so off-screen slots keep presenting their last buffer.
+    /// Visible widgets run the full animation loop;
+    /// gate animation-driven renders on `frame_callback_enabled` so inactive slots
+    /// whose runtime returns `wants_next_frame() == true` do NOT spin a render loop.
     #[must_use]
     pub fn needs_render(&self, now: Instant) -> bool {
         let gate = if !self.is_renderable() {
@@ -558,10 +585,23 @@ impl WidgetSlot {
         let runtime_frame_due = self.frame_callback_enabled() && self.runtime_frame_due(now);
         slot_needs_render_from_inputs(SlotRenderInputs {
             gate,
-            surface_needs_render: self.surface_needs_render(),
+            surface_needs_render: self.effective_surface_needs_render(),
             runtime_frame_due,
             min_inter_frame_remaining: self.min_inter_frame_remaining(now),
         })
+    }
+
+    /// The surface dirty flag, masked by [`dirty_render_allowed`].
+    /// A held-back flag is not cleared — the deferred render happens
+    /// once the state allows it again (typically on the transition to Visible).
+    #[must_use]
+    fn effective_surface_needs_render(&self) -> bool {
+        self.surface_needs_render()
+            && dirty_render_allowed(
+                self.lifecycle.current(),
+                self.rendered_since_acquire,
+                self.forced_render_pending,
+            )
     }
 
     #[must_use]
@@ -593,7 +633,9 @@ impl WidgetSlot {
             is_blocked: self.is_blocked() || !self.render_buffer_available(),
             frame_callback_enabled: self.frame_callback_enabled(),
             animation_wants_immediate: self.runtime_frame_due(now),
-            surface_needs_render: self.surface_needs_render(),
+            // The masked flag, not the raw one — a held-back dirty surface
+            // must not wake the poll loop for renders `needs_render` will refuse.
+            surface_needs_render: self.effective_surface_needs_render(),
             min_inter_frame_remaining: self.min_inter_frame_remaining(now),
             next_frame_delay: self
                 .runtime_frame_due_in(now)
@@ -651,6 +693,7 @@ impl WidgetSlot {
 
     pub fn apply_lifecycle(&mut self, now: Instant, shared: &SharedHost) {
         let previous = self.lifecycle.current();
+        let had_render_target = self.render_target.is_some();
         let w = self.surface.width();
         let h = self.surface.height();
         let mut ctx = SlotApplyCtx {
@@ -663,6 +706,9 @@ impl WidgetSlot {
             height: h,
         };
         self.lifecycle.apply(&mut ctx, now);
+        if !had_render_target && self.render_target.is_some() {
+            self.rendered_since_acquire = false;
+        }
         let current = self.lifecycle.current();
         if previous != current {
             tracing::debug!(
@@ -771,6 +817,8 @@ impl WidgetSlot {
             HostRenderFrameContext::new(target_width, target_height, wants_immediate, status),
         );
         self.schedule_next_runtime_frame(frame_start_instant);
+        self.rendered_since_acquire = true;
+        self.forced_render_pending = false;
         self.frame_count += 1;
         if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
             tracing::info!(
@@ -931,6 +979,7 @@ impl WidgetSlot {
                 let current = self.lifecycle.current();
                 let request_render = should_render(current);
                 if request_render {
+                    self.forced_render_pending = true;
                     self.surface.mark_needs_render();
                 }
                 tracing::debug!(

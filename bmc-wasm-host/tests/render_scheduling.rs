@@ -20,8 +20,10 @@
 
 use std::time::{Duration, Instant};
 
+use bmc_wasm_host::lifecycle::LifecycleState;
 use bmc_wasm_host::slot::{
-    RenderGate, SlotRenderInputs, refresh_runtime_frame_due_at, slot_needs_render_from_inputs,
+    RenderGate, SlotRenderInputs, dirty_render_allowed, refresh_runtime_frame_due_at,
+    slot_needs_render_from_inputs,
 };
 
 #[test]
@@ -51,5 +53,53 @@ fn delivery_refresh_does_not_postpone_existing_runtime_deadline() {
         refreshed,
         Some(existing_due_at),
         "an overdue frame remains due instead of being re-anchored after delivery polling"
+    );
+}
+
+#[test]
+fn dirty_surface_defers_off_screen_after_warmup_frame() {
+    for state in [
+        LifecycleState::Prepared,
+        LifecycleState::Entering,
+        LifecycleState::Leaving,
+    ] {
+        assert!(
+            !dirty_render_allowed(state, true, false),
+            "{state:?} with a committed buffer must keep presenting it — off-screen \
+             re-renders are what made swipes stutter (BDK-658)"
+        );
+    }
+}
+
+#[test]
+fn dirty_surface_renders_when_visible() {
+    assert!(
+        dirty_render_allowed(LifecycleState::Visible, true, false),
+        "a held-back dirty flag must resolve into a render once the widget is Visible"
+    );
+}
+
+#[test]
+fn warmup_frame_renders_in_every_render_state() {
+    for state in [
+        LifecycleState::Prepared,
+        LifecycleState::Entering,
+        LifecycleState::Visible,
+        LifecycleState::Leaving,
+    ] {
+        assert!(
+            dirty_render_allowed(state, false, false),
+            "a fresh render target has nothing to present — the warm-up frame for \
+             {state:?} must paint or the compositor shows garbage"
+        );
+    }
+}
+
+#[test]
+fn transition_incoming_forces_a_pre_transition_frame() {
+    assert!(
+        dirty_render_allowed(LifecycleState::Prepared, true, true),
+        "the compositor's transition_incoming demands fresh content before an automatic \
+         transition; the off-screen gate must not hold that frame back"
     );
 }
