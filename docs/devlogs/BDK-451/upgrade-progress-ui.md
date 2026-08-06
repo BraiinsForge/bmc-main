@@ -305,15 +305,15 @@ unsupported values in this design.
 
 Stage labels are:
 
-| Phase                | Label                | Progress treatment                                |
-| -------------------- | -------------------- | ------------------------------------------------- |
-| Firmware downloading | Downloading firmware | Determinate when total is known; otherwise active |
-| Firmware verifying   | Verifying firmware   | Indeterminate                                     |
-| Package realizing    | Downloading packages | Determinate when total is known; otherwise active |
-| Package verifying    | Verifying packages   | Indeterminate                                     |
-| Package building     | Building packages    | Indeterminate                                     |
-| Package activating   | Activating packages  | Indeterminate                                     |
-| Firmware applying    | Applying firmware    | Indeterminate                                     |
+| Phase                | Label                | Progress treatment                                      |
+| -------------------- | -------------------- | ------------------------------------------------------- |
+| Firmware downloading | Downloading firmware | Determinate when total is known; otherwise active       |
+| Firmware verifying   | Verifying firmware   | Stable supporting copy in fullscreen                    |
+| Package realizing    | Downloading packages | Determinate when total is known; otherwise active       |
+| Package verifying    | Verifying packages   | Active in compact; stable supporting copy in fullscreen |
+| Package building     | Building packages    | Active in compact; stable supporting copy in fullscreen |
+| Package activating   | Activating packages  | Active in compact; stable supporting copy in fullscreen |
+| Firmware applying    | Applying firmware    | Stable supporting copy in fullscreen                    |
 
 The UI does not map stage count to a fabricated overall percentage. Progress events update the existing mapped surface
 in place. The overlay marks content dirty only when the decoded state changes; the current backend throttle admits
@@ -364,6 +364,10 @@ only for previews.
 Use `just storybook` for the initial visual comparison with stable and `just storybook-hot` while tuning geometry,
 typography, progress treatment, and the compact layout. Storybook inspection is an explicit design acceptance gate, not
 a substitute for render-tree, state, and layer-configuration tests.
+
+Visual acceptance on 2026-08-06 fixes the compact package surface at 384 x 192 logical pixels. At that size, the 48 px
+icon, 18 px title, 14 px supporting text, and 5 px progress track remain readable while the card occupies only the
+bottom-right portion of the 1280 x 480 display. The runtime layer and Storybook cells use the same exported size.
 
 ## Lifecycle
 

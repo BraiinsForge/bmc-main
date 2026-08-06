@@ -1,0 +1,33 @@
+[package]
+name = "bmc-overlay-upgrade"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Braiins Systems s.r.o."]
+description = "Firmware and package upgrade-progress overlays"
+
+[package.metadata.nix]
+include = ["assets/**"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "bmc-overlay-upgrade-firmware"
+path = "src/bin/firmware.rs"
+
+[[bin]]
+name = "bmc-overlay-upgrade-packages"
+path = "src/bin/packages.rs"
+
+[dependencies]
+anyhow.workspace = true
+bmc-render.workspace = true
+bmc-render-macros = { path = "../../bmc-render/macros" }
+bmc-system-overlay.workspace = true
+bmc-wasm-protocol.workspace = true
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+tracing.workspace = true
+
+[lints]
+workspace = true

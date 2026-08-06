@@ -1045,6 +1045,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-overlay-upgrade"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-render",
+ "bmc-render-macros",
+ "bmc-system-overlay",
+ "bmc-wasm-protocol",
+ "bmc-wasm-sdk",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-platform"
 version = "0.1.0"
 dependencies = [
@@ -1167,6 +1180,7 @@ dependencies = [
  "bmc-overlay-device-info",
  "bmc-overlay-offline",
  "bmc-overlay-settings-tray",
+ "bmc-overlay-upgrade",
  "bmc-render",
  "bmc-render-keyboard",
  "bmc-render-skin",
@@ -1224,6 +1238,7 @@ dependencies = [
  "bmc-overlay-device-info",
  "bmc-overlay-offline",
  "bmc-overlay-settings-tray",
+ "bmc-overlay-upgrade",
  "bmc-render",
  "bmc-render-keyboard",
  "bmc-render-skin",
