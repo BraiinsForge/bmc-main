@@ -871,10 +871,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         )
     }
 
-    #[expect(
-        dead_code,
-        reason = "the compositor startup bridge consumes this API in the next upgrade-display step"
-    )]
     pub(crate) fn subscribe_display_state(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
         self.display_state_service.subscribe()
     }

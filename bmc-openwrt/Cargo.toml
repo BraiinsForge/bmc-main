@@ -40,6 +40,7 @@ clap.workspace = true
 deck-alarm-v1 = { workspace = true }
 deck-screen-edge-v1 = { workspace = true }
 deck-settings-v1 = { workspace = true }
+deck-upgrade-v1 = { workspace = true }
 drm.workspace = true
 flume.workspace = true
 futures.workspace = true

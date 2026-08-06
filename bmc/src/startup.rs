@@ -29,7 +29,7 @@ use crate::alarm::{AlarmBus, AlarmController, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::{
-    AlarmCommand, Compositor, CompositorEvent, run_night_mode_cycling_task,
+    AlarmCommand, Compositor, CompositorEvent, UpgradeDisplaySnapshot, run_night_mode_cycling_task,
     run_screen_blank_reset_task,
 };
 use crate::config::ConfigHandle;
@@ -146,6 +146,35 @@ fn spawn_alarm_ringing_watch(alarm_bus: &AlarmBus) -> watch::Receiver<bool> {
         }
     });
     rx
+}
+
+fn spawn_upgrade_display_listener(
+    compositor: Arc<dyn Compositor>,
+    receiver: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
+) {
+    tokio::spawn(async move {
+        forward_upgrade_display_state(receiver, |snapshot| compositor.set_upgrade_state(snapshot))
+            .await;
+    });
+}
+
+async fn forward_upgrade_display_state<F>(
+    mut receiver: watch::Receiver<Option<UpgradeDisplaySnapshot>>,
+    mut set_state: F,
+) where
+    F: FnMut(UpgradeDisplaySnapshot) -> Result<(), crate::compositor::CompositorError>,
+{
+    receiver.mark_changed();
+    loop {
+        if receiver.changed().await.is_err() {
+            break;
+        }
+        if let Some(snapshot) = receiver.borrow_and_update().clone()
+            && let Err(error) = set_state(snapshot)
+        {
+            warn!(%error, "failed to relay upgrade display state to compositor");
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -279,6 +308,11 @@ where
                 config_handle.clone(),
             )),
             config.pending_install_path.clone(),
+        );
+
+        spawn_upgrade_display_listener(
+            compositor.clone(),
+            system_upgrade_service.subscribe_display_state(),
         );
 
         system_upgrade_service
@@ -610,5 +644,125 @@ impl Default for Configuration {
             nix_hooks_dir: Self::NIX_HOOKS_DIR.to_owned(),
             nix_hooks_override_path: None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::forward_upgrade_display_state;
+    use crate::compositor::{
+        CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration,
+        UpgradeKind,
+    };
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::{Notify, watch};
+
+    fn snapshot(generation: usize) -> UpgradeDisplaySnapshot {
+        UpgradeDisplaySnapshot {
+            generation: UpgradeGeneration::new(generation),
+            state: UpgradeDisplayState::Succeeded {
+                kind: UpgradeKind::Firmware,
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn upgrade_bridge_replays_a_terminal_snapshot_present_before_its_first_poll() {
+        let (sender, receiver) = watch::channel(None);
+        let second = snapshot(2);
+        sender
+            .send(Some(second.clone()))
+            .expect("BUG: receiver is live");
+        drop(sender);
+        let received = Arc::new(Mutex::new(Vec::new()));
+
+        forward_upgrade_display_state(receiver, {
+            let received = Arc::clone(&received);
+            move |state| {
+                received
+                    .lock()
+                    .expect("BUG: received lock poisoned")
+                    .push(state);
+                Ok(())
+            }
+        })
+        .await;
+
+        assert_eq!(
+            *received.lock().expect("BUG: received lock poisoned"),
+            vec![second]
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrade_bridge_coalesces_to_the_latest_authoritative_snapshot() {
+        let (sender, receiver) = watch::channel(None);
+        sender
+            .send(Some(snapshot(1)))
+            .expect("BUG: receiver is live");
+        let second = snapshot(2);
+        sender
+            .send(Some(second.clone()))
+            .expect("BUG: receiver is live");
+        drop(sender);
+        let received = Arc::new(Mutex::new(Vec::new()));
+
+        forward_upgrade_display_state(receiver, {
+            let received = Arc::clone(&received);
+            move |state| {
+                received
+                    .lock()
+                    .expect("BUG: received lock poisoned")
+                    .push(state);
+                Ok(())
+            }
+        })
+        .await;
+
+        assert_eq!(
+            *received.lock().expect("BUG: received lock poisoned"),
+            vec![second]
+        );
+    }
+
+    #[tokio::test]
+    async fn upgrade_bridge_continues_after_a_compositor_error() {
+        let (sender, receiver) = watch::channel(None);
+        let first = snapshot(1);
+        let second = snapshot(2);
+        let entered = Arc::new(Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let received = Arc::new(Mutex::new(Vec::new()));
+        let task = tokio::spawn(forward_upgrade_display_state(receiver, {
+            let entered = Arc::clone(&entered);
+            let calls = Arc::clone(&calls);
+            let received = Arc::clone(&received);
+            move |state| {
+                received
+                    .lock()
+                    .expect("BUG: received lock poisoned")
+                    .push(state);
+                if calls.fetch_add(1, Ordering::SeqCst) == 0 {
+                    entered.notify_one();
+                    Err(CompositorError::NotStarted)
+                } else {
+                    Ok(())
+                }
+            }
+        }));
+
+        sender.send(Some(first)).expect("BUG: receiver is live");
+        entered.notified().await;
+        sender
+            .send(Some(second.clone()))
+            .expect("BUG: receiver is live");
+        drop(sender);
+        task.await.expect("BUG: bridge task must finish");
+
+        assert_eq!(
+            *received.lock().expect("BUG: received lock poisoned"),
+            vec![snapshot(1), second]
+        );
     }
 }

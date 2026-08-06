@@ -2204,6 +2204,9 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::SetNightMode { active, until } => {
             state.compositor.settings.set_night_mode(active, until);
         }
+        CompositorCommand::SetUpgradeState { state: upgrade } => {
+            state.compositor.upgrade.set(upgrade, Instant::now());
+        }
         CompositorCommand::RestartDeclined { reason } => {
             state.compositor.settings.restart_declined(&reason);
         }
@@ -2509,6 +2512,15 @@ impl Compositor for EglCompositor {
         self.profile.capabilities()
     }
 
+    fn set_upgrade_state(
+        &self,
+        state: bmc::compositor::UpgradeDisplaySnapshot,
+    ) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetUpgradeState { state })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
     fn register_widget(
         &self,
         instance_id: InstanceId,
@@ -2769,7 +2781,8 @@ mod tests {
     };
     use bmc::compositor::{
         CompositorEvent, InstanceId, Position, SceneCycling, SceneCyclingTransition, SceneLayout,
-        Size, WidgetPlacement,
+        Size, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
+        WidgetPlacement,
     };
     use bmc_platform::backlight::ScreenVisibility;
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
@@ -3453,6 +3466,26 @@ mod tests {
         );
 
         assert_eq!(state.active_scene_cycle_duration(), duration);
+    }
+
+    #[test]
+    fn set_upgrade_state_command_installs_the_authoritative_snapshot() {
+        let mut state = make_app_state();
+        let snapshot = UpgradeDisplaySnapshot {
+            generation: UpgradeGeneration::new(9),
+            state: UpgradeDisplayState::Succeeded {
+                kind: UpgradeKind::Firmware,
+            },
+        };
+
+        handle_command(
+            &mut state,
+            CompositorCommand::SetUpgradeState {
+                state: snapshot.clone(),
+            },
+        );
+
+        assert_eq!(state.compositor.upgrade.current_snapshot(), Some(&snapshot));
     }
 
     #[test]
