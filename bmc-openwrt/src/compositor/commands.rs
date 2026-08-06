@@ -19,7 +19,8 @@
 // the grant above.
 
 use bmc::compositor::{
-    CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetAction,
+    CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, UpgradeDisplaySnapshot,
+    WidgetAction,
 };
 use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 
@@ -77,6 +78,9 @@ pub enum CompositorCommand {
     SetNightMode {
         active: bool,
         until: Option<String>,
+    },
+    SetUpgradeState {
+        state: UpgradeDisplaySnapshot,
     },
     RestartDeclined {
         reason: String,

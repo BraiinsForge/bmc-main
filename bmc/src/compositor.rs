@@ -263,6 +263,11 @@ pub trait Compositor: Send + Sync {
     /// product, mapped from the hardware profile by the compositor.
     fn hardware_capabilities(&self) -> HardwareCapabilities;
 
+    /// Publish the latest complete upgrade presentation snapshot.
+    fn set_upgrade_state(&self, _state: UpgradeDisplaySnapshot) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
     /// Register a widget before spawning its process.
     ///
     /// Stores the widget's initial configuration (size, params) in the

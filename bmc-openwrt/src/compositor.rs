@@ -34,6 +34,7 @@ mod screen_edge;
 mod settings;
 mod state;
 mod touch_gesture;
+mod upgrade;
 mod widget_tracker;
 
 pub use commands::{CompositorCommand, CompositorResponse};

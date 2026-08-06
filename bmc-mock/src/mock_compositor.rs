@@ -27,7 +27,8 @@ use std::collections::BTreeSet;
 use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CredentialSecrets,
     HardwareCapabilities, InstanceId, LedRequestStatusEvent, Position, SceneCycling, SceneLayout,
-    SettingUpdate, SettingsCommand, Size, WidgetAction, WidgetInitialConfig,
+    SettingUpdate, SettingsCommand, Size, UpgradeDisplaySnapshot, WidgetAction,
+    WidgetInitialConfig,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -106,6 +107,7 @@ pub struct MockCompositor {
     display_name: std::sync::Mutex<Option<String>>,
     product: Product,
     scene_state: std::sync::Mutex<MockSceneState>,
+    upgrade_state: std::sync::Mutex<Option<UpgradeDisplaySnapshot>>,
 }
 
 impl MockCompositor {
@@ -139,6 +141,7 @@ impl MockCompositor {
             display_name: std::sync::Mutex::new(None),
             product,
             scene_state: std::sync::Mutex::new(MockSceneState::default()),
+            upgrade_state: std::sync::Mutex::new(None),
         }
     }
 
@@ -171,6 +174,14 @@ impl MockCompositor {
             self.emit_active_scene_changed(scene_id, widget_ids);
         }
     }
+
+    #[must_use]
+    pub fn upgrade_state(&self) -> Option<UpgradeDisplaySnapshot> {
+        self.upgrade_state
+            .lock()
+            .expect("BUG: upgrade_state lock poisoned")
+            .clone()
+    }
 }
 
 impl Compositor for MockCompositor {
@@ -193,6 +204,15 @@ impl Compositor for MockCompositor {
 
     fn hardware_capabilities(&self) -> HardwareCapabilities {
         HardwareProfile::for_product(self.product).capabilities()
+    }
+
+    fn set_upgrade_state(&self, state: UpgradeDisplaySnapshot) -> Result<(), CompositorError> {
+        tracing::info!(?state, "MockCompositor: set upgrade state");
+        *self
+            .upgrade_state
+            .lock()
+            .expect("BUG: upgrade_state lock poisoned") = Some(state);
+        Ok(())
     }
 
     fn register_widget(
@@ -374,11 +394,29 @@ impl Compositor for MockCompositor {
 
 #[cfg(test)]
 mod tests {
-    use bmc::compositor::{ActiveScene, Compositor, Position, SceneLayout, Size, WidgetPlacement};
+    use bmc::compositor::{
+        ActiveScene, Compositor, Position, SceneLayout, Size, UpgradeDisplaySnapshot,
+        UpgradeDisplayState, UpgradeGeneration, UpgradeKind, WidgetPlacement,
+    };
     use bmc::scene::SceneId;
     use bmc_platform::{DisplayShape, Product};
 
     use super::MockCompositor;
+
+    #[tokio::test]
+    async fn mock_retains_the_latest_upgrade_snapshot() {
+        let compositor = MockCompositor::new(Product::Bmc100);
+        let snapshot = UpgradeDisplaySnapshot {
+            generation: UpgradeGeneration::new(4),
+            state: UpgradeDisplayState::Failed {
+                kind: UpgradeKind::Packages,
+            },
+        };
+        compositor
+            .set_upgrade_state(snapshot.clone())
+            .expect("BUG: mock accepts upgrade state");
+        assert_eq!(compositor.upgrade_state(), Some(snapshot));
+    }
 
     fn scene_with_id_and_widgets(id: SceneId, widgets: &[(&str, bool)]) -> SceneLayout {
         SceneLayout {
