@@ -128,6 +128,71 @@ pub struct ActiveScene {
     pub widget_ids: Vec<InstanceId>,
 }
 
+/// Process-local identity for one upgrade display run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct UpgradeGeneration(usize);
+
+impl UpgradeGeneration {
+    #[must_use]
+    pub const fn new(value: usize) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn get(self) -> usize {
+        self.0
+    }
+}
+
+/// Presentation category that selects the firmware or package upgrade surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeKind {
+    Firmware,
+    Packages,
+}
+
+/// Current stage of a system upgrade.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradePhase {
+    FirmwareDownloading,
+    FirmwareVerifying,
+    FirmwareApplying,
+    PackageRealizing,
+    PackageVerifying,
+    PackageBuilding,
+    PackageActivating,
+}
+
+/// Download bytes the on-device display can present without inferring totals.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DownloadProgress {
+    pub downloaded_bytes: u64,
+    pub total_bytes: Option<u64>,
+}
+
+/// Current upgrade view projected from the internal run stream.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UpgradeDisplayState {
+    Running {
+        kind: UpgradeKind,
+        phase: Option<UpgradePhase>,
+        progress: Option<DownloadProgress>,
+    },
+    Succeeded {
+        kind: UpgradeKind,
+    },
+    Failed {
+        kind: UpgradeKind,
+    },
+}
+
+/// Latest coherent display state for one upgrade generation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct UpgradeDisplaySnapshot {
+    pub generation: UpgradeGeneration,
+    pub state: UpgradeDisplayState,
+}
+
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
     WidgetReady { instance_id: InstanceId },

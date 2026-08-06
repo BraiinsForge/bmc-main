@@ -40,10 +40,11 @@ use tracing::error;
 use super::SystemUpgradeService;
 use super::scene_management::{PlatformDescriptor, supported_sizes_for_constraints};
 use crate::BmcManager;
+use crate::compositor::UpgradePhase;
 use crate::config::ConfigHandle;
 use crate::system_upgrade::{
     CheckOutcome, Disruption, PackagesPreview, SystemPackageChange, SystemUpgradeError,
-    SystemUpgradePhase, UpgradeRunState,
+    UpgradeRunState,
 };
 pub(crate) struct UpgradeService<T, U>
 where
@@ -290,25 +291,25 @@ fn map_package_change(change: SystemPackageChange) -> PackageChange {
 fn run_state_to_progress(state: UpgradeRunState) -> Result<UpgradeProgress, Status> {
     let event = match state {
         UpgradeRunState::Phase(phase) => match phase {
-            SystemUpgradePhase::FirmwareDownloading => {
+            UpgradePhase::FirmwareDownloading => {
                 upgrade_progress::Event::FirmwarePhase(FirmwareUpgradePhase::Downloading.into())
             }
-            SystemUpgradePhase::FirmwareVerifying => {
+            UpgradePhase::FirmwareVerifying => {
                 upgrade_progress::Event::FirmwarePhase(FirmwareUpgradePhase::Verifying.into())
             }
-            SystemUpgradePhase::FirmwareApplying => {
+            UpgradePhase::FirmwareApplying => {
                 upgrade_progress::Event::FirmwarePhase(FirmwareUpgradePhase::Applying.into())
             }
-            SystemUpgradePhase::PackageRealizing => {
+            UpgradePhase::PackageRealizing => {
                 upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Realizing.into())
             }
-            SystemUpgradePhase::PackageVerifying => {
+            UpgradePhase::PackageVerifying => {
                 upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Verifying.into())
             }
-            SystemUpgradePhase::PackageBuilding => {
+            UpgradePhase::PackageBuilding => {
                 upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Building.into())
             }
-            SystemUpgradePhase::PackageActivating => {
+            UpgradePhase::PackageActivating => {
                 upgrade_progress::Event::PackagePhase(PackageUpgradePhase::Activating.into())
             }
         },
@@ -403,9 +404,8 @@ mod tests {
 
     #[test]
     fn run_state_maps_to_wire_events() {
-        let phase =
-            run_state_to_progress(UpgradeRunState::Phase(SystemUpgradePhase::PackageRealizing))
-                .expect("BUG: phase maps");
+        let phase = run_state_to_progress(UpgradeRunState::Phase(UpgradePhase::PackageRealizing))
+            .expect("BUG: phase maps");
         assert!(matches!(
             phase.event,
             Some(upgrade_progress::Event::PackagePhase(p))
