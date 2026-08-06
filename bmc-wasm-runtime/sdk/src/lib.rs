@@ -172,6 +172,29 @@
 //! a touch produces no render, so buttons, sliders, and scroll views stay
 //! inert. A purely passive widget that ignores touch simply omits it.
 //!
+//! ### `on_network_update`
+//!
+//! ```rust,ignore
+//! #[unsafe(no_mangle)]
+//! pub extern "C" fn on_network_update() {
+//!     if network_is_on_screen() {
+//!         request_frame();
+//!     }
+//! }
+//! ```
+//!
+//! Optional — fires when the Deck's own SSID or IP changed
+//! (signal-strength jitter never fires it).
+//! Like `on_touch` it carries no arguments:
+//! the widget re-reads [`network::info`], decides whether the change is visible
+//! on its current screen, and requests a frame only then.
+//! Unlike `on_touch`, it can fire in any lifecycle state — including on a
+//! dormant widget, before its first `on_wake` — so it must not rely on state
+//! that `on_sleep` tears down.
+//! The host never renders on network changes by itself; a widget that displays
+//! the Deck's SSID/IP and omits this hook shows stale values until its next
+//! natural render.
+//!
 //! ### `unload`
 //!
 //! ```rust,ignore
@@ -213,9 +236,9 @@
 //!   (`None` for touch reads, no-op for frame requests). Used when reading defensively
 //!   is reasonable and the widget composes naturally with the sentinel.
 //!
-//! `on_params_update`, `on_system_update`, `on_touch`, `on_wake`, and
-//! `on_sleep` share the same import-legality row — state-mutation legal,
-//! tree-submission illegal.
+//! `on_params_update`, `on_system_update`, `on_touch`, `on_network_update`,
+//! `on_wake`, and `on_sleep` share the same import-legality row —
+//! state-mutation legal, tree-submission illegal.
 //!
 //! | Import                                              | `init` | `render` | `on_*`* | `unload` |
 //! |-----------------------------------------------------|:------:|:--------:|:-------:|:--------:|
@@ -224,7 +247,8 @@
 //! | `request_frame` / `request_frame_after`             | ✓      | ✓        | ✓       | no-op²   |
 //! | All other imports (params, KV, fetch, log, …)       | ✓      | ✓        | ✓       | ✓        |
 //!
-//! \* Same gating for `on_params_update`, `on_system_update`, and `on_touch`.
+//! \* Same gating for `on_params_update`, `on_system_update`, `on_touch`,
+//!   and `on_network_update`.
 //!
 //! ¹ Returns the touch-not-present sentinel after a one-time warn.
 //!   Defensive reads compose naturally — the widget gets `None`

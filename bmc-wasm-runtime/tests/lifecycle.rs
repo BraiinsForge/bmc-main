@@ -335,6 +335,38 @@ fn touch_probe_widget_wat() -> String {
     )
 }
 
+/// Probe widget for the network channel.
+/// Exports `on_network_update`, which bumps a counter and calls
+/// `host_request_frame` — the "visible on my screen, repaint" response.
+/// The counter getter lets the test assert the hook fired exactly once.
+fn network_probe_widget_wat() -> String {
+    format!(
+        r#"
+    (module
+      (import "env" "host_request_frame" (func $host_request_frame))
+
+      (memory (export "memory") 1)
+
+      (global $network_count (mut i32) (i32.const 0))
+
+      (func (export "__bmc_sdk_init") (result i64)
+        i64.const {})
+
+      (func (export "render") (param i32))
+
+      (func (export "on_network_update")
+        global.get $network_count
+        i32.const 1
+        i32.add
+        global.set $network_count
+        call $host_request_frame)
+
+      (func (export "network_count") (result i32) global.get $network_count))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn key(s: &str) -> ParamKey {
@@ -390,7 +422,7 @@ fn sdk_version_constant_matches_fixture_assumption() {
     let (major, minor, patch) = WasmWidgetRuntime::host_sdk_version();
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
-        packed, 65_536,
+        packed, 131_072,
         "host SDK version drifted to ({major}, {minor}, {patch}); \
          bumping `SDK_VERSION` means updating this pinned literal."
     );
@@ -760,5 +792,58 @@ fn widget_without_on_touch_drops_touch_without_requesting_a_frame() {
     assert!(
         !runtime.wants_next_frame(),
         "no on_touch hook means no request_frame, so no frame is scheduled"
+    );
+}
+
+// ── Network channel tests ───────────────────────────────────────────
+
+#[test]
+fn deliver_network_update_fires_hook_and_requests_frame() {
+    let mut runtime = build_runtime_without_renderer(network_probe_widget_wat());
+
+    assert!(
+        !runtime.wants_next_frame(),
+        "no frame should be pending before any network change is delivered"
+    );
+
+    runtime.set_network_info(bmc_wasm_runtime::NetworkInfo {
+        ssid: "deck-net".to_owned(),
+        ip: "10.0.0.7".to_owned(),
+    });
+    let hook_ran = runtime.deliver_network_update();
+    assert!(
+        hook_ran,
+        "deliver_network_update must invoke the on_network_update hook"
+    );
+    assert_eq!(runtime.call_export_i32("network_count"), Some(1));
+    assert!(
+        runtime.wants_next_frame(),
+        "request_frame() called from on_network_update must leave the runtime wanting a \
+         frame — the host never force-renders on network changes, so this is the only \
+         way a network change reaches the screen"
+    );
+}
+
+#[test]
+fn widget_without_on_network_update_is_silently_skipped() {
+    let wat = format!(
+        r#"
+        (module
+          (memory (export "memory") 1)
+          (func (export "__bmc_sdk_init") (result i64) i64.const {})
+          (func (export "render") (param i32)))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    );
+    let mut runtime = build_runtime_without_renderer(&wat);
+
+    let hook_ran = runtime.deliver_network_update();
+    assert!(
+        !hook_ran,
+        "absent on_network_update export — deliver_network_update returns false, not a trap"
+    );
+    assert!(
+        !runtime.wants_next_frame(),
+        "no hook means no request_frame; the widget sees the new info on its next natural render"
     );
 }

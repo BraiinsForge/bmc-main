@@ -333,6 +333,11 @@ pub struct WasmWidgetRuntime {
     /// call `request_frame()` from it — the host no longer force-renders on
     /// touch, so without the hook the widget's touch is dropped.
     on_touch_func: Option<wasmi::TypedFunc<(), ()>>,
+    /// Optional guest export fired when the Deck's own SSID or IP changed.
+    /// The widget re-reads `network::info()` and calls `request_frame()`
+    /// if the change is visible on its current screen —
+    /// the host never force-renders on network changes.
+    on_network_update_func: Option<wasmi::TypedFunc<(), ()>>,
     /// Optional guest exports fired on the dormancy/wake edge.
     on_wake_func: Option<wasmi::TypedFunc<(), ()>>,
     on_sleep_func: Option<wasmi::TypedFunc<(), ()>>,
@@ -495,6 +500,9 @@ impl WasmWidgetRuntime {
             .get_typed_func::<(), ()>(&store, "on_credentials_update")
             .ok();
         let on_touch_func = instance.get_typed_func::<(), ()>(&store, "on_touch").ok();
+        let on_network_update_func = instance
+            .get_typed_func::<(), ()>(&store, "on_network_update")
+            .ok();
         let on_wake_func = instance.get_typed_func::<(), ()>(&store, "on_wake").ok();
         let on_sleep_func = instance.get_typed_func::<(), ()>(&store, "on_sleep").ok();
         tracing::info!(
@@ -505,6 +513,7 @@ impl WasmWidgetRuntime {
             has_on_params_update = on_params_update_func.is_some(),
             has_on_system_update = on_system_update_func.is_some(),
             has_on_touch = on_touch_func.is_some(),
+            has_on_network_update = on_network_update_func.is_some(),
             "runtime instantiated"
         );
 
@@ -526,6 +535,7 @@ impl WasmWidgetRuntime {
             on_system_update_func,
             on_credentials_update_func,
             on_touch_func,
+            on_network_update_func,
             on_wake_func,
             on_sleep_func,
             pending_hook: None,
@@ -943,8 +953,8 @@ impl WasmWidgetRuntime {
     }
 
     /// Set the Deck's network info for the `host_network_info` getter.
-    /// Fires no hook, so the caller drives any re-render
-    /// (the slot marks one on change).
+    /// Fires no hook by itself; the caller follows up with
+    /// [`Self::deliver_network_update`] when the value changed.
     pub fn set_network_info(&mut self, info: NetworkInfo) {
         self.store.data_mut().network_info = info;
     }
@@ -991,6 +1001,25 @@ impl WasmWidgetRuntime {
     /// trap), matching the other deliver methods.
     pub fn deliver_touch(&mut self) -> bool {
         self.fire_update_hook(self.on_touch_func, "on_touch", Lifecycle::Touch)
+    }
+
+    /// Notify the widget that the Deck's SSID or IP changed.
+    ///
+    /// Like [`Self::deliver_touch`] there is no snapshot to stage —
+    /// the caller already stored the new value via [`Self::set_network_info`],
+    /// and the guest re-reads it through `host_network_info`.
+    /// The hook is purely the "decide whether to re-render" notification;
+    /// the widget responds by calling `request_frame()` under
+    /// [`Lifecycle::NetworkUpdate`].
+    ///
+    /// Returns whether the guest's hook actually ran
+    /// (`false` = no hook or a trap), matching the other deliver methods.
+    pub fn deliver_network_update(&mut self) -> bool {
+        self.fire_update_hook(
+            self.on_network_update_func,
+            "on_network_update",
+            Lifecycle::NetworkUpdate,
+        )
     }
 
     /// Queue the dormant edge; the hook fires later, in `poll_deliveries` scope.

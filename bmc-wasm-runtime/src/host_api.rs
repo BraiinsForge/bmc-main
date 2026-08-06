@@ -223,6 +223,11 @@ pub(crate) enum Lifecycle {
     /// re-render in response); submitting a tree and touch readback are not —
     /// the queued touch is consumed at the next render, not here.
     Touch,
+    /// `on_network_update` is on the stack — the Deck's SSID or IP changed.
+    /// Shares [`Self::Touch`]'s import surface:
+    /// the widget re-reads `host_network_info` and decides via `request_frame`
+    /// whether to repaint.
+    NetworkUpdate,
     /// `on_sleep` is on the stack — release off-scene resources.
     Sleep,
     /// `on_wake` is on the stack — restore resources; `request_frame` is legal.
@@ -735,7 +740,8 @@ pub(crate) struct HostState {
     pub system: VersionedSnapshotCache<SystemSnapshot>,
 
     /// The Deck's own SSID + IP, read on demand by the `host_network_info` getter.
-    /// Set by the embedder; unversioned, since it rarely changes and no hook reads it.
+    /// Unversioned: the embedder stores the new value first, then fires
+    /// `on_network_update`, which re-reads it through the getter.
     pub network_info: NetworkInfo,
 
     /// Third channel of the same shape as `params` and `system`.
