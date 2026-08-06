@@ -323,7 +323,14 @@ impl Storage {
         }
 
         let path = self.mount_path.join(file_path);
-        File::open(path).await
+        let file = File::open(path).await?;
+        if !file.metadata().await?.is_file() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "asset path must be a regular file",
+            ));
+        }
+        Ok(file)
     }
 
     async fn file_handler(
@@ -491,6 +498,24 @@ mod tests {
                 .await
                 .expect_err("path outside web root must be rejected");
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        }
+    }
+
+    #[tokio::test]
+    async fn storage_rejects_directory_requests_as_not_found() {
+        let temp = tempfile::tempdir().expect("BUG: create temporary directory");
+        let mount = temp.path().join("www");
+        let nested = mount.join("nested");
+        std::fs::create_dir_all(&nested).expect("BUG: create nested asset directory");
+        std::fs::write(nested.join("asset"), "asset").expect("BUG: write nested asset");
+
+        let storage = Storage::new(mount);
+        for path in ["nested", "nested/"] {
+            let error = storage
+                .get_asset(path)
+                .await
+                .expect_err("directory must not be served");
+            assert_eq!(error.kind(), std::io::ErrorKind::NotFound, "path: {path}");
         }
     }
 
