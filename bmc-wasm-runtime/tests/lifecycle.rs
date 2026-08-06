@@ -34,14 +34,16 @@
 //!
 //! ## Headless GL
 //!
-//! `WasmWidgetRuntime::new` needs a current EGL/GL context for FemtoVG.
+//! Tests that construct a FemtoVG renderer need a current EGL/GL context.
 //! The `ci` build profile (`nix/profiles.nix`) supplies Mesa, llvmpipe
 //! and surfaceless EGL inside the Nix sandbox.
-//! Locally without Nix the EGL init will fail, and each test then skips
-//! with a clear log line rather than spuriously failing.
+//! Locally without Nix the EGL init will fail, and renderer-backed tests
+//! then skip with a clear log line rather than spuriously failing.
+//! Renderer-free tests do not enter that skip path, so runtime-only
+//! contracts still execute without EGL.
 //!
 //! The expectation is that CI (which runs through the `ci`
-//! profile) is the authoritative environment for these tests.
+//! profile) is the authoritative environment for renderer-backed tests.
 
 #![cfg(target_os = "linux")]
 
@@ -51,9 +53,10 @@ use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
 use bmc_wasm_runtime::{
-    NextAlarm, RuntimeConfig, SystemSettings, SystemSnapshot, WasmWidgetRuntime,
+    CredentialView, NextAlarm, RuntimeConfig, SystemSettings, SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_widget_manifest::{ParamKey, ParamValue};
+use bmc_widget_protocol::CredentialSecrets;
 
 mod common;
 use common::headless_egl;
@@ -348,8 +351,32 @@ fn network_probe_widget_wat() -> String {
 
 // ── Helpers ─────────────────────────────────────────────────────────
 
+fn credential_update_probe_widget_wat() -> String {
+    include_str!("fixtures/update_probe.wat")
+        .replace("__UPDATE_HOOK__", "on_credentials_update")
+        .replace(
+            "__SDK_VERSION__",
+            &bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION).to_string(),
+        )
+        .replace("__REQUEST_FRAME__", "call $host_request_frame")
+}
+
 fn key(s: &str) -> ParamKey {
     ParamKey::try_new(s.to_owned()).expect("BUG: test key must be valid")
+}
+
+fn build_runtime_without_renderer(wat: impl AsRef<str>) -> WasmWidgetRuntime {
+    let wasm = wat::parse_str(wat).expect("BUG: probe WAT must parse");
+    WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: probe runtime must construct")
 }
 
 fn build_runtime(
@@ -391,6 +418,24 @@ fn build_runtime_with_system(
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
+
+#[test]
+fn deliver_credentials_update_fires_hook_and_preserves_frame_request() {
+    let mut runtime = build_runtime_without_renderer(credential_update_probe_widget_wat());
+
+    let hook_ran =
+        runtime.deliver_credentials_update(CredentialView::default(), CredentialSecrets::default());
+
+    assert!(
+        hook_ran,
+        "credential delivery must invoke on_credentials_update"
+    );
+    assert_eq!(runtime.call_export_i32("update_count"), Some(1));
+    assert!(
+        runtime.wants_next_frame(),
+        "request_frame from on_credentials_update must reach the scheduler"
+    );
+}
 
 #[test]
 fn sdk_version_constant_matches_fixture_assumption() {
