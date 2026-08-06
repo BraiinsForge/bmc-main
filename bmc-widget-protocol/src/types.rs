@@ -73,7 +73,66 @@ impl DisplayInfo {
 #[derive(Clone, Default, PartialEq)]
 pub struct CredentialSecrets(serde_json::Map<String, serde_json::Value>);
 
+/// Why a hand-written secrets map could not become [`CredentialSecrets`].
+/// Each names the mistake rather than degrading to a value whose lookups
+/// all miss — that would surface only as a refused fetch,
+/// reading as an outage rather than a typo.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+pub enum SecretsShapeError {
+    #[error("names slot {slot:?}, which the widget does not declare (declared: {declared:?})")]
+    UndeclaredSlot { slot: String, declared: Vec<String> },
+    #[error("slot {slot:?} is not an object of fields")]
+    NotAnObject { slot: String },
+    #[error("slot {slot:?} carries no fields")]
+    NoFields { slot: String },
+}
+
 impl CredentialSecrets {
+    /// Build from a hand-written map,
+    /// validating it against the slots the manifest declares.
+    ///
+    /// Accepts this type's own delivery shape, `{"<slot>": {"fields": {…}}}`,
+    /// and the bare `{"<slot>": {"<field>": …}}` that is easier to write
+    /// by hand, normalising the latter into the former. `allow_hosts`
+    /// stays beside the fields in either shape, never inside them.
+    pub fn from_editable(
+        map: serde_json::Map<String, serde_json::Value>,
+        declared: &[String],
+    ) -> Result<Self, SecretsShapeError> {
+        let mut out = serde_json::Map::new();
+        for (slot, mut entry) in map {
+            if !declared.contains(&slot) {
+                return Err(SecretsShapeError::UndeclaredSlot {
+                    slot,
+                    declared: declared.to_vec(),
+                });
+            }
+            // In the delivery shape the pin sits beside "fields", so it must
+            // come off the entry before the descent into the field map.
+            let outer_hosts = entry
+                .as_object_mut()
+                .and_then(|entry| entry.remove("allow_hosts"));
+            let mut fields = entry.get("fields").cloned().unwrap_or(entry);
+            let Some(fields) = fields.as_object_mut() else {
+                return Err(SecretsShapeError::NotAnObject { slot });
+            };
+            let allow_hosts = outer_hosts.or_else(|| fields.remove("allow_hosts"));
+            if fields.is_empty() {
+                return Err(SecretsShapeError::NoFields { slot });
+            }
+            let mut wire = serde_json::Map::new();
+            wire.insert(
+                "fields".to_owned(),
+                serde_json::Value::Object(fields.clone()),
+            );
+            if let Some(hosts) = allow_hosts {
+                wire.insert("allow_hosts".to_owned(), hosts);
+            }
+            out.insert(slot, serde_json::Value::Object(wire));
+        }
+        Ok(Self(out))
+    }
+
     #[must_use]
     pub fn new(secrets: serde_json::Map<String, serde_json::Value>) -> Self {
         Self(secrets)
@@ -395,6 +454,76 @@ pub enum ActionPayload {
         /// just that request.
         request_id: LedRequestId,
     },
+}
+
+#[cfg(test)]
+mod editable_shape_tests {
+    use super::*;
+
+    fn parse(json: &str, declared: &[&str]) -> Result<CredentialSecrets, SecretsShapeError> {
+        let map = serde_json::from_str(json).expect("BUG: fixture is valid JSON");
+        let declared: Vec<String> = declared.iter().map(|s| (*s).to_owned()).collect();
+        CredentialSecrets::from_editable(map, &declared)
+    }
+
+    #[test]
+    fn both_shapes_reach_the_same_field() {
+        let bare = parse(r#"{"pool":{"token":"abc"}}"#, &["pool"]).expect("bare shape loads");
+        let nested = parse(r#"{"pool":{"fields":{"token":"abc"}}}"#, &["pool"])
+            .expect("delivery shape loads");
+        assert_eq!(bare.field("pool", "token"), Some("abc"));
+        assert_eq!(nested.field("pool", "token"), Some("abc"));
+    }
+
+    #[test]
+    fn allow_hosts_stays_beside_the_fields_in_either_shape() {
+        let secrets = parse(
+            r#"{"pool":{"token":"abc","allow_hosts":["api.example.com"]}}"#,
+            &["pool"],
+        )
+        .expect("bare shape with a pin loads");
+        assert_eq!(secrets.allow_hosts("pool"), vec!["api.example.com"]);
+        assert_eq!(secrets.field("pool", "allow_hosts"), None);
+    }
+
+    #[test]
+    fn the_delivery_shape_keeps_its_sibling_pin() {
+        let secrets = parse(
+            r#"{"pool":{"fields":{"token":"abc"},"allow_hosts":["10.0.0.5:8080"]}}"#,
+            &["pool"],
+        )
+        .expect("delivery shape with a pin loads");
+        assert_eq!(secrets.allow_hosts("pool"), vec!["10.0.0.5:8080"]);
+        assert_eq!(secrets.field("pool", "token"), Some("abc"));
+    }
+
+    #[test]
+    fn an_undeclared_slot_names_what_the_widget_does_declare() {
+        let err = parse(r#"{"poool":{"token":"abc"}}"#, &["pool"]).expect_err("typo is rejected");
+        assert_eq!(
+            err,
+            SecretsShapeError::UndeclaredSlot {
+                slot: "poool".to_owned(),
+                declared: vec!["pool".to_owned()],
+            }
+        );
+    }
+
+    #[test]
+    fn a_slot_without_fields_is_rejected_rather_than_missing_every_lookup() {
+        assert_eq!(
+            parse(r#"{"pool":{}}"#, &["pool"]).expect_err("empty slot is rejected"),
+            SecretsShapeError::NoFields {
+                slot: "pool".to_owned()
+            }
+        );
+        assert_eq!(
+            parse(r#"{"pool":"abc"}"#, &["pool"]).expect_err("scalar slot is rejected"),
+            SecretsShapeError::NotAnObject {
+                slot: "pool".to_owned()
+            }
+        );
+    }
 }
 
 #[cfg(test)]

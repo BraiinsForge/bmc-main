@@ -1620,6 +1620,7 @@ dependencies = [
  "bmc-shared-utils",
  "serde",
  "serde_json",
+ "thiserror 1.0.69",
  "wayland-backend",
  "wayland-client",
  "wayland-protocols",
