@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_upgrade_v1">
+  <copyright>
+    Copyright (C) 2026  Braiins Forge s.r.o.
+    SPDX-License-Identifier: MIT
+
+    Upgrade-progress presentation protocol for BDK-451. The compositor relays
+    a complete display snapshot to the firmware and package overlay clients.
+  </copyright>
+
+  <interface name="deck_upgrade_v1" version="1">
+    <description summary="Deck upgrade-progress interface">
+      Lightweight compositor-relayed IPC for upgrade overlays. Each complete
+      snapshot starts with started and ends with snapshot_done, so a client
+      commits only coherent state when Wayland dispatch batches several events.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the upgrade interface"/>
+    </request>
+
+    <enum name="kind">
+      <description summary="upgrade presentation kind"/>
+      <entry name="packages" value="0" summary="package-only upgrade"/>
+      <entry name="firmware" value="1" summary="firmware-containing upgrade"/>
+    </enum>
+
+    <enum name="phase">
+      <description summary="current upgrade stage"/>
+      <entry name="firmware_downloading" value="0" summary="downloading firmware image"/>
+      <entry name="firmware_verifying" value="1" summary="verifying firmware image"/>
+      <entry name="firmware_applying" value="2" summary="applying firmware image"/>
+      <entry name="package_realizing" value="3" summary="realizing package closure"/>
+      <entry name="package_verifying" value="4" summary="verifying package closure"/>
+      <entry name="package_building" value="5" summary="building package closure"/>
+      <entry name="package_activating" value="6" summary="activating package closure"/>
+    </enum>
+
+    <event name="started">
+      <description summary="begin a full upgrade snapshot">
+        Establish the presentation kind for the snapshot. A client must ignore
+        following phase, progress, and terminal events until this event arrives.
+      </description>
+      <arg name="kind" type="uint" enum="kind" summary="upgrade presentation kind"/>
+    </event>
+
+    <event name="phase">
+      <description summary="current upgrade phase">
+        Report the current upgrade stage. A phase starts a new progress interval
+        and therefore clears any prior download progress in the client snapshot.
+        A packages snapshot carries only the package_* phases; clients treat a
+        firmware phase in a packages snapshot as a malformed sequence.
+      </description>
+      <arg name="phase" type="uint" enum="phase" summary="current upgrade stage"/>
+    </event>
+
+    <event name="download_progress">
+      <description summary="download progress with an unknown total">
+        Report bytes downloaded when no total is available. The byte count is a
+        u64 encoded as two u32 words to preserve the full range over Wayland.
+      </description>
+      <arg name="downloaded_bytes_hi" type="uint" summary="high 32 bits of downloaded bytes"/>
+      <arg name="downloaded_bytes_lo" type="uint" summary="low 32 bits of downloaded bytes"/>
+    </event>
+
+    <event name="download_progress_with_total">
+      <description summary="download progress with a known total">
+        Report bytes downloaded and the total. Each byte count is a u64 encoded
+        as two u32 words to preserve the full range over Wayland.
+      </description>
+      <arg name="downloaded_bytes_hi" type="uint" summary="high 32 bits of downloaded bytes"/>
+      <arg name="downloaded_bytes_lo" type="uint" summary="low 32 bits of downloaded bytes"/>
+      <arg name="total_bytes_hi" type="uint" summary="high 32 bits of total bytes"/>
+      <arg name="total_bytes_lo" type="uint" summary="low 32 bits of total bytes"/>
+    </event>
+
+    <event name="succeeded">
+      <description summary="upgrade completed successfully">
+        Report success for the remaining on-screen terminal interval.
+      </description>
+      <arg name="remaining_ms" type="uint" summary="remaining terminal display lifetime in milliseconds"/>
+    </event>
+
+    <event name="failed">
+      <description summary="upgrade failed">
+        Report a generic failure for the remaining on-screen terminal interval.
+      </description>
+      <arg name="remaining_ms" type="uint" summary="remaining terminal display lifetime in milliseconds"/>
+    </event>
+
+    <event name="snapshot_done">
+      <description summary="commit a coherent upgrade snapshot">
+        Marks the end of a complete snapshot sequence. Clients retain their last
+        coherent view if the candidate sequence contained invalid enum values or
+        event ordering.
+      </description>
+    </event>
+  </interface>
+</protocol>

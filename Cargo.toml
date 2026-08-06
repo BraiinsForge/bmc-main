@@ -52,6 +52,7 @@ members = [
     "deck-alarm-v1",
     "deck-screen-edge-v1",
     "deck-settings-v1",
+    "deck-upgrade-v1",
     "system-overlays/bmc-overlay-alarm",
     "system-overlays/bmc-overlay-device-info",
     "system-overlays/bmc-overlay-offline",
@@ -214,6 +215,7 @@ data-encoding = "2.6.0"
 deck-alarm-v1 = { path = "deck-alarm-v1" }
 deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 deck-settings-v1 = { path = "deck-settings-v1" }
+deck-upgrade-v1 = { path = "deck-upgrade-v1" }
 dialoguer = "0.11.0"
 dirs = "6.0.0"
 drm = "0.14.1"
