@@ -10,6 +10,7 @@
   },
   "binary": "bin/ticker-single",
   "icon": "assets/icon.svg",
+  "category": "finance",
   "settings": [
     "localization",
     "timezone"

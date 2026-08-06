@@ -764,6 +764,7 @@ pub(crate) fn category_to_proto(c: bmc_widget_manifest::WidgetCategory) -> web::
         C::Knowledge => web::WidgetCategory::Knowledge,
         C::Utility => web::WidgetCategory::Utility,
         C::Media => web::WidgetCategory::Media,
+        C::Finance => web::WidgetCategory::Finance,
         C::Misc => web::WidgetCategory::Misc,
     }
 }

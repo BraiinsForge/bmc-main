@@ -519,6 +519,8 @@ pub enum WidgetCategory {
     Utility,
     /// Audio, video, and image media.
     Media,
+    /// Stock, currency, and crypto prices.
+    Finance,
     /// Uncategorized — the default fallback.
     #[default]
     Misc,

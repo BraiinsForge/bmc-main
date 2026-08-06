@@ -540,6 +540,11 @@
           "const": "media"
         },
         {
+          "description": "Stock, currency, and crypto prices.",
+          "type": "string",
+          "const": "finance"
+        },
+        {
           "description": "Uncategorized — the default fallback.",
           "type": "string",
           "const": "misc"

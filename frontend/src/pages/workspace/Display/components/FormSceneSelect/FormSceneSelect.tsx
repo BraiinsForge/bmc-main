@@ -52,6 +52,7 @@ interface Props extends FormSceneSelectProps {
 // their category is unset or not one yet surfaced here.
 const CATEGORY_ORDER: pb.WidgetCategory[] = [
     pb.WidgetCategory.MINING,
+    pb.WidgetCategory.FINANCE,
     pb.WidgetCategory.CLOCK,
     pb.WidgetCategory.WEATHER,
     pb.WidgetCategory.CALENDAR,
@@ -71,6 +72,9 @@ function categoryLabel(intl: IntlShape, category: pb.WidgetCategory): string {
     switch (category) {
         case pb.WidgetCategory.MINING:
             return formatMessage({ defaultMessage: 'Mining' });
+
+        case pb.WidgetCategory.FINANCE:
+            return formatMessage({ defaultMessage: 'Finance' });
 
         case pb.WidgetCategory.CLOCK:
             return formatMessage({ defaultMessage: 'Clock' });
