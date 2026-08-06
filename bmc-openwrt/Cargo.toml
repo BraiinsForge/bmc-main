@@ -65,6 +65,7 @@ tokio.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+tempfile.workspace = true
 wayland-client.workspace = true
 wayland-protocols-wlr = { workspace = true, features = ["client"] }
 

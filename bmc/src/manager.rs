@@ -50,6 +50,14 @@ pub enum UpgradeError {
     Failed(String),
 }
 
+/// Outcome of consuming the one-shot post-upgrade marker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeMarker {
+    Absent,
+    Consumed,
+    RemovalFailed,
+}
+
 #[async_trait::async_trait]
 pub trait BmcManager: Sync + Send + 'static + Debug {
     type SessionManager: crate::session::Manager;
@@ -70,8 +78,8 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
         progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     ) -> Result<(), UpgradeError>;
 
-    // Checks if a system upgrade was performed
-    async fn check_and_remove_upgrade_marker(&self) -> bool;
+    /// Consume the post-upgrade marker without conflating absence and failure.
+    async fn consume_upgrade_marker(&self) -> UpgradeMarker;
 
     fn session_manager(&self) -> Self::SessionManager;
 

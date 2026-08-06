@@ -795,10 +795,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         self.display_state_service.subscribe()
     }
 
-    #[expect(
-        dead_code,
-        reason = "the post-reboot startup bridge consumes this API in the next upgrade-display step"
-    )]
     pub(crate) fn publish_post_reboot_success(&self) {
         self.display_state_service.publish_post_reboot_success();
     }

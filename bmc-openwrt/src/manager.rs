@@ -30,7 +30,8 @@ use crate::{ROOT_USERNAME, pwd, unix};
 use anyhow::{anyhow, bail};
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
-    BmcState, IfaceData, InitialSetupError, UpgradeError, WifiData, WifiEvent, WifiNetworkConfig,
+    BmcState, IfaceData, InitialSetupError, UpgradeError, UpgradeMarker, WifiData, WifiEvent,
+    WifiNetworkConfig,
 };
 use bmc::{
     BmcManager,
@@ -350,6 +351,21 @@ impl Manager {
     }
 }
 
+async fn consume_upgrade_marker(path: &Path) -> UpgradeMarker {
+    match fs::remove_file(path).await {
+        Ok(()) => UpgradeMarker::Consumed,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => UpgradeMarker::Absent,
+        Err(err) => {
+            error!(
+                error = %err,
+                path = %path.display(),
+                "failed to remove upgrade marker file"
+            );
+            UpgradeMarker::RemovalFailed
+        }
+    }
+}
+
 #[async_trait::async_trait]
 impl BmcManager for Manager {
     type SessionManager = OpenwrtSessionManager;
@@ -396,19 +412,8 @@ impl BmcManager for Manager {
         result
     }
 
-    async fn check_and_remove_upgrade_marker(&self) -> bool {
-        let is_after_upgrade = Path::new(Self::UPGRADE_RESULT_FILE_PATH).exists();
-
-        if is_after_upgrade && let Err(err) = fs::remove_file(Self::UPGRADE_RESULT_FILE_PATH).await
-        {
-            error!(
-                error = %err,
-                path = Self::UPGRADE_RESULT_FILE_PATH,
-                "Failed to remove upgrade marker file"
-            );
-        }
-
-        is_after_upgrade
+    async fn consume_upgrade_marker(&self) -> UpgradeMarker {
+        consume_upgrade_marker(Path::new(Self::UPGRADE_RESULT_FILE_PATH)).await
     }
 
     fn session_manager(&self) -> Self::SessionManager {
@@ -982,7 +987,28 @@ pub enum Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{UpgradeError, drain_lines, interpret_sysupgrade_exit};
+    use std::fs;
+
+    use bmc::UpgradeMarker;
+
+    use super::{UpgradeError, consume_upgrade_marker, drain_lines, interpret_sysupgrade_exit};
+
+    #[tokio::test]
+    async fn consuming_upgrade_marker_distinguishes_all_outcomes() {
+        let dir = tempfile::tempdir().expect("BUG: create temporary marker directory");
+        let marker = dir.path().join("upgrade_result");
+        fs::write(&marker, "success").expect("BUG: create upgrade marker");
+
+        assert_eq!(
+            consume_upgrade_marker(&marker).await,
+            UpgradeMarker::Consumed
+        );
+        assert_eq!(consume_upgrade_marker(&marker).await, UpgradeMarker::Absent);
+        assert_eq!(
+            consume_upgrade_marker(dir.path()).await,
+            UpgradeMarker::RemovalFailed
+        );
+    }
 
     #[tokio::test]
     async fn drain_lines_survives_non_utf8_output() {
