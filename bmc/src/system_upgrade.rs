@@ -20,6 +20,10 @@
 // the grant above.
 
 use crate::BmcManager;
+use crate::compositor::{
+    DownloadProgress, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
+    UpgradePhase,
+};
 use anyhow::anyhow;
 use bmc_scheduler::JobScheduler;
 use bmc_scheduler::jobs::to_boxed;
@@ -84,7 +88,7 @@ pub(crate) trait WidgetLifecycle: Send + Sync + std::fmt::Debug {
     async fn refresh_widgets(&self);
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SystemUpgradePhase {
     FirmwareDownloading,
     FirmwareVerifying,
@@ -95,7 +99,7 @@ pub(crate) enum SystemUpgradePhase {
     PackageActivating,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) enum UpgradeRunState {
     Phase(SystemUpgradePhase),
     Progress {
@@ -264,13 +268,96 @@ fn led_event(state: &UpgradeRunState) -> Option<SystemUpgradeState> {
     }
 }
 
-fn forward_led_events(state_service: StateService, mut run: UpgradeRunStream) -> UpgradeRunStream {
+fn display_phase(phase: SystemUpgradePhase) -> UpgradePhase {
+    match phase {
+        SystemUpgradePhase::FirmwareDownloading => UpgradePhase::FirmwareDownloading,
+        SystemUpgradePhase::FirmwareVerifying => UpgradePhase::FirmwareVerifying,
+        SystemUpgradePhase::FirmwareApplying => UpgradePhase::FirmwareApplying,
+        SystemUpgradePhase::PackageRealizing => UpgradePhase::PackageRealizing,
+        SystemUpgradePhase::PackageVerifying => UpgradePhase::PackageVerifying,
+        SystemUpgradePhase::PackageBuilding => UpgradePhase::PackageBuilding,
+        SystemUpgradePhase::PackageActivating => UpgradePhase::PackageActivating,
+    }
+}
+
+#[derive(Debug)]
+struct UpgradeDisplayProjector {
+    generation: UpgradeGeneration,
+    kind: UpgradeKind,
+    phase: Option<UpgradePhase>,
+    progress: Option<DownloadProgress>,
+}
+
+impl UpgradeDisplayProjector {
+    fn new(generation: UpgradeGeneration, kind: UpgradeKind) -> Self {
+        Self {
+            generation,
+            kind,
+            phase: None,
+            progress: None,
+        }
+    }
+
+    fn initial_snapshot(&self) -> UpgradeDisplaySnapshot {
+        self.running_snapshot()
+    }
+
+    fn project(&mut self, state: &UpgradeRunState) -> UpgradeDisplaySnapshot {
+        match state {
+            UpgradeRunState::Phase(phase) => {
+                self.phase = Some(display_phase(*phase));
+                self.progress = None;
+                self.running_snapshot()
+            }
+            UpgradeRunState::Progress {
+                downloaded_bytes,
+                total_bytes,
+            } => {
+                self.progress = Some(DownloadProgress {
+                    downloaded_bytes: *downloaded_bytes,
+                    total_bytes: *total_bytes,
+                });
+                self.running_snapshot()
+            }
+            UpgradeRunState::Finished => UpgradeDisplaySnapshot {
+                generation: self.generation,
+                state: UpgradeDisplayState::Succeeded { kind: self.kind },
+            },
+            UpgradeRunState::Failed(_) => UpgradeDisplaySnapshot {
+                generation: self.generation,
+                state: UpgradeDisplayState::Failed { kind: self.kind },
+            },
+        }
+    }
+
+    fn running_snapshot(&self) -> UpgradeDisplaySnapshot {
+        UpgradeDisplaySnapshot {
+            generation: self.generation,
+            state: UpgradeDisplayState::Running {
+                kind: self.kind,
+                phase: self.phase,
+                progress: self.progress,
+            },
+        }
+    }
+}
+
+fn forward_upgrade_events(
+    state_service: StateService,
+    display_state_service: DisplayStateService,
+    generation: UpgradeGeneration,
+    kind: UpgradeKind,
+    mut run: UpgradeRunStream,
+) -> UpgradeRunStream {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let mut projector = UpgradeDisplayProjector::new(generation, kind);
+    display_state_service.publish(projector.initial_snapshot());
     task::spawn(async move {
         while let Some(state) = run.rx.recv().await {
             if let Some(event) = led_event(&state) {
                 state_service.notify(event);
             }
+            display_state_service.publish(projector.project(&state));
             _ = tx.send(state);
         }
     });
@@ -380,6 +467,23 @@ async fn claim_upgrade(
     Ok((gate, upgrade))
 }
 
+async fn claim_upgrade_with_generation(
+    run_gate: &Arc<Mutex<()>>,
+    system_upgrades: &Mutex<HashMap<String, AvailableSystemUpgrade>>,
+    upgrade_id: &str,
+    display_state_service: &DisplayStateService,
+) -> Result<
+    (
+        tokio::sync::OwnedMutexGuard<()>,
+        AvailableSystemUpgrade,
+        UpgradeGeneration,
+    ),
+    UpgradeRunStream,
+> {
+    let (gate, upgrade) = claim_upgrade(run_gate, system_upgrades, upgrade_id).await?;
+    Ok((gate, upgrade, display_state_service.next_generation()))
+}
+
 fn spawn_packages_run(
     gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: Arc<dyn PackageBackend>,
@@ -448,9 +552,61 @@ impl StateService {
     }
 }
 
+#[derive(Clone, Debug)]
+struct DisplayStateService {
+    sender: Arc<watch::Sender<Option<UpgradeDisplaySnapshot>>>,
+    generation: Arc<AtomicUsize>,
+}
+
+impl DisplayStateService {
+    fn new() -> Self {
+        let (sender, _) = watch::channel(None);
+
+        Self {
+            sender: Arc::new(sender),
+            generation: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+
+    fn next_generation(&self) -> UpgradeGeneration {
+        let value = self
+            .generation
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |value| {
+                value.checked_add(1)
+            })
+            .expect("BUG: exhausted upgrade display generations");
+        UpgradeGeneration::new(value)
+    }
+
+    fn publish(&self, snapshot: UpgradeDisplaySnapshot) {
+        let snapshot = Some(snapshot);
+        self.sender.send_if_modified(|current| {
+            if *current != snapshot {
+                *current = snapshot;
+                return true;
+            }
+            false
+        });
+    }
+
+    fn subscribe(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
+        self.sender.subscribe()
+    }
+
+    fn publish_post_reboot_success(&self) {
+        self.publish(UpgradeDisplaySnapshot {
+            generation: self.next_generation(),
+            state: UpgradeDisplayState::Succeeded {
+                kind: UpgradeKind::Firmware,
+            },
+        });
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     state_service: StateService,
+    display_state_service: DisplayStateService,
     firmware_upgrader: Arc<Mutex<FirmwareUpgrader<T>>>,
     bmc_manager: Arc<U>,
     scheduler: JobScheduler,
@@ -471,6 +627,7 @@ where
     fn clone(&self) -> Self {
         Self {
             state_service: self.state_service.clone(),
+            display_state_service: self.display_state_service.clone(),
             firmware_upgrader: self.firmware_upgrader.clone(),
             bmc_manager: self.bmc_manager.clone(),
             scheduler: self.scheduler.clone(),
@@ -505,6 +662,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         );
         Self {
             state_service,
+            display_state_service: DisplayStateService::new(),
             firmware_upgrader: Arc::new(Mutex::new(firmware_upgrader)),
             bmc_manager,
             scheduler,
@@ -590,31 +748,63 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     pub(crate) async fn start_upgrade(&self, upgrade_id: String) -> UpgradeRunStream {
-        let (gate, upgrade) =
-            match claim_upgrade(&self.run_gate, &self.system_upgrades, &upgrade_id).await {
-                Ok(claimed) => claimed,
-                Err(stream) => return stream,
-            };
+        let (gate, upgrade, generation) = match claim_upgrade_with_generation(
+            &self.run_gate,
+            &self.system_upgrades,
+            &upgrade_id,
+            &self.display_state_service,
+        )
+        .await
+        {
+            Ok(claimed) => claimed,
+            Err(stream) => return stream,
+        };
 
-        let run = match upgrade {
-            AvailableSystemUpgrade::Firmware { detail, install } => {
-                self.spawn_firmware_run(gate, detail, install)
-            }
+        let (kind, run) = match upgrade {
+            AvailableSystemUpgrade::Firmware { detail, install } => (
+                UpgradeKind::Firmware,
+                self.spawn_firmware_run(gate, detail, install),
+            ),
             AvailableSystemUpgrade::Packages {
                 merged,
                 install,
                 download_size_bytes,
-            } => spawn_packages_run(
-                gate,
-                Arc::clone(&self.package_backend),
-                Arc::clone(&self.widget_lifecycle),
-                merged,
-                install,
-                download_size_bytes,
-                self.state_service.clone(),
+            } => (
+                UpgradeKind::Packages,
+                spawn_packages_run(
+                    gate,
+                    Arc::clone(&self.package_backend),
+                    Arc::clone(&self.widget_lifecycle),
+                    merged,
+                    install,
+                    download_size_bytes,
+                    self.state_service.clone(),
+                ),
             ),
         };
-        forward_led_events(self.state_service.clone(), run)
+        forward_upgrade_events(
+            self.state_service.clone(),
+            self.display_state_service.clone(),
+            generation,
+            kind,
+            run,
+        )
+    }
+
+    #[expect(
+        dead_code,
+        reason = "the compositor startup bridge consumes this API in the next upgrade-display step"
+    )]
+    pub(crate) fn subscribe_display_state(&self) -> Receiver<Option<UpgradeDisplaySnapshot>> {
+        self.display_state_service.subscribe()
+    }
+
+    #[expect(
+        dead_code,
+        reason = "the post-reboot startup bridge consumes this API in the next upgrade-display step"
+    )]
+    pub(crate) fn publish_post_reboot_success(&self) {
+        self.display_state_service.publish_post_reboot_success();
     }
 
     #[expect(clippy::too_many_lines)]
@@ -1029,8 +1219,24 @@ mod tests {
     async fn start_upgrade_unknown_id_expires_and_frees_gate() {
         let run_gate = Arc::new(Mutex::new(()));
         let system_upgrades = Mutex::new(HashMap::new());
+        let display_state_service = DisplayStateService::new();
+        let snapshot = UpgradeDisplaySnapshot {
+            generation: display_state_service.next_generation(),
+            state: UpgradeDisplayState::Running {
+                kind: UpgradeKind::Firmware,
+                phase: Some(UpgradePhase::FirmwareDownloading),
+                progress: None,
+            },
+        };
+        display_state_service.publish(snapshot.clone());
 
-        let claim = claim_upgrade(&run_gate, &system_upgrades, "unknown-id").await;
+        let claim = claim_upgrade_with_generation(
+            &run_gate,
+            &system_upgrades,
+            "unknown-id",
+            &display_state_service,
+        )
+        .await;
 
         let Err(mut stream) = claim else {
             panic!("BUG: unknown id must not claim an upgrade");
@@ -1041,12 +1247,25 @@ mod tests {
         ));
         assert!(stream.next().await.is_none());
         assert!(run_gate.try_lock().is_ok());
+        assert_eq!(display_state_service.next_generation().get(), 1);
+        let receiver = display_state_service.subscribe();
+        assert_eq!(*receiver.borrow(), Some(snapshot));
     }
 
     #[tokio::test]
     async fn start_upgrade_while_gate_held_keeps_id_and_reports_in_progress() {
         let run_gate = Arc::new(Mutex::new(()));
         let system_upgrades = Mutex::new(HashMap::new());
+        let display_state_service = DisplayStateService::new();
+        let snapshot = UpgradeDisplaySnapshot {
+            generation: display_state_service.next_generation(),
+            state: UpgradeDisplayState::Running {
+                kind: UpgradeKind::Packages,
+                phase: Some(UpgradePhase::PackageRealizing),
+                progress: None,
+            },
+        };
+        display_state_service.publish(snapshot.clone());
         system_upgrades.lock().await.insert(
             "upgrade-0".to_owned(),
             AvailableSystemUpgrade::Firmware {
@@ -1059,7 +1278,13 @@ mod tests {
             .try_lock_owned()
             .expect("BUG: fresh gate is lockable");
 
-        let claim = claim_upgrade(&run_gate, &system_upgrades, "upgrade-0").await;
+        let claim = claim_upgrade_with_generation(
+            &run_gate,
+            &system_upgrades,
+            "upgrade-0",
+            &display_state_service,
+        )
+        .await;
 
         let Err(mut stream) = claim else {
             panic!("BUG: held gate must not claim an upgrade");
@@ -1071,6 +1296,9 @@ mod tests {
             ))
         ));
         assert!(system_upgrades.lock().await.contains_key("upgrade-0"));
+        assert_eq!(display_state_service.next_generation().get(), 1);
+        let receiver = display_state_service.subscribe();
+        assert_eq!(*receiver.borrow(), Some(snapshot));
 
         drop(guard);
         assert!(run_gate.try_lock().is_ok());
@@ -1511,6 +1739,254 @@ mod tests {
             led_event(&UpgradeRunState::Finished),
             Some(SystemUpgradeState::Finished)
         ));
+    }
+
+    #[test]
+    fn display_projector_maps_every_phase_with_the_run_kind_and_generation() {
+        let generation = UpgradeGeneration::new(42);
+        let mut projector = UpgradeDisplayProjector::new(generation, UpgradeKind::Firmware);
+
+        for (run_phase, display_phase) in [
+            (
+                SystemUpgradePhase::FirmwareDownloading,
+                UpgradePhase::FirmwareDownloading,
+            ),
+            (
+                SystemUpgradePhase::FirmwareVerifying,
+                UpgradePhase::FirmwareVerifying,
+            ),
+            (
+                SystemUpgradePhase::FirmwareApplying,
+                UpgradePhase::FirmwareApplying,
+            ),
+            (
+                SystemUpgradePhase::PackageRealizing,
+                UpgradePhase::PackageRealizing,
+            ),
+            (
+                SystemUpgradePhase::PackageVerifying,
+                UpgradePhase::PackageVerifying,
+            ),
+            (
+                SystemUpgradePhase::PackageBuilding,
+                UpgradePhase::PackageBuilding,
+            ),
+            (
+                SystemUpgradePhase::PackageActivating,
+                UpgradePhase::PackageActivating,
+            ),
+        ] {
+            assert_eq!(
+                projector.project(&UpgradeRunState::Phase(run_phase)),
+                UpgradeDisplaySnapshot {
+                    generation,
+                    state: UpgradeDisplayState::Running {
+                        kind: UpgradeKind::Firmware,
+                        phase: Some(display_phase),
+                        progress: None,
+                    },
+                }
+            );
+        }
+    }
+
+    #[test]
+    fn display_projector_preserves_optional_totals_and_clears_progress_for_a_new_phase() {
+        let generation = UpgradeGeneration::new(7);
+        let mut projector = UpgradeDisplayProjector::new(generation, UpgradeKind::Packages);
+        let _ = projector.project(&UpgradeRunState::Phase(
+            SystemUpgradePhase::PackageRealizing,
+        ));
+
+        assert_eq!(
+            projector.project(&UpgradeRunState::Progress {
+                downloaded_bytes: 10,
+                total_bytes: Some(20),
+            }),
+            UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Running {
+                    kind: UpgradeKind::Packages,
+                    phase: Some(UpgradePhase::PackageRealizing),
+                    progress: Some(DownloadProgress {
+                        downloaded_bytes: 10,
+                        total_bytes: Some(20),
+                    }),
+                },
+            }
+        );
+        assert_eq!(
+            projector.project(&UpgradeRunState::Progress {
+                downloaded_bytes: 11,
+                total_bytes: None,
+            }),
+            UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Running {
+                    kind: UpgradeKind::Packages,
+                    phase: Some(UpgradePhase::PackageRealizing),
+                    progress: Some(DownloadProgress {
+                        downloaded_bytes: 11,
+                        total_bytes: None,
+                    }),
+                },
+            }
+        );
+        assert_eq!(
+            projector.project(&UpgradeRunState::Phase(SystemUpgradePhase::PackageBuilding)),
+            UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Running {
+                    kind: UpgradeKind::Packages,
+                    phase: Some(UpgradePhase::PackageBuilding),
+                    progress: None,
+                },
+            }
+        );
+        let _ = projector.project(&UpgradeRunState::Progress {
+            downloaded_bytes: 12,
+            total_bytes: Some(30),
+        });
+        assert_eq!(
+            projector.project(&UpgradeRunState::Phase(SystemUpgradePhase::PackageBuilding)),
+            UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Running {
+                    kind: UpgradeKind::Packages,
+                    phase: Some(UpgradePhase::PackageBuilding),
+                    progress: None,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn display_projector_projects_terminal_states_with_the_run_kind() {
+        let generation = UpgradeGeneration::new(3);
+        let mut packages = UpgradeDisplayProjector::new(generation, UpgradeKind::Packages);
+        assert_eq!(
+            packages.project(&UpgradeRunState::Finished),
+            UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Succeeded {
+                    kind: UpgradeKind::Packages,
+                },
+            }
+        );
+
+        let mut firmware = UpgradeDisplayProjector::new(generation, UpgradeKind::Firmware);
+        assert_eq!(
+            firmware.project(&UpgradeRunState::Failed(SystemUpgradeError::UpgradeFailed)),
+            UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Failed {
+                    kind: UpgradeKind::Firmware,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn display_state_retains_snapshots_for_late_subscribers() {
+        let state_service = DisplayStateService::new();
+        let initial_receiver = state_service.subscribe();
+        assert_eq!(*initial_receiver.borrow(), None);
+        drop(initial_receiver);
+        let first = state_service.next_generation();
+        let second = state_service.next_generation();
+
+        assert_eq!(first.get(), 0);
+        assert_eq!(second.get(), 1);
+
+        let snapshot = UpgradeDisplaySnapshot {
+            generation: second,
+            state: UpgradeDisplayState::Succeeded {
+                kind: UpgradeKind::Firmware,
+            },
+        };
+        state_service.publish(snapshot.clone());
+        let mut receiver = state_service.subscribe();
+        assert_eq!(*receiver.borrow_and_update(), Some(snapshot));
+    }
+
+    #[test]
+    fn post_reboot_success_publishes_a_fresh_firmware_snapshot() {
+        let display_state_service = DisplayStateService::new();
+        let prior_generation = display_state_service.next_generation();
+        display_state_service.publish(UpgradeDisplaySnapshot {
+            generation: prior_generation,
+            state: UpgradeDisplayState::Failed {
+                kind: UpgradeKind::Firmware,
+            },
+        });
+
+        display_state_service.publish_post_reboot_success();
+
+        let receiver = display_state_service.subscribe();
+        assert_eq!(
+            *receiver.borrow(),
+            Some(UpgradeDisplaySnapshot {
+                generation: UpgradeGeneration::new(1),
+                state: UpgradeDisplayState::Succeeded {
+                    kind: UpgradeKind::Firmware,
+                },
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn forwarding_adapter_publishes_initial_running_and_preserves_run_stream() {
+        let state_service = StateService::new();
+        let display_state_service = DisplayStateService::new();
+        let mut display_receiver = display_state_service.subscribe();
+        let generation = display_state_service.next_generation();
+        let (input_tx, input_rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut run = forward_upgrade_events(
+            state_service,
+            display_state_service,
+            generation,
+            UpgradeKind::Packages,
+            UpgradeRunStream { rx: input_rx },
+        );
+
+        assert_eq!(
+            *display_receiver.borrow_and_update(),
+            Some(UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Running {
+                    kind: UpgradeKind::Packages,
+                    phase: None,
+                    progress: None,
+                },
+            })
+        );
+
+        let states = [
+            UpgradeRunState::Phase(SystemUpgradePhase::PackageRealizing),
+            UpgradeRunState::Progress {
+                downloaded_bytes: 3,
+                total_bytes: Some(5),
+            },
+            UpgradeRunState::Failed(SystemUpgradeError::PackageUpgradeFailed("boom".to_owned())),
+        ];
+        for state in states {
+            input_tx
+                .send(state.clone())
+                .expect("BUG: forwarding input stays open");
+            assert_eq!(run.next().await, Some(state));
+        }
+        drop(input_tx);
+        assert!(run.next().await.is_none());
+
+        assert_eq!(
+            *display_receiver.borrow_and_update(),
+            Some(UpgradeDisplaySnapshot {
+                generation,
+                state: UpgradeDisplayState::Failed {
+                    kind: UpgradeKind::Packages,
+                },
+            })
+        );
     }
 
     #[test]
