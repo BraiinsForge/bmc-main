@@ -93,6 +93,22 @@ pub fn slot_needs_render_from_inputs(inputs: SlotRenderInputs) -> bool {
         .is_none_or(|remaining| remaining.is_zero())
 }
 
+/// Project the connectivity snapshot onto the widget-visible `NetworkInfo`.
+/// The snapshot also carries the Wi-Fi signal level, which widgets cannot observe;
+/// comparing this projection instead of the snapshot version
+/// keeps signal-only bumps from waking widgets at all.
+#[must_use]
+pub fn widget_network_info(snapshot: &bmc_system_overlay::Snapshot) -> NetworkInfo {
+    NetworkInfo {
+        ssid: snapshot.station_ssid.clone().unwrap_or_default(),
+        ip: snapshot
+            .ipv4
+            .as_ref()
+            .map(std::net::Ipv4Addr::to_string)
+            .unwrap_or_default(),
+    }
+}
+
 #[must_use]
 pub fn duration_to_timeout_millis(duration: Duration) -> u32 {
     u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
@@ -173,6 +189,10 @@ pub struct WidgetSlot {
     /// Last connectivity snapshot version pushed to the runtime as `NetworkInfo`;
     /// version-gated so an unchanged network re-polls free.
     pub snapshot_version: Option<bmc_system_overlay::SnapshotVersion>,
+    /// Last `NetworkInfo` pushed to the runtime.
+    /// The snapshot version also bumps on fields widgets cannot observe
+    /// (Wi-Fi signal level), so the delivery hook fires only when this projection changes.
+    pub last_network_info: NetworkInfo,
     pub credentials: bmc_wasm_runtime::CredentialView,
     pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     pub peer_pid: libc::pid_t,
@@ -285,6 +305,7 @@ impl WidgetSlot {
             initial_params: initial.params,
             pending_system,
             snapshot_version: None,
+            last_network_info: NetworkInfo::default(),
             credentials,
             credential_secrets,
             peer_pid,
@@ -312,8 +333,12 @@ impl WidgetSlot {
 
     /// Poll the shared OS connectivity prober, then push the Deck's SSID + IP
     /// to the runtime as `NetworkInfo` so a widget can show how to reach the Deck.
-    /// Version-gated like the overlays' `refresh_network`; a change re-renders
-    /// so the widget picks it up.
+    /// Version-gated like the overlays' `refresh_network`, with the overlays' inner
+    /// comparison: the version also bumps on signal-level jitter, which widgets
+    /// cannot observe, so only a changed projection reaches the runtime.
+    /// The widget decides whether to re-render by calling `request_frame()`
+    /// from `on_network_update` — the host never marks the surface dirty
+    /// for network changes.
     pub fn refresh_network(&mut self) {
         let Some(bmc_system_overlay::VersionedSnapshot { version, snapshot }) =
             bmc_system_overlay::snapshot_if_changed(self.snapshot_version)
@@ -321,15 +346,13 @@ impl WidgetSlot {
             return;
         };
         self.snapshot_version = Some(version);
-        self.runtime.set_network_info(NetworkInfo {
-            ssid: snapshot.station_ssid.unwrap_or_default(),
-            ip: snapshot
-                .ipv4
-                .as_ref()
-                .map(std::net::Ipv4Addr::to_string)
-                .unwrap_or_default(),
-        });
-        self.surface.mark_needs_render();
+        let info = widget_network_info(&snapshot);
+        if info == self.last_network_info {
+            return;
+        }
+        self.last_network_info = info.clone();
+        self.runtime.set_network_info(info);
+        self.runtime.deliver_network_update();
     }
 
     pub fn dispatch_wayland_events(&mut self) -> Result<()> {
