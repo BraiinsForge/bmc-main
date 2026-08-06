@@ -34,8 +34,9 @@ pub use connectivity::{Snapshot, SnapshotVersion, VersionedSnapshot, snapshot_if
 pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use overlay::{
-    AlarmEvent, AlarmRequest, InputRegion, LayerConfig, ScreenEdge, SettingsCaps, SettingsRequest,
-    SystemOverlay, TickOutcome, TouchEvent,
+    AlarmEvent, AlarmRequest, DownloadProgress, InputRegion, LayerConfig, ScreenEdge, SettingsCaps,
+    SettingsRequest, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase,
+    UpgradeSnapshot, UpgradeState,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;

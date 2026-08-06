@@ -32,6 +32,8 @@
 use std::time::{Duration, Instant};
 
 use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
+use ::deck_upgrade_v1::UpgradeDecoder;
+use ::deck_upgrade_v1::client::deck_upgrade_v1::{self, DeckUpgradeV1};
 use anyhow::Context;
 use wayland_client::backend::ObjectId;
 use wayland_client::protocol::{
@@ -117,6 +119,15 @@ struct State {
     /// round keeps the ring — the trailing event wins, preserving wire order.
     pending_alarm_event: Option<AlarmEvent>,
 
+    /// Whether this overlay opted into `deck_upgrade_v1` (its
+    /// `SystemOverlay::uses_upgrade`).
+    wants_upgrade: bool,
+    upgrade: Option<DeckUpgradeV1>,
+    upgrade_decoder: UpgradeDecoder,
+    /// Latest coherent `deck_upgrade_v1` snapshot, drained by the framework
+    /// before its next tick.
+    pending_upgrade_snapshot: Option<crate::overlay::UpgradeSnapshot>,
+
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
     /// Compositor-suggested size from the latest Configure.
@@ -171,6 +182,10 @@ impl Default for State {
             wants_alarm: false,
             alarm: None,
             pending_alarm_event: None,
+            wants_upgrade: false,
+            upgrade: None,
+            upgrade_decoder: UpgradeDecoder::default(),
+            pending_upgrade_snapshot: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -214,6 +229,12 @@ impl State {
     /// Record an `alarm_stopped` into the single latest-wins alarm slot.
     fn note_alarm_stop(&mut self) {
         self.pending_alarm_event = Some(AlarmEvent::Stop);
+    }
+
+    fn on_upgrade_event(&mut self, event: &deck_upgrade_v1::Event) {
+        if let Some(snapshot) = self.upgrade_decoder.decode(event) {
+            self.pending_upgrade_snapshot = Some(snapshot);
+        }
     }
 
     fn discard_unmap_configure(&mut self, previous_size: (u32, u32)) {
@@ -323,6 +344,7 @@ impl LayerSurfaceClient {
         config: &crate::overlay::LayerConfig,
         wants_settings: bool,
         wants_alarm: bool,
+        wants_upgrade: bool,
     ) -> anyhow::Result<Self> {
         let conn =
             Connection::connect_to_env().map_err(|e| anyhow::anyhow!("wayland connect: {e}"))?;
@@ -333,6 +355,7 @@ impl LayerSurfaceClient {
         let mut state = State {
             wants_settings,
             wants_alarm,
+            wants_upgrade,
             ..State::default()
         };
         queue
@@ -604,6 +627,10 @@ impl LayerSurfaceClient {
         self.state.pending_alarm_event.take()
     }
 
+    pub fn take_upgrade_snapshot(&mut self) -> Option<crate::overlay::UpgradeSnapshot> {
+        self.state.pending_upgrade_snapshot.take()
+    }
+
     pub fn send_settings_request(
         &self,
         req: crate::overlay::SettingsRequest,
@@ -765,6 +792,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     let alarm = registry.bind::<DeckAlarmV1, _, _>(name, version.min(1), qh, ());
                     state.alarm = Some(alarm);
                 }
+                "deck_upgrade_v1" if state.wants_upgrade => {
+                    let upgrade =
+                        registry.bind::<DeckUpgradeV1, _, _>(name, version.min(1), qh, ());
+                    state.upgrade = Some(upgrade);
+                }
                 _ => {}
             }
         }
@@ -910,6 +942,19 @@ impl Dispatch<DeckAlarmV1, ()> for State {
             }
             other => tracing::debug!(?other, "unhandled deck_alarm_v1 event"),
         }
+    }
+}
+
+impl Dispatch<DeckUpgradeV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckUpgradeV1,
+        event: deck_upgrade_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        state.on_upgrade_event(&event);
     }
 }
 
@@ -1083,6 +1128,146 @@ impl Dispatch<wl_touch::WlTouch, ()> for State {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ::deck_upgrade_v1::client::deck_upgrade_v1::{Event, Kind, Phase};
+
+    fn running_snapshot(
+        kind: crate::overlay::UpgradeKind,
+        phase: Option<crate::overlay::UpgradePhase>,
+        progress: Option<crate::overlay::DownloadProgress>,
+    ) -> crate::overlay::UpgradeSnapshot {
+        crate::overlay::UpgradeSnapshot {
+            kind,
+            state: crate::overlay::UpgradeState::Running { phase, progress },
+        }
+    }
+
+    fn started(kind: Kind) -> Event {
+        Event::Started {
+            kind: WEnum::Value(kind),
+        }
+    }
+
+    fn phase(phase: Phase) -> Event {
+        Event::Phase {
+            phase: WEnum::Value(phase),
+        }
+    }
+
+    #[test]
+    fn invalid_upgrade_candidate_preserves_pending_valid_snapshot() {
+        let valid = running_snapshot(
+            crate::overlay::UpgradeKind::Packages,
+            Some(crate::overlay::UpgradePhase::PackageRealizing),
+            None,
+        );
+        let mut state = State::default();
+        state.on_upgrade_event(&started(Kind::Packages));
+        state.on_upgrade_event(&phase(Phase::PackageRealizing));
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        state.on_upgrade_event(&started(Kind::Firmware));
+        state.on_upgrade_event(&Event::Phase {
+            phase: WEnum::Unknown(99),
+        });
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        assert_eq!(state.pending_upgrade_snapshot, Some(valid));
+    }
+
+    #[derive(Default)]
+    struct UpgradeObserver {
+        snapshot: Option<crate::overlay::UpgradeSnapshot>,
+        calls: Vec<&'static str>,
+    }
+
+    impl crate::overlay::SystemOverlay for UpgradeObserver {
+        fn layer_config(&self) -> crate::overlay::LayerConfig {
+            crate::overlay::LayerConfig::fullscreen("upgrade-observer")
+        }
+
+        fn tick(&mut self, _now: Instant) -> crate::overlay::TickOutcome {
+            self.calls.push("tick");
+            crate::overlay::TickOutcome::default()
+        }
+
+        fn render(
+            &mut self,
+            _renderer: &mut dyn bmc_render::renderer::Renderer,
+            _size: (u32, u32),
+        ) {
+        }
+
+        fn uses_upgrade(&self) -> bool {
+            true
+        }
+
+        fn on_upgrade_state(&mut self, snapshot: crate::overlay::UpgradeSnapshot) {
+            self.calls.push("upgrade");
+            self.snapshot = Some(snapshot);
+        }
+    }
+
+    #[test]
+    fn malformed_sequences_preserve_the_snapshot_delivered_before_tick() {
+        let valid = running_snapshot(
+            crate::overlay::UpgradeKind::Packages,
+            Some(crate::overlay::UpgradePhase::PackageRealizing),
+            None,
+        );
+        let mut state = State::default();
+        state.on_upgrade_event(&started(Kind::Packages));
+        state.on_upgrade_event(&phase(Phase::PackageRealizing));
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        state.on_upgrade_event(&Event::Started {
+            kind: WEnum::Unknown(99),
+        });
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        state.on_upgrade_event(&started(Kind::Packages));
+        state.on_upgrade_event(&Event::DownloadProgress {
+            downloaded_bytes_hi: 0,
+            downloaded_bytes_lo: 1,
+        });
+        state.on_upgrade_event(&phase(Phase::PackageVerifying));
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        state.on_upgrade_event(&started(Kind::Firmware));
+        state.on_upgrade_event(&Event::Phase {
+            phase: WEnum::Unknown(99),
+        });
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        let mut observer = UpgradeObserver::default();
+        let _ = crate::overlay::deliver_upgrade_snapshot_and_tick(
+            &mut observer,
+            state.pending_upgrade_snapshot.take(),
+            Instant::now(),
+        );
+
+        assert_eq!(observer.snapshot, Some(valid));
+        assert_eq!(observer.calls, vec!["upgrade", "tick"]);
+    }
+
+    #[test]
+    fn latest_completed_upgrade_snapshot_wins_before_take() {
+        let mut state = State::default();
+        state.on_upgrade_event(&started(Kind::Packages));
+        state.on_upgrade_event(&Event::SnapshotDone);
+        state.on_upgrade_event(&started(Kind::Firmware));
+        state.on_upgrade_event(&Event::Succeeded { remaining_ms: 500 });
+        state.on_upgrade_event(&Event::SnapshotDone);
+
+        assert_eq!(
+            state.pending_upgrade_snapshot,
+            Some(crate::overlay::UpgradeSnapshot {
+                kind: crate::overlay::UpgradeKind::Firmware,
+                state: crate::overlay::UpgradeState::Succeeded {
+                    remaining: Duration::from_millis(500),
+                },
+            })
+        );
+    }
 
     #[test]
     fn screen_edge_hidden_clears_pending_reveal() {

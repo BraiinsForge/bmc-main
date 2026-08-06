@@ -337,6 +337,12 @@ pub struct TickOutcome {
     pub next_wake: Option<Instant>,
 }
 
+/// Presentation type of an upgrade overlay (the `deck_upgrade_v1` wire enum).
+pub use ::deck_upgrade_v1::client::deck_upgrade_v1::Kind as UpgradeKind;
+/// Upgrade stage supplied by the compositor (the `deck_upgrade_v1` wire enum).
+pub use ::deck_upgrade_v1::client::deck_upgrade_v1::Phase as UpgradePhase;
+pub use ::deck_upgrade_v1::{DownloadProgress, UpgradeSnapshot, UpgradeState};
+
 /// A privileged system overlay. Implementors do background work in `tick`,
 /// draw in `render`, and declare placement via `layer_config`.
 pub trait SystemOverlay {
@@ -363,6 +369,13 @@ pub trait SystemOverlay {
 
     /// Handle a touch event (only delivered when input region is not `None`).
     fn on_touch(&mut self, _event: TouchEvent) {}
+
+    /// Whether this overlay binds the compositor upgrade-state protocol.
+    fn uses_upgrade(&self) -> bool {
+        false
+    }
+    /// Receive one coherent compositor upgrade snapshot before `tick`.
+    fn on_upgrade_state(&mut self, _snapshot: UpgradeSnapshot) {}
 
     /// Opt in to screen-edge reveal. `None` (default) means a normal overlay
     /// whose visibility is driven by [`TickOutcome::visible`]. `Some(edge)` arms
@@ -491,6 +504,19 @@ pub trait SystemOverlay {
     fn on_frame_submitted(&mut self, _now: Instant) {}
 }
 
+pub(crate) fn deliver_upgrade_snapshot_and_tick(
+    overlay: &mut dyn SystemOverlay,
+    snapshot: Option<UpgradeSnapshot>,
+    now: Instant,
+) -> TickOutcome {
+    if overlay.uses_upgrade()
+        && let Some(snapshot) = snapshot
+    {
+        overlay.on_upgrade_state(snapshot);
+    }
+    overlay.tick(now)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -504,6 +530,80 @@ mod tests {
         assert!(c.anchor.contains(Anchor::Right));
         assert_eq!(c.size, (0, 0));
         assert_eq!(c.input, InputRegion::Full);
+    }
+
+    #[derive(Default)]
+    struct RecordingUpgradeOverlay {
+        enabled: bool,
+        snapshot: Option<UpgradeSnapshot>,
+        calls: Vec<&'static str>,
+    }
+
+    impl SystemOverlay for RecordingUpgradeOverlay {
+        fn layer_config(&self) -> LayerConfig {
+            LayerConfig::fullscreen("recording-upgrade-overlay")
+        }
+
+        fn tick(&mut self, _now: Instant) -> TickOutcome {
+            self.calls.push("tick");
+            TickOutcome::default()
+        }
+
+        fn render(&mut self, _renderer: &mut dyn Renderer, _size: (u32, u32)) {}
+
+        fn uses_upgrade(&self) -> bool {
+            self.enabled
+        }
+
+        fn on_upgrade_state(&mut self, snapshot: UpgradeSnapshot) {
+            self.calls.push("upgrade");
+            self.snapshot = Some(snapshot);
+        }
+    }
+
+    fn run_upgrade_delivery() -> RecordingUpgradeOverlay {
+        let snapshot = UpgradeSnapshot {
+            kind: UpgradeKind::Packages,
+            state: UpgradeState::Running {
+                phase: Some(UpgradePhase::PackageRealizing),
+                progress: Some(DownloadProgress {
+                    downloaded_bytes: 3,
+                    total_bytes: Some(5),
+                }),
+            },
+        };
+        let mut overlay = RecordingUpgradeOverlay {
+            enabled: true,
+            ..RecordingUpgradeOverlay::default()
+        };
+        let _ = deliver_upgrade_snapshot_and_tick(&mut overlay, Some(snapshot), Instant::now());
+        overlay
+    }
+
+    #[test]
+    fn shared_upgrade_delivery_calls_callback_before_tick() {
+        let overlay = run_upgrade_delivery();
+
+        assert!(overlay.snapshot.is_some());
+        assert_eq!(overlay.calls, vec!["upgrade", "tick"]);
+    }
+
+    #[test]
+    fn opted_out_overlay_does_not_receive_upgrade_snapshot() {
+        let mut overlay = RecordingUpgradeOverlay::default();
+        let _ = deliver_upgrade_snapshot_and_tick(
+            &mut overlay,
+            Some(UpgradeSnapshot {
+                kind: UpgradeKind::Firmware,
+                state: UpgradeState::Succeeded {
+                    remaining: Duration::from_secs(1),
+                },
+            }),
+            Instant::now(),
+        );
+
+        assert_eq!(overlay.snapshot, None);
+        assert_eq!(overlay.calls, vec!["tick"]);
     }
 
     #[test]

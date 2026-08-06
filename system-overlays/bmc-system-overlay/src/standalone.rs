@@ -29,8 +29,8 @@ use bmc_widget::egl::{EglContext, SharedRenderScratch};
 
 use crate::gpu::{OverlayRenderTarget, wait_for_gpu};
 use crate::overlay::{
-    AlarmEvent, LayerConfig, MIN_INTER_FRAME, SystemOverlay, resize_transition,
-    resolved_configured_size, screen_edge_visible,
+    AlarmEvent, LayerConfig, MIN_INTER_FRAME, SystemOverlay, deliver_upgrade_snapshot_and_tick,
+    resize_transition, resolved_configured_size, screen_edge_visible,
 };
 use crate::surface::LayerSurfaceClient;
 
@@ -43,8 +43,12 @@ use crate::surface::LayerSurfaceClient;
 pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()> {
     let config: LayerConfig = overlay.layer_config();
 
-    let mut client =
-        LayerSurfaceClient::connect(&config, overlay.uses_settings(), overlay.uses_alarm())?;
+    let mut client = LayerSurfaceClient::connect(
+        &config,
+        overlay.uses_settings(),
+        overlay.uses_alarm(),
+        overlay.uses_upgrade(),
+    )?;
     let mut size = resolved_configured_size(config.size, client.size());
 
     let egl = EglContext::new()?;
@@ -103,7 +107,8 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
         deliver_alarm_events(&mut client, &mut *overlay);
 
         let now = Instant::now();
-        let tick = overlay.tick(now);
+        let tick =
+            deliver_upgrade_snapshot_and_tick(&mut *overlay, client.take_upgrade_snapshot(), now);
         let want_visible = match screen_edge {
             Some(_) => screen_edge_visible(revealed, tick.visible),
             None => tick.visible,
