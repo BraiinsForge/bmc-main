@@ -650,8 +650,11 @@ impl DisplayStateService {
     }
 
     fn publish_post_reboot_success(&self, kind: UpgradeKind) {
+        let generation = self.next_generation();
+        // The only durable record of this transient startup decision.
+        info!(?kind, ?generation, "publishing upgrade success overlay");
         self.publish(UpgradeDisplaySnapshot {
-            generation: self.next_generation(),
+            generation,
             state: UpgradeDisplayState::Succeeded { kind },
         });
     }
