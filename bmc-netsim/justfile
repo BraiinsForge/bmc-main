@@ -10,6 +10,12 @@ default:
 schema:
     UPDATE_SCHEMA=1 cargo test -p bmc-netsim blueprint_schema
 
-# Run the simulator against blueprints/<name>.json5 (bare name, default example).
-run name="example":
-    cargo run -p bmc-netsim -- run {{ dir / "blueprints" / (name + ".json5") }}
+# Run the simulator: a bare name from blueprints/ (default example), or a path to any .json5.
+run blueprint="example":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    bp="{{ blueprint }}"
+    [[ "$bp" == *.json5 ]] || bp="{{ dir }}/blueprints/$bp.json5"
+
+    exec cargo run -p bmc-netsim -- run "$bp"

@@ -37,27 +37,43 @@ clean:
 # === Dev / run ===
 
 # Hot-reload dev: build testbed + widget + run in an mprocs split.
-dev WIDGET ARGS="":
+dev WIDGET ARGS="": (prebuild WIDGET)
+    mprocs \
+        --names "watch,testbed" \
+        "just --justfile {{ source_file() }} watch {{ WIDGET }}" \
+        "just --justfile {{ source_file() }} testbed {{ WIDGET }} '{{ ARGS }}'"
+
+# The testbed loads the widget's wasm at startup, so both exist up front.
+[private]
+prebuild WIDGET:
     #!/usr/bin/env bash
     set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
+    cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
+    cargo build --manifest-path "$root/$name/Cargo.toml" --target {{ wasm_target }}
 
+# Rebuild WIDGET's wasm on source change.
+watch WIDGET:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
+    name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
+    cd "$root" && exec cargo watch -x "build --manifest-path $name/Cargo.toml --target {{ wasm_target }}"
+
+# Run the debug testbed on WIDGET with its dev blob cache; extra ARGS reach the testbed.
+testbed WIDGET ARGS="":
+    #!/usr/bin/env bash
+    set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
     name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
     target=$({{ target_dir_tool }} "$root")
     wasm_file="$target/{{ wasm_target }}/debug/$(echo "$name" | tr - _).wasm"
-
-    cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
-    cargo build --manifest-path "$root/$name/Cargo.toml" --target {{ wasm_target }}
-
     # Per-widget dev blob cache at the repo root (git-ignored), easy to find and
     # clear, so history survives a hot rebuild.
     cache_dir="{{ parent_directory(dir) }}/.cache/testbed/$name"
     mkdir -p "$cache_dir"
-
-    mprocs \
-        --names "watch,testbed" \
-        "cd '$root' && cargo watch -x 'build --manifest-path $name/Cargo.toml --target {{ wasm_target }}'" \
-        "cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- '$wasm_file' --widget-root '$root/$name' --cache-dir '$cache_dir' {{ ARGS }}"
+    exec cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --cache-dir "$cache_dir" {{ ARGS }}
 
 # Run a release-built widget once in the testbed.
 run WIDGET ARGS="":
