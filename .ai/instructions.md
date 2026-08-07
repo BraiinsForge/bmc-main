@@ -224,6 +224,9 @@ Proto files are in `bmc-grpc/proto/web/`. Changes to `.proto` files require
 
 - Rust unit tests are colocated with code
 - Integration tests use standard Cargo test structure
+- What a widget or overlay renders is reviewed in the gallery — `just gallery::run` for the window, or
+  `just gallery::capture` for headless shots at knob values a recipe sets. See
+  [`bmc-gallery/README.md`](bmc-gallery/README.md), which also spells out what capture cannot catch.
 - Frontend tests run on `@rstest/core` (Vitest-compatible API) with React Testing Library; specs are `*.spec.tsx`, run
   via `just fe::test` — see [`frontend/CLAUDE.md`](frontend/CLAUDE.md) for the setup
 - The CI runs both nextest and standard cargo test
@@ -349,6 +352,8 @@ When multiple valid approaches exist, choose based on:
 
 - Use same libraries/utilities when possible
 - Follow existing test patterns
+- write generated and throwaway artifacts to `.tmp/<domain>/`, never beside the source that made them — `.tmp` is
+  gitignored whole, so nothing generated reaches the source tree or `git status`
 - Commit working code incrementally
 - Update plan documentation as you go
 - Learn from existing implementations
