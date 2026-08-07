@@ -25,7 +25,7 @@ use anyhow::anyhow;
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, NetworkProtocolConfig, UpgradeError, UpgradeMarker,
-    WifiData, WifiEvent, WifiNetworkConfig,
+    WifiData, WifiEvent, WifiNetworkConfig, consume_upgrade_marker,
 };
 use bmc_nix::progress::{ActiveDownload, ProgressEvent};
 use bmc_platform::{BosPlatform, BosVersion};
@@ -44,8 +44,7 @@ use std::{
     time::Duration,
 };
 use tokio::signal;
-use tracing::info;
-use tracing::log::warn;
+use tracing::{info, warn};
 use zip::write::SimpleFileOptions;
 
 #[derive(thiserror::Error, Debug)]
@@ -114,17 +113,6 @@ impl Manager {
             wifi_reconfig_sender,
             pacing,
             stop,
-        }
-    }
-}
-
-fn consume_upgrade_marker(marker: &Path) -> UpgradeMarker {
-    match std::fs::remove_file(marker) {
-        Ok(()) => UpgradeMarker::Consumed,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => UpgradeMarker::Absent,
-        Err(err) => {
-            warn!("failed to remove mock upgrade marker: {err}");
-            UpgradeMarker::RemovalFailed
         }
     }
 }
@@ -223,11 +211,11 @@ impl bmc::BmcManager for Manager {
     }
 
     async fn consume_upgrade_marker(&self) -> UpgradeMarker {
-        consume_upgrade_marker(&self.mockfs.upgrade_result())
+        consume_upgrade_marker(&self.mockfs.upgrade_result()).await
     }
 
     async fn consume_service_upgrade_marker(&self) -> UpgradeMarker {
-        consume_upgrade_marker(&self.mockfs.service_upgrade_marker())
+        consume_upgrade_marker(&self.mockfs.service_upgrade_marker()).await
     }
 
     fn session_manager(&self) -> Self::SessionManager {
@@ -566,33 +554,83 @@ impl bmc::BmcManager for Manager {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::fs;
+    use std::net::{IpAddr, Ipv4Addr};
+    use std::sync::{Arc, Mutex};
 
-    use bmc::UpgradeMarker;
+    use bmc::{BmcManager as _, UpgradeMarker};
+    use bmc_nix::store::progress::DownloadSnapshot;
+    use bmc_nix::types::MergedIndex;
+    use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
+    use bmc_platform::BosPlatform;
+    use bmc_upgrade::packages::PackageBackend as _;
 
-    use super::consume_upgrade_marker;
+    use super::Manager;
+    use crate::mock_package_backend::MockPackageBackend;
+    use crate::mockfs::MockFs;
+    use crate::pacing::UpgradePacing;
+    use crate::session::MockSessionManager;
 
-    #[test]
-    fn consuming_mock_upgrade_marker_removes_it_once() {
-        let dir = tempfile::tempdir().expect("BUG: create temporary marker directory");
-        let marker = dir.path().join("upgrade_result");
-        fs::write(&marker, "success").expect("BUG: create mock upgrade marker");
+    struct SilentProgress;
 
-        assert_eq!(consume_upgrade_marker(&marker), UpgradeMarker::Consumed);
-        assert!(
-            !marker.exists(),
-            "consumed marker must not replay after restart"
-        );
-        assert_eq!(consume_upgrade_marker(&marker), UpgradeMarker::Absent);
+    impl UpgradeProgress for SilentProgress {
+        fn on_phase(&self, _phase: UpgradePhase) {}
+        fn on_realization_started(&self, _total_paths: usize) {}
+        fn on_realization_finished(&self) {}
+        fn on_download_status(&self, _snapshot: &DownloadSnapshot) {}
+        fn on_gc_deleted(&self, _deleted_paths: usize) {}
+        fn on_gc_finished(&self, _deleted_paths: usize, _freed_bytes: Option<u64>) {}
     }
 
-    #[test]
-    fn consuming_mock_upgrade_marker_reports_removal_failure() {
-        let dir = tempfile::tempdir().expect("BUG: create temporary marker directory");
+    /// The mock's own restart, end to end: the package backend publishes the
+    /// marker the service orchestrator would, and the manager the relaunched
+    /// process asks finds it — both against one mockfs, as `main` wires them.
+    #[tokio::test]
+    async fn a_restart_upgrade_leaves_the_marker_the_manager_consumes() {
+        let dir = tempfile::tempdir().expect("BUG: create temporary mockfs root");
+        let mockfs = MockFs::new(dir.path(), dir.path());
+        let scenario = dir.path().join("upgrade-scenario.json");
+        fs::write(&scenario, r#"{"run":"success","package_action":"restart"}"#)
+            .expect("BUG: write package scenario");
+        let password = Arc::new(Mutex::new(None));
+        let stop = Arc::new(tokio::sync::Notify::new());
+
+        let backend = MockPackageBackend::new(scenario, UpgradePacing::Instant, Arc::clone(&stop))
+            .with_service_upgrade_marker(Some(mockfs.service_upgrade_marker()));
+        let manager = Manager::new(
+            mockfs,
+            MockSessionManager::new(Arc::clone(&password)),
+            password,
+            "deck".to_owned(),
+            "00:11:22:33:44:55".to_owned(),
+            IpAddr::V4(Ipv4Addr::LOCALHOST),
+            8080,
+            BosPlatform::Bmc1,
+            UpgradePacing::Instant,
+            stop,
+        );
+
+        backend
+            .apply(
+                MergedIndex {
+                    packages: Vec::new(),
+                    by_name: BTreeMap::new(),
+                },
+                Vec::new(),
+                Arc::new(SilentProgress),
+            )
+            .await
+            .expect("BUG: package apply should succeed");
 
         assert_eq!(
-            consume_upgrade_marker(dir.path()),
-            UpgradeMarker::RemovalFailed
+            manager.consume_service_upgrade_marker().await,
+            UpgradeMarker::Consumed
+        );
+        assert_eq!(
+            manager.consume_service_upgrade_marker().await,
+            UpgradeMarker::Absent,
+            "a consumed marker must not replay on the next restart"
         );
     }
 }

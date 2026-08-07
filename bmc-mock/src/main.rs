@@ -89,7 +89,8 @@ async fn main() -> Result<()> {
         MockPackageBackend::new(scenario_path, pacing, Arc::clone(&stop))
             .with_package_index(config.package_index.clone())
             .with_widgets_path(Some(bundle))
-            .with_staging_path(Some(staging.clone())),
+            .with_staging_path(Some(staging.clone()))
+            .with_service_upgrade_marker(Some(mockfs.service_upgrade_marker())),
     );
 
     let blob = bmc_mock::blob_server::spawn(pacing)

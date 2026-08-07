@@ -27,6 +27,7 @@ use std::sync::{Arc, LazyLock};
 
 use base64::Engine as _;
 use bmc_nix::index::merge_indexes;
+use bmc_nix::service_orchestrator::publish_upgraded_service_marker;
 use bmc_nix::store::progress::DownloadSnapshot;
 use bmc_nix::types::{FetchedIndex, MergedIndex, PackageIndex};
 use bmc_nix::upgrade::{UpgradePhase, UpgradeProgress};
@@ -104,6 +105,7 @@ pub struct MockPackageBackend {
     index_path: Option<PathBuf>,
     widgets_path: Option<PathBuf>,
     staging_path: Option<PathBuf>,
+    service_upgrade_marker: Option<PathBuf>,
 }
 
 impl MockPackageBackend {
@@ -116,6 +118,7 @@ impl MockPackageBackend {
             index_path: None,
             widgets_path: None,
             staging_path: None,
+            service_upgrade_marker: None,
         }
     }
 
@@ -140,6 +143,15 @@ impl MockPackageBackend {
     #[must_use]
     pub fn with_staging_path(mut self, staging_path: Option<PathBuf>) -> Self {
         self.staging_path = staging_path;
+        self
+    }
+
+    /// Point at the marker the service orchestrator writes for a service it
+    /// restarts, so the relaunched mock can tell a restart from a cold start
+    /// the way the device does.
+    #[must_use]
+    pub fn with_service_upgrade_marker(mut self, marker_path: Option<PathBuf>) -> Self {
+        self.service_upgrade_marker = marker_path;
         self
     }
 }
@@ -403,6 +415,11 @@ impl PackageBackend for MockPackageBackend {
             // The notifier models bmc-openwrt receiving procd's SIGTERM from
             // the external service orchestrator once a packages-only
             // activation lands; the mock never signals itself.
+            if let Some(marker) = &self.service_upgrade_marker {
+                publish_upgraded_service_marker(marker).map_err(|err| {
+                    ApplyError::Failed(format!("mock: write service upgrade marker: {err}"))
+                })?;
+            }
             let stop = Arc::clone(&self.stop);
             let delay = self.pacing.shutdown_delay();
             tokio::spawn(async move {
@@ -1067,5 +1084,61 @@ mod tests {
         tokio::time::timeout(Duration::from_millis(200), stop.notified())
             .await
             .expect_err("apply failure must not notify application stop");
+    }
+
+    #[tokio::test]
+    async fn successful_restart_action_publishes_the_service_upgrade_marker() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(
+            dir.path(),
+            r#"{"run":"success","package_action":"restart"}"#,
+        );
+        let marker = dir
+            .path()
+            .join("dev/shm/bmc-service-upgraded/bmc-compositor");
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier())
+            .with_service_upgrade_marker(Some(marker.clone()));
+
+        backend
+            .apply(
+                empty_merged_index(),
+                Vec::new(),
+                Arc::new(RecordingProgress::default()),
+            )
+            .await
+            .expect("BUG: package apply should succeed");
+
+        assert!(
+            marker.exists(),
+            "the restart the mock models must carry the marker the orchestrator writes"
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_failure_does_not_publish_the_service_upgrade_marker() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(
+            dir.path(),
+            r#"{"run":"apply-fail","package_action":"restart"}"#,
+        );
+        let marker = dir
+            .path()
+            .join("dev/shm/bmc-service-upgraded/bmc-compositor");
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier())
+            .with_service_upgrade_marker(Some(marker.clone()));
+
+        let result = backend
+            .apply(
+                empty_merged_index(),
+                Vec::new(),
+                Arc::new(RecordingProgress::default()),
+            )
+            .await;
+        assert!(result.is_err());
+
+        assert!(
+            !marker.exists(),
+            "an upgrade that never activated must not report success after a restart"
+        );
     }
 }
