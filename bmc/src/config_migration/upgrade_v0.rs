@@ -47,10 +47,11 @@
 //!   widget is an edge case, not an inter-state we need to preserve.
 
 use std::collections::BTreeMap;
+use std::str::FromStr;
 use std::time::Duration;
 
 use bmc_shared_time::time::Timezone;
-use bmc_widget_manifest::{ParamKey, ParamValue, ViewportShape};
+use bmc_widget_manifest::{CredentialKey, ParamKey, ParamValue, ViewportShape};
 use indexmap::IndexMap;
 use serde_json::{Map, Value, json};
 use tracing::warn;
@@ -58,11 +59,11 @@ use uuid::Uuid;
 
 use super::{Report, v0};
 use crate::config::widget_uuids::{
-    BLOCK_HEIGHT_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
-    SPACEX_LAUNCH_UID, WEATHER_UID,
+    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID,
+    REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings};
-use crate::data::SceneCycling;
+use crate::data::{AccountId, SceneCycling};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
@@ -99,6 +100,14 @@ const DEFAULT_REFRESH_SECONDS: i32 = 3600;
 const MIN_REFRESH_SECONDS: i32 = 300;
 /// Nameday `country` fallback — nameday manifest `default_value`.
 const DEFAULT_NAMEDAY_COUNTRY: &str = "cz";
+/// Pool `style` fallback — braiins-pool manifest `default_value`.
+const POOL_STYLE_DEFAULT: &str = "overview";
+/// Pool `chart_frame` fallback — braiins-pool manifest `default_value`.
+const POOL_CHART_FRAME_DEFAULT: &str = "hours_12";
+/// Pool `worker_states` fallback — braiins-pool manifest `default_value`.
+const POOL_WORKER_STATES_DEFAULT: bool = true;
+/// The credential slot the braiins-pool manifest declares.
+const POOL_CREDENTIAL_SLOT: &str = "pool";
 /// Nameday `country` vocabulary — nameday manifest `enum_values`.
 const NAMEDAY_COUNTRIES: &[&str] = &[
     "at", "cz", "de", "dk", "ee", "es", "fi", "fr", "hr", "hu", "it", "lt", "lv", "pl", "se", "sk",
@@ -207,11 +216,12 @@ fn upgrade_scene(scene: &v0::Scene, report: &mut Report) -> Option<Scene> {
 /// is no placeholder bucket. Callers treat `None` as "this widget
 /// does not survive the upgrade" and count it accordingly.
 fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
-    let (widget_type_id, params) = match widget.kind.as_str() {
-        "clock" => dispatch_clock(widget),
-        "block_height" => dispatch_block_height(widget),
-        "remote_image" => dispatch_remote_image(widget),
-        "remote_widget" => dispatch_remote_widget(widget)?,
+    let (widget_type_id, params, credential_bindings) = match widget.kind.as_str() {
+        "clock" => with_no_bindings(dispatch_clock(widget)),
+        "block_height" => with_no_bindings(dispatch_block_height(widget)),
+        "remote_image" => with_no_bindings(dispatch_remote_image(widget)),
+        "remote_widget" => with_no_bindings(dispatch_remote_widget(widget)?),
+        "braiins_pool" => dispatch_braiins_pool(widget),
         other => {
             warn!(
                 kind = %other,
@@ -234,8 +244,14 @@ fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
         // rectangular. A future manifest can override it when it loads.
         viewport_shape: ViewportShape::Rectangular,
         params: params_from_value(params),
-        credential_bindings: BTreeMap::new(),
+        credential_bindings,
     })
+}
+
+fn with_no_bindings(
+    (uid, params): (Uuid, Value),
+) -> (Uuid, Value, BTreeMap<CredentialKey, AccountId>) {
+    (uid, params, BTreeMap::new())
 }
 
 /// Convert a legacy free-form JSON params blob into the current typed
@@ -368,6 +384,74 @@ fn dispatch_block_height(widget: &v0::Widget) -> (Uuid, Value) {
     params.insert("numbers_font_style".to_owned(), json!(font_style));
 
     (BLOCK_HEIGHT_UID, Value::Object(params))
+}
+
+/// v0's `braiins_pool` widget maps onto the WASM one ([`BRAIINS_POOL_UID`]).
+/// `pool_style` and the current `style` share a vocabulary, so a known value
+/// passes through; the chart windows are respelled (`hours24` → `hours_24`).
+/// v0 never persisted `worker_states`, so it takes the manifest default.
+///
+/// The legacy `account_id` becomes the `pool` slot's credential binding.
+/// Accounts migrate in the next hop keeping their ids, so the binding lands
+/// on the same account the operator had chosen; a widget that names none
+/// migrates unbound and renders its bind prompt.
+fn dispatch_braiins_pool(widget: &v0::Widget) -> (Uuid, Value, BTreeMap<CredentialKey, AccountId>) {
+    let mut params = Map::new();
+
+    let style = widget
+        .params
+        .get("pool_style")
+        .and_then(Value::as_str)
+        .filter(|s| matches!(*s, "overview" | "big_chart"))
+        .unwrap_or(POOL_STYLE_DEFAULT);
+    params.insert("style".to_owned(), json!(style));
+
+    let chart_frame = widget
+        .params
+        .get("chart_frame")
+        .and_then(Value::as_str)
+        .and_then(translate_chart_frame)
+        .unwrap_or(POOL_CHART_FRAME_DEFAULT);
+    params.insert("chart_frame".to_owned(), json!(chart_frame));
+
+    params.insert(
+        "worker_states".to_owned(),
+        json!(POOL_WORKER_STATES_DEFAULT),
+    );
+
+    let mut bindings = BTreeMap::new();
+    if let Some((slot, account)) = pool_account(widget) {
+        bindings.insert(slot, account);
+    } else {
+        warn!(
+            id = %widget.id,
+            "legacy pool widget names no usable account; migrating it unbound"
+        );
+    }
+
+    (BRAIINS_POOL_UID, Value::Object(params), bindings)
+}
+
+/// The `pool` slot and the account a legacy pool widget names, if it names
+/// one this schema can hold.
+fn pool_account(widget: &v0::Widget) -> Option<(CredentialKey, AccountId)> {
+    let account = widget.params.get("account_id").and_then(Value::as_str)?;
+    let account = AccountId::from_str(account).ok()?;
+    let slot = CredentialKey::try_new(POOL_CREDENTIAL_SLOT.to_owned())
+        .expect("BUG: the pool slot key is a fixed literal the manifest declares");
+    Some((slot, account))
+}
+
+/// Map a v0 chart window onto the current manifest's spelling. `None` for a
+/// window outside the v0 set, so the caller substitutes the manifest default.
+fn translate_chart_frame(frame: &str) -> Option<&'static str> {
+    match frame {
+        "hours4" => Some("hours_4"),
+        "hours12" => Some("hours_12"),
+        "hours24" => Some("hours_24"),
+        "days7" => Some("days_7"),
+        _ => None,
+    }
 }
 
 /// Read a v0 `numbers_font_style`, remap it to the current
@@ -778,6 +862,78 @@ mod tests {
         }
     }
 
+    /// The pool half of the manifest contract: its param defaults, the
+    /// vocabularies the v0 remap can emit, and the slot it binds.
+    #[test]
+    fn pool_fallbacks_match_the_shipped_manifest() {
+        use std::collections::BTreeSet;
+        use std::str::FromStr;
+
+        use bmc_widget_manifest::{Manifest, ParamKind};
+
+        let pool = Manifest::from_str(include_str!(
+            "../../../widgets-wasm/braiins-pool/manifest.json"
+        ))
+        .expect("BUG: in-tree manifest must parse");
+
+        let kind = |key: &str| {
+            &pool
+                .params
+                .get(key)
+                .unwrap_or_else(|| panic!("BUG: manifest has no param {key:?}"))
+                .kind
+        };
+        let string_default = |key: &str| {
+            let ParamKind::String { default_value, .. } = kind(key) else {
+                panic!("BUG: manifest param {key:?} is not a string");
+            };
+            default_value
+                .clone()
+                .unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
+        };
+        let string_enum = |key: &str| -> BTreeSet<String> {
+            let ParamKind::String { enum_values, .. } = kind(key) else {
+                panic!("BUG: manifest param {key:?} is not a string");
+            };
+            enum_values.iter().map(|o| o.value.clone()).collect()
+        };
+
+        assert_eq!(string_default("style"), POOL_STYLE_DEFAULT);
+        assert_eq!(string_default("chart_frame"), POOL_CHART_FRAME_DEFAULT);
+        let ParamKind::Boolean { default_value, .. } = kind("worker_states") else {
+            panic!("BUG: manifest param worker_states is not a boolean");
+        };
+        assert_eq!(*default_value, Some(POOL_WORKER_STATES_DEFAULT));
+
+        // A value outside the manifest enum fails the widget's typed param read.
+        let frame_enum = string_enum("chart_frame");
+        for v0_frame in ["hours4", "hours12", "hours24", "days7"] {
+            let mapped = translate_chart_frame(v0_frame)
+                .expect("BUG: v0 chart frame must remap")
+                .to_owned();
+            assert!(
+                frame_enum.contains(&mapped),
+                "remapped window {mapped:?} is not in the manifest frame enum"
+            );
+        }
+        let style_enum = string_enum("style");
+        for style in ["overview", "big_chart"] {
+            assert!(
+                style_enum.contains(style),
+                "v0 pool style {style:?} is not in the manifest style enum"
+            );
+        }
+
+        // A binding on an undeclared slot is one the widget never reads.
+        assert!(
+            pool.credentials.contains_key(
+                &CredentialKey::try_new(POOL_CREDENTIAL_SLOT.to_owned())
+                    .expect("BUG: slot key is valid")
+            ),
+            "the migration binds a slot the pool manifest does not declare"
+        );
+    }
+
     // --- clock ---------------------------------------------------------------
 
     #[test]
@@ -1007,6 +1163,75 @@ mod tests {
     fn unknown_kind_drops() {
         let w = mk_widget("mystery_widget", json!({}));
         assert!(upgrade_widget(&w).is_none());
+    }
+
+    // --- braiins pool --------------------------------------------------------
+
+    #[test]
+    fn pool_binds_the_account_it_named() {
+        let account = "9fbe91d6-c391-4598-a8c2-b0e54eb5290c";
+        let upgraded = upgrade("braiins_pool", json!({ "account_id": account }));
+        let slot = CredentialKey::try_new(POOL_CREDENTIAL_SLOT.to_owned())
+            .expect("BUG: slot key is valid");
+        assert_eq!(
+            upgraded
+                .credential_bindings
+                .get(&slot)
+                .map(ToString::to_string),
+            Some(account.to_owned()),
+        );
+    }
+
+    /// A missing or unparseable `account_id` leaves the widget unbound
+    /// rather than dropping it; the operator rebinds from its own prompt.
+    #[test]
+    fn pool_without_a_usable_account_migrates_unbound() {
+        for params in [json!({}), json!({ "account_id": "" })] {
+            let upgraded = upgrade("braiins_pool", params.clone());
+            assert!(
+                upgraded.credential_bindings.is_empty(),
+                "{params} must not produce a binding",
+            );
+        }
+    }
+
+    #[test]
+    fn pool_respells_the_chart_window_and_defaults_an_unknown_one() {
+        for (v0_frame, expected) in [
+            ("hours4", "hours_4"),
+            ("hours12", "hours_12"),
+            ("hours24", "hours_24"),
+            ("days7", "days_7"),
+        ] {
+            let upgraded = upgrade("braiins_pool", json!({ "chart_frame": v0_frame }));
+            assert_eq!(
+                upgraded.params["chart_frame"],
+                str_param(expected),
+                "v0 `{v0_frame}` must map to `{expected}`",
+            );
+        }
+
+        let upgraded = upgrade("braiins_pool", json!({ "chart_frame": "fortnight" }));
+        assert_eq!(
+            upgraded.params["chart_frame"],
+            str_param(POOL_CHART_FRAME_DEFAULT),
+            "a window outside the v0 set must land on the manifest default",
+        );
+    }
+
+    #[test]
+    fn pool_passes_a_known_style_and_defaults_the_rest() {
+        for style in ["overview", "big_chart"] {
+            let upgraded = upgrade("braiins_pool", json!({ "pool_style": style }));
+            assert_eq!(upgraded.params["style"], str_param(style));
+        }
+
+        let upgraded = upgrade("braiins_pool", json!({ "pool_style": "hologram" }));
+        assert_eq!(
+            upgraded.params["style"],
+            str_param(POOL_STYLE_DEFAULT),
+            "a style outside the v0 set must land on the manifest default",
+        );
     }
 
     // --- scene dropping ------------------------------------------------------

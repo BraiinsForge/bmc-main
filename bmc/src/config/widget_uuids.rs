@@ -56,6 +56,9 @@ pub(crate) const RANDOM_FACTS_UID: Uuid =
 /// `widgets-wasm/spacex-launch`
 pub(crate) const SPACEX_LAUNCH_UID: Uuid =
     Uuid::from_u128(0xe854_e395_5d90_45ca_b4c9_eb5e_e327_a457);
+/// `widgets-wasm/braiins-pool`
+pub(crate) const BRAIINS_POOL_UID: Uuid =
+    Uuid::from_u128(0xb4e0_608d_d38c_4494_8bee_7df2_a030_c9b1);
 
 #[cfg(test)]
 mod tests {
@@ -120,6 +123,11 @@ mod tests {
                 "spacex-launch",
                 SPACEX_LAUNCH_UID,
                 include_str!("../../../widgets-wasm/spacex-launch/manifest.json"),
+            ),
+            (
+                "braiins-pool",
+                BRAIINS_POOL_UID,
+                include_str!("../../../widgets-wasm/braiins-pool/manifest.json"),
             ),
         ];
 

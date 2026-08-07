@@ -52,6 +52,27 @@
       "kind": "combined",
       "widgets": [
         {
+          "col": 2,
+          "credential_bindings": {
+            "pool": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          },
+          "id": "7ff6c5d0-08dc-457e-b236-1a7bbe61226b",
+          "params": {
+            "chart_frame": "hours_24",
+            "style": "overview",
+            "worker_states": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "b4e0608d-d38c-4494-8bee-7df2a030c9b1"
+        },
+        {
           "col": 0,
           "id": "d9de2913-f795-4de6-b79f-d2a9469e204e",
           "params": {
@@ -87,27 +108,6 @@
           "row": 1,
           "viewport_shape": "rectangular",
           "widget_type_id": "7cb584a8-1f26-42a0-867e-955aadd2391c"
-        },
-        {
-          "col": 2,
-          "credential_bindings": {
-            "pool": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
-          },
-          "id": "7ff6c5d0-08dc-457e-b236-1a7bbe61226b",
-          "params": {
-            "chart_frame": "hours_24",
-            "style": "overview",
-            "worker_states": true
-          },
-          "placement": {
-            "slot_span": {
-              "columns": 2,
-              "rows": 1
-            }
-          },
-          "row": 0,
-          "viewport_shape": "rectangular",
-          "widget_type_id": "b4e0608d-d38c-4494-8bee-7df2a030c9b1"
         }
       ]
     },
