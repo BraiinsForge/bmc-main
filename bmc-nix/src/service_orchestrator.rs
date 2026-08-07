@@ -37,6 +37,25 @@ pub use discovery::{
 /// a service killed by a reboot, not by activation, must find none waiting.
 pub const UPGRADED_SERVICE_MARKER_DIR: &str = "/dev/shm/bmc-service-upgraded";
 
+/// Environment variable naming the service a process runs as.
+/// `mkOpenWrtDaemon` sets it from the name it gives the init script,
+/// so a daemon never carries its own copy of that name.
+pub const SERVICE_NAME_ENV: &str = "BMC_SERVICE_NAME";
+
+/// Marker announcing that an activation upgraded `service` in place.
+#[must_use]
+pub fn upgraded_service_marker(service: &str) -> PathBuf {
+    Path::new(UPGRADED_SERVICE_MARKER_DIR).join(service)
+}
+
+/// Publish the marker announcing an in-place service upgrade.
+pub fn publish_upgraded_service_marker(marker: &Path) -> std::io::Result<()> {
+    if let Some(parent) = marker.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(marker, [])
+}
+
 /// Runtime status returned by `/etc/init.d/<service> status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ServiceStatus {
@@ -59,6 +78,13 @@ pub struct PlannedAction {
     pub service: String,
     pub action: String,
     pub command_path: PathBuf,
+    pub upgrade_marker: UpgradeMarkerAction,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpgradeMarkerAction {
+    None,
+    Publish,
 }
 
 #[must_use]
@@ -134,22 +160,6 @@ fn planned_upgrade_config(
     Some(config)
 }
 
-/// Services whose `upgrade` actions this activation runs.
-/// Plan membership alone says nothing:
-/// `always` actions run for every service on every activation.
-#[must_use]
-pub fn upgraded_services(
-    changes: &ServiceChanges,
-    upgrade_statuses: &BTreeMap<String, ServiceStatus>,
-) -> BTreeSet<String> {
-    changes
-        .upgraded
-        .iter()
-        .filter(|change| planned_upgrade_config(change, upgrade_statuses).is_some())
-        .map(|change| change.name.clone())
-        .collect()
-}
-
 #[must_use]
 pub fn build_action_plan(
     changes: &ServiceChanges,
@@ -170,6 +180,7 @@ pub fn build_action_plan(
                 service: change.name.clone(),
                 action: action.clone(),
                 command_path: command_path.clone(),
+                upgrade_marker: UpgradeMarkerAction::None,
             });
         }
     }
@@ -180,14 +191,25 @@ pub fn build_action_plan(
         };
         let command_path = active_root_command_path(&change.name);
         let priority = 100 + order_priority(new_start_order, &change.name).unwrap_or_default();
-        for action in &service.upgrade {
+        let Some((final_action, preceding_actions)) = service.upgrade.split_last() else {
+            continue;
+        };
+        for action in preceding_actions {
             plan.push(PlannedAction {
                 priority,
                 service: change.name.clone(),
                 action: action.clone(),
                 command_path: command_path.clone(),
+                upgrade_marker: UpgradeMarkerAction::None,
             });
         }
+        plan.push(PlannedAction {
+            priority,
+            service: change.name.clone(),
+            action: final_action.clone(),
+            command_path,
+            upgrade_marker: UpgradeMarkerAction::Publish,
+        });
     }
 
     for change in &changes.new {
@@ -200,6 +222,7 @@ pub fn build_action_plan(
                 service: change.name.clone(),
                 action: action.clone(),
                 command_path: command_path.clone(),
+                upgrade_marker: UpgradeMarkerAction::None,
             });
         }
     }
@@ -226,6 +249,7 @@ pub fn build_action_plan(
                 service: change.name.clone(),
                 action: action.clone(),
                 command_path: command_path.clone(),
+                upgrade_marker: UpgradeMarkerAction::None,
             });
         }
     }
@@ -251,6 +275,7 @@ pub fn build_action_plan(
                 service: change.name.clone(),
                 action: action.clone(),
                 command_path: command_path.clone(),
+                upgrade_marker: UpgradeMarkerAction::None,
             });
         }
     }
@@ -287,6 +312,20 @@ mod tests {
                 )
             })
             .collect()
+    }
+
+    #[test]
+    fn publishing_upgrade_marker_creates_the_shared_artifact() {
+        let dir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let marker = dir.path().join("markers/bmc-compositor");
+
+        publish_upgraded_service_marker(&marker).expect("BUG: should publish marker");
+
+        assert_eq!(
+            std::fs::read(marker).expect("BUG: should read marker"),
+            b"",
+            "service consumers and the mock must observe the exact artifact production publishes"
+        );
     }
 
     #[test]
@@ -543,7 +582,44 @@ mod tests {
     }
 
     #[test]
-    fn unchanged_service_running_always_actions_is_not_reported_as_upgraded() {
+    fn only_final_upgrade_action_publishes_service_upgrade_marker() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/moved"), "old");
+        write_file(&old_root.join("etc/rc.d/S90moved"), "");
+        write_file(&new_root.join("etc/init.d/moved"), "new");
+        write_file(&new_root.join("etc/rc.d/S90moved"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+        let statuses = BTreeMap::from([("moved".to_owned(), ServiceStatus::Running)]);
+
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::from(["moved".to_owned()]),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert_eq!(
+            actions
+                .iter()
+                .map(|action| (action.action.as_str(), action.upgrade_marker))
+                .collect::<Vec<_>>(),
+            vec![
+                ("disable", UpgradeMarkerAction::None),
+                ("reload", UpgradeMarkerAction::Publish),
+                ("enable", UpgradeMarkerAction::None),
+            ]
+        );
+    }
+
+    #[test]
+    fn unchanged_service_runs_always_actions() {
         let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
         let old_root = tempdir.path().join("old");
         let new_root = tempdir.path().join("new");
@@ -569,15 +645,10 @@ mod tests {
             !actions.is_empty(),
             "unchanged service should still run its always actions"
         );
-        assert!(
-            upgraded_services(&changes, &BTreeMap::new()).is_empty(),
-            "always actions run on every activation, so having a planned action \
-             must not report a service as upgraded"
-        );
     }
 
     #[test]
-    fn upgraded_service_is_reported_only_when_its_upgrade_actions_run() {
+    fn upgrade_marker_is_planned_only_when_upgrade_actions_run() {
         let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
         let old_root = tempdir.path().join("old");
         let new_root = tempdir.path().join("new");
@@ -594,18 +665,37 @@ mod tests {
         let running = BTreeMap::from([("moved".to_owned(), ServiceStatus::Running)]);
         let stopped = BTreeMap::from([("moved".to_owned(), ServiceStatus::Stopped)]);
 
-        assert_eq!(
-            upgraded_services(&changes, &running),
-            BTreeSet::from(["moved".to_owned()])
+        let registered = BTreeSet::from(["moved".to_owned()]);
+        let running_actions = build_action_plan(
+            &changes,
+            &running,
+            &registered,
+            &old.stop_order,
+            &new.start_order,
+        );
+        let stopped_actions = build_action_plan(
+            &changes,
+            &stopped,
+            &registered,
+            &old.stop_order,
+            &new.start_order,
         );
         assert!(
-            upgraded_services(&changes, &stopped).is_empty(),
+            running_actions
+                .iter()
+                .any(|action| action.upgrade_marker == UpgradeMarkerAction::Publish),
+            "a running upgraded service must receive a restart marker"
+        );
+        assert!(
+            stopped_actions
+                .iter()
+                .all(|action| action.upgrade_marker == UpgradeMarkerAction::None),
             "the default running gate skips a stopped service, so nothing restarts it"
         );
     }
 
     #[test]
-    fn service_declaring_no_upgrade_actions_is_not_reported_as_upgraded() {
+    fn service_declaring_no_upgrade_actions_has_no_upgrade_marker() {
         let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
         let old_root = tempdir.path().join("old");
         let new_root = tempdir.path().join("new");
@@ -624,10 +714,19 @@ mod tests {
         let changes = compare_generation_services(&old, &new);
 
         let statuses = BTreeMap::from([("inert".to_owned(), ServiceStatus::Running)]);
+        let actions = build_action_plan(
+            &changes,
+            &statuses,
+            &BTreeSet::from(["inert".to_owned()]),
+            &old.stop_order,
+            &new.start_order,
+        );
 
         assert!(
-            upgraded_services(&changes, &statuses).is_empty(),
-            "a changed service the activation never acts on must not be reported as upgraded"
+            actions
+                .iter()
+                .all(|action| action.upgrade_marker == UpgradeMarkerAction::None),
+            "a changed service with no upgrade actions must not publish an upgrade marker"
         );
     }
 

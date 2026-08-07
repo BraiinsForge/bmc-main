@@ -38,8 +38,23 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use tracing::{error, warn};
 
-#[tokio::main]
-async fn main() -> Result<()> {
+const DEFAULT_SERVICE_NAME: &str = "bmc-compositor";
+
+fn main() -> Result<()> {
+    if std::env::var_os(bmc::manager::SERVICE_NAME_ENV).is_none() {
+        // SAFETY: this is the first operation in main, before the Tokio runtime
+        // or any other process threads exist.
+        unsafe {
+            std::env::set_var(bmc::manager::SERVICE_NAME_ENV, DEFAULT_SERVICE_NAME);
+        }
+    }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     log::init();
     let config = cli::Config::parse();
     let system_password = config.system_password.clone();
@@ -90,7 +105,7 @@ async fn main() -> Result<()> {
             .with_package_index(config.package_index.clone())
             .with_widgets_path(Some(bundle))
             .with_staging_path(Some(staging.clone()))
-            .with_service_upgrade_marker(Some(mockfs.service_upgrade_marker())),
+            .with_service_upgrade_marker(mockfs.service_upgrade_marker()),
     );
 
     let blob = bmc_mock::blob_server::spawn(pacing)

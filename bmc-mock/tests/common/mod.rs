@@ -30,6 +30,7 @@ use tonic::metadata::MetadataValue;
 use tonic::transport::Channel;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
+pub const MOCK_SERVICE_NAME: &str = "bmc-mock-test-compositor";
 
 pub struct MockInstance {
     pub child: Child,
@@ -84,6 +85,7 @@ fn spawn_child(
     }
     Command::new(env!("CARGO_BIN_EXE_bmc-mock"))
         .args(args)
+        .env(bmc::manager::SERVICE_NAME_ENV, MOCK_SERVICE_NAME)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .spawn()

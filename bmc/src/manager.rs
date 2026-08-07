@@ -21,7 +21,8 @@
 
 use crate::bootloader_config::BootloaderConfig;
 use anyhow::anyhow;
-use bmc_nix::service_orchestrator::UPGRADED_SERVICE_MARKER_DIR;
+pub use bmc_nix::service_orchestrator::SERVICE_NAME_ENV;
+use bmc_nix::service_orchestrator::upgraded_service_marker;
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
@@ -36,7 +37,7 @@ use std::{
 use strum::Display;
 use thiserror::Error;
 use tokio::sync::watch;
-use tracing::info;
+use tracing::{error, info};
 
 /// Failure handing a firmware image off to the platform upgrade
 /// mechanism. `InvalidImage` is permanent — the image is incompatible,
@@ -51,15 +52,14 @@ pub enum UpgradeError {
     Failed(String),
 }
 
-/// Init script owning this application, as named in the service generation.
-const SERVICE_NAME: &str = "bmc-compositor";
-
-/// Marker the service orchestrator publishes when an activation upgrades this
-/// application in place. The mock mirrors it under its own root, so both
-/// binaries model the same restart.
+/// Marker the service orchestrator publishes when an activation
+/// upgrades this process in place, or `None` when nothing started it
+/// as a service — a hand-run binary has no activation to hear from.
 #[must_use]
-pub fn service_upgrade_marker_path() -> PathBuf {
-    Path::new(UPGRADED_SERVICE_MARKER_DIR).join(SERVICE_NAME)
+pub fn service_upgrade_marker_path() -> Option<PathBuf> {
+    std::env::var(SERVICE_NAME_ENV)
+        .ok()
+        .map(|service| upgraded_service_marker(&service))
 }
 
 /// Outcome of consuming the one-shot post-upgrade marker.
@@ -68,6 +68,22 @@ pub enum UpgradeMarker {
     Absent,
     Consumed,
     RemovalFailed,
+}
+
+/// Consume a one-shot upgrade marker without conflating absence and failure.
+pub async fn consume_upgrade_marker(path: &Path) -> UpgradeMarker {
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => UpgradeMarker::Consumed,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => UpgradeMarker::Absent,
+        Err(err) => {
+            error!(
+                error = %err,
+                path = %path.display(),
+                "failed to remove upgrade marker file"
+            );
+            UpgradeMarker::RemovalFailed
+        }
+    }
 }
 
 #[async_trait::async_trait]
@@ -304,4 +320,28 @@ pub struct IfaceData {
 pub struct WifiData {
     pub iface: IfaceData,
     pub status: WifiStatus,
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use super::{UpgradeMarker, consume_upgrade_marker};
+
+    #[tokio::test]
+    async fn consuming_upgrade_marker_distinguishes_all_outcomes() {
+        let dir = tempfile::tempdir().expect("BUG: create temporary marker directory");
+        let marker = dir.path().join("upgrade_result");
+        fs::write(&marker, "success").expect("BUG: create upgrade marker");
+
+        assert_eq!(
+            consume_upgrade_marker(&marker).await,
+            UpgradeMarker::Consumed
+        );
+        assert_eq!(consume_upgrade_marker(&marker).await, UpgradeMarker::Absent);
+        assert_eq!(
+            consume_upgrade_marker(dir.path()).await,
+            UpgradeMarker::RemovalFailed
+        );
+    }
 }

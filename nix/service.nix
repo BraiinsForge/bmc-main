@@ -122,11 +122,14 @@ let
         args;
       commandLine = ''"${command}"''
         + lib.optionalString (args != [ ]) (" " + quotedArgs);
-      envNames = builtins.attrNames env;
+      # Every daemon learns the name activation knows it by,
+      # so it can find what the orchestrator files under that name.
+      daemonEnv = env // { BMC_SERVICE_NAME = name; };
+      envNames = builtins.attrNames daemonEnv;
       # A single call: repeated `procd_set_param env` calls overwrite each
       # other, keeping only the last variable.
       envLines = "procd_set_param env " + lib.concatMapStringsSep " "
-        (k: ''"${k}=${env.${k}}"'')
+        (k: ''"${k}=${daemonEnv.${k}}"'')
         envNames;
       boolToInt = b: if b then "1" else "0";
       startBody = lib.concatStringsSep "\n" (
@@ -137,9 +140,7 @@ let
           # procd sets LD_PRELOAD to /lib/libsetlbf.so that depends on libc.so
           # breaking loading of libc, since libc.so from Nix store is a linker script.
           "procd_set_param command /bin/ash -c 'unset LD_PRELOAD; exec ${commandLine}'"
-        ]
-        ++ lib.optional (env != { }) envLines
-        ++ [
+          envLines
           "procd_set_param respawn ${toString respawn.threshold} ${toString respawn.timeout} ${toString respawn.retry}"
           "procd_set_param stdout ${boolToInt stdout}"
           "procd_set_param stderr ${boolToInt stderr}"
@@ -163,6 +164,8 @@ let
         { name = "service_stopped"; body = stoppedBody; }
       ];
     in
+    assert lib.assertMsg (!(env ? BMC_SERVICE_NAME))
+      "mkOpenWrtDaemon(${name}): env.BMC_SERVICE_NAME is reserved";
     mkOpenWrtService {
       inherit name start stop enabled serviceConfig;
       variables = { USE_PROCD = "1"; } // extraVariables;
@@ -174,6 +177,16 @@ in
 assert lib.assertMsg
   (!(builtins.tryEval (mkOpenWrtService { name = "self-test"; start = 62; }).name).success)
   "mkOpenWrtService must reject start <= 62";
+assert lib.assertMsg
+  (
+    !(builtins.tryEval (mkOpenWrtDaemon {
+      name = "self-test";
+      start = 63;
+      command = "/bin/true";
+      env.BMC_SERVICE_NAME = "conflict";
+    }).name).success
+  )
+  "mkOpenWrtDaemon must reject env.BMC_SERVICE_NAME";
 {
   inherit mkOpenWrtService mkOpenWrtDaemon;
 }

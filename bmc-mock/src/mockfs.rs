@@ -19,6 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use bmc::manager::service_upgrade_marker_path;
 use std::{
     fs, io,
     path::{Path, PathBuf},
@@ -77,11 +78,9 @@ impl MockFs {
         self.build_mockfs_path(Self::PENDING_INSTALL_FILE)
     }
 
-    /// Mirror of the device path, so the mock models the marker the real
-    /// orchestrator writes rather than a look-alike of its own.
     #[must_use]
-    pub fn service_upgrade_marker(&self) -> PathBuf {
-        self.build_mockfs_path(bmc::manager::service_upgrade_marker_path())
+    pub fn service_upgrade_marker(&self) -> Option<PathBuf> {
+        service_upgrade_marker_path().map(|path| self.build_mockfs_path(path))
     }
 
     #[must_use]

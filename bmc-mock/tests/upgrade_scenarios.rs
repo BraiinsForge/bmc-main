@@ -318,6 +318,16 @@ async fn packages_restart_action_stops_the_app_after_activation() {
         );
         tokio::time::sleep(Duration::from_millis(200)).await;
     }
+    let marker = bmc_nix::service_orchestrator::upgraded_service_marker(common::MOCK_SERVICE_NAME);
+    let marker = mock.mockfs.join(
+        marker
+            .strip_prefix(std::path::MAIN_SEPARATOR_STR)
+            .expect("BUG: service marker path must be absolute"),
+    );
+    assert!(
+        marker.exists(),
+        "restart must publish the marker named by BMC_SERVICE_NAME"
+    );
 }
 
 #[tokio::test]

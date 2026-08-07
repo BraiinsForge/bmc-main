@@ -110,6 +110,8 @@ assert_best_effort_failure() {
 
 env_calls=$(grep -c 'procd_set_param env' "$script" || :)
 [ "$env_calls" -eq 1 ] || fail "generated service must emit one procd env call"
+assert_script_contains '"BMC_SERVICE_NAME=bmc-compositor"' \
+    "generated service does not publish its own name to the daemon"
 assert_script_contains '"MESA_SHADER_CACHE_MAX_SIZE=16M"' \
     "generated service is missing MESA_SHADER_CACHE_MAX_SIZE=16M"
 assert_script_contains '"XDG_CACHE_HOME=/mnt/data/bmc/cache"' \
