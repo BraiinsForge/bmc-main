@@ -27,6 +27,7 @@ bmc-gpu-render-lock.workspace = true
 bmc-kobject.workspace = true
 bmc-led = { workspace = true, features = ["apa102_spi"] }
 bmc-log.workspace = true
+bmc-nix.workspace = true
 bmc-platform = { workspace = true, features = ["backlight", "linux-input"] }
 bmc-shared-ii-net.workspace = true
 bmc-shared-ii-net-drv.workspace = true

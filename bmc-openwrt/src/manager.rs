@@ -37,6 +37,7 @@ use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
+use bmc_nix::service_orchestrator::UPGRADED_SERVICE_MARKER_DIR;
 use bmc_platform::{BmcInfo, BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
@@ -76,6 +77,8 @@ impl Manager {
     const SYSUPGRADE_BIN: &str = "/sbin/sysupgrade";
     const SYSUPGRADE_ARG_NO_SAVE: &str = "-n";
     const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
+    /// Init script owning this process, as named in the service generation.
+    const COMPOSITOR_SERVICE_NAME: &str = "bmc-compositor";
     const DEFAULT_INTERFACE: &str = "wlan0";
 
     const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
@@ -414,6 +417,13 @@ impl BmcManager for Manager {
 
     async fn consume_upgrade_marker(&self) -> UpgradeMarker {
         consume_upgrade_marker(Path::new(Self::UPGRADE_RESULT_FILE_PATH)).await
+    }
+
+    async fn consume_service_upgrade_marker(&self) -> UpgradeMarker {
+        consume_upgrade_marker(
+            &Path::new(UPGRADED_SERVICE_MARKER_DIR).join(Self::COMPOSITOR_SERVICE_NAME),
+        )
+        .await
     }
 
     fn session_manager(&self) -> Self::SessionManager {

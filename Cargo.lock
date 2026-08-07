@@ -961,6 +961,7 @@ dependencies = [
  "bmc-kobject",
  "bmc-led",
  "bmc-log",
+ "bmc-nix",
  "bmc-platform",
  "bmc-shared-time",
  "bmc-shared-utils",

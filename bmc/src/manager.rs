@@ -81,6 +81,11 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     /// Consume the post-upgrade marker without conflating absence and failure.
     async fn consume_upgrade_marker(&self) -> UpgradeMarker;
 
+    /// Consume the marker announcing that activation upgraded this service
+    /// in place. A package upgrade never reboots,
+    /// so the restart is the only signal that its run finished.
+    async fn consume_service_upgrade_marker(&self) -> UpgradeMarker;
+
     fn session_manager(&self) -> Self::SessionManager;
 
     async fn has_password(&self) -> Result<bool, Self::Error> {

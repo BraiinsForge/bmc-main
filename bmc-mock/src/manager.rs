@@ -226,6 +226,10 @@ impl bmc::BmcManager for Manager {
         consume_upgrade_marker(&self.mockfs.upgrade_result())
     }
 
+    async fn consume_service_upgrade_marker(&self) -> UpgradeMarker {
+        consume_upgrade_marker(&self.mockfs.service_upgrade_marker())
+    }
+
     fn session_manager(&self) -> Self::SessionManager {
         self.session_manager.clone()
     }

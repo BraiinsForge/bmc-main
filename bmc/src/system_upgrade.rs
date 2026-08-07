@@ -593,12 +593,10 @@ impl DisplayStateService {
         self.sender.subscribe()
     }
 
-    fn publish_post_reboot_success(&self) {
+    fn publish_post_reboot_success(&self, kind: UpgradeKind) {
         self.publish(UpgradeDisplaySnapshot {
             generation: self.next_generation(),
-            state: UpgradeDisplayState::Succeeded {
-                kind: UpgradeKind::Firmware,
-            },
+            state: UpgradeDisplayState::Succeeded { kind },
         });
     }
 }
@@ -795,8 +793,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         self.display_state_service.subscribe()
     }
 
-    pub(crate) fn publish_post_reboot_success(&self) {
-        self.display_state_service.publish_post_reboot_success();
+    pub(crate) fn publish_post_reboot_success(&self, kind: UpgradeKind) {
+        self.display_state_service.publish_post_reboot_success(kind);
     }
 
     #[expect(clippy::too_many_lines)]
@@ -1912,7 +1910,7 @@ mod tests {
             },
         });
 
-        display_state_service.publish_post_reboot_success();
+        display_state_service.publish_post_reboot_success(UpgradeKind::Firmware);
 
         let receiver = display_state_service.subscribe();
         assert_eq!(
