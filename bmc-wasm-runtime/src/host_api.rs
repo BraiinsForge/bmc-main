@@ -708,6 +708,12 @@ pub(crate) struct HostState {
     /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
     pub fetch_interceptor: Option<crate::runtime::FetchInterceptor>,
 
+    /// Base-URL rewrites `(from_prefix, to_prefix)`; the first matching
+    /// prefix maps the URL at the last hop, ahead of secret substitution
+    /// and the egress check — dev plumbing that points a widget's
+    /// hard-coded API base at a simulator. Set via `RuntimeConfig`.
+    pub url_rewrites: Vec<(String, String)>,
+
     /// Hermetic-run state; `None` is a normal run. Set via `RuntimeConfig`.
     pub hermetic: Option<HermeticRun>,
 
@@ -889,6 +895,7 @@ impl HostState {
             http_response_txs: HashMap::new(),
             next_http_request_id: 1,
             fetch_interceptor: None,
+            url_rewrites: Vec::new(),
             hermetic: None,
             fetch_observer: None,
             fetch_keys: HashMap::new(),

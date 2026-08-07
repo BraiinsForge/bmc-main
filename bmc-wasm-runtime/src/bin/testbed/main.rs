@@ -436,6 +436,35 @@ struct CliArgs {
     /// at the wire hop only, so no fixture, log, or diagnostic ever holds a secret.
     #[arg(long)]
     secrets: Option<PathBuf>,
+    /// Rewrite a fetch's origin at the last hop, as `FROM=TO` (repeatable) —
+    /// points a widget's hard-coded API base at a simulator:
+    /// `--rewrite-url https://api.braiins.com=http://127.0.0.1:20000`.
+    /// Both sides name an origin (scheme, host, port), matched whole.
+    /// The egress check judges the rewritten destination, so the slot's
+    /// secrets entry needs a matching `allow_hosts` pin.
+    #[arg(long = "rewrite-url")]
+    rewrite_url: Vec<String>,
+}
+
+/// One side of a `--rewrite-url` pair as its origin.
+///
+/// The rewrite matches whole origins, so anything it could not honour
+/// is refused here rather than silently never matching:
+/// an unparsable URL, a scheme carrying no host to compare,
+/// or a path, query or fragment.
+fn origin_of(side: &str) -> Result<String> {
+    let url = url::Url::parse(side)
+        .with_context(|| format!("--rewrite-url {side}: not a parsable URL"))?;
+    let origin = url.origin();
+    anyhow::ensure!(
+        origin.is_tuple(),
+        "--rewrite-url {side}: needs a scheme with a host"
+    );
+    anyhow::ensure!(
+        url.path() == "/" && url.query().is_none() && url.fragment().is_none(),
+        "--rewrite-url {side}: name an origin only, with no path, query or fragment"
+    );
+    Ok(origin.ascii_serialization())
 }
 
 /// Per-tag bucket cap for the dev blob cache, matching the device's flash cap.
@@ -482,6 +511,19 @@ impl CliArgs {
             .with_context(|| format!("parse secrets file {}", path.display()))?;
         bmc_widget_protocol::CredentialSecrets::from_editable(parsed, declared)
             .with_context(|| format!("secrets file {}", path.display()))
+    }
+
+    /// The `--rewrite-url` pairs, split at the first `=`.
+    fn url_rewrites(&self) -> Result<Vec<(String, String)>> {
+        self.rewrite_url
+            .iter()
+            .map(|pair| {
+                let (from, to) = pair
+                    .split_once('=')
+                    .with_context(|| format!("--rewrite-url {pair}: expected FROM=TO"))?;
+                Ok((origin_of(from)?, origin_of(to)?))
+            })
+            .collect()
     }
 
     /// The disk-backed blob cache for `--cache-dir`, creating the directory
@@ -593,6 +635,58 @@ mod platforms_startup_tests {
 
         let absent = parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: bare args parse");
         assert_eq!(absent.cache_dir, None, "no cache without the flag");
+    }
+
+    #[test]
+    fn parse_args_accepts_rewrite_url_forms() {
+        let cli = parse_test_args(&[
+            "testbed",
+            "widget.wasm",
+            "--rewrite-url=https://api.example.com=http://127.0.0.1:20000",
+            "--rewrite-url",
+            "https://api.other.example=http://127.0.0.1:20001",
+        ])
+        .expect("BUG: rewrite-url args must parse");
+        assert_eq!(
+            cli.url_rewrites().expect("BUG: well-formed pairs split"),
+            vec![
+                (
+                    "https://api.example.com".to_owned(),
+                    "http://127.0.0.1:20000".to_owned()
+                ),
+                (
+                    "https://api.other.example".to_owned(),
+                    "http://127.0.0.1:20001".to_owned()
+                ),
+            ]
+        );
+
+        for rejected in [
+            "https://api.example.com/pool/v2=http://127.0.0.1:20000",
+            "https://api.example.com=http://127.0.0.1:20000/base",
+            "api.example.com=http://127.0.0.1:20000",
+        ] {
+            let cli = parse_test_args(&["testbed", "widget.wasm", "--rewrite-url", rejected])
+                .expect("BUG: the flag itself parses");
+            assert!(
+                cli.url_rewrites().is_err(),
+                "{rejected}: a pair the rewrite cannot honour must fail at startup"
+            );
+        }
+
+        let absent = parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: bare args parse");
+        assert_eq!(
+            absent.url_rewrites().expect("BUG: no flag, no pairs"),
+            Vec::new(),
+            "no rewrites without the flag"
+        );
+
+        let bad = parse_test_args(&["testbed", "widget.wasm", "--rewrite-url", "no-separator"])
+            .expect("BUG: clap accepts the raw string");
+        assert!(
+            bad.url_rewrites().is_err(),
+            "a pair without '=' is rejected at resolution"
+        );
     }
 
     #[test]
@@ -1148,6 +1242,8 @@ pub(crate) struct TestbedApp {
     /// Secrets from `--secrets`, handed to the runtime with each credential
     /// delivery; empty by default, so fetches refuse before egress.
     pub(crate) secrets: bmc_widget_protocol::CredentialSecrets,
+    /// Base-URL rewrites from `--rewrite-url`, installed on every runtime.
+    url_rewrites: Vec<(String, String)>,
     gl: Arc<eframe::glow::Context>,
     pub(crate) tiles: Vec<PreviewTile>,
     gpu_pool: Vec<TileGpu>,
@@ -1315,9 +1411,11 @@ impl TestbedApp {
             .map(|key| key.as_str().to_owned())
             .collect();
         let secrets = cli.credential_secrets(&declared)?;
+        let url_rewrites = cli.url_rewrites()?;
         Ok(Self {
             cli,
             secrets,
+            url_rewrites,
             requested_size,
             // 30 attempts at ~16ms = ~0.5 s of negotiation.
             // More than enough for any compositor to settle,
@@ -1424,6 +1522,7 @@ impl TestbedApp {
                 system: system.clone(),
                 led_request_sender: led_tx,
                 asset_cache: self.cli.asset_cache(),
+                url_rewrites: self.url_rewrites.clone(),
                 ..RuntimeConfig::default()
             };
             tile.renderer.drop_all();
@@ -1579,6 +1678,7 @@ impl TestbedApp {
             rt_config.params = self.params.clone();
             rt_config.system = self.system.clone();
             rt_config.led_request_sender = led_tx;
+            rt_config.url_rewrites.clone_from(&self.url_rewrites);
             // SAFETY: eframe keeps the GL context current for the app's lifetime.
             let renderer = unsafe {
                 FemtoVgRenderer::new(

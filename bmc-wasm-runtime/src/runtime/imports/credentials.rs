@@ -230,6 +230,13 @@ pub(in crate::runtime) fn spend(
     headers: &[(String, String)],
     body: Option<Vec<u8>>,
 ) -> Option<SpentRequest> {
+    // Base-URL rewrite (`RuntimeConfig::url_rewrites`): applied ahead of
+    // substitution and the egress check, so the pin judges the destination
+    // actually dialed. Everything upstream — the fetch key, interceptor,
+    // hermetic record — has already seen the original URL.
+    let url = rewrite_origin(url, &state.url_rewrites).unwrap_or_else(|| url.to_owned());
+    let url = url.as_str();
+
     let secrets = &state.credential_secrets;
     let spent = slots_referenced(url, headers, body.as_deref());
     if spent.is_empty() {
@@ -284,6 +291,36 @@ pub(in crate::runtime) fn spend(
         body,
         carries_secret: true,
     })
+}
+
+/// `url` with the origin a rewrite names swapped for its replacement,
+/// or `None` when no rewrite names this one.
+///
+/// The match is judged by `url::Url`, the parser [`egress_permitted`] reads
+/// the destination with. So `api.braiins.com.evil.example` is a different
+/// origin than `api.braiins.com` and goes untouched,
+/// while an explicit `:443` on an https base is the same one.
+///
+/// The tail comes off the original string rather than off the parse:
+/// a URL here may still hold a `{{ credential.… }}` placeholder,
+/// which serialising would percent-encode past [`slots_referenced`]
+/// — sending an unpinned request that carries a mangled placeholder
+/// instead of a secret.
+fn rewrite_origin(url: &str, rewrites: &[(String, String)]) -> Option<String> {
+    let origin = url::Url::parse(url).ok()?.origin();
+    let (_, to) = rewrites
+        .iter()
+        .find(|(from, _)| url::Url::parse(from).is_ok_and(|from| from.origin() == origin))?;
+    Some(format!("{to}{}", after_authority(url)?))
+}
+
+/// Path, query and fragment exactly as written, empty when the URL has none.
+fn after_authority(url: &str) -> Option<&str> {
+    let (_, authority) = url.split_once("://")?;
+    match authority.find(['/', '?', '#']) {
+        Some(at) => authority.get(at..),
+        None => Some(""),
+    }
 }
 
 /// Whether the client's own parser reads the same host the pin approved.
@@ -645,6 +682,72 @@ mod tests {
             .is_none(),
             "replacement, not union: the type's host is no longer pinned in"
         );
+    }
+
+    #[test]
+    fn a_url_rewrite_is_judged_and_dialed_as_the_rewritten_destination() {
+        let mut state =
+            host_state_with_account_pin(BuiltinType::BraiinsPool.id(), &["127.0.0.1:20000"]);
+        state.url_rewrites = vec![(
+            "https://api.braiins.com".to_owned(),
+            "http://127.0.0.1:20000".to_owned(),
+        )];
+
+        let spent = spend(
+            &state,
+            "https://api.braiins.com/v2/x?t={{ credential.pool.token }}",
+            &[],
+            None,
+        )
+        .expect("the rewritten destination satisfies the account pin");
+        assert_eq!(spent.url, "http://127.0.0.1:20000/v2/x?t=s3cr3t");
+        assert!(
+            spend(
+                &state,
+                "https://api.elsewhere.example/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .is_none(),
+            "an unrewritten host is judged as itself and refused by the pin"
+        );
+    }
+
+    /// The rewrite runs ahead of the pin, so whatever it calls "the same host"
+    /// is what the pin ends up judging.
+    #[test]
+    fn a_rewrite_matches_an_origin_not_a_string_prefix() {
+        // The lookalike is pinned outright,
+        // so only the rewrite mangling it can get it refused.
+        let mut state = host_state_with_account_pin(
+            BuiltinType::BraiinsPool.id(),
+            &["127.0.0.1:20000", "api.braiins.com.evil.example"],
+        );
+        state.url_rewrites = vec![(
+            "https://api.braiins.com".to_owned(),
+            "http://127.0.0.1:20000".to_owned(),
+        )];
+
+        let lookalike = spend(
+            &state,
+            "https://api.braiins.com.evil.example/v2/x?t={{ credential.pool.token }}",
+            &[],
+            None,
+        )
+        .expect("a host the pin allows stays reachable");
+        assert_eq!(
+            lookalike.url, "https://api.braiins.com.evil.example/v2/x?t=s3cr3t",
+            "a host that merely starts with the rewrite's is a different host"
+        );
+
+        let default_port = spend(
+            &state,
+            "https://api.braiins.com:443/v2/x?t={{ credential.pool.token }}",
+            &[],
+            None,
+        )
+        .expect("an explicit default port names the same origin");
+        assert_eq!(default_port.url, "http://127.0.0.1:20000/v2/x?t=s3cr3t");
     }
 
     #[test]

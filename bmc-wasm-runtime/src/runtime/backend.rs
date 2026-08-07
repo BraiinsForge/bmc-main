@@ -202,6 +202,10 @@ pub struct RuntimeConfig {
     /// Intercept fetch requests before they hit the network.
     /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
     pub fetch_interceptor: Option<FetchInterceptor>,
+    /// Base-URL rewrites `(from_prefix, to_prefix)` applied at the last hop,
+    /// ahead of secret substitution and the egress check — dev plumbing
+    /// that points a widget's hard-coded API base at a simulator.
+    pub url_rewrites: Vec<(String, String)>,
     /// Hermetic-run mode: refuse (and record) any live external I/O a fixture
     /// does not satisfy, instead of hitting the network.
     ///
@@ -275,6 +279,7 @@ impl Default for RuntimeConfig {
             system: SystemSnapshot::default(),
             kv_store_path: None,
             fetch_interceptor: None,
+            url_rewrites: Vec::new(),
             hermetic: false,
             fetch_observer: None,
             record_events: false,
@@ -396,6 +401,7 @@ impl WasmWidgetRuntime {
             system,
             kv_store_path,
             fetch_interceptor,
+            url_rewrites,
             hermetic,
             fetch_observer,
             record_events,
@@ -452,6 +458,7 @@ impl WasmWidgetRuntime {
             state.instance_id = token;
         }
         state.fetch_interceptor = fetch_interceptor;
+        state.url_rewrites = url_rewrites;
         state.hermetic = hermetic.then(HermeticRun::default);
         state.fetch_observer = fetch_observer;
         state.record_events = record_events;
