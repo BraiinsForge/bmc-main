@@ -59,6 +59,10 @@ pub enum Instance {
         params: bos::Params,
         #[serde(default = "one")]
         count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
     },
     // Braiins OS Libre is the product name; only the Rust side keeps uBOS.
     #[serde(rename = "bos-libre")]
@@ -70,6 +74,10 @@ pub enum Instance {
         params: ubos::Params,
         #[serde(default = "one")]
         count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
     },
     Axeos {
         /// Human label describing this entry's scenario, shown in the readout.
@@ -79,6 +87,10 @@ pub enum Instance {
         params: axeos::Params,
         #[serde(default = "one")]
         count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
     },
     /// A Braiins Pool account — a cloud API on its port, never announced.
     #[serde(rename = "braiins-pool")]
@@ -90,6 +102,10 @@ pub enum Instance {
         params: braiins_pool::Params,
         #[serde(default = "one")]
         count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
     },
 }
 
@@ -99,7 +115,7 @@ fn one() -> usize {
 
 /// The device keys a blueprint may name, as written in the `device` field.
 const DEVICE_KEYS: &[&str] = &["bos", "bos-libre", "axeos", "braiins-pool"];
-const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count"];
+const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count", "port"];
 
 /// One device's typed params, before they are folded into an [`Instance`].
 enum DeviceParams {
@@ -147,27 +163,31 @@ impl DeviceParams {
         })
     }
 
-    fn into_instance(self, label: Option<String>, count: usize) -> Instance {
+    fn into_instance(self, label: Option<String>, count: usize, port: Option<u16>) -> Instance {
         match self {
             DeviceParams::Bos(params) => Instance::Bos {
                 label,
                 params,
                 count,
+                port,
             },
             DeviceParams::Ubos(params) => Instance::Ubos {
                 label,
                 params,
                 count,
+                port,
             },
             DeviceParams::Axeos(params) => Instance::Axeos {
                 label,
                 params,
                 count,
+                port,
             },
             DeviceParams::BraiinsPool(params) => Instance::BraiinsPool {
                 label,
                 params,
                 count,
+                port,
             },
         }
     }
@@ -197,6 +217,7 @@ impl<'de> Visitor<'de> for InstanceVisitor {
         let mut device: Option<String> = None;
         let mut label: Option<Option<String>> = None;
         let mut count: Option<usize> = None;
+        let mut port: Option<Option<u16>> = None;
         let mut params: Option<DeviceParams> = None;
         let mut early_params: Option<Json> = None;
 
@@ -222,6 +243,12 @@ impl<'de> Visitor<'de> for InstanceVisitor {
                     }
                     count = Some(map.next_value()?);
                 }
+                "port" => {
+                    if port.is_some() {
+                        return Err(de::Error::duplicate_field("port"));
+                    }
+                    port = Some(map.next_value()?);
+                }
                 "params" => {
                     if params.is_some() || early_params.is_some() {
                         return Err(de::Error::duplicate_field("params"));
@@ -241,7 +268,7 @@ impl<'de> Visitor<'de> for InstanceVisitor {
             (None, Some(json)) => DeviceParams::reparse(&device, json)?,
             (None, None) => DeviceParams::fallback(&device)?,
         };
-        Ok(params.into_instance(label.flatten(), count.unwrap_or_else(one)))
+        Ok(params.into_instance(label.flatten(), count.unwrap_or_else(one), port.flatten()))
     }
 }
 
@@ -277,6 +304,17 @@ impl Instance {
             | Instance::Ubos { label, .. }
             | Instance::Axeos { label, .. }
             | Instance::BraiinsPool { label, .. } => label.as_deref(),
+        }
+    }
+
+    /// The entry's pinned base port, if the blueprint set one.
+    #[must_use]
+    pub fn port(&self) -> Option<u16> {
+        match self {
+            Instance::Bos { port, .. }
+            | Instance::Ubos { port, .. }
+            | Instance::Axeos { port, .. }
+            | Instance::BraiinsPool { port, .. } => *port,
         }
     }
 

@@ -169,6 +169,7 @@ mod tests {
             label: None,
             params: crate::devices::axeos::Params::default(),
             count: 1,
+            port: None,
         }
     }
 

@@ -32,14 +32,15 @@ cargo run -p bmc-netsim -- run bmc-netsim/blueprints/example.json5
 cargo run -p bmc-netsim -- schema
 ```
 
-The n-th device listens on `20000 + n`. A widget browsing the LAN finds each over mDNS and polls its `host:port`. To
-point a real Deck at it, run the sim on a machine on the Deck's Wi-Fi and open the fleet-management widget — the sim
-accepts any BOS/uBOS credentials.
+Unpinned devices fill ports from `20000` upward in blueprint order, skipping any an instance pins via `port`. A widget
+browsing the LAN finds each over mDNS and polls its `host:port`. To point a real Deck at it, run the sim on a machine on
+the Deck's Wi-Fi and open the fleet-management widget — the sim accepts any BOS/uBOS credentials.
 
 ## Blueprint
 
 A blueprint is JSON5, loaded from disk: a list of device instances. Each names a `device`, supplies that device's typed
-`params`, and optionally a `count`. Point `$schema` at the generated schema for editor autocomplete and validation.
+`params`, and optionally a `count` and a pinned `port` (a `count` fans out from the pinned base; pinning the same port
+twice refuses the blueprint). Point `$schema` at the generated schema for editor autocomplete and validation.
 
 ```json5
 {
