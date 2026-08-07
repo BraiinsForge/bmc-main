@@ -1,8 +1,9 @@
+mod fe 'frontend/justfile'
 mod manifest 'bmc-widget-manifest/justfile'
 mod netsim 'bmc-netsim/justfile'
 mod virt 'bmc-virt/justfile'
 mod wasm 'bmc-wasm-runtime/justfile'
-mod fe 'frontend/justfile'
+mod widgets 'widgets-wasm'
 
 NIX_SYSTEM := "$(nix eval --impure --raw --expr builtins.currentSystem)"
 

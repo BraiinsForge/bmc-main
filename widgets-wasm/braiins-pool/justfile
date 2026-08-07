@@ -1,0 +1,55 @@
+# Braiins Pool dev tasks: `just widgets::braiins-pool::dev`, or bare `just dev`
+# from this directory. Generic mechanics (builds, watch, testbed) delegate to
+# the wasm module; this file owns only the sim scenarios and their wiring.
+
+dir := source_directory()
+repo := parent_directory(parent_directory(dir))
+root_justfile := repo / "justfile"
+
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
+
+# Widget + pool sim + rebuild watch in one mprocs. SCENARIO = healthy | idle | denied.
+dev SCENARIO="healthy":
+    @just --justfile {{ root_justfile }} wasm::prebuild braiins-pool
+    mprocs \
+        --names "netsim,watch,testbed:{{ SCENARIO }}" \
+        "just --justfile {{ source_file() }} run-netsim" \
+        "just --justfile {{ root_justfile }} wasm::watch braiins-pool" \
+        "just --justfile {{ source_file() }} run-testbed {{ SCENARIO }}"
+
+# Like `dev` under the perf profiler; no watch, as a rebuild would drop the profiling build.
+profile SCENARIO="healthy":
+    mprocs \
+        --names "netsim,profile:{{ SCENARIO }}" \
+        "just --justfile {{ source_file() }} run-netsim" \
+        "just --justfile {{ source_file() }} run-testbed {{ SCENARIO }} profiling"
+
+# Serve the sim accounts — every scenario at once, one port each.
+[private]
+run-netsim:
+    @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
+
+# Testbed against SCENARIO's simulated account, with the committed sim secrets.
+[private]
+run-testbed SCENARIO BUILD="debug":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{ SCENARIO }}" in
+        healthy) port=20000 ;;
+        idle)    port=20001 ;;
+        denied)  port=20002 ;;
+        *) echo "unknown scenario '{{ SCENARIO }}' (healthy | idle | denied)" >&2; exit 1 ;;
+    esac
+
+    args="--secrets {{ dir }}/sim-secrets.json --rewrite-url https://api.braiins.com=http://127.0.0.1:$port"
+
+    case "{{ BUILD }}" in
+        # `wasm::testbed` takes its extra flags as one string, `wasm::profile`
+        # as a variadic tail — hence the deliberate unquoted expansion.
+        debug)     exec just --justfile {{ root_justfile }} wasm::testbed braiins-pool "$args" ;;
+        profiling) exec just --justfile {{ root_justfile }} wasm::profile braiins-pool 00-latest $args ;;
+        *) echo "unknown build '{{ BUILD }}' (debug | profiling)" >&2; exit 1 ;;
+    esac
