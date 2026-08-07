@@ -226,21 +226,21 @@ pub fn sample_overview_empty(bucket: SizeBucket) -> OverviewViewData {
     overview_with(bucket, empty_data())
 }
 
+/// The hint the host fills from the deck's own network state.
+fn unbound_hint() -> crate::screens::parts::BindHint {
+    crate::screens::parts::BindHint {
+        ssid: "Braiins-Guest".to_owned(),
+        url: "http://192.168.1.42".to_owned(),
+    }
+}
+
 /// Overview screen with no account bound.
 #[must_use]
 pub fn sample_overview_unbound(bucket: SizeBucket) -> OverviewViewData {
-    let (width, height) = overview_size(bucket);
     OverviewViewData {
-        bucket,
-        width,
-        height,
         account: None,
-        bind_hint: crate::screens::parts::BindHint {
-            ssid: "Braiins-Guest".to_owned(),
-            url: "http://192.168.1.42".to_owned(),
-        },
-        worker_states: true,
-        data: PoolData::default(),
+        bind_hint: unbound_hint(),
+        ..overview_with(bucket, PoolData::default())
     }
 }
 
@@ -248,6 +248,16 @@ pub fn sample_overview_unbound(bucket: SizeBucket) -> OverviewViewData {
 #[must_use]
 pub fn sample_overview_denied(bucket: SizeBucket) -> OverviewViewData {
     overview_with(bucket, denied_data())
+}
+
+/// Big Chart screen with no account bound.
+#[must_use]
+pub fn sample_big_chart_unbound(bucket: SizeBucket) -> BigChartViewData {
+    BigChartViewData {
+        account: None,
+        bind_hint: unbound_hint(),
+        ..big_chart_with(bucket, PoolData::default())
+    }
 }
 
 /// Big Chart screen over the given data, bound to the sample account.

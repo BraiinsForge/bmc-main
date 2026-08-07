@@ -113,6 +113,14 @@ fn overview_denied(ctx: &mut StoryCtx) {
 }
 
 #[story]
+fn big_chart_unbound(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        let view = fixtures::sample_big_chart_unbound(bucket);
+        (big_chart::big_chart_view(&view), view.width, view.height)
+    });
+}
+
+#[story]
 fn big_chart_loading(ctx: &mut StoryCtx) {
     size_frames(ctx, |bucket| {
         let view = fixtures::sample_big_chart_loading(bucket);
