@@ -27,13 +27,12 @@ profile SCENARIO="healthy":
         "just --justfile {{ source_file() }} run-testbed {{ SCENARIO }} profiling"
 
 # Serve the sim accounts — every scenario at once, one port each.
-[private]
 run-netsim:
     @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
 
-# Testbed against SCENARIO's simulated account, with the committed sim secrets.
+# The testbed flags aiming a run at SCENARIO's simulated account.
 [private]
-run-testbed SCENARIO BUILD="debug":
+sim-args SCENARIO:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -44,7 +43,15 @@ run-testbed SCENARIO BUILD="debug":
         *) echo "unknown scenario '{{ SCENARIO }}' (healthy | idle | denied)" >&2; exit 1 ;;
     esac
 
-    args="--secrets {{ dir }}/sim-secrets.json --rewrite-url https://api.braiins.com=http://127.0.0.1:$port"
+    echo "--secrets {{ dir }}/sim-secrets.json --rewrite-url https://api.braiins.com=http://127.0.0.1:$port"
+
+# Testbed against SCENARIO's simulated account, with the committed sim secrets.
+[private]
+run-testbed SCENARIO BUILD="debug":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
 
     case "{{ BUILD }}" in
         # `wasm::testbed` takes its extra flags as one string, `wasm::profile`
@@ -53,3 +60,16 @@ run-testbed SCENARIO BUILD="debug":
         profiling) exec just --justfile {{ root_justfile }} wasm::profile braiins-pool 00-latest $args ;;
         *) echo "unknown build '{{ BUILD }}' (debug | profiling)" >&2; exit 1 ;;
     esac
+
+# Record SIZE's capture fixture against SCENARIO; needs `run-netsim` already serving.
+record SCENARIO SIZE="full":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Bound to a variable, not inlined: a failed substitution inside the exec's
+    # arguments would leave `set -e` satisfied and record against the live API.
+    args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
+
+    # Style, chart frame and the worker toggle have no flag — set them in the
+    # testbed's params panel, which the fixture snapshots when recording stops.
+    exec just --justfile {{ root_justfile }} wasm::record braiins-pool {{ SIZE }} $args

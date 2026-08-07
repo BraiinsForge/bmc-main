@@ -113,12 +113,15 @@ fetches are served by method + URL before substitution would run.
 
 Repeat per declared size. Each size produces an independent fixture file; sizes do not share state.
 
-For a deterministic recording, record against a bmc-netsim cloud profile instead of the live API: run the widget's own
-sim (the pool widget's `just netsim` from `widgets-wasm/braiins-pool/`), then add
-`--rewrite-url https://api.braiins.com=http://127.0.0.1:20000 --secrets ../widgets-wasm/braiins-pool/sim-secrets.json`
-to the record invocation — the committed sim secrets carry a bogus token plus the loopback `allow_hosts` pin the egress
-check needs. The fixture keys stay canonical `api.braiins.com` URLs — the rewrite happens after they are recorded — so
-sim-recorded fixtures replay exactly like live-recorded ones, without baking a real account's numbers into the baseline.
+For a deterministic recording, record against a bmc-netsim cloud profile instead of the live API. Add
+`--rewrite-url <api-origin>=http://127.0.0.1:<port>` to aim the widget's hard-coded base at the sim — both sides name an
+origin, matched whole, so a lookalike host cannot pick the rewrite up — and a `--secrets` file whose slot carries a
+loopback `allow_hosts` pin — the egress check judges the rewritten destination, so the account's own pin is what admits
+it, and the token itself can be bogus. A widget that ships a sim owns both ends of this: the pool widget serves its
+accounts with `just widgets::braiins-pool::run-netsim` and records against one of them with
+`just widgets::braiins-pool::record <scenario> <size>`. The fixture keys stay canonical API URLs — the rewrite happens
+after they are recorded — so sim-recorded fixtures replay exactly like live-recorded ones, without baking a real
+account's numbers into the baseline.
 
 If the widget makes outbound HTTP/WebSocket calls during the recording, the testbed records the real responses into the
 timeline. Re-recording against a flaky endpoint produces flaky fixtures — once a recording is good, leave it.
