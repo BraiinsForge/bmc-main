@@ -994,7 +994,7 @@ interface ScreenCyclingConfigFormProps {
     render(x: { title: string; content: ReactElement }): ReactElement;
 }
 function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElement {
-    const { cycle, duration, render } = props;
+    const { cycle, duration, transitionEffect, render } = props;
     const intl = useIntl();
 
     const { formatMessage } = intl;
@@ -1004,6 +1004,7 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
         off: formatMessage({ defaultMessage: 'Off' }),
 
         defaultDuration: formatMessage({ defaultMessage: 'Default Display Duration' }),
+        transitionEffect: formatMessage({ defaultMessage: 'Transition Effect' }),
         title: formatMessage({ defaultMessage: 'Screen Cycling' }),
     };
 
@@ -1029,6 +1030,17 @@ function ScreenCyclingConfigForm(props: ScreenCyclingConfigFormProps): ReactElem
                     selectedItem={duration.value ?? undefined}
                     itemToString={pb.sceneCycleDurationToString}
                     renderSelectedItem={pb.sceneCycleDurationToString}
+                />
+
+                <Dropdown<Exclude<pb.SceneCyclingTransition, 0>>
+                    id={$('cycle-transition-effect')}
+                    label={txt.transitionEffect}
+                    titleText={txt.transitionEffect}
+                    items={pb.sceneCyclingEffectOptions}
+                    onChange={x => (x.selectedItem ? transitionEffect.onChange?.(x.selectedItem) : null)}
+                    selectedItem={transitionEffect.value || undefined}
+                    itemToString={x => pb.sceneCyclingEffectToString(intl, x) ?? ''}
+                    renderSelectedItem={x => pb.sceneCyclingEffectToString(intl, x) ?? ''}
                 />
             </Form>
         );

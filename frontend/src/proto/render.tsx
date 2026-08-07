@@ -231,8 +231,9 @@ export function alarmSnoozeDurationToString(intl: IntlShape, x?: null | pb.Snooz
 }
 
 export const sceneCyclingEffectOptions: Array<Exclude<pb.SceneCyclingTransition, 0>> = [
-    pb.SceneCyclingTransition.FADE,
     pb.SceneCyclingTransition.SLIDE,
+    pb.SceneCyclingTransition.FADE,
+    pb.SceneCyclingTransition.NONE,
 ];
 export function sceneCyclingEffectToString(intl: IntlShape, x?: Maybe<pb.SceneCyclingTransition>): null;
 export function sceneCyclingEffectToString(intl: IntlShape, x: Exclude<pb.SceneCyclingTransition, 0>): string;
@@ -250,6 +251,9 @@ export function sceneCyclingEffectToString(intl: IntlShape, x?: null | pb.SceneC
 
         case pb.SceneCyclingTransition.SLIDE:
             return formatMessage({ defaultMessage: 'Slide' });
+
+        case pb.SceneCyclingTransition.NONE:
+            return formatMessage({ defaultMessage: 'None' });
 
         default:
             assertUnreachable(x, 'Widget transition effect');

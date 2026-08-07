@@ -123,6 +123,85 @@ afterEach(() => {
     rstest.useRealTimers();
 });
 
+describe('screen cycling transition effect', () => {
+    const CYCLE_MENU_ID = 'bmc-display-list-cycle-form-menu';
+    const EFFECT_DROPDOWN_ID = 'bmc-display-list-cycle-transition-effect';
+
+    let saved: pb.SceneCycling[];
+
+    beforeEach(() => {
+        saved = [];
+        registerMocks(pb.services.SceneManagementService, {
+            getSceneCycling: () => ({
+                sceneCycling: pb.create(pb.SceneCyclingSchema, {
+                    automaticCyclingEnabled: true,
+                    automaticCyclingDefaultDurationSec: 30,
+                    transition: pb.SceneCyclingTransition.SLIDE,
+                }),
+            }),
+            setSceneCycling: ({ req }) => {
+                if (req.sceneCycling) saved.push(req.sceneCycling);
+                return {};
+            },
+        });
+    });
+
+    // Open the screen-cycling overflow menu and return the effect dropdown's
+    // toggle button (Carbon puts the given id on the ListBox wrapper).
+    async function openCyclingForm(): Promise<HTMLElement> {
+        const trigger = document.getElementById(CYCLE_MENU_ID);
+        if (!trigger) throw new Error('cycling menu trigger not rendered');
+        fireEvent.click(trigger);
+        await flush(50);
+        const toggle = document.querySelector<HTMLElement>(`#${EFFECT_DROPDOWN_ID} button`);
+        if (!toggle) throw new Error('transition effect dropdown not rendered');
+        return toggle;
+    }
+
+    function effectOptions(): HTMLElement[] {
+        return [...document.querySelectorAll<HTMLElement>('[role="option"]')];
+    }
+
+    test('the selector shows the effect loaded from the backend', async () => {
+        renderPage();
+        await flush();
+
+        const toggle = await openCyclingForm();
+
+        expect(toggle.textContent).toContain('Slide');
+    });
+
+    test('the selector offers Slide, Fade and None in that order', async () => {
+        renderPage();
+        await flush();
+
+        const toggle = await openCyclingForm();
+        fireEvent.click(toggle);
+
+        expect(effectOptions().map(el => el.textContent?.trim())).toEqual(['Slide', 'Fade', 'None']);
+    });
+
+    test('choosing None submits it with the other cycling settings intact', async () => {
+        renderPage();
+        await flush();
+
+        const toggle = await openCyclingForm();
+        fireEvent.click(toggle);
+        const none = effectOptions().find(el => el.textContent?.includes('None'));
+        if (!none) throw new Error('None option not rendered');
+        fireEvent.click(none);
+        await flush();
+
+        expect(saved).toEqual([
+            expect.objectContaining({
+                transition: pb.SceneCyclingTransition.NONE,
+                automaticCyclingEnabled: true,
+                automaticCyclingDefaultDurationSec: 30,
+            }),
+        ]);
+    });
+});
+
 describe('DisplayList scene clone (BDK-527)', () => {
     test('cloning a scene never renders two rows for the same scene id', async () => {
         const { container } = renderPage();
