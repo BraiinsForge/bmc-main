@@ -46,6 +46,7 @@ use smithay::{
 };
 
 use super::render::{BufferPool, DrmOutput, EglContext, ScanoutFormat, ScanoutSwizzler};
+use super::scene_cycling::TransitionFrame;
 use super::state::OutputDamage;
 use super::widget_tracker::WidgetTracker;
 
@@ -164,21 +165,32 @@ const _: () = assert!(
     "BUG: the logo, caption and separator draws do not report damage - damage-track them before enabling damage clips"
 );
 
-/// Draw the combined-scene separator grid once per entry in `x_offsets`, so it
-/// slides with its scene during swipes and transitions. Widgets snap to
+/// A combined scene showing the separator grid this frame: the x-offset the
+/// grid slides with during swipes and transitions, and the opacity it fades
+/// with during cross-fades.
+struct CombinedSceneGrid {
+    x_offset: i32,
+    alpha: f32,
+}
+
+/// Draw the combined-scene separator grid once per entry in `grids`,
+/// so it slides with its scene during swipes and transitions
+/// and fades with it during cross-fades. Widgets snap to
 /// `WidgetPosition::{COL,ROW}_PITCH` (viewport + a uniform 4px gap), so a strip
 /// drawn in the gap just before each internal boundary shows as the separator,
 /// and is covered or trimmed by the widgets blitted on top: a spanning widget
 /// hides its internal boundary line, an occupied cell trims its strips to the
 /// 4px gap, and an empty cell keeps a black interior framed by the lines.
+/// During a cross-fade the widgets go translucent and covered strips can
+/// bleed through faintly — verified invisible on device at the fade's pace.
 /// Geometry is sourced from `WidgetPosition` + `DrmOutput::logical_size`.
 fn draw_separator_grids(
     frame: &mut GlesFrame<'_, '_>,
     output: &DrmOutput,
     transform: DisplayTransform,
-    x_offsets: &[i32],
+    grids: &[CombinedSceneGrid],
 ) {
-    if x_offsets.is_empty() {
+    if grids.is_empty() {
         return;
     }
     let (lw, lh) = output.logical_size();
@@ -194,27 +206,29 @@ fn draw_separator_grids(
     let row_pitch = to_i32(WidgetPosition::row_pitch(lh));
     let cols = i32::try_from(WidgetPosition::MAX_COLS).expect("BUG: grid dimension fits i32");
     let rows = i32::try_from(WidgetPosition::MAX_ROWS).expect("BUG: grid dimension fits i32");
-    for x_offset in x_offsets {
+    for grid in grids {
+        // `Color32F` is premultiplied, so scaling all components fades it.
+        let color = SEPARATOR_COLOR * grid.alpha;
         for col in 1..cols {
-            let x = col * col_pitch - gap + x_offset;
+            let x = col * col_pitch - gap + grid.x_offset;
             draw_rect_on_frame(
                 frame,
                 Rectangle::from_loc_and_size((x, 0), (gap, logical_h)),
                 output_w,
                 output_h,
                 transform,
-                SEPARATOR_COLOR,
+                color,
             );
         }
         for row in 1..rows {
             let y = row * row_pitch - gap;
             draw_rect_on_frame(
                 frame,
-                Rectangle::from_loc_and_size((*x_offset, y), (logical_w, gap)),
+                Rectangle::from_loc_and_size((grid.x_offset, y), (logical_w, gap)),
                 output_w,
                 output_h,
                 transform,
-                SEPARATOR_COLOR,
+                color,
             );
         }
     }
@@ -311,6 +325,7 @@ fn blit_texture_on_frame(
     output_w: i32,
     output_h: i32,
     transform: DisplayTransform,
+    alpha: f32,
     label: &str,
 ) {
     let tex_size = texture.size();
@@ -327,7 +342,7 @@ fn blit_texture_on_frame(
         &[texture_damage_rect(dst)],
         &[],
         scanout_transform(transform),
-        1.0,
+        alpha,
         None,
         &[],
     ) {
@@ -347,10 +362,12 @@ fn centered_start(container: i32, content: i32) -> i32 {
 }
 
 /// A scene showing the branding logo this frame: the x-offset it slides with
-/// during swipes and transitions, and whether the "Loading scene…" caption is
-/// drawn below the logo (see [`ScenePlaceholder`]).
+/// during swipes and transitions, the opacity it fades with during cross-fades,
+/// and whether the "Loading scene…" caption is drawn below the logo
+/// (see [`ScenePlaceholder`]).
 struct LogoScene {
     x_offset: i32,
+    alpha: f32,
     with_caption: bool,
 }
 
@@ -395,6 +412,7 @@ fn draw_logo_scenes(
             output_w,
             output_h,
             transform,
+            scene.alpha,
             "DECK logo",
         );
 
@@ -414,6 +432,7 @@ fn draw_logo_scenes(
                 output_w,
                 output_h,
                 transform,
+                scene.alpha,
                 "loading text",
             );
         }
@@ -649,7 +668,7 @@ impl SceneRenderer {
     pub fn render_scene(
         &mut self,
         widgets: &WidgetTracker,
-        transition_offset: Option<i32>,
+        transition_frame: Option<TransitionFrame>,
         buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
         layers: &[(WlBuffer, Rectangle<i32, Logical>)],
         dirty: &[ObjectId],
@@ -675,32 +694,49 @@ impl SceneRenderer {
             self.import_buffer_texture(buffer, dirty, ShmImport::WhenDirty, "layer");
         }
 
-        // Collect render items: (buffer_id, placement, x_offset)
+        // Collect render items: (buffer_id, placement, x_offset, alpha)
         let mut to_render = Vec::new();
-        // x-offsets of rendered combined scenes in view; each gets a separator
-        // grid, sliding with the scene during swipes and transitions. Scenes
-        // that show the logo instead are excluded so the grid never sits on it.
-        let mut combined_scene_offsets = Vec::new();
+        // Rendered combined scenes in view; each gets a separator grid,
+        // sliding and fading with its scene. Scenes that show the logo
+        // instead are excluded so the grid never sits on it — except mid
+        // cross-fade, where the other scene's fading grid can overlap a
+        // logo parked at the same offset.
+        let mut combined_scene_grids: Vec<CombinedSceneGrid> = Vec::new();
         // On-screen scenes showing the branding logo, per their
         // `ScenePlaceholder`. Products without a logo (see `logo_for_product`)
         // keep the plain cleared background.
         let mut logo_scenes: Vec<LogoScene> = Vec::new();
 
-        for rendered in widgets.rendered_scenes(transition_offset, self.seam_overlap_px) {
-            collect_scene_widgets(rendered.scene, buffers, rendered.x_offset, &mut to_render);
+        for rendered in widgets.rendered_scenes(transition_frame, self.seam_overlap_px) {
+            collect_scene_widgets(
+                rendered.scene,
+                buffers,
+                rendered.x_offset,
+                rendered.alpha,
+                &mut to_render,
+            );
             if self.scene_has_rendered_widget(rendered.scene, buffers) {
                 if rendered.scene.combined {
-                    combined_scene_offsets.push(rendered.x_offset);
+                    combined_scene_grids.push(CombinedSceneGrid {
+                        x_offset: rendered.x_offset,
+                        alpha: rendered.alpha,
+                    });
                 }
             } else {
                 // The grid-vs-logo-vs-caption policy lives on SceneLayout;
                 // see `ScenePlaceholder` for the policy and its rationale.
                 match rendered.scene.placeholder() {
-                    ScenePlaceholder::Grid => combined_scene_offsets.push(rendered.x_offset),
+                    ScenePlaceholder::Grid => {
+                        combined_scene_grids.push(CombinedSceneGrid {
+                            x_offset: rendered.x_offset,
+                            alpha: rendered.alpha,
+                        });
+                    }
                     ScenePlaceholder::Logo => {
                         if self.logo_png.is_some() {
                             logo_scenes.push(LogoScene {
                                 x_offset: rendered.x_offset,
+                                alpha: rendered.alpha,
                                 with_caption: false,
                             });
                         }
@@ -709,6 +745,7 @@ impl SceneRenderer {
                         if self.logo_png.is_some() {
                             logo_scenes.push(LogoScene {
                                 x_offset: rendered.x_offset,
+                                alpha: rendered.alpha,
                                 with_caption: true,
                             });
                         }
@@ -763,7 +800,7 @@ impl SceneRenderer {
         let mut renderable_items = Vec::new();
 
         ii_stopwatch::stopwatch_start!(self.compose_w);
-        for (buffer_id, placement, x_offset) in &to_render {
+        for (buffer_id, placement, x_offset, alpha) in &to_render {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
                 tracing::warn!("No cached texture for buffer {:?}", buffer_id);
                 continue;
@@ -796,15 +833,28 @@ impl SceneRenderer {
                 damage_rects.push(dst);
             }
 
-            renderable_items.push((buffer_id.clone(), placement.instance_id.clone(), dst));
+            renderable_items.push((
+                buffer_id.clone(),
+                placement.instance_id.clone(),
+                dst,
+                *alpha,
+            ));
         }
 
-        let drawn_regions: Vec<_> = renderable_items.iter().map(|(_, _, dst)| *dst).collect();
+        // Only opaque widgets hide the stale back buffer beneath them, so
+        // translucent ones (mid cross-fade) don't count as coverage — the
+        // clear must reach under them or the previous frame ghosts through.
+        let drawn_regions: Vec<_> = renderable_items
+            .iter()
+            .filter(|(_, _, _, alpha)| *alpha >= 1.0)
+            .map(|(_, _, dst, _)| *dst)
+            .collect();
 
-        // Clear regions not covered by any widget before drawing widgets.
+        // Clear regions not covered by any opaque widget before drawing widgets.
         // Clearing after widget draws can overpaint widget content on the
         // target hardware when the clear path and rotated texture path mix.
         let clear_regions = uncovered_output_regions(output_rect, drawn_regions);
+
         if !clear_regions.is_empty() {
             frame
                 .clear(BACKGROUND_COLOR, &clear_regions)
@@ -828,10 +878,10 @@ impl SceneRenderer {
             &mut frame,
             &self.output,
             self.scanout_transform,
-            &combined_scene_offsets,
+            &combined_scene_grids,
         );
 
-        for (buffer_id, instance_id, dst) in &renderable_items {
+        for (buffer_id, instance_id, dst, alpha) in &renderable_items {
             let Some(texture) = self.texture_cache.get(buffer_id) else {
                 tracing::warn!("No cached texture for buffer {:?}", buffer_id);
                 continue;
@@ -849,7 +899,7 @@ impl SceneRenderer {
                 &[damage],
                 &[],
                 scanout_transform(self.scanout_transform),
-                1.0,
+                *alpha,
                 None,
                 &[],
             ) {
@@ -872,6 +922,7 @@ impl SceneRenderer {
                 output_w,
                 output_h,
                 self.scanout_transform,
+                1.0,
                 "layer surface",
             );
         }
@@ -1133,12 +1184,14 @@ fn rectangle_union(
     Rectangle::from_loc_and_size((x1, y1), (x2 - x1, y2 - y1))
 }
 
-/// Collect visible widgets from a scene into the render list with an x offset.
+/// Collect visible widgets from a scene into the render list
+/// with the scene's x offset and opacity.
 fn collect_scene_widgets(
     scene: &bmc::compositor::SceneLayout,
     buffers: &[(WlBuffer, bmc::compositor::InstanceId)],
     x_offset: i32,
-    out: &mut Vec<(ObjectId, bmc::compositor::WidgetPlacement, i32)>,
+    alpha: f32,
+    out: &mut Vec<(ObjectId, bmc::compositor::WidgetPlacement, i32, f32)>,
 ) {
     for (client_buffer, instance_id) in buffers {
         if let Some(placement) = scene
@@ -1146,7 +1199,7 @@ fn collect_scene_widgets(
             .iter()
             .find(|w| &w.instance_id == instance_id && w.visible)
         {
-            out.push((client_buffer.id(), placement.clone(), x_offset));
+            out.push((client_buffer.id(), placement.clone(), x_offset, alpha));
         }
     }
 }

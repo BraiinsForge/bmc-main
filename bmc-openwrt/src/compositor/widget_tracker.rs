@@ -24,6 +24,8 @@ use std::collections::HashSet;
 
 use bmc::compositor::{InstanceId, SceneLayout};
 
+use super::scene_cycling::TransitionFrame;
+
 pub use bmc_widget_protocol::server::deck_widget_surface_v1::LifecycleState;
 
 /// Default drag distance (fraction of screen width) required to commit a
@@ -68,10 +70,12 @@ struct AutomaticTransition {
     target: SceneTransitionTarget,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct RenderedScene<'a> {
     pub scene: &'a SceneLayout,
     pub x_offset: i32,
+    /// Scene opacity, `1.0` except while a cross-fade transition runs.
+    pub alpha: f32,
 }
 
 #[derive(Debug)]
@@ -354,22 +358,51 @@ impl WidgetTracker {
     #[must_use]
     pub fn rendered_scenes(
         &self,
-        transition_offset: Option<i32>,
+        transition_frame: Option<TransitionFrame>,
         seam_overlap_px: i32,
     ) -> Vec<RenderedScene<'_>> {
         if let Some(transition) = self.automatic_transition {
-            let outgoing_offset = transition_offset.unwrap_or(0);
-            let incoming_offset = outgoing_offset
-                + i32::try_from(self.screen_width).unwrap_or(i32::MAX)
-                - seam_overlap_px;
+            let outgoing = &self.scenes[transition.target.from_index];
+            let incoming = &self.scenes[transition.target.to_index];
+            if let Some(TransitionFrame::Fade { progress }) = transition_frame {
+                // Source-over with complementary alphas dips toward the black clear
+                // (~25% at midpoint). Deliberate: it matches the 25.10 Slint fade
+                // and was verified on device.
+                return vec![
+                    RenderedScene {
+                        scene: outgoing,
+                        x_offset: 0,
+                        alpha: 1.0 - progress,
+                    },
+                    RenderedScene {
+                        scene: incoming,
+                        x_offset: 0,
+                        alpha: progress,
+                    },
+                ];
+            }
+            // Mid-slide the incoming scene trails the outgoing one overlapped
+            // by `seam_overlap_px` (GC400 edge-sampling at the moving boundary);
+            // the pre-transition warm-up frames of every effect (`transition_frame`
+            // is `None` there) park it fully off screen instead — the outgoing
+            // scene covers the whole panel, so there is no seam to compensate.
+            let width = i32::try_from(self.screen_width).unwrap_or(i32::MAX);
+            let (outgoing_offset, incoming_offset) = match transition_frame {
+                Some(TransitionFrame::Slide { offset }) => {
+                    (offset, offset + width - seam_overlap_px)
+                }
+                Some(TransitionFrame::Fade { .. }) | None => (0, width),
+            };
             return vec![
                 RenderedScene {
-                    scene: &self.scenes[transition.target.from_index],
+                    scene: outgoing,
                     x_offset: outgoing_offset,
+                    alpha: 1.0,
                 },
                 RenderedScene {
-                    scene: &self.scenes[transition.target.to_index],
+                    scene: incoming,
                     x_offset: incoming_offset,
+                    alpha: 1.0,
                 },
             ];
         }
@@ -378,6 +411,7 @@ impl WidgetTracker {
         let mut rendered = vec![RenderedScene {
             scene: self.active_scene(),
             x_offset: drag_offset,
+            alpha: 1.0,
         }];
         if let Some(dx) = self.drag_offset {
             let logical_width = i32::try_from(self.screen_width).unwrap_or(i32::MAX);
@@ -390,6 +424,7 @@ impl WidgetTracker {
                 rendered.push(RenderedScene {
                     scene: neighbor,
                     x_offset: neighbor_offset,
+                    alpha: 1.0,
                 });
             }
         }
@@ -548,7 +583,9 @@ mod tests {
     use bmc::compositor::{Position, SceneLayout, Size, WidgetPlacement};
     use bmc::scene::SceneId;
 
-    use super::{LifecycleState, SceneCommitConfig, SceneTransitionTarget, WidgetTracker};
+    use super::{
+        LifecycleState, SceneCommitConfig, SceneTransitionTarget, TransitionFrame, WidgetTracker,
+    };
     use crate::compositor::lifecycle_emitter::LifecycleEmitter;
 
     /// Build a tracker with three distinct scenes on a 1000-px-wide panel
@@ -855,18 +892,59 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "idle-scene alpha is the literal 1.0, not a computed value"
+    )]
     fn rendered_scenes_include_offsets_during_automatic_transition() {
         let mut t = WidgetTracker::with_screen_width(1000);
         t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
         t.begin_automatic_transition_to_next();
 
-        let rendered = t.rendered_scenes(Some(-120), 3);
+        let rendered = t.rendered_scenes(Some(TransitionFrame::Slide { offset: -120 }), 3);
 
         assert_eq!(rendered.len(), 2);
         assert_eq!(rendered[0].scene.widgets[0].instance_id, "a");
         assert_eq!(rendered[0].x_offset, -120);
+        assert_eq!(rendered[0].alpha, 1.0);
         assert_eq!(rendered[1].scene.widgets[0].instance_id, "b");
         assert_eq!(rendered[1].x_offset, 877);
+        assert_eq!(rendered[1].alpha, 1.0);
+    }
+
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "0.25 and its complement 0.75 are exact in binary"
+    )]
+    fn rendered_scenes_cross_fade_overlays_scenes_with_complementary_alpha() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        let rendered = t.rendered_scenes(Some(TransitionFrame::Fade { progress: 0.25 }), 3);
+
+        assert_eq!(rendered.len(), 2);
+        assert_eq!(rendered[0].scene.widgets[0].instance_id, "a");
+        assert_eq!(rendered[0].x_offset, 0);
+        assert_eq!(rendered[1].scene.widgets[0].instance_id, "b");
+        assert_eq!(rendered[1].x_offset, 0);
+
+        assert_eq!(rendered[0].alpha + rendered[1].alpha, 1.0);
+        assert_eq!(rendered[1].alpha, 0.25); // incoming tracks progress
+    }
+
+    #[test]
+    fn rendered_scenes_pre_transition_parks_incoming_scene_offscreen() {
+        let mut t = WidgetTracker::with_screen_width(1000);
+        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
+        t.begin_automatic_transition_to_next();
+
+        let rendered = t.rendered_scenes(None, 3);
+
+        assert_eq!(rendered.len(), 2);
+        assert_eq!(rendered[0].x_offset, 0);
+        assert_eq!(rendered[1].x_offset, 1000);
     }
 
     #[test]

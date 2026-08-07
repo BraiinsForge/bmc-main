@@ -793,14 +793,14 @@ impl EglCompositor {
                     let capture_active = !app_state.compositor.capture_sessions.is_empty();
                     let output_damage = app_state.compositor.current_output_damage();
                     let logical_width = renderer.logical_size().0;
-                    let transition_offset = app_state
+                    let transition_frame = app_state
                         .automatic_cycling
-                        .transition_offset(logical_width, Instant::now());
+                        .transition_frame(logical_width, Instant::now());
                     let layer_items = app_state.compositor.layer_render_items();
                     let (rendered, unconsumed_captures, capture_failed) = renderer
                         .render_scene(
                             &app_state.compositor.widgets,
-                            transition_offset,
+                            transition_frame,
                             &app_state.compositor.widget_buffers,
                             &layer_items,
                             &dirty,
@@ -1241,32 +1241,55 @@ impl AppState {
                     ),
                     "BUG: BeginTransition is only produced by the PreTransition phase",
                 );
-                if !transition_warm_up_ready(
-                    self.pending_transition_warm_up.as_ref(),
-                    now,
-                    |instance_id| self.compositor.latest_widget_generation(instance_id),
-                ) {
-                    tracing::debug!("scene cycling transition waiting for warm-up render");
-                    self.rearm_scene_cycling_timer(Some(TRANSITION_WARM_UP_RETRY));
+                if !self.take_transition_warm_up(now) {
                     return;
                 }
-                self.pending_transition_warm_up = None;
                 self.automatic_cycling.enter_transition(now);
                 self.compositor.mark_full_output_damage();
                 self.schedule_scene_cycling_timer(now);
             }
             AutomaticCyclingAction::FinishTransition => {
-                let active_scene_before = (
-                    self.compositor.widgets.active_scene_id(),
-                    self.compositor.widgets.active_visible_widget_ids(),
-                );
-                self.pending_transition_warm_up = None;
-                self.compositor.widgets.finish_automatic_transition();
-                after_scene_change(self);
-                emit_active_scene_changed_if_changed(self, &active_scene_before);
-                self.reset_automatic_waiting(now);
+                // A zero-length (None) transition finishes straight from
+                // PreTransition, so the warm-up gate applies here too; after
+                // an animated transition the warm-up is already taken and
+                // the gate passes vacuously.
+                if !self.take_transition_warm_up(now) {
+                    return;
+                }
+                self.commit_automatic_transition(now);
             }
         }
+    }
+
+    /// Take the pending transition warm-up if the incoming widgets have
+    /// rendered (or the warm-up timed out); otherwise rearm the cycling
+    /// timer for a retry and return `false`.
+    fn take_transition_warm_up(&mut self, now: Instant) -> bool {
+        if !transition_warm_up_ready(
+            self.pending_transition_warm_up.as_ref(),
+            now,
+            |instance_id| self.compositor.latest_widget_generation(instance_id),
+        ) {
+            tracing::debug!("scene cycling transition waiting for warm-up render");
+            self.rearm_scene_cycling_timer(Some(TRANSITION_WARM_UP_RETRY));
+            return false;
+        }
+        self.pending_transition_warm_up = None;
+        true
+    }
+
+    /// Commit the in-flight automatic transition: the target scene becomes
+    /// current, and the cycler returns to waiting for the next period.
+    fn commit_automatic_transition(&mut self, now: Instant) {
+        let active_scene_before = (
+            self.compositor.widgets.active_scene_id(),
+            self.compositor.widgets.active_visible_widget_ids(),
+        );
+        self.pending_transition_warm_up = None;
+        self.compositor.widgets.finish_automatic_transition();
+        after_scene_change(self);
+        emit_active_scene_changed_if_changed(self, &active_scene_before);
+        self.reset_automatic_waiting(now);
     }
 
     /// Schedule (or skip) a touch-discovery retry ladder.
@@ -2742,10 +2765,11 @@ mod tests {
     use crate::compositor::CompositorCommand;
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
-        SceneCyclingRuntimeConfig,
+        PRE_TRANSITION_DURATION, SceneCyclingRuntimeConfig,
     };
     use bmc::compositor::{
-        CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, WidgetPlacement,
+        CompositorEvent, InstanceId, Position, SceneCycling, SceneCyclingTransition, SceneLayout,
+        Size, WidgetPlacement,
     };
     use bmc_platform::backlight::ScreenVisibility;
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
@@ -2939,6 +2963,7 @@ mod tests {
         SceneCyclingRuntimeConfig {
             enabled,
             default_duration: Duration::from_secs(30),
+            transition: SceneCyclingTransition::Slide,
         }
     }
 
@@ -3216,6 +3241,42 @@ mod tests {
 
         assert!(state.pending_lifecycle_emission);
         assert!(state.compositor.needs_redraw());
+    }
+
+    #[test]
+    fn none_transition_commits_scene_straight_from_pre_transition() {
+        let mut state = make_app_state();
+        state
+            .automatic_cycling
+            .set_config(SceneCyclingRuntimeConfig {
+                transition: SceneCyclingTransition::None,
+                ..cycling_config(true)
+            });
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let now = Instant::now();
+        state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state.automatic_cycling.enter_pre_transition(now);
+        state.compositor.clear_output_damage();
+
+        state.on_scene_cycling_timer(now + PRE_TRANSITION_DURATION);
+
+        assert!(
+            !state.compositor.widgets.automatic_transition_active(),
+            "None transition must commit without an animated Transition phase"
+        );
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
+        ));
+        assert!(state.compositor.needs_redraw());
+        assert!(state.pending_lifecycle_emission);
     }
 
     #[test]

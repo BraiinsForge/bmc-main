@@ -20,6 +20,7 @@
 
 //! Automatic scene cycling state machine.
 
+use bmc::compositor::SceneCyclingTransition;
 use std::time::{Duration, Instant};
 
 pub(crate) const PRE_TRANSITION_DURATION: Duration = Duration::from_millis(100);
@@ -30,6 +31,7 @@ const AUTOMATIC_TRANSITION_TICK: Duration = Duration::from_millis(16);
 pub(crate) struct SceneCyclingRuntimeConfig {
     pub(crate) enabled: bool,
     pub(crate) default_duration: Duration,
+    pub(crate) transition: SceneCyclingTransition,
 }
 
 impl Default for SceneCyclingRuntimeConfig {
@@ -43,8 +45,20 @@ impl From<bmc::compositor::SceneCycling> for SceneCyclingRuntimeConfig {
         Self {
             enabled: config.automatic_cycling_enabled,
             default_duration: config.automatic_cycling_default_duration,
+            transition: config.transition,
         }
     }
+}
+
+/// Per-frame animation value of an in-flight automatic transition.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) enum TransitionFrame {
+    /// X-offset of the outgoing scene, `0` down to `-logical_width`;
+    /// the incoming scene follows one screen width to the right.
+    Slide { offset: i32 },
+    /// Cross-fade progress, `0.0` to `1.0`: the incoming scene's opacity,
+    /// with the outgoing scene at the complement.
+    Fade { progress: f32 },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,14 +112,28 @@ impl AutomaticCycling {
         self.config.default_duration
     }
 
+    #[cfg(test)]
+    pub(crate) fn transition(&self) -> SceneCyclingTransition {
+        self.config.transition
+    }
+
+    /// Animation length of the configured effect. `None` is a zero-length
+    /// transition: it commits straight from the warmed-up pre-transition
+    /// and never enters the `Transition` phase.
+    fn transition_duration(&self) -> Duration {
+        match self.config.transition {
+            SceneCyclingTransition::Slide | SceneCyclingTransition::Fade => {
+                AUTOMATIC_TRANSITION_DURATION
+            }
+            SceneCyclingTransition::None => Duration::ZERO,
+        }
+    }
+
     pub(crate) fn set_config(&mut self, config: SceneCyclingRuntimeConfig) {
-        if !config.enabled
-            && matches!(
-                self.phase,
-                AutomaticCyclingPhase::PreTransition { .. }
-                    | AutomaticCyclingPhase::Transition { .. }
-            )
-        {
+        if matches!(
+            self.phase,
+            AutomaticCyclingPhase::PreTransition { .. } | AutomaticCyclingPhase::Transition { .. }
+        ) {
             self.pending_config = Some(config);
             return;
         }
@@ -154,22 +182,34 @@ impl AutomaticCycling {
         self.phase = AutomaticCyclingPhase::Transition { started_at: now };
     }
 
-    pub(crate) fn transition_offset(&self, logical_width: u32, now: Instant) -> Option<i32> {
+    pub(crate) fn transition_frame(
+        &self,
+        logical_width: u32,
+        now: Instant,
+    ) -> Option<TransitionFrame> {
         let AutomaticCyclingPhase::Transition { started_at } = self.phase else {
             return None;
         };
         let elapsed = now.saturating_duration_since(started_at);
         let progress =
             (elapsed.as_secs_f32() / AUTOMATIC_TRANSITION_DURATION.as_secs_f32()).min(1.0);
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "transition pixel offset is panel-sized"
-        )]
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "transition pixel offset is panel-sized"
-        )]
-        Some(-((logical_width as f32) * progress).round() as i32)
+        match self.config.transition {
+            SceneCyclingTransition::Slide => {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "transition pixel offset is panel-sized"
+                )]
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "transition pixel offset is panel-sized"
+                )]
+                let offset = -((logical_width as f32) * progress).round() as i32;
+                Some(TransitionFrame::Slide { offset })
+            }
+            SceneCyclingTransition::Fade => Some(TransitionFrame::Fade { progress }),
+            // None commits straight from PreTransition and never enters this phase.
+            SceneCyclingTransition::None => None,
+        }
     }
 
     pub(crate) fn next_delay(&self, now: Instant, active_duration: Duration) -> Option<Duration> {
@@ -201,13 +241,17 @@ impl AutomaticCycling {
             }
             AutomaticCyclingPhase::PreTransition { started_at, .. } => {
                 if now.saturating_duration_since(started_at) >= PRE_TRANSITION_DURATION {
-                    AutomaticCyclingAction::BeginTransition
+                    if self.transition_duration().is_zero() {
+                        AutomaticCyclingAction::FinishTransition
+                    } else {
+                        AutomaticCyclingAction::BeginTransition
+                    }
                 } else {
                     AutomaticCyclingAction::None
                 }
             }
             AutomaticCyclingPhase::Transition { started_at, .. } => {
-                if now.saturating_duration_since(started_at) >= AUTOMATIC_TRANSITION_DURATION {
+                if now.saturating_duration_since(started_at) >= self.transition_duration() {
                     AutomaticCyclingAction::FinishTransition
                 } else {
                     AutomaticCyclingAction::None
@@ -230,6 +274,16 @@ mod tests {
         SceneCyclingRuntimeConfig {
             enabled,
             default_duration: Duration::from_secs(30),
+            transition: SceneCyclingTransition::Slide,
+        }
+    }
+
+    fn cycling_config_with_transition(
+        transition: SceneCyclingTransition,
+    ) -> SceneCyclingRuntimeConfig {
+        SceneCyclingRuntimeConfig {
+            transition,
+            ..cycling_config(true)
         }
     }
 
@@ -320,20 +374,73 @@ mod tests {
     }
 
     #[test]
-    fn automatic_cycling_transition_offset_follows_elapsed_progress() {
+    fn automatic_cycling_slide_frame_follows_elapsed_progress() {
         let now = Instant::now();
         let mut state = AutomaticCycling::new(now, cycling_config(true));
         state.enter_transition(now);
 
-        assert_eq!(state.transition_offset(1000, now), Some(0));
         assert_eq!(
-            state.transition_offset(1000, now + Duration::from_millis(150)),
-            Some(-500),
+            state.transition_frame(1000, now),
+            Some(TransitionFrame::Slide { offset: 0 })
         );
         assert_eq!(
-            state.transition_offset(1000, now + Duration::from_millis(600)),
-            Some(-1000),
+            state.transition_frame(1000, now + Duration::from_millis(150)),
+            Some(TransitionFrame::Slide { offset: -500 }),
         );
+        assert_eq!(
+            state.transition_frame(1000, now + Duration::from_millis(600)),
+            Some(TransitionFrame::Slide { offset: -1000 }),
+        );
+    }
+
+    #[test]
+    fn automatic_cycling_fade_frame_follows_elapsed_progress() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(
+            now,
+            cycling_config_with_transition(SceneCyclingTransition::Fade),
+        );
+        state.enter_transition(now);
+
+        assert_eq!(
+            state.transition_frame(1000, now),
+            Some(TransitionFrame::Fade { progress: 0.0 })
+        );
+        assert_eq!(
+            state.transition_frame(1000, now + Duration::from_millis(150)),
+            Some(TransitionFrame::Fade { progress: 0.5 }),
+        );
+        assert_eq!(
+            state.transition_frame(1000, now + Duration::from_millis(600)),
+            Some(TransitionFrame::Fade { progress: 1.0 }),
+        );
+    }
+
+    #[test]
+    fn automatic_cycling_none_transition_yields_no_frame() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(
+            now,
+            cycling_config_with_transition(SceneCyclingTransition::None),
+        );
+        state.enter_transition(now);
+
+        assert_eq!(
+            state.transition_frame(1000, now + Duration::from_millis(150)),
+            None
+        );
+    }
+
+    #[test]
+    fn no_transition_frame_outside_transition_phase() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(
+            now,
+            cycling_config_with_transition(SceneCyclingTransition::Fade),
+        );
+        state.enter_pre_transition(now);
+
+        assert_eq!(state.transition_frame(1000, now), None);
     }
 
     #[test]
@@ -445,6 +552,43 @@ mod tests {
         assert!(matches!(
             state.phase(),
             AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+    }
+
+    #[test]
+    fn none_transition_finishes_straight_from_pre_transition() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(
+            now,
+            cycling_config_with_transition(SceneCyclingTransition::None),
+        );
+        state.enter_pre_transition(now);
+
+        assert_eq!(
+            state.on_timer(now + PRE_TRANSITION_DURATION, Duration::from_secs(30)),
+            AutomaticCyclingAction::FinishTransition,
+        );
+    }
+
+    #[test]
+    fn transition_change_during_transition_defers_until_next_wait_period() {
+        let now = Instant::now();
+        let mut state = AutomaticCycling::new(now, cycling_config(true));
+        state.enter_transition(now);
+
+        state.set_config(cycling_config_with_transition(SceneCyclingTransition::Fade));
+
+        assert_eq!(state.transition(), SceneCyclingTransition::Slide);
+        assert_eq!(
+            state.transition_frame(1000, now + Duration::from_millis(150)),
+            Some(TransitionFrame::Slide { offset: -500 })
+        );
+
+        state.reset_waiting(now + AUTOMATIC_TRANSITION_DURATION, 2, false);
+        assert_eq!(state.transition(), SceneCyclingTransition::Fade);
+        assert!(matches!(
+            state.phase(),
+            AutomaticCyclingPhase::WaitingForTimer { .. }
         ));
     }
 }
