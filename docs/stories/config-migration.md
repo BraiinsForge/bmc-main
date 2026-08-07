@@ -24,12 +24,15 @@ typed credential instances. Every later schema bump adds one more step to the sa
   boot-sound switches, and auto-upgrade preferences all carry over unchanged.
 - Scene IDs, widget positions, and widget sizes are preserved. The grid the user built still looks the same.
 - Each upgrade step translates the widgets it has an equivalent for and drops the rest. In the current v0 → v1 step that
-  means the clock, block height, and image widgets keep their settings, plus the Braiins Forge remote widgets that now
-  have a WASM equivalent — weather, nameday, ISS position, random facts, and SpaceX launch (matched by their URL to the
-  WASM widget's ID). Their positions and user-configured settings carry over and they work immediately.
+  means the clock, block height, image, and Braiins Pool widgets keep their settings, plus the Braiins Forge remote
+  widgets that now have a WASM equivalent — weather, nameday, ISS position, random facts, and SpaceX launch (matched by
+  their URL to the WASM widget's ID). Their positions and user-configured settings carry over and they work immediately.
+- The Braiins Pool widget also keeps its account: the pool account it used is bound to the new widget's account slot, so
+  the user never re-enters the API key. A legacy pool widget that had no account arrives unbound and shows its bind
+  prompt.
 - Any widget the step has no equivalent for is dropped, with a `warn!` line naming the unsupported kind or URL. For v0 →
-  v1 this includes the legacy ticker, Braiins Pool, blockchain-data, and halving-countdown widgets, and the remote
-  exchange-rate, Formula 1, NASA picture of the day, and ticker widgets — none of which have a WASM counterpart yet.
-  Dropped widgets are not preserved as empty placeholders.
+  v1 this includes the legacy ticker, blockchain-data, and halving-countdown widgets, and the remote exchange-rate,
+  Formula 1, NASA picture of the day, and ticker widgets — none of which have a WASM counterpart yet. Dropped widgets
+  are not preserved as empty placeholders.
 - Saved accounts survive too. The version `1` → `2` step migrates a Braiins Pool account to the typed-credential shape,
   keeping its name and token; the user never re-enters it.

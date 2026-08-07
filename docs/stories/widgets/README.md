@@ -11,6 +11,13 @@ A widget that displays the latest Bitcoin block height with an optional *found a
 weight, and an automatic refresh against the Braiins Forge Nexus. Renders at all four widget sizes and on the round
 BFM100 face.
 
+### [Braiins Pool Widget](braiins-pool.md)
+
+Live hashrate, worker, and payout stats for one Braiins Pool account, bound as a saved account so the API key is entered
+once. Renders as an Overview of payout and worker stats or as a Big Chart of hashrate history over a selectable window,
+with the active-worker count on a second axis and completed payouts marked on the full-screen chart. Distinguishes
+not-yet-loaded from genuinely empty, and names the fix when the API key cannot read pool stats.
+
 ### [Clock Widget](clock.md)
 
 A clock widget with an analog (round or rectangular) or digital face, optional date, seconds, and timezone readouts, a
