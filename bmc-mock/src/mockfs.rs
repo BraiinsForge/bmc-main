@@ -38,6 +38,7 @@ impl MockFs {
     const WIFI_RECONFIG_FILE: &str = "etc/wifi-reconfig";
     const WIFI_STATUS_FILE: &str = "etc/is_wifi_enabled";
     const PENDING_INSTALL_FILE: &str = "dev/shm/bmc-nix-pending-install.json";
+    const SERVICE_UPGRADE_MARKER_FILE: &str = "dev/shm/bmc-service-upgraded/bmc-compositor";
 
     pub fn new(template_dir: impl AsRef<Path>, runtime_dir: impl AsRef<Path>) -> Self {
         Self {
@@ -75,6 +76,11 @@ impl MockFs {
     #[must_use]
     pub fn pending_install(&self) -> PathBuf {
         self.build_mockfs_path(Self::PENDING_INSTALL_FILE)
+    }
+
+    #[must_use]
+    pub fn service_upgrade_marker(&self) -> PathBuf {
+        self.build_mockfs_path(Self::SERVICE_UPGRADE_MARKER_FILE)
     }
 
     #[must_use]

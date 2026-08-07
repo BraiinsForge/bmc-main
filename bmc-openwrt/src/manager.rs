@@ -31,7 +31,7 @@ use anyhow::{anyhow, bail};
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
     BmcState, IfaceData, InitialSetupError, UpgradeError, UpgradeMarker, WifiData, WifiEvent,
-    WifiNetworkConfig,
+    WifiNetworkConfig, service_upgrade_marker_path,
 };
 use bmc::{
     BmcManager,
@@ -414,6 +414,10 @@ impl BmcManager for Manager {
 
     async fn consume_upgrade_marker(&self) -> UpgradeMarker {
         consume_upgrade_marker(Path::new(Self::UPGRADE_RESULT_FILE_PATH)).await
+    }
+
+    async fn consume_service_upgrade_marker(&self) -> UpgradeMarker {
+        consume_upgrade_marker(&service_upgrade_marker_path()).await
     }
 
     fn session_manager(&self) -> Self::SessionManager {

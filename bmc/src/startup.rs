@@ -20,7 +20,6 @@
 // the grant above.
 
 use std::fmt::Debug;
-use std::future::Future;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -30,8 +29,8 @@ use crate::alarm::{AlarmBus, AlarmController, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::{
-    AlarmCommand, Compositor, CompositorEvent, UpgradeDisplaySnapshot, run_night_mode_cycling_task,
-    run_screen_blank_reset_task,
+    AlarmCommand, Compositor, CompositorEvent, UpgradeDisplaySnapshot, UpgradeKind,
+    run_night_mode_cycling_task, run_screen_blank_reset_task,
 };
 use crate::config::ConfigHandle;
 use crate::initial_setup::InitialSetup;
@@ -159,38 +158,14 @@ fn spawn_upgrade_display_listener(
     });
 }
 
-async fn initialize_upgrade_startup<
-    InstallBridge,
-    Consume,
-    ConsumeFuture,
-    State,
-    StateFuture,
-    Publish,
-    Init,
-    InitFuture,
->(
-    install_bridge: InstallBridge,
-    consume_marker: Consume,
-    device_state: State,
-    publish_success: Publish,
-    autoupgrade_init: Init,
-) where
-    InstallBridge: FnOnce(),
-    Consume: FnOnce() -> ConsumeFuture,
-    ConsumeFuture: Future<Output = UpgradeMarker>,
-    State: FnOnce() -> StateFuture,
-    StateFuture: Future<Output = BmcState>,
-    Publish: FnOnce(),
-    Init: FnOnce() -> InitFuture,
-    InitFuture: Future<Output = ()>,
-{
-    install_bridge();
-    if consume_marker().await == UpgradeMarker::Consumed
-        && device_state().await == BmcState::Operational
-    {
-        publish_success();
+fn post_upgrade_kind(firmware: UpgradeMarker, service: UpgradeMarker) -> Option<UpgradeKind> {
+    if firmware != UpgradeMarker::Absent {
+        Some(UpgradeKind::Firmware)
+    } else if service == UpgradeMarker::Consumed {
+        Some(UpgradeKind::Packages)
+    } else {
+        None
     }
-    autoupgrade_init().await;
 }
 
 async fn forward_upgrade_display_state<F>(
@@ -345,19 +320,23 @@ where
             config.pending_install_path.clone(),
         );
 
-        initialize_upgrade_startup(
-            || {
-                spawn_upgrade_display_listener(
-                    compositor.clone(),
-                    system_upgrade_service.subscribe_display_state(),
-                );
-            },
-            || manager.consume_upgrade_marker(),
-            || manager.device_state(),
-            || system_upgrade_service.publish_post_reboot_success(),
-            || system_upgrade_service.autoupgrade_init(autoupgrade_config.enabled),
-        )
-        .await;
+        spawn_upgrade_display_listener(
+            compositor.clone(),
+            system_upgrade_service.subscribe_display_state(),
+        );
+        // Consume both even though only one decides the outcome: a firmware
+        // upgrade activates its generation after the reboot, so it can leave a
+        // service marker that would otherwise replay later.
+        let firmware_marker = manager.consume_upgrade_marker().await;
+        let service_marker = manager.consume_service_upgrade_marker().await;
+        if let Some(kind) = post_upgrade_kind(firmware_marker, service_marker)
+            && manager.device_state().await == BmcState::Operational
+        {
+            system_upgrade_service.publish_post_reboot_success(kind);
+        }
+        system_upgrade_service
+            .autoupgrade_init(autoupgrade_config.enabled)
+            .await;
         system_upgrade_service
             .gc_init(config.nix_gc_config_path.clone())
             .await;
@@ -689,12 +668,12 @@ impl Default for Configuration {
 
 #[cfg(test)]
 mod tests {
-    use super::{forward_upgrade_display_state, initialize_upgrade_startup};
+    use super::{forward_upgrade_display_state, post_upgrade_kind};
     use crate::compositor::{
         CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration,
         UpgradeKind,
     };
-    use crate::manager::{BmcState, UpgradeMarker};
+    use crate::manager::UpgradeMarker;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::sync::{Notify, watch};
@@ -807,82 +786,29 @@ mod tests {
         );
     }
 
-    async fn record_upgrade_startup(marker: UpgradeMarker, state: BmcState) -> Vec<&'static str> {
-        let calls = Arc::new(Mutex::new(Vec::new()));
-        let consume_calls = Arc::clone(&calls);
-        let bridge_calls = Arc::clone(&calls);
-        let state_calls = Arc::clone(&calls);
-        let publish_calls = Arc::clone(&calls);
-        let init_calls = Arc::clone(&calls);
-
-        initialize_upgrade_startup(
-            || {
-                bridge_calls
-                    .lock()
-                    .expect("BUG: call log lock poisoned")
-                    .push("bridge");
-            },
-            || async move {
-                consume_calls
-                    .lock()
-                    .expect("BUG: call log lock poisoned")
-                    .push("consume");
-                marker
-            },
-            || async move {
-                state_calls
-                    .lock()
-                    .expect("BUG: call log lock poisoned")
-                    .push("state");
-                state
-            },
-            || {
-                publish_calls
-                    .lock()
-                    .expect("BUG: call log lock poisoned")
-                    .push("publish");
-            },
-            || async move {
-                init_calls
-                    .lock()
-                    .expect("BUG: call log lock poisoned")
-                    .push("autoupgrade");
-            },
-        )
-        .await;
-
-        calls.lock().expect("BUG: call log lock poisoned").clone()
-    }
-
-    #[tokio::test]
-    async fn operational_marker_publishes_before_autoupgrade_init() {
+    #[test]
+    fn service_marker_alone_reports_a_package_upgrade() {
         assert_eq!(
-            record_upgrade_startup(UpgradeMarker::Consumed, BmcState::Operational).await,
-            vec!["bridge", "consume", "state", "publish", "autoupgrade"]
+            post_upgrade_kind(UpgradeMarker::Absent, UpgradeMarker::Consumed),
+            Some(UpgradeKind::Packages),
+            "a restart without a firmware marker can only come from a package upgrade"
         );
     }
 
-    #[tokio::test]
-    async fn non_operational_markers_are_consumed_without_publication() {
-        for state in [
-            BmcState::FactoryDefault,
-            BmcState::SetupPending,
-            BmcState::WifiReconfiguration,
-        ] {
-            assert_eq!(
-                record_upgrade_startup(UpgradeMarker::Consumed, state).await,
-                vec!["bridge", "consume", "state", "autoupgrade"]
-            );
-        }
+    #[test]
+    fn firmware_marker_wins_even_when_removal_fails() {
+        assert_eq!(
+            post_upgrade_kind(UpgradeMarker::RemovalFailed, UpgradeMarker::Consumed),
+            Some(UpgradeKind::Firmware),
+            "the marker's existence proves the firmware upgrade; \
+             a failed removal must not demote it to packages"
+        );
     }
 
-    #[tokio::test]
-    async fn absent_or_failed_marker_skips_state_and_publication() {
-        for marker in [UpgradeMarker::Absent, UpgradeMarker::RemovalFailed] {
-            assert_eq!(
-                record_upgrade_startup(marker, BmcState::Operational).await,
-                vec!["bridge", "consume", "autoupgrade"]
-            );
+    #[test]
+    fn absent_firmware_and_unconsumed_service_marker_report_no_upgrade() {
+        for service in [UpgradeMarker::Absent, UpgradeMarker::RemovalFailed] {
+            assert_eq!(post_upgrade_kind(UpgradeMarker::Absent, service), None);
         }
     }
 }
