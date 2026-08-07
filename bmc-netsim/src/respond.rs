@@ -20,18 +20,21 @@
 
 //! HTTP responder: serve a resource's endpoints on its own TCP port.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+use axum::extract::Query;
 use axum::{Json, Router, routing};
 
-use crate::blueprint::{Body, EndpointSpec};
+use crate::blueprint::{Body, EndpointSpec, RequestCtx};
 use crate::cache::Cache;
 use crate::render;
 
 /// Build the router: a `Render` endpoint fills its template per request (noise
-/// keyed on `seed`, time from `start`); an `Accumulate` endpoint reads `cache`.
+/// keyed on `seed`, time from `start`); an `Accumulate` endpoint reads `cache`;
+/// a `Respond` endpoint reads its own query string.
 pub fn build_router(
     endpoints: Vec<EndpointSpec>,
     seed: u64,
@@ -43,7 +46,7 @@ pub fn build_router(
         let body = endpoint.body.clone();
         let cache = Arc::clone(cache);
         let status = endpoint.status.code();
-        let handler = move || {
+        let handler = move |Query(query): Query<BTreeMap<String, String>>| {
             let body = body.clone();
             let cache = Arc::clone(&cache);
             async move {
@@ -52,6 +55,11 @@ pub fn build_router(
                         render::render(template, start.elapsed().as_secs_f64(), seed)
                     }
                     Body::Accumulate(reader) => reader(&cache),
+                    Body::Respond(responder) => responder(&RequestCtx {
+                        query,
+                        t_s: start.elapsed().as_secs_f64(),
+                        seed,
+                    }),
                 };
                 (status, Json(json))
             }

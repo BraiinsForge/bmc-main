@@ -271,7 +271,9 @@ impl Instance {
 pub struct ResourceSpec {
     pub name: String,
     pub port: u16,
-    pub announce: AnnounceSpec,
+    /// `None` for a cloud-API resource: it is reached by its port rather
+    /// than discovered on the LAN, so nothing is advertised.
+    pub announce: Option<AnnounceSpec>,
     pub endpoints: Vec<EndpointSpec>,
     /// Opt-in: the engine records these series into the device's cache for an
     /// accumulating endpoint to serve back.
@@ -343,10 +345,27 @@ pub enum Body {
     Render(Json),
     /// A response built from the device's accumulated cache (history).
     Accumulate(AccumFn),
+    /// A response computed from the request itself — for endpoints keyed
+    /// on their query string (windowed history, cursor pagination).
+    Respond(RespondFn),
 }
 
 /// Reads a device's cache and shapes it into an endpoint response body.
 pub type AccumFn = Arc<dyn Fn(&Cache) -> Json + Send + Sync>;
+
+/// Shapes a request-aware endpoint's response body.
+pub type RespondFn = Arc<dyn Fn(&RequestCtx) -> Json + Send + Sync>;
+
+/// What a [`Body::Respond`] endpoint sees of its request and device.
+#[derive(Debug, Clone)]
+pub struct RequestCtx {
+    /// The parsed query string, later duplicates winning.
+    pub query: BTreeMap<String, String>,
+    /// Elapsed scenario time in seconds.
+    pub t_s: f64,
+    /// The device's noise seed.
+    pub seed: u64,
+}
 
 impl Body {
     /// Wrap a cache reader as an accumulating endpoint body.
@@ -357,6 +376,15 @@ impl Body {
     {
         Body::Accumulate(Arc::new(reader))
     }
+
+    /// Wrap a request reader as a query-aware endpoint body.
+    #[must_use]
+    pub fn respond<F>(responder: F) -> Self
+    where
+        F: Fn(&RequestCtx) -> Json + Send + Sync + 'static,
+    {
+        Body::Respond(Arc::new(responder))
+    }
 }
 
 impl std::fmt::Debug for Body {
@@ -364,6 +392,7 @@ impl std::fmt::Debug for Body {
         match self {
             Body::Render(template) => f.debug_tuple("Render").field(template).finish(),
             Body::Accumulate(_) => f.debug_tuple("Accumulate").finish_non_exhaustive(),
+            Body::Respond(_) => f.debug_tuple("Respond").finish_non_exhaustive(),
         }
     }
 }

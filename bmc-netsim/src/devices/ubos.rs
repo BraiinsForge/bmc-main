@@ -82,11 +82,11 @@ impl Params {
         ResourceSpec {
             name: name.to_owned(),
             port,
-            announce: AnnounceSpec::Mdns {
+            announce: Some(AnnounceSpec::Mdns {
                 service_type: "_ubos._tcp".to_owned(),
                 subtype: None,
                 txt: BTreeMap::new(),
-            },
+            }),
             endpoints: vec![EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/info".to_owned(),

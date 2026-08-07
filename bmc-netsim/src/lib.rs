@@ -45,7 +45,7 @@ use std::time::Instant;
 use anyhow::{Result, anyhow};
 
 use crate::announce::{Announcer, MdnsAnnouncer};
-use crate::blueprint::{Blueprint, ResourceSpec};
+use crate::blueprint::{AnnounceSpec, Blueprint, ResourceSpec};
 use crate::cache::Cache;
 
 /// The base TCP port; the `n`-th resource listens on `BASE_PORT + n`.
@@ -100,10 +100,14 @@ pub async fn serve(blueprint: Blueprint) -> Result<()> {
             // Hold the port before advertising, so a device is never announced
             // with no API behind it.
             let bound = respond::bind(port, endpoints, seed, start, Arc::clone(&cache)).await?;
-            announcer.announce(&name, port, &announce)?;
+            if let Some(announce) = &announce {
+                announcer.announce(&name, port, announce)?;
+            }
             tracing::info!(
                 name = %name,
-                mdns = %announce.browse(),
+                mdns = %announce
+                    .as_ref()
+                    .map_or_else(|| "(cloud, not announced)".to_owned(), AnnounceSpec::browse),
                 port,
                 endpoints = endpoint_count,
                 "up: {label}",

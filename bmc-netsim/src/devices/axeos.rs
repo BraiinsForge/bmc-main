@@ -127,11 +127,11 @@ impl Params {
         ResourceSpec {
             name: name.to_owned(),
             port,
-            announce: AnnounceSpec::Mdns {
+            announce: Some(AnnounceSpec::Mdns {
                 service_type: "_http._tcp".to_owned(),
                 subtype: Some("_axeos".to_owned()),
                 txt,
-            },
+            }),
             endpoints: vec![
                 EndpointSpec {
                     method: "GET".to_owned(),

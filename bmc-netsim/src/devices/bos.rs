@@ -145,11 +145,11 @@ impl Params {
         ResourceSpec {
             name: name.to_owned(),
             port,
-            announce: AnnounceSpec::Mdns {
+            announce: Some(AnnounceSpec::Mdns {
                 service_type: "_http._tcp".to_owned(),
                 subtype: Some("_bos".to_owned()),
                 txt: BTreeMap::new(),
-            },
+            }),
             endpoints,
             sampler: None,
         }
