@@ -80,6 +80,19 @@ swipes and automatic rotation.
 - Automatic cycling follows the same configured scene order as manual navigation.
 - Automatic cycling skips disabled or unsupported scenes.
 
+### Choose the transition effect
+
+> As a user, I want to pick how the display changes between scenes, so automatic cycling matches my taste — or gets out
+> of my way entirely.
+
+- The web UI's screen cycling settings offer three transition effects: Slide, Fade, and None.
+- Slide moves the outgoing scene off one side of the display while the incoming scene follows it in.
+- Fade cross-fades in place: the outgoing scene dissolves as the incoming scene appears over it.
+- None switches scenes instantly with no animation, for users who find motion distracting.
+- Whatever the effect, a scene change never shows a blank or half-drawn scene: the incoming scene is fully prepared
+  before it appears.
+- The chosen effect persists across reboot; the default is Slide.
+
 ## Constraints
 
 - A fullscreen scene uses exactly one `full` widget.
@@ -90,6 +103,7 @@ swipes and automatic rotation.
   configuration.
 - The branding logo appears only on the Braiins Deck; other products show a plain dark background while a scene has no
   rendered content.
+- The transition effect applies to automatic cycling; a manual swipe always slides, following the finger.
 
 ## Out of scope
 
