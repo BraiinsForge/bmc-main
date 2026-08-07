@@ -5,15 +5,15 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["Braiins <braiins@braiins.com>"]
 
-# Widget manifests embedded via include_str! from the sibling widgets-wasm
-# tree — default scenes (config/defaults.rs), the UID cross-check
-# (config/widget_uuids.rs), and the migration fallback cross-check
-# (config_migration/upgrade_v0.rs). The nix source filter keeps only
-# rust/toml/lock otherwise, so every included path must be listed here or the
-# hermetic build fails to find it.
+# Widget manifests embedded via include_str! from the sibling widgets-wasm tree
+# — default scenes (config/defaults.rs), the UID cross-check (config/widget_uuids.rs),
+# and the migration fallback cross-check (config_migration/upgrade_v0.rs).
+# The nix source filter keeps only rust/toml/lock otherwise, so every included path
+# must be listed here or the hermetic build fails to find it.
 [package.metadata.nix]
 include = [
     "../widgets-wasm/blockheight/manifest.json",
+    "../widgets-wasm/braiins-pool/manifest.json",
     "../widgets-wasm/clock/manifest.json",
     "../widgets-wasm/image/manifest.json",
     "../widgets-wasm/iss-position/manifest.json",
@@ -24,6 +24,10 @@ include = [
     "../widgets-wasm/spacex-launch/manifest.json",
     "../widgets-wasm/weather/manifest.json",
     "tests/fixtures/legacy_config_sample.json",
+    # Globbed, not listed: the golden suite discovers its cases by reading
+    # this directory, so a case whose files the filter dropped would be
+    # silently untested rather than failing the build.
+    "tests/fixtures/migration/*.json",
 ]
 
 [[bin]]
@@ -104,6 +108,7 @@ walkdir.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true
+similar-asserts.workspace = true
 tempfile.workspace = true
 
 [lints]

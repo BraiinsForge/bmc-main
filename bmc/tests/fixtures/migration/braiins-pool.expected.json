@@ -1,0 +1,161 @@
+{
+  "alarms": [
+    {
+      "enabled": true,
+      "id": "fc37b6eb-3a24-4102-8935-58e4ff0b35f9",
+      "name": "FOCUS - 08",
+      "repeat": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+      ],
+      "snooze_options": null,
+      "sound": "HashrateMelody",
+      "time": "08:00:00"
+    }
+  ],
+  "autoupgrade": {
+    "cron": "39 10 1 * * 2",
+    "enabled": true
+  },
+  "brightness_pct": 45,
+  "data_collection": false,
+  "localization": {
+    "date_format": "DdMmYyyyDot",
+    "first_day_of_week": "Sunday",
+    "number_format": "CommaGroupDotDecimal",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Fahrenheit",
+    "time_system": "Hour12",
+    "unit_system": "Imperial"
+  },
+  "night_mode": {
+    "enabled": false,
+    "from": "22:30:00",
+    "sound_volume_pct": 25,
+    "to": "06:30:00"
+  },
+  "scene_cycling": {
+    "automatic_cycling_default_duration": "1m",
+    "automatic_cycling_enabled": true,
+    "transition": "slide"
+  },
+  "scenes": [
+    {
+      "cycle_duration": "1m",
+      "enabled": true,
+      "id": "57435b3d-09c7-4bc3-b078-58978bab1c25",
+      "kind": "combined",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "d9de2913-f795-4de6-b79f-d2a9469e204e",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "regular",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "fbc867c9-b722-4bdb-8738-c15d20fe2b88"
+        },
+        {
+          "col": 1,
+          "id": "03d56da9-11ba-47a7-9eef-38da0a301607",
+          "params": {
+            "numbers_font_style": "regular",
+            "show_timestamp": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "7cb584a8-1f26-42a0-867e-955aadd2391c"
+        },
+        {
+          "col": 2,
+          "credential_bindings": {
+            "pool": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          },
+          "id": "7ff6c5d0-08dc-457e-b236-1a7bbe61226b",
+          "params": {
+            "chart_frame": "hours_24",
+            "style": "overview",
+            "worker_states": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "b4e0608d-d38c-4494-8bee-7df2a030c9b1"
+        }
+      ]
+    },
+    {
+      "cycle_duration": "1m",
+      "enabled": true,
+      "id": "98a20fc5-9eb7-4854-b08b-b7f996c7a8f1",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "credential_bindings": {
+            "pool": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          },
+          "id": "34092f35-11f6-4e5b-8251-72619cba57a4",
+          "params": {
+            "chart_frame": "hours_24",
+            "style": "overview",
+            "worker_states": true
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "b4e0608d-d38c-4494-8bee-7df2a030c9b1"
+        }
+      ]
+    },
+    {
+      "cycle_duration": "30s",
+      "enabled": true,
+      "id": "e7d9466e-9892-4d81-bdc0-ca38b141cddb",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "5371573e-f3b3-4221-abcf-e03202898e59",
+          "params": {
+            "location": "Fairfax",
+            "time_zone": "location"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "2379712a-e573-46db-8e9c-94f6ed75d92c"
+        }
+      ]
+    }
+  ],
+  "sound_volume_pct": 25,
+  "version": 2
+}

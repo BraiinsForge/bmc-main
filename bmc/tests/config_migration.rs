@@ -25,7 +25,7 @@
 //! The fixture lives at `bmc/tests/fixtures/legacy_config_sample.json`
 //! and must only be modified when we capture a new device snapshot.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use anyhow::{Context, Result};
@@ -34,6 +34,8 @@ use tempfile::TempDir;
 use tokio::fs;
 
 const FIXTURE: &str = include_str!("fixtures/legacy_config_sample.json");
+
+const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
 /// Load, upgrade if needed, validate, and persist in place. Mirrors the
 /// offline `bmc-migrate-config` chain (load → validate → `save_with_backup`);
@@ -148,6 +150,140 @@ async fn migrates_device_sample_without_losing_scenes() {
         }
     }
     assert!(saw_backup, "backup file must be written");
+}
+
+/// Golden migration snapshots: `<case>.v0.json` migrates to
+/// `<case>.expected.json` plus `<case>.accounts.json`. Widening the suite
+/// to another widget is three files, no new test code.
+const GOLDEN_DIR: &str = "tests/fixtures/migration";
+
+/// Rewrite the expected sides instead of comparing, for when a migration
+/// change is meant to move them. The diff is then the review artifact —
+/// as with netsim's `UPDATE_SCHEMA`.
+fn blessing() -> bool {
+    std::env::var_os("UPDATE_GOLDEN").is_some()
+}
+
+/// Every `<case>.v0.json` under [`GOLDEN_DIR`], by stem.
+fn golden_cases() -> Vec<(String, PathBuf)> {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join(GOLDEN_DIR);
+    let mut cases: Vec<(String, PathBuf)> = std::fs::read_dir(&dir)
+        .unwrap_or_else(|e| panic!("BUG: {} must be readable: {e}", dir.display()))
+        .filter_map(|entry| {
+            let path = entry.expect("BUG: readable dir entry").path();
+            let stem = path.file_name()?.to_str()?.strip_suffix(".v0.json")?;
+            Some((stem.to_owned(), path))
+        })
+        .collect();
+    cases.sort();
+    assert!(!cases.is_empty(), "the golden suite must have a case");
+    cases
+}
+
+fn compare_or_bless(path: &Path, actual: &serde_json::Value, case: &str) {
+    let rendered = format!(
+        "{}\n",
+        serde_json::to_string_pretty(actual).expect("BUG: migrated value must render")
+    );
+    if blessing() {
+        std::fs::write(path, &rendered)
+            .unwrap_or_else(|e| panic!("BUG: blessing {} must write: {e}", path.display()));
+        return;
+    }
+    let expected = std::fs::read_to_string(path).unwrap_or_else(|e| {
+        panic!(
+            "BUG: {} missing ({e}); create it with UPDATE_GOLDEN=1",
+            path.display()
+        )
+    });
+    // `similar_asserts` prints the differing hunks; the std macro would
+    // escape both whole files onto one line each.
+    similar_asserts::assert_eq!(
+        expected: expected,
+        actual: rendered,
+        "{case}: migration output drifted from {}; \
+         review the diff, then re-bless with UPDATE_GOLDEN=1",
+        path.display(),
+    );
+}
+
+/// The migration is a pure function of its input — ids come from the
+/// legacy ids and nothing reads the clock — so its whole output is
+/// comparable, not just the fields a hand-written assertion remembers.
+#[test]
+fn golden_snapshots_migrate_to_their_expected_config_and_accounts() {
+    for (case, input) in golden_cases() {
+        let raw = std::fs::read_to_string(&input).expect("BUG: fixture must be readable");
+        let loaded = LoadedConfig::from_str(&raw)
+            .unwrap_or_else(|e| panic!("BUG: {case} must migrate: {e:#}"));
+        assert!(loaded.was_migrated(), "{case}: fixture must be legacy");
+        loaded
+            .validate()
+            .unwrap_or_else(|e| panic!("BUG: {case} must migrate to a valid config: {e:#}"));
+
+        let dir = input.parent().expect("BUG: fixture path has a parent");
+        compare_or_bless(
+            &dir.join(format!("{case}.expected.json")),
+            &serde_json::to_value(loaded.current()).expect("BUG: config must serialize"),
+            &case,
+        );
+        compare_or_bless(
+            &dir.join(format!("{case}.accounts.json")),
+            &serde_json::to_value(loaded.extracted_accounts())
+                .expect("BUG: accounts must serialize"),
+            &case,
+        );
+    }
+}
+
+/// Properties no re-blessing can paper over: a golden file records what
+/// the migration *does*, these record what it *owes*.
+#[test]
+fn migrated_widgets_honour_their_manifests_and_bindings() {
+    for (case, input) in golden_cases() {
+        let raw = std::fs::read_to_string(&input).expect("BUG: fixture must be readable");
+        let loaded = LoadedConfig::from_str(&raw)
+            .unwrap_or_else(|e| panic!("BUG: {case} must migrate: {e:#}"));
+        let migrated = serde_json::to_value(loaded.current()).expect("BUG: config must serialize");
+        let accounts: Vec<String> = loaded
+            .extracted_accounts()
+            .keys()
+            .map(ToString::to_string)
+            .collect();
+
+        for widget in migrated["scenes"]
+            .as_array()
+            .expect("BUG: scenes array")
+            .iter()
+            .flat_map(|scene| scene["widgets"].as_array().expect("BUG: widgets array"))
+        {
+            let type_id = widget["widget_type_id"]
+                .as_str()
+                .expect("BUG: widget_type_id must be a string");
+            assert_ne!(
+                type_id, NIL_UUID,
+                "{case}: an upgraded widget kept a nil type id: {widget}",
+            );
+            let params = &widget["params"];
+            assert!(
+                params.get("_legacy").is_none() && params.get("_legacy_remote").is_none(),
+                "{case}: retired placeholder shape leaked through: {widget}",
+            );
+            // A binding naming an account that did not survive leaves the
+            // widget pointing at nothing, which reads as "never configured".
+            for account in widget["credential_bindings"]
+                .as_object()
+                .into_iter()
+                .flat_map(|slots| slots.values())
+            {
+                let account = account.as_str().expect("BUG: a binding names an account");
+                assert!(
+                    accounts.iter().any(|id| id == account),
+                    "{case}: binding names account {account}, which did not migrate: {accounts:?}",
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]

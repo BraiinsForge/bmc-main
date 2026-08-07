@@ -1,0 +1,167 @@
+{
+  "scenes": [
+    {
+      "id": "57435b3d-09c7-4bc3-b078-58978bab1c25",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "7ff6c5d0-08dc-457e-b236-1a7bbe61226b",
+          "row": 0,
+          "col": 2,
+          "size": "medium",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          }
+        },
+        {
+          "id": "268a0e9a-8baf-4467-835d-4813a58179d5",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "day1"
+          }
+        },
+        {
+          "id": "707d032d-7be6-4c58-a1c6-708988c5a1f0",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "blockchain_data"
+        },
+        {
+          "id": "d9de2913-f795-4de6-b79f-d2a9469e204e",
+          "row": 1,
+          "col": 0,
+          "size": "small",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "light",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "03d56da9-11ba-47a7-9eef-38da0a301607",
+          "row": 1,
+          "col": 1,
+          "size": "small",
+          "kind": "block_height",
+          "params": {
+            "show_timestamp": true,
+            "numbers_font_style": "light"
+          }
+        }
+      ]
+    },
+    {
+      "id": "98a20fc5-9eb7-4854-b08b-b7f996c7a8f1",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "34092f35-11f6-4e5b-8251-72619cba57a4",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "braiins_pool",
+          "params": {
+            "pool_style": "overview",
+            "chart_frame": "hours24",
+            "account_id": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c"
+          }
+        }
+      ]
+    },
+    {
+      "id": "e7d9466e-9892-4d81-bdc0-ca38b141cddb",
+      "enabled": true,
+      "cycle_duration": "30s",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "5371573e-f3b3-4221-abcf-e03202898e59",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Fairfax"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "scene_cycling": {
+    "automatic_cycling_enabled": true,
+    "automatic_cycling_default_duration": "1m",
+    "transition": "fade"
+  },
+  "localization": {
+    "time_system": "Hour12",
+    "number_format": "CommaGroupDotDecimal",
+    "date_format": "DdMmYyyyDot",
+    "first_day_of_week": "Sunday",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Fahrenheit",
+    "unit_system": "Imperial"
+  },
+  "data_collection": false,
+  "brightness_pct": 45,
+  "night_mode": {
+    "enabled": false,
+    "from": "22:30:00",
+    "to": "06:30:00",
+    "sound_volume_pct": 25
+  },
+  "sound_volume_pct": 25,
+  "alarms": [
+    {
+      "id": "fc37b6eb-3a24-4102-8935-58e4ff0b35f9",
+      "enabled": true,
+      "name": "FOCUS - 08",
+      "time": "08:00:00",
+      "repeat": [
+        "Saturday",
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Sunday",
+        "Friday",
+        "Thursday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": null
+    }
+  ],
+  "autoupgrade": {
+    "enabled": true,
+    "cron": "39 10 1 * * 2"
+  },
+  "accounts": [
+    {
+      "id": "9fbe91d6-c391-4598-a8c2-b0e54eb5290c",
+      "type": "braiins_pool",
+      "name": "DeckProfile",
+      "authentication": {
+        "api_key": "sanitised-not-a-real-key"
+      },
+      "created_at": "2025-12-23T06:38:09.329985975Z"
+    }
+  ]
+}

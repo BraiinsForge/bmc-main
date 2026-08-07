@@ -363,6 +363,7 @@ serial_test = "3.2.0"
 sevenz-rust2 = { version = "0.20", features = ["compress", "util"] }
 sha2 = "0.10.9"
 signal-hook = { version = "0.3", default-features = false, features = ["iterator"] }
+similar-asserts = "1.7"
 smart-leds-trait = { version = "0.3.1" }
 smithay = { git = "https://github.com/Smithay/smithay.git", rev = "c114b88eb54c6ecc1be16997ca39628363600101", default-features = false, features = [
     "backend_drm",
