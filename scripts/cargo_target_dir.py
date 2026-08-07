@@ -24,7 +24,7 @@
 Runs `cargo metadata` for the workspace rooted at the given directory and
 prints its absolute `target_directory`. Single source of truth for where
 build artifacts land, shared by the wasm testbed/capture flows and the
-storybook hot-reloader so they all agree on the active target dir.
+gallery's hot reload so they all agree on the active target dir.
 
   cargo_target_dir.py WORKSPACE_ROOT    Print the absolute target dir for
                                         the workspace whose `Cargo.toml`

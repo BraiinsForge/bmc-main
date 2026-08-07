@@ -1,0 +1,67 @@
+[package]
+# Distinct from the `gallery` framework crate it depends on
+# (and from the bin/dylib named `gallery`), so the scenes dylib
+# doesn't collide with the framework at link time.
+name = "bmc-gallery"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+description = "The Deck widget gallery — an instance of the rs-gallery framework."
+
+[lib]
+path = "lib.rs"
+crate-type = ["dylib"]
+
+[[bin]]
+name = "gallery"
+path = "main.rs"
+
+[dependencies]
+# Pinned by rev rather than tracking a branch: the lockfile beside this file is
+# what CI and a fresh clone resolve through, and a scene API moves under us otherwise.
+gallery = { git = "https://github.com/kubijo/rs-gallery.git", rev = "2fabeabeacbe81a54b90dc4e75784b56b30f4927" }
+
+bmc-overlay-alarm = { path = "../system-overlays/bmc-overlay-alarm" }
+bmc-overlay-device-info = { path = "../system-overlays/bmc-overlay-device-info" }
+bmc-overlay-offline = { path = "../system-overlays/bmc-overlay-offline" }
+bmc-overlay-settings-tray = { path = "../system-overlays/bmc-overlay-settings-tray" }
+bmc-overlay-upgrade = { path = "../system-overlays/bmc-overlay-upgrade" }
+bmc-render = { path = "../bmc-render" }
+bmc-render-keyboard = { path = "../bmc-render/keyboard" }
+bmc-render-skin = { path = "../bmc-render/skin" }
+# The upgrade scene's view types, which the overlay crate takes but does not re-export.
+bmc-system-overlay = { path = "../system-overlays/bmc-system-overlay" }
+bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk" }
+braiins-pool = { path = "../widgets-wasm/braiins-pool" }
+fleet-management = { path = "../widgets-wasm/fleet-management" }
+
+femtovg = "0.20.4"
+# Matches the workspace pin; the default features carry the output backends
+# the sink opens, which bmc-render-keyboard's own dependency does not need.
+rodio = "0.20"
+taffy = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[build-dependencies]
+gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", rev = "2fabeabeacbe81a54b90dc4e75784b56b30f4927" }
+
+# Reached only from scenes, which live in the crates they exercise and arrive
+# through the glob — nothing under this manifest's own directory names them.
+[package.metadata.cargo-machete]
+ignored = [
+    "bmc-overlay-alarm",
+    "bmc-overlay-device-info",
+    "bmc-overlay-offline",
+    "bmc-overlay-settings-tray",
+    "bmc-overlay-upgrade",
+    "bmc-system-overlay",
+    "braiins-pool",
+    "fleet-management",
+]
+
+# Scenes stay debuggable at opt 0, but bmc-render/femtovg
+# at opt 0 would crawl. Optimize dependencies only.
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,6 @@
+# Gallery config: where gallery looks for scenes.
+# Globs are relative to this file; scene files
+# are co-located with the components they exercise
+# (`*.scene.rs`) and register via `#[scene]`.
+scene_globs = ["../**/*.scene.rs"]
+title = "Deck widget gallery"

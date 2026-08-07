@@ -1,4 +1,5 @@
 mod fe 'frontend/justfile'
+mod gallery 'bmc-gallery/justfile'
 mod manifest 'bmc-widget-manifest/justfile'
 mod netsim 'bmc-netsim/justfile'
 mod virt 'bmc-virt/justfile'
@@ -21,7 +22,7 @@ NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "
 
 export FORCE_COLOR := "1"
 # Default tracing filter for `just wasm::dev` and friends; overridable by the caller's env.
-export RUST_LOG := env('RUST_LOG', 'bmc_wasm_runtime=debug,testbed=debug,bmc_storybook=info')
+export RUST_LOG := env('RUST_LOG', 'bmc_wasm_runtime=debug,testbed=debug,bmc_gallery=info')
 
 [private]
 default:
@@ -118,16 +119,6 @@ fmt-images *PATHS:
 # Full nix-driven checks (matches CI's main stage) - Very heavy
 validate-full:
     scripts/mem-box.sh nix flake check -L --option max-jobs 4
-
-# === Storybook ===
-
-# Run the widget storybook (interactive component catalog).
-storybook:
-    cargo run -p bmc-storybook
-
-# Run the storybook with hot-reload (rebuilds stories cdylib on change).
-storybook-hot:
-    cargo run -p bmc-storybook -- --hot-reload
 
 # === Tooling ===
 

@@ -37,9 +37,9 @@ const UNIT: Color = GRAY_50;
 const VALUE: Color = WHITE;
 const BACKGROUND: Color = BLACK;
 
-// Storybook BTC sparkline palette: green when the 1d series ends above where it
-// started, red otherwise. The area gradient fades from a tinted top down to
-// fully transparent; the falling tint is stronger to read on a dark header.
+// BTC sparkline palette: green when the 1d series ends above where it started,
+// red otherwise. The area gradient fades from a tinted top down to fully transparent;
+// the falling tint is stronger to read on a dark header.
 const CHART_UP: Color = Color::from_rgb(0x34, 0xC0, 0x6A);
 const CHART_DOWN: Color = Color::from_rgb(0xF9, 0x53, 0x55);
 const CHART_UP_TOP_ALPHA: f32 = 0.16;

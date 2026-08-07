@@ -37,7 +37,7 @@ use crate::icons::UpgradeIcons;
 // the indeterminate bar at 10 fps.
 const ANIMATION_FRAME: Duration = Duration::from_millis(100);
 
-/// Compact package surface size, shared by runtime and Storybook.
+/// Compact package surface size, shared by the runtime and the gallery scene.
 pub const PACKAGE_SURFACE_SIZE: (u32, u32) = (384, 192);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

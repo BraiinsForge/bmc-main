@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 exclude = [
+    # The gallery deps the external rs-gallery framework.
+    # Joining the workspace would drag that git dep into the hermetic nix build.
+    # Making it its own crate helps with both.
+    "bmc-gallery",
     "tooling",
     "widgets-wasm-examples",
 ]
@@ -27,10 +31,6 @@ members = [
     "bmc-render/skin",
     "bmc-scheduler",
     "bmc-shared/*",
-    "bmc-storybook",
-    "bmc-storybook/api",
-    "bmc-storybook/stories",
-    "bmc-storybook/storybook-macros",
     "bmc-support",
     "bmc-upgrade",
     "bmc-virt/console",

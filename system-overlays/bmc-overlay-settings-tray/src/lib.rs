@@ -285,7 +285,7 @@ impl Slide {
     }
 }
 
-/// Product selector for deterministic storybook tray views.
+/// Product selector for deterministic gallery tray views.
 #[doc(hidden)]
 pub use bmc_platform::Product as SettingsTrayProduct;
 
@@ -328,13 +328,13 @@ pub struct SettingsTrayView {
     pub ssid: Option<String>,
     pub setup_ssid: Option<String>,
     pub wifi_buttons: bool,
-    /// Forced pressed key for storybook injection; the runtime leaves this
+    /// Forced pressed key for gallery injection; the runtime leaves this
     /// `None` and derives the pressed key from the tree's touch state.
     pub pressed_key: Option<String>,
 }
 
 impl SettingsTrayView {
-    /// Build a deterministic storybook-facing view shell for a hardware product.
+    /// Build a deterministic gallery-facing view shell for a hardware product.
     #[doc(hidden)]
     #[must_use]
     pub fn for_product(product: SettingsTrayProduct) -> Self {

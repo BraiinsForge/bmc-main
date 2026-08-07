@@ -23,7 +23,7 @@ glam = { workspace = true, default-features = false, features = ["libm"], option
 ufmt = { workspace = true }
 unit-prefix = { workspace = true }
 
-# Native-only: the storybook (and any non-wasm build) formats
+# Native-only: the gallery (and any non-wasm build) formats
 # through the shared core instead of the host FFI.
 # Kept off the wasm target so `formato` never lands in a widget binary
 # — on device, formatting still goes through the host.

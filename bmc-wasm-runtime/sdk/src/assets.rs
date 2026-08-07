@@ -21,7 +21,7 @@
 //! Asset registration (icons, bitmaps, audio, meshes).
 //!
 //! On WASM targets, registration goes through host FFI calls.
-//! On native targets (storybook), callers must initialize pluggable registrars
+//! On native targets (the gallery), callers must initialize pluggable registrars
 //! via [`init_icon_registrar`], [`init_bitmap_registrar`], [`init_mesh_registrar`]
 //! before any registration occurs.
 //!
@@ -176,7 +176,7 @@ pub fn ensure_audio_registered(audio: &Audio) -> Option<AudioId> {
     host::register_audio(audio.data, audio.name)
 }
 
-/// Placeholder for native compilation (audio not used in storybook).
+/// Placeholder for native compilation (audio not used in the gallery).
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn ensure_audio_registered(_audio: &Audio) -> Option<AudioId> {

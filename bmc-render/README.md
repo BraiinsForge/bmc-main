@@ -5,7 +5,7 @@ handling.
 
 ## Purpose
 
-Platform-independent rendering pipeline used by both the device runtime and the storybook dev tool. Provides:
+Platform-independent rendering pipeline used by both the device runtime and the gallery dev tool. Provides:
 
 - `Renderer` trait and `gpu::FemtoVgRenderer` (femtovg/glow) implementation
 - Tree deserialization from the binary wire format produced by widgets
@@ -15,8 +15,8 @@ Platform-independent rendering pipeline used by both the device runtime and the 
 - Animation and transition interpolation
 
 Renderer-specific assets (icons, 9-patch PNGs, mesh GLBs) live in `bmc-render/assets/`. Workspace fonts live at
-`assets/fonts/` (top level) and are loaded by the host. Story files (`*.stories.rs`) live alongside source files to
-document renderer capabilities and serve as storybook entries.
+`assets/fonts/` (top level) and are loaded by the host. Scene files (`*.scene.rs`) live alongside source files,
+documenting renderer capabilities in the gallery.
 
 ## Boundaries
 
@@ -26,7 +26,7 @@ document renderer capabilities and serve as storybook entries.
 - Taffy layout tree construction and computation
 - Deserializing the widget tree binary into renderable nodes
 - Interaction state management (touch tracking, hit testing)
-- Hosting `*.stories.rs` files that exercise rendering features
+- Hosting `*.scene.rs` files that exercise rendering features
 
 **IS NOT its responsibility:**
 

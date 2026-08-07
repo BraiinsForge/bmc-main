@@ -10,8 +10,8 @@ license = "GPL-3.0-or-later"
 include = ["assets/**"]
 
 [lib]
-# `lib` (native rlib) in addition to the wasm `cdylib` so the storybook can
-# depend on this crate and render its `screens::*` view fns as stories.
+# `lib` (native rlib) in addition to the wasm `cdylib` so the gallery can
+# depend on this crate and render its `screens::*` view fns as scenes.
 crate-type = ["cdylib", "lib"]
 
 [dependencies]

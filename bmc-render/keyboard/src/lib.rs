@@ -242,7 +242,7 @@ mod tests {
     //!
     //! Long-press transitions live in `render::update_long_press` and are
     //! interleaved with `InteractionState` / audio sinks; they're exercised
-    //! by the storybook keyboard story rather than unit-tested here.
+    //! by the gallery's keyboard scene rather than unit-tested here.
 
     use super::*;
 

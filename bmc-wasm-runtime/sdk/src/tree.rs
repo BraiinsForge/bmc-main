@@ -514,7 +514,7 @@ pub fn submit_and_clear(width: u32, height: u32) {
     });
 }
 
-/// Serialize a `Node` to its wire-format bytes (native path for storybook).
+/// Serialize a `Node` to its wire-format bytes (native path for the gallery).
 ///
 /// Returns the serialized tree buffer that can be passed to
 /// `bmc_render::deserialize_tree()` on the host side.

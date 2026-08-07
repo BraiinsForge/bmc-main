@@ -3,6 +3,7 @@ target/
 result**
 
 # Local scratch dirs
+.tmp
 .cache/
 .ai/scratch/
 

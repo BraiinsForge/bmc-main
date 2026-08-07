@@ -20,7 +20,7 @@
 
 //! Rendering engine for the WASM widget system.
 //!
-//! Extracted from `bmc-wasm-runtime` to enable reuse by the storybook dev tool
+//! Extracted from `bmc-wasm-runtime` to enable reuse by the gallery dev tool
 //! and other native-compilation consumers. Provides:
 //!
 //! - [`renderer::Renderer`] trait and [`gpu::FemtoVgRenderer`] implementation

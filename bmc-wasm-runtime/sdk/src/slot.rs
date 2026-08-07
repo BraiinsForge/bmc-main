@@ -43,8 +43,8 @@
 //! `BitmapSlot::new("album_art")` and `BitmapSlot::new("album_art_thumb")`
 //! coexist safely — eviction respects segment boundaries (`:`).
 //!
-//! Slots are wasm32-only. On native targets (storybook) they panic; static
-//! assets registered via `Bitmap`/`Svg`/`Mesh`/`Audio` cover the storybook
+//! Slots are wasm32-only. On native targets (the gallery) they panic; static
+//! assets registered via `Bitmap`/`Svg`/`Mesh`/`Audio` cover the gallery
 //! use case.
 
 #![cfg(target_arch = "wasm32")]

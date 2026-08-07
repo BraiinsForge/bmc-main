@@ -345,7 +345,7 @@ pub fn previous() -> Params {
 // On native targets the host imports don't exist; SDK tests use `Params::from_bytes` directly,
 // and the cache logic is exercised via `current_using` / `previous_using` with a mock host.
 // The `current` / `previous` entry points return empty snapshots so non-wasm consumers of the
-// SDK API (storybook etc.) still compile and behave consistently.
+// SDK API (the gallery etc.) still compile and behave consistently.
 
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]

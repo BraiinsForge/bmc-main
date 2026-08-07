@@ -2,7 +2,7 @@
 
 ```
                        ┌─────────────────┐
-                       │  bmc-storybook  │
+                       │   bmc-gallery   │
                        └─┬──────┬──────┬─┘
                          │      │      │
                          ▼      ▼      ▼
@@ -49,7 +49,7 @@
 | `bmc-wasm-sdk`        | Widget authoring API (tree builders, host bindings)                                                                               | `bmc-wasm-runtime/sdk/`           |
 | `bmc-render`          | Rendering engine (FemtoVG, layout, interaction, components, animation)                                                            | `bmc-render/`                     |
 | `bmc-wasm-runtime`    | WASM interpreter, host state, network, testbed/capture bins                                                                       | `bmc-wasm-runtime/`               |
-| `bmc-storybook`       | Dev tool — visual catalog of SDK components                                                                                       | `bmc-storybook/`                  |
+| `bmc-gallery`         | Dev tool — visual catalog of SDK components                                                                                       | `bmc-gallery/`                    |
 
 ## Leaf crates
 

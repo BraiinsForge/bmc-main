@@ -1,0 +1,60 @@
+# Shots a change to the overlays has to survive, with `capture.json` beside them
+# for a loop to read. Where they land is the recipe's to say — `just
+# gallery::capture` passes an `--out` under the repo's scratch dir.
+size = "1280x720"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "status-overlay-stale"
+scene = "bmc_gallery::status_overlay::Status Overlay"
+frames = 4
+
+[shot.knobs]
+Variant = "Stale (age)"
+"Last refresh age (s)" = 120
+"Round face" = false
+
+# The round face masks the stage to its inscribed circle and paints a bezel over
+# it — the one stage the kit draws chrome of its own on.
+[[shot]]
+name = "status-overlay-round"
+scene = "bmc_gallery::status_overlay::Status Overlay"
+frames = 4
+
+[shot.knobs]
+Variant = "Stale (age)"
+"Last refresh age (s)" = 120
+"Round face" = true
+
+[[shot]]
+name = "status-overlay-error-round"
+scene = "bmc_gallery::status_overlay::Status Overlay"
+frames = 4
+
+[shot.knobs]
+Variant = "Error (reason)"
+"Error reason" = "Unsupported image"
+"Round face" = true
+
+# The right-hand square is the point: it is drawn after two shadows,
+# and a `drop_shadow` that hands the frame's target back wrongly
+# strands it on the window instead of the stage.
+[[shot]]
+name = "drop-shadow"
+scene = "bmc_gallery::canvas_drop_shadow::Shapes"
+frames = 4
+
+[shot.knobs]
+"Offset X" = 6
+"Offset Y" = 6
+Blur = 8
+"Shadow alpha" = 0.6
+
+# The width is the point: the one stage sized from its content on both axes,
+# so a device-wide render here is a tag column adrift in 1280 pixels.
+[[shot]]
+name = "auto-sized-stage"
+scene = "bmc_gallery::fleet::Status Tags"
+frames = 4

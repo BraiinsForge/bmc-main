@@ -27,7 +27,7 @@
 //!
 //! When compiled for native targets (non-wasm32), FFI-dependent modules are gated out.
 //! The tree-building API ([`col`], [`row`], [`fn@text`], [`button!`], [`props!`], [`style!`])
-//! and pure types remain available for the storybook and other native consumers.
+//! and pure types remain available for the gallery and other native consumers.
 //!
 //! # Widget lifecycle
 //!

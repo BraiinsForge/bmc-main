@@ -242,7 +242,7 @@ pub fn auth_failures(count: usize) -> Node {
 }
 
 /// A device's status as a labelled, tinted chip — the inline tag on the rows
-/// and device detail, catalogued by variant in the storybook.
+/// and device detail, catalogued by variant in the gallery.
 #[must_use]
 pub fn status_tag(status: DeviceStatus) -> Node {
     let (glyph, color, label) = status_glyph(status);
@@ -258,7 +258,7 @@ pub fn status_tag(status: DeviceStatus) -> Node {
     )
 }
 
-/// Every status tag stacked for the storybook catalog of inline-status variants.
+/// Every status tag stacked for the gallery catalog of inline-status variants.
 #[must_use]
 pub fn status_tag_catalog() -> Node {
     col(

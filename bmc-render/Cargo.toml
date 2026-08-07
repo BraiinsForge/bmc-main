@@ -5,9 +5,9 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 # Fonts embedded via include_bytes! from the top-level assets tree, this crate's
-# own icon/bitmap/mesh assets (build.rs and storybook stories), plus the few
-# cross-crate assets its `*.stories.rs` reference. The nix source filter keeps
-# only rust/toml/lock unless a crate opts extra files here.
+# own icon/bitmap/mesh assets (build.rs and its scenes), plus the few cross-crate
+# assets those `*.scene.rs` reference. The nix source filter keeps only
+# rust/toml/lock unless a crate opts extra files here.
 [package.metadata.nix]
 include = [
     "../assets/fonts/*",

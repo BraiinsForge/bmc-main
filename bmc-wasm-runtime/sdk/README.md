@@ -15,7 +15,7 @@ multiple crates into a single ergonomic surface:
 - Host services (wasm32 only): WebSocket, HTTP listener, mDNS, SSDP, KV store, LED control, calendar, UDP broadcast
 
 When compiled for native targets (non-wasm32), FFI-dependent modules are gated out. The tree-building API and pure types
-remain available for the storybook.
+remain available for the gallery.
 
 Optional `math-3d` feature re-exports `glam` for widgets doing 3D math (~6 KB added to WASM binary).
 

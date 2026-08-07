@@ -1729,9 +1729,8 @@ pub fn layout_and_render(
         &mut modals,
     )?;
 
-    // Override root size per-axis. Zero means "keep the node's own style"
-    // (content-sized). The storybook passes (panel_width, 0) so children
-    // can flex horizontally but the root doesn't stretch vertically.
+    // Override root size per-axis: a non-zero value pins that axis, and zero
+    // keeps the node's own style so its content sizes it.
     if let Ok(style) = ctx.taffy.style(root_id) {
         let mut new_style = style.clone();
         if width > 0.0 {

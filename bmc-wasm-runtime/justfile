@@ -13,7 +13,7 @@ dir := source_directory()
 wasm_target := "wasm32-unknown-unknown"
 cargo_features := "--features testbed"
 
-# Shared cargo target-dir resolver (repo-level, used by storybook too).
+# Shared cargo target-dir resolver (repo-level, used by the gallery too).
 target_dir_tool := dir + "/../scripts/cargo_target_dir.py"
 
 # Visual regression output (shared across all widget roots).

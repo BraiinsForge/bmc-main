@@ -1,0 +1,88 @@
+# bmc-gallery dev tasks — run, hot-reload and headless-render the Deck widget gallery.
+
+set working-directory := '..'
+# `gl` takes the command as positional arguments: interpolating them as one string
+# re-splits a scene name that contains a space back into two arguments.
+set positional-arguments
+
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
+
+# Run CMD, on mesa's software EGL when GALLERY_SOFTWARE_GL=1.
+[private]
+gl +cmd:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Headless capture wants an EGL device, which a machine with no GPU or display server
+    # (CI, a sandbox) hasn't got — mesa renders in software instead. Opt-in, since the
+    # software device has no window configs and forcing it would override a real GPU.
+    # mesa comes from the flake's own nixpkgs, so the rasteriser is the pinned one rather
+    # than whatever the registry resolves to today, and the dev shell supplies the rpath
+    # (see build.rs) for the compositor libraries the scenes dylib links.
+    if [ "${GALLERY_SOFTWARE_GL:-0}" = "1" ]; then
+        mesa="$(nix build --no-link --print-out-paths .#pkgs.mesa)"
+        libgl="$(nix build --no-link --print-out-paths .#pkgs.libGL)"
+        # Set from inside the shell, which exports an LD_LIBRARY_PATH of its own.
+        exec nix develop --command bash -c '
+            export __EGL_VENDOR_LIBRARY_FILENAMES="$1"
+            export LD_LIBRARY_PATH="$2${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            export GALLERY_CAPTURE_RENDERER=llvmpipe
+            shift 2
+            exec "$@"
+        ' _ "$mesa/share/glvnd/egl_vendor.d/50_mesa.json" "$mesa/lib:$libgl/lib" "$@"
+    fi
+    # Otherwise the ambient toolchain and the machine's own GL driver, which is what a
+    # window needs: inside `nix develop` the driver is off the search path and eframe
+    # finds no config to open one with.
+    exec "$@"
+
+# Run the Deck widget gallery.
+run:
+    cargo run --manifest-path bmc-gallery/Cargo.toml
+
+# Run the gallery with live scene hot-reload.
+hot:
+    cargo run --manifest-path bmc-gallery/Cargo.toml -- --hot
+
+# Report whether a newer `gallery` framework is out and what changed since our pinned rev.
+update:
+    cargo run --manifest-path bmc-gallery/Cargo.toml -- --check-updates
+
+# Type-check scenes + launcher without launching — the scene glob mirrors gallery.toml.
+check:
+    env GALLERY_SCENE_GLOBS='../**/*.scene.rs' cargo check --manifest-path bmc-gallery/Cargo.toml
+
+# Look at one scene as it declares itself, to `.tmp/gallery-preview/NAME.png`.
+preview SCENE NAME SIZE="1280x720" FRAMES="4":
+    # Its declared knobs and nothing else — setting them is what `capture` is for.
+    mkdir -p "{{ justfile_directory() }}/.tmp/gallery-preview"
+    @just --justfile {{ source_file() }} gl \
+        cargo run --quiet --manifest-path bmc-gallery/Cargo.toml -- \
+            --scene "{{ SCENE }}" \
+            --render "{{ justfile_directory() }}/.tmp/gallery-preview/{{ NAME }}.png" \
+            --size {{ SIZE }} \
+            --frames {{ FRAMES }}
+
+# Render every shot in a capture recipe (a render per knob set) into `.tmp/OUT`.
+capture FILE="capture.toml" OUT="gallery-renders":
+    # OUT names the run rather than its path — two of them compare without either
+    # escaping the scratch dir, which is the one place generated output belongs.
+    @just --justfile {{ source_file() }} gl \
+        cargo run --quiet --manifest-path bmc-gallery/Cargo.toml -- \
+            --capture "{{ FILE }}" \
+            --out "{{ justfile_directory() }}/.tmp/{{ OUT }}"
+
+# List SCENE's knobs, their kinds and their values — the labels a capture recipe sets.
+knobs SCENE:
+    @just --justfile {{ source_file() }} gl \
+        cargo run --quiet --manifest-path bmc-gallery/Cargo.toml -- \
+            --scene "{{ SCENE }}" \
+            --list-knobs
+
+# Print a capture recipe for SCENE with its knobs filled in — redirect it into a file to start one.
+capture-init SCENE:
+    @just --justfile {{ source_file() }} gl \
+        cargo run --quiet --manifest-path bmc-gallery/Cargo.toml -- \
+            --scene "{{ SCENE }}" \
+            --init-capture

@@ -153,6 +153,8 @@
             pkgs.udev
             pkgs.wayland
             pkgs.libxkbcommon
+            # The gallery's scenes dylib reaches bmc-system-overlay, which links gbm.
+            pkgs.libgbm
           ];
         });
 

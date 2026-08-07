@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Hand-picked fixture summaries for the storybook screens.
+//! Hand-picked fixture summaries for the gallery screens.
 
 use bmc_wasm_sdk::{ElectricPower, Hashrate, MiningEfficiency, Temperature};
 

@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-// Native builds (the storybook) can't reach the wasm-exported logic; suppress
+// Native builds (the gallery) can't reach the wasm-exported logic; suppress
 // the false dead_code there only — wasm and tests still catch the real thing.
 #![cfg_attr(
     not(any(target_arch = "wasm32", test)),
