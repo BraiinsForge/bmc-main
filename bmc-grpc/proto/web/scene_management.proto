@@ -142,6 +142,8 @@ enum SceneCyclingTransition {
   SCENE_CYCLING_TRANSITION_UNSPECIFIED = 0;
   SCENE_CYCLING_TRANSITION_SLIDE = 1;
   SCENE_CYCLING_TRANSITION_FADE = 2;
+  // Instant scene switch with no animation.
+  SCENE_CYCLING_TRANSITION_NONE = 3;
 }
 
 message SceneCycling {

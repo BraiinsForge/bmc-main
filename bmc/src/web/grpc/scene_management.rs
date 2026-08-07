@@ -1000,8 +1000,9 @@ fn parse_scene_cycling_transition(value: i32) -> Result<SceneCyclingTransition, 
     match web::SceneCyclingTransition::try_from(value) {
         Ok(web::SceneCyclingTransition::Slide) => Ok(SceneCyclingTransition::Slide),
         Ok(web::SceneCyclingTransition::Fade) => Ok(SceneCyclingTransition::Fade),
+        Ok(web::SceneCyclingTransition::None) => Ok(SceneCyclingTransition::None),
         Ok(web::SceneCyclingTransition::Unspecified) => Err(Status::invalid_argument(
-            "scene_cycling.transition must be Slide or Fade (got Unspecified)",
+            "scene_cycling.transition must be Slide, Fade, or None (got Unspecified)",
         )),
         Err(_) => Err(Status::invalid_argument(format!(
             "scene_cycling.transition: unknown value {value}"
@@ -1465,6 +1466,7 @@ impl GrpcSceneManagementService for SceneManagementService {
                 transition: match cycling.transition {
                     SceneCyclingTransition::Slide => web::SceneCyclingTransition::Slide.into(),
                     SceneCyclingTransition::Fade => web::SceneCyclingTransition::Fade.into(),
+                    SceneCyclingTransition::None => web::SceneCyclingTransition::None.into(),
                 },
             }),
         }))
@@ -3348,7 +3350,7 @@ mod tests {
     }
 
     #[test]
-    fn set_scene_cycling_accepts_slide_and_fade() {
+    fn set_scene_cycling_accepts_slide_fade_and_none() {
         assert_eq!(
             parse_scene_cycling_transition(web::SceneCyclingTransition::Slide.into())
                 .expect("BUG: Slide must parse"),
@@ -3358,6 +3360,11 @@ mod tests {
             parse_scene_cycling_transition(web::SceneCyclingTransition::Fade.into())
                 .expect("BUG: Fade must parse"),
             SceneCyclingTransition::Fade,
+        );
+        assert_eq!(
+            parse_scene_cycling_transition(web::SceneCyclingTransition::None.into())
+                .expect("BUG: None must parse"),
+            SceneCyclingTransition::None,
         );
     }
 

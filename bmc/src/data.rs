@@ -48,11 +48,13 @@ impl Default for SceneCycling {
     }
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum SceneCyclingTransition {
     Slide,
     Fade,
+    /// Instant scene switch with no animation.
+    None,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Hash, Eq, PartialEq)]
@@ -193,6 +195,22 @@ mod tests {
             Duration::from_secs(30)
         );
         assert_eq!(config.transition, SceneCyclingTransition::Slide);
+    }
+
+    #[test]
+    fn scene_cycling_transition_serializes_snake_case() {
+        for (transition, expected) in [
+            (SceneCyclingTransition::Slide, json!("slide")),
+            (SceneCyclingTransition::Fade, json!("fade")),
+            (SceneCyclingTransition::None, json!("none")),
+        ] {
+            let serialized = serde_json::to_value(transition)
+                .expect("BUG: transition serialization must succeed");
+            assert_eq!(serialized, expected);
+            let roundtrip: SceneCyclingTransition = serde_json::from_value(serialized)
+                .expect("BUG: transition deserialization must succeed");
+            assert_eq!(roundtrip, transition);
+        }
     }
 
     #[test]

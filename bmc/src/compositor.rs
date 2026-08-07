@@ -29,7 +29,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, watch};
 
-pub use crate::data::SceneCycling;
+pub use crate::data::{SceneCycling, SceneCyclingTransition};
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 pub use bmc_widget_protocol::{
     ActionPayload, CredentialSecrets, LedRequestId, LedRequestStatus, SettingUpdate,
