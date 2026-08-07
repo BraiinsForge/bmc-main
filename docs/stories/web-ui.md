@@ -41,7 +41,8 @@ firmware rebuild.
 > As a user, I want the available widgets grouped into meaningful categories so I can quickly find the kind of widget I
 > want instead of scanning one flat, unordered grid.
 
-- The picker presents widgets in labeled category sections, for example Mining, Clock, Weather, Space, and Utility.
+- The picker presents widgets in labeled category sections, for example Mining, Finance, Clock, Weather, Space, and
+  Utility.
 - Sections appear in a consistent, predictable order every time the picker opens.
 - Widgets with no category, or a category not currently shown, fall under an "Other" section that always appears last.
 - Within a section, widgets are listed alphabetically by name.

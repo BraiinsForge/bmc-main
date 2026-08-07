@@ -82,3 +82,17 @@ sizes on rectangular viewports.
 A widget that shows current weather and forecast data for a chosen location, with hourly and daily forecast layouts
 across the shared rectangular widget sizes. Reads weather data from the Braiins Forge Nexus API, follows device
 localization and timezone settings, and lets users choose whether forecast times use the location or device timezone.
+
+### [Ticker List Widget](ticker-list.md)
+
+A widget that lists up to eight financial instruments — stocks, indices, currency pairs, or cryptocurrency pairs — one
+per row, each with its name, a sparkline over a selectable time period, the current price, and a signed change badge.
+Reads prices and instrument names from the Braiins Forge Nexus, fetches every row independently so one bad symbol only
+degrades its own row, and adapts from eight rows in two columns at full size down to two chartless rows at small.
+
+### [Single Ticker Widget](ticker-single.md)
+
+A widget that follows one financial instrument in depth, either as a sparkline behind a large price readout or as a
+candlestick chart with a price axis, a volume strip, and time labels. Reads price history from the Braiins Forge Nexus
+over a selectable time period, dims when the instrument's market is closed, and keeps the last known chart on screen
+when a refresh fails.

@@ -22,11 +22,11 @@ The following widgets are currently supported:
 - Nameday
 - ISS Position
 - SpaceX Launch
+- Financial Ticker — single (including old BTC Ticker widget)
+- Financial Ticker — list
 
 Not yet supported widgets:
 
-- Financial Ticker — single (including BTC Ticker widget)
-- Financial Ticker — list
 - NASA Picture of the Day
 - Formula 1
 - Braiins Pool
