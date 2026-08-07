@@ -19,7 +19,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
 use bmc_grpc::web::{
     AddAlarmRequest, Alarm as AlarmProto, AlarmInfoResponse, ListAlarmsResponse, Off,
@@ -376,7 +376,7 @@ fn validate_alarm_name(field: &str, value: &str) -> FieldViolations {
     field_violations
 }
 
-fn map_weekday_vec(value: Vec<i32>) -> HashSet<WeekDay> {
+fn map_weekday_vec(value: Vec<i32>) -> BTreeSet<WeekDay> {
     value
         .into_iter()
         .filter_map(Weekday::from_i32)

@@ -301,7 +301,23 @@ impl DateFormat {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq, Hash, Copy, Display, Default)]
+/// The derived order follows the declaration, which follows the
+/// discriminants — so an ordered set of days iterates as a calendar week
+/// and its numbers come out ascending.
+#[derive(
+    Serialize,
+    Deserialize,
+    Clone,
+    Debug,
+    Eq,
+    PartialEq,
+    Ord,
+    PartialOrd,
+    Hash,
+    Copy,
+    Display,
+    Default,
+)]
 pub enum WeekDay {
     #[default]
     Monday = 1,

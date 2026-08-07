@@ -20,7 +20,7 @@
 // the grant above.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeSet, HashMap},
     fmt::{Display, Formatter},
     ops::{Deref, DerefMut},
     pin::Pin,
@@ -96,7 +96,9 @@ pub(crate) struct AlarmData {
     pub(crate) enabled: bool,
     pub(crate) name: String,
     pub(crate) time: NaiveTime,
-    pub(crate) repeat: HashSet<WeekDay>,
+    /// Ordered, so writing the config back yields the same bytes.
+    /// A hash set's order varies per process.
+    pub(crate) repeat: BTreeSet<WeekDay>,
     pub(crate) sound: Option<Sounds>,
     pub(crate) snooze_options: Option<SnoozeOptions>,
 }
@@ -106,7 +108,7 @@ impl AlarmData {
         enabled: bool,
         name: String,
         time: NaiveTime,
-        repeat: HashSet<WeekDay>,
+        repeat: BTreeSet<WeekDay>,
         sound: Option<Sounds>,
         snooze_options: Option<SnoozeOptions>,
     ) -> Self {
@@ -126,7 +128,7 @@ impl AlarmData {
         enabled: bool,
         name: String,
         time: NaiveTime,
-        repeat: HashSet<WeekDay>,
+        repeat: BTreeSet<WeekDay>,
         sound: Option<Sounds>,
         snooze_options: Option<SnoozeOptions>,
     ) -> Self {
@@ -141,11 +143,12 @@ impl AlarmData {
         }
     }
 
-    fn weekdays_to_number_string(set: &HashSet<WeekDay>) -> String {
-        let mut nums: Vec<String> = set.iter().map(|day| day.as_number_string()).collect();
-
-        nums.sort();
-        nums.join(",")
+    fn weekdays_to_number_string(set: &BTreeSet<WeekDay>) -> String {
+        set.iter()
+            .copied()
+            .map(WeekDay::as_number_string)
+            .collect::<Vec<_>>()
+            .join(",")
     }
 
     pub fn cron(&self) -> anyhow::Result<Cron> {
@@ -1169,7 +1172,7 @@ mod tests {
             true,
             "test".to_owned(),
             NaiveTime::from_hms_opt(7, 30, 0).expect("BUG: valid test time"),
-            HashSet::new(),
+            BTreeSet::new(),
             None,
             snooze_options,
         );
@@ -1243,7 +1246,7 @@ mod tests {
     #[test]
     fn test_parse_simple_alarm_data_to_cron() -> anyhow::Result<()> {
         let time = NaiveTime::parse_from_str("10:30", "%H:%M")?;
-        let alarm_data = AlarmData::new(false, String::new(), time, HashSet::new(), None, None);
+        let alarm_data = AlarmData::new(false, String::new(), time, BTreeSet::new(), None, None);
 
         let cron = alarm_data
             .cron()
@@ -1258,7 +1261,7 @@ mod tests {
 
     #[test]
     fn test_weekdays_to_num_string() {
-        let cases: Vec<(HashSet<WeekDay>, &str)> = vec![
+        let cases: Vec<(BTreeSet<WeekDay>, &str)> = vec![
             (
                 [WeekDay::Monday, WeekDay::Tuesday, WeekDay::Wednesday].into(),
                 "1,2,3",
