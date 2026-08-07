@@ -98,6 +98,68 @@
       },
       "additionalProperties": false
     },
+    "BraiinsPoolParams": {
+      "description": "Tunables for a simulated Braiins Pool account.",
+      "type": "object",
+      "properties": {
+        "hashrate_ths": {
+          "description": "5-minute-average hashrate the account hovers around, in TH/s.",
+          "$ref": "#/$defs/NonNegative"
+        },
+        "payout_amount_btc": {
+          "description": "Amount of every completed payout, in BTC.",
+          "$ref": "#/$defs/NonNegative"
+        },
+        "payout_period_s": {
+          "description": "Seconds between payouts, landing on the unix-epoch grid (86400 =\ndaily at midnight UTC). `null` = an account that has never paid out:\nno history, no estimate, null progress.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint64",
+          "default": 86400,
+          "minimum": 1
+        },
+        "reward_btc": {
+          "description": "Today's reward estimate, in BTC.",
+          "$ref": "#/$defs/NonNegative"
+        },
+        "reward_usd": {
+          "description": "The same estimate in USD.",
+          "$ref": "#/$defs/NonNegative"
+        },
+        "status": {
+          "description": "HTTP status every endpoint returns; 401/403 = the denied account.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "workers_active": {
+          "description": "Worker counts by state, as `/user/workers/current` reports them.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 24,
+          "minimum": 0
+        },
+        "workers_disabled": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "workers_low": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 2,
+          "minimum": 0
+        },
+        "workers_offline": {
+          "type": "integer",
+          "format": "uint64",
+          "default": 1,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
     "Celsius": {
       "description": "A temperature in degrees Celsius, above absolute zero",
       "type": "number",
@@ -254,6 +316,36 @@
             },
             "params": {
               "$ref": "#/$defs/AxeosParams"
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
+          "description": "A Braiins Pool account — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "braiins-pool"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/BraiinsPoolParams"
             }
           },
           "required": [

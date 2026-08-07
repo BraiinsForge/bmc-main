@@ -24,4 +24,5 @@
 
 pub mod axeos;
 pub mod bos;
+pub mod braiins_pool;
 pub mod ubos;

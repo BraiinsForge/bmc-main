@@ -72,14 +72,23 @@ drifts around `hashrate_ths`.
 
 ## Devices
 
-| `device`    | mDNS service                   | endpoints                                                                     |
-| ----------- | ------------------------------ | ----------------------------------------------------------------------------- |
-| `bos`       | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details}` |
-| `bos-libre` | `_ubos._tcp`                   | `/api/info`                                                                   |
-| `axeos`     | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                            |
+| `device`       | mDNS service                   | endpoints                                                                                                   |
+| -------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `bos`          | `_bos._sub._http._tcp`         | boser `/api/v1/{auth/login, miner/stats, miner/hw/hashboards, miner/details}`                               |
+| `bos-libre`    | `_ubos._tcp`                   | `/api/info`                                                                                                 |
+| `axeos`        | `_axeos._sub._http._tcp` + TXT | `/api/system/info`                                                                                          |
+| `braiins-pool` | — (cloud, not announced)       | FPPS `/pool/v2/user/{hashrate,workers}/{current,history}`, `rewards/latest`, `financials`, `payouts/recent` |
 
 Each device's params — `model_name`, `hashrate_ths`, `power_w`, `temp_c`, `uptime_s`, `status` — live in its module and
-appear in the schema under `BosParams` / `UbosParams` / `AxeosParams`.
+appear in the schema under `BosParams` / `UbosParams` / `AxeosParams` / `BraiinsPoolParams`.
+
+## Cloud profiles
+
+A profile may also simulate a cloud API rather than a LAN device: it announces nothing (`announce: None`) and is reached
+by its port alone — how a consumer routes traffic to that port is the consumer's business. `braiins-pool` is the first
+such profile: its windowed endpoints read their query string (`Body::Respond`), history is generated on demand as a pure
+function of each five-minute slot's absolute time — so any window depth paginates deterministically — and payouts land
+on the `payout_period_s` grid.
 
 ## Adding a device
 

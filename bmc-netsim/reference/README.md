@@ -41,6 +41,25 @@ Consumed by `families/bos.rs` (parses `/api/v1/miner/{stats,hw/hashboards,detail
 hostname live on `GetMinerDetailsResponse` (`/api/v1/miner/details`) and `GetNetworkInfoResponse`; hashboard
 temperatures on the `Hashboard` / `Temperature` schemas.
 
+## Braiins Pool FPPS API — probed, not vendored
+
+No public spec to snapshot; the subset below was probed live against `https://api.braiins.com/pool/v2` on 2026-08-02
+(auth: `X-API-Key` header) and is what `widgets-wasm/braiins-pool/src/pool_api.rs` parses and
+`src/devices/braiins_pool.rs` serves:
+
+| endpoint                 | payload                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------- |
+| `/user/hashrate/current` | `{hashrate_th_per_sec}`                                                                  |
+| `/user/rewards/latest`   | `{todays_reward_estimate_btc, todays_reward_estimate_usd}`                               |
+| `/user/workers/current`  | `{active_workers, low_workers, offline_workers, disabled_workers}`                       |
+| `/user/hashrate/history` | `{from_timestamp, to_timestamp, slots: [{slot_start, hashrate_th_per_sec}], pagination}` |
+| `/user/workers/history`  | same, slots `{slot_start, active_workers}`                                               |
+| `/user/financials`       | `{financial_accounts: [{next_payout_at_estimate, next_payout_progress_pct}]}`            |
+| `/user/payouts/recent`   | `{payouts: [{occurred_at, amount_btc, type: ONCHAIN\|LIGHTNING, status}], pagination}`   |
+
+Windowed queries: `from_timestamp`/`to_timestamp` (RFC 3339), `page_limit` (capped at 1000), cursor via
+`pagination.{has_next, next_cursor}` echoed back as `page_cursor`. Timestamps are UTC whole seconds.
+
 ## AxeOS (ESP-Miner) — not vendored
 
 Open source. The `/api/system/info` contract (including `macAddr`, `temp`, `temp2`) is specified in

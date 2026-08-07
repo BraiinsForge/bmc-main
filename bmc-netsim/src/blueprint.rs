@@ -33,7 +33,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::Value as Json;
 
 use crate::cache::Cache;
-use crate::devices::{axeos, bos, ubos};
+use crate::devices::{axeos, bos, braiins_pool, ubos};
 use crate::http_status::HttpStatus;
 use crate::value::Value;
 
@@ -80,6 +80,17 @@ pub enum Instance {
         #[serde(default = "one")]
         count: usize,
     },
+    /// A Braiins Pool account — a cloud API on its port, never announced.
+    #[serde(rename = "braiins-pool")]
+    BraiinsPool {
+        /// Human label describing this entry's scenario, shown in the readout.
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        params: braiins_pool::Params,
+        #[serde(default = "one")]
+        count: usize,
+    },
 }
 
 fn one() -> usize {
@@ -87,7 +98,7 @@ fn one() -> usize {
 }
 
 /// The device keys a blueprint may name, as written in the `device` field.
-const DEVICE_KEYS: &[&str] = &["bos", "bos-libre", "axeos"];
+const DEVICE_KEYS: &[&str] = &["bos", "bos-libre", "axeos", "braiins-pool"];
 const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count"];
 
 /// One device's typed params, before they are folded into an [`Instance`].
@@ -95,6 +106,7 @@ enum DeviceParams {
     Bos(bos::Params),
     Ubos(ubos::Params),
     Axeos(axeos::Params),
+    BraiinsPool(braiins_pool::Params),
 }
 
 impl DeviceParams {
@@ -105,6 +117,7 @@ impl DeviceParams {
             "bos" => DeviceParams::Bos(map.next_value()?),
             "bos-libre" => DeviceParams::Ubos(map.next_value()?),
             "axeos" => DeviceParams::Axeos(map.next_value()?),
+            "braiins-pool" => DeviceParams::BraiinsPool(map.next_value()?),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -117,6 +130,9 @@ impl DeviceParams {
             "bos" => DeviceParams::Bos(serde_json::from_value(json).map_err(E::custom)?),
             "bos-libre" => DeviceParams::Ubos(serde_json::from_value(json).map_err(E::custom)?),
             "axeos" => DeviceParams::Axeos(serde_json::from_value(json).map_err(E::custom)?),
+            "braiins-pool" => {
+                DeviceParams::BraiinsPool(serde_json::from_value(json).map_err(E::custom)?)
+            }
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -126,6 +142,7 @@ impl DeviceParams {
             "bos" => DeviceParams::Bos(bos::Params::default()),
             "bos-libre" => DeviceParams::Ubos(ubos::Params::default()),
             "axeos" => DeviceParams::Axeos(axeos::Params::default()),
+            "braiins-pool" => DeviceParams::BraiinsPool(braiins_pool::Params::default()),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
     }
@@ -143,6 +160,11 @@ impl DeviceParams {
                 count,
             },
             DeviceParams::Axeos(params) => Instance::Axeos {
+                label,
+                params,
+                count,
+            },
+            DeviceParams::BraiinsPool(params) => Instance::BraiinsPool {
                 label,
                 params,
                 count,
@@ -232,6 +254,7 @@ impl Instance {
             Instance::Bos { .. } => "bos",
             Instance::Ubos { .. } => "bos-libre",
             Instance::Axeos { .. } => "axeos",
+            Instance::BraiinsPool { .. } => "braiins-pool",
         }
     }
 
@@ -241,7 +264,8 @@ impl Instance {
         match self {
             Instance::Bos { count, .. }
             | Instance::Ubos { count, .. }
-            | Instance::Axeos { count, .. } => *count,
+            | Instance::Axeos { count, .. }
+            | Instance::BraiinsPool { count, .. } => *count,
         }
     }
 
@@ -251,7 +275,8 @@ impl Instance {
         match self {
             Instance::Bos { label, .. }
             | Instance::Ubos { label, .. }
-            | Instance::Axeos { label, .. } => label.as_deref(),
+            | Instance::Axeos { label, .. }
+            | Instance::BraiinsPool { label, .. } => label.as_deref(),
         }
     }
 
@@ -262,6 +287,7 @@ impl Instance {
             Instance::Bos { params, .. } => params.resource(name, port),
             Instance::Ubos { params, .. } => params.resource(name, port),
             Instance::Axeos { params, .. } => params.resource(name, port),
+            Instance::BraiinsPool { params, .. } => params.resource(name, port),
         }
     }
 }

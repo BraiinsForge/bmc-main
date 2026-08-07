@@ -113,6 +113,13 @@ fetches are served by method + URL before substitution would run.
 
 Repeat per declared size. Each size produces an independent fixture file; sizes do not share state.
 
+For a deterministic recording, record against a bmc-netsim cloud profile instead of the live API: run
+`just netsim::run pool` and add `--rewrite-url https://api.braiins.com=http://127.0.0.1:20000` to the record invocation,
+with `"allow_hosts": ["127.0.0.0/8"]` beside a dummy token in the slot's secrets entry (the egress pin must admit the
+rewritten destination). The fixture keys stay canonical `api.braiins.com` URLs — the rewrite happens after they are
+recorded — so sim-recorded fixtures replay exactly like live-recorded ones, without baking a real account's numbers into
+the baseline.
+
 If the widget makes outbound HTTP/WebSocket calls during the recording, the testbed records the real responses into the
 timeline. Re-recording against a flaky endpoint produces flaky fixtures — once a recording is good, leave it.
 
