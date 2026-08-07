@@ -126,6 +126,11 @@ pub struct FemtoVgRenderer {
     /// Device-pixel ratio from the last `begin_frame`;
     /// shadow FBOs are sized in physical pixels off it.
     dpi_scale: f32,
+    /// What the frame in progress draws into, so a pass that borrows the target
+    /// can hand it back. `drop_shadow` renders its own offscreens mid-frame,
+    /// and restoring `Screen` blindly would strand the rest of an image-backed frame
+    /// on the window.
+    frame_target: RenderTarget,
     shadow_fbo_pool: Option<ShadowFboPool>,
     frame_counter: u64,
 }
@@ -140,21 +145,13 @@ impl std::fmt::Debug for FemtoVgRenderer {
     }
 }
 
-/// Re-export femtovg's `ImageId` for use by storybook viewport rendering.
+/// Re-export femtovg's `ImageId` for use by gallery stage rendering.
 pub type FemtovgImageId = femtovg::ImageId;
 
 impl FemtoVgRenderer {
     /// Direct access to the underlying femtovg canvas (for testbed-only effects).
     pub fn canvas_mut(&mut self) -> &mut Canvas<OpenGl> {
         &mut self.canvas
-    }
-
-    /// Switch the FBO target for multi-viewport rendering.
-    ///
-    /// Allows a single renderer to serve multiple viewports by changing which
-    /// FBO `begin_frame` binds before rendering.
-    pub fn set_target_fbo(&mut self, fbo_id: u32) {
-        self.screen_fbo = NonZeroU32::new(fbo_id).map(glow::NativeFramebuffer);
     }
 
     /// Create a femtovg-managed render target image.
@@ -201,7 +198,12 @@ impl FemtoVgRenderer {
         self.dpi_scale = dpi_scale;
         self.frame_counter += 1;
         self.canvas.set_size(width, height, dpi_scale);
+        // femtovg 0.20.4: `set_size` queues a switch to the screen without updating the
+        // target it remembers, so `set_render_target` skips the switch back as redundant
+        // and a second frame into the same image lands on the screen, freezing the image.
+        self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.set_render_target(RenderTarget::Image(image_id));
+        self.frame_target = RenderTarget::Image(image_id);
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (pw, ph) = (
             (width as f32 * dpi_scale) as u32,
@@ -210,11 +212,6 @@ impl FemtoVgRenderer {
         self.canvas
             .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
         self.paragraph_cache.begin_frame(self.frame_counter);
-    }
-
-    /// Restore rendering to the screen FBO.
-    pub fn set_render_target_screen(&mut self) {
-        self.canvas.set_render_target(RenderTarget::Screen);
     }
 
     /// Run `inner` translated to the canvas origin `(cx, cy)`.
@@ -360,6 +357,7 @@ impl FemtoVgRenderer {
             width: width as f32,
             height: height as f32,
             dpi_scale: 1.0,
+            frame_target: RenderTarget::Screen,
             shadow_fbo_pool: None,
             frame_counter: 0,
         })
@@ -377,14 +375,6 @@ impl FemtoVgRenderer {
             Ok(r) => self.mesh_renderer = Some(r),
             Err(e) => tracing::error!("mesh renderer init failed: {e}"),
         }
-    }
-
-    /// Re-clear the FBO with transparent black (for compositing over checkerboard etc.).
-    pub fn clear_transparent(&mut self) {
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let (pw, ph) = (self.width as u32, self.height as u32);
-        self.canvas
-            .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
     }
 
     /// Drop every caller-registered bitmap and icon plus the lazy-init sphere
@@ -1171,7 +1161,10 @@ impl Renderer for FemtoVgRenderer {
         // pooled pair serve every shadow in a frame — draw N's composites
         // are queued before draw N+1's `clear_rect`. A flush here,
         // or out-of-order shadow rendering, would break that.
-        self.canvas.set_render_target(RenderTarget::Screen);
+        // Back to whatever the frame draws into rather than `Screen`.
+        // Under `begin_frame_to_image` that is a stage's image,
+        // and assuming the window strands everything queued after this shadow.
+        self.canvas.set_render_target(self.frame_target);
         self.canvas.restore();
 
         let composite_src = if sigma > 0.0 { blurred } else { unblurred };
@@ -1225,6 +1218,7 @@ impl Renderer for FemtoVgRenderer {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
         }
         self.canvas.set_render_target(RenderTarget::Screen);
+        self.frame_target = RenderTarget::Screen;
         self.canvas.set_size(width, height, dpi_scale);
         // clear_rect uses physical pixels when dpi_scale > 1.0
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
