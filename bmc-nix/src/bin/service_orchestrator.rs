@@ -37,8 +37,9 @@ use tracing_subscriber::util::SubscriberInitExt as _;
 
 use bmc_nix::profile;
 use bmc_nix::service_orchestrator::{
-    ActivationCompletion, ServiceStatus, build_action_plan, compare_generation_services,
-    discover_generation, evaluate_activation_completion, parse_rcd_link_name,
+    ActivationCompletion, ServiceStatus, UPGRADED_SERVICE_MARKER_DIR, build_action_plan,
+    compare_generation_services, discover_generation, evaluate_activation_completion,
+    parse_rcd_link_name, upgraded_services,
 };
 
 const LOG_FILE: &str = "/var/log/nix-orchestrator/nix-orchestrator.log";
@@ -195,6 +196,12 @@ async fn run(args: Args) -> anyhow::Result<()> {
             &new.start_order,
         );
         log_action_plan(&actions);
+        // Publish before executing: `reload` is stop then start,
+        // so the restarted service reads its marker while the plan still runs.
+        publish_upgraded_service_markers(
+            Path::new(UPGRADED_SERVICE_MARKER_DIR),
+            &upgraded_services(&changes, &statuses),
+        );
         execute_action_plan(&actions);
         Ok(())
     }
@@ -376,6 +383,38 @@ fn read_active_service_status(service: &str) -> anyhow::Result<ServiceStatus> {
     })
 }
 
+/// Announce which services this activation upgrades in place,
+/// so each can learn on startup why it was restarted.
+/// A marker that cannot be written costs that service its restart reason,
+/// not the activation.
+fn publish_upgraded_service_markers(marker_dir: &Path, services: &BTreeSet<String>) {
+    if services.is_empty() {
+        return;
+    }
+    if let Err(error) = std::fs::create_dir_all(marker_dir) {
+        warn!(
+            marker_dir = %marker_dir.display(),
+            %error,
+            "failed to create upgraded service marker directory"
+        );
+        return;
+    }
+    for service in services {
+        let marker = marker_dir.join(service);
+        match std::fs::write(&marker, []) {
+            Ok(()) => {
+                info!(service = %service, marker = %marker.display(), "published upgraded service marker");
+            }
+            Err(error) => warn!(
+                service = %service,
+                marker = %marker.display(),
+                %error,
+                "failed to publish upgraded service marker"
+            ),
+        }
+    }
+}
+
 fn execute_action_plan(actions: &[bmc_nix::service_orchestrator::PlannedAction]) {
     let mut failures = 0_u32;
     for action in actions {
@@ -475,7 +514,25 @@ mod tests {
     use tokio::sync::Mutex;
     use tokio::time::timeout;
 
-    use super::{Args, run, verify_current_generation};
+    use super::{Args, publish_upgraded_service_markers, run, verify_current_generation};
+
+    #[test]
+    fn publishes_a_marker_per_upgraded_service_and_nothing_otherwise() {
+        let dir = tempdir().expect("BUG: should create temp dir");
+        let marker_dir = dir.path().join("bmc-service-upgraded");
+
+        publish_upgraded_service_markers(&marker_dir, &BTreeSet::new());
+        assert!(
+            !marker_dir.exists(),
+            "an activation that upgrades nothing must leave no markers behind"
+        );
+
+        publish_upgraded_service_markers(
+            &marker_dir,
+            &BTreeSet::from(["bmc-compositor".to_owned()]),
+        );
+        assert!(marker_dir.join("bmc-compositor").exists());
+    }
 
     #[test]
     fn parses_required_arguments_without_activation_pid() {

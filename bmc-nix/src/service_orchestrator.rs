@@ -31,6 +31,12 @@ pub use discovery::{
     parse_rcd_link_name,
 };
 
+/// Directory where an activation publishes one marker
+/// per service whose `upgrade` actions it ran.
+/// Lives on tmpfs so markers never outlive the boot that produced them:
+/// a service killed by a reboot, not by activation, must find none waiting.
+pub const UPGRADED_SERVICE_MARKER_DIR: &str = "/dev/shm/bmc-service-upgraded";
+
 /// Runtime status returned by `/etc/init.d/<service> status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ServiceStatus {
@@ -111,6 +117,39 @@ fn order_priority(order: &ServicePriorityMap, service: &str) -> Option<u16> {
     order.get(service).copied()
 }
 
+/// Config of a changed service whose `upgrade` actions this activation runs,
+/// or `None` when the status gate rejects it or it declares none.
+fn planned_upgrade_config(
+    change: &ServiceChange,
+    upgrade_statuses: &BTreeMap<String, ServiceStatus>,
+) -> Option<ServiceConfig> {
+    let config = effective_service_config(change);
+    let status = upgrade_statuses
+        .get(&change.name)
+        .copied()
+        .unwrap_or(ServiceStatus::Unknown);
+    if !should_run_upgrade(config.upgrade_if_status, status) || config.upgrade.is_empty() {
+        return None;
+    }
+    Some(config)
+}
+
+/// Services whose `upgrade` actions this activation runs.
+/// Plan membership alone says nothing:
+/// `always` actions run for every service on every activation.
+#[must_use]
+pub fn upgraded_services(
+    changes: &ServiceChanges,
+    upgrade_statuses: &BTreeMap<String, ServiceStatus>,
+) -> BTreeSet<String> {
+    changes
+        .upgraded
+        .iter()
+        .filter(|change| planned_upgrade_config(change, upgrade_statuses).is_some())
+        .map(|change| change.name.clone())
+        .collect()
+}
+
 #[must_use]
 pub fn build_action_plan(
     changes: &ServiceChanges,
@@ -136,14 +175,9 @@ pub fn build_action_plan(
     }
 
     for change in &changes.upgraded {
-        let service = effective_service_config(change);
-        let status = upgrade_statuses
-            .get(&change.name)
-            .copied()
-            .unwrap_or(ServiceStatus::Unknown);
-        if !should_run_upgrade(service.upgrade_if_status, status) {
+        let Some(service) = planned_upgrade_config(change, upgrade_statuses) else {
             continue;
-        }
+        };
         let command_path = active_root_command_path(&change.name);
         let priority = 100 + order_priority(new_start_order, &change.name).unwrap_or_default();
         for action in &service.upgrade {
@@ -505,6 +539,95 @@ mod tests {
             ],
             "upgrade must wipe every [SK]??<name> (including stale S95) and \
              always=[enable] must recreate the symlink at the new priority"
+        );
+    }
+
+    #[test]
+    fn unchanged_service_running_always_actions_is_not_reported_as_upgraded() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&new_root.join("etc/init.d/kept"), "kept-service");
+        write_file(&old_root.join("etc/rc.d/S15kept"), "");
+        write_file(&new_root.join("etc/rc.d/S15kept"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let actions = build_action_plan(
+            &changes,
+            &BTreeMap::new(),
+            &BTreeSet::from(["kept".to_owned()]),
+            &old.stop_order,
+            &new.start_order,
+        );
+
+        assert!(
+            !actions.is_empty(),
+            "unchanged service should still run its always actions"
+        );
+        assert!(
+            upgraded_services(&changes, &BTreeMap::new()).is_empty(),
+            "always actions run on every activation, so having a planned action \
+             must not report a service as upgraded"
+        );
+    }
+
+    #[test]
+    fn upgraded_service_is_reported_only_when_its_upgrade_actions_run() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/moved"), "START=95");
+        write_file(&old_root.join("etc/rc.d/S95moved"), "");
+        write_file(&new_root.join("etc/init.d/moved"), "START=90");
+        write_file(&new_root.join("etc/rc.d/S90moved"), "");
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let running = BTreeMap::from([("moved".to_owned(), ServiceStatus::Running)]);
+        let stopped = BTreeMap::from([("moved".to_owned(), ServiceStatus::Stopped)]);
+
+        assert_eq!(
+            upgraded_services(&changes, &running),
+            BTreeSet::from(["moved".to_owned()])
+        );
+        assert!(
+            upgraded_services(&changes, &stopped).is_empty(),
+            "the default running gate skips a stopped service, so nothing restarts it"
+        );
+    }
+
+    #[test]
+    fn service_declaring_no_upgrade_actions_is_not_reported_as_upgraded() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(&old_root.join("etc/init.d/inert"), "old-inert");
+        write_file(&old_root.join("etc/rc.d/S15inert"), "");
+        write_file(&new_root.join("etc/init.d/inert"), "new-inert");
+        write_file(&new_root.join("etc/rc.d/S15inert"), "");
+        write_file(
+            &new_root.join("etc/init.d.conf/inert.json"),
+            r#"{"upgrade":[]}"#,
+        );
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        let statuses = BTreeMap::from([("inert".to_owned(), ServiceStatus::Running)]);
+
+        assert!(
+            upgraded_services(&changes, &statuses).is_empty(),
+            "a changed service the activation never acts on must not be reported as upgraded"
         );
     }
 
