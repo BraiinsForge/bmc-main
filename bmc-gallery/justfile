@@ -49,9 +49,21 @@ hot:
 update:
     cargo run --manifest-path bmc-gallery/Cargo.toml -- --check-updates
 
-# Type-check scenes + launcher without launching — the scene glob mirrors gallery.toml.
+# `gallery.toml`'s globs, spelled out again for the recipes that drive cargo directly:
+# the build script reads them from the environment alone, so a bare invocation
+# would compile a dylib with no scenes in it. The launcher passes them itself.
+scene_globs := '../**/*.scene.rs'
+
+# Type-check scenes + launcher without launching.
 check:
-    env GALLERY_SCENE_GLOBS='../**/*.scene.rs' cargo check --manifest-path bmc-gallery/Cargo.toml
+    # `--locked` here and on `build`: the manifest says the lockfile beside it is what
+    # CI resolves through, and a bare cargo would rewrite it on any semver-compatible
+    # release of ~500 transitive deps rather than fail.
+    env GALLERY_SCENE_GLOBS='{{ scene_globs }}' cargo check --locked --manifest-path bmc-gallery/Cargo.toml
+
+# Codegen and link the scenes dylib, which `check` stops short of.
+build:
+    env GALLERY_SCENE_GLOBS='{{ scene_globs }}' cargo build --locked --manifest-path bmc-gallery/Cargo.toml
 
 # Look at one scene as it declares itself, to `.tmp/gallery-preview/NAME.png`.
 preview SCENE NAME SIZE="1280x720" FRAMES="4":

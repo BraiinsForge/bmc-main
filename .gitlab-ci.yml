@@ -156,6 +156,15 @@ workspace-deps-armv7:
 ########### Check Stage ###########
 ###################################
 
+# The gallery deps a git rev of its framework,
+# so it resolves in the dev shell rather than a nix build.
+# Built rather than checked: nothing else in CI codegens the scenes dylib.
+gallery-build:
+  stage: check
+  needs: []
+  script:
+    - nix develop --command just gallery::build
+
 python-check:
   stage: check
   needs: []
