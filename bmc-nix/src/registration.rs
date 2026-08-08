@@ -22,6 +22,27 @@ use std::path::{Path, PathBuf};
 
 use crate::types::{FactoryServerEntry, ServerEntry, ServersConfig};
 
+/// What a registration does to the server entries it is not registering.
+///
+/// Resolution ranks candidates by version before it consults priority,
+/// so a lower priority cannot keep a rig authoritative
+/// against a public server that publishes something newer.
+/// Disabling the others is the only way to let one server decide alone.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OtherServers {
+    /// Leave every other entry as it stands.
+    Keep,
+    /// Disable every other entry, leaving the factory entry alone —
+    /// it anchors init trust and takes no part in upgrade resolution.
+    Disable,
+}
+
+impl From<bool> for OtherServers {
+    fn from(exclusive: bool) -> Self {
+        if exclusive { Self::Disable } else { Self::Keep }
+    }
+}
+
 /// Errors returned when registering a server or substituter.
 #[derive(Debug, thiserror::Error)]
 pub enum RegisterError {
@@ -120,7 +141,8 @@ impl PreparedRegistration {
 /// supplies the factory entry's base URL; it is required whenever the
 /// registration seeds or updates the factory entry — the no-config
 /// bootstrap and the bootstrapped same-id resync — and ignored
-/// otherwise.
+/// otherwise. `other_servers` decides whether the entries left behind
+/// keep resolving; see [`OtherServers`].
 ///
 /// # Errors
 ///
@@ -132,6 +154,7 @@ pub fn prepare_registration(
     default_path: &Path,
     entry: ServerEntry,
     factory_base_url: Option<&str>,
+    other_servers: OtherServers,
 ) -> Result<PreparedRegistration, RegisterError> {
     let require_factory_base_url = || {
         factory_base_url.ok_or_else(|| RegisterError::FactoryBaseUrlRequired {
@@ -168,6 +191,11 @@ pub fn prepare_registration(
     }
 
     config.servers.retain(|s| s.id != entry.id);
+    if other_servers == OtherServers::Disable {
+        for server in &mut config.servers {
+            server.enabled = false;
+        }
+    }
     config.servers.push(entry);
 
     let serialized =
@@ -375,9 +403,96 @@ mod tests {
         entry: ServerEntry,
         factory_base_url: Option<&str>,
     ) -> Result<(), RegisterError> {
+        register_entry(path, entry, factory_base_url, OtherServers::Keep)
+    }
+
+    fn register_exclusively(path: &Path, entry: ServerEntry) -> Result<(), RegisterError> {
+        register_entry(path, entry, None, OtherServers::Disable)
+    }
+
+    fn register_entry(
+        path: &Path,
+        entry: ServerEntry,
+        factory_base_url: Option<&str>,
+        other_servers: OtherServers,
+    ) -> Result<(), RegisterError> {
         let mut default = path.as_os_str().to_owned();
         default.push(".default");
-        prepare_registration(path, Path::new(&default), entry, factory_base_url)?.persist()
+        prepare_registration(
+            path,
+            Path::new(&default),
+            entry,
+            factory_base_url,
+            other_servers,
+        )?
+        .persist()
+    }
+
+    #[test]
+    fn exclusive_registration_disables_the_servers_it_must_outrank() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        write_base_config(&path);
+
+        register(
+            &path,
+            sample_entry("forge-feed", "https://forge.example.com/v1"),
+        )
+        .expect("BUG: register the public server");
+        register_exclusively(&path, sample_entry("rig", "http://10.0.0.1:8083/v1"))
+            .expect("BUG: register the rig exclusively");
+
+        let config = read_config(&path);
+        let enabled: Vec<&str> = config
+            .servers
+            .iter()
+            .filter(|s| s.enabled)
+            .map(|s| s.id.as_str())
+            .collect();
+        assert_eq!(
+            enabled,
+            vec!["rig"],
+            "an exclusive registration must leave only its own server resolving, \
+             since resolution ranks version above priority"
+        );
+    }
+
+    #[test]
+    fn exclusive_registration_spares_the_factory_entry() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        write_base_config(&path);
+
+        register_exclusively(&path, sample_entry("rig", "http://10.0.0.1:8083/v1"))
+            .expect("BUG: register the rig exclusively");
+
+        let config = read_config(&path);
+        assert!(
+            config.factory.enabled,
+            "the factory entry anchors init trust and takes no part in upgrade \
+             resolution, so exclusivity must not disable it"
+        );
+    }
+
+    #[test]
+    fn non_exclusive_registration_leaves_other_servers_enabled() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let path = tmp.path().join("servers.json");
+        write_base_config(&path);
+
+        register(
+            &path,
+            sample_entry("forge-feed", "https://forge.example.com/v1"),
+        )
+        .expect("BUG: register the public server");
+        register(&path, sample_entry("rig", "http://10.0.0.1:8083/v1"))
+            .expect("BUG: register the rig");
+
+        let config = read_config(&path);
+        assert!(
+            config.servers.iter().all(|s| s.enabled),
+            "a plain registration must not disturb the servers already registered"
+        );
     }
 
     #[test]

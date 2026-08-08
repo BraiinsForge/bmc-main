@@ -25,6 +25,7 @@ use bmc_nix::activation::{self, ActivationOutcome, GenerationSelector};
 use bmc_nix::index::{AD_HOC_INDEX_PRIORITY, AdHocIndexRef};
 use bmc_nix::manifest;
 use bmc_nix::mount::{self, MountOutcome};
+use bmc_nix::registration::OtherServers;
 use bmc_nix::types::{
     BaseSelector, FetchedIndex, GcConfig, InstallResult, Manifest, MergedIndex, PackageChange,
     PackageVersion, ServerEntry, ServerSource,
@@ -604,6 +605,13 @@ enum Commands {
         /// default.
         #[arg(long, action = clap::ArgAction::SetTrue)]
         optional: bool,
+
+        /// Disable every other registered server so this one alone
+        /// resolves upgrades. Priority cannot substitute: resolution
+        /// ranks a candidate's version above its server's priority.
+        /// The factory entry is left alone.
+        #[arg(long, action = clap::ArgAction::SetTrue)]
+        exclusive: bool,
     },
 
     /// Remove every package server entry from the server registry.
@@ -1301,6 +1309,7 @@ fn cmd_register_server(
     cache_public_key: Option<&str>,
     priority: u32,
     optional: bool,
+    other_servers: OtherServers,
 ) -> anyhow::Result<()> {
     let cache = match (cache_url, cache_public_key) {
         (Some(url), Some(key)) => Some((url, key)),
@@ -1351,6 +1360,7 @@ fn cmd_register_server(
         default_servers_config,
         entry,
         factory_base_url,
+        other_servers,
     )?;
     if let Some((cache_url, cache_public_key)) = cache {
         // Register the substituter (nix.conf) before persisting the server
@@ -1692,6 +1702,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             cache_public_key,
             priority,
             optional,
+            exclusive,
         } => {
             let source = match (feed_url, index_url) {
                 (Some(feed_url), None) => ServerSource::Feed { feed_url },
@@ -1712,6 +1723,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 cache_public_key.as_deref(),
                 priority,
                 optional,
+                OtherServers::from(exclusive),
             )
         }
         Commands::ClearServers {
@@ -2134,12 +2146,76 @@ mod tests {
             Some("cache:KEY"),
             50,
             false,
+            OtherServers::Keep,
         )
         .expect_err("prepare failure must abort the command");
 
         assert!(
             !nix_conf.exists(),
             "nix.conf must not be touched when prepare fails"
+        );
+    }
+
+    #[tokio::test]
+    async fn register_server_run_forwards_exclusive_to_registration() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = tmp.path().join("servers.json");
+        let nix_conf = tmp.path().join("nix.conf");
+        std::fs::write(
+            &servers,
+            r#"{
+                "factory": {
+                    "id": "factory",
+                    "base_url": "https://factory.example.com",
+                    "known_public_key": "factory:KEY",
+                    "priority": 0,
+                    "enabled": true
+                },
+                "servers": [{
+                    "id": "forge",
+                    "index_url": "https://forge.example.com/index.json",
+                    "known_public_key": "forge:KEY",
+                    "priority": 50,
+                    "enabled": true
+                }]
+            }"#,
+        )
+        .expect("BUG: write registry");
+        let cli = Cli::try_parse_from([
+            "bmc-nix-cli",
+            "register-server",
+            "--servers-config",
+            servers.to_str().expect("BUG: temp path must be UTF-8"),
+            "--nix-conf",
+            nix_conf.to_str().expect("BUG: temp path must be UTF-8"),
+            "--id",
+            "dev",
+            "--index-url",
+            "https://dev.example.com/v1/index.json",
+            "--index-public-key",
+            "index:KEY",
+            "--cache-url",
+            "https://cache.example.com",
+            "--cache-public-key",
+            "cache:KEY",
+            "--exclusive",
+        ])
+        .expect("BUG: register-server should parse");
+
+        run(cli).await.expect("BUG: registration should succeed");
+
+        let config: bmc_nix::types::ServersConfig = serde_json::from_str(
+            &std::fs::read_to_string(servers).expect("BUG: read updated registry"),
+        )
+        .expect("BUG: updated registry must parse");
+        let forge = config
+            .servers
+            .iter()
+            .find(|server| server.id == "forge")
+            .expect("BUG: registration must keep the existing server");
+        assert!(
+            !forge.enabled,
+            "--exclusive must reach registration so production servers cannot decide the upgrade"
         );
     }
 
@@ -2171,6 +2247,7 @@ mod tests {
             None,
             50,
             false,
+            OtherServers::Keep,
         )
         .expect("BUG: registration without a cache pair must succeed");
 
@@ -2209,6 +2286,7 @@ mod tests {
             Some("cache:key"),
             50,
             false,
+            OtherServers::Keep,
         )
         .expect("BUG: registration with a cache pair must succeed");
 
