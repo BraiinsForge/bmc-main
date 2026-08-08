@@ -127,6 +127,15 @@ pub fn source_needed(
     by_variant && (worker_states || !worker_source)
 }
 
+/// Fixtures replay fetches by exact URL, so a window end
+/// that ticks every second never matches.
+pub const WINDOW_QUANTUM_SECS: i64 = 60;
+
+#[must_use]
+pub fn quantize_window_end(secs: i64) -> i64 {
+    secs - secs.rem_euclid(WINDOW_QUANTUM_SECS)
+}
+
 /// Chart frame span in seconds.
 #[must_use]
 pub fn chart_frame_secs(frame: ChartFrame) -> i64 {
@@ -233,6 +242,31 @@ pub struct PoolData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 2026-08-08T09:33:13Z — the second a replayed poll missed.
+    const REPLAYED_MISS: i64 = 1_786_181_593;
+
+    #[test]
+    fn polls_within_one_quantum_share_a_window_end() {
+        let start = quantize_window_end(REPLAYED_MISS);
+        for offset in 0..WINDOW_QUANTUM_SECS {
+            assert_eq!(
+                quantize_window_end(start + offset),
+                start,
+                "offset {offset}s left the quantum"
+            );
+        }
+        assert_ne!(quantize_window_end(start + WINDOW_QUANTUM_SECS), start);
+    }
+
+    #[test]
+    fn window_end_snaps_down_to_the_quantum() {
+        assert_eq!(
+            quantize_window_end(REPLAYED_MISS).rem_euclid(WINDOW_QUANTUM_SECS),
+            0
+        );
+        assert!(quantize_window_end(REPLAYED_MISS) <= REPLAYED_MISS);
+    }
 
     #[test]
     fn buckets_snap_to_design_sizes() {

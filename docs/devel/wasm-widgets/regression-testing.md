@@ -113,6 +113,20 @@ fetches are served by method + URL before substitution would run.
 
 Repeat per declared size. Each size produces an independent fixture file; sizes do not share state.
 
+## Request URLs Must Be Stable
+
+Replay serves fetches by method + URL, so a widget must produce a finite, reproducible set of URLs per logical state. A
+URL built from the clock at full resolution does not. Replay follows the recorded timeline, but a poll firing a fraction
+of a frame later crosses a second boundary and asks for a URL that was never recorded — a hermetic capture breach, which
+re-recording only reshuffles.
+
+So quantise any clock-derived part of a URL. The pool widget snaps its query window to `WINDOW_QUANTUM_SECS`, matching
+its poll interval, so every poll within one interval reuses a single URL. Crossing a quantum boundary still mints a new
+URL, so a recording that straddles one must be retaken; that fails loudly at record time, not in CI.
+
+Worth doing whatever the capture story: a window end that follows the clock second by second makes every request unique,
+and uncacheable upstream.
+
 For a deterministic recording, record against a bmc-netsim cloud profile instead of the live API. Add
 `--rewrite-url <api-origin>=http://127.0.0.1:<port>` to aim the widget's hard-coded base at the sim — both sides name an
 origin, matched whole, so a lookalike host cannot pick the rewrite up — and a `--secrets` file whose slot carries a

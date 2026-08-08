@@ -34,7 +34,8 @@ use bmc_wasm_sdk::*;
 use crate::manifest_params::credentials as slots;
 use crate::manifest_params::{ChartFrame, Params, Style};
 use crate::model::{
-    PoolData, Series, SizeBucket, Source, chart_frame_secs, size_bucket, source_needed,
+    PoolData, Series, SizeBucket, Source, chart_frame_secs, quantize_window_end, size_bucket,
+    source_needed,
 };
 use crate::pool_api::{self, RFC3339_UTC};
 use crate::screens::big_chart::{BigChartViewData, big_chart_view};
@@ -51,16 +52,27 @@ thread_local! {
     static HANDLES: RefCell<Option<[PollHandle; Source::ALL.len()]>> =
         const { RefCell::new(None) };
     /// In-flight cursor chains for the windowed sources:
-    /// the query window (so follow-up pages repeat it)
-    /// and the pages merged so far.
+    /// the window their request was built with (so follow-up
+    /// pages repeat it) and the pages merged so far.
     static HASHRATE_CHAIN: RefCell<Option<PageChain>> = const { RefCell::new(None) };
     static WORKERS_CHAIN: RefCell<Option<PageChain>> = const { RefCell::new(None) };
     static PAYOUTS_CHAIN: RefCell<Option<PageChain>> = const { RefCell::new(None) };
+    /// The window each chaining source's outstanding request was built with,
+    /// handed to the chain when its first page lands.
+    /// Re-deriving it there would straddle the fetch and can land a quantum
+    /// later, chaining page 1's cursor onto URLs for a window it never covered.
+    static HASHRATE_REQUEST: RefCell<Option<Window>> = const { RefCell::new(None) };
+    static WORKERS_REQUEST: RefCell<Option<Window>> = const { RefCell::new(None) };
+    static PAYOUTS_REQUEST: RefCell<Option<Window>> = const { RefCell::new(None) };
 }
 
+/// A query window as the API takes it: RFC 3339 UTC `from` and `to`.
+type Window = (String, String);
+
 struct PageChain {
-    from: String,
-    to: String,
+    /// `None` for the Overview payout page, which asks for no window
+    /// and so has none to repeat on a follow-up.
+    window: Option<Window>,
     series: Series,
     payouts: Vec<crate::model::Payout>,
 }
@@ -79,13 +91,26 @@ fn pool_bound() -> bool {
     credentials::current().is_bound("pool")
 }
 
+/// A page-1 URL for `source` over the current window, recording that window
+/// so the chain built from the reply repeats it rather than a later one.
+fn windowed_request(source: Source) -> String {
+    let (from, to) = window();
+    let url = source.windowed_page_url(&from, &to, None);
+    record_request(source, Some((from, to)));
+    url
+}
+
+fn record_request(source: Source, window: Option<Window>) {
+    request_cell(source).with(|cell| *cell.borrow_mut() = window);
+}
+
 /// The chart frame's query window as RFC 3339 UTC strings.
 fn window() -> (String, String) {
-    let now = SystemTime::now().unix_secs;
-    let from = now - chart_frame_secs(Params::current().chart_frame);
+    let to = quantize_window_end(SystemTime::now().unix_secs);
+    let from = to - chart_frame_secs(Params::current().chart_frame);
     (
         format::strftime(from, RFC3339_UTC),
-        format::strftime(now, RFC3339_UTC),
+        format::strftime(to, RFC3339_UTC),
     )
 }
 
@@ -95,16 +120,13 @@ fn build(handle: PollHandle) -> Option<FetchSpec> {
     }
     let source = source_of(handle);
     let url = match source {
-        Source::HashrateHistory | Source::WorkersHistory => {
-            let (from, to) = window();
-            source.windowed_page_url(&from, &to, None)
-        }
+        Source::HashrateHistory | Source::WorkersHistory => windowed_request(source),
         Source::PayoutsRecent => match Params::current().style {
-            Style::Overview => source.recent_page_url(),
-            Style::BigChart => {
-                let (from, to) = window();
-                source.windowed_page_url(&from, &to, None)
+            Style::Overview => {
+                record_request(source, None);
+                source.recent_page_url()
             }
+            Style::BigChart => windowed_request(source),
         },
         Source::HashrateCurrent
         | Source::RewardsLatest
@@ -176,10 +198,11 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
 }
 
 fn start_chain(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'_>) {
-    let (from, to) = window();
+    // Taken, not read: the window belongs to the request that just replied,
+    // and the next request records its own.
+    let window = request_cell(source).with(|cell| cell.borrow_mut().take());
     let chain = PageChain {
-        from,
-        to,
+        window,
         series: Series::default(),
         payouts: Vec::new(),
     };
@@ -199,6 +222,18 @@ fn chain_cell(source: Source) -> &'static std::thread::LocalKey<RefCell<Option<P
     }
 }
 
+fn request_cell(source: Source) -> &'static std::thread::LocalKey<RefCell<Option<Window>>> {
+    match source {
+        Source::HashrateHistory => &HASHRATE_REQUEST,
+        Source::WorkersHistory => &WORKERS_REQUEST,
+        Source::PayoutsRecent => &PAYOUTS_REQUEST,
+        Source::HashrateCurrent
+        | Source::RewardsLatest
+        | Source::WorkersCurrent
+        | Source::Financials => unreachable!("BUG: only windowed sources chain pages"),
+    }
+}
+
 /// Merge one page into the source's chain; follow the cursor
 /// when the reply names a next page, otherwise commit
 /// the merged result into [`DATA`].
@@ -208,10 +243,14 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
     let follows_cursor =
         !(source == Source::PayoutsRecent && Params::current().style == Style::Overview);
     let next = pool_api::next_cursor(json).filter(|_| follows_cursor);
-    let done = next.is_none();
-    chain_cell(source).with(|cell| {
+    // Read from the launch itself rather than from the cursor alone, so a page
+    // that names a next one it cannot ask for still commits,
+    // instead of stranding the chain until the next tick.
+    let following = chain_cell(source).with(|cell| {
         let mut cell = cell.borrow_mut();
-        let Some(chain) = cell.as_mut() else { return };
+        let Some(chain) = cell.as_mut() else {
+            return false;
+        };
         match source {
             Source::HashrateHistory => {
                 if let Some(page) = pool_api::parse_history_page(json, "hashrate_th_per_sec", date)
@@ -234,29 +273,34 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
             | Source::WorkersCurrent
             | Source::Financials => unreachable!("BUG: only windowed sources chain pages"),
         }
-        if let Some(cursor) = &next {
-            let url = source.windowed_page_url(&chain.from, &chain.to, Some(cursor));
-            let callback = match source {
-                Source::HashrateHistory => continue_hashrate,
-                Source::WorkersHistory => continue_workers,
-                Source::PayoutsRecent => continue_payouts,
-                Source::HashrateCurrent
-                | Source::RewardsLatest
-                | Source::WorkersCurrent
-                | Source::Financials => unreachable!("BUG: only windowed sources chain pages"),
-            };
-            let started = net::FetchRequest::get(&url)
-                .headers(&auth_header())
-                .timeout(FETCH_TIMEOUT)
-                .send(callback);
-            if started.is_none() {
-                // The follow-up page never launched; drop the chain and keep
-                // last cycle's committed data — the next tick starts fresh.
-                *cell = None;
-            }
+        // A follow-up repeats the window its page 1 asked for;
+        // a request made without one has no next page to ask for.
+        let (Some(cursor), Some((from, to))) = (&next, &chain.window) else {
+            return false;
+        };
+        let url = source.windowed_page_url(from, to, Some(cursor));
+        let callback = match source {
+            Source::HashrateHistory => continue_hashrate,
+            Source::WorkersHistory => continue_workers,
+            Source::PayoutsRecent => continue_payouts,
+            Source::HashrateCurrent
+            | Source::RewardsLatest
+            | Source::WorkersCurrent
+            | Source::Financials => unreachable!("BUG: only windowed sources chain pages"),
+        };
+        let started = net::FetchRequest::get(&url)
+            .headers(&auth_header())
+            .timeout(FETCH_TIMEOUT)
+            .send(callback);
+        if started.is_none() {
+            // The follow-up page never launched; drop the chain and keep
+            // last cycle's committed data — the next tick starts fresh.
+            *cell = None;
+            return false;
         }
+        true
     });
-    if done {
+    if !following {
         commit_chain(source);
         request_frame();
     }
