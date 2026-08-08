@@ -12,8 +12,9 @@ after an intentional visual change. For the internals (capture binary, Mesa wrap
 ## Opt In
 
 A widget is included in `wasm-regression` if and only if `capture/config.toml` exists next to its `Cargo.toml`.
-`nix/checks.nix` enumerates `wasmWidgetCatalog`, filters on `hasCaptureConfig`, and emits one `wasm-regression-<widget>`
-derivation per match. No registration step, no allowlist — drop the config in and the next pipeline picks it up.
+`nix/wasm-regression.nix` enumerates `wasmWidgetCatalog`, filters on `hasCaptureConfig`, and emits one
+`wasm-regression-report-<widget>` derivation per match. No registration step, no allowlist — drop the config in and the
+next pipeline picks it up.
 
 ```
 widgets-wasm/<widget>/
@@ -136,14 +137,17 @@ Fast loop: runs the capture binary directly against the current widget. Good for
 development.
 
 ```bash
-nix build --keep-failed -L .#checks.x86_64-linux.wasm-regression-blockheight
+nix build -L --keep-going .#wasm-regression-report --out-link result
+nix build -L .#checks.x86_64-linux.wasm-regression
 ```
 
-What CI runs for a single widget. On regression, inspect the build log summary. Use the direct `just wasm::verify` loop
-above when you need the generated capture files for inspection.
+What CI runs. The first command renders every opted-in widget in parallel and writes each one's verdict into
+`result/passed/<widget>/`, `result/failed/<widget>/` or `result/broken/<widget>/`; the second turns a populated
+`failed/` or `broken/` into a non-zero exit, replaying those widgets' logs. Run both before pushing if you've touched
+shared rendering code.
 
-The aggregate `nix build -L --keep-going .#checks.x86_64-linux.wasm-regression` matches CI and runs every opted-in
-widget in parallel; use it before pushing if you've touched shared rendering code.
+The per-widget derivations are internal — there is no `.#checks…wasm-regression-<widget>` to build. To narrow the loop
+to one widget, use `just wasm::verify <widget>` above, which also leaves the capture files in place for inspection.
 
 ## Updating After An Intentional Visual Change
 
@@ -161,8 +165,26 @@ different shape of API response. Cosmetic widget changes do not require re-recor
 
 ## CI Failure
 
-The `wasm-regression-<widget>` derivation fails the moment a single pixel differs. The CI job (`wasm-regression` in
-`.gitlab-ci.yml`) uploads `captures/` as a 7-day artifact; download it from the failed job and open `report.html`.
+Drift does not fail the `wasm-regression-report-<widget>` derivation. It records the widget under `failed/<widget>/` in
+the report's output, and the separate `wasm-regression` check then fails because that directory exists. The ordering is
+the point: the CI job uploads the whole tree as an artifact before the verdict is allowed to turn the job red. If
+capture exits before writing `report.html`, the derivation records `broken/<widget>/` instead, with `verify.log` and any
+capture files produced before the failure.
+
+Download the artifact from the failed job and open `failed/<widget>/report.html` — it embeds the baseline, current and
+diff images, and sits next to the A/B comparison media and `verify.log`. The job log also replays each failing widget's
+`verify.log`, so the per-frame pixel counts are readable without downloading anything.
+
+Failed and broken reports are valid Nix store paths. Retrying the GitLab job against the same commit therefore reuses
+the per-widget results and reruns only the gate; it does not clear a suspected capture flake. The job has no
+cache-bypass switch. Run `just wasm::verify <widget>` for a fresh local capture, or change an input and push to make CI
+capture again. `nix build --rebuild .#wasm-regression-report` is not sufficient because it rebuilds only the aggregate
+report, not its per-widget dependencies.
+
+As an operational fallback for suspected flakes, CI administrators can remove the affected per-widget report path.
+Remove aggregate paths that refer to it before retrying the job. Remove those paths from every runner, remote builder
+and substituter serving the job; otherwise Nix can restore the same cached result. Prefer targeted `nix store delete`
+operations. Check roots and referrers first, and avoid broad store garbage collection.
 
 Reasons a CI run flags drift that a local run did not:
 

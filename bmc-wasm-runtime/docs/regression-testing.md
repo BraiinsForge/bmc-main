@@ -37,7 +37,8 @@ nix run .#wasm-capture      # run directly
 ```
 
 The wrapper is the local/dev entry point and is also the binary that the per-widget regression derivations in
-`nix/checks.nix` call (with `--widget=<name>` + a single-widget `--workspace`). It is not, on its own, what CI invokes.
+`nix/wasm-regression.nix` call (with `--widget=<name>` + a single-widget `--workspace`). It is not, on its own, what CI
+invokes.
 
 ## Capture binary
 
