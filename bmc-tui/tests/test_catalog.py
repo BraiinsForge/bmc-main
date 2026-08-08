@@ -4004,3 +4004,52 @@ def test_restore_after_success_aborts_if_stock_service_does_not_start(
     assert commands.index(f"cat > {catalog._NIX_CONF}") < commands.index(
         "service bmc-compositor start"
     )
+
+
+def test_sweep_store_ballast_removes_both_the_ballast_and_its_spacer() -> None:
+    # The spacer is a separate file, and a run killed between the fill and
+    # its removal leaves it behind: sweeping only the ballast would keep
+    # eating the margin the next fill is trying to measure.
+    backend = _Exec(_routes({}))
+    catalog.sweep_store_ballast(Device("h", backend=backend))
+    removed = " ".join(argv[-1] for argv in backend.runs)
+    assert catalog._STORE_BALLAST in removed
+    assert catalog._STORE_BALLAST_SPACER in removed
+
+
+def test_store_available_kib_aborts_on_a_non_numeric_available_field() -> None:
+    malformed = f"filesystem 100 0 unknown 0% {catalog._DATA_MOUNT}"
+    backend = _Exec(_routes({f"df -k {catalog._DATA_MOUNT}": malformed}))
+    with pytest.raises(Abort, match="unparseable df output"):
+        catalog._store_available_kib(Device("h", backend=backend))
+
+
+def test_fill_store_filesystem_reopens_the_margin_only_after_hitting_zero() -> None:
+    """The fill is what makes the fault fire: it must run the store to a
+    genuine ENOSPC — root spends ext4's reserve, so `df` reaching 0 is the
+    only proof — and only then delete the pre-sized spacer, which is the
+    sole way to reopen an exact margin without `fallocate` or `truncate`."""
+    df_zero = f"filesystem 100 100 0 100% {catalog._DATA_MOUNT}"
+    backend = _Exec(_routes({f"df -k {catalog._DATA_MOUNT}": df_zero}))
+    catalog.fill_store_filesystem(Device("h", backend=backend))
+
+    commands = [argv[-1] for argv in backend.runs]
+    spacer_written = next(
+        i for i, c in enumerate(commands) if "dd" in c and catalog._STORE_BALLAST_SPACER in c
+    )
+    filled = next(
+        i for i, c in enumerate(commands) if "dd" in c and f"of={catalog._STORE_BALLAST} " in c
+    )
+    spacer_removed = next(
+        i for i, c in enumerate(commands) if c.startswith("rm -f") and "spacer" in c
+    )
+    assert spacer_written < filled < spacer_removed
+
+
+def test_fill_store_filesystem_aborts_when_the_store_did_not_fill() -> None:
+    # A fill that stopped short leaves room for the upgrade, the flash
+    # succeeds, and C7 would report a fault that never fired.
+    df_free = f"filesystem 100 0 4096 0% {catalog._DATA_MOUNT}"
+    backend = _Exec(_routes({f"df -k {catalog._DATA_MOUNT}": df_free}))
+    with pytest.raises(Abort, match="still has 4096 KiB free"):
+        catalog.fill_store_filesystem(Device("h", backend=backend))

@@ -73,6 +73,7 @@ Scenario = Literal[
     "wrong-cache-key",  # C4
     "stale-next-marker",  # C5
     "same-version-reflash",  # C6
+    "full-store",  # C7
     "shm-local-file",  # D1
     "staged-once",  # D4
     "servers-json",  # D5
@@ -102,6 +103,7 @@ _GROUP_C_ORDER = (
     "unreachable-rig",
     "malformed-index",
     "wrong-cache-key",
+    "full-store",  # leaves the device on A; cache-swap-retry proves B still lands
     "cache-swap-retry",  # fuses stale-next-marker + servers-json on retry
     "same-version-reflash",  # fuses shm-local-file (staged via /dev/shm)
 )
@@ -201,12 +203,14 @@ def _prepare_flash(ctx: _Ctx, image: Image, *, memory_need: int | None = None) -
     )
     if ctx.quiesced_pin is not None:
         pinned = ctx.quiesced_pin
+        catalog.sweep_store_ballast(pinned)
         catalog.push_nix_cli(pinned, ctx.prov)
         catalog.register_rig(pinned, ctx.run)
         catalog.sweep_uploaded_images(pinned, ctx.run)
         catalog.ensure_memory(pinned, need)
         catalog.upload_firmware(pinned, image)
     else:
+        catalog.sweep_store_ballast(ctx.dev)
         # Production stops widgets before its tmpfs firmware download. The SSH
         # path has no widget-lifecycle handle, so stop the owning service; its
         # graceful shutdown releases bmc-wasm-host while keeping /nix mounted.
@@ -631,6 +635,36 @@ def _scenario_cache_swap_retry(ctx: _Ctx) -> None:
     )
 
 
+def _scenario_full_store(ctx: _Ctx) -> None:
+    """C7: the store's filesystem has no room for the incoming generation.
+
+    The staging preflight must refuse the plan before fetching anything,
+    so sysupgrade aborts before flashing
+    and the running system is left exactly as it was."""
+    _require_c_preconditions(ctx)
+    catalog.ensure_bump_absent(ctx.dev, ctx.run)
+    _prepare_flash(ctx, ctx.image_b)
+    pinned = _pinned(ctx)
+    catalog.drop_e2e_marker(pinned)
+    catalog.record_upgrade_state(pinned, ctx.state)
+    failed = False
+    try:
+        catalog.fill_store_filesystem(pinned)
+        catalog.flash_expect_abort(
+            pinned,
+            ctx.image_b,
+            expect="not enough space in the store",
+            state=ctx.state,
+            assume_yes=ctx.yes,
+        )
+        catalog.require_upgrade_state_untouched(pinned, ctx.state)
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        _restore_step(failed=failed, action=lambda: catalog.sweep_store_ballast(pinned))
+
+
 def _scenario_same_version_reflash(ctx: _Ctx) -> None:
     """C6 + D1: same-version re-flash of image B staged via /dev/shm —
     empty plan, no next marker, current unchanged, marker survived."""
@@ -769,6 +803,7 @@ _DRIVERS: dict[str, Callable[[_Ctx], None]] = {
     "wrong-cache-key": _scenario_wrong_cache_key,
     "stale-next-marker": _scenario_stale_next_marker,
     "same-version-reflash": _scenario_same_version_reflash,
+    "full-store": _scenario_full_store,
     "shm-local-file": _scenario_shm_local_file,
     "staged-once": _scenario_staged_once,
     "servers-json": _scenario_servers_json,

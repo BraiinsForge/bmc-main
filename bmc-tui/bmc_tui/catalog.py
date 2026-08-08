@@ -2280,6 +2280,72 @@ def require_stale_next_gone(dev: Device) -> str:
     return f"{console.lit(_STALE_NEXT_MARKER)} gone"
 
 
+_STORE_BALLAST = f"{_DATA_MOUNT}/.e2e-store-ballast"
+_STORE_BALLAST_SPACER = f"{_STORE_BALLAST}.spacer"
+# What the fill leaves free. A filesystem at literally zero also fails
+# writes the upgrade never makes — logs, the nix db journal — so an abort
+# there would not show the realise ran out of space. Must stay under the
+# plan's unpacked size, or the flash succeeds and flash_expect_abort says
+# the fault did not fire.
+_STORE_BALLAST_MARGIN_MIB = 2
+# `df -k` columns: Filesystem, 1K-blocks, Used, Available, Use%, Mounted on.
+# Counted from the end: df wraps a long device name onto a line of its own,
+# and the row that follows then carries five fields, not six.
+_DF_AVAILABLE_FIELD = -3
+_DF_MIN_FIELDS = 5
+
+
+def _store_available_kib(dev: Device) -> int:
+    out = dev.read(f"df -k {_DATA_MOUNT} | tail -1")
+    fields = out.split()
+    hint = f"unparseable df output for {console.lit(_DATA_MOUNT)}: {out!r}"
+    require(
+        len(fields) >= _DF_MIN_FIELDS,
+        hint,
+    )
+    try:
+        return int(fields[_DF_AVAILABLE_FIELD])
+    except ValueError:
+        raise Abort(hint) from None
+
+
+@stage("Fill the store filesystem (C7)")
+def fill_store_filesystem(dev: Device) -> str:
+    """Leave the store's filesystem with less room than the incoming
+    generation needs, so the realise runs out of space part-way.
+
+    `dd` until it fails is the only way to fill it here.
+    The device's busybox ships neither `fallocate` nor `truncate`,
+    and a size derived from df's available column would still leave
+    ext4's root-reserved blocks for nix, which runs as root, to spend.
+    Deleting a pre-sized spacer afterwards is then the only way
+    to reopen an exact margin.
+
+    Expect no output for minutes.
+    The Deck writes its data partition at roughly 7 MB/s,
+    so filling 1.7 GiB took about four minutes."""
+    spacer_blocks = _STORE_BALLAST_MARGIN_MIB
+    dev.run(f"dd if=/dev/zero of={_STORE_BALLAST_SPACER} bs=1M count={spacer_blocks} 2>/dev/null")
+    dev.run(f"dd if=/dev/zero of={_STORE_BALLAST} bs=1M 2>/dev/null || true")
+    if not dry_run.get():
+        available = _store_available_kib(dev)
+        require(
+            available == 0,
+            f"{console.lit(_DATA_MOUNT)} still has {available} KiB free after ballasting",
+        )
+    dev.run(f"rm -f {_STORE_BALLAST_SPACER}")
+    return f"{console.lit(_DATA_MOUNT)} down to {_STORE_BALLAST_MARGIN_MIB} MiB"
+
+
+@stage("Sweep the store ballast")
+def sweep_store_ballast(dev: Device) -> str:
+    """A run killed outright never reaches its teardown, and the ballast it
+    leaves fails every later scenario with ENOSPC noise instead of the
+    message that scenario expects."""
+    dev.run(f"rm -f {_STORE_BALLAST} {_STORE_BALLAST_SPACER}")
+    return f"{console.lit(_STORE_BALLAST)} absent"
+
+
 @stage("Record servers.json (D5)")
 def record_servers_json(dev: Device, state: FaultsState) -> str:
     """Snapshot the registry bytes the D5 flash must carry across: the rig

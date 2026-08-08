@@ -61,6 +61,7 @@ def test_suite_order_is_pinned() -> None:
         "unreachable-rig",
         "malformed-index",
         "wrong-cache-key",
+        "full-store",
         "cache-swap-retry",
         "same-version-reflash",
     )
@@ -84,6 +85,7 @@ def test_every_scenario_id_has_a_driver() -> None:
         "wrong-cache-key",
         "stale-next-marker",
         "same-version-reflash",
+        "full-store",
         "shm-local-file",
         "staged-once",
         "servers-json",
@@ -594,6 +596,7 @@ def test_c_group_runs_aborts_then_retry_then_reflash(monkeypatch) -> None:
         "unreachable-rig",
         "malformed-index",
         "wrong-cache-key",
+        "full-store",
         "cache-swap-retry",
         "same-version-reflash",
     ):
@@ -603,6 +606,7 @@ def test_c_group_runs_aborts_then_retry_then_reflash(monkeypatch) -> None:
         "unreachable-rig",
         "malformed-index",
         "wrong-cache-key",
+        "full-store",
         "cache-swap-retry",
         "same-version-reflash",
     ]
@@ -770,6 +774,7 @@ def test_prepare_flash_frees_widget_memory_and_sweeps_uploads_before_the_gate(
         "push_nix_cli",
         "register_rig",
         "sweep_uploaded_images",
+        "sweep_store_ballast",
         "ensure_memory",
         "pin_device_address",
         "upload_firmware",
@@ -795,8 +800,13 @@ def test_prepare_flash_frees_widget_memory_and_sweeps_uploads_before_the_gate(
             assert calls.index("stop_compositor") < calls.index("ensure_memory")
         else:
             assert "stop_compositor" not in calls
+        assert calls.index("sweep_store_ballast") == 0
         assert calls.index("sweep_uploaded_images") < calls.index("ensure_memory")
         assert calls.index("ensure_memory") < calls.index("upload_firmware")
+        assert calls.index("sweep_store_ballast") < calls.index("upload_firmware"), (
+            "C7 killed outright never reaches its teardown, and the ballast it leaves "
+            "fails every later scenario with ENOSPC instead of the message it expects"
+        )
 
 
 def _via_shm_budget_ctx() -> types.SimpleNamespace:
@@ -890,6 +900,67 @@ def test_upgrade_abort_restores_rig_even_when_the_abort_check_fails(monkeypatch)
         "tamper",
         "restore-rig",
     ]
+
+
+def _full_store_stubs(monkeypatch, calls: list[str]) -> "faults._Ctx":
+    monkeypatch.setattr(faults, "_require_c_preconditions", _note(calls, "preconditions"))
+    monkeypatch.setattr(faults, "_prepare_flash", _note(calls, "prepare"))
+    monkeypatch.setattr(faults, "_pinned", lambda ctx: ctx.dev)
+    for fn in (
+        "ensure_bump_absent",
+        "drop_e2e_marker",
+        "record_upgrade_state",
+        "require_upgrade_state_untouched",
+        "fill_store_filesystem",
+        "sweep_store_ballast",
+    ):
+        monkeypatch.setattr(faults.catalog, fn, _note(calls, fn))
+    return cast(
+        "faults._Ctx",
+        types.SimpleNamespace(
+            dev=object(), run=object(), state=object(), image_b=object(), yes=True
+        ),
+    )
+
+
+def test_full_store_releases_the_ballast_when_the_flash_check_fails(monkeypatch) -> None:
+    """A ballast left behind wedges the store for every later scenario,
+    so the release must run even when the attempt raises —
+    and only after the state record,
+    or the recorded 'before' would already be the full-disk state."""
+    calls: list[str] = []
+    ctx = _full_store_stubs(monkeypatch, calls)
+
+    def exploding_flash(*_a, **_k) -> None:
+        raise Abort("session death")
+
+    monkeypatch.setattr(faults.catalog, "flash_expect_abort", exploding_flash)
+    with pytest.raises(Abort, match="session death"):
+        faults._scenario_full_store(ctx)
+    assert calls == [
+        "preconditions",
+        "ensure_bump_absent",
+        "prepare",
+        "drop_e2e_marker",
+        "record_upgrade_state",
+        "fill_store_filesystem",
+        "sweep_store_ballast",
+    ]
+
+
+def test_full_store_release_failure_fails_a_successful_attempt(monkeypatch) -> None:
+    """With no primary failure to preserve, a ballast that cannot be removed
+    must fail the run: swallowing it hands every later scenario a full store."""
+    calls: list[str] = []
+    ctx = _full_store_stubs(monkeypatch, calls)
+    monkeypatch.setattr(faults.catalog, "flash_expect_abort", lambda *_a, **_k: None)
+
+    def exploding_release(*_a, **_k) -> None:
+        raise OSError("rm failed")
+
+    monkeypatch.setattr(faults.catalog, "sweep_store_ballast", exploding_release)
+    with pytest.raises(OSError, match="rm failed"):
+        faults._scenario_full_store(ctx)
 
 
 def _upgrade_abort_stubs(monkeypatch) -> "faults._Ctx":
