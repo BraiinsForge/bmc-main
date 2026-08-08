@@ -5,7 +5,10 @@ mod virt 'bmc-virt/justfile'
 mod wasm 'bmc-wasm-runtime/justfile'
 mod widgets 'widgets-wasm'
 
-NIX_SYSTEM := "$(nix eval --impure --raw --expr builtins.currentSystem)"
+# The flake's checks build the compositor stack, so they exist for Linux only.
+# A darwin host has no local system to ask for; nix routes these to the configured
+# `linux-builder`, which serves aarch64 natively under apple-virt.
+NIX_SYSTEM := if os() == "macos" { "aarch64-linux" } else { "$(nix eval --impure --raw --expr builtins.currentSystem)" }
 
 # Auto-enter the dev shell for recipes that link against system libs
 # (e.g. `cargo nextest` needs wayland-client to compile bmc).

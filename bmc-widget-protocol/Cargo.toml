@@ -23,5 +23,12 @@ wayland-protocols.workspace = true
 wayland-scanner.workspace = true
 wayland-server.workspace = true
 
+# libwayland ships no darwin build, so `wayland-sys`' pkg-config probe fails
+# and nothing downstream — the host testbed included — compiles on macOS.
+# `dlopen` defers the lookup to run time, which never happens there:
+# macOS builds use the crate's plain wire types, never `client`/`server`.
+[target.'cfg(target_os = "macos")'.dependencies]
+wayland-backend = { workspace = true, features = ["dlopen"] }
+
 [lints]
 workspace = true
