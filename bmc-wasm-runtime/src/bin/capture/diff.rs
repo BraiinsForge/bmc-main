@@ -201,7 +201,7 @@ fn diff_directories(
             report.results.push(DiffResult {
                 rel: rel_str,
                 status: "diff".into(),
-                diff_percentage: cmp.diff_percentage,
+                diff: cmp.diff,
                 baseline_file: Some(baseline_file.clone()),
                 current_file: Some(current_file),
                 diff_file: Some(diff_file),
@@ -323,6 +323,7 @@ impl OdiffServer {
             "options": {
                 "threshold": self.threshold,
                 "diffOverlay": 0.1,
+                "failOnLayoutDiff": false,
             },
         })
         .to_string();
@@ -340,18 +341,40 @@ impl OdiffServer {
             .read_line(&mut line)
             .context("failed to read odiff server response")?;
 
-        if line.contains("\"error\"") {
-            bail!("odiff error: {}", line.trim());
-        }
-
-        let matched = line.contains("\"match\":true");
-        let diff_percentage = parse_json_f64(&line, "diffPercentage").unwrap_or(0.0);
-
-        Ok(OdiffResult {
-            matched,
-            diff_percentage,
-        })
+        parse_odiff_response(&line)
     }
+}
+
+fn parse_odiff_response(line: &str) -> Result<OdiffResult> {
+    let parsed: serde_json::Value =
+        serde_json::from_str(line).context("failed to parse odiff response")?;
+    if let Some(error) = parsed.get("error") {
+        bail!("odiff error: {error}");
+    }
+
+    let matched = parsed
+        .get("match")
+        .and_then(serde_json::Value::as_bool)
+        .context("odiff response has no \"match\" field")?;
+    let diff = if matched {
+        None
+    } else {
+        if parsed.get("reason").and_then(serde_json::Value::as_str) == Some("layout-diff") {
+            bail!("odiff returned unexpected layout-diff with failOnLayoutDiff disabled");
+        }
+        let count = parsed
+            .get("diffCount")
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|count| usize::try_from(count).ok())
+            .context("odiff reported a mismatch without a usable diffCount")?;
+        let percentage = parsed
+            .get("diffPercentage")
+            .and_then(serde_json::Value::as_f64)
+            .context("odiff reported a mismatch without a diffPercentage")?;
+        Some(PixelDiff { count, percentage })
+    };
+
+    Ok(OdiffResult { matched, diff })
 }
 
 impl Drop for OdiffServer {
@@ -367,13 +390,8 @@ impl Drop for OdiffServer {
 
 struct OdiffResult {
     matched: bool,
-    diff_percentage: f64,
-}
-
-/// Extract a float value from a JSON string by key.
-fn parse_json_f64(json: &str, key: &str) -> Option<f64> {
-    let parsed: serde_json::Value = serde_json::from_str(json).ok()?;
-    parsed.get(key)?.as_f64()
+    /// `None` exactly when the frames matched.
+    diff: Option<PixelDiff>,
 }
 
 // ── Report types (exported for verify orchestrator) ─────────────────
@@ -399,11 +417,18 @@ impl WidgetReport {
     }
 }
 
+/// How much of a frame changed. Carried only by frames that actually differ.
+#[derive(Clone, Copy)]
+pub struct PixelDiff {
+    pub count: usize,
+    pub percentage: f64,
+}
+
 #[derive(Default)]
 pub struct DiffResult {
     pub rel: String,
     pub status: String,
-    pub diff_percentage: f64,
+    pub diff: Option<PixelDiff>,
     pub baseline_file: Option<PathBuf>,
     pub current_file: Option<PathBuf>,
     pub diff_file: Option<PathBuf>,
@@ -448,6 +473,7 @@ struct WidgetReportView {
 struct DiffResultView {
     rel: String,
     status: String,
+    diff_count: usize,
     diff_percentage: f64,
     baseline_uri: Option<String>,
     current_uri: Option<String>,
@@ -489,7 +515,8 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                     DiffResultView {
                         rel: d.rel.clone(),
                         status: d.status.clone(),
-                        diff_percentage: d.diff_percentage,
+                        diff_count: d.diff.map_or(0, |diff| diff.count),
+                        diff_percentage: d.diff.map_or(0.0, |diff| diff.percentage),
                         baseline_uri,
                         current_uri,
                         diff_uri,
@@ -538,8 +565,14 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
     if let Some(parent) = output.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    std::fs::write(output, html)
-        .with_context(|| format!("failed to write report to {}", output.display()))?;
+    // Write through a sibling and rename: the report's existence is taken as
+    // proof that a verdict was reached, so one truncated by a full disk would
+    // be read as a visual regression rather than the failure it is.
+    let staging = output.with_extension("html.part");
+    std::fs::write(&staging, html)
+        .with_context(|| format!("failed to write report to {}", staging.display()))?;
+    std::fs::rename(&staging, output)
+        .with_context(|| format!("failed to move report into {}", output.display()))?;
 
     let abs_path = std::fs::canonicalize(output).unwrap_or_else(|_| output.to_owned());
     eprintln!("\nHTML report: {}", abs_path.display());
@@ -824,13 +857,7 @@ pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
     } else if !ok {
         let mut parts = Vec::new();
         if report.failed > 0 {
-            let max_pct = report
-                .results
-                .iter()
-                .filter(|r| r.status == "diff")
-                .map(|r| r.diff_percentage)
-                .fold(0.0_f64, f64::max);
-            parts.push(format!("{}Δ ↑{max_pct:.2}%", report.failed));
+            parts.push(format!("{}Δ {}", report.failed, diff_totals(report)));
         }
         if report.missing > 0 {
             parts.push(format!("{} missing", report.missing));
@@ -852,7 +879,7 @@ pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
     } else {
         2 + 2 + name.len() + 1
     };
-    let visible_right = 1 + visible_len(&right_text) + 2 + time_str.len();
+    let visible_right = 1 + visible_len(&right_text) + 3 + time_str.len();
     let dots = COL_WIDTH
         .saturating_sub(visible_label + visible_right)
         .max(1);
@@ -864,7 +891,7 @@ pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
             format!("{} {}", mark.green(), name.green())
         };
         format!(
-            "  {label} {} {} {}",
+            "  {label} {} {} · {}",
             "·".repeat(dots).dimmed(),
             right_text.green(),
             time_str.dimmed()
@@ -876,11 +903,27 @@ pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
             format!("{} {}", mark.red(), name.red())
         };
         format!(
-            "  {label} {} {} {}",
+            "  {label} {} {} · {}",
             "·".repeat(dots).dimmed(),
             right_text.red(),
             time_str.dimmed()
         )
+    }
+}
+
+/// An intentional restyle drifts every frame; listing them all would bury the log.
+const MAX_FRAME_LINES: usize = 10;
+
+fn diff_totals(report: &WidgetReport) -> String {
+    let diffs: Vec<PixelDiff> = report.results.iter().filter_map(|r| r.diff).collect();
+    let worst = diffs
+        .iter()
+        .fold(0.0_f64, |worst, diff| worst.max(diff.percentage));
+    let total: usize = diffs.iter().map(|diff| diff.count).sum();
+    if worst >= 0.01 {
+        format!("{total} px total (↑{worst:.2}% worst)")
+    } else {
+        format!("{total} px total")
     }
 }
 
@@ -905,13 +948,7 @@ pub fn print_failure_details(reports: &[WidgetReport]) {
         }
         let mut parts = Vec::new();
         if report.failed > 0 {
-            let max_pct = report
-                .results
-                .iter()
-                .filter(|r| r.status == "diff")
-                .map(|r| r.diff_percentage)
-                .fold(0.0_f64, f64::max);
-            parts.push(format!("Δ {} {max_pct:.2}%", report.failed));
+            parts.push(format!("Δ {} {}", report.failed, diff_totals(report)));
         }
         if report.missing > 0 {
             parts.push(format!("{} missing", report.missing));
@@ -924,11 +961,157 @@ pub fn print_failure_details(reports: &[WidgetReport]) {
             format!("{label}:").red(),
             parts.join(", ").dimmed()
         ));
+
+        let diffs: Vec<_> = report
+            .results
+            .iter()
+            .filter_map(|result| result.diff.map(|diff| (result, diff)))
+            .collect();
+        for (result, diff) in diffs.iter().take(MAX_FRAME_LINES) {
+            let detail = format!("{} px ({:.2}%)", diff.count, diff.percentage);
+            lines.push(format!("      {} {}", result.rel.dimmed(), detail.dimmed()));
+        }
+        if let Some(rest) = diffs
+            .len()
+            .checked_sub(MAX_FRAME_LINES)
+            .filter(|remaining| *remaining > 0)
+        {
+            lines.push(format!("      {}", format!("… and {rest} more").dimmed()));
+        }
     }
     if !lines.is_empty() {
         eprintln!();
         for line in &lines {
             eprintln!("{line}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn report_with_diff(diff: PixelDiff) -> WidgetReport {
+        WidgetReport {
+            workspace: "widgets".to_owned(),
+            widget: "clock".to_owned(),
+            results: vec![DiffResult {
+                rel: "full/frame_0000.png".to_owned(),
+                status: "diff".to_owned(),
+                diff: Some(diff),
+                ..Default::default()
+            }],
+            failed: 1,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn odiff_match_needs_no_pixel_measurements() {
+        let result = parse_odiff_response(r#"{"match":true}"#)
+            .expect("a matching odiff response should parse");
+
+        assert!(result.matched);
+        assert!(result.diff.is_none());
+    }
+
+    #[test]
+    fn odiff_pixel_diff_keeps_both_measurements() {
+        let result = parse_odiff_response(
+            r#"{"match":false,"reason":"pixel-diff","diffCount":17,"diffPercentage":0.01}"#,
+        )
+        .expect("a complete pixel-diff response should parse");
+
+        assert!(!result.matched);
+        let diff = result
+            .diff
+            .expect("a pixel mismatch should carry its measurements");
+        assert_eq!(diff.count, 17);
+        assert!(
+            (diff.percentage - 0.01).abs() < f64::EPSILON,
+            "unexpected percentage: {}",
+            diff.percentage
+        );
+    }
+
+    #[test]
+    fn odiff_pixel_diff_rejects_missing_count() {
+        let Err(error) =
+            parse_odiff_response(r#"{"match":false,"reason":"pixel-diff","diffPercentage":0.01}"#)
+        else {
+            panic!("a pixel mismatch without a count must be rejected");
+        };
+
+        assert!(
+            error
+                .to_string()
+                .contains("mismatch without a usable diffCount"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn odiff_layout_diff_reports_the_pinned_option_violation() {
+        let Err(error) = parse_odiff_response(r#"{"match":false,"reason":"layout-diff"}"#) else {
+            panic!("failOnLayoutDiff=false should prevent layout-only responses");
+        };
+
+        assert!(
+            error.to_string().contains("unexpected layout-diff"),
+            "unexpected error: {error:#}"
+        );
+    }
+
+    #[test]
+    fn diff_totals_omits_a_percentage_that_odiff_rounded_to_zero() {
+        let report = report_with_diff(PixelDiff {
+            count: 3,
+            percentage: 0.0,
+        });
+
+        assert_eq!(diff_totals(&report), "3 px total");
+    }
+
+    #[test]
+    fn diff_totals_leads_with_pixels_before_a_visible_percentage() {
+        let report = report_with_diff(PixelDiff {
+            count: 900,
+            percentage: 0.43,
+        });
+
+        assert_eq!(diff_totals(&report), "900 px total (↑0.43% worst)");
+    }
+
+    #[test]
+    fn status_line_separates_nested_drift_summary_from_elapsed_time() {
+        let mut report = report_with_diff(PixelDiff {
+            count: 900,
+            percentage: 0.43,
+        });
+        report.missing = 3;
+
+        let styled_line = widget_status_line(&report, 0.9);
+        let line = console::strip_ansi_codes(&styled_line);
+
+        assert!(
+            line.ends_with("1Δ 900 px total (↑0.43% worst), 3 missing · 0.9s"),
+            "unexpected status line: {line}"
+        );
+    }
+
+    #[test]
+    fn html_report_shows_tiny_pixel_diff_without_zero_percentage() {
+        let report = report_with_diff(PixelDiff {
+            count: 3,
+            percentage: 0.0,
+        });
+        let temp = tempfile::tempdir().expect("temporary report directory should be created");
+        let output = temp.path().join("report.html");
+
+        generate_html_report(&[report], &output).expect("HTML report should render");
+        let html = std::fs::read_to_string(output).expect("HTML report should be readable");
+
+        assert!(html.contains("<span class=\"hint\">3 px</span>"));
+        assert!(!html.contains("0.00%"));
     }
 }

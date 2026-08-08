@@ -182,7 +182,7 @@ h1 { margin-bottom: 8px; }
   <div class="row-header">
     <span class="tag {{ result.status }}">{{ result.status }}</span>
     <span class="path">{{ result.rel }}</span>
-    {% if result.diff_percentage > 0.0 %}<span class="hint">{{ result.diff_percentage|fmt("{:.2}") }}%</span>{% endif %}
+    {% if result.diff_count > 0 %}<span class="hint">{{ result.diff_count }} px{% if result.diff_percentage >= 0.01 %} · {{ result.diff_percentage|fmt("{:.2}") }}%{% endif %}</span>{% endif %}
   </div>
   {% if result.status != "pass" %}
   <div class="images">
