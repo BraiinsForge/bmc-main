@@ -21,11 +21,12 @@ silently; unparseable content falls back with a logged warning.
 }
 ```
 
-| Field      | Values                                                              | Meaning                                                        |
-| ---------- | ------------------------------------------------------------------- | -------------------------------------------------------------- |
-| `firmware` | `available` (default), `up-to-date`, `check-error`                  | whether a firmware release is offered, or the check errors     |
-| `packages` | `available` (default), `unavailable`, `fetch-failed`                | whether a package upgrade is offered, or the index fetch fails |
-| `run`      | `success` (default), `download-fail`, `hash-mismatch`, `apply-fail` | how a started upgrade run ends                                 |
+| Field              | Values                                                              | Meaning                                                        |
+| ------------------ | ------------------------------------------------------------------- | -------------------------------------------------------------- |
+| `firmware`         | `available` (default), `up-to-date`, `check-error`                  | whether a firmware release is offered, or the check errors     |
+| `packages`         | `available` (default), `unavailable`, `fetch-failed`                | whether a package upgrade is offered, or the index fetch fails |
+| `run`              | `success` (default), `download-fail`, `hash-mismatch`, `apply-fail` | how a started upgrade run ends                                 |
+| `store_free_bytes` | a byte count; omitted (default) leaves the store unconstrained      | free store space the mock reports to the daemon's preflight    |
 
 The scenario selects states only — the offered firmware versions and package change lists are fixed built-in datasets,
 not configurable. The previous releases in the firmware offer are display-only: their URLs point at the real feed and
@@ -34,6 +35,11 @@ are not served locally (the pipeline only ever runs the latest release).
 Scenarios are check-scoped: `CheckForUpgrade` bakes the offer (URLs, hashes, upgrade id) from the scenario at check
 time, and `StartUpgrade` consumes that stored offer. To exercise a different state, edit the file and check again.
 `run: apply-fail` is the one execute-time knob — it is consulted when the apply actually runs.
+
+`store_free_bytes` is the exception to "states only": the mock filesystem has no capacity to measure, so without an
+explicit value the daemon's store preflight always passes and its `NotEnoughSpace` — the `FailedPrecondition` the
+frontend sees — cannot be reached off-device. Set it below the plan's unpacked size plus 10% headroom to drive the
+refusal; the value is re-read per call, so a full store can be freed mid-session like any other scenario field.
 
 ## How the run outcomes work
 
