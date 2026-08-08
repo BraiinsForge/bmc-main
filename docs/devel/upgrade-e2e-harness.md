@@ -54,26 +54,32 @@ path that no longer reflects what ships.
     `/nix/store` but, unlike `deck deploy`, never copied to the device.
 03. **Snapshot current generation** — records the device's current profile generation number (from the `current` symlink
     in `/nix/var/nix/gcroots/profiles/bmc`) for the final assertion.
-04. **Start upgrade server** — launches `nix run .#upgrade-server` in the background with one
+04. **Pre-run package config is the device's own / Capture server registry / Capture nix.conf** — refuses to start when
+    `/etc/nix-upgrade/servers.json` still carries a `dev-upgrade` entry or `/etc/nix/nix.conf` still trusts a
+    `dev-upgrade:*` key, because either means an earlier run did not restore the device's package config. Remove the
+    registry entry, re-enable the servers it disabled, remove the rig URL token from `extra-substituters`, and remove
+    the `dev-upgrade:*` token from `extra-trusted-public-keys`; then re-run. On clean config, the bytes of both files
+    are recorded for the restore.
+05. **Start upgrade server** — launches `nix run .#upgrade-server` in the background with one
     `--package NAME=VERSION=STORE_PATH` per built package, waits until both the cache (`/nix-cache-info`) and the index
     (`nix-package-index.v1.json`) answer HTTP, and reads the cache public key from the keypair directory
     (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to `bmc-upgrade-server.log` in the system temp directory.
     The advertised host address is autodetected from the route to the device.
-05. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing
+06. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing
     both the index document URL (`--index-url`) and the cache substituter at the developer machine. The index is
     unsigned, so the index public key mirrors the cache key, matching the command `upgrade-server` itself prints. The
     registration is `--exclusive`: it disables every other server entry, leaving the factory entry alone.
-06. **Only the harness server resolves** — asserts the exclusivity took, rather than assuming it. A public entry left
+07. **Only the harness server resolves** — asserts the exclusivity took, rather than assuming it. A public entry left
     enabled decides the upgrade whenever it publishes a higher version, because resolution ranks a candidate's version
     above its server's priority; and a `required` entry the device cannot reach fails the whole `CheckForUpgrade` probe.
     Registration seeds the registry from the shipped default when the runtime file is missing, so production entries
-    turn up unprompted (#BDK-666).
-07. **Authenticate** — `AuthenticationService/Login` via grpcurl (plaintext h2c on port 80); the returned token becomes
+    turn up unprompted.
+08. **Authenticate** — `AuthenticationService/Login` via grpcurl (plaintext h2c on port 80); the returned token becomes
     the `session_id` cookie for the authenticated `UpgradeService` calls.
-08. **Check for upgrade** — expects a populated `packages` plan, an `APP_RESTART` disruption, and an upgrade id.
-09. **Run upgrade** — `StartUpgrade` with the upgrade id, consuming the progress stream live; the stream must pass
+09. **Check for upgrade** — expects a populated `packages` plan, an `APP_RESTART` disruption, and an upgrade id.
+10. **Run upgrade** — `StartUpgrade` with the upgrade id, consuming the progress stream live; the stream must pass
     through the `REALIZING` and `ACTIVATING` package phases and end with a `finished` event.
-10. **Profile advanced** — re-reads the current generation, requiring it to have incremented, and requires every served
+11. **Profile advanced** — re-reads the current generation, requiring it to have incremented, and requires every served
     package that was installed before the upgrade to appear in the new generation's manifest at its served store path.
     Served packages absent from the pre-upgrade manifest are index-only — they are not auto-installed and not expected
     to appear.
@@ -111,30 +117,30 @@ Then:
 5. **Verify widget installed** — the widget is back in `list-packages` and its uid is exposed by
    `SceneManagementService/GetAvailableWidgets`, proving the running registry picked it up, not just the profile.
 
-The run is self-cleaning device-side — the reinstall returns the device to its baseline — but the `dev-upgrade` server
-registration persists exactly as with `upgrade-e2e`, so the cleanup below applies.
+The run is self-cleaning device-side — the reinstall returns the device to its baseline — and the server registry and
+`nix.conf` are captured and restored exactly as with `upgrade-e2e`, so the cleanup below applies.
 
 ## Cleanup
 
-**Remove the registration once you stop the harness, or the device's upgrade checks break.** The `dev-upgrade` server
-registration persists on the device after the run: its entry stays in `/etc/nix-upgrade/servers.json` and its
-substituter plus trusted key stay in `/etc/nix/nix.conf`. Index fetching aborts when any *required* top-level server
-fetch fails (`fetch_and_merge_indexes` in `bmc-nix/src/index.rs`; only servers registered as optional degrade to a
-warning), and `register-server` marks servers required by default, so while `dev-upgrade` is still registered and
-enabled but the developer machine's server is down, *every* `CheckForUpgrade` on the device fails entirely — not just
-for `dev-upgrade` — until the entry is removed or disabled. Re-running the harness against a live server heals it
-(`register-server` replaces the entry by id).
+**The run cleans up after itself.** "Capture server registry" and "Capture nix.conf" record
+`/etc/nix-upgrade/servers.json` and `/etc/nix/nix.conf` byte for byte before registration, and the run puts both back on
+the way out whether it succeeded or failed — restoring the original bytes, or removing a file that was not there. So
+neither the `dev-upgrade` entry, nor the production servers that `--exclusive` disabled, nor the rig's
+`extra-substituters` and `extra-trusted-public-keys` lines outlive the run.
 
-**The run also leaves every other server entry disabled.** Registration is `--exclusive`, which sets `"enabled": false`
-on each entry it did not register — the production `forge` entry included — and nothing re-enables them when the run
-ends. Re-enable them by hand once you are done, or the device goes on resolving upgrades against the developer machine
-alone, which by then is gone. The factory entry is never touched.
+Restoring `nix.conf` matters most for the trusted key: `register-server` writes the rig's cache public key there, and a
+key left behind is a standing grant for a developer machine's signing key on a device that will outlive the run.
 
-To remove it, on the device:
+That matters because the registry is unforgiving of a stale entry. Index fetching aborts when any *required* top-level
+server fetch fails (`fetch_and_merge_indexes` in `bmc-nix/src/index.rs`; only servers registered as optional degrade to
+a warning), and `register-server` marks servers required by default — so a `dev-upgrade` entry left behind pointing at a
+developer machine that is now off would fail *every* `CheckForUpgrade` on the device, not just its own.
 
-- delete the `dev-upgrade` object from the `servers` array in `/etc/nix-upgrade/servers.json`;
-- delete the `extra-substituters = <cache-url>` and `extra-trusted-public-keys = <key>` lines from `/etc/nix/nix.conf`.
+A restore failure fails the run rather than passing quietly, unless the run was already failing for another reason, in
+which case it degrades to a logged warning so the original error survives. Either way both restores are attempted — one
+blowing up does not skip the other, since half-restored is the state this exists to prevent.
 
-These undo exactly what the "Register server on device" stage wrote (`register-server` adds the `servers.json` entry and
-sets those two `extra-*` lines). Disabling the entry (`"enabled": false` in `servers.json`) instead of deleting it also
-stops the failing fetches while keeping the registration around for a later run.
+A run killed outright can still leave its registration behind, and there the next run refuses to start: "Pre-run package
+config is the device's own" aborts on a leftover `dev-upgrade` registry entry or trusted key rather than capturing it as
+the baseline. Registration writes `nix.conf` first, so the trusted-key guard also covers a process killed before it
+persisted `servers.json`.
