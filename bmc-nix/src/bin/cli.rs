@@ -1391,14 +1391,40 @@ fn sha256_file(path: &Path) -> anyhow::Result<[u8; 32]> {
 async fn main() -> std::process::ExitCode {
     let cli = Cli::parse();
 
+    // File logging writes under `/var/log/bmc` and takes a sidecar lock,
+    // an on-device side effect. Off-device invocations log to the console
+    // only, so the `build-profile` step of the Nix tarball build
+    // writes nothing beyond the profile it is there to build.
+    // `--help`/`--version` exit inside `Cli::parse()` above and reach neither init.
+    //
+    // The guard holds the sidecar flock; binding it here reserves
+    // the single-writer claim for the whole process, failure report included.
+    let log_guard = if Path::new(DEVICE_MARKER).exists() {
+        Some(bmc_log::init_file_and_console(
+            Path::new(LOG_FILE),
+            CLI_DIAGNOSTIC_TARGET,
+        ))
+    } else {
+        bmc_log::init_console();
+        None
+    };
+
     match run(cli).await {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(err) => {
-            eprintln!("Error: {err:?}");
-            // Exit 1 belongs to is-initialized's "store absent or incomplete" answer;
-            // runtime failures use 2 (clap's usage-error code) so the
-            // firmware COMMAND script never mistakes a broken run for
-            // an absent store.
+            if log_guard.is_some() {
+                // The diagnostic target is exempt from `RUST_LOG`,
+                // so this reaches both the rotated log and the console.
+                tracing::error!(target: CLI_DIAGNOSTIC_TARGET, error = ?err, "command failed");
+            } else {
+                // Console-only logging honours `RUST_LOG` and can drop
+                // the event outright; a failure must never print nothing.
+                eprintln!("Error: {err:?}");
+            }
+            // Exit 1 belongs to is-initialized's "store absent or incomplete"
+            // answer, so runtime failures use 2 (clap's usage-error code):
+            // the firmware COMMAND script must never mistake a broken run
+            // for an absent store.
             std::process::ExitCode::from(2)
         }
     }
@@ -1410,22 +1436,6 @@ async fn main() -> std::process::ExitCode {
 )]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     let log_format = cli.log_format;
-
-    // File logging writes under `/var/log/bmc` and takes a sidecar lock —
-    // an on-device side effect. Off-device invocations (notably the
-    // `build-profile` step in the Nix tarball build) log to the console
-    // only, so the pure build stays free of filesystem side effects. The
-    // device is identified by `DEVICE_MARKER`. `--help`/`--version` exit
-    // inside `Cli::parse()` above and reach neither init.
-    let _log_guard = if Path::new(DEVICE_MARKER).exists() {
-        Some(bmc_log::init_file_and_console(
-            Path::new(LOG_FILE),
-            CLI_DIAGNOSTIC_TARGET,
-        ))
-    } else {
-        bmc_log::init_console();
-        None
-    };
 
     match cli.command {
         Commands::BuildProfile {
