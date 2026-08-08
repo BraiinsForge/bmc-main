@@ -129,7 +129,7 @@ rig. Remove them from `/etc/nix/nix.conf` on the device when you are done.
 
 ## Fault-injection suite (`deck e2e-sysupgrade-faults`)
 
-The negative counterpart of the happy path (BDK-601): nineteen scenarios across four groups — init-signature faults (A),
+The negative counterpart of the happy path: twenty scenarios across four groups — init-signature faults (A),
 partition/partial-store damage (B), upgrade-path faults (C), and delivery variants (D). Same preamble and two-image
 contract as `deck e2e-sysupgrade`; both image arguments are always required.
 
@@ -142,6 +142,16 @@ nix run .#deck -- e2e-sysupgrade-faults --device deck.local \
   `all` (default). Every scenario asserts its read-only preconditions first, so a mis-sequenced single run aborts with
   the device untouched. Group/suite runs thread the lineage themselves (one cleardown for `all`; C5/D1/D4/D5 ride other
   scenarios' flashes instead of spending extra flash cycles).
+- `full-store` (C7) is the only scenario that damages the device's free space rather than the rig: it fills the store's
+  filesystem with `dd` — the device busybox has neither `fallocate` nor `truncate`, and a size derived from `df`'s
+  available column would leave ext4's root reserve for nix to spend — then requires the flash to abort with the running
+  system untouched. Filling the Deck's free 1.7 GiB takes about four minutes with no output. The ballast is released
+  through the strict restore step, so a release failure fails the run rather than handing every later scenario a full
+  store — except when the scenario is already failing, where the release degrades to a logged warning so it cannot mask
+  the primary error. Because that path, and a run killed outright, can both leave the ballast behind, every flash sweeps
+  it up front (`sweep_store_ballast` in `_prepare_flash`); the file is `/mnt/data/.e2e-store-ballast` if you ever need
+  to remove it by hand. Recovery spends no flash cycle of its own, since the `cache-swap-retry` run that follows proves
+  an upgrade still lands on the freed store.
 - `--no-servers-json-preserved` downgrades D5 to observe-only for images predating the conffile registration (#BDK-358).
   By default D5 snapshots the runtime `servers.json` before the flash and asserts it comes back byte-identical.
 - The rig signs its init tarballs (mandatory since BDK-376): the cache key doubles as the factory trust anchor, and the
