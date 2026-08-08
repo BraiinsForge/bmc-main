@@ -48,29 +48,35 @@ path that no longer reflects what ships.
 
 ## What the Stages Do
 
-1. **grpcurl present / Device reachable / bmc-nix-cli present** — fail-fast preconditions; `bmc-nix-cli` is bootstrapped
-   onto the device when missing, as in `deck deploy`.
-2. **Resolve packages / Build packages** — the shared deploy stages; the closures are realized into the local
-   `/nix/store` but, unlike `deck deploy`, never copied to the device.
-3. **Snapshot current generation** — records the device's current profile generation number (from the `current` symlink
-   in `/nix/var/nix/gcroots/profiles/bmc`) for the final assertion.
-4. **Start upgrade server** — launches `nix run .#upgrade-server` in the background with one
-   `--package NAME=VERSION=STORE_PATH` per built package, waits until both the cache (`/nix-cache-info`) and the index
-   (`nix-package-index.v1.json`) answer HTTP, and reads the cache public key from the keypair directory
-   (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to `bmc-upgrade-server.log` in the system temp directory.
-   The advertised host address is autodetected from the route to the device.
-5. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing both
-   the index document URL (`--index-url`) and the cache substituter at the developer machine. The index is unsigned, so
-   the index public key mirrors the cache key, matching the command `upgrade-server` itself prints.
-6. **Authenticate** — `AuthenticationService/Login` via grpcurl (plaintext h2c on port 80); the returned token becomes
-   the `session_id` cookie for the authenticated `UpgradeService` calls.
-7. **Check for upgrade** — expects a populated `packages` plan, an `APP_RESTART` disruption, and an upgrade id.
-8. **Run upgrade** — `StartUpgrade` with the upgrade id, consuming the progress stream live; the stream must pass
-   through the `REALIZING` and `ACTIVATING` package phases and end with a `finished` event.
-9. **Profile advanced** — re-reads the current generation, requiring it to have incremented, and requires every served
-   package that was installed before the upgrade to appear in the new generation's manifest at its served store path.
-   Served packages absent from the pre-upgrade manifest are index-only — they are not auto-installed and not expected to
-   appear.
+01. **grpcurl present / Device reachable / bmc-nix-cli present** — fail-fast preconditions; `bmc-nix-cli` is
+    bootstrapped onto the device when missing, as in `deck deploy`.
+02. **Resolve packages / Build packages** — the shared deploy stages; the closures are realized into the local
+    `/nix/store` but, unlike `deck deploy`, never copied to the device.
+03. **Snapshot current generation** — records the device's current profile generation number (from the `current` symlink
+    in `/nix/var/nix/gcroots/profiles/bmc`) for the final assertion.
+04. **Start upgrade server** — launches `nix run .#upgrade-server` in the background with one
+    `--package NAME=VERSION=STORE_PATH` per built package, waits until both the cache (`/nix-cache-info`) and the index
+    (`nix-package-index.v1.json`) answer HTTP, and reads the cache public key from the keypair directory
+    (`$XDG_STATE_HOME/bmc-upgrade-server`). Server output goes to `bmc-upgrade-server.log` in the system temp directory.
+    The advertised host address is autodetected from the route to the device.
+05. **Register server on device** — runs `bmc-nix-cli register-server` on the device with id `dev-upgrade`, pointing
+    both the index document URL (`--index-url`) and the cache substituter at the developer machine. The index is
+    unsigned, so the index public key mirrors the cache key, matching the command `upgrade-server` itself prints. The
+    registration is `--exclusive`: it disables every other server entry, leaving the factory entry alone.
+06. **Only the harness server resolves** — asserts the exclusivity took, rather than assuming it. A public entry left
+    enabled decides the upgrade whenever it publishes a higher version, because resolution ranks a candidate's version
+    above its server's priority; and a `required` entry the device cannot reach fails the whole `CheckForUpgrade` probe.
+    Registration seeds the registry from the shipped default when the runtime file is missing, so production entries
+    turn up unprompted (#BDK-666).
+07. **Authenticate** — `AuthenticationService/Login` via grpcurl (plaintext h2c on port 80); the returned token becomes
+    the `session_id` cookie for the authenticated `UpgradeService` calls.
+08. **Check for upgrade** — expects a populated `packages` plan, an `APP_RESTART` disruption, and an upgrade id.
+09. **Run upgrade** — `StartUpgrade` with the upgrade id, consuming the progress stream live; the stream must pass
+    through the `REALIZING` and `ACTIVATING` package phases and end with a `finished` event.
+10. **Profile advanced** — re-reads the current generation, requiring it to have incremented, and requires every served
+    package that was installed before the upgrade to appear in the new generation's manifest at its served store path.
+    Served packages absent from the pre-upgrade manifest are index-only — they are not auto-installed and not expected
+    to appear.
 
 The upgrade server is terminated when the procedure ends, whether it succeeded or aborted.
 
@@ -118,6 +124,11 @@ warning), and `register-server` marks servers required by default, so while `dev
 enabled but the developer machine's server is down, *every* `CheckForUpgrade` on the device fails entirely — not just
 for `dev-upgrade` — until the entry is removed or disabled. Re-running the harness against a live server heals it
 (`register-server` replaces the entry by id).
+
+**The run also leaves every other server entry disabled.** Registration is `--exclusive`, which sets `"enabled": false`
+on each entry it did not register — the production `forge` entry included — and nothing re-enables them when the run
+ends. Re-enable them by hand once you are done, or the device goes on resolving upgrades against the developer machine
+alone, which by then is gone. The factory entry is never touched.
 
 To remove it, on the device:
 

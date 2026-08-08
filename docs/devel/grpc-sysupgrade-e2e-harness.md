@@ -81,8 +81,10 @@ the byte snapshots used to restore the device afterwards.
 
 **Prepare the device:** **Memory headroom**, then **Ensure anchor version** (rewrite `/etc/bos_version` below the image
 release so the offer appears), **Upload firmware** and **Trust image signing keys** (accept the dev-signed image),
-**Start / register the package servers**, and **Restrict package servers** (keep only the harness entry in the runtime
-registry — one unusable production server would fail the whole `CheckForUpgrade` package probe).
+**Start / register the package servers** (the registration is `--exclusive`, so it disables every other server entry and
+leaves the factory entry alone), and **Only the harness server resolves**, which asserts that exclusivity took rather
+than assuming it — an enabled production entry decides the upgrade whenever it publishes a higher version, and an
+unreachable `required` one fails the whole `CheckForUpgrade` package probe.
 
 **Serve and point bmc at the index:** assemble the serve tree (`firmware.tar` plus the `index.v1.json` naming the
 running and image versions, the image URL, its sha256, and size), start the recording index server, then **Point bmc at
