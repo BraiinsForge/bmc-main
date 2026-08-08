@@ -237,7 +237,20 @@ wasm-regression:
     - workspace-deps
   tags: [nix]
   script:
-    - nix build -L --keep-going .#checks.x86_64-linux.wasm-regression
+    # The report always builds and records the verdict as a passed/ or failed/
+    # tree, so the artifacts are in place before the gate below fails on them.
+    # --no-preserve=mode: store dirs are 0555, and a reused runner checkout
+    # cannot clean an artifact tree it lacks write permission on.
+    # Clear before building, not after: a reused checkout that fails the build
+    # would otherwise upload the previous run's tree as this run's evidence.
+    - rm -rf wasm-regression
+    - nix build -L --keep-going .#wasm-regression-report --out-link result
+    - cp -rL --no-preserve=mode result/. wasm-regression/
+    - nix build -L .#checks.x86_64-linux.wasm-regression --no-link
+  artifacts:
+    when: always
+    paths:
+      - wasm-regression
 
 ############################
 ######## Apps Stage ########
