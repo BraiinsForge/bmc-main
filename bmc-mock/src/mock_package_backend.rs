@@ -286,7 +286,9 @@ impl PackageBackend for MockPackageBackend {
     }
 
     fn store_free_bytes(&self) -> std::io::Result<u64> {
-        Ok(u64::MAX)
+        Ok(scenario::read(&self.scenario_path)
+            .store_free_bytes
+            .unwrap_or(u64::MAX))
     }
 
     async fn probe(&self, estimate: EstimateMode, install: &[String]) -> PackageProbe {
@@ -614,6 +616,59 @@ mod tests {
             backend.probe(EstimateMode::Estimate, &[]).await,
             PackageProbe::Failed(PackageProbeError::NoEnabledServers)
         ));
+    }
+
+    /// What the daemon's preflight demands of the store for the plan this
+    /// mock offers — the threshold a scenario has to undercut to drive
+    /// `NotEnoughSpace` without a device.
+    fn required_for_the_mock_plan() -> u64 {
+        bmc_nix::store::required_with_headroom(UNPACKED_TOTAL_BYTES)
+    }
+
+    #[test]
+    fn store_free_bytes_is_unconstrained_without_a_scenario_override() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(dir.path(), r#"{"packages": "available"}"#);
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
+
+        let free = backend.store_free_bytes().expect("BUG: measure free bytes");
+        assert!(
+            free >= required_for_the_mock_plan(),
+            "an unset override must not make the mock's own plan unaffordable"
+        );
+    }
+
+    #[test]
+    fn store_free_bytes_honours_a_scenario_short_of_the_plan() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let short = required_for_the_mock_plan() - 1;
+        let path = write_scenario(
+            dir.path(),
+            &format!(r#"{{"packages": "available", "store_free_bytes": {short}}}"#),
+        );
+        let backend = MockPackageBackend::new(path, UpgradePacing::Instant, notifier());
+
+        assert_eq!(
+            backend.store_free_bytes().expect("BUG: measure free bytes"),
+            short,
+            "the override is the only way to drive the daemon's space \
+             preflight, and so the FailedPrecondition it maps to, off-device"
+        );
+    }
+
+    #[test]
+    fn store_free_bytes_follows_the_scenario_file_at_runtime() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let path = write_scenario(dir.path(), r#"{"store_free_bytes": 0}"#);
+        let backend = MockPackageBackend::new(path.clone(), UpgradePacing::Instant, notifier());
+        assert_eq!(backend.store_free_bytes().expect("BUG: measure"), 0);
+
+        write_scenario(dir.path(), r#"{"packages": "available"}"#);
+        assert!(
+            backend.store_free_bytes().expect("BUG: measure") >= required_for_the_mock_plan(),
+            "the scenario is re-read per call, so a full store can be freed \
+             mid-session the way the rest of the scenario flips"
+        );
     }
 
     #[tokio::test]

@@ -75,6 +75,10 @@ pub struct UpgradeScenario {
     pub run: RunScenario,
     pub package_action: PackageUpgradeAction,
     pub shadowed_packages: Vec<String>,
+    /// Free store bytes the mock reports. `None` leaves the store
+    /// unconstrained: the mock filesystem has no capacity to measure,
+    /// so only an explicit value can drive the daemon's space preflight.
+    pub store_free_bytes: Option<u64>,
 }
 
 #[must_use]
