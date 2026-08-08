@@ -767,6 +767,10 @@ mod tests {
             unreachable!("BUG: profile gc never estimates realization")
         }
 
+        fn store_free_bytes(&self, _profile_dir: &std::path::Path) -> std::io::Result<u64> {
+            unreachable!("BUG: profile gc never measures free space")
+        }
+
         async fn realize_store_paths(
             &self,
             _packages: &[crate::types::ResolvedPackage],

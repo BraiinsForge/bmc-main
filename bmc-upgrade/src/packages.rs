@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bmc_nix::store::ESTIMATE_TIMEOUT;
 use serde::Deserialize;
 use tracing::{info, warn};
 
@@ -30,12 +31,6 @@ use tracing::{info, warn};
 /// server must time out instead of wedging every check/start in
 /// `UpgradeInProgress`.
 const INDEX_FETCH_TIMEOUT: Duration = Duration::from_secs(30);
-
-/// The dry-run size estimate spawns `nix-store`, which may consult
-/// substituters over the network — under the same run gate as the index
-/// fetch, so a hung probe must time out too. On timeout the preview just
-/// omits the download size.
-const ESTIMATE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug)]
 pub struct NixUpgradeConfig {
@@ -225,11 +220,18 @@ impl std::fmt::Display for PackagePlanFailure {
     }
 }
 
-/// A package upgrade application failure, carrying the display message of
-/// the underlying error.
+/// A package upgrade application failure,
+/// carrying the display message of the underlying error.
+///
+/// A full store is kept distinct so callers can blame the user's disk
+/// rather than the daemon.
 #[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub struct ApplyError(pub String);
+pub enum ApplyError {
+    #[error("{0}")]
+    NotEnoughSpace(String),
+    #[error("{0}")]
+    Failed(String),
+}
 
 pub type PackageGcOutcome = bmc_nix::gc::ProfileGcOutcome;
 pub type PackageGcRequest = bmc_nix::gc::GcRequest;
@@ -468,9 +470,6 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
 
         let realize_estimate = match estimate {
             EstimateMode::Estimate => {
-                // The timeout drops the estimate future, which kills the
-                // spawned `nix-store`: the command runner sets
-                // `kill_on_drop(true)`, so dropping the child reaps it.
                 match tokio::time::timeout(
                     ESTIMATE_TIMEOUT,
                     self.nix.estimate_realization(&plan.packages),
@@ -512,8 +511,8 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         // by design: a slow substituter on a large upgrade is legitimate and a
         // wall-clock cap would kill it. nix's own `stalled-download-timeout`
         // plus `kill_on_drop(true)` on the child bound a genuinely stuck fetch.
-        let installs =
-            resolve_installs(&merged, &install).map_err(|err| ApplyError(err.to_string()))?;
+        let installs = resolve_installs(&merged, &install)
+            .map_err(|err| ApplyError::Failed(err.to_string()))?;
         bmc_nix::upgrade::apply_profile_change(
             &self.nix,
             &self.config.profile_dir,
@@ -529,7 +528,14 @@ impl<N: bmc_nix::store::StoreOperations> PackageBackend for PackageUpgrader<N> {
         )
         .await
         .map(|_| ())
-        .map_err(|err| ApplyError(err.to_string()))
+        .map_err(|err| {
+            let message = err.to_string();
+            if matches!(err, bmc_nix::upgrade::InstallError::NotEnoughSpace { .. }) {
+                ApplyError::NotEnoughSpace(message)
+            } else {
+                ApplyError::Failed(message)
+            }
+        })
     }
 
     async fn list_installable_widgets(&self) -> Result<Vec<InstallableWidget>, PackageProbeError> {
@@ -811,6 +817,10 @@ mod tests {
             &self,
             _packages: &[bmc_nix::types::ResolvedPackage],
         ) -> Result<bmc_nix::store::RealizeEstimate, bmc_nix::store::StorePathError> {
+            unreachable!("BUG: GcStore only serves garbage collection")
+        }
+
+        fn store_free_bytes(&self, _profile_dir: &std::path::Path) -> std::io::Result<u64> {
             unreachable!("BUG: GcStore only serves garbage collection")
         }
 
@@ -1622,6 +1632,10 @@ mod tests {
                 }),
             };
             async move { result }
+        }
+
+        fn store_free_bytes(&self, _profile_dir: &std::path::Path) -> std::io::Result<u64> {
+            unreachable!("BUG: StubStore serves probe estimates only")
         }
 
         async fn realize_store_paths(

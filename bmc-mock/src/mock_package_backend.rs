@@ -370,7 +370,7 @@ impl PackageBackend for MockPackageBackend {
         }
 
         if scenario.run == RunScenario::ApplyFail {
-            return Err(ApplyError("mock: package apply failed".to_owned()));
+            return Err(ApplyError::Failed("mock: package apply failed".to_owned()));
         }
 
         for phase in [
@@ -393,11 +393,12 @@ impl PackageBackend for MockPackageBackend {
                 .into_iter()
                 .filter(|pkg| !install.contains(pkg))
                 .collect();
-            crate::widget_staging::stage_installed_widgets(bundle, staging, &shadowed)
-                .map_err(|err| ApplyError(format!("mock: stage installed widgets: {err}")))?;
+            crate::widget_staging::stage_installed_widgets(bundle, staging, &shadowed).map_err(
+                |err| ApplyError::Failed(format!("mock: stage installed widgets: {err}")),
+            )?;
         }
 
-        scenario::unshadow(&self.scenario_path, &install).map_err(ApplyError)?;
+        scenario::unshadow(&self.scenario_path, &install).map_err(ApplyError::Failed)?;
         if scenario.package_action == PackageUpgradeAction::Restart {
             // The notifier models bmc-openwrt receiving procd's SIGTERM from
             // the external service orchestrator once a packages-only

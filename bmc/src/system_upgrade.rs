@@ -400,15 +400,6 @@ async fn claim_upgrade(
     Ok((gate, upgrade))
 }
 
-/// Free space the preflight requires beyond the dry-run estimate: the
-/// estimate is parsed from nix's one-decimal summary, so its rounding error
-/// alone is proportional to the printed magnitude, and the store also grows
-/// bookkeeping (database, temp files) the estimate does not count.
-fn required_with_headroom(unpacked_bytes: u64) -> u64 {
-    #[expect(clippy::integer_division, reason = "a byte of headroom is immaterial")]
-    unpacked_bytes.saturating_add(unpacked_bytes / 10)
-}
-
 async fn automatic_gc_preflight(
     gate: tokio::sync::OwnedMutexGuard<()>,
     package_backend: &Arc<dyn PackageBackend>,
@@ -454,7 +445,7 @@ fn store_space_preflight(
         }
     };
 
-    let required_bytes = required_with_headroom(unpacked_bytes);
+    let required_bytes = bmc_nix::store::required_with_headroom(unpacked_bytes);
     if free_bytes < required_bytes {
         error!(
             free_bytes,
@@ -496,9 +487,15 @@ fn spawn_packages_run(
             }
             Err(err) => {
                 error!(error = %err, "Package upgrade failed");
-                _ = tx.send(UpgradeRunState::Failed(
-                    SystemUpgradeError::PackageUpgradeFailed(err.to_string()),
-                ));
+                let failure = match err {
+                    bmc_upgrade::packages::ApplyError::NotEnoughSpace(_) => {
+                        SystemUpgradeError::NotEnoughSpace
+                    }
+                    bmc_upgrade::packages::ApplyError::Failed(message) => {
+                        SystemUpgradeError::PackageUpgradeFailed(message)
+                    }
+                };
+                _ = tx.send(UpgradeRunState::Failed(failure));
             }
         }
     });
@@ -1384,8 +1381,15 @@ mod tests {
         }
     }
 
+    /// Which apply failure the backend reports.
+    #[derive(Clone, Copy, Debug)]
+    enum ApplyFailure {
+        Generic,
+        StoreFull,
+    }
+
     #[derive(Debug)]
-    struct FailingBackend;
+    struct FailingBackend(ApplyFailure);
 
     #[async_trait::async_trait]
     impl PackageBackend for FailingBackend {
@@ -1403,7 +1407,14 @@ mod tests {
             _install: Vec<String>,
             _progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
         ) -> Result<(), bmc_upgrade::packages::ApplyError> {
-            Err(bmc_upgrade::packages::ApplyError("boom".to_owned()))
+            Err(match self.0 {
+                ApplyFailure::Generic => {
+                    bmc_upgrade::packages::ApplyError::Failed("boom".to_owned())
+                }
+                ApplyFailure::StoreFull => bmc_upgrade::packages::ApplyError::NotEnoughSpace(
+                    "not enough space in the store".to_owned(),
+                ),
+            })
         }
 
         async fn list_installable_widgets(
@@ -1858,7 +1869,7 @@ mod tests {
 
         let run = spawn_packages_run(
             gate,
-            Arc::new(FailingBackend),
+            Arc::new(FailingBackend(ApplyFailure::Generic)),
             Arc::clone(&lifecycle) as Arc<dyn WidgetLifecycle>,
             empty_merged_index(),
             vec!["widget-flip-clock".to_owned()],
@@ -1880,6 +1891,32 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn a_full_store_found_during_apply_keeps_its_own_failure() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+
+        let run = spawn_packages_run(
+            gate,
+            Arc::new(FailingBackend(ApplyFailure::StoreFull)),
+            Arc::new(RecordingLifecycle::default()) as Arc<dyn WidgetLifecycle>,
+            empty_merged_index(),
+            Vec::new(),
+            None,
+            StateService::new(),
+        );
+
+        // A store the preflight could not size only turns out full here,
+        // and reporting that as PackageUpgradeFailed would blame the daemon
+        // for the user's own disk.
+        assert!(matches!(
+            drain(run).await,
+            Some(UpgradeRunState::Failed(SystemUpgradeError::NotEnoughSpace))
+        ));
     }
 
     #[test]

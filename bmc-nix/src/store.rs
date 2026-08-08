@@ -454,6 +454,25 @@ pub fn statvfs_free_bytes(path: &Path) -> std::io::Result<u64> {
     Ok(u64::from(stat.f_frsize) * u64::from(stat.f_bavail))
 }
 
+/// Deadline for a dry-run estimate.
+///
+/// The estimate spawns `nix-store` and may consult substituters,
+/// so an unreachable one must not stall a caller holding the lock.
+/// Dropping the future reaps the child,
+/// since the command runner sets `kill_on_drop(true)`.
+pub const ESTIMATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+
+/// Free space a preflight requires beyond the dry-run estimate.
+///
+/// The estimate is parsed from nix's one-decimal summary,
+/// so its rounding error alone scales with the printed magnitude,
+/// and the store also grows bookkeeping (database, temp files) the estimate omits.
+#[must_use]
+pub fn required_with_headroom(unpacked_bytes: u64) -> u64 {
+    #[expect(clippy::integer_division, reason = "a byte of headroom is immaterial")]
+    unpacked_bytes.saturating_add(unpacked_bytes / 10)
+}
+
 /// Estimate what realising the store paths of `packages` would download,
 /// via `nix-store --realise --dry-run`. Queries the configured
 /// substituters but fetches nothing.
@@ -539,6 +558,9 @@ pub trait StoreOperations: Send + Sync + std::fmt::Debug + 'static {
         packages: &[ResolvedPackage],
     ) -> impl std::future::Future<Output = Result<RealizeEstimate, StorePathError>> + Send;
 
+    /// Free bytes on the filesystem holding `profile_dir`.
+    fn store_free_bytes(&self, profile_dir: &Path) -> std::io::Result<u64>;
+
     /// See [`realize_store_paths`].
     fn realize_store_paths(
         &self,
@@ -569,6 +591,10 @@ impl StoreOperations for Nix {
         packages: &[ResolvedPackage],
     ) -> impl std::future::Future<Output = Result<RealizeEstimate, StorePathError>> + Send {
         estimate_realization(&TokioCommandRunner, packages)
+    }
+
+    fn store_free_bytes(&self, profile_dir: &Path) -> std::io::Result<u64> {
+        statvfs_free_bytes(profile_dir)
     }
 
     fn realize_store_paths(
@@ -1193,6 +1219,25 @@ mod tests {
 
     use super::*;
     use crate::types::InstalledBy;
+
+    #[test]
+    fn headroom_scales_with_the_estimate_and_cannot_wrap() {
+        assert_eq!(
+            required_with_headroom(1_000_000),
+            1_100_000,
+            "the headroom is a tenth of the estimate, matching the daemon"
+        );
+        assert_eq!(
+            required_with_headroom(0),
+            0,
+            "an empty plan must not manufacture a requirement it cannot meet"
+        );
+        assert_eq!(
+            required_with_headroom(u64::MAX),
+            u64::MAX,
+            "an implausible estimate must saturate, not wrap to a passing value"
+        );
+    }
 
     /// Exit outcome the mock reports for a `--realise` invocation.
     #[derive(Clone, Copy)]

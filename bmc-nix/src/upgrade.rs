@@ -49,6 +49,15 @@ pub enum InstallError {
     MalformedCurrent { target: PathBuf },
     #[error("failed to stage next-boot activation marker: {0}")]
     StageNext(#[source] std::io::Error),
+    #[error(
+        "not enough space in the store: {required_bytes} bytes required \
+         ({unpacked_bytes} unpacked plus headroom), {free_bytes} free"
+    )]
+    NotEnoughSpace {
+        free_bytes: u64,
+        required_bytes: u64,
+        unpacked_bytes: u64,
+    },
 }
 
 /// Activation behavior for a newly built profile generation.
@@ -305,6 +314,79 @@ fn should_skip_rebuild(explicit_base: bool, plan: &UpgradePlan) -> bool {
     !explicit_base && plan.added.is_empty() && plan.removed.is_empty() && plan.changed.is_empty()
 }
 
+/// Refuse a plan that certainly will not fit before anything is fetched.
+///
+/// Only a certain "will not fit" fails here.
+/// A missing estimate or an unmeasurable filesystem leaves nothing to compare,
+/// so the realise is left to fail on its own.
+///
+/// Sizing is deadlined because this runs under the profile lock:
+/// a substituter that accepts the connection and then goes quiet
+/// would otherwise hold the lock, and the caller's run gate, indefinitely.
+async fn ensure_store_space(
+    store: &impl store::StoreOperations,
+    profile_dir: &Path,
+    plan: &UpgradePlan,
+) -> Result<(), InstallError> {
+    let sizing = tokio::time::timeout(
+        store::ESTIMATE_TIMEOUT,
+        store.estimate_realization(&plan.packages),
+    )
+    .await;
+    let estimate = match sizing {
+        Ok(Ok(estimate)) => estimate,
+        // A path no substituter provides dooms the realise itself,
+        // so the plan is refused before the realise writes anything.
+        Ok(Err(error @ store::StorePathError::UnsubstitutablePaths { .. })) => {
+            return Err(error.into());
+        }
+        Ok(Err(
+            error @ (store::StorePathError::CheckValidityFailed(_)
+            | store::StorePathError::MissingStorePath { .. }
+            | store::StorePathError::RealiseFailed(_)
+            | store::StorePathError::RealiseExited { .. }
+            | store::StorePathError::EstimateFailed(_)
+            | store::StorePathError::EstimateExited { .. }
+            | store::StorePathError::EstimateSummaryUnparsed { .. }),
+        )) => {
+            tracing::warn!(%error, "cannot size the plan; leaving the realise to decide");
+            return Ok(());
+        }
+        Err(_elapsed) => {
+            tracing::warn!(
+                timeout_secs = store::ESTIMATE_TIMEOUT.as_secs(),
+                "sizing the plan timed out; leaving the realise to decide"
+            );
+            return Ok(());
+        }
+    };
+    let free_bytes = match store.store_free_bytes(profile_dir) {
+        Ok(free_bytes) => free_bytes,
+        Err(error) => {
+            tracing::warn!(%error, "cannot measure free store space; continuing");
+            return Ok(());
+        }
+    };
+
+    let required_bytes = store::required_with_headroom(estimate.unpacked_bytes);
+    if free_bytes < required_bytes {
+        // The reason has to outlive the console it was reported on,
+        // since the refusal is all that explains an upgrade that stopped.
+        tracing::error!(
+            free_bytes,
+            required_bytes,
+            unpacked_bytes = estimate.unpacked_bytes,
+            "not enough space in the store; refusing the plan"
+        );
+        return Err(InstallError::NotEnoughSpace {
+            free_bytes,
+            required_bytes,
+            unpacked_bytes: estimate.unpacked_bytes,
+        });
+    }
+    Ok(())
+}
+
 async fn realize_and_build_generation(
     store: &impl store::StoreOperations,
     profile_dir: &Path,
@@ -313,6 +395,8 @@ async fn realize_and_build_generation(
     hooks_dir: &str,
     hooks_override_path: Option<&Path>,
 ) -> Result<ProfileGeneration, InstallError> {
+    ensure_store_space(store, profile_dir, plan).await?;
+
     if let Some(p) = progress {
         p.on_phase(UpgradePhase::Realizing);
     }
@@ -567,13 +651,41 @@ mod tests {
         }
     }
 
+    /// What the fake's dry-run reports.
+    #[derive(Clone, Copy, Debug)]
+    enum FakeEstimate {
+        Succeeds,
+        /// A dead substituter or an unparsed summary: inconclusive, not doomed.
+        Transient,
+        /// A path no substituter provides, so the realise cannot succeed.
+        Unsubstitutable,
+        /// A substituter that accepted the connection and went quiet.
+        Hangs,
+    }
+
     /// A [`StoreOperations`] that never touches nix: it records which store
     /// operations the orchestration invoked and returns typed outcomes, so
     /// `apply_profile_change` can be driven end-to-end without a live store.
-    #[derive(Debug, Default)]
+    #[derive(Debug)]
     struct FakeStore {
         calls: std::sync::Arc<Mutex<Vec<&'static str>>>,
         realize_fails: bool,
+        estimate: FakeEstimate,
+        unpacked_bytes: u64,
+        /// `None` fails the probe, simulating an unmeasurable filesystem.
+        free_bytes: Option<u64>,
+    }
+
+    impl Default for FakeStore {
+        fn default() -> Self {
+            Self {
+                calls: std::sync::Arc::default(),
+                realize_fails: false,
+                estimate: FakeEstimate::Succeeds,
+                unpacked_bytes: 0,
+                free_bytes: Some(u64::MAX),
+            }
+        }
     }
 
     impl FakeStore {
@@ -594,7 +706,36 @@ mod tests {
             Output = Result<store::RealizeEstimate, store::StorePathError>,
         > + Send {
             self.record("estimate");
-            std::future::ready(Ok(store::RealizeEstimate::default()))
+            let outcome = self.estimate;
+            let unpacked_bytes = self.unpacked_bytes;
+            async move {
+                match outcome {
+                    FakeEstimate::Succeeds => Ok(store::RealizeEstimate {
+                        unpacked_bytes,
+                        ..store::RealizeEstimate::default()
+                    }),
+                    FakeEstimate::Transient => {
+                        use std::os::unix::process::ExitStatusExt as _;
+                        Err(store::StorePathError::EstimateExited {
+                            status: std::process::ExitStatus::from_raw(1 << 8),
+                            messages: vec!["fake estimate failure".to_owned()],
+                        })
+                    }
+                    FakeEstimate::Unsubstitutable => {
+                        Err(store::StorePathError::UnsubstitutablePaths {
+                            paths: vec![
+                                "/nix/store/00000000000000000000000000000000-pkg".to_owned(),
+                            ],
+                        })
+                    }
+                    FakeEstimate::Hangs => std::future::pending().await,
+                }
+            }
+        }
+
+        fn store_free_bytes(&self, _profile_dir: &Path) -> std::io::Result<u64> {
+            self.free_bytes
+                .ok_or_else(|| std::io::Error::other("scripted statvfs failure"))
         }
 
         fn realize_store_paths(
@@ -690,6 +831,194 @@ mod tests {
         );
         assert!(profile_dir.join("next").symlink_metadata().is_err());
         assert!(profile_dir.join("next.0.9").symlink_metadata().is_err());
+    }
+
+    /// One package plan against a profile, driven through `apply_profile_change`.
+    async fn run_with_store(store: &FakeStore) -> Result<InstallResult, InstallError> {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let profile_dir = tmp.path().join("bmc");
+        std::fs::create_dir_all(&profile_dir).expect("BUG: mkdir");
+
+        let package = ResolvedPackage {
+            name: "pkg".into(),
+            version: "1.0.0".into(),
+            store_path: "/nix/store/00000000000000000000000000000000-pkg".into(),
+            category: None,
+            description: None,
+            upgrade_strategy: None,
+            install_strategy: None,
+            installed_by: crate::types::InstalledBy::System,
+            installed_from: "local".into(),
+            pinned: None,
+            metadata: std::collections::BTreeMap::new(),
+        };
+
+        apply_profile_change(
+            store,
+            &profile_dir,
+            Some(Manifest::default()),
+            None,
+            &[package],
+            &[],
+            ActivationMode::Skip,
+            None,
+            None,
+            "hooks",
+            None,
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn staging_that_will_not_fit_fails_before_fetching_anything() {
+        // The point of the preflight: a firmware upgrade must not discover
+        // a full store part-way through writing to it.
+        let store = FakeStore {
+            unpacked_bytes: 1_000_000,
+            free_bytes: Some(500_000),
+            ..Default::default()
+        };
+        let result = run_with_store(&store).await;
+
+        assert!(
+            matches!(result, Err(InstallError::NotEnoughSpace { .. })),
+            "expected a space failure, got {result:?}"
+        );
+        assert_eq!(
+            store.calls(),
+            vec!["estimate"],
+            "nothing may be realised once the plan is known not to fit"
+        );
+    }
+
+    #[tokio::test]
+    async fn staging_space_requires_headroom_beyond_the_estimate() {
+        // Matches the daemon's rule, so the two paths cannot disagree
+        // about what fits: 1_000_000 unpacked needs 1_100_000 free.
+        let tight = FakeStore {
+            unpacked_bytes: 1_000_000,
+            free_bytes: Some(1_050_000),
+            ..Default::default()
+        };
+        assert!(
+            matches!(
+                run_with_store(&tight).await,
+                Err(InstallError::NotEnoughSpace { .. })
+            ),
+            "free space above the estimate but below the headroom must fail"
+        );
+
+        let ample = FakeStore {
+            unpacked_bytes: 1_000_000,
+            free_bytes: Some(1_100_000),
+            ..Default::default()
+        };
+        let result = run_with_store(&ample).await;
+        assert!(
+            !matches!(result, Err(InstallError::NotEnoughSpace { .. })),
+            "exactly the required headroom must pass the gate, got {result:?}"
+        );
+        assert!(
+            ample.calls().contains(&"realize"),
+            "the realise must run once the plan fits, got {:?}",
+            ample.calls()
+        );
+    }
+
+    #[tokio::test]
+    async fn unmeasurable_free_space_does_not_block_staging() {
+        // A probe failure leaves nothing to compare; the realise still fails
+        // loudly on its own if space really has run out. The u64::MAX estimate
+        // is what turns this red if an unmeasurable filesystem
+        // ever starts counting as an empty one.
+        let store = FakeStore {
+            unpacked_bytes: u64::MAX,
+            free_bytes: None,
+            ..Default::default()
+        };
+        let result = run_with_store(&store).await;
+        assert!(
+            !matches!(result, Err(InstallError::NotEnoughSpace { .. })),
+            "an unmeasurable filesystem must not veto the upgrade, got {result:?}"
+        );
+        assert!(
+            store.calls().contains(&"realize"),
+            "the realise must still run, got {:?}",
+            store.calls()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_inconclusive_estimate_does_not_block_staging() {
+        // A dead substituter or a summary nix reworded is transient,
+        // costing only the size preview. Vetoing here would strand
+        // every profile change, including the firmware staging this gate guards.
+        let store = FakeStore {
+            estimate: FakeEstimate::Transient,
+            ..Default::default()
+        };
+        let result = run_with_store(&store).await;
+        assert!(
+            !matches!(result, Err(InstallError::StorePaths(_))),
+            "the estimate failure must not surface as the change's own, got {result:?}"
+        );
+        assert!(
+            store.calls().contains(&"realize"),
+            "the realise must still run, got {:?}",
+            store.calls()
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_hung_estimate_gives_up_instead_of_holding_the_lock() {
+        // This runs under the profile lock and the caller's run gate,
+        // so a substituter that goes quiet would wedge every later upgrade
+        // until reboot. Sizing is optional; the lock is not.
+        let store = FakeStore {
+            estimate: FakeEstimate::Hangs,
+            ..Default::default()
+        };
+        let started = tokio::time::Instant::now();
+        let result = run_with_store(&store).await;
+        assert!(
+            started.elapsed() >= store::ESTIMATE_TIMEOUT,
+            "sizing must wait the shared estimate deadline before giving up"
+        );
+        assert!(
+            !matches!(result, Err(InstallError::NotEnoughSpace { .. })),
+            "a plan that could not be sized must not be read as too big, got {result:?}"
+        );
+        assert!(
+            store.calls().contains(&"realize"),
+            "the realise must still run once sizing gives up, got {:?}",
+            store.calls()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unrealizable_plan_is_refused_before_the_realise() {
+        // Unlike an inconclusive estimate, this one proves the plan cannot complete.
+        // Letting it through would spend the whole substituter timeout
+        // of a firmware upgrade only to abort with a vaguer error.
+        let store = FakeStore {
+            estimate: FakeEstimate::Unsubstitutable,
+            ..Default::default()
+        };
+        let result = run_with_store(&store).await;
+        assert!(
+            matches!(
+                result,
+                Err(InstallError::StorePaths(
+                    store::StorePathError::UnsubstitutablePaths { .. }
+                ))
+            ),
+            "a doomed plan must be refused with its own error, got {result:?}"
+        );
+        assert_eq!(
+            store.calls(),
+            vec!["estimate"],
+            "nothing may be realised once the plan is known to be unrealizable"
+        );
     }
 
     #[tokio::test]
@@ -866,8 +1195,8 @@ mod tests {
         assert!(result.gc.is_ok(), "gc must succeed, got {:?}", result.gc);
         assert_eq!(
             store.calls(),
-            vec!["realize", "verify", "gc"],
-            "the orchestration must realize, verify, then collect garbage in order"
+            vec!["estimate", "realize", "verify", "gc"],
+            "the space estimate must precede the realize, then verify, then collect garbage"
         );
     }
 
