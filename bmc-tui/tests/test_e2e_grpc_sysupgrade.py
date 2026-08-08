@@ -132,6 +132,7 @@ def harness(  # noqa: PLR0915
     monkeypatch.setattr(catalog, "validate_firmware_image", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(catalog, "require_nix_era", lambda _image: None)
     monkeypatch.setattr(catalog, "preflight_device", lambda _dev: None)
+    monkeypatch.setattr(catalog, "ensure_nix_cli", lambda *_args: events.append("ensure cli"))
     monkeypatch.setattr(catalog, "resolve_packages", lambda *_args: events.append("resolve"))
     monkeypatch.setattr(catalog, "build_packages", lambda *_args: events.append("build"))
 
@@ -177,7 +178,9 @@ def harness(  # noqa: PLR0915
         catalog, "register_upgrade_server", lambda *_args: events.append("register")
     )
     monkeypatch.setattr(
-        catalog, "restrict_package_servers", lambda *_args: events.append("restrict servers")
+        catalog,
+        "require_exclusive_package_server",
+        lambda *_args: events.append("restrict servers"),
     )
     monkeypatch.setattr(
         catalog, "stop_upgrade_server_group", lambda *_args: events.append("stop host")
@@ -392,7 +395,7 @@ def test_provisional_success_matching_reboot_succeeds(harness: SimpleNamespace) 
     assert "restore success" in harness.events
     assert "restore bos_version" not in harness.events
     assert not harness.snapshot.exists()
-    ordered = ("snapshot bos_version", "anchor", "upload")
+    ordered = ("ensure cli", "resolve", "snapshot bos_version", "anchor", "upload")
     indices = [harness.events.index(event) for event in ordered]
     assert indices == sorted(indices)
 

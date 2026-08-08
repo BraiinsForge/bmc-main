@@ -332,17 +332,21 @@ class Deployment:
     built: list[Built] = field(default_factory=list)
 
 
-@stage("bmc-nix-cli present")
+@stage("Compatible bmc-nix-cli present")
 def ensure_nix_cli(nix: Nix, dev: Device) -> None:
-    def present() -> bool:
-        return "ok" in dev.read(f"test -x {_NIX_CLI} && echo ok || true")
+    def compatible() -> bool:
+        cli = shlex.quote(_NIX_CLI)
+        return "ok" in dev.read(
+            f"test -x {cli} && {cli} register-server --help 2>/dev/null "
+            "| grep -q -- --exclusive && echo ok || true"
+        )
 
     def bootstrap() -> None:
         [built] = nix.build([nix.resolve(Attr(".#deck-packages.bmc-nix-cli"))])
         nix.copy([built.store_path], dev.copy_dest)
         dev.run(_register_cmd([built], cli=f"{built.store_path}/bin/bmc-nix-cli"))
 
-    ensure(present, bootstrap, "bmc-nix-cli bootstrap did not take")
+    ensure(compatible, bootstrap, "compatible bmc-nix-cli bootstrap did not take")
 
 
 # The flake sets `lfs = true`, so nix resolves LFS pointers from the remote
@@ -2608,6 +2612,7 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
     args = [
         _NIX_CLI,
         "register-server",
+        "--exclusive",
         "--id",
         _UPGRADE_SERVER_ID,
         "--index-url",
@@ -2624,12 +2629,15 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
     return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.index_url)}"
 
 
-@stage("Restrict package servers")
-def restrict_package_servers(dev: Device) -> str:
-    """Keep only the harness server in the runtime registry: registration
-    seeds a missing runtime servers.json from the shipped default, whose
-    production entries (e.g. forge) may not serve a package feed at all —
-    and one unusable server fails the whole CheckForUpgrade package probe."""
+@stage("Only the harness server resolves")
+def require_exclusive_package_server(dev: Device) -> str:
+    """Prove `register-server --exclusive` took, rather than assume it.
+
+    Any other enabled entry can still decide the upgrade,
+    because resolution ranks a candidate's version above its server's priority.
+    A `required` public entry the device cannot reach fails the whole probe.
+    Registration seeds the registry from the shipped default
+    when the runtime file is missing, so such entries appear unprompted."""
 
     raw = dev.read(f"cat {SERVERS_JSON}")
     try:
@@ -2638,19 +2646,16 @@ def restrict_package_servers(dev: Device) -> str:
         raise Abort(f"{SERVERS_JSON} is not valid JSON after registration: {e}") from None
     servers = config.get("servers")
     require(isinstance(servers, list), f"{SERVERS_JSON} has no servers list")
-    kept = [
-        entry
+    enabled = [
+        entry.get("id")
         for entry in servers
-        if isinstance(entry, dict) and entry.get("id") == _UPGRADE_SERVER_ID
+        if isinstance(entry, dict) and entry.get("enabled", True)
     ]
     require(
-        len(kept) == 1,
-        f"expected exactly one {_UPGRADE_SERVER_ID} entry in {SERVERS_JSON}, found {len(kept)}",
+        enabled == [_UPGRADE_SERVER_ID],
+        f"{SERVERS_JSON} must leave {_UPGRADE_SERVER_ID} the only enabled server, found {enabled}",
     )
-    config["servers"] = kept
-    payload = json.dumps(config, indent=2)
-    dev.run(f"printf '%s' {shlex.quote(payload)} > {SERVERS_JSON}")
-    return f"{console.lit(SERVERS_JSON)} → {console.lit(_UPGRADE_SERVER_ID)} only"
+    return f"{console.lit(_UPGRADE_SERVER_ID)} only"
 
 
 @stage("Authenticate")

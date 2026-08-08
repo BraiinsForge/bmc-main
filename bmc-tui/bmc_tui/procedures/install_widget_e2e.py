@@ -76,6 +76,7 @@ class InstallWidgetE2e:
         try:
             catalog.start_upgrade_server(dev, plan, cycle)
             catalog.register_upgrade_server(dev, cycle)
+            catalog.require_exclusive_package_server(dev)
             catalog.grpc_login(dev, cycle)
             catalog.remove_package(dev, cycle, self.widget)
             catalog.list_installable_widgets(dev, cycle, self.widget)

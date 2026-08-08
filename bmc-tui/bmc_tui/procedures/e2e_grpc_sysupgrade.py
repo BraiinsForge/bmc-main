@@ -424,6 +424,7 @@ class E2eGrpcSysupgrade:
         try:
             catalog.ensure_grpcurl()
             catalog.ensure_device_reachable(dev)
+            catalog.ensure_nix_cli(backend, dev)
             catalog.validate_firmware_image(image, device_target=dev.target)
             catalog.require_nix_era(image)
             catalog.preflight_versions(dev, image, cycle)
@@ -455,7 +456,7 @@ class E2eGrpcSysupgrade:
             catalog.remove_uploaded_image(mutation_dev, image, cycle)
             catalog.start_upgrade_server(mutation_dev, plan, packages)
             catalog.register_upgrade_server(mutation_dev, packages)
-            catalog.restrict_package_servers(mutation_dev)
+            catalog.require_exclusive_package_server(mutation_dev)
 
             cycle.host = default_serve_ip(mutation_dev.host)
             serve_root = snapshot_dir / "serve"

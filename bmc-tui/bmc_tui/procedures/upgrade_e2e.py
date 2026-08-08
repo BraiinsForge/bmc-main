@@ -83,6 +83,7 @@ class UpgradeE2e:
         try:
             catalog.start_upgrade_server(dev, plan, cycle)
             catalog.register_upgrade_server(dev, cycle)
+            catalog.require_exclusive_package_server(dev)
             catalog.grpc_login(dev, cycle)
             catalog.check_for_upgrade(dev, cycle)
             catalog.run_upgrade(dev, cycle)

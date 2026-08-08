@@ -1143,9 +1143,9 @@ def test_generation_number_absent_or_unexpected() -> None:
     assert catalog._generation_number("Profile unchanged.") is None
 
 
-def test_ensure_nix_cli_skips_when_present() -> None:
+def test_ensure_nix_cli_skips_when_exclusive_registration_is_supported() -> None:
     nix = _Nix()
-    dev = Device("h", backend=_Exec(_routes({"test -x": "ok"})))
+    dev = Device("h", backend=_Exec(_routes({"register-server --help": "ok"})))
     catalog.ensure_nix_cli(nix, dev)
     assert not nix.built  # no bootstrap needed
 
@@ -1157,7 +1157,7 @@ def test_ensure_nix_cli_bootstraps_when_absent() -> None:
         cmd = argv[-1]
         if "add-packages" in cmd:
             state["present"] = True
-        if "test -x" in cmd:
+        if "register-server --help" in cmd:
             return _cp(argv, "ok" if state["present"] else "")
         return _cp(argv)
 
@@ -1165,6 +1165,22 @@ def test_ensure_nix_cli_bootstraps_when_absent() -> None:
     catalog.ensure_nix_cli(nix, Device("h", backend=_Exec(respond)))
     assert [p.name for p in nix.built] == ["bmc-nix-cli"]
     assert nix.copied  # the closure was shipped
+
+
+def test_ensure_nix_cli_replaces_one_without_exclusive_registration() -> None:
+    state = {"compatible": False}
+
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        cmd = argv[-1]
+        if "add-packages" in cmd:
+            state["compatible"] = True
+        if "register-server --help" in cmd:
+            return _cp(argv, "ok" if state["compatible"] else "")
+        return _cp(argv)
+
+    nix = _Nix()
+    catalog.ensure_nix_cli(nix, Device("h", backend=_Exec(respond)))
+    assert [p.name for p in nix.built] == ["bmc-nix-cli"]
 
 
 # ── build_init_tarball metadata validation ────────────────────────────────────
@@ -1492,7 +1508,7 @@ def test_register_upgrade_server_registers_index_document_url() -> None:
     cmd = backend.runs[-1][-1]
     assert "--base-url" not in cmd
     assert (
-        f"register-server --id {catalog._UPGRADE_SERVER_ID} "
+        f"register-server --exclusive --id {catalog._UPGRADE_SERVER_ID} "
         "--index-url http://10.0.0.20:8081/nix-package-index.v1.json "
         "--index-public-key dev-upgrade:KEY "
         "--cache-url http://10.0.0.20:8080 "
@@ -1511,32 +1527,43 @@ def _servers_json(*server_ids: str) -> str:
     )
 
 
-def test_restrict_package_servers_keeps_only_harness_entry() -> None:
-    # Regression: register-server seeds a missing runtime servers.json from
-    # the shipped default, whose production entries (forge) may not serve a
-    # package feed — one unusable server fails the whole package probe.
-    raw = _servers_json("forge", catalog._UPGRADE_SERVER_ID)
+def _registry(*servers: dict[str, object]) -> str:
+    return json.dumps({"factory": {"id": "factory"}, "servers": list(servers)})
+
+
+def test_exclusive_package_server_accepts_a_disabled_public_entry() -> None:
+    raw = _registry(
+        {"id": "forge", "enabled": False},
+        {"id": catalog._UPGRADE_SERVER_ID, "enabled": True},
+    )
     backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": raw}))
-    catalog.restrict_package_servers(Device("h", backend=backend))
-    push = next(argv[-1] for argv in backend.runs if "printf" in argv[-1])
-    tokens = shlex.split(push)
-    assert tokens[0] == "printf"
-    assert tokens[-1] == catalog.SERVERS_JSON
-    written = json.loads(tokens[2])
-    assert written["factory"]["id"] == "factory"
-    assert [entry["id"] for entry in written["servers"]] == [catalog._UPGRADE_SERVER_ID]
+    catalog.require_exclusive_package_server(Device("h", backend=backend))
 
 
-def test_restrict_package_servers_aborts_without_harness_entry() -> None:
-    backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": _servers_json("forge")}))
-    with pytest.raises(Abort, match="expected exactly one dev-upgrade entry"):
-        catalog.restrict_package_servers(Device("h", backend=backend))
+def test_exclusive_package_server_rejects_a_live_public_entry() -> None:
+    # The point of --exclusive: resolution ranks a candidate's version above
+    # its server's priority, so an enabled forge publishing something newer
+    # decides the upgrade instead of the harness rig.
+    raw = _registry(
+        {"id": "forge", "enabled": True},
+        {"id": catalog._UPGRADE_SERVER_ID, "enabled": True},
+    )
+    backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": raw}))
+    with pytest.raises(Abort, match="only enabled"):
+        catalog.require_exclusive_package_server(Device("h", backend=backend))
 
 
-def test_restrict_package_servers_aborts_on_malformed_json() -> None:
+def test_exclusive_package_server_treats_a_missing_enabled_flag_as_live() -> None:
+    raw = _registry({"id": "forge"}, {"id": catalog._UPGRADE_SERVER_ID, "enabled": True})
+    backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": raw}))
+    with pytest.raises(Abort, match="only enabled"):
+        catalog.require_exclusive_package_server(Device("h", backend=backend))
+
+
+def test_exclusive_package_server_aborts_on_malformed_json() -> None:
     backend = _Exec(_routes({f"cat {catalog.SERVERS_JSON}": "not json"}))
     with pytest.raises(Abort, match="not valid JSON after registration"):
-        catalog.restrict_package_servers(Device("h", backend=backend))
+        catalog.require_exclusive_package_server(Device("h", backend=backend))
 
 
 def _manifest(**paths: str) -> str:
