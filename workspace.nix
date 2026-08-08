@@ -292,7 +292,7 @@ let
   # A widget is anything with `Cargo.toml` in a subdir of one of the roots;
   # per-entry flags drive which downstream consumer picks it up:
   #   - `isShippable` (has manifest.json): nix/packages.nix deck packages
-  #   - `hasCaptureConfig`: nix/checks.nix regression checks
+  #   - `hasCaptureConfig`: nix/wasm-regression.nix regression reports
   #
   # Regression-only crates (e.g. stress-test) have no manifest.
   wasmWidgetCatalog =

@@ -80,10 +80,13 @@
           inherit (workspace) wasmExamples wasmWidgetsBundle;
         };
         checks = import ./nix/checks.nix {
-          inherit pkgs ty-bin capture;
+          inherit pkgs ty-bin;
           deckPackages = workspace.legacyPackages.deck-packages;
-          inherit (workspace) wasmWidgets wasmWidgetCatalog;
           inherit (workspace.bmc) profiles;
+        };
+        wasmRegression = import ./nix/wasm-regression.nix {
+          inherit pkgs capture;
+          inherit (workspace) wasmWidgets wasmWidgetCatalog;
         };
         content-checks = nixlib.braiinschk.${localSystem} {
           mermaid = true;
@@ -257,8 +260,15 @@
         checks =
           # The armv7 cross outputs are CI-only: keep them out of
           # `nix flake check` (full armv7 workspace build + qemu test run).
-          builtins.removeAttrs self.packages.${localSystem} [ "workspace-deps-armv7" "nextest-armv7" ]
-          // workspace.checks // checks;
+          # The regression report always builds by design; `wasm-regression`
+          # is the gate over it.
+          builtins.removeAttrs self.packages.${localSystem} [
+            "workspace-deps-armv7"
+            "nextest-armv7"
+            "wasm-regression-report"
+          ]
+          // workspace.checks // checks
+          // { wasm-regression = wasmRegression.check; };
 
         bmc = workspace.bmc;
 
@@ -268,6 +278,7 @@
 
         packages = workspace.packages // {
           wasm-capture = capture.package;
+          wasm-regression-report = wasmRegression.report;
           wasm-examples = capture.wasmExamples;
           wasm-widgets = capture.wasmWidgetsBundle;
           verify-shared-crates = pkgs.writeShellApplication {
