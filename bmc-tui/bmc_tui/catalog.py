@@ -43,8 +43,8 @@ import tempfile
 import threading
 import time
 import urllib.request
-from collections.abc import Callable
-from contextlib import suppress
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, NewType, Protocol
@@ -56,7 +56,7 @@ from bmc_tui.bos_version import BosVersion, VersionName, parse_bos_version
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.image import Image
 from bmc_tui.nix import ABSENT_ATTR, Attr, Built, Nix, Pkg, StorePath
-from bmc_tui.stage import Abort, done_if, dry_run, ensure, require, stage
+from bmc_tui.stage import Abort, best_effort, done_if, dry_run, ensure, require, stage
 
 _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 # Probe and invoke the CLI at the profile we deploy into, not
@@ -1153,18 +1153,28 @@ def register_rig(dev: Device, run: E2eRun) -> str:
     )
 
 
-def _servers_json_b64(dev: Device) -> str | None:
-    """base64 of the runtime registry's bytes, or None when absent."""
-    out = dev.read(
-        f"if [ -e {SERVERS_JSON} ]; then echo PRESENT; base64 {SERVERS_JSON}; else echo ABSENT; fi"
-    )
+def _remote_file_b64(dev: Device, path: str) -> str | None:
+    """base64 of a remote file's bytes, or None when it is absent."""
+    out = dev.read(f"if [ -e {path} ]; then echo PRESENT; base64 {path}; else echo ABSENT; fi")
     marker, _, body = out.partition("\n")
     require(marker in ("PRESENT", "ABSENT"), f"unexpected capture output: {out[:80]!r}")
     return "".join(body.split()) if marker == "PRESENT" else None
 
 
+def _restore_file_b64(dev: Device, path: str, body: str | None) -> None:
+    if body is None:
+        dev.run(f"rm -f {path}")
+        return
+    dev.run(f"echo {shlex.quote(body)} | base64 -d > {path}.tmp && mv {path}.tmp {path} && sync")
+
+
+class RegistrySnapshot(Protocol):
+    servers_json_captured: bool
+    original_servers_json: str | None
+
+
 @stage("Capture server registry")
-def capture_server_registry(dev: Device, plan: Provisioning) -> str:
+def capture_server_registry(dev: Device, plan: RegistrySnapshot) -> str:
     """Record the pre-run runtime servers.json so the final restore puts
     the device back exactly as found. The run registers the ephemeral rig
     there; leaving that behind would send the next real init or upgrade
@@ -1172,28 +1182,52 @@ def capture_server_registry(dev: Device, plan: Provisioning) -> str:
     registration that sysupgrade deliberately preserves (it is a
     registered conffile)."""
 
-    plan.original_servers_json = _servers_json_b64(dev)
+    plan.original_servers_json = _remote_file_b64(dev, SERVERS_JSON)
     plan.servers_json_captured = True
     state = "captured" if plan.original_servers_json is not None else "absent before the run"
     return f"{console.lit(SERVERS_JSON)} {state}"
 
 
 @stage("Restore server registry")
-def restore_server_registry(dev: Device, plan: Provisioning) -> str:
+def restore_server_registry(dev: Device, plan: RegistrySnapshot) -> str:
     """Put the runtime servers.json back exactly as capture_server_registry
     found it: restore the original bytes, or remove the file if there was
     none — so the rig registration never outlives the run and a real
     pre-run registration survives it."""
 
     require(plan.servers_json_captured, "BUG: restore without a prior capture")
+    _restore_file_b64(dev, SERVERS_JSON, plan.original_servers_json)
     if plan.original_servers_json is None:
-        dev.run(f"rm -f {SERVERS_JSON}")
         return f"{console.lit(SERVERS_JSON)} removed (absent before the run)"
-    dev.run(
-        f"echo {shlex.quote(plan.original_servers_json)} | base64 -d "
-        f"> {SERVERS_JSON}.tmp && mv {SERVERS_JSON}.tmp {SERVERS_JSON} && sync"
-    )
     return f"{console.lit(SERVERS_JSON)} restored"
+
+
+class NixConfSnapshot(Protocol):
+    nix_conf_captured: bool
+    original_nix_conf: str | None
+
+
+@stage("Capture nix.conf")
+def capture_nix_conf(dev: Device, plan: NixConfSnapshot) -> str:
+    """Record nix.conf before registration writes to it.
+
+    `register-server` adds the rig's `extra-substituters` and, worse, an
+    `extra-trusted-public-keys` entry: a standing grant for a developer
+    machine's signing key on a device that will outlive the run."""
+
+    plan.original_nix_conf = _remote_file_b64(dev, _NIX_CONF)
+    plan.nix_conf_captured = True
+    state = "captured" if plan.original_nix_conf is not None else "absent before the run"
+    return f"{console.lit(_NIX_CONF)} {state}"
+
+
+@stage("Restore nix.conf")
+def restore_nix_conf(dev: Device, plan: NixConfSnapshot) -> str:
+    require(plan.nix_conf_captured, "BUG: restore without a prior capture")
+    _restore_file_b64(dev, _NIX_CONF, plan.original_nix_conf)
+    if plan.original_nix_conf is None:
+        return f"{console.lit(_NIX_CONF)} removed (absent before the run)"
+    return f"{console.lit(_NIX_CONF)} restored"
 
 
 @stage("Preflight rig from device")
@@ -2356,7 +2390,7 @@ def record_servers_json(dev: Device, state: FaultsState) -> str:
     registration just wrote them, so a post-flash byte match is the
     preservation proof. Existence alone proves nothing — a flash that
     replaced the file with different defaults would still 'exist'."""
-    state.servers_json_before = _servers_json_b64(dev)
+    state.servers_json_before = _remote_file_b64(dev, SERVERS_JSON)
     if dry_run.get():
         return "snapshot logged (dry-run: registration was only logged)"
     require(
@@ -2422,7 +2456,7 @@ def require_preservation_policy(  # noqa: PLR0913  the policy flag, the snapshot
     if failure is not None:
         raise Abort(failure)
     require(
-        _servers_json_b64(dev) == state.servers_json_before,
+        _remote_file_b64(dev, SERVERS_JSON) == state.servers_json_before,
         "servers.json exists but its contents changed across the flash",
     )
     return "nix.conf preserved, servers.json preserved byte-identical"
@@ -2456,6 +2490,10 @@ class UpgradeCycle:
     generation_before: int | None = None
     installed_before: set[str] | None = None  # package names in the pre-upgrade manifest
     widget_uid: str | None = None  # uid of the widget under install, for the registry check
+    servers_json_captured: bool = False  # capture_server_registry ran
+    original_servers_json: str | None = None  # base64 of the pre-run registry; None = absent
+    nix_conf_captured: bool = False  # capture_nix_conf ran
+    original_nix_conf: str | None = None  # base64 of the pre-run nix.conf; None = absent
 
     @property
     def index_url(self) -> str:
@@ -2532,6 +2570,53 @@ def start_upgrade_server(dev: Device, plan: Deployment, cycle: UpgradeCycle) -> 
     _await_upgrade_server(cycle)
     cycle.cache_public_key = (cycle.key_dir / "public").read_text().strip()
     return f"index {console.lit(cycle.index_url)}, cache {console.lit(cycle.cache_url)}"
+
+
+def _restore_each(*, failed: bool, actions: list[Callable[[], object]]) -> None:
+    """Attempt every restore even after one raises, then re-raise the first
+    failure: a device left half-restored is the state this exists to prevent.
+    Softens to a warning only while a primary failure is unwinding, which
+    the restore must not mask.
+    """
+    if failed:
+        for action in actions:
+            best_effort(action)
+        return
+    errors: list[Exception] = []
+    for action in actions:
+        try:
+            action()
+        except Exception as e:
+            errors.append(e)
+    if errors:
+        raise errors[0]
+
+
+@contextmanager
+def package_upgrade_session(dev: Device, cycle: UpgradeCycle) -> Iterator[None]:
+    """Hand back both files registration writes — the server registry and
+    nix.conf, which carries a standing trust grant for the rig's signing key.
+
+    A failed restore fails the run: leaving the rig registered, and every
+    production server disabled behind it, must not degrade to a log line.
+    """
+    failed = False
+    try:
+        yield
+    except BaseException:
+        failed = True
+        raise
+    finally:
+        try:
+            _restore_each(
+                failed=failed,
+                actions=[
+                    lambda: restore_server_registry(dev, cycle),
+                    lambda: restore_nix_conf(dev, cycle),
+                ],
+            )
+        finally:
+            stop_upgrade_server(cycle)
 
 
 def stop_upgrade_server(cycle: UpgradeCycle) -> None:
@@ -2627,6 +2712,51 @@ def register_upgrade_server(dev: Device, cycle: UpgradeCycle) -> str:
     inner = " ".join(shlex.quote(a) for a in args)
     dev.run(f"PATH=/run/current-profile/bin:$PATH {inner}")
     return f"{console.lit(_UPGRADE_SERVER_ID)} → {console.lit(cycle.index_url)}"
+
+
+@stage("Pre-run package config is the device's own")
+def require_unclaimed_package_registry(dev: Device) -> str:
+    """Refuse to capture package config an earlier run already claimed.
+
+    A run that dies before its restore leaves the rig registered and every
+    production server disabled, or can leave its trusted key in nix.conf
+    before the registry write. Capturing either as the pre-run state would
+    hand it back at the end as the device's baseline."""
+
+    raw = dev.read(f"if [ -e {SERVERS_JSON} ]; then cat {SERVERS_JSON}; fi")
+    servers: list[Any] = []
+    if raw.strip():
+        try:
+            config = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise Abort(f"{SERVERS_JSON} is not valid JSON before registration: {e}") from None
+        parsed_servers = config.get("servers")
+        require(isinstance(parsed_servers, list), f"{SERVERS_JSON} has no servers list")
+        servers = parsed_servers
+
+    nix_conf = dev.read(f"if [ -e {_NIX_CONF} ]; then cat {_NIX_CONF}; fi")
+    trusted_key_left = False
+    for line in nix_conf.splitlines():
+        setting, separator, value = line.partition("=")
+        if separator and setting.strip() == "extra-trusted-public-keys":
+            trusted_key_left = any(
+                token.partition(":")[0] == _UPGRADE_SERVER_ID for token in value.split()
+            )
+            if trusted_key_left:
+                break
+
+    registry_left = any(
+        isinstance(entry, dict) and entry.get("id") == _UPGRADE_SERVER_ID for entry in servers
+    )
+    require(
+        not registry_left and not trusted_key_left,
+        f"an earlier run did not restore the {_UPGRADE_SERVER_ID} package config: capturing "
+        f"it would make the rig the device's baseline. Delete its {SERVERS_JSON} entry, "
+        "re-enable the servers it disabled, and remove its URL token from extra-substituters "
+        "and its dev-upgrade:* token from extra-trusted-public-keys, then re-run.",
+    )
+    registry_state = "absent" if not raw.strip() else f"no {console.lit(_UPGRADE_SERVER_ID)} entry"
+    return f"{console.lit(SERVERS_JSON)} {registry_state}, no stale trust key"
 
 
 @stage("Only the harness server resolves")

@@ -25,7 +25,10 @@ installable by construction. This procedure creates the gap on purpose:
 remove a widget, then discover + install it back over gRPC. Self-cleaning
 — the reinstall returns the device to its baseline. Dev-only harness: the
 served build must contain the removed widget for the install to be offered.
-The server registration persists on the device after the run.
+The runtime servers.json and nix.conf are captured before registration and
+put back on the way out, success or failure, so neither the rig entry, nor
+the production servers it disables, nor its trusted signing key outlive the
+run.
 """
 
 from dataclasses import dataclass, field
@@ -73,7 +76,10 @@ class InstallWidgetE2e:
         catalog.resolve_packages(backend, plan)
         catalog.build_packages(backend, plan)
         catalog.snapshot_profile(dev, cycle)
-        try:
+        catalog.require_unclaimed_package_registry(dev)
+        catalog.capture_server_registry(dev, cycle)
+        catalog.capture_nix_conf(dev, cycle)
+        with catalog.package_upgrade_session(dev, cycle):
             catalog.start_upgrade_server(dev, plan, cycle)
             catalog.register_upgrade_server(dev, cycle)
             catalog.require_exclusive_package_server(dev)
@@ -83,8 +89,6 @@ class InstallWidgetE2e:
             catalog.check_for_install(dev, cycle, self.widget)
             catalog.run_upgrade(dev, cycle)
             catalog.verify_widget_installed(dev, cycle, self.widget)
-        finally:
-            catalog.stop_upgrade_server(cycle)
 
 
 @entrypoint

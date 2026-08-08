@@ -1516,19 +1516,80 @@ def test_register_upgrade_server_registers_index_document_url() -> None:
     ) in cmd
 
 
-def _servers_json(*server_ids: str) -> str:
-    return json.dumps(
+def _registry(*servers: dict[str, object]) -> str:
+    return json.dumps({"factory": {"id": "factory"}, "servers": list(servers)})
+
+
+def _unclaimed_probe(raw: str, *, nix_conf: str = "") -> _Respond:
+    return _routes(
         {
-            "factory": {"id": "factory", "base_url": "https://example.com/bmc"},
-            "servers": [
-                {"id": sid, "feed_url": f"https://{sid}.example.com"} for sid in server_ids
-            ],
+            f"if [ -e {catalog.SERVERS_JSON} ]; then cat {catalog.SERVERS_JSON}; fi": raw,
+            f"if [ -e {catalog._NIX_CONF} ]; then cat {catalog._NIX_CONF}; fi": nix_conf,
         }
     )
 
 
-def _registry(*servers: dict[str, object]) -> str:
-    return json.dumps({"factory": {"id": "factory"}, "servers": list(servers)})
+def test_unclaimed_registry_rejects_a_predecessors_leftover_entry() -> None:
+    # Capturing a predecessor's registry as "the pre-run state" hands it back
+    # as the device's baseline, and every later run does the same — the Deck
+    # would resolve no upgrade ever again.
+    raw = _registry(
+        {"id": "forge", "enabled": False},
+        {"id": catalog._UPGRADE_SERVER_ID, "enabled": True},
+    )
+    backend = _Exec(_unclaimed_probe(raw))
+    with pytest.raises(Abort, match="did not restore the dev-upgrade package config"):
+        catalog.require_unclaimed_package_registry(Device("h", backend=backend))
+
+
+def test_unclaimed_registry_rejects_a_leftover_entry_left_disabled() -> None:
+    # Disabled is just as poisonous: the restore would still hand back a
+    # registry whose production servers a predecessor turned off.
+    raw = _registry({"id": catalog._UPGRADE_SERVER_ID, "enabled": False})
+    backend = _Exec(_unclaimed_probe(raw))
+    with pytest.raises(Abort, match="did not restore the dev-upgrade package config"):
+        catalog.require_unclaimed_package_registry(Device("h", backend=backend))
+
+
+def test_unclaimed_registry_rejects_a_leftover_trust_key_without_an_entry() -> None:
+    nix_conf = "\n".join(
+        (
+            "extra-substituters = https://cache.example.com http://192.0.2.1:8080",
+            "extra-trusted-public-keys = cache.example.com:KEY dev-upgrade:STALE",
+        )
+    )
+    backend = _Exec(
+        _unclaimed_probe(_registry({"id": "forge", "enabled": True}), nix_conf=nix_conf)
+    )
+    with pytest.raises(Abort, match="extra-trusted-public-keys"):
+        catalog.require_unclaimed_package_registry(Device("h", backend=backend))
+
+
+def test_unclaimed_registry_accepts_unrelated_trusted_keys() -> None:
+    nix_conf = "extra-trusted-public-keys = cache.example.com:KEY"
+    backend = _Exec(
+        _unclaimed_probe(_registry({"id": "forge", "enabled": True}), nix_conf=nix_conf)
+    )
+    catalog.require_unclaimed_package_registry(Device("h", backend=backend))
+
+
+def test_unclaimed_registry_accepts_a_production_only_registry() -> None:
+    raw = _registry({"id": "forge", "enabled": True})
+    backend = _Exec(_unclaimed_probe(raw))
+    catalog.require_unclaimed_package_registry(Device("h", backend=backend))
+
+
+def test_unclaimed_registry_accepts_an_absent_registry() -> None:
+    # register-server seeds the runtime file from the shipped default, so a
+    # device that never registered anything is a legitimate starting point.
+    backend = _Exec(_unclaimed_probe(""))
+    catalog.require_unclaimed_package_registry(Device("h", backend=backend))
+
+
+def test_unclaimed_registry_aborts_on_malformed_json() -> None:
+    backend = _Exec(_unclaimed_probe("not json"))
+    with pytest.raises(Abort, match="not valid JSON before registration"):
+        catalog.require_unclaimed_package_registry(Device("h", backend=backend))
 
 
 def test_exclusive_package_server_accepts_a_disabled_public_entry() -> None:

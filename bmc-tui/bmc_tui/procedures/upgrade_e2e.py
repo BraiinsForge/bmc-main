@@ -25,7 +25,9 @@ Builds the requested packages locally, serves them from this machine via
 CheckForUpgrade → StartUpgrade over gRPC (grpcurl) and asserts the bmc
 profile advanced to a new generation. Dev-only harness: the served build
 must differ from the installed profile or no upgrade is offered. The
-server registration persists on the device after the run.
+runtime servers.json and nix.conf are captured before registration and put
+back on the way out, success or failure, so neither the rig entry, nor the
+production servers it disables, nor its trusted signing key outlive the run.
 """
 
 import os
@@ -80,7 +82,10 @@ class UpgradeE2e:
         catalog.resolve_packages(backend, plan)
         catalog.build_packages(backend, plan)
         catalog.snapshot_profile(dev, cycle)
-        try:
+        catalog.require_unclaimed_package_registry(dev)
+        catalog.capture_server_registry(dev, cycle)
+        catalog.capture_nix_conf(dev, cycle)
+        with catalog.package_upgrade_session(dev, cycle):
             catalog.start_upgrade_server(dev, plan, cycle)
             catalog.register_upgrade_server(dev, cycle)
             catalog.require_exclusive_package_server(dev)
@@ -88,8 +93,6 @@ class UpgradeE2e:
             catalog.check_for_upgrade(dev, cycle)
             catalog.run_upgrade(dev, cycle)
             catalog.verify_profile_advanced(dev, plan, cycle)
-        finally:
-            catalog.stop_upgrade_server(cycle)
 
 
 @entrypoint
