@@ -1,0 +1,4 @@
+[fixtures]
+large = "fixtures/large.jsonl.gz"
+medium = "fixtures/medium.jsonl.gz"
+full = "fixtures/full.jsonl.gz"
