@@ -104,6 +104,12 @@ When upgrading from the slint-monolith firmware to the manifest-driven widget sy
 automatically. Scenes and widget positions survive; widgets this firmware can't translate are dropped with a warning
 rather than kept as placeholders.
 
+### [Upgrade Progress](upgrade-progress.md)
+
+On-device feedback for firmware and package upgrades. A firmware upgrade takes over the screen with a modal full-screen
+progress overlay; a package-only upgrade shows a passive corner card while widgets keep running. Both end in a clear
+success or failure screen, including after the restart that finishes an upgrade.
+
 ### Audio & Alarms
 
 See [Clock Alarm](alarm.md) for the whole alarm feature — configuring alarms from the web app (time, repeat days, label,
@@ -123,7 +129,8 @@ management.
 ### [Software Upgrades](software-upgrades.md)
 
 Firmware and application updates share one over-the-air upgrade flow. Automatic updates check throughout the day, so a
-device can stay current even when it is normally offline at night, while per-device staggering spreads service load.
+device can stay current even when it is normally offline at night, while per-device staggering spreads service load. See
+[Upgrade Progress](upgrade-progress.md) for the on-device progress UI.
 
 ### Authentication & Accounts
 
