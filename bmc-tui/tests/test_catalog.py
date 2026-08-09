@@ -3184,9 +3184,9 @@ def _firmware_offer(image: Image, cycle: catalog.FirmwareCycle) -> dict[str, obj
     "response",
     [
         {"enabled": False},
-        # grpcurl omits proto3 default-valued fields: a disabled schedule
-        # arrives without any "enabled" key.
-        {"frequency": "AUTO_UPGRADE_FREQUENCY_WEEKLY"},
+        # grpcurl omits proto3 default-valued fields, so a disabled flag
+        # arrives as an empty object.
+        {},
     ],
 )
 def test_require_auto_upgrade_disabled_uses_stock_session(

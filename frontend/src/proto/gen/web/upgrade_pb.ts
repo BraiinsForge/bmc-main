@@ -16,7 +16,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_upgrade: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIjMKC1JlbGVhc2VJbmZvEg8KB3ZlcnNpb24YASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkiyQEKD0Zpcm13YXJlVXBncmFkZRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCRIXCg9maWxlX3NpemVfYnl0ZXMYBSABKAQSNwoRcHJldmlvdXNfcmVsZWFzZXMYBiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iuwEKDVBhY2thZ2VDaGFuZ2USDAoEbmFtZRgBIAEoCRIZCgx2ZXJzaW9uX2Zyb20YAiABKAlIAIgBARIXCgp2ZXJzaW9uX3RvGAMgASgJSAGIAQESFQoIY2F0ZWdvcnkYBCABKAlIAogBARIWCgljaGFuZ2Vsb2cYBSABKAlIA4gBAUIPCg1fdmVyc2lvbl9mcm9tQg0KC192ZXJzaW9uX3RvQgsKCV9jYXRlZ29yeUIMCgpfY2hhbmdlbG9nItcBChJQYWNrYWdlVXBncmFkZVBsYW4SLwoHY2hhbmdlcxgBIAMoCzIeLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlQ2hhbmdlEiAKE2Rvd25sb2FkX3NpemVfYnl0ZXMYAiABKARIAIgBARIYCgtibWNfdmVyc2lvbhgDIAEoCUgBiAEBEhoKDWJtY19jaGFuZ2Vsb2cYBCABKAlIAogBAUIWChRfZG93bmxvYWRfc2l6ZV9ieXRlc0IOCgxfYm1jX3ZlcnNpb25CEAoOX2JtY19jaGFuZ2Vsb2ciiAIKF0NoZWNrRm9yVXBncmFkZVJlc3BvbnNlEhcKCnVwZ3JhZGVfaWQYASABKAlIAIgBARI3CghmaXJtd2FyZRgCIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5GaXJtd2FyZVVwZ3JhZGVIAYgBARI6CghwYWNrYWdlcxgDIAEoCzIjLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlVXBncmFkZVBsYW5IAogBARI2CgpkaXNydXB0aW9uGAQgASgOMiIuYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVEaXNydXB0aW9uQg0KC191cGdyYWRlX2lkQgsKCV9maXJtd2FyZUILCglfcGFja2FnZXMiMgoWQ2hlY2tGb3JVcGdyYWRlUmVxdWVzdBIYChBpbnN0YWxsX3BhY2thZ2VzGAEgAygJIjEKEkluc3RhbGxhYmxlUHJldmlldxINCgVpbWFnZRgBIAEoCRIMCgRzaXplGAIgASgJIuUCChFJbnN0YWxsYWJsZVdpZGdldBIUCgxwYWNrYWdlX25hbWUYASABKAkSCwoDdWlkGAIgASgJEg8KB3ZlcnNpb24YAyABKAkSFAoMZGlzcGxheV9uYW1lGAQgASgJEhQKB3N1Ym5hbWUYBSABKAlIAIgBARIxCghjYXRlZ29yeRgGIAEoDjIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRDYXRlZ29yeRIYCgtkZXNjcmlwdGlvbhgHIAEoCUgBiAEBEhEKBGljb24YCCABKAlIAogBARI1CghwcmV2aWV3cxgJIAMoCzIjLmJyYWlpbnMuYm1jLndlYi5JbnN0YWxsYWJsZVByZXZpZXcSNAoPc3VwcG9ydGVkX3NpemVzGAogAygOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemVCCgoIX3N1Ym5hbWVCDgoMX2Rlc2NyaXB0aW9uQgcKBV9pY29uIlQKHUdldEluc3RhbGxhYmxlV2lkZ2V0c1Jlc3BvbnNlEjMKB3dpZGdldHMYASADKAsyIi5icmFpaW5zLmJtYy53ZWIuSW5zdGFsbGFibGVXaWRnZXQiKQoTU3RhcnRVcGdyYWRlUmVxdWVzdBISCgp1cGdyYWRlX2lkGAEgASgJIl0KF1VwZ3JhZGVEb3dubG9hZFByb2dyZXNzEhgKEGRvd25sb2FkZWRfYnl0ZXMYASABKAQSGAoLdG90YWxfYnl0ZXMYAiABKARIAIgBAUIOCgxfdG90YWxfYnl0ZXMihAIKD1VwZ3JhZGVQcm9ncmVzcxI8Cghkb3dubG9hZBgBIAEoCzIoLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlRG93bmxvYWRQcm9ncmVzc0gAEj0KDXBhY2thZ2VfcGhhc2UYAiABKA4yJC5icmFpaW5zLmJtYy53ZWIuUGFja2FnZVVwZ3JhZGVQaGFzZUgAEj8KDmZpcm13YXJlX3BoYXNlGAMgASgOMiUuYnJhaWlucy5ibWMud2ViLkZpcm13YXJlVXBncmFkZVBoYXNlSAASKgoIZmluaXNoZWQYBCABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIAEIHCgVldmVudCKxAQoVU2V0QXV0b1VwZ3JhZGVSZXF1ZXN0Eg8KB2VuYWJsZWQYASABKAgSPQoJZnJlcXVlbmN5GAIgASgOMiUuYnJhaWlucy5ibWMud2ViLkF1dG9VcGdyYWRlRnJlcXVlbmN5SACIAQESEQoEaG91chgDIAEoDUgBiAEBEhMKBm1pbnV0ZRgEIAEoDUgCiAEBQgwKCl9mcmVxdWVuY3lCBwoFX2hvdXJCCQoHX21pbnV0ZSKyAQoWR2V0QXV0b1VwZ3JhZGVSZXNwb25zZRIPCgdlbmFibGVkGAEgASgIEj0KCWZyZXF1ZW5jeRgCIAEoDjIlLmJyYWlpbnMuYm1jLndlYi5BdXRvVXBncmFkZUZyZXF1ZW5jeUgAiAEBEhEKBGhvdXIYAyABKA1IAYgBARITCgZtaW51dGUYBCABKA1IAogBAUIMCgpfZnJlcXVlbmN5QgcKBV9ob3VyQgkKB19taW51dGUqzQEKFEF1dG9VcGdyYWRlRnJlcXVlbmN5EiYKIkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfVU5TUEVDSUZJRUQQABIgChxBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0RBSUxZEAESIQodQVVUT19VUEdSQURFX0ZSRVFVRU5DWV9XRUVLTFkQAhIkCiBBVVRPX1VQR1JBREVfRlJFUVVFTkNZX0JJX1dFRUtMWRADEiIKHkFVVE9fVVBHUkFERV9GUkVRVUVOQ1lfTU9OVEhMWRAEKnoKEVVwZ3JhZGVEaXNydXB0aW9uEiIKHlVQR1JBREVfRElTUlVQVElPTl9VTlNQRUNJRklFRBAAEiIKHlVQR1JBREVfRElTUlVQVElPTl9BUFBfUkVTVEFSVBABEh0KGVVQR1JBREVfRElTUlVQVElPTl9SRUJPT1QQAirQAQoTUGFja2FnZVVwZ3JhZGVQaGFzZRIlCiFQQUNLQUdFX1VQR1JBREVfUEhBU0VfVU5TUEVDSUZJRUQQABIjCh9QQUNLQUdFX1VQR1JBREVfUEhBU0VfUkVBTElaSU5HEAESIwofUEFDS0FHRV9VUEdSQURFX1BIQVNFX1ZFUklGWUlORxACEiIKHlBBQ0tBR0VfVVBHUkFERV9QSEFTRV9CVUlMRElORxADEiQKIFBBQ0tBR0VfVVBHUkFERV9QSEFTRV9BQ1RJVkFUSU5HEAQqsQEKFEZpcm13YXJlVXBncmFkZVBoYXNlEiYKIkZJUk1XQVJFX1VQR1JBREVfUEhBU0VfVU5TUEVDSUZJRUQQABImCiJGSVJNV0FSRV9VUEdSQURFX1BIQVNFX0RPV05MT0FESU5HEAESJAogRklSTVdBUkVfVVBHUkFERV9QSEFTRV9WRVJJRllJTkcQAhIjCh9GSVJNV0FSRV9VUEdSQURFX1BIQVNFX0FQUExZSU5HEAMy1gMKDlVwZ3JhZGVTZXJ2aWNlEmQKD0NoZWNrRm9yVXBncmFkZRInLmJyYWlpbnMuYm1jLndlYi5DaGVja0ZvclVwZ3JhZGVSZXF1ZXN0GiguYnJhaWlucy5ibWMud2ViLkNoZWNrRm9yVXBncmFkZVJlc3BvbnNlEl8KFUdldEluc3RhbGxhYmxlV2lkZ2V0cxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRouLmJyYWlpbnMuYm1jLndlYi5HZXRJbnN0YWxsYWJsZVdpZGdldHNSZXNwb25zZRJYCgxTdGFydFVwZ3JhZGUSJC5icmFpaW5zLmJtYy53ZWIuU3RhcnRVcGdyYWRlUmVxdWVzdBogLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlUHJvZ3Jlc3MwARJQCg5TZXRBdXRvVXBncmFkZRImLmJyYWlpbnMuYm1jLndlYi5TZXRBdXRvVXBncmFkZVJlcXVlc3QaFi5nb29nbGUucHJvdG9idWYuRW1wdHkSUQoOR2V0QXV0b1VwZ3JhZGUSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJy5icmFpaW5zLmJtYy53ZWIuR2V0QXV0b1VwZ3JhZGVSZXNwb25zZWIGcHJvdG8z',
+        'ChF3ZWIvdXBncmFkZS5wcm90bxIPYnJhaWlucy5ibWMud2ViIjMKC1JlbGVhc2VJbmZvEg8KB3ZlcnNpb24YASABKAkSEwoLZGVzY3JpcHRpb24YAiABKAkiyQEKD0Zpcm13YXJlVXBncmFkZRIMCgRoYXNoGAEgASgJEg8KB3ZlcnNpb24YAiABKAkSMAoMcmVsZWFzZV9kYXRlGAMgASgLMhouZ29vZ2xlLnByb3RvYnVmLlRpbWVzdGFtcBITCgtkZXNjcmlwdGlvbhgEIAEoCRIXCg9maWxlX3NpemVfYnl0ZXMYBSABKAQSNwoRcHJldmlvdXNfcmVsZWFzZXMYBiADKAsyHC5icmFpaW5zLmJtYy53ZWIuUmVsZWFzZUluZm8iuwEKDVBhY2thZ2VDaGFuZ2USDAoEbmFtZRgBIAEoCRIZCgx2ZXJzaW9uX2Zyb20YAiABKAlIAIgBARIXCgp2ZXJzaW9uX3RvGAMgASgJSAGIAQESFQoIY2F0ZWdvcnkYBCABKAlIAogBARIWCgljaGFuZ2Vsb2cYBSABKAlIA4gBAUIPCg1fdmVyc2lvbl9mcm9tQg0KC192ZXJzaW9uX3RvQgsKCV9jYXRlZ29yeUIMCgpfY2hhbmdlbG9nItcBChJQYWNrYWdlVXBncmFkZVBsYW4SLwoHY2hhbmdlcxgBIAMoCzIeLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlQ2hhbmdlEiAKE2Rvd25sb2FkX3NpemVfYnl0ZXMYAiABKARIAIgBARIYCgtibWNfdmVyc2lvbhgDIAEoCUgBiAEBEhoKDWJtY19jaGFuZ2Vsb2cYBCABKAlIAogBAUIWChRfZG93bmxvYWRfc2l6ZV9ieXRlc0IOCgxfYm1jX3ZlcnNpb25CEAoOX2JtY19jaGFuZ2Vsb2ciiAIKF0NoZWNrRm9yVXBncmFkZVJlc3BvbnNlEhcKCnVwZ3JhZGVfaWQYASABKAlIAIgBARI3CghmaXJtd2FyZRgCIAEoCzIgLmJyYWlpbnMuYm1jLndlYi5GaXJtd2FyZVVwZ3JhZGVIAYgBARI6CghwYWNrYWdlcxgDIAEoCzIjLmJyYWlpbnMuYm1jLndlYi5QYWNrYWdlVXBncmFkZVBsYW5IAogBARI2CgpkaXNydXB0aW9uGAQgASgOMiIuYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVEaXNydXB0aW9uQg0KC191cGdyYWRlX2lkQgsKCV9maXJtd2FyZUILCglfcGFja2FnZXMiMgoWQ2hlY2tGb3JVcGdyYWRlUmVxdWVzdBIYChBpbnN0YWxsX3BhY2thZ2VzGAEgAygJIjEKEkluc3RhbGxhYmxlUHJldmlldxINCgVpbWFnZRgBIAEoCRIMCgRzaXplGAIgASgJIuUCChFJbnN0YWxsYWJsZVdpZGdldBIUCgxwYWNrYWdlX25hbWUYASABKAkSCwoDdWlkGAIgASgJEg8KB3ZlcnNpb24YAyABKAkSFAoMZGlzcGxheV9uYW1lGAQgASgJEhQKB3N1Ym5hbWUYBSABKAlIAIgBARIxCghjYXRlZ29yeRgGIAEoDjIfLmJyYWlpbnMuYm1jLndlYi5XaWRnZXRDYXRlZ29yeRIYCgtkZXNjcmlwdGlvbhgHIAEoCUgBiAEBEhEKBGljb24YCCABKAlIAogBARI1CghwcmV2aWV3cxgJIAMoCzIjLmJyYWlpbnMuYm1jLndlYi5JbnN0YWxsYWJsZVByZXZpZXcSNAoPc3VwcG9ydGVkX3NpemVzGAogAygOMhsuYnJhaWlucy5ibWMud2ViLldpZGdldFNpemVCCgoIX3N1Ym5hbWVCDgoMX2Rlc2NyaXB0aW9uQgcKBV9pY29uIlQKHUdldEluc3RhbGxhYmxlV2lkZ2V0c1Jlc3BvbnNlEjMKB3dpZGdldHMYASADKAsyIi5icmFpaW5zLmJtYy53ZWIuSW5zdGFsbGFibGVXaWRnZXQiKQoTU3RhcnRVcGdyYWRlUmVxdWVzdBISCgp1cGdyYWRlX2lkGAEgASgJIl0KF1VwZ3JhZGVEb3dubG9hZFByb2dyZXNzEhgKEGRvd25sb2FkZWRfYnl0ZXMYASABKAQSGAoLdG90YWxfYnl0ZXMYAiABKARIAIgBAUIOCgxfdG90YWxfYnl0ZXMihAIKD1VwZ3JhZGVQcm9ncmVzcxI8Cghkb3dubG9hZBgBIAEoCzIoLmJyYWlpbnMuYm1jLndlYi5VcGdyYWRlRG93bmxvYWRQcm9ncmVzc0gAEj0KDXBhY2thZ2VfcGhhc2UYAiABKA4yJC5icmFpaW5zLmJtYy53ZWIuUGFja2FnZVVwZ3JhZGVQaGFzZUgAEj8KDmZpcm13YXJlX3BoYXNlGAMgASgOMiUuYnJhaWlucy5ibWMud2ViLkZpcm13YXJlVXBncmFkZVBoYXNlSAASKgoIZmluaXNoZWQYBCABKAsyFi5nb29nbGUucHJvdG9idWYuRW1wdHlIAEIHCgVldmVudCIoChVTZXRBdXRvVXBncmFkZVJlcXVlc3QSDwoHZW5hYmxlZBgBIAEoCCIpChZHZXRBdXRvVXBncmFkZVJlc3BvbnNlEg8KB2VuYWJsZWQYASABKAgqegoRVXBncmFkZURpc3J1cHRpb24SIgoeVVBHUkFERV9ESVNSVVBUSU9OX1VOU1BFQ0lGSUVEEAASIgoeVVBHUkFERV9ESVNSVVBUSU9OX0FQUF9SRVNUQVJUEAESHQoZVVBHUkFERV9ESVNSVVBUSU9OX1JFQk9PVBACKtABChNQYWNrYWdlVXBncmFkZVBoYXNlEiUKIVBBQ0tBR0VfVVBHUkFERV9QSEFTRV9VTlNQRUNJRklFRBAAEiMKH1BBQ0tBR0VfVVBHUkFERV9QSEFTRV9SRUFMSVpJTkcQARIjCh9QQUNLQUdFX1VQR1JBREVfUEhBU0VfVkVSSUZZSU5HEAISIgoeUEFDS0FHRV9VUEdSQURFX1BIQVNFX0JVSUxESU5HEAMSJAogUEFDS0FHRV9VUEdSQURFX1BIQVNFX0FDVElWQVRJTkcQBCqxAQoURmlybXdhcmVVcGdyYWRlUGhhc2USJgoiRklSTVdBUkVfVVBHUkFERV9QSEFTRV9VTlNQRUNJRklFRBAAEiYKIkZJUk1XQVJFX1VQR1JBREVfUEhBU0VfRE9XTkxPQURJTkcQARIkCiBGSVJNV0FSRV9VUEdSQURFX1BIQVNFX1ZFUklGWUlORxACEiMKH0ZJUk1XQVJFX1VQR1JBREVfUEhBU0VfQVBQTFlJTkcQAzLWAwoOVXBncmFkZVNlcnZpY2USZAoPQ2hlY2tGb3JVcGdyYWRlEicuYnJhaWlucy5ibWMud2ViLkNoZWNrRm9yVXBncmFkZVJlcXVlc3QaKC5icmFpaW5zLmJtYy53ZWIuQ2hlY2tGb3JVcGdyYWRlUmVzcG9uc2USXwoVR2V0SW5zdGFsbGFibGVXaWRnZXRzEhYuZ29vZ2xlLnByb3RvYnVmLkVtcHR5Gi4uYnJhaWlucy5ibWMud2ViLkdldEluc3RhbGxhYmxlV2lkZ2V0c1Jlc3BvbnNlElgKDFN0YXJ0VXBncmFkZRIkLmJyYWlpbnMuYm1jLndlYi5TdGFydFVwZ3JhZGVSZXF1ZXN0GiAuYnJhaWlucy5ibWMud2ViLlVwZ3JhZGVQcm9ncmVzczABElAKDlNldEF1dG9VcGdyYWRlEiYuYnJhaWlucy5ibWMud2ViLlNldEF1dG9VcGdyYWRlUmVxdWVzdBoWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRJRCg5HZXRBdXRvVXBncmFkZRIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRonLmJyYWlpbnMuYm1jLndlYi5HZXRBdXRvVXBncmFkZVJlc3BvbnNlYgZwcm90bzM',
         [file_google_protobuf_empty, file_google_protobuf_timestamp, file_web_scene_management],
     );
 
@@ -405,21 +405,6 @@ export type SetAutoUpgradeRequest = Message<'braiins.bmc.web.SetAutoUpgradeReque
      * @generated from field: bool enabled = 1;
      */
     enabled: boolean;
-
-    /**
-     * @generated from field: optional braiins.bmc.web.AutoUpgradeFrequency frequency = 2;
-     */
-    frequency?: AutoUpgradeFrequency | undefined;
-
-    /**
-     * @generated from field: optional uint32 hour = 3;
-     */
-    hour?: number | undefined;
-
-    /**
-     * @generated from field: optional uint32 minute = 4;
-     */
-    minute?: number | undefined;
 };
 
 /**
@@ -438,21 +423,6 @@ export type GetAutoUpgradeResponse = Message<'braiins.bmc.web.GetAutoUpgradeResp
      * @generated from field: bool enabled = 1;
      */
     enabled: boolean;
-
-    /**
-     * @generated from field: optional braiins.bmc.web.AutoUpgradeFrequency frequency = 2;
-     */
-    frequency?: AutoUpgradeFrequency | undefined;
-
-    /**
-     * @generated from field: optional uint32 hour = 3;
-     */
-    hour?: number | undefined;
-
-    /**
-     * @generated from field: optional uint32 minute = 4;
-     */
-    minute?: number | undefined;
 };
 
 /**
@@ -462,41 +432,6 @@ export type GetAutoUpgradeResponse = Message<'braiins.bmc.web.GetAutoUpgradeResp
 export const GetAutoUpgradeResponseSchema: GenMessage<GetAutoUpgradeResponse> =
     /*@__PURE__*/
     messageDesc(file_web_upgrade, 13);
-
-/**
- * @generated from enum braiins.bmc.web.AutoUpgradeFrequency
- */
-export enum AutoUpgradeFrequency {
-    /**
-     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_UNSPECIFIED = 0;
-     */
-    UNSPECIFIED = 0,
-
-    /**
-     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_DAILY = 1;
-     */
-    DAILY = 1,
-
-    /**
-     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_WEEKLY = 2;
-     */
-    WEEKLY = 2,
-
-    /**
-     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_BI_WEEKLY = 3;
-     */
-    BI_WEEKLY = 3,
-
-    /**
-     * @generated from enum value: AUTO_UPGRADE_FREQUENCY_MONTHLY = 4;
-     */
-    MONTHLY = 4,
-}
-
-/**
- * Describes the enum braiins.bmc.web.AutoUpgradeFrequency.
- */
-export const AutoUpgradeFrequencySchema: GenEnum<AutoUpgradeFrequency> = /*@__PURE__*/ enumDesc(file_web_upgrade, 0);
 
 /**
  * @generated from enum braiins.bmc.web.UpgradeDisruption
@@ -521,7 +456,7 @@ export enum UpgradeDisruption {
 /**
  * Describes the enum braiins.bmc.web.UpgradeDisruption.
  */
-export const UpgradeDisruptionSchema: GenEnum<UpgradeDisruption> = /*@__PURE__*/ enumDesc(file_web_upgrade, 1);
+export const UpgradeDisruptionSchema: GenEnum<UpgradeDisruption> = /*@__PURE__*/ enumDesc(file_web_upgrade, 0);
 
 /**
  * @generated from enum braiins.bmc.web.PackageUpgradePhase
@@ -558,7 +493,7 @@ export enum PackageUpgradePhase {
 /**
  * Describes the enum braiins.bmc.web.PackageUpgradePhase.
  */
-export const PackageUpgradePhaseSchema: GenEnum<PackageUpgradePhase> = /*@__PURE__*/ enumDesc(file_web_upgrade, 2);
+export const PackageUpgradePhaseSchema: GenEnum<PackageUpgradePhase> = /*@__PURE__*/ enumDesc(file_web_upgrade, 1);
 
 /**
  * @generated from enum braiins.bmc.web.FirmwareUpgradePhase
@@ -588,7 +523,7 @@ export enum FirmwareUpgradePhase {
 /**
  * Describes the enum braiins.bmc.web.FirmwareUpgradePhase.
  */
-export const FirmwareUpgradePhaseSchema: GenEnum<FirmwareUpgradePhase> = /*@__PURE__*/ enumDesc(file_web_upgrade, 3);
+export const FirmwareUpgradePhaseSchema: GenEnum<FirmwareUpgradePhase> = /*@__PURE__*/ enumDesc(file_web_upgrade, 2);
 
 /**
  * @generated from service braiins.bmc.web.UpgradeService

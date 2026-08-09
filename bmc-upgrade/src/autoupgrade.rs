@@ -18,7 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_grpc::web::AutoUpgradeFrequency as GrpcAutoUpgradeFrequency;
 use bmc_scheduler::{Cron, jobs::BoxedTask};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
@@ -29,8 +28,6 @@ use tokio::sync::Notify;
 use tokio::time::{Duration, Instant};
 use tracing::debug;
 
-const CRON_BIWEEKLY_DAYS: &str = "1,15";
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum UpgradeStatus {
     NotStarted,
@@ -38,84 +35,6 @@ pub enum UpgradeStatus {
     InProgress,
     Success,
     Failed,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Default)]
-pub enum AutoUpgradeFrequency {
-    Daily = 1,
-    #[default]
-    Weekly = 2,
-    BiWeekly = 3,
-    Monthly = 4,
-}
-
-impl From<GrpcAutoUpgradeFrequency> for AutoUpgradeFrequency {
-    fn from(value: GrpcAutoUpgradeFrequency) -> Self {
-        match value {
-            GrpcAutoUpgradeFrequency::Daily => Self::Daily,
-            GrpcAutoUpgradeFrequency::Weekly => Self::Weekly,
-            GrpcAutoUpgradeFrequency::BiWeekly => Self::BiWeekly,
-            GrpcAutoUpgradeFrequency::Monthly => Self::Monthly,
-            GrpcAutoUpgradeFrequency::Unspecified => Self::default(),
-        }
-    }
-}
-
-impl From<AutoUpgradeFrequency> for GrpcAutoUpgradeFrequency {
-    fn from(value: AutoUpgradeFrequency) -> Self {
-        match value {
-            AutoUpgradeFrequency::Daily => Self::Daily,
-            AutoUpgradeFrequency::Weekly => Self::Weekly,
-            AutoUpgradeFrequency::BiWeekly => Self::BiWeekly,
-            AutoUpgradeFrequency::Monthly => Self::Monthly,
-        }
-    }
-}
-
-impl From<AutoUpgradeFrequency> for i32 {
-    fn from(value: AutoUpgradeFrequency) -> Self {
-        let web_freq: GrpcAutoUpgradeFrequency = value.into();
-        web_freq as i32
-    }
-}
-
-impl From<&Cron> for AutoUpgradeFrequency {
-    fn from(value: &Cron) -> Self {
-        let pattern = value.pattern.as_str();
-
-        // Check for biweekly pattern (contains "1,15")
-        if pattern.contains(CRON_BIWEEKLY_DAYS) {
-            return Self::BiWeekly;
-        }
-
-        // Split pattern to analyze day/month/weekday parts
-        let parts: Vec<&str> = pattern.split_whitespace().collect();
-        if parts.len() < 6 {
-            return Self::default();
-        }
-
-        let day = parts[3];
-        let month = parts[4];
-        let weekday = parts[5];
-
-        // Daily: "* * *" for day/month/weekday
-        if day == "*" && month == "*" && weekday == "*" {
-            return Self::Daily;
-        }
-
-        // Weekly: specific weekday (0-7), wildcard day and month
-        if day == "*" && month == "*" && weekday != "*" {
-            return Self::Weekly;
-        }
-
-        // Monthly: specific day, wildcard month and weekday
-        if day != "*" && month == "*" && weekday == "*" {
-            return Self::Monthly;
-        }
-
-        // Default fallback
-        Self::default()
-    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]

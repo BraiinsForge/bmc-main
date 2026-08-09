@@ -27,14 +27,6 @@ import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 import "web/scene_management.proto";
 
-enum AutoUpgradeFrequency {
-  AUTO_UPGRADE_FREQUENCY_UNSPECIFIED = 0;
-  AUTO_UPGRADE_FREQUENCY_DAILY = 1;
-  AUTO_UPGRADE_FREQUENCY_WEEKLY = 2;
-  AUTO_UPGRADE_FREQUENCY_BI_WEEKLY = 3;
-  AUTO_UPGRADE_FREQUENCY_MONTHLY = 4;
-}
-
 message ReleaseInfo {
   string version = 1;
   string description = 2;
@@ -147,16 +139,10 @@ message UpgradeProgress {
 
 message SetAutoUpgradeRequest {
   bool enabled = 1;
-  optional AutoUpgradeFrequency frequency = 2;
-  optional uint32 hour = 3;
-  optional uint32 minute = 4;
 }
 
 message GetAutoUpgradeResponse {
   bool enabled = 1;
-  optional AutoUpgradeFrequency frequency = 2;
-  optional uint32 hour = 3;
-  optional uint32 minute = 4;
 }
 
 service UpgradeService {

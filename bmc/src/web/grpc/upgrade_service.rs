@@ -27,13 +27,15 @@ use bmc_grpc::web::{
     upgrade_progress, upgrade_service_server::UpgradeService as GrpcUpgradeService,
 };
 use bmc_platform::HardwareCapabilities;
+use bmc_upgrade::autoupgrade::AutoUpgradeConfig;
 use bmc_upgrade::firmware::{FirmwareIndex, ReleaseInfo, UpgradeDetail};
 use chrono::NaiveTime;
 use futures::stream::{BoxStream, StreamExt};
 use prost_types::Timestamp;
 use std::sync::Arc;
-use tokio::sync::RwLock;
+use tokio::sync::{Mutex, RwLock};
 use tonic::{Request, Status};
+use tracing::error;
 
 use super::SystemUpgradeService;
 use super::scene_management::{PlatformDescriptor, supported_sizes_for_constraints};
@@ -51,6 +53,10 @@ where
     system_upgrade: SystemUpgradeService<U, T>,
     config_handle: Arc<RwLock<ConfigHandle>>,
     platform: PlatformDescriptor,
+    /// Serializes the save-apply-rollback transition in `set_auto_upgrade`;
+    /// the config lock alone cannot, since it is released before the
+    /// scheduler call.
+    autoupgrade_transition: Mutex<()>,
 }
 
 impl<T, U> UpgradeService<T, U>
@@ -67,6 +73,7 @@ where
             system_upgrade,
             config_handle,
             platform: PlatformDescriptor::from(hardware_capabilities),
+            autoupgrade_transition: Mutex::new(()),
         }
     }
 }
@@ -128,22 +135,41 @@ where
         request: Request<SetAutoUpgradeRequest>,
     ) -> Result<tonic::Response<()>, Status> {
         let enabled = request.get_ref().enabled;
-        let mut guard = self.config_handle.write().await;
-        let previous_config = guard.autoupgrade();
+        let _transition = self.autoupgrade_transition.lock().await;
         let config = self
             .system_upgrade
             .create_autoupgrade_config(enabled)
             .map_err(|e| Status::internal(e.to_string()))?;
 
+        let mut guard = self.config_handle.write().await;
+        let previous_config = guard.autoupgrade();
         guard.set_autoupgrade(config);
         if let Err(err) = guard.save().await {
             guard.set_autoupgrade(previous_config);
             return Err(Status::internal(err.to_string()));
         }
-        self.system_upgrade
-            .apply_autoupgrade(enabled)
-            .await
-            .map_err(|e| Status::internal(e.to_string()))?;
+        // Released before the scheduler call below so config readers do not
+        // block on it.
+        drop(guard);
+
+        if let Err(err) = self.system_upgrade.apply_autoupgrade(enabled).await {
+            // A failed apply leaves the runtime disabled (gate closed, job
+            // cancelled) regardless of the previous config, so persist that
+            // state rather than the previous one — a re-enable failure must
+            // not write back `enabled: true`.
+            let mut guard = self.config_handle.write().await;
+            guard.set_autoupgrade(AutoUpgradeConfig {
+                enabled: false,
+                cron: None,
+            });
+            if let Err(save_err) = guard.save().await {
+                error!(
+                    ?save_err,
+                    "Failed to persist the disabled auto-upgrade state after a scheduling failure"
+                );
+            }
+            return Err(Status::internal(err.to_string()));
+        }
 
         Ok(tonic::Response::new(()))
     }
@@ -153,12 +179,7 @@ where
         _request: Request<()>,
     ) -> Result<tonic::Response<GetAutoUpgradeResponse>, Status> {
         let enabled = self.config_handle.read().await.autoupgrade().enabled;
-        Ok(tonic::Response::new(GetAutoUpgradeResponse {
-            enabled,
-            frequency: None,
-            hour: None,
-            minute: None,
-        }))
+        Ok(tonic::Response::new(GetAutoUpgradeResponse { enabled }))
     }
 }
 
