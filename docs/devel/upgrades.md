@@ -88,6 +88,42 @@ An application-layer upgrade — the common case, no firmware change — runs en
 
 The previous generation stays on disk and remains the rollback target.
 
+## Automatic Upgrades
+
+When automatic upgrades are enabled, `bmc` schedules checks every two hours and pins them to the odd-hour cron grid.
+Each process start draws one random maintenance offset between 30 minutes and just under one hour after startup.
+Periodic garbage collection shares the exact minute and second drawn from that single per-boot maintenance offset.
+Upgrade checks use the odd-hour pattern `{second} {minute} 1/2 * * *`; collection uses the corresponding even-hour grid.
+The jobs therefore alternate exactly one hour apart on a device, while independent draws stagger devices across a fleet.
+The grid follows the device's civil time, so a DST fall-back stretches one check interval to three elapsed hours. This
+is accepted, like the single occurrence a clock correction can cost; the two-hour cadence otherwise holds.
+
+The first job whose hour parity matches the drawn target runs between 30 minutes and one hour after a process startup.
+The opposite-parity job first runs exactly one hour later, between 90 minutes and two hours after a process startup.
+Monotonic uptime enforces a 30-minute startup floor, dropping ticks pulled into the boot window by a clock correction.
+When a check is still running as another tick arrives, the notifier retains no more than one pending automatic check.
+Repeated ticks therefore coalesce instead of queuing or disappearing.
+
+User-facing and gRPC configuration exposes only the enabled flag, with no frequency, weekday, or time-of-day setting.
+The derived `cron` value remains in the on-disk config solely so older firmware can schedule upgrades after a rollback.
+Current firmware derives its schedule from the maintenance stagger and never reads the compatibility field.
+
+Initial device setup enables the recurring schedule and queues a one-shot check immediately after the setup completes.
+This check bypasses the startup floor so a new device does not wait for its first scheduled occurrence.
+
+### Developer Opt-Out
+
+After registering the new profile, `deck deploy` runs the installed `bmc-nix-cli clear-servers` command on the device.
+The command empties `servers[]` and writes the result directly into the runtime file at `/etc/nix-upgrade/servers.json`.
+It creates that runtime file even when the previous registry came solely from the shipped `servers.json.default` file.
+It preserves the factory entry and bootstrap marker, while leaving the existing `/etc/nix/nix.conf` entirely unchanged.
+Package probes then fail with `NoEnabledServers`, blocking automatic upgrades on a development device as intended.
+
+Run `deck register-server <device>` to replay the server entries from the shipped `servers.json.default` on the device.
+Use the `--url`, `--id`, and `--key` options to select an entry or override its identifier, URL, and key as appropriate.
+When no usable default entry exists, provide all three options to register one explicitly during device recovery itself.
+Recovery leaves the binary-cache settings intact because deploy never cleared them.
+
 ## Firmware Upgrades
 
 Firmware (BOS) upgrades are orchestrated by `bmc-upgrade`. They merge all enabled package servers just like a normal
@@ -257,10 +293,14 @@ changes (glibc or compiler bumps). `bmc-nix::gc` reclaims space in two stages:
   than that default.
 - **Nix store GC.** `nix-collect-garbage` removes store paths no longer referenced by any surviving generation.
 
-`bmc` collects Nix garbage every two hours. The schedule is a cron job on the shared scheduler, and its offset inside
-the two-hour period is drawn randomly at each startup, so devices booted together are unlikely to collect together. The
-first collection lands between 30 minutes and two hours after startup, keeping it clear of the boot window; a clock
-correction or a DST fall-back can defer it by one further occurrence.
+`bmc` runs Nix garbage collection every two hours on the even-hour cron grid, using the shared maintenance stagger:
+
+- At startup, it draws a target 30 minutes to just under one hour ahead and gives both jobs its minute and second.
+- Matching parity first runs in that window.
+- Opposite parity runs exactly one hour later, 90 minutes to just under two hours after startup.
+- The shared offset keeps both jobs one hour apart, while independent per-device draws stagger the fleet.
+
+Clock corrections or a DST fall-back can defer collection by one further occurrence.
 
 Each run cleans up profile generations, then runs `nix-collect-garbage` only when that cleanup actually removed
 something, so an idle device does no store scan. When a run removes generations but the store sweep then fails, the next

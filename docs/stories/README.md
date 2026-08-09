@@ -120,10 +120,10 @@ limits).
 *Not yet documented.* Ethernet (DHCP / static IP) and Wi-Fi configuration, network scanning, and saved-network
 management.
 
-### Firmware Upgrade
+### [Software Upgrades](software-upgrades.md)
 
-*Not yet documented.* Over-the-air firmware download, installation, and auto-upgrade scheduling (daily, weekly,
-bi-weekly, monthly).
+Firmware and application updates share one over-the-air upgrade flow. Automatic updates check throughout the day, so a
+device can stay current even when it is normally offline at night, while per-device staggering spreads service load.
 
 ### Authentication & Accounts
 
