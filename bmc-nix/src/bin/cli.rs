@@ -543,11 +543,12 @@ enum Commands {
         format: OutputFormat,
     },
 
-    /// Register a package server and its binary-cache substituter.
+    /// Register a package server, optionally with its binary-cache substituter.
     ///
-    /// Inserts (or replaces by `id`) a server entry in `servers.json` and
-    /// appends the substituter plus its trusted key to `nix.conf`. Points
-    /// a device at a developer machine for the upgrade test harness.
+    /// Inserts (or replaces by `id`) a server entry in `servers.json`; when
+    /// the --cache-url/--cache-public-key pair is given, also appends the
+    /// substituter plus its trusted key to `nix.conf`. Points a device at a
+    /// developer machine for the upgrade test harness.
     #[command(group(
         clap::ArgGroup::new("source").required(true).multiple(false)
     ))]
@@ -585,13 +586,14 @@ enum Commands {
         #[arg(long)]
         index_public_key: String,
 
-        /// URL of the binary-cache substituter.
-        #[arg(long)]
-        cache_url: String,
+        /// URL of the binary-cache substituter. Optional as a pair with
+        /// --cache-public-key; when absent, nix.conf is left untouched.
+        #[arg(long, requires = "cache_public_key")]
+        cache_url: Option<String>,
 
         /// Public key that signs the substituter's NARs.
-        #[arg(long)]
-        cache_public_key: String,
+        #[arg(long, requires = "cache_url")]
+        cache_public_key: Option<String>,
 
         /// Resolution priority for the server entry.
         #[arg(long, default_value_t = 50)]
@@ -1285,7 +1287,7 @@ async fn cmd_activate(
 
 #[expect(
     clippy::too_many_arguments,
-    reason = "CLI dispatch — all args are required"
+    reason = "CLI dispatch — mirrors the clap variant"
 )]
 fn cmd_register_server(
     servers_config: &Path,
@@ -1295,11 +1297,16 @@ fn cmd_register_server(
     source: ServerSource,
     factory_base_url: Option<&str>,
     index_public_key: String,
-    cache_url: &str,
-    cache_public_key: &str,
+    cache_url: Option<&str>,
+    cache_public_key: Option<&str>,
     priority: u32,
     optional: bool,
 ) -> anyhow::Result<()> {
+    let cache = match (cache_url, cache_public_key) {
+        (Some(url), Some(key)) => Some((url, key)),
+        (None, None) => None,
+        _ => anyhow::bail!("--cache-url and --cache-public-key must be given together"),
+    };
     anyhow::ensure!(!id.trim().is_empty(), "--id must not be empty");
     match &source {
         ServerSource::Feed { feed_url } => {
@@ -1316,19 +1323,21 @@ fn cmd_register_server(
             .map_err(anyhow::Error::msg)?;
     }
     anyhow::ensure!(
-        cache_url.starts_with("https://")
-            || cache_url.starts_with("http://")
-            || cache_url.starts_with("file://"),
-        "--cache-url must be an http(s):// or file:// URL, got '{cache_url}'"
-    );
-    anyhow::ensure!(
         !index_public_key.trim().is_empty(),
         "--index-public-key must not be empty"
     );
-    anyhow::ensure!(
-        !cache_public_key.trim().is_empty(),
-        "--cache-public-key must not be empty"
-    );
+    if let Some((cache_url, cache_public_key)) = cache {
+        anyhow::ensure!(
+            cache_url.starts_with("https://")
+                || cache_url.starts_with("http://")
+                || cache_url.starts_with("file://"),
+            "--cache-url must be an http(s):// or file:// URL, got '{cache_url}'"
+        );
+        anyhow::ensure!(
+            !cache_public_key.trim().is_empty(),
+            "--cache-public-key must not be empty"
+        );
+    }
     let entry = ServerEntry {
         id,
         source,
@@ -1343,13 +1352,15 @@ fn cmd_register_server(
         entry,
         factory_base_url,
     )?;
-    // Register the substituter (nix.conf) before persisting the server
-    // registry: if the process dies between the two writes, a server
-    // missing from the registry is more benign than a registered server
-    // whose binary cache is absent — the latter fetches an index it then
-    // cannot realize. The registry content was validated up front, so a
-    // bad config aborts before nix.conf is touched.
-    bmc_nix::registration::register_substituter(nix_conf, cache_url, cache_public_key)?;
+    if let Some((cache_url, cache_public_key)) = cache {
+        // Register the substituter (nix.conf) before persisting the server
+        // registry: if the process dies between the two writes, a server
+        // missing from the registry is more benign than a registered server
+        // whose binary cache is absent — the latter fetches an index it then
+        // cannot realize. The registry content was validated up front, so a
+        // bad config aborts before nix.conf is touched.
+        bmc_nix::registration::register_substituter(nix_conf, cache_url, cache_public_key)?;
+    }
     prepared.persist()?;
     Ok(())
 }
@@ -1697,8 +1708,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 source,
                 factory_base_url.as_deref(),
                 index_public_key,
-                &cache_url,
-                &cache_public_key,
+                cache_url.as_deref(),
+                cache_public_key.as_deref(),
                 priority,
                 optional,
             )
@@ -1982,6 +1993,31 @@ mod tests {
     }
 
     #[test]
+    fn register_server_rejects_a_one_sided_cache_pair() {
+        let base = [
+            "bmc-nix-cli",
+            "register-server",
+            "--id",
+            "forge",
+            "--index-url",
+            "https://forge.example/index.json",
+            "--index-public-key",
+            "forge:key",
+        ];
+        for lone in [
+            ["--cache-url", "https://cache.example"],
+            ["--cache-public-key", "cache:key"],
+        ] {
+            let args: Vec<&str> = base.iter().chain(lone.iter()).copied().collect();
+            assert!(
+                Cli::try_parse_from(args).is_err(),
+                "a lone {} must be rejected at parse time",
+                lone[0]
+            );
+        }
+    }
+
+    #[test]
     fn upgrade_only_indexes_requires_an_index() {
         let err = Cli::try_parse_from(["bmc-nix-cli", "upgrade", "--only-indexes"])
             .expect_err("BUG: --only-indexes requires at least one --index");
@@ -2094,8 +2130,8 @@ mod tests {
             },
             None,
             "index:KEY".to_owned(),
-            "https://cache.example.com",
-            "cache:KEY",
+            Some("https://cache.example.com"),
+            Some("cache:KEY"),
             50,
             false,
         )
@@ -2105,6 +2141,80 @@ mod tests {
             !nix_conf.exists(),
             "nix.conf must not be touched when prepare fails"
         );
+    }
+
+    #[test]
+    fn register_without_the_cache_pair_skips_nix_conf() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let default = dir.path().join("servers.json.default");
+        let nix_conf = dir.path().join("nix.conf");
+        std::fs::write(
+            &servers,
+            r#"{"factory": {"id": "factory", "base_url": "https://factory.example",
+                "known_public_key": "factory:key", "priority": 10, "enabled": true},
+                "servers": []}"#,
+        )
+        .expect("BUG: write servers.json");
+
+        cmd_register_server(
+            &servers,
+            &default,
+            &nix_conf,
+            "forge".to_owned(),
+            ServerSource::Index {
+                index_url: "https://forge.example/index.json".to_owned(),
+            },
+            None,
+            "forge:key".to_owned(),
+            None,
+            None,
+            50,
+            false,
+        )
+        .expect("BUG: registration without a cache pair must succeed");
+
+        assert!(!nix_conf.exists(), "no cache pair, no nix.conf write");
+        let written: bmc_nix::types::ServersConfig =
+            serde_json::from_str(&std::fs::read_to_string(&servers).expect("BUG: read back"))
+                .expect("BUG: written config must parse");
+        assert_eq!(written.servers.len(), 1);
+    }
+
+    #[test]
+    fn register_with_the_cache_pair_still_writes_nix_conf() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let servers = dir.path().join("servers.json");
+        let default = dir.path().join("servers.json.default");
+        let nix_conf = dir.path().join("nix.conf");
+        std::fs::write(
+            &servers,
+            r#"{"factory": {"id": "factory", "base_url": "https://factory.example",
+                "known_public_key": "factory:key", "priority": 10, "enabled": true},
+                "servers": []}"#,
+        )
+        .expect("BUG: write servers.json");
+
+        cmd_register_server(
+            &servers,
+            &default,
+            &nix_conf,
+            "forge".to_owned(),
+            ServerSource::Index {
+                index_url: "https://forge.example/index.json".to_owned(),
+            },
+            None,
+            "forge:key".to_owned(),
+            Some("https://cache.example"),
+            Some("cache:key"),
+            50,
+            false,
+        )
+        .expect("BUG: registration with a cache pair must succeed");
+
+        let conf = std::fs::read_to_string(&nix_conf).expect("BUG: nix.conf must be written");
+        assert!(conf.contains("https://cache.example"));
+        assert!(conf.contains("cache:key"));
     }
 
     #[test]
