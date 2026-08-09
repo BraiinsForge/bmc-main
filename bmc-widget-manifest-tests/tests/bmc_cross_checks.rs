@@ -42,7 +42,7 @@ fn load_wasm_manifest(name: &str) -> Manifest {
 fn every_default_widget_matches_its_manifest() {
     let manifests: HashMap<_, _> = [
         "clock",
-        "weather",
+        "ticker-single",
         "blockheight",
         "mining-info",
         "mining-clock",

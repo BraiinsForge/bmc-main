@@ -27,7 +27,7 @@ use uuid::Uuid;
 
 use super::params_map;
 use super::widget_uuids::{
-    BLOCK_HEIGHT_UID, CLOCK_UID, MINING_CLOCK_UID, MINING_INFO_UID, WEATHER_UID,
+    BLOCK_HEIGHT_UID, CLOCK_UID, MINING_CLOCK_UID, MINING_INFO_UID, TICKER_SINGLE_UID,
 };
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
@@ -62,10 +62,11 @@ fn blockheight_params() -> BTreeMap<ParamKey, ParamValue> {
     ])
 }
 
-fn weather_params(location: &str) -> BTreeMap<ParamKey, ParamValue> {
+fn ticker_params(pair: &str, period: &str) -> BTreeMap<ParamKey, ParamValue> {
     params(&[
-        ("location", ParamValue::String(location.into())),
-        ("time_zone", ParamValue::String("location".into())),
+        ("pair", ParamValue::String(pair.into())),
+        ("period", ParamValue::String(period.into())),
+        ("view", ParamValue::String("sparkline".into())),
     ])
 }
 
@@ -139,7 +140,7 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
 
     let digital = fullscreen(CLOCK_UID, rect, clock_params("digital"));
 
-    let weather = fullscreen(WEATHER_UID, rect, weather_params("Prague"));
+    let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
 
     let combined = {
         let clock_w = widget(
@@ -156,12 +157,12 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
             WidgetPlacement::from(WidgetSize::Medium),
             blockheight_params(),
         );
-        let weather_w = widget(
-            WEATHER_UID,
+        let ticker_w = widget(
+            TICKER_SINGLE_UID,
             rect,
             WidgetPosition { row: 0, col: 2 },
             WidgetPlacement::from(WidgetSize::Large),
-            weather_params("Prague"),
+            ticker_params("BTC-USD", "1d"),
         );
         Scene {
             id: SceneId::generate(),
@@ -171,14 +172,14 @@ fn bmc100_scenes() -> IndexMap<SceneId, Scene> {
             widgets: indexmap! {
                 clock_w.id => clock_w,
                 block_w.id => block_w,
-                weather_w.id => weather_w,
+                ticker_w.id => ticker_w,
             },
         }
     };
 
     indexmap! {
         digital.id => digital,
-        weather.id => weather,
+        ticker.id => ticker,
         combined.id => combined,
     }
 }
@@ -199,7 +200,7 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
     let rect = ViewportShape::Rectangular;
 
     let clock = fullscreen(CLOCK_UID, rect, clock_params("analog_rect"));
-    let weather = fullscreen(WEATHER_UID, rect, weather_params("Prague"));
+    let ticker = fullscreen(TICKER_SINGLE_UID, rect, ticker_params("BTC-USD", "7d"));
     let mining = fullscreen(MINING_INFO_UID, rect, mining_info_params("mining"));
     let geek = fullscreen(MINING_INFO_UID, rect, mining_info_params("geek"));
     let network = fullscreen(MINING_INFO_UID, rect, mining_info_params("network"));
@@ -207,7 +208,7 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
 
     indexmap! {
         clock.id => clock,
-        weather.id => weather,
+        ticker.id => ticker,
         mining.id => mining,
         geek.id => geek,
         network.id => network,
@@ -218,6 +219,7 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::widget_uuids::WEATHER_UID;
 
     #[test]
     fn bmc100_has_three_scenes_with_one_combined() {
@@ -252,6 +254,47 @@ mod tests {
                     .values()
                     .all(|scene| scene.kind == SceneKind::Fullscreen)
             );
+        }
+    }
+
+    #[test]
+    fn rectangular_defaults_replace_weather_with_btc_tickers() {
+        for (product, expected_ticker_count) in [
+            (Product::Bmc100, 2),
+            (Product::Bmm100, 1),
+            (Product::Bmm101, 1),
+        ] {
+            let widgets = scenes_for(product)
+                .into_values()
+                .flat_map(|scene| scene.widgets.into_values())
+                .collect::<Vec<_>>();
+            assert!(
+                widgets
+                    .iter()
+                    .all(|widget| widget.widget_type_id != WEATHER_UID),
+                "{product:?} defaults must not contain the weather widget"
+            );
+            let tickers = widgets
+                .iter()
+                .filter(|widget| widget.widget_type_id == TICKER_SINGLE_UID)
+                .collect::<Vec<_>>();
+            assert_eq!(
+                tickers.len(),
+                expected_ticker_count,
+                "{product:?} defaults must contain the expected ticker placements"
+            );
+            for ticker in tickers {
+                let period = if ticker.placement == WidgetPlacement::Fullscreen {
+                    "7d"
+                } else {
+                    "1d"
+                };
+                assert_eq!(
+                    ticker.params,
+                    ticker_params("BTC-USD", period),
+                    "{product:?} ticker must use BTC with the period for its placement"
+                );
+            }
         }
     }
 
