@@ -281,6 +281,7 @@ def _dry_routes(sha_a: str) -> _Respond:
     board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
     outputs = {
         "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
+        "if [ -e /etc/nix/nix.conf ]": "ABSENT",
         "ubus call system board": board,
         "MemAvailable": "999999999",
         "dd bs=64": "64",
@@ -334,6 +335,7 @@ def _staged_dry_routes(sha_a: str) -> _Respond:
     board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
     outputs = {
         "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
+        "if [ -e /etc/nix/nix.conf ]": "ABSENT",
         "ubus call system board": board,
         "MemAvailable": "999999999",
         "dd bs=64": "64",
@@ -387,19 +389,23 @@ def test_staged_once_dry_run_skips_the_capture_check(tmp_path: Path) -> None:
     assert not any(c.startswith("sysupgrade ") for c in cmds)  # flash logged, not run
 
 
-def _run_with_cleanup_stubs(
+def _run_with_cleanup_stubs(  # noqa: PLR0913  each cleanup hook controls a distinct failure path
     monkeypatch,
     tmp_path: Path,
     driver,
     restore,
     seen: dict[str, tuple],
+    *,
+    restore_nix_conf=None,
 ) -> None:
     """Run the procedure with the preamble and cleanup stages stubbed out
-    (recorded in `seen` by name → positional args), a fake scenario driver,
-    and a controllable restore_server_registry."""
+    (recorded in `seen` by name → positional args), a controllable
+    restore_server_registry and restore_nix_conf (recorded when not
+    overridden), and a fake scenario driver."""
     for fn in (
         "ensure_device_reachable",
         "capture_server_registry",
+        "capture_nix_conf",
         "validate_firmware_image",
         "validate_e2e_inputs",
         "build_e2e_artifacts",
@@ -414,6 +420,11 @@ def _run_with_cleanup_stubs(
     ):
         monkeypatch.setattr(faults.catalog, fn, lambda *a, fn=fn, **_k: seen.setdefault(fn, a))
     monkeypatch.setattr(faults.catalog, "restore_server_registry", restore)
+    monkeypatch.setattr(
+        faults.catalog,
+        "restore_nix_conf",
+        restore_nix_conf or (lambda *a, **_k: seen.setdefault("restore_nix_conf", a)),
+    )
     monkeypatch.setitem(faults._DRIVERS, "unsigned-feed", driver)
     image_a = _e2e_image(tmp_path, name="a.tar", version="va")
     image_b = _e2e_image(tmp_path, name="b.tar", version="vb")
@@ -469,6 +480,31 @@ def test_cleanup_restore_failure_never_masks_the_scenario_failure(
 
     with pytest.raises(Abort, match="scenario failed"):
         _run_with_cleanup_stubs(monkeypatch, tmp_path, driver, restore, {})
+
+
+def test_cleanup_nix_conf_restore_failure_fails_a_successful_run(
+    monkeypatch, tmp_path: Path
+) -> None:
+    """nix.conf carries the rig's trusted signing key — a standing grant
+    for a developer machine on a device that outlives the run. Silently
+    leaving it behind must fail an otherwise-successful run, exactly like
+    a failed servers.json restore."""
+
+    def driver(ctx) -> None:
+        ctx.run.device_mutated = True
+
+    def restore_nix_conf(*_a, **_k) -> None:
+        raise Abort("nix.conf restore failed")
+
+    with pytest.raises(Abort, match=r"nix\.conf restore failed"):
+        _run_with_cleanup_stubs(
+            monkeypatch,
+            tmp_path,
+            driver,
+            lambda *_a, **_k: None,
+            {},
+            restore_nix_conf=restore_nix_conf,
+        )
 
 
 def test_cleanup_stays_strict_inside_a_caller_except_block(monkeypatch, tmp_path: Path) -> None:
@@ -536,6 +572,7 @@ def _b1_dry_routes(sha_a: str) -> _Respond:
     board = json.dumps({"board_name": "b", "release": {"target": _TARGET}})
     outputs = {
         "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
+        "if [ -e /etc/nix/nix.conf ]": "ABSENT",
         "ubus call system board": board,
         "MemAvailable": "999999999",
         "dd bs=64": "64",

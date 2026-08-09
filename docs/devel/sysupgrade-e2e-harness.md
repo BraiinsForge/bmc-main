@@ -117,15 +117,16 @@ fails here rather than after the store is gone).
    was consumed, and the generation's services are running.
 
 On any exit — success or abort, once the first device mutation has happened — the harness best-effort removes the e2e
-marker and the uploaded firmware tars, and restores the runtime `servers.json` to its pre-run bytes (removing it only if
-it was absent before the run; the registry is captured at run start).
+marker and the uploaded firmware tars, and restores the runtime `servers.json` and `/etc/nix/nix.conf` to their pre-run
+bytes (removing either only if it was absent before the run; both are captured at run start).
 
 ## Cleanup
 
-The harness cleans up after itself device-side, with one exception it cannot undo automatically: the rig's
-`extra-substituters` and `extra-trusted-public-keys` lines that registration adds to `/etc/nix/nix.conf`. That file is a
-preserved conffile, so those lines survive the flashes and outlive the run, still pointing at the (now gone) ephemeral
-rig. Remove them from `/etc/nix/nix.conf` on the device when you are done.
+The harness cleans up after itself device-side. The `nix.conf` restore matters because registration merges the rig's
+`extra-substituters` and `extra-trusted-public-keys` entries into a preserved conffile: without the restore they would
+survive the flashes and outlive the run, leaving the ephemeral rig's signing key trusted on the device. The restore runs
+after the final boot — the activator still needs the rig registration while a flashed image comes up — and, like the
+`servers.json` restore, its failure fails the run rather than degrading to a log line.
 
 ## Fault-injection suite (`deck e2e-sysupgrade-faults`)
 

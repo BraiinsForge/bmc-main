@@ -851,6 +851,7 @@ class E2eSysupgradeFaults:
 
         catalog.ensure_device_reachable(dev)
         catalog.capture_server_registry(dev, prov)
+        catalog.capture_nix_conf(dev, prov)
         catalog.validate_firmware_image(run.image_a, device_target=dev.target)
         catalog.validate_firmware_image(run.image_b, device_target=dev.target)
         catalog.validate_e2e_inputs(run)
@@ -904,19 +905,16 @@ class E2eSysupgradeFaults:
                             failed=failed,
                             action=lambda: catalog.restore_server_registry(cleanup, prov),
                         )
+                        _restore_step(
+                            failed=failed,
+                            action=lambda: catalog.restore_nix_conf(cleanup, prov),
+                        )
                         _best_effort(lambda: catalog.sweep_uploaded_images(cleanup, run))
                         _best_effort(lambda: catalog.sweep_shm_upload(cleanup, run.image_a))
                         _best_effort(lambda: catalog.sweep_shm_upload(cleanup, run.image_b))
                         _best_effort(lambda: catalog.cleanup_remote_artifacts(cleanup, prov))
                         _best_effort(lambda: catalog.start_compositor(cleanup))
                         _best_effort(lambda: _restore_rig(ctx))
-                        if not dry_run.get():
-                            console.kv(
-                                "note",
-                                "the rig's extra-substituters/extra-trusted-public-keys lines "
-                                "persist in /etc/nix/nix.conf (preserved conffile) — remove "
-                                "them when done",
-                            )
 
 
 @entrypoint

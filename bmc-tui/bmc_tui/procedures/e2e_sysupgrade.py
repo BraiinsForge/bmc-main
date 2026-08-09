@@ -54,7 +54,7 @@ class E2eSysupgrade:
     yes: bool = False  # skip the confirm prompts (cleardown + each flash)
     dry_run: bool = False  # run read-only checks; log mutations without executing
 
-    def run(
+    def run(  # noqa: PLR0915  one ordered scenario owns setup, mutation, and restore
         self,
         dev: Device | None = None,
         backend: Nix | None = None,
@@ -75,6 +75,7 @@ class E2eSysupgrade:
 
         catalog.ensure_device_reachable(dev)
         catalog.capture_server_registry(dev, prov)
+        catalog.capture_nix_conf(dev, prov)
         catalog.validate_firmware_image(state.image_a, device_target=dev.target)
         catalog.validate_firmware_image(state.image_b, device_target=dev.target)
         catalog.validate_e2e_inputs(state)
@@ -113,21 +114,16 @@ class E2eSysupgrade:
                         best_effort(lambda: catalog.cleanup_e2e_marker(cleanup))
                         if failed:
                             best_effort(lambda: catalog.restore_server_registry(cleanup, prov))
+                            best_effort(lambda: catalog.restore_nix_conf(cleanup, prov))
                         else:
                             # No primary failure to preserve: leaving the rig
                             # registration behind must fail the run, not
                             # degrade to a log line.
                             catalog.restore_server_registry(cleanup, prov)
+                            catalog.restore_nix_conf(cleanup, prov)
                         best_effort(lambda: catalog.sweep_uploaded_images(cleanup, state))
                         best_effort(lambda: catalog.cleanup_remote_artifacts(cleanup, prov))
                         best_effort(lambda: catalog.start_compositor(cleanup))
-                        if not dry_run.get():
-                            console.kv(
-                                "note",
-                                "the rig's extra-substituters/extra-trusted-public-keys lines "
-                                "persist in /etc/nix/nix.conf (preserved conffile) — remove "
-                                "them when done",
-                            )
 
     def _scenario_a(
         self,

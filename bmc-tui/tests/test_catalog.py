@@ -1932,25 +1932,36 @@ def test_register_rig_writes_factory_then_registers_server(tmp_path: Path) -> No
 
 
 def test_capture_server_registry_records_the_present_file() -> None:
-    exc = _Exec(_routes({"if [ -e /etc/nix-upgrade/servers.json ]": "PRESENT\nQkFTRTY0\nREFUQQ=="}))
+    content = b"BASE64DATA"
+    exc = _Exec(
+        _routes(
+            {
+                "test -f /etc/nix-upgrade/servers.json": "present",
+                "base64 < /etc/nix-upgrade/servers.json": base64.b64encode(content).decode(),
+                "wc -c < /etc/nix-upgrade/servers.json": str(len(content)),
+                "sha256sum /etc/nix-upgrade/servers.json": hashlib.sha256(content).hexdigest(),
+            }
+        )
+    )
     plan = catalog.Provisioning()
     catalog.capture_server_registry(Device("h", backend=exc), plan)
-    assert plan.servers_json_captured
-    # busybox base64 wraps its output; the capture must join the lines
-    assert plan.original_servers_json == "QkFTRTY0REFUQQ=="
+    assert plan.servers_snapshot is not None
+    assert plan.servers_snapshot.contents == content
 
 
 def test_capture_server_registry_records_absence() -> None:
-    exc = _Exec(_routes({"if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT"}))
+    exc = _Exec(_routes({}))
     plan = catalog.Provisioning()
     catalog.capture_server_registry(Device("h", backend=exc), plan)
-    assert plan.servers_json_captured
-    assert plan.original_servers_json is None
+    assert plan.servers_snapshot is not None
+    assert not plan.servers_snapshot.present
 
 
 def test_restore_server_registry_rewrites_the_original_content() -> None:
     exc = _Exec(_routes({}))
-    plan = catalog.Provisioning(servers_json_captured=True, original_servers_json="QkFTRTY0")
+    plan = catalog.Provisioning(
+        servers_snapshot=catalog.FileSnapshot(catalog.SERVERS_JSON, None, b"BASE64")
+    )
     catalog.restore_server_registry(Device("h", backend=exc), plan)
     cmd = exc.runs[-1][-1]
     assert "echo QkFTRTY0 | base64 -d" in cmd
@@ -1959,7 +1970,7 @@ def test_restore_server_registry_rewrites_the_original_content() -> None:
 
 def test_restore_server_registry_removes_what_was_absent_before() -> None:
     exc = _Exec(_routes({}))
-    plan = catalog.Provisioning(servers_json_captured=True, original_servers_json=None)
+    plan = catalog.Provisioning(servers_snapshot=catalog.FileSnapshot(catalog.SERVERS_JSON, None))
     catalog.restore_server_registry(Device("h", backend=exc), plan)
     assert [argv[-1] for argv in exc.runs] == ["rm -f /etc/nix-upgrade/servers.json"]
 
@@ -2883,6 +2894,7 @@ def _e2e_full_routes(sha_a: str, sha_b: str) -> _Respond:
             return _cp(argv, "S20bar" if "rc.d" in cmd else "bar")
         outputs = {
             "if [ -e /etc/nix-upgrade/servers.json ]": "ABSENT",
+            "if [ -e /etc/nix/nix.conf ]": "ABSENT",
             "ubus call system board": board,
             "bos_version": ["old", "va", "vb"][state["flashes"]],
             "MemAvailable": "524288",
@@ -3079,11 +3091,13 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_uninitialized_store(tmp_path: P
         )
     cmds = [argv[-1] for argv in exc.runs]
     assert not exc.streams
-    # the registry capture probe ("if [ -e …servers.json ]…") is read-only and allowed
+    # The registry snapshot probes are read-only and allowed.
     assert not any(
         "register-server" in c
         or "chmod" in c
-        or ("servers.json" in c and not c.startswith("if [ -e "))
+        or f"> {catalog.SERVERS_JSON}" in c
+        or f"rm -f {catalog.SERVERS_JSON}" in c
+        or f"mv {catalog.SERVERS_JSON}" in c
         for c in cmds
     )
     assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)
@@ -3098,8 +3112,8 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -
         cmd = argv[-1]
         if "bos_version" in cmd:
             return _cp(argv, "va")
-        if "if [ -e /etc/nix-upgrade/servers.json ]" in cmd:
-            return base(argv)  # the read-only registry capture, routed normally
+        if cmd.startswith("if [ -e "):
+            return base(argv)  # the read-only capture probes, routed normally
         if "[ -e " in cmd:
             return _cp(argv, "yes")
         return base(argv)
@@ -3115,11 +3129,13 @@ def test_e2e_upgrade_scenario_aborts_readonly_on_existing_bump(tmp_path: Path) -
         )
     cmds = [argv[-1] for argv in exc.runs]
     assert not exc.streams
-    # the registry capture probe ("if [ -e …servers.json ]…") is read-only and allowed
+    # The registry snapshot probes are read-only and allowed.
     assert not any(
         "register-server" in c
         or "chmod" in c
-        or ("servers.json" in c and not c.startswith("if [ -e "))
+        or f"> {catalog.SERVERS_JSON}" in c
+        or f"rm -f {catalog.SERVERS_JSON}" in c
+        or f"mv {catalog.SERVERS_JSON}" in c
         for c in cmds
     )
     assert not any(c.startswith("touch ") or c.startswith("sysupgrade ") for c in cmds)

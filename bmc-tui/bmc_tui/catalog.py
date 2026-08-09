@@ -747,8 +747,8 @@ class Provisioning:
     cli: Path | None = None  # host path of the built bmc-nix-cli
     remote_tarball: RemotePath | None = None  # device path of the pushed tarball
     debugfs: Path | None = None  # host path of the built static debugfs (B2 only)
-    servers_json_captured: bool = False  # capture_server_registry ran
-    original_servers_json: str | None = None  # base64 of the pre-run registry; None = absent
+    servers_snapshot: "FileSnapshot | None" = None
+    nix_conf_snapshot: "FileSnapshot | None" = None
 
 
 @stage("Build init tarball")
@@ -1161,20 +1161,8 @@ def _remote_file_b64(dev: Device, path: str) -> str | None:
     return "".join(body.split()) if marker == "PRESENT" else None
 
 
-def _restore_file_b64(dev: Device, path: str, body: str | None) -> None:
-    if body is None:
-        dev.run(f"rm -f {path}")
-        return
-    dev.run(f"echo {shlex.quote(body)} | base64 -d > {path}.tmp && mv {path}.tmp {path} && sync")
-
-
-class RegistrySnapshot(Protocol):
-    servers_json_captured: bool
-    original_servers_json: str | None
-
-
 @stage("Capture server registry")
-def capture_server_registry(dev: Device, plan: RegistrySnapshot) -> str:
+def capture_server_registry(dev: Device, plan: "Provisioning | UpgradeCycle") -> str:
     """Record the pre-run runtime servers.json so the final restore puts
     the device back exactly as found. The run registers the ephemeral rig
     there; leaving that behind would send the next real init or upgrade
@@ -1182,50 +1170,47 @@ def capture_server_registry(dev: Device, plan: RegistrySnapshot) -> str:
     registration that sysupgrade deliberately preserves (it is a
     registered conffile)."""
 
-    plan.original_servers_json = _remote_file_b64(dev, SERVERS_JSON)
-    plan.servers_json_captured = True
-    state = "captured" if plan.original_servers_json is not None else "absent before the run"
+    plan.servers_snapshot = snapshot_remote_file(dev, SERVERS_JSON)
+    state = "captured" if plan.servers_snapshot.present else "absent before the run"
     return f"{console.lit(SERVERS_JSON)} {state}"
 
 
 @stage("Restore server registry")
-def restore_server_registry(dev: Device, plan: RegistrySnapshot) -> str:
+def restore_server_registry(dev: Device, plan: "Provisioning | UpgradeCycle") -> str:
     """Put the runtime servers.json back exactly as capture_server_registry
     found it: restore the original bytes, or remove the file if there was
     none — so the rig registration never outlives the run and a real
     pre-run registration survives it."""
 
-    require(plan.servers_json_captured, "BUG: restore without a prior capture")
-    _restore_file_b64(dev, SERVERS_JSON, plan.original_servers_json)
-    if plan.original_servers_json is None:
+    snapshot = plan.servers_snapshot
+    if snapshot is None:
+        raise Abort("BUG: restore without a prior capture")
+    restore_remote_file(dev, snapshot)
+    if not snapshot.present:
         return f"{console.lit(SERVERS_JSON)} removed (absent before the run)"
     return f"{console.lit(SERVERS_JSON)} restored"
 
 
-class NixConfSnapshot(Protocol):
-    nix_conf_captured: bool
-    original_nix_conf: str | None
-
-
 @stage("Capture nix.conf")
-def capture_nix_conf(dev: Device, plan: NixConfSnapshot) -> str:
+def capture_nix_conf(dev: Device, plan: "Provisioning | UpgradeCycle") -> str:
     """Record nix.conf before registration writes to it.
 
     `register-server` adds the rig's `extra-substituters` and, worse, an
     `extra-trusted-public-keys` entry: a standing grant for a developer
     machine's signing key on a device that will outlive the run."""
 
-    plan.original_nix_conf = _remote_file_b64(dev, _NIX_CONF)
-    plan.nix_conf_captured = True
-    state = "captured" if plan.original_nix_conf is not None else "absent before the run"
+    plan.nix_conf_snapshot = snapshot_remote_file(dev, _NIX_CONF)
+    state = "captured" if plan.nix_conf_snapshot.present else "absent before the run"
     return f"{console.lit(_NIX_CONF)} {state}"
 
 
 @stage("Restore nix.conf")
-def restore_nix_conf(dev: Device, plan: NixConfSnapshot) -> str:
-    require(plan.nix_conf_captured, "BUG: restore without a prior capture")
-    _restore_file_b64(dev, _NIX_CONF, plan.original_nix_conf)
-    if plan.original_nix_conf is None:
+def restore_nix_conf(dev: Device, plan: "Provisioning | UpgradeCycle") -> str:
+    snapshot = plan.nix_conf_snapshot
+    if snapshot is None:
+        raise Abort("BUG: restore without a prior capture")
+    restore_remote_file(dev, snapshot)
+    if not snapshot.present:
         return f"{console.lit(_NIX_CONF)} removed (absent before the run)"
     return f"{console.lit(_NIX_CONF)} restored"
 
@@ -2490,10 +2475,8 @@ class UpgradeCycle:
     generation_before: int | None = None
     installed_before: set[str] | None = None  # package names in the pre-upgrade manifest
     widget_uid: str | None = None  # uid of the widget under install, for the registry check
-    servers_json_captured: bool = False  # capture_server_registry ran
-    original_servers_json: str | None = None  # base64 of the pre-run registry; None = absent
-    nix_conf_captured: bool = False  # capture_nix_conf ran
-    original_nix_conf: str | None = None  # base64 of the pre-run nix.conf; None = absent
+    servers_snapshot: "FileSnapshot | None" = None
+    nix_conf_snapshot: "FileSnapshot | None" = None
 
     @property
     def index_url(self) -> str:
@@ -3206,6 +3189,11 @@ class FirmwareIndex(Protocol):
 class FileSnapshot:
     remote_path: str
     local: Path | None
+    contents: bytes | None = None
+
+    @property
+    def present(self) -> bool:
+        return self.local is not None or self.contents is not None
 
 
 @dataclass(frozen=True)
@@ -3231,21 +3219,33 @@ def _verify_snapshot(dev: Device, remote_path: str, data: bytes) -> None:
     )
 
 
-def snapshot_remote_file(dev: Device, remote_path: str, into: Path) -> FileSnapshot:
+def snapshot_remote_file(dev: Device, remote_path: str, into: Path | None = None) -> FileSnapshot:
     quoted = shlex.quote(remote_path)
     if dev.read(f"test -f {quoted} && echo present || true") != "present":
         return FileSnapshot(remote_path, None)
     data = _snapshot_bytes(dev, remote_path)
-    into.write_bytes(data)
+    if into is not None:
+        into.write_bytes(data)
     _verify_snapshot(dev, remote_path, data)
-    return FileSnapshot(remote_path, into)
+    return FileSnapshot(remote_path, into, None if into is not None else data)
 
 
 def restore_remote_file(dev: Device, snap: FileSnapshot) -> None:
-    if snap.local is None:
+    if not snap.present:
         dev.run(f"rm -f {shlex.quote(snap.remote_path)}")
-    else:
+    elif snap.local is not None:
         dev.push(snap.local, RemotePath(snap.remote_path))
+    else:
+        contents = snap.contents
+        if contents is None:
+            msg = "BUG: present in-memory snapshot has no contents"
+            raise RuntimeError(msg)
+        encoded = base64.b64encode(contents).decode()
+        temporary = f"{snap.remote_path}.tmp"
+        dev.run(
+            f"echo {shlex.quote(encoded)} | base64 -d > {shlex.quote(temporary)} "
+            f"&& mv {shlex.quote(temporary)} {shlex.quote(snap.remote_path)} && sync"
+        )
 
 
 def _remote_dir_parts(remote_path: str) -> tuple[str, str]:
