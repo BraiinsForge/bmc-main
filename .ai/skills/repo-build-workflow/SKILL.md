@@ -21,6 +21,8 @@ fixup or proposing the change is "done".
 3. Repo content checks (the `content` nix check).
 4. Final marker: `@echo "validate: OK"` — if you don't see that line, validate failed or is still running.
 
+The frontend is not part of `just validate`: on a branch that changes `frontend/`, run `just fe::validate` separately.
+
 Why it's not "just clippy": the formatter step is load-bearing. `cargo check` / `cargo clippy` / `just clippy` alone
 leave the tree in a "compiles but will fail CI format check" state. Skipping the format step is the most common reason a
 fixup gets bounced.

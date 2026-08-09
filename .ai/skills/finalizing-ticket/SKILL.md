@@ -23,6 +23,9 @@ Walk the Definition of Done from `.ai/instructions.md` and confirm each item is 
 Run the repo's validation path — never raw `cargo`/`nix` substitutes. See the `repo-build-workflow` skill for the
 narrower targets worth using mid-iteration. Finish on the full `just validate` and confirm the `validate: OK` marker.
 
+`just validate` does not cover the frontend: on a branch that changes `frontend/`, also run `just fe::validate`
+separately and confirm it passes.
+
 ## 3. Clean up scratch state
 
 The planning devlog under `docs/devlogs/BDK-<ticket>-<slug>/` is scratch, not deliverable. Remove it once the stages are

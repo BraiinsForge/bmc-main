@@ -66,9 +66,6 @@ validate: format clippy python
     for root in $(bmc-wasm-runtime/tools/widget_root.py); do (cd "$root" && cargo build --target wasm32-unknown-unknown --workspace) || exit 1; done
     nix build -L ".#checks.{{ NIX_SYSTEM }}.docs-wasm"
 
-    # Frontend
-    @just fe::validate
-
     @echo "validate: OK"
 
 # Auto-format everything (nix fmt + SVG pass).
