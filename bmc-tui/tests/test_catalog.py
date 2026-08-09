@@ -731,6 +731,304 @@ def test_clear_upgrade_servers_raises_on_other_failures() -> None:
         catalog.clear_upgrade_servers(dev)
 
 
+_DEFAULT_REGISTRY = json.dumps(
+    {
+        "factory": {
+            "id": "factory",
+            "base_url": "https://factory.example",
+            "known_public_key": "factory:key",
+            "priority": 10,
+            "enabled": True,
+        },
+        "servers": [
+            {
+                "id": "forge",
+                "feed_url": "https://downloads.braiinsforge.com/feed.json",
+                "known_public_key": "forge:key",
+                "priority": 50,
+                "enabled": True,
+                "required": True,
+            }
+        ],
+    }
+)
+
+
+def test_register_default_servers_replays_the_default_entry() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _DEFAULT_REGISTRY}))
+    dev = Device("h", backend=backend)
+    catalog.register_default_servers(dev)
+    cmd = backend.runs[-1][-1]
+    assert f"{catalog._NIX_CLI} register-server" in cmd
+    assert "--id forge" in cmd
+    assert "--feed-url https://downloads.braiinsforge.com/feed.json" in cmd
+    assert "--index-public-key forge:key" in cmd
+    assert "--priority 50" in cmd
+    assert "--cache-url" not in cmd
+    assert "--optional" not in cmd
+
+
+def test_register_default_servers_url_override_replaces_the_source() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _DEFAULT_REGISTRY}))
+    dev = Device("h", backend=backend)
+    catalog.register_default_servers(dev, url="https://staging.example/feed.json")
+    cmd = backend.runs[-1][-1]
+    assert "--feed-url https://staging.example/feed.json" in cmd
+    assert "--index-public-key forge:key" in cmd
+
+
+def test_register_default_servers_without_default_needs_explicit_fields() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": ""}))
+    dev = Device("h", backend=backend)
+    with pytest.raises(Abort):
+        catalog.register_default_servers(dev)
+
+
+def test_register_default_servers_explicit_entry_without_default() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": ""}))
+    dev = Device("h", backend=backend)
+    catalog.register_default_servers(
+        dev,
+        url="https://dev.example/index.json",
+        entry_id="dev",
+        key="dev:key",
+    )
+    cmd = backend.runs[-1][-1]
+    assert "--id dev" in cmd
+    assert "--index-url https://dev.example/index.json" in cmd
+    assert "--index-public-key dev:key" in cmd
+
+
+def test_register_default_servers_factory_only_uses_explicit_entry() -> None:
+    registry = json.loads(_DEFAULT_REGISTRY)
+    del registry["servers"]
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    catalog.register_default_servers(
+        Device("h", backend=backend),
+        url="https://dev.example/index.json",
+        entry_id="dev",
+        key="dev:key",
+    )
+    commands = [run[-1] for run in backend.runs if "register-server" in run[-1]]
+    assert len(commands) == 1
+    assert "--id dev" in commands[0]
+    assert "--index-url https://dev.example/index.json" in commands[0]
+    assert "--index-public-key dev:key" in commands[0]
+
+
+_TWO_ENTRY_REGISTRY = json.dumps(
+    {
+        "factory": {
+            "id": "factory",
+            "base_url": "https://factory.example",
+            "known_public_key": "factory:key",
+            "priority": 10,
+            "enabled": True,
+        },
+        "servers": [
+            {
+                "id": "forge",
+                "feed_url": "https://downloads.braiinsforge.com/feed.json",
+                "known_public_key": "forge:key",
+                "priority": 50,
+                "enabled": True,
+                "required": True,
+            },
+            {
+                "id": "mirror",
+                "index_url": "https://mirror.example/index.json",
+                "known_public_key": "mirror:key",
+                "priority": 80,
+                "enabled": True,
+                "required": False,
+            },
+        ],
+    }
+)
+
+
+def test_register_default_servers_replays_every_entry_faithfully() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _TWO_ENTRY_REGISTRY}))
+    dev = Device("h", backend=backend)
+    catalog.register_default_servers(dev)
+    cmds = [run[-1] for run in backend.runs if "register-server" in run[-1]]
+    assert len(cmds) == 2
+    assert "--feed-url https://downloads.braiinsforge.com/feed.json" in cmds[0]
+    assert "--priority 50" in cmds[0]
+    assert "--optional" not in cmds[0]
+    assert "--index-url https://mirror.example/index.json" in cmds[1]
+    assert "--priority 80" in cmds[1]
+    assert "--optional" in cmds[1], "required: false must replay as --optional"
+
+
+def test_register_default_servers_skips_a_disabled_entry() -> None:
+    registry = json.loads(_TWO_ENTRY_REGISTRY)
+    registry["servers"][1]["enabled"] = False
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    dev = Device("h", backend=backend)
+    catalog.register_default_servers(dev)
+    cmds = [run[-1] for run in backend.runs if "register-server" in run[-1]]
+    assert len(cmds) == 1, "a disabled default entry must not be replayed"
+    assert "--id forge" in cmds[0]
+
+
+def test_register_default_servers_rejects_an_id_naming_a_disabled_entry() -> None:
+    registry = json.loads(_TWO_ENTRY_REGISTRY)
+    registry["servers"][1]["enabled"] = False
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    with pytest.raises(Abort, match="'mirror' is disabled"):
+        catalog.register_default_servers(
+            Device("h", backend=backend), url="https://x.example", entry_id="mirror"
+        )
+    assert not any("register-server" in run[-1] for run in backend.runs), (
+        "--id naming a disabled entry must not register another server under that id"
+    )
+
+
+def test_register_default_servers_aborts_when_every_entry_is_disabled() -> None:
+    registry = json.loads(_TWO_ENTRY_REGISTRY)
+    for entry in registry["servers"]:
+        entry["enabled"] = False
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    with pytest.raises(Abort, match="no enabled server entries"):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs), (
+        "a fully disabled registry must not be replayed as enabled"
+    )
+
+
+def test_register_default_servers_id_selects_among_multiple_entries() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _TWO_ENTRY_REGISTRY}))
+    dev = Device("h", backend=backend)
+    catalog.register_default_servers(
+        dev, url="https://staging.example/index.json", entry_id="mirror"
+    )
+    cmds = [run[-1] for run in backend.runs if "register-server" in run[-1]]
+    assert len(cmds) == 1
+    assert "--id mirror" in cmds[0]
+    assert "--index-url https://staging.example/index.json" in cmds[0]
+
+
+def test_register_default_servers_rejects_an_unknown_id() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _TWO_ENTRY_REGISTRY}))
+    dev = Device("h", backend=backend)
+    with pytest.raises(Abort):
+        catalog.register_default_servers(dev, url="https://x.example", entry_id="nope")
+
+
+def test_register_default_servers_url_alone_is_ambiguous_with_two_entries() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _TWO_ENTRY_REGISTRY}))
+    dev = Device("h", backend=backend)
+    with pytest.raises(Abort):
+        catalog.register_default_servers(dev, url="https://x.example")
+
+
+def test_register_server_cmd_quotes_a_metacharacter_priority() -> None:
+    priority = "50; touch /tmp/owned"
+    cmd = catalog._register_server_cmd(
+        {
+            "id": "forge",
+            "feed_url": "https://downloads.braiinsforge.com/feed.json",
+            "known_public_key": "forge:key",
+            "priority": priority,
+        }
+    )
+    assert shlex.split(cmd)[-1] == priority
+
+
+def test_register_default_servers_rejects_a_metacharacter_priority() -> None:
+    registry = json.loads(_DEFAULT_REGISTRY)
+    registry["servers"][0]["priority"] = "50; touch /tmp/owned"
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    with pytest.raises(Abort, match=r"servers\[0\]\.priority"):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs)
+
+
+def test_register_default_servers_rejects_malformed_json_without_mutation() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": "{"}))
+    with pytest.raises(Abort, match="not valid JSON"):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs)
+
+
+@pytest.mark.parametrize("raw", ["null", "[]", '"registry"'])
+def test_register_default_servers_rejects_a_non_object_root(raw: str) -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": raw}))
+    with pytest.raises(Abort, match="must contain a JSON object"):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs)
+
+
+@pytest.mark.parametrize("servers", [None, {}, "entries"])
+def test_register_default_servers_requires_a_servers_list(servers: object) -> None:
+    raw = json.dumps({"servers": servers})
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": raw}))
+    with pytest.raises(Abort, match="must contain a servers list"):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs)
+
+
+def test_register_default_servers_validates_every_entry_before_mutating() -> None:
+    registry = json.loads(_TWO_ENTRY_REGISTRY)
+    del registry["servers"][1]["known_public_key"]
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    with pytest.raises(Abort, match=r"servers\[1\]\.known_public_key"):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs)
+
+
+@pytest.mark.parametrize(
+    ("sources", "message"),
+    [
+        ({}, "exactly one"),
+        ({"feed_url": None}, "exactly one"),
+        (
+            {
+                "feed_url": "https://downloads.braiinsforge.com/feed.json",
+                "index_url": "https://downloads.braiinsforge.com/index.json",
+            },
+            "exactly one",
+        ),
+    ],
+)
+def test_register_default_servers_requires_exactly_one_source(
+    sources: dict[str, object], message: str
+) -> None:
+    registry = json.loads(_DEFAULT_REGISTRY)
+    entry = registry["servers"][0]
+    entry.pop("feed_url")
+    entry.update(sources)
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    with pytest.raises(Abort, match=message):
+        catalog.register_default_servers(Device("h", backend=backend))
+    assert not any("register-server" in run[-1] for run in backend.runs)
+
+
+def test_register_default_servers_treats_a_null_source_as_absent() -> None:
+    registry = json.loads(_DEFAULT_REGISTRY)
+    entry = registry["servers"][0]
+    entry["feed_url"] = None
+    entry["index_url"] = "https://downloads.braiinsforge.com/index.json"
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": json.dumps(registry)}))
+    catalog.register_default_servers(Device("h", backend=backend))
+    commands = [run[-1] for run in backend.runs if "register-server" in run[-1]]
+    assert len(commands) == 1
+    assert "--index-url https://downloads.braiinsforge.com/index.json" in commands[0]
+    assert "--feed-url" not in commands[0]
+
+
+def test_register_default_servers_dry_run_reads_but_skips_mutations() -> None:
+    backend = _Exec(_routes({f"cat {catalog._SERVERS_JSON_DEFAULT}": _DEFAULT_REGISTRY}))
+    token = dry_run.set(True)
+    try:
+        catalog.register_default_servers(Device("h", backend=backend))
+    finally:
+        dry_run.reset(token)
+    assert len(backend.runs) == 1
+    assert f"cat {catalog._SERVERS_JSON_DEFAULT}" in backend.runs[0][-1]
+
+
 def _flip_clock_plan() -> catalog.Deployment:
     built = Built(
         "widget-flip-clock", "1.0", Attr(".#x^out"), store_path=StorePath("/nix/store/wfc")

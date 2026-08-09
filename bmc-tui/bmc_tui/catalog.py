@@ -66,6 +66,8 @@ _PROFILE_DIR = "/nix/var/nix/gcroots/profiles/bmc"
 _NIX_CLI = f"{_PROFILE_DIR}/current/bin/bmc-nix-cli"
 
 _NIX_CONF = "/etc/nix/nix.conf"
+_SERVERS_JSON_DEFAULT = "/etc/nix-upgrade/servers.json.default"
+_U32_MAX = 0xFFFF_FFFF
 
 # Device-side nix store: a directory on the data partition, bind-mounted at /nix
 # so the read-only rootfs gains a writable store. Matches the init tarball layout.
@@ -481,6 +483,148 @@ def clear_upgrade_servers(dev: Device) -> str:
     if dry_run.get():
         return "would clear package servers"
     return "package servers cleared; scheduled upgrade checks fail until servers are re-registered"
+
+
+def _register_server_cmd(entry: dict[str, object]) -> str:
+    parts = [_NIX_CLI, "register-server", "--id", str(entry["id"])]
+    if entry.get("feed_url") is not None:
+        parts += ["--feed-url", str(entry["feed_url"])]
+    else:
+        parts += ["--index-url", str(entry["index_url"])]
+    parts += ["--index-public-key", str(entry["known_public_key"])]
+    parts += ["--priority", str(entry.get("priority", 50))]
+    if not entry.get("required", True):
+        parts.append("--optional")
+    return shlex.join(parts)
+
+
+def _default_server_entries(raw: str) -> list[dict[str, object]]:
+    if not raw.strip():
+        return []
+    try:
+        registry = json.loads(raw)
+    except json.JSONDecodeError as error:
+        raise Abort(f"{_SERVERS_JSON_DEFAULT} is not valid JSON: {error}") from None
+    require(
+        isinstance(registry, dict),
+        f"{_SERVERS_JSON_DEFAULT} must contain a JSON object",
+    )
+    servers = registry.get("servers", [])
+    require(
+        isinstance(servers, list),
+        f"{_SERVERS_JSON_DEFAULT} must contain a servers list",
+    )
+
+    entries: list[dict[str, object]] = []
+    for index, candidate in enumerate(servers):
+        label = f"{_SERVERS_JSON_DEFAULT} servers[{index}]"
+        require(isinstance(candidate, dict), f"{label} must be a JSON object")
+
+        entry_id = candidate.get("id")
+        require(
+            isinstance(entry_id, str) and bool(entry_id),
+            f"{label}.id must be a non-empty string",
+        )
+        sources = [
+            source for source in ("feed_url", "index_url") if candidate.get(source) is not None
+        ]
+        require(
+            len(sources) == 1,
+            f"{label} must contain exactly one of feed_url or index_url",
+        )
+        source = sources[0]
+        require(
+            isinstance(candidate[source], str) and bool(candidate[source]),
+            f"{label}.{source} must be a non-empty string",
+        )
+        known_public_key = candidate.get("known_public_key")
+        require(
+            isinstance(known_public_key, str) and bool(known_public_key),
+            f"{label}.known_public_key must be a non-empty string",
+        )
+        priority = candidate.get("priority")
+        require(
+            isinstance(priority, int)
+            and not isinstance(priority, bool)
+            and 0 <= priority <= _U32_MAX,
+            f"{label}.priority must be an unsigned 32-bit integer",
+        )
+        require(
+            isinstance(candidate.get("enabled"), bool),
+            f"{label}.enabled must be a boolean",
+        )
+        require(
+            isinstance(candidate.get("required", True), bool),
+            f"{label}.required must be a boolean when present",
+        )
+        entries.append(candidate)
+    return entries
+
+
+@stage("Register upgrade servers")
+def register_default_servers(
+    dev: Device,
+    url: str | None = None,
+    entry_id: str | None = None,
+    key: str | None = None,
+) -> str:
+    # Registry reads must run under --dry-run so the skipped mutations can be derived and logged.
+    raw = dev.read(f"cat {_SERVERS_JSON_DEFAULT} 2>/dev/null || true")
+
+    entries = _default_server_entries(raw)
+    # register-server always writes enabled entries, so replaying a disabled
+    # one would silently enable it.
+    disabled = [entry for entry in entries if entry["enabled"] is False]
+    entries = [entry for entry in entries if entry["enabled"] is True]
+
+    if not entries:
+        require(
+            url is not None and entry_id is not None and key is not None,
+            f"{_SERVERS_JSON_DEFAULT} has no enabled server entries; "
+            "pass --url, --id and --key to register one explicitly",
+        )
+        explicit_entry: dict[str, object] = {
+            "id": entry_id,
+            "index_url": url,
+            "known_public_key": key,
+            "priority": 50,
+        }
+        entries = [explicit_entry]
+    elif url is not None or entry_id is not None or key is not None:
+        # Without this, --id naming a disabled entry falls through to the
+        # rename below and registers a different server's URL and key under
+        # the requested id.
+        if entry_id is not None:
+            require(
+                all(entry["id"] != entry_id for entry in disabled),
+                f"default entry {entry_id!r} is disabled; enable it in "
+                f"{_SERVERS_JSON_DEFAULT} before replaying it",
+            )
+        if len(entries) > 1 and entry_id is not None:
+            entries = [entry for entry in entries if entry["id"] == entry_id]
+            require(bool(entries), f"no enabled default entry with id {entry_id!r}")
+        require(
+            len(entries) == 1,
+            "overrides are ambiguous with multiple default entries; pass --id",
+        )
+        entry = dict(entries[0])
+        if entry_id is not None:
+            entry["id"] = entry_id
+        if key is not None:
+            entry["known_public_key"] = key
+        if url is not None:
+            source = "feed_url" if entry.get("feed_url") is not None else "index_url"
+            entry[source] = url
+        entries = [entry]
+
+    commands = [_register_server_cmd(entry) for entry in entries]
+    for command in commands:
+        dev.run(command)
+    ids = ", ".join(str(entry["id"]) for entry in entries)
+    if disabled:
+        skipped = ", ".join(str(entry["id"]) for entry in disabled)
+        return f"registered {ids}; skipped disabled {skipped}"
+    return f"registered {ids}"
 
 
 _WASM_HOST = "bmc-wasm-host"

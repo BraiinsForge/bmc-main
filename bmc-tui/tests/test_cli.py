@@ -22,8 +22,10 @@
 
 from pathlib import Path
 
+import pytest
 import tyro
 
+from bmc_tui import cli
 from bmc_tui.procedures.deploy import Deploy
 from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
 from bmc_tui.procedures.init import Init
@@ -76,3 +78,9 @@ def test_e2e_grpc_sysupgrade_parses_args() -> None:
     assert cmd.packages_port == 8080
     assert cmd.packages_index_port == 8081
     assert cmd.stream_deadline == 900.0
+
+
+def test_register_server_is_a_deck_subcommand(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit):
+        cli.main(["register-server", "--help"])
+    assert "register-server" in capsys.readouterr().out

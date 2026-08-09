@@ -18,37 +18,33 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-"""Single `deck` entry point: dispatch to a procedure subcommand."""
+"""Restore or register upgrade servers on a device after a deploy cleared them."""
 
-from bmc_tui.procedures.check_credential_egress import CheckCredentialEgress
-from bmc_tui.procedures.deploy import Deploy
-from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
-from bmc_tui.procedures.e2e_sysupgrade import E2eSysupgrade
-from bmc_tui.procedures.e2e_sysupgrade_faults import E2eSysupgradeFaults
-from bmc_tui.procedures.image_formats import ImageFormats
-from bmc_tui.procedures.init import Init
-from bmc_tui.procedures.install_widget_e2e import InstallWidgetE2e
-from bmc_tui.procedures.register_server import RegisterServer
-from bmc_tui.procedures.sysupgrade import Sysupgrade
-from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
+from dataclasses import dataclass
+
+from bmc_tui import catalog, console
+from bmc_tui.device import Device
 from bmc_tui.stage import entrypoint
 
 
+@dataclass
+class RegisterServer:
+    device: str  # IP or host of the target Deck
+    url: str | None = None  # override the default entry's feed/index URL
+    id: str | None = None  # override or select the entry id
+    key: str | None = None  # override the entry's index public key
+
+    def run(self) -> None:
+        dev = Device(self.device)
+        console.header("Register upgrade servers")
+        dev.print()
+        catalog.ensure_device_reachable(dev)
+        catalog.register_default_servers(dev, url=self.url, entry_id=self.id, key=self.key)
+
+
 @entrypoint
-def main(
-    command: Init
-    | Deploy
-    | Sysupgrade
-    | UpgradeE2e
-    | InstallWidgetE2e
-    | E2eSysupgrade
-    | E2eGrpcSysupgrade
-    | ImageFormats
-    | E2eSysupgradeFaults
-    | CheckCredentialEgress
-    | RegisterServer,
-) -> None:
-    command.run()
+def main(args: RegisterServer) -> None:
+    args.run()
 
 
 if __name__ == "__main__":
