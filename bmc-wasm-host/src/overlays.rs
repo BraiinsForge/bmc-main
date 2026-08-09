@@ -72,7 +72,7 @@ fn overlay_specs() -> Vec<OverlaySpec> {
         specs,
         "overlay-upgrade",
         "upgrade-firmware",
-        Box::new(bmc_overlay_upgrade::FirmwareUpgradeOverlay::default())
+        Box::new(bmc_overlay_upgrade::UpgradeOverlay::firmware())
     );
     register_overlay!(
         specs,
@@ -84,7 +84,7 @@ fn overlay_specs() -> Vec<OverlaySpec> {
         specs,
         "overlay-upgrade",
         "upgrade-packages",
-        Box::new(bmc_overlay_upgrade::PackageUpgradeOverlay::default())
+        Box::new(bmc_overlay_upgrade::UpgradeOverlay::packages())
     );
     register_overlay!(
         specs,

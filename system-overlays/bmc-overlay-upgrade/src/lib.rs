@@ -27,8 +27,8 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TreeUi,
-    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
+    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome,
+    TouchEvent, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -182,6 +182,14 @@ impl OverlayState {
         }
     }
 
+    fn dismiss_finished(&mut self) {
+        if matches!(self.view, Some(UpgradeView::Succeeded { .. })) {
+            self.view = None;
+            self.terminal_deadline = None;
+            self.dirty = false;
+        }
+    }
+
     fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
         if let Some(view) = self.view {
             render_upgrade(
@@ -199,69 +207,43 @@ impl OverlayState {
     missing_debug_implementations,
     reason = "retained TreeUi render state is not Debug"
 )]
-pub struct FirmwareUpgradeOverlay {
+pub struct UpgradeOverlay {
     state: OverlayState,
 }
 
-impl Default for FirmwareUpgradeOverlay {
-    fn default() -> Self {
+impl UpgradeOverlay {
+    #[must_use]
+    pub fn firmware() -> Self {
         Self {
             state: OverlayState::new(UpgradeKind::Firmware),
         }
     }
-}
 
-impl SystemOverlay for FirmwareUpgradeOverlay {
-    fn layer_config(&self) -> LayerConfig {
-        LayerConfig::fullscreen("bmc-overlay-upgrade-firmware")
-    }
-
-    fn uses_upgrade(&self) -> bool {
-        true
-    }
-
-    fn on_upgrade_state(&mut self, snapshot: UpgradeSnapshot) {
-        self.state.receive(snapshot, Instant::now());
-    }
-
-    fn tick(&mut self, now: Instant) -> TickOutcome {
-        self.state.tick(now)
-    }
-
-    fn render(&mut self, renderer: &mut dyn Renderer, size: (u32, u32)) {
-        self.state.render(renderer, size);
-    }
-}
-
-#[expect(
-    missing_debug_implementations,
-    reason = "retained TreeUi render state is not Debug"
-)]
-pub struct PackageUpgradeOverlay {
-    state: OverlayState,
-}
-
-impl Default for PackageUpgradeOverlay {
-    fn default() -> Self {
+    #[must_use]
+    pub fn packages() -> Self {
         Self {
             state: OverlayState::new(UpgradeKind::Packages),
         }
     }
 }
 
-impl SystemOverlay for PackageUpgradeOverlay {
+impl SystemOverlay for UpgradeOverlay {
     fn layer_config(&self) -> LayerConfig {
-        LayerConfig {
-            layer: Layer::Bottom,
-            anchor: Anchor::Bottom | Anchor::Right,
-            size: PACKAGE_SURFACE_SIZE,
-            margin_top: 0,
-            margin_right: 0,
-            margin_bottom: 0,
-            margin_left: 0,
-            exclusive_zone: 0,
-            namespace: "bmc-overlay-upgrade-packages".to_owned(),
-            input: InputRegion::None,
+        match self.state.kind {
+            UpgradeKind::Firmware => LayerConfig::fullscreen("bmc-overlay-upgrade-firmware"),
+            UpgradeKind::Packages => LayerConfig {
+                layer: Layer::Bottom,
+                anchor: Anchor::Bottom | Anchor::Right,
+                size: PACKAGE_SURFACE_SIZE,
+                margin_top: 0,
+                margin_right: 0,
+                margin_bottom: 0,
+                margin_left: 0,
+                exclusive_zone: 0,
+                namespace: "bmc-overlay-upgrade-packages".to_owned(),
+                input: InputRegion::None,
+            },
+            kind => unreachable!("BUG: upgrade overlay constructed for unsupported kind {kind:?}"),
         }
     }
 
@@ -271,6 +253,12 @@ impl SystemOverlay for PackageUpgradeOverlay {
 
     fn on_upgrade_state(&mut self, snapshot: UpgradeSnapshot) {
         self.state.receive(snapshot, Instant::now());
+    }
+
+    fn on_touch(&mut self, event: TouchEvent) {
+        if self.state.kind == UpgradeKind::Firmware && matches!(event, TouchEvent::Down { .. }) {
+            self.state.dismiss_finished();
+        }
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
@@ -428,9 +416,79 @@ mod tests {
         assert!(state.tick(now).wants_render);
     }
 
+    fn touch_down() -> TouchEvent {
+        TouchEvent::Down {
+            id: 0,
+            x: 1.0,
+            y: 1.0,
+        }
+    }
+
+    #[test]
+    fn touch_dismisses_the_finished_overlay_immediately() {
+        let now = Instant::now();
+        let mut overlay = UpgradeOverlay::firmware();
+        overlay.on_upgrade_state(UpgradeSnapshot {
+            kind: UpgradeKind::Firmware,
+            state: UpgradeState::Succeeded {
+                remaining: Duration::from_secs(10),
+            },
+        });
+        assert!(overlay.tick(now).visible);
+
+        overlay.on_touch(touch_down());
+        assert!(
+            !overlay.tick(now).visible,
+            "the finished screen must hide on the first touch"
+        );
+    }
+
+    #[test]
+    fn touch_does_not_dismiss_a_running_or_failed_upgrade() {
+        let now = Instant::now();
+        let mut overlay = UpgradeOverlay::firmware();
+        overlay.on_upgrade_state(running(UpgradeKind::Firmware));
+        overlay.on_touch(touch_down());
+        assert!(
+            overlay.tick(now).visible,
+            "a running upgrade must stay modal"
+        );
+
+        overlay.on_upgrade_state(UpgradeSnapshot {
+            kind: UpgradeKind::Firmware,
+            state: UpgradeState::Failed {
+                remaining: Duration::from_secs(10),
+            },
+        });
+        overlay.on_touch(touch_down());
+        assert!(
+            overlay.tick(now).visible,
+            "a failure must stay up for its full dwell"
+        );
+    }
+
+    #[test]
+    fn touch_does_not_dismiss_a_finished_package_upgrade() {
+        let now = Instant::now();
+        let mut overlay = UpgradeOverlay::packages();
+        overlay.on_upgrade_state(UpgradeSnapshot {
+            kind: UpgradeKind::Packages,
+            state: UpgradeState::Succeeded {
+                remaining: Duration::from_secs(10),
+            },
+        });
+
+        overlay.on_touch(touch_down());
+
+        assert!(
+            overlay.tick(now).visible,
+            "the package result must remain visible for its full dwell"
+        );
+    }
+
     #[test]
     fn layer_configs_keep_firmware_modal_and_packages_passive() {
-        let firmware = FirmwareUpgradeOverlay::default().layer_config();
+        let firmware = UpgradeOverlay::firmware().layer_config();
         assert_eq!(firmware.layer, Layer::Top);
         assert_eq!(
             firmware.anchor,
@@ -450,7 +508,7 @@ mod tests {
         assert_eq!(firmware.namespace, "bmc-overlay-upgrade-firmware");
         assert_eq!(firmware.input, InputRegion::Full);
 
-        let packages = PackageUpgradeOverlay::default().layer_config();
+        let packages = UpgradeOverlay::packages().layer_config();
         assert_eq!(packages.layer, Layer::Bottom);
         assert_eq!(packages.anchor, Anchor::Bottom | Anchor::Right);
         assert_eq!(packages.size, PACKAGE_SURFACE_SIZE);

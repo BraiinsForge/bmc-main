@@ -18,8 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use bmc_overlay_upgrade::PackageUpgradeOverlay;
+use bmc_overlay_upgrade::UpgradeOverlay;
 
 fn main() -> anyhow::Result<()> {
-    bmc_system_overlay::run_standalone(Box::new(PackageUpgradeOverlay::default()))
+    bmc_system_overlay::run_standalone(Box::new(UpgradeOverlay::packages()))
 }
