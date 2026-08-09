@@ -20,7 +20,9 @@
 // the grant above.
 
 mod periodic_gc;
+pub(crate) mod stagger;
 
+use self::stagger::MaintenanceStagger;
 use crate::BmcManager;
 use anyhow::anyhow;
 use bmc_scheduler::JobScheduler;
@@ -538,6 +540,7 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     firmware_upgrader: Arc<Mutex<FirmwareUpgrader<T>>>,
     bmc_manager: Arc<U>,
     scheduler: JobScheduler,
+    stagger: MaintenanceStagger,
     autoupgrade: Arc<AutoUpgrade>,
     run_gate: Arc<Mutex<()>>,
     upgrade_id_seq: Arc<AtomicUsize>,
@@ -558,6 +561,7 @@ where
             firmware_upgrader: self.firmware_upgrader.clone(),
             bmc_manager: self.bmc_manager.clone(),
             scheduler: self.scheduler.clone(),
+            stagger: self.stagger,
             autoupgrade: self.autoupgrade.clone(),
             run_gate: self.run_gate.clone(),
             upgrade_id_seq: self.upgrade_id_seq.clone(),
@@ -587,11 +591,16 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             upgrade_image_path.to_owned(),
             CLIENT.clone(),
         );
+        // The timezone is read here and again when the scheduler evaluates the cron;
+        // a change between those reads can cost at most one occurrence.
+        let now = chrono::Utc::now().with_timezone(&scheduler.timezone());
+        let stagger = stagger::MaintenanceStagger::draw(&now, &mut rand::rng());
         Self {
             state_service,
             firmware_upgrader: Arc::new(Mutex::new(firmware_upgrader)),
             bmc_manager,
             scheduler,
+            stagger,
             autoupgrade: Arc::new(autoupgrade),
             run_gate: Arc::new(Mutex::new(())),
             upgrade_id_seq: Arc::new(AtomicUsize::new(0)),
@@ -934,7 +943,7 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             Arc::clone(&self.package_backend),
             gc_config_path,
         ));
-        if let Err(err) = gc.schedule(&self.scheduler).await {
+        if let Err(err) = gc.schedule(&self.scheduler, self.stagger).await {
             error!(error = %err, "Failed to schedule periodic garbage collection");
         }
     }

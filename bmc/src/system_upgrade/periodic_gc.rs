@@ -22,70 +22,16 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 
 use bmc_scheduler::Cron;
 use bmc_scheduler::JobScheduler;
 use bmc_scheduler::scheduler::{AsyncTask, JobConfig, Schedule, Task};
 use bmc_upgrade::packages::{PackageBackend, PackageGcOutcome, PackageGcRequest};
-use chrono::{DateTime, TimeZone, Timelike, Utc};
-use rand::Rng;
 use tokio::sync::Mutex;
 use tokio::time::Instant;
 use tracing::{debug, info, warn};
 
-/// How long after process start the first collection may run.
-///
-/// Collection competes with everything the device does while coming up, so it
-/// stays clear of the boot window.
-pub(crate) const GC_MIN_DELAY: Duration = Duration::from_secs(30 * 60);
-
-/// How often collection runs.
-pub(crate) const GC_PERIOD: Duration = Duration::from_secs(2 * 60 * 60);
-
-/// Draw the delay until the first collection.
-///
-/// Uniform over the whole seconds in `[GC_MIN_DELAY, GC_PERIOD - 1)`. The last
-/// second of the period belongs to the ceiling in [`derive_gc_pattern`], which
-/// adds a whole second to a sub-second `now` so the first occurrence never
-/// falls inside the boot window. `croner` carries that same sub-second
-/// component into the occurrence it returns, so in its frame the maximum draw
-/// plus the ceiling is exactly the period — hence the cap two seconds under
-/// it. The scheduler that fires the job truncates the occurrence to a whole
-/// second, so it fires no later than that; the cap is the stricter of the two
-/// frames. The draw is what staggers devices booted together; it is
-/// independent per device, so a collision is possible and harmless —
-/// collection is entirely local.
-fn draw_gc_delay(rng: &mut impl Rng) -> Duration {
-    let max_secs = GC_PERIOD.as_secs() - 2;
-    Duration::from_secs(rng.random_range(GC_MIN_DELAY.as_secs()..=max_secs))
-}
-
-/// Build a two-hourly cron pattern whose first occurrence is `delay` after
-/// `now`, rounded up to the next whole second.
-///
-/// `now` must be read in the scheduler's configured timezone, since that is
-/// the frame the pattern is evaluated in.
-fn derive_gc_pattern<Tz: TimeZone>(now: &DateTime<Tz>, delay: Duration) -> String {
-    let ceiling = if now.nanosecond() > 0 {
-        chrono::TimeDelta::seconds(1)
-    } else {
-        chrono::TimeDelta::zero()
-    };
-    let delay = chrono::TimeDelta::from_std(delay)
-        .expect("BUG: the drawn gc delay does not fit in a TimeDelta");
-    let target = now.clone() + ceiling + delay;
-
-    // `croner` reads a bare start before `/` as extending to the field
-    // maximum, so hour `0/2` yields 00,02,..,22 and `1/2` yields 01,03,..,23.
-    // Both step cleanly across midnight.
-    format!(
-        "{} {} {}/2 * * *",
-        target.second(),
-        target.minute(),
-        target.hour() % 2
-    )
-}
+use super::stagger::{HourParity, MAINTENANCE_MIN_DELAY, MaintenanceStagger};
 
 /// Scheduler source name, so the job can be listed and cancelled like any
 /// other.
@@ -131,26 +77,16 @@ impl PeriodicGc {
         }
     }
 
-    /// Register the job, deriving its schedule from the current time in the
-    /// scheduler's timezone.
-    pub(crate) async fn schedule(self: &Arc<Self>, scheduler: &JobScheduler) -> anyhow::Result<()> {
-        // The timezone is read here and again by `schedule` when it builds the
-        // job. A change landing between the two would evaluate fields derived
-        // in one zone against another, which costs at most one occurrence:
-        // the monotonic floor skips anything the shifted grid pulls into the
-        // boot window. That is the same tolerance the design already grants a
-        // clock correction, so the two reads are not worth a scheduler API
-        // that threads a snapshot through.
-        let now = Utc::now().with_timezone(&scheduler.timezone());
-        let delay = draw_gc_delay(&mut rand::rng());
-        let pattern = derive_gc_pattern(&now, delay);
+    /// Register the job on the stagger's even-hour grid.
+    pub(crate) async fn schedule(
+        self: &Arc<Self>,
+        scheduler: &JobScheduler,
+        stagger: MaintenanceStagger,
+    ) -> anyhow::Result<()> {
+        let pattern = stagger.pattern(HourParity::Even);
         let cron = <Cron as std::str::FromStr>::from_str(&pattern)?;
 
-        info!(
-            pattern,
-            delay_secs = delay.as_secs(),
-            "Scheduling periodic garbage collection"
-        );
+        info!(pattern, "Scheduling periodic garbage collection");
 
         let gc = Arc::clone(self);
         let task: AsyncTask = Box::new(move || {
@@ -173,7 +109,7 @@ impl PeriodicGc {
 
     /// One occurrence.
     pub(crate) async fn run(&self) {
-        if self.started.elapsed() < GC_MIN_DELAY {
+        if self.started.elapsed() < MAINTENANCE_MIN_DELAY {
             debug!("Skipping periodic garbage collection inside the startup window");
             return;
         }
@@ -234,109 +170,6 @@ impl PeriodicGc {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rand::SeedableRng as _;
-    use std::str::FromStr as _;
-
-    /// First instant the pattern derived at `now` with `delay` matches.
-    fn first_occurrence(now: &DateTime<chrono_tz::Tz>, delay: Duration) -> DateTime<chrono_tz::Tz> {
-        let pattern = derive_gc_pattern(now, delay);
-        let cron = Cron::from_str(&pattern).expect("BUG: derived an unparsable cron pattern");
-        cron.find_next_occurrence(now, false)
-            .expect("BUG: derived a pattern with no next occurrence")
-    }
-
-    fn at(tz: chrono_tz::Tz, h: u32, min: u32, s: u32) -> DateTime<chrono_tz::Tz> {
-        tz.with_ymd_and_hms(2026, 7, 29, h, min, s)
-            .single()
-            .expect("BUG: constructed an invalid timestamp")
-    }
-
-    #[test]
-    fn the_first_occurrence_stays_inside_the_bounds_across_the_drawn_range() {
-        // A start time inside every field's range, and late enough that the
-        // derived target crosses both an hour boundary and midnight. Both a
-        // whole second and a sub-second start: the second-ceiling adds up to
-        // one second, so the maximum draw is where the deadline is tightest.
-        for now in [
-            at(chrono_tz::UTC, 23, 47, 13),
-            at(chrono_tz::UTC, 23, 47, 13)
-                .with_nanosecond(1)
-                .expect("BUG: constructed an invalid timestamp"),
-            at(chrono_tz::UTC, 23, 47, 13)
-                .with_nanosecond(999_999_999)
-                .expect("BUG: constructed an invalid timestamp"),
-        ] {
-            for delay_secs in [1800_u64, 1801, 3600, 5400, 7197, 7198] {
-                let delay = Duration::from_secs(delay_secs);
-                let gap = (first_occurrence(&now, delay) - now)
-                    .to_std()
-                    .expect("BUG: the first occurrence precedes registration");
-
-                assert!(
-                    gap >= GC_MIN_DELAY,
-                    "delay {delay_secs}s at {now} landed {gap:?} after startup, inside the boot window"
-                );
-                assert!(
-                    gap < GC_PERIOD,
-                    "delay {delay_secs}s at {now} landed {gap:?} after startup, past the two-hour deadline"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn occurrences_repeat_every_two_hours_across_midnight() {
-        let now = at(chrono_tz::UTC, 22, 5, 0);
-        let pattern = derive_gc_pattern(&now, Duration::from_secs(4000));
-        let cron = Cron::from_str(&pattern).expect("BUG: derived an unparsable cron pattern");
-
-        let first = cron
-            .find_next_occurrence(&now, false)
-            .expect("BUG: no first occurrence");
-        let second = cron
-            .find_next_occurrence(&first, false)
-            .expect("BUG: no second occurrence");
-
-        assert_eq!(
-            (second - first)
-                .to_std()
-                .expect("BUG: occurrences out of order"),
-            GC_PERIOD,
-            "the pattern must neither skip nor double up at midnight"
-        );
-    }
-
-    #[test]
-    fn a_fractional_hour_zone_keeps_the_bounds() {
-        // Kathmandu is +05:45: a pattern derived in a differently-offset frame
-        // would put the minute field in the wrong place.
-        let now = at(chrono_tz::Asia::Kathmandu, 9, 12, 40);
-        let gap = (first_occurrence(&now, Duration::from_secs(2000)) - now)
-            .to_std()
-            .expect("BUG: the first occurrence precedes registration");
-
-        assert!(gap >= GC_MIN_DELAY && gap < GC_PERIOD, "gap was {gap:?}");
-    }
-
-    #[test]
-    fn the_drawn_delay_stays_inside_the_documented_range() {
-        let mut rng = rand::rngs::StdRng::seed_from_u64(0);
-        for _ in 0..1000 {
-            let delay = draw_gc_delay(&mut rng);
-            assert!(
-                delay >= GC_MIN_DELAY,
-                "drew {delay:?}, inside the boot window"
-            );
-            // Not just `< GC_PERIOD`: the derivation's ceiling can add a whole
-            // second on top of the draw, so the draw itself has to stay two
-            // seconds under the period for the first occurrence to land
-            // strictly inside it.
-            assert!(
-                delay.as_secs() <= GC_PERIOD.as_secs() - 2,
-                "drew {delay:?}, which the second-ceiling can push onto the two-hour deadline"
-            );
-        }
-    }
 
     use std::sync::Mutex as StdMutex;
     use std::sync::atomic::AtomicUsize;
@@ -442,7 +275,7 @@ mod tests {
             backend,
             config_dir.path().join("gc.json"),
         );
-        tokio::time::advance(GC_MIN_DELAY).await;
+        tokio::time::advance(MAINTENANCE_MIN_DELAY).await;
         (gc, run_gate, config_dir)
     }
 
