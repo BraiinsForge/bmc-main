@@ -27,7 +27,8 @@ use std::time::{Duration, Instant};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Layer, LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, VersionedSnapshot,
+    Layer, LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind,
+    UpgradeSnapshot, UpgradeState, VersionedSnapshot,
 };
 
 /// How long to wait for an IPv4 before showing the connection-failure state.
@@ -57,6 +58,9 @@ impl Env for OsEnv {
 enum Phase {
     /// Mapped immediately at operational startup; polling for an IPv4.
     Connecting { since: Instant },
+    /// A firmware-upgrade success screen owns the display; stay unmapped
+    /// and start connecting once it is due to hide.
+    Postponed { until: Instant },
     /// IPv4 appeared before timeout; show the last-known IP for a fixed duration.
     Success { since: Instant, ip: Ipv4Addr },
     /// Timeout expired without IPv4; show failure briefly.
@@ -67,7 +71,7 @@ enum Phase {
 
 #[must_use]
 fn phase_visible(phase: Phase) -> bool {
-    !matches!(phase, Phase::Done)
+    !matches!(phase, Phase::Done | Phase::Postponed { .. })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,6 +93,13 @@ fn step(phase: Phase, now: Instant, ip: Option<Ipv4Addr>) -> (Phase, bool) {
                 (Phase::Failed { since: now }, true)
             } else {
                 (Phase::Connecting { since }, false)
+            }
+        }
+        Phase::Postponed { until } => {
+            if now >= until {
+                (Phase::Connecting { since: now }, true)
+            } else {
+                (Phase::Postponed { until }, false)
             }
         }
         Phase::Success {
@@ -170,7 +181,7 @@ impl DeviceInfoOverlay {
             Phase::Failed { .. } => DeviceInfoView::Failed {
                 ssid: self.ssid.clone(),
             },
-            Phase::Done => DeviceInfoView::Done,
+            Phase::Postponed { .. } | Phase::Done => DeviceInfoView::Done,
         }
     }
 
@@ -230,6 +241,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             }
             Phase::Success { since, .. } => Some(since + SUCCESS_VISIBLE_FOR),
             Phase::Failed { since } => Some(since + FAILURE_VISIBLE_FOR),
+            Phase::Postponed { until } => Some(until),
             Phase::Done => None,
         };
         TickOutcome {
@@ -246,6 +258,33 @@ impl SystemOverlay for DeviceInfoOverlay {
     fn on_touch(&mut self, event: TouchEvent) {
         if matches!(event, TouchEvent::Down { .. }) {
             self.phase = Phase::Done;
+        }
+    }
+
+    fn uses_upgrade(&self) -> bool {
+        true
+    }
+
+    /// A success snapshot while still `Connecting` marks this startup
+    /// as post-upgrade. A package restart never dropped the network:
+    /// skip the connection screen. A firmware success keeps its overlay
+    /// in front: wait out that dwell before connecting.
+    fn on_upgrade_state(&mut self, snapshot: UpgradeSnapshot) {
+        if !matches!(self.phase, Phase::Connecting { .. }) {
+            return;
+        }
+        let UpgradeState::Succeeded { remaining } = snapshot.state else {
+            return;
+        };
+        if snapshot.kind == UpgradeKind::Packages {
+            // TODO(BDK-450): only the regular show-the-IP screen is safe to skip here.
+            // Factory-default or config-init screens, once added,
+            // must still run after a package restart.
+            self.phase = Phase::Done;
+        } else if snapshot.kind == UpgradeKind::Firmware {
+            self.phase = Phase::Postponed {
+                until: Instant::now() + remaining,
+            };
         }
     }
 }
@@ -469,6 +508,87 @@ mod tests {
         };
 
         assert_eq!(overlay.view(), DeviceInfoView::Success { ip });
+    }
+
+    fn connecting_overlay(start: Instant) -> DeviceInfoOverlay {
+        DeviceInfoOverlay {
+            phase: Phase::Connecting { since: start },
+            ip: None,
+            ssid: None,
+            snapshot_version: None,
+            env: Box::new(StaticEnv { snapshot: None }),
+        }
+    }
+
+    fn succeeded(kind: UpgradeKind) -> UpgradeSnapshot {
+        UpgradeSnapshot {
+            kind,
+            state: UpgradeState::Succeeded {
+                remaining: Duration::from_secs(10),
+            },
+        }
+    }
+
+    #[test]
+    fn a_package_activation_restart_skips_the_startup_screen() {
+        let start = t0();
+        let mut overlay = connecting_overlay(start);
+
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Packages));
+
+        assert_eq!(overlay.phase, Phase::Done);
+        assert!(!overlay.tick(start).visible);
+    }
+
+    #[test]
+    fn a_firmware_success_postpones_connecting_past_its_dwell() {
+        let start = t0();
+        let mut overlay = connecting_overlay(start);
+
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware));
+
+        let Phase::Postponed { until } = overlay.phase else {
+            panic!("firmware success must postpone, got {:?}", overlay.phase);
+        };
+        let tick = overlay.tick(start);
+        assert!(!tick.visible, "stay unmapped under the success screen");
+        assert_eq!(tick.next_wake, Some(until));
+
+        let (next, changed) = step(Phase::Postponed { until }, until, None);
+        assert_eq!(
+            next,
+            Phase::Connecting { since: until },
+            "the full connect window must start after the dwell"
+        );
+        assert!(changed);
+    }
+
+    #[test]
+    fn a_running_package_upgrade_keeps_the_startup_screen() {
+        let start = t0();
+        let mut overlay = connecting_overlay(start);
+
+        overlay.on_upgrade_state(UpgradeSnapshot {
+            kind: UpgradeKind::Packages,
+            state: UpgradeState::Running {
+                phase: None,
+                progress: None,
+            },
+        });
+
+        assert_eq!(overlay.phase, Phase::Connecting { since: start });
+    }
+
+    #[test]
+    fn a_live_upgrade_success_does_not_restart_a_shown_screen() {
+        let start = t0();
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let mut overlay = connecting_overlay(start);
+        overlay.phase = Phase::Success { since: start, ip };
+
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware));
+
+        assert_eq!(overlay.phase, Phase::Success { since: start, ip });
     }
 
     #[test]
