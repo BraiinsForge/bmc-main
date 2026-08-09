@@ -165,7 +165,6 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
 
         let upgrade_service = web::upgrade_service_server::UpgradeServiceServer::new(
             upgrade_service::UpgradeService::new(
-                self.manager.clone(),
                 self.system_upgrade_service,
                 self.config_handle.clone(),
                 &self.hardware_capabilities,

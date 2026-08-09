@@ -28,7 +28,6 @@ pub(crate) const MAINTENANCE_MIN_DELAY: Duration = Duration::from_secs(30 * 60);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HourParity {
     Even,
-    #[cfg_attr(not(test), expect(dead_code))]
     Odd,
 }
 

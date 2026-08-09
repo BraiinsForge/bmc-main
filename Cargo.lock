@@ -1305,6 +1305,7 @@ dependencies = [
  "chrono-tz",
  "croner",
  "data-encoding",
+ "futures",
  "index-bmc",
  "index-common",
  "rand 0.9.1",

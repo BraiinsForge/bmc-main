@@ -29,12 +29,7 @@ use bmc_shared_time::time::{DateFormat, TimeSystem, Timezone};
 use bmc_shared_utils::{
     number_format::NumberFormat, temperature::TemperatureUnit, unit_system::UnitSystem,
 };
-use bmc_upgrade::autoupgrade::{
-    AutoUpgradeConfig, AutoUpgradeFrequency, SECONDS_DEVICE_SETUP_DELAY,
-};
 use bmc_upgrade::firmware::FirmwareIndex;
-use chrono::{TimeDelta, Utc};
-use std::ops::Add;
 use std::{
     sync::{
         Arc,
@@ -241,15 +236,11 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
 
             info!("Device system password configured");
         }
-        let time_of_day = Utc::now()
-            .time()
-            .add(TimeDelta::seconds(SECONDS_DEVICE_SETUP_DELAY));
-        let autoupgrade_config = AutoUpgradeConfig::new(
-            true,
-            AutoUpgradeFrequency::default(),
-            Some(time_of_day),
-            timezone.chrono_offset(),
-        );
+        let previous_autoupgrade_config = config_guard.autoupgrade();
+        let autoupgrade_config = self
+            .system_upgrade_service
+            .create_autoupgrade_config(true)
+            .map_err(DeviceSetupError::EnableAutoUpgrade)?;
 
         let date_format = config.date_format;
         let number_format = config.number_format;
@@ -264,11 +255,11 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         config_guard.set_data_collection(data_collection);
         config_guard.set_temperature_unit(temperature_unit);
         config_guard.set_unit_system(unit_system);
-        config_guard.set_autoupgrade(autoupgrade_config.clone());
-        config_guard
-            .save()
-            .await
-            .map_err(DeviceSetupError::SyncConfigData)?;
+        config_guard.set_autoupgrade(autoupgrade_config);
+        if let Err(err) = config_guard.save().await {
+            config_guard.set_autoupgrade(previous_autoupgrade_config);
+            return Err(DeviceSetupError::SyncConfigData(err));
+        }
 
         info!(
             date_format = ?date_format,
@@ -285,13 +276,22 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             .await
             .map_err(DeviceSetupError::UpdateDeviceState)?;
 
+        // The device already left SetupPending above, so erroring out here
+        // would fail a setup no client can retry; the saved config lets the
+        // next boot's autoupgrade_init recover the schedule.
+        if let Err(err) = self.system_upgrade_service.apply_autoupgrade(true).await {
+            warn!(
+                ?err,
+                "Failed to schedule automatic upgrade checks; deferring to the next boot"
+            );
+        }
+
         self.state_service
             .notify(InitSetupState::DeviceSetupSuccess);
 
-        self.system_upgrade_service
-            .autoupgrade_reschedule(autoupgrade_config)
-            .await
-            .map_err(DeviceSetupError::EnableAutoUpgrade)?;
+        // A fresh device should not wait up to two hours for its first check;
+        // the setup flow ending implies the device is up and attended.
+        self.system_upgrade_service.autoupgrade_check_now();
 
         info!("Device setup completed successfully");
 

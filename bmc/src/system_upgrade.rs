@@ -22,12 +22,11 @@
 mod periodic_gc;
 pub(crate) mod stagger;
 
-use self::stagger::MaintenanceStagger;
+use self::stagger::{MAINTENANCE_MIN_DELAY, MaintenanceStagger};
 use crate::BmcManager;
-use anyhow::anyhow;
-use bmc_scheduler::JobScheduler;
 use bmc_scheduler::jobs::to_boxed;
 use bmc_scheduler::scheduler::{JobConfig, Schedule, Task};
+use bmc_scheduler::{Cron, JobScheduler};
 pub(crate) use bmc_upgrade::arbitration::Disruption;
 use bmc_upgrade::arbitration::arbitrate;
 use bmc_upgrade::autoupgrade::{AutoUpgrade, AutoUpgradeConfig};
@@ -39,12 +38,11 @@ pub(crate) use bmc_upgrade::packages::{PackagesPreview, SystemPackageChange};
 use bmc_upgrade::upgrader::{
     DownloadState as UpgraderDownloadState, FirmwareUpgradeError, FirmwareUpgrader,
 };
-use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use reqwest::Client;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, sync::LazyLock};
 use thiserror::Error;
@@ -73,6 +71,23 @@ pub static CLIENT: LazyLock<Client> = LazyLock::new(|| {
         .build()
         .expect("BUG: static client builder failed")
 });
+
+fn derive_autoupgrade_cron(stagger: MaintenanceStagger) -> anyhow::Result<Cron> {
+    let pattern = stagger.pattern(stagger::HourParity::Odd);
+    Ok(<Cron as std::str::FromStr>::from_str(&pattern)?)
+}
+
+fn derive_autoupgrade_config(
+    stagger: MaintenanceStagger,
+    enabled: bool,
+) -> anyhow::Result<AutoUpgradeConfig> {
+    let cron = if enabled {
+        Some(derive_autoupgrade_cron(stagger)?)
+    } else {
+        None
+    };
+    Ok(AutoUpgradeConfig { enabled, cron })
+}
 
 /// Widget lifecycle control around a system upgrade. Around a disruptive
 /// firmware upgrade it stops all running widget processes before the image
@@ -541,7 +556,9 @@ pub(crate) struct SystemUpgradeService<T: FirmwareIndex, U: BmcManager> {
     bmc_manager: Arc<U>,
     scheduler: JobScheduler,
     stagger: MaintenanceStagger,
+    started: tokio::time::Instant,
     autoupgrade: Arc<AutoUpgrade>,
+    autoupgrade_enabled: Arc<AtomicBool>,
     run_gate: Arc<Mutex<()>>,
     upgrade_id_seq: Arc<AtomicUsize>,
     system_upgrades: Arc<Mutex<HashMap<String, AvailableSystemUpgrade>>>,
@@ -562,7 +579,9 @@ where
             bmc_manager: self.bmc_manager.clone(),
             scheduler: self.scheduler.clone(),
             stagger: self.stagger,
+            started: self.started,
             autoupgrade: self.autoupgrade.clone(),
+            autoupgrade_enabled: Arc::clone(&self.autoupgrade_enabled),
             run_gate: self.run_gate.clone(),
             upgrade_id_seq: self.upgrade_id_seq.clone(),
             system_upgrades: self.system_upgrades.clone(),
@@ -581,11 +600,12 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         bmc_manager: Arc<U>,
         state_service: StateService,
         scheduler: JobScheduler,
+        started: tokio::time::Instant,
         package_backend: Arc<dyn PackageBackend>,
         widget_lifecycle: Arc<dyn WidgetLifecycle>,
         pending_install_path: PathBuf,
     ) -> Self {
-        let autoupgrade = AutoUpgrade::new(Notify::new(), Instant::now());
+        let autoupgrade = AutoUpgrade::new(Notify::new(), started, MAINTENANCE_MIN_DELAY);
         let firmware_upgrader = FirmwareUpgrader::new(
             firmware_index,
             upgrade_image_path.to_owned(),
@@ -601,7 +621,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
             bmc_manager,
             scheduler,
             stagger,
+            started,
             autoupgrade: Arc::new(autoupgrade),
+            autoupgrade_enabled: Arc::new(AtomicBool::new(false)),
             run_gate: Arc::new(Mutex::new(())),
             upgrade_id_seq: Arc::new(AtomicUsize::new(0)),
             system_upgrades: Arc::new(Mutex::new(HashMap::new())),
@@ -911,8 +933,8 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(Some(release_info))
     }
 
-    pub async fn autoupgrade_init(&self, config: AutoUpgradeConfig) {
-        if let Err(err) = self.autoupgrade_reschedule(config).await {
+    pub async fn autoupgrade_init(&self, enabled: bool) {
+        if let Err(err) = self.apply_autoupgrade(enabled).await {
             error!(?err, "Failed to reschedule autoupgrade");
         }
 
@@ -936,9 +958,9 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         });
     }
 
-    pub(crate) async fn gc_init(&self, started: tokio::time::Instant, gc_config_path: PathBuf) {
+    pub(crate) async fn gc_init(&self, gc_config_path: PathBuf) {
         let gc = Arc::new(periodic_gc::PeriodicGc::new(
-            started,
+            self.started,
             Arc::clone(&self.run_gate),
             Arc::clone(&self.package_backend),
             gc_config_path,
@@ -981,6 +1003,11 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
     }
 
     async fn autoupgrade_trigger(&self) -> Result<(), SystemUpgradeError> {
+        if !self.autoupgrade_enabled.load(Ordering::SeqCst) {
+            debug!("Ignoring automatic upgrade trigger while disabled");
+            return Ok(());
+        }
+
         debug!("Auto-upgrade triggered");
         let outcome = self.check_for_upgrade(Vec::new()).await?;
 
@@ -1008,41 +1035,48 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         Ok(())
     }
 
-    pub async fn autoupgrade_reschedule(
-        &self,
-        new_config: AutoUpgradeConfig,
-    ) -> anyhow::Result<()> {
-        // First, cancel existing jobs if there are any
+    pub fn create_autoupgrade_config(&self, enabled: bool) -> anyhow::Result<AutoUpgradeConfig> {
+        derive_autoupgrade_config(self.stagger, enabled)
+    }
+
+    pub async fn apply_autoupgrade(&self, enabled: bool) -> anyhow::Result<()> {
+        // Flip the run-side gate before touching the scheduler: a tick firing
+        // between this store and the cancellation below already sees the new
+        // state instead of racing it.
+        self.autoupgrade_enabled.store(enabled, Ordering::SeqCst);
         self.scheduler
             .cancel_jobs(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME.to_owned())
             .await;
 
-        if new_config.enabled {
-            let Some(cron) = new_config.cron else {
-                return Err(anyhow!("Missing Cron in AutoUpgrade config"));
-            };
-            let schedule = Schedule::Cron(cron);
-            let task = Task::Async(to_boxed(self.autoupgrade.task.clone()));
-            let job_config = JobConfig::new(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME);
+        if !enabled {
+            return Ok(());
+        }
 
-            self.scheduler.schedule(schedule, task, job_config).await?;
+        let cron = match derive_autoupgrade_cron(self.stagger) {
+            Ok(cron) => cron,
+            Err(err) => {
+                self.autoupgrade_enabled.store(false, Ordering::SeqCst);
+                return Err(err);
+            }
+        };
+        let pattern = self.stagger.pattern(stagger::HourParity::Odd);
+        info!(pattern, "Scheduling automatic upgrade checks");
+        let schedule = Schedule::Cron(cron);
+        let task = Task::Async(to_boxed(self.autoupgrade.task.clone()));
+        let job_config = JobConfig::new(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME);
+
+        if let Err(err) = self.scheduler.schedule(schedule, task, job_config).await {
+            self.autoupgrade_enabled.store(false, Ordering::SeqCst);
+            return Err(err);
         }
 
         Ok(())
     }
 
-    pub async fn get_autoupgrade_next_run(&self) -> Option<DateTime<Utc>> {
-        let Ok(jobs) = self.scheduler.jobs().await else {
-            return None;
-        };
-        if let Some(autoupgrade_job) = jobs
-            .into_iter()
-            .find(|job| job.source == AutoUpgrade::AUTOUPGRADE_SOURCE_NAME)
-        {
-            autoupgrade_job.next_tick
-        } else {
-            None
-        }
+    /// Queue an enabled automatic check through the runtime trigger loop,
+    /// bypassing the scheduled task's boot floor.
+    pub(crate) fn autoupgrade_check_now(&self) {
+        self.autoupgrade.notifier.notify_one();
     }
 }
 
@@ -1150,7 +1184,51 @@ impl SystemUpgradeError {
 mod tests {
     use super::*;
     use bmc_upgrade::packages::{PackageGcError, PackageGcOutcome};
+    use chrono::TimeZone as _;
     use futures::StreamExt;
+    use rand::SeedableRng as _;
+
+    fn seeded_stagger() -> MaintenanceStagger {
+        let now = chrono::Utc
+            .with_ymd_and_hms(2026, 8, 10, 11, 20, 30)
+            .single()
+            .expect("BUG: constructed an invalid timestamp");
+        let mut rng = rand::rngs::StdRng::seed_from_u64(634);
+        MaintenanceStagger::draw(&now, &mut rng)
+    }
+
+    #[test]
+    fn disabled_autoupgrade_config_has_no_rollback_cron() {
+        let config = derive_autoupgrade_config(seeded_stagger(), false)
+            .expect("BUG: disabled config derivation failed");
+
+        assert_eq!(
+            config,
+            AutoUpgradeConfig {
+                enabled: false,
+                cron: None,
+            }
+        );
+    }
+
+    #[test]
+    fn enabled_autoupgrade_config_uses_the_staggers_odd_hour_pattern() {
+        let stagger = seeded_stagger();
+        let expected =
+            <Cron as std::str::FromStr>::from_str(&stagger.pattern(stagger::HourParity::Odd))
+                .expect("BUG: the stagger produced an invalid cron");
+
+        let config = derive_autoupgrade_config(stagger, true)
+            .expect("BUG: enabled config derivation failed");
+
+        assert_eq!(
+            config,
+            AutoUpgradeConfig {
+                enabled: true,
+                cron: Some(expected),
+            }
+        );
+    }
 
     fn test_upgrade_detail() -> UpgradeDetail {
         UpgradeDetail {
@@ -2036,5 +2114,352 @@ mod tests {
         );
         assert!(!SystemUpgradeState::Finished.blocks_restart());
         assert!(!SystemUpgradeState::Failed.blocks_restart());
+    }
+
+    // The stubs panic on every use, so a service built from them can only
+    // survive the paths that never reach a dependency: applying the
+    // enable/disable state and a gated trigger.
+    mod enable_disable {
+        use super::*;
+        use crate::bootloader_config::BootloaderConfig;
+        use crate::manager::{
+            BmcState, InitialSetupError, NetworkProtocolConfig, UpgradeError, WifiData, WifiEvent,
+            WifiNetworkConfig,
+        };
+        use crate::session;
+        use axum_extra::extract::cookie::Cookie;
+        use bmc_platform::{BosPlatform, BosVersion};
+        use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
+        use bmc_shared_time::time::Timezone;
+        use bmc_support::SupportArchiveFormat;
+        use bmc_upgrade::firmware::{FirmwareDownloadError, UpgradeMetadata};
+        use bmc_upgrade::packages::{
+            ApplyError, EstimateMode, InstallableWidget, PackageGcRequest, PackageProbe,
+            PackageProbeError,
+        };
+        use std::net::IpAddr;
+        use std::path::Path;
+        use tokio::sync::watch;
+
+        const UNREACHABLE: &str = "BUG: a gated auto-upgrade must not reach the service's stubs";
+
+        #[derive(Debug)]
+        struct StubIndex;
+
+        #[async_trait::async_trait]
+        impl FirmwareIndex for StubIndex {
+            async fn get_available_releases(
+                &self,
+                _client: &Client,
+                _platform: BosPlatform,
+                _version: String,
+            ) -> Result<Option<Vec<UpgradeMetadata>>, FirmwareDownloadError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+        }
+
+        #[derive(Debug)]
+        struct StubBackend;
+
+        #[async_trait::async_trait]
+        impl PackageBackend for StubBackend {
+            async fn gc(
+                &self,
+                _request: PackageGcRequest,
+            ) -> Result<PackageGcOutcome, PackageGcError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn probe(&self, _estimate: EstimateMode, _install: &[String]) -> PackageProbe {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn apply(
+                &self,
+                _merged: bmc_nix::types::MergedIndex,
+                _install: Vec<String>,
+                _progress: Arc<dyn bmc_nix::upgrade::UpgradeProgress>,
+            ) -> Result<(), ApplyError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn list_installable_widgets(
+                &self,
+            ) -> Result<Vec<InstallableWidget>, PackageProbeError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn store_free_bytes(&self) -> std::io::Result<u64> {
+                unimplemented!("{UNREACHABLE}")
+            }
+        }
+
+        #[derive(Debug)]
+        struct StubLifecycle;
+
+        #[async_trait::async_trait]
+        impl WidgetLifecycle for StubLifecycle {
+            async fn stop_all_widgets(&self) {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn restart_widgets(&self) {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn refresh_widgets(&self) {
+                unimplemented!("{UNREACHABLE}")
+            }
+        }
+
+        #[derive(Debug, Clone)]
+        struct StubSession;
+
+        impl session::Handle for StubSession {
+            fn is_valid(&self) -> bool {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn id(&self) -> String {
+                unimplemented!("{UNREACHABLE}")
+            }
+        }
+
+        #[derive(Debug, Default)]
+        struct StubSessionManager;
+
+        #[async_trait::async_trait]
+        impl session::Manager for StubSessionManager {
+            type Error = std::io::Error;
+            type Session = StubSession;
+            const SESSION_TIMEOUT: u32 = 0;
+
+            async fn login(&self, _password: &str) -> Result<Cookie<'static>, Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn logout(
+                &self,
+                _session: Self::Session,
+            ) -> Result<Cookie<'static>, Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn logout_all_related(&self, _session: Self::Session) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn extend(
+                &self,
+                _session: Self::Session,
+            ) -> Result<Cookie<'static>, Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn find(&self, _cookies: &[Cookie<'_>]) -> Result<Self::Session, Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+        }
+
+        #[derive(Debug)]
+        struct StubManager;
+
+        #[async_trait::async_trait]
+        impl BmcManager for StubManager {
+            type SessionManager = StubSessionManager;
+            type Error = std::io::Error;
+
+            async fn version(&self) -> Option<BosVersion> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn platform(&self) -> BosPlatform {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn upgrade(
+                &self,
+                _keep_settings: bool,
+                _upgrade_image_path: &Path,
+                _progress: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+            ) -> Result<(), UpgradeError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn check_and_remove_upgrade_marker(&self) -> bool {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn session_manager(&self) -> Self::SessionManager {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn check_password(&self, _password: Option<&str>) -> Result<bool, Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn set_password(&self, _password: Option<String>) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn timezone(&self) -> Timezone {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn set_timezone(&self, _timezone: Timezone) -> anyhow::Result<()> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn watch_timezone_updates(&self) -> watch::Receiver<Timezone> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn watch_wifi_reconfig(&self) -> watch::Receiver<bool> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn is_factory_default(&self) -> bool {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn factory_reset(&self, _hard: bool) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn is_setup_pending(&self) -> bool {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn is_wifi_reconfig(&self) -> bool {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn hostname(&self) -> Option<String> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn mac_address(&self) -> Option<String> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn ip_address(&self) -> Option<IpAddr> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn network_config(&self) -> Option<NetworkProtocolConfig> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn set_network_config(
+                &self,
+                _config: NetworkProtocolConfig,
+            ) -> anyhow::Result<()> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn captive_portal_redirect_host(&self) -> Option<String> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn wifi_initial_setup(
+                &self,
+                _config: WifiNetworkConfig,
+            ) -> Result<(), InitialSetupError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn reboot(&self) -> anyhow::Result<()> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn device_state(&self) -> BmcState {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn update_device_state(&self) -> anyhow::Result<()> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn wifi_ssid(&self) -> anyhow::Result<String> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn wifi_save_and_connect(
+                &self,
+                _ssid: String,
+                _password: Option<String>,
+                _encryption: EncryptionType,
+            ) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn wifi_status(&self) -> anyhow::Result<WifiData> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn handle_graceful_shutdown(&self) {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn support_archive(
+                &self,
+                _format: SupportArchiveFormat,
+            ) -> Result<Vec<u8>, Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            async fn sync_boot_environment(
+                &self,
+                _config: &BootloaderConfig,
+            ) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+        }
+
+        async fn stub_service() -> (
+            SystemUpgradeService<StubIndex, StubManager>,
+            watch::Sender<Timezone>,
+        ) {
+            let (timezone_sender, timezone_receiver) = watch::channel(Timezone::default());
+            let scheduler = JobScheduler::init(timezone_receiver, None).await;
+            let service = SystemUpgradeService::new(
+                StubIndex,
+                &PathBuf::from("/nonexistent/upgrade.img"),
+                Arc::new(StubManager),
+                StateService::new(),
+                scheduler,
+                tokio::time::Instant::now(),
+                Arc::new(StubBackend),
+                Arc::new(StubLifecycle),
+                PathBuf::from("/nonexistent/pending-install"),
+            );
+            (service, timezone_sender)
+        }
+
+        #[tokio::test]
+        async fn enabling_schedules_the_check_and_opens_the_gate() {
+            let (service, _timezone_sender) = stub_service().await;
+
+            service
+                .apply_autoupgrade(true)
+                .await
+                .expect("BUG: enabling with a working scheduler must succeed");
+
+            assert!(service.autoupgrade_enabled.load(Ordering::SeqCst));
+            let jobs = service
+                .scheduler
+                .jobs_by_source(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME)
+                .await
+                .expect("BUG: the scheduler must list jobs");
+            assert_eq!(jobs.len(), 1, "enabling must register exactly one job");
+        }
+
+        #[tokio::test]
+        async fn disabling_cancels_the_job_and_gates_delivered_ticks() {
+            let (service, _timezone_sender) = stub_service().await;
+            service
+                .apply_autoupgrade(true)
+                .await
+                .expect("BUG: enabling with a working scheduler must succeed");
+
+            service
+                .apply_autoupgrade(false)
+                .await
+                .expect("BUG: disabling must succeed");
+
+            assert!(!service.autoupgrade_enabled.load(Ordering::SeqCst));
+            let jobs = service
+                .scheduler
+                .jobs_by_source(AutoUpgrade::AUTOUPGRADE_SOURCE_NAME)
+                .await
+                .expect("BUG: the scheduler must list jobs");
+            assert!(jobs.is_empty(), "disabling must cancel the scheduled job");
+            // A delivered tick must stop at the gate: every stub past it
+            // panics, so returning Ok proves the early return.
+            service
+                .autoupgrade_trigger()
+                .await
+                .expect("BUG: a gated trigger must be a no-op");
+        }
     }
 }

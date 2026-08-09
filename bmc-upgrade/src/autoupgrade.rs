@@ -18,27 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use anyhow::anyhow;
 use bmc_grpc::web::AutoUpgradeFrequency as GrpcAutoUpgradeFrequency;
 use bmc_scheduler::{Cron, jobs::BoxedTask};
-use chrono::{DateTime, Datelike, NaiveDateTime, NaiveTime, Timelike};
-use chrono_tz::{Tz, TzOffset};
-use croner::parser::{CronParser, Seconds};
 use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Formatter};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::Instant;
 use tokio::sync::Notify;
-use tokio::time::Duration;
+use tokio::time::{Duration, Instant};
+use tracing::debug;
 
-const AUTOUPGRADE_MINIMUM_UPTIME: Duration = Duration::from_secs(60 * 60); // 1 hour
-const SECONDS_IN_DAY: u64 = 60 * 60 * 24; // 86,400 seconds
-const SECONDS_IN_WEEK: u64 = SECONDS_IN_DAY * 7; // 604,800 seconds
-const SECONDS_IN_TWO_WEEKS: u64 = SECONDS_IN_WEEK * 2; // 1,209,600 seconds
-const SECONDS_IN_FOUR_WEEKS: u64 = SECONDS_IN_WEEK * 4; // 2,592,000 seconds
-pub const SECONDS_DEVICE_SETUP_DELAY: i64 = 15;
 const CRON_BIWEEKLY_DAYS: &str = "1,15";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -57,18 +47,6 @@ pub enum AutoUpgradeFrequency {
     Weekly = 2,
     BiWeekly = 3,
     Monthly = 4,
-}
-
-impl AutoUpgradeFrequency {
-    #[must_use]
-    pub fn to_seconds(&self) -> u64 {
-        match self {
-            AutoUpgradeFrequency::Daily => SECONDS_IN_DAY,
-            AutoUpgradeFrequency::Weekly => SECONDS_IN_WEEK,
-            AutoUpgradeFrequency::BiWeekly => SECONDS_IN_TWO_WEEKS,
-            AutoUpgradeFrequency::Monthly => SECONDS_IN_FOUR_WEEKS,
-        }
-    }
 }
 
 impl From<GrpcAutoUpgradeFrequency> for AutoUpgradeFrequency {
@@ -143,21 +121,10 @@ impl From<&Cron> for AutoUpgradeFrequency {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Default)]
 pub struct AutoUpgradeConfig {
     pub enabled: bool,
+    /// Written for firmware rollback only.
+    /// An older BMC schedules from this cron; current code
+    /// derives from the maintenance stagger and never reads it.
     pub cron: Option<Cron>,
-}
-
-impl AutoUpgradeConfig {
-    #[must_use]
-    pub fn new(
-        enabled: bool,
-        frequency: AutoUpgradeFrequency,
-        time_of_day: Option<NaiveTime>,
-        timezone_offset: TzOffset,
-    ) -> Self {
-        let date = get_date_from_frequency(frequency, time_of_day, timezone_offset);
-        let cron = build_cron_from_frequency_date(frequency, date).ok();
-        Self { enabled, cron }
-    }
 }
 
 #[derive(Clone)]
@@ -177,13 +144,13 @@ impl Debug for AutoUpgrade {
 
 impl AutoUpgrade {
     pub const AUTOUPGRADE_SOURCE_NAME: &str = "autoupgrade";
-    /// The start time is used to determine if the upgrade should be performed.
+
     #[must_use]
-    pub fn new(notifier: Notify, start_time: Instant) -> Self {
+    pub fn new(notifier: Notify, start_time: Instant, minimum_uptime: Duration) -> Self {
         let notifier = Arc::new(notifier);
         let task = {
             let notifier_clone = notifier.clone();
-            move || Self::autoupgrade_task(notifier_clone.clone(), start_time)
+            move || Self::autoupgrade_task(notifier_clone.clone(), start_time, minimum_uptime)
         };
         let task: BoxedTask = Box::new(task);
         Self {
@@ -194,128 +161,73 @@ impl AutoUpgrade {
 
     fn autoupgrade_task(
         sender: Arc<Notify>,
-        _start_time: Instant,
+        start_time: Instant,
+        minimum_uptime: Duration,
     ) -> Pin<Box<dyn Future<Output = ()> + Send>> {
         Box::pin(async move {
-            // Send notification to SystemUpgrade
-            sender.notify_waiters();
+            if start_time.elapsed() < minimum_uptime {
+                debug!("Skipping the auto-upgrade tick inside the startup window");
+                return;
+            }
+
+            // `notify_one` stores a permit when nobody waits, so a tick landing
+            // while the consumer is busy coalesces into one pending run instead
+            // of vanishing (`notify_waiters` would drop it).
+            sender.notify_one();
         })
     }
-}
-
-#[expect(dead_code)]
-fn can_upgrade(start_time: Instant) -> anyhow::Result<()> {
-    check_uptime(start_time, AUTOUPGRADE_MINIMUM_UPTIME)?;
-    Ok(())
-}
-
-/// When specified, time_of_day is used as the time of day for the first run.
-/// Otherwise, a random time of day is used.
-#[must_use]
-fn get_date_from_frequency(
-    frequency: AutoUpgradeFrequency,
-    time_of_day: Option<NaiveTime>,
-    tz_offset: TzOffset,
-) -> DateTime<Tz> {
-    let divisor = frequency.to_seconds();
-    let now_utc = chrono::Utc::now().naive_utc();
-    let now_in_tz: DateTime<Tz> = DateTime::from_naive_utc_and_offset(now_utc, tz_offset);
-    let today = now_in_tz.date_naive();
-    DateTime::from_naive_utc_and_offset(
-        NaiveDateTime::new(
-            today,
-            time_of_day.unwrap_or(
-                NaiveTime::default() + Duration::from_secs(rand::random::<u64>() % divisor),
-            ),
-        ),
-        tz_offset,
-    )
-}
-fn frequency_to_partial_cron_pattern(
-    frequency: AutoUpgradeFrequency,
-    date: DateTime<Tz>,
-) -> String {
-    match frequency {
-        AutoUpgradeFrequency::Daily => "* * *".to_owned(),
-        AutoUpgradeFrequency::Weekly => {
-            let days_of_week = date.weekday().number_from_monday().to_string();
-            format!("* * {days_of_week}")
-        }
-        AutoUpgradeFrequency::BiWeekly => format!("{CRON_BIWEEKLY_DAYS} * *"),
-        AutoUpgradeFrequency::Monthly => {
-            let day = date.day().to_string();
-            format!("{day} * *")
-        }
-    }
-}
-
-/// Builds a Cron with day, month, and days_of_week fields configured based on frequency
-fn build_cron_from_frequency_date(
-    frequency: AutoUpgradeFrequency,
-    date: DateTime<Tz>,
-) -> anyhow::Result<Cron> {
-    let cron_parser = CronParser::builder()
-        .seconds(Seconds::Required)
-        .dom_and_dow(true)
-        .build();
-    let pattern = format!(
-        "{} {} {} {}",
-        date.second(),
-        date.minute(),
-        date.hour(),
-        frequency_to_partial_cron_pattern(frequency, date)
-    );
-
-    cron_parser
-        .parse(&pattern)
-        .map_err(|e| anyhow!("Failed to parse cron pattern: {e}"))
-}
-
-fn check_uptime(start_time: Instant, minimum_uptime: Duration) -> anyhow::Result<()> {
-    let uptime = start_time.elapsed();
-    if uptime.as_secs() < minimum_uptime.as_secs() {
-        return Err(anyhow!(
-            "Cannot upgrade: uptime is insufficient ({} seconds required).",
-            minimum_uptime.as_secs()
-        ));
-    }
-    Ok(())
 }
 
 #[cfg(test)]
 mod test {
     use super::*;
-    use bmc_shared_time::time::Timezone;
-    use chrono::NaiveDate;
-    use std::str::FromStr;
+    use futures::FutureExt as _;
 
-    #[test]
-    fn test_get_cron_from_frequency() {
-        let d = NaiveDate::from_ymd_opt(2009, 1, 3).unwrap_or_default();
-        let t = NaiveTime::from_hms_milli_opt(19, 15, 5, 0).unwrap_or_default();
-        let date = NaiveDateTime::new(d, t);
-        let tz_offset = Timezone::from_str(Tz::Etc__GMT.name())
-            .expect("BUG: Invalid timezone")
-            .chrono_offset();
-        let date: DateTime<Tz> = DateTime::from_naive_utc_and_offset(date, tz_offset);
+    const TEST_MINIMUM_UPTIME: Duration = Duration::from_secs(1);
 
-        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Daily, date)
-            .expect("BUG: Failed to build cron");
-        assert_eq!(cron.pattern.as_str(), "5 15 19 * * *");
-
-        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Weekly, date)
-            .expect("BUG: Failed to build cron");
-        assert_eq!(cron.pattern.as_str(), "5 15 19 * * 6");
-
-        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::BiWeekly, date)
-            .expect("BUG: Failed to build cron");
-        assert_eq!(
-            cron.pattern.as_str(),
-            format!("5 15 19 {CRON_BIWEEKLY_DAYS} * *").as_str()
+    #[tokio::test(start_paused = true)]
+    async fn a_tick_inside_the_boot_window_does_not_notify() {
+        let auto = AutoUpgrade::new(
+            Notify::new(),
+            tokio::time::Instant::now(),
+            TEST_MINIMUM_UPTIME,
         );
+        (auto.task)().await;
+        assert!(
+            auto.notifier.notified().now_or_never().is_none(),
+            "the floor must hold the tick back during the boot window"
+        );
+    }
 
-        let cron = build_cron_from_frequency_date(AutoUpgradeFrequency::Monthly, date)
-            .expect("BUG: Failed to build cron");
-        assert_eq!(cron.pattern.as_str(), "5 15 19 3 * *");
+    #[tokio::test(start_paused = true)]
+    async fn a_tick_past_the_boot_window_notifies_once() {
+        let auto = AutoUpgrade::new(
+            Notify::new(),
+            tokio::time::Instant::now(),
+            TEST_MINIMUM_UPTIME,
+        );
+        tokio::time::advance(TEST_MINIMUM_UPTIME).await;
+        (auto.task)().await;
+        assert!(auto.notifier.notified().now_or_never().is_some());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn ticks_during_a_busy_consumer_coalesce_to_one_permit() {
+        let auto = AutoUpgrade::new(
+            Notify::new(),
+            tokio::time::Instant::now(),
+            TEST_MINIMUM_UPTIME,
+        );
+        tokio::time::advance(TEST_MINIMUM_UPTIME).await;
+        (auto.task)().await;
+        (auto.task)().await;
+        assert!(
+            auto.notifier.notified().now_or_never().is_some(),
+            "the first pending tick must be delivered"
+        );
+        assert!(
+            auto.notifier.notified().now_or_never().is_none(),
+            "a second tick during a busy consumer must coalesce, not queue"
+        );
     }
 }

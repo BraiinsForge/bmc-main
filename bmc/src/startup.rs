@@ -272,6 +272,7 @@ where
             manager.clone(),
             state_service.clone(),
             scheduler.clone(),
+            started,
             package_backend,
             Arc::new(UpgradeWidgetLifecycle::new(
                 widget_coordinator.clone(),
@@ -281,10 +282,10 @@ where
         );
 
         system_upgrade_service
-            .autoupgrade_init(autoupgrade_config)
+            .autoupgrade_init(autoupgrade_config.enabled)
             .await;
         system_upgrade_service
-            .gc_init(started, config.nix_gc_config_path.clone())
+            .gc_init(config.nix_gc_config_path.clone())
             .await;
 
         let sound_controller =
