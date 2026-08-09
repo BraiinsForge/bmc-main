@@ -604,6 +604,19 @@ enum Commands {
         optional: bool,
     },
 
+    /// Remove every package server entry from the server registry.
+    /// The factory entry and nix.conf are left untouched.
+    ClearServers {
+        /// Path to the runtime server registry.
+        #[arg(long, default_value = "/etc/nix-upgrade/servers.json")]
+        servers_config: PathBuf,
+
+        /// Read-only fallback used when the server registry file does
+        /// not exist (default: the --servers-config path + ".default").
+        #[arg(long)]
+        default_servers_config: Option<PathBuf>,
+    },
+
     /// Sign an init tarball for a package-feed entry (nix-style
     /// `name:base64` Ed25519 signature over the tarball's SHA-256)
     SignInitTarball {
@@ -1341,6 +1354,20 @@ fn cmd_register_server(
     Ok(())
 }
 
+fn cmd_clear_servers(servers_config: &Path, default_servers_config: &Path) -> anyhow::Result<()> {
+    match bmc_nix::registration::prepare_clear_servers(servers_config, default_servers_config)? {
+        Some(prepared) => {
+            prepared.persist()?;
+            println!(
+                "cleared package server entries in {}",
+                servers_config.display()
+            );
+        }
+        None => println!("no servers configuration present; nothing to clear"),
+    }
+    Ok(())
+}
+
 fn cmd_list_packages(profile_dir: Option<PathBuf>, format: OutputFormat) -> anyhow::Result<()> {
     let profile_dir =
         profile_dir.unwrap_or_else(|| PathBuf::from("/nix/var/nix/gcroots/profiles/bmc"));
@@ -1675,6 +1702,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 priority,
                 optional,
             )
+        }
+        Commands::ClearServers {
+            servers_config,
+            default_servers_config,
+        } => {
+            let default_servers_config =
+                resolve_default_config_path(&servers_config, default_servers_config);
+            cmd_clear_servers(&servers_config, &default_servers_config)
         }
         Commands::SignInitTarball {
             secret_key,

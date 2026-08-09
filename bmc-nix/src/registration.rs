@@ -85,10 +85,8 @@ fn write_persisted(path: &Path, tmp_path: &Path, contents: &str) -> Result<(), R
 
 /// A validated servers-config update, ready to be written.
 ///
-/// Produced by [`prepare_registration`]; holds the serialized config and
-/// its destination so the caller can interleave other side effects
-/// (`nix.conf`) between validation and the final write without the
-/// config being re-read.
+/// Holds the serialized config and destination returned by either preparation helper.
+/// [`Self::persist`] performs the atomic write without re-reading the source config.
 #[derive(Debug)]
 pub struct PreparedRegistration {
     path: PathBuf,
@@ -184,6 +182,38 @@ pub fn prepare_registration(
     })
 }
 
+/// Load the servers config and empty its package-server list.
+///
+/// A default-only config is prepared for the runtime path.
+/// This prevents later loads from falling back to the intact default.
+/// The factory entry and bootstrap marker are preserved.
+///
+/// # Errors
+///
+/// Returns [`RegisterError`] if the config cannot be loaded or serialized.
+pub fn prepare_clear_servers(
+    runtime_path: &Path,
+    default_path: &Path,
+) -> Result<Option<PreparedRegistration>, RegisterError> {
+    let Some(mut config) =
+        crate::servers_config::load_servers_config_opt(runtime_path, default_path)?
+    else {
+        return Ok(None);
+    };
+    config.servers.clear();
+
+    let serialized =
+        serde_json::to_string_pretty(&config).map_err(|source| RegisterError::Serialize {
+            path: runtime_path.display().to_string(),
+            source,
+        })?;
+
+    Ok(Some(PreparedRegistration {
+        path: runtime_path.to_path_buf(),
+        serialized,
+    }))
+}
+
 /// Register a substituter and its trusted public key in `nix.conf`.
 ///
 /// Merges `<url>` into the `extra-substituters` line and `<public_key>`
@@ -268,6 +298,24 @@ mod tests {
     use super::*;
     use crate::types::ServerSource;
 
+    const RUNTIME_WITH_SERVERS: &str = r#"{
+  "factory": {
+    "id": "factory",
+    "base_url": "https://factory.example",
+    "known_public_key": "factory:key",
+    "priority": 10,
+    "enabled": true
+  },
+  "servers": [{
+    "id": "forge",
+    "index_url": "https://forge.example/index.json",
+    "known_public_key": "forge:key",
+    "priority": 50,
+    "enabled": true,
+    "required": true
+  }]
+}"#;
+
     fn sample_entry(id: &str, index_url: &str) -> ServerEntry {
         ServerEntry {
             id: id.to_owned(),
@@ -330,6 +378,104 @@ mod tests {
         let mut default = path.as_os_str().to_owned();
         default.push(".default");
         prepare_registration(path, Path::new(&default), entry, factory_base_url)?.persist()
+    }
+
+    #[test]
+    fn clear_servers_empties_the_list_and_keeps_the_factory() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let runtime = dir.path().join("servers.json");
+        let default = dir.path().join("servers.json.default");
+        std::fs::write(&runtime, RUNTIME_WITH_SERVERS).expect("BUG: write runtime");
+
+        let prepared = prepare_clear_servers(&runtime, &default)
+            .expect("BUG: prepare failed")
+            .expect("BUG: a present config must be clearable");
+        prepared.persist().expect("BUG: persist failed");
+
+        let written = read_config(&runtime);
+        assert!(written.servers.is_empty());
+        assert_eq!(written.factory.id, "factory");
+        assert_eq!(written.factory.base_url, "https://factory.example");
+        assert_eq!(written.factory.known_public_key, "factory:key");
+        assert_eq!(written.factory.priority, 10);
+        assert!(written.factory.enabled);
+    }
+
+    #[test]
+    fn clear_servers_materializes_the_runtime_file_from_the_default() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let runtime = dir.path().join("servers.json");
+        let default = dir.path().join("servers.json.default");
+        std::fs::write(&default, RUNTIME_WITH_SERVERS).expect("BUG: write default");
+
+        let prepared = prepare_clear_servers(&runtime, &default)
+            .expect("BUG: prepare failed")
+            .expect("BUG: a default-only config must still be clearable");
+        prepared.persist().expect("BUG: persist failed");
+
+        assert!(read_config(&runtime).servers.is_empty());
+        assert_eq!(
+            read_config(&default).servers.len(),
+            1,
+            "the shipped default stays pristine"
+        );
+    }
+
+    #[test]
+    fn clear_servers_without_any_config_is_a_noop() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let prepared = prepare_clear_servers(
+            &dir.path().join("servers.json"),
+            &dir.path().join("servers.json.default"),
+        )
+        .expect("BUG: prepare failed");
+
+        assert!(prepared.is_none());
+    }
+
+    #[test]
+    fn clear_servers_keeps_the_bootstrapped_factory_marker() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let runtime = dir.path().join("servers.json");
+        let default = dir.path().join("servers.json.default");
+        let bootstrapped = RUNTIME_WITH_SERVERS.replacen(
+            "{\n  \"factory\"",
+            "{\n  \"bootstrapped_factory\": true,\n  \"factory\"",
+            1,
+        );
+        std::fs::write(&runtime, bootstrapped).expect("BUG: write runtime");
+
+        prepare_clear_servers(&runtime, &default)
+            .expect("BUG: prepare failed")
+            .expect("BUG: a present config must be clearable")
+            .persist()
+            .expect("BUG: persist failed");
+
+        assert!(
+            read_config(&runtime).bootstrapped_factory,
+            "the bootstrap marker must survive a clear"
+        );
+    }
+
+    #[test]
+    fn clear_servers_quarantines_a_corrupt_runtime_and_clears_the_default() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let runtime = dir.path().join("servers.json");
+        let default = dir.path().join("servers.json.default");
+        std::fs::write(&runtime, "not json").expect("BUG: write runtime");
+        std::fs::write(&default, RUNTIME_WITH_SERVERS).expect("BUG: write default");
+
+        prepare_clear_servers(&runtime, &default)
+            .expect("BUG: a corrupt runtime file must quarantine, not fail the clear")
+            .expect("BUG: the default fallback must be clearable")
+            .persist()
+            .expect("BUG: persist failed");
+
+        assert!(
+            dir.path().join("servers.json.bcp").exists(),
+            "the corrupt runtime file must be quarantined beside the new one"
+        );
+        assert!(read_config(&runtime).servers.is_empty());
     }
 
     #[test]
