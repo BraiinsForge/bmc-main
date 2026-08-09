@@ -693,6 +693,44 @@ def test_register_packages_builds_cli_command() -> None:
     assert "--name core --version 1.0 --store-path /nix/store/core" in cmd
 
 
+def test_clear_upgrade_servers_invokes_the_profile_cli() -> None:
+    backend = _Exec(_routes({}))
+    dev = Device("h", backend=backend)
+    catalog.clear_upgrade_servers(dev)
+    cmd = backend.runs[-1][-1]
+    assert cmd == f"{catalog._NIX_CLI} clear-servers"
+
+
+def test_clear_upgrade_servers_dry_run_skips_the_device() -> None:
+    backend = _Exec(_routes({}))
+    dev = Device("h", backend=backend)
+    token = dry_run.set(True)
+    try:
+        catalog.clear_upgrade_servers(dev)
+    finally:
+        dry_run.reset(token)
+    assert backend.runs == [], "dry-run must log the mutation without executing it"
+
+
+def test_clear_upgrade_servers_tolerates_a_cli_without_the_subcommand() -> None:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        raise subprocess.CalledProcessError(
+            2, argv, stderr="error: unrecognized subcommand 'clear-servers'"
+        )
+
+    dev = Device("h", backend=_Exec(respond))
+    catalog.clear_upgrade_servers(dev)
+
+
+def test_clear_upgrade_servers_raises_on_other_failures() -> None:
+    def respond(argv: list[str]) -> "subprocess.CompletedProcess[str]":
+        raise subprocess.CalledProcessError(1, argv, stderr="io error")
+
+    dev = Device("h", backend=_Exec(respond))
+    with pytest.raises(subprocess.CalledProcessError):
+        catalog.clear_upgrade_servers(dev)
+
+
 def _flip_clock_plan() -> catalog.Deployment:
     built = Built(
         "widget-flip-clock", "1.0", Attr(".#x^out"), store_path=StorePath("/nix/store/wfc")

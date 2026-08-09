@@ -65,6 +65,7 @@ class Deploy:
         catalog.remove_legacy_flip_clock(dev, plan)
         old_pid = catalog.compositor_pid(dev)
         catalog.register_packages(dev, plan)
+        catalog.clear_upgrade_servers(dev)
         catalog.restart_compositor(dev, old_pid=old_pid, skip=self.no_restart)
 
 

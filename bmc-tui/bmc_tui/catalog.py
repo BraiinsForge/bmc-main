@@ -468,6 +468,21 @@ def register_packages(dev: Device, plan: Deployment) -> str:
     return f"{names} → generation {console.lit(generation)}" if generation else names
 
 
+@stage("Clear upgrade servers")
+def clear_upgrade_servers(dev: Device) -> str:
+    try:
+        dev.run(f"{_NIX_CLI} clear-servers")
+    except subprocess.CalledProcessError as error:
+        # A plan without bmc-nix-cli leaves the previously deployed CLI in
+        # the profile, and that one may predate the subcommand.
+        if "unrecognized subcommand" not in (error.stderr or ""):
+            raise
+        return "on-device bmc-nix-cli predates clear-servers; servers left untouched"
+    if dry_run.get():
+        return "would clear package servers"
+    return "package servers cleared; scheduled upgrade checks fail until servers are re-registered"
+
+
 _WASM_HOST = "bmc-wasm-host"
 
 
