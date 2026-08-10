@@ -59,13 +59,19 @@ glab api "projects/<group>%2F<project>/merge_requests/<iid>" | jq '{project_id, 
 
 ## Inline comments — line classification
 
-For each line you want to anchor on, classify it against the diff:
+**Both `old_path` and `new_path` are required in every text position**, whatever the line type — for an unrenamed file
+they're the same string; for a rename, pre- and post-rename respectively.
 
-| Line type                 | What to send                                             |
-| ------------------------- | -------------------------------------------------------- |
-| **Added** (`+` in diff)   | `new_path` + `new_line` only                             |
-| **Removed** (`-` in diff) | `old_path` + `old_line` only                             |
-| **Context** (unchanged)   | BOTH `new_path` + `new_line` AND `old_path` + `old_line` |
+Only the *line* fields vary, so classify each line you want to anchor on against the diff:
+
+| Line type                 | Line fields to send                     |
+| ------------------------- | --------------------------------------- |
+| **Added** (`+` in diff)   | `new_line` only — send `old_line: null` |
+| **Removed** (`-` in diff) | `old_line` only — send `new_line: null` |
+| **Context** (unchanged)   | both `old_line` and `new_line`          |
+
+Omitting `old_path` is a 400 whose message blames `line_code` (`Note {:line_code=>["can't be blank", …]}`) and never
+mentions the field you actually left out.
 
 Prefer anchoring on added lines — context-line position errors are the most common silent-drop cause.
 
@@ -83,7 +89,9 @@ Write each payload to a temp file (avoids shell-escape hell with backticks and e
     "start_sha": "<start_sha>",
     "head_sha": "<head_sha>",
     "position_type": "text",
+    "old_path": "<path/as/shown/in/diff>",
     "new_path": "<path/as/shown/in/diff>",
+    "old_line": null,
     "new_line": <line number>
   }
 }
