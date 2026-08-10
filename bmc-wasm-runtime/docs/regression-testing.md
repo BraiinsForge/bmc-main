@@ -68,12 +68,16 @@ subcommands:
 3. **Widget-colocated capture data** — each widget has a `capture/` directory containing `config.toml` (capture
    settings), `fixtures/` (recorded network data), and `baselines.7z` (compressed reference images).
 
-4. **Auto-readiness via I/O completion** — capture renders until all I/O resolves, then waits `settle_delay` additional
-   frames, then captures. With fixtures, readiness is reached within 2 frames.
+4. **Auto-readiness via I/O completion** — capture renders until all I/O resolves. Each `Capture` event then renders
+   `settle_delay` further frames (advancing the replay clock by 16ms each and injecting any events they cover), drains
+   outstanding image decodes without advancing that clock, and shoots. With fixtures, readiness is reached within 2
+   frames.
 
-5. **Exact-match comparison** — odiff with threshold `0.0`. Exact match works because captures are deterministic renders
-   — same WASM + same fixtures + same host-provided time (with timezone) = identical pixels. Baselines must be captured
-   with the same renderer (llvmpipe in CI, or via `nix run .#wasm-capture` locally).
+5. **Near-exact comparison** — odiff at threshold `0.1`, plus a `--max-diff-pixels` (8) budget per frame. Renders are
+   deterministic for a given rasteriser — same WASM + same fixtures + same host-provided time (with timezone) =
+   identical pixels — but rasterisers disagree on steep antialiased edges by a whole pixel of full contrast, which no
+   colour distance can absorb. The budget covers that, so llvmpipe (CI, and Linux locally) and ANGLE (macOS) can share
+   baselines; frames spending from it are reported as `tolerated`. Every run names the rasteriser it drew with.
 
 ## Fixture format
 

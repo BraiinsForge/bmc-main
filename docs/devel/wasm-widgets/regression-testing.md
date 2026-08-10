@@ -2,8 +2,8 @@
 
 Every widget under `widgets-wasm/` (and every example under `bmc-wasm-runtime/examples/`) can opt into pixel-level
 visual regression. The CI job `wasm-regression` runs one nix derivation per opted-in widget, each rendering the widget
-in a sandbox with headless EGL, then diffing the output against compressed baselines committed in the tree. Any pixel
-drift fails the job and publishes an HTML report with A/B images as a build artifact.
+in a sandbox with headless EGL, then diffing the output against compressed baselines committed in the tree. Drift past
+the tolerances below fails the job and publishes an HTML report with A/B images as a build artifact.
 
 This document is the widget-author view: what files a widget needs, how to record them, and how to refresh baselines
 after an intentional visual change. For the internals (capture binary, Mesa wrapper, fixture format, replay loop), see
@@ -46,9 +46,18 @@ large  = "fixtures/large.jsonl.gz"
 full   = "fixtures/full.jsonl.gz"
 ```
 
-`settle_delay` is the number of extra frames to render after all pending I/O resolves and before the first capture. Bump
-it for widgets that need a few frames to settle visual state (fetch-then-format chains, animations winding down). The
-default zero is fine for purely static widgets.
+`settle_delay` is the number of extra frames rendered before **every** capture, ahead of the I/O drain that follows it.
+Bump it for widgets that need a few frames to settle visual state (fetch-then-format chains, animations winding down).
+
+Each settle frame advances the replay clock by 16 ms and delivers any timeline events that fall in it. So a widget whose
+visuals track the clock — a countdown, a progress meter, a time-windowed chart — captures a *later* state with a settle
+delay than without one, and the shift accumulates across a fixture's capture events. Changing it on such a widget
+therefore changes the frames, and baselines must be refreshed with them. The default zero is right for a widget that is
+ready as soon as its data lands.
+
+`honor_frame_schedule` replays at the widget's own `request_frame_after` cadence instead of rendering every virtual
+frame. Needed only by a widget that decouples its data fold from the render loop — fleet-management folds on a ~1 s
+interval — so replay samples the state hardware would.
 
 Only declare the sizes your widget actually supports. The capture binary skips sizes that don't have a fixture entry; CI
 will not invent baselines for missing sizes.
@@ -65,7 +74,7 @@ captures everything that would otherwise be ambient state on a real device:
   testbed System panel at the moment of Record.
 - `kv` — pre-seeded KV store entries.
 
-Timeline events (`fetch`, `ws_message`, `click`, `params_delivery`, `system_delivery`, `capture`, …) drive everything
+Timeline events (`fetch`, `ws_message`, `click`, `param_delivery`, `system_delivery`, `capture`, …) drive everything
 that happens after the first frame.
 
 The practical consequence: if your widget reacts to params or system settings, set them in the testbed sidebars **before
@@ -148,13 +157,22 @@ Once the fixture is final, regenerate the baselines:
 just wasm::update-baselines blockheight
 ```
 
-This re-runs `wasm-capture` against the fixture (so the baselines are captured by the same renderer CI uses, not the
-testbed), then compresses the resulting frames into `capture/baselines.7z`. Commit the new fixture and the new
-`baselines.7z` together.
+This re-captures through the capture binary rather than the testbed, then compresses the resulting frames into
+`capture/baselines.7z`. Commit the new fixture and the new `baselines.7z` together.
 
-Baselines are pixel-exact: odiff runs with threshold `0.0`. The render must be deterministic — same WASM, same fixture,
-same Mesa llvmpipe renderer. This is also why baselines must be regenerated through `just wasm::update-baselines`, not
-by hand-copying testbed screenshots.
+**Baselines carry the rasteriser that drew them.** The recipe builds the capture binary locally, and which rasteriser
+that reaches is decided by the platform: Mesa llvmpipe on Linux — the same one CI uses, since the capture code asks EGL
+for its software device and only falls back to the first device when there is none — and ANGLE's Metal backend on macOS.
+Every run names it (`captured in 2.2s via …`), and so does the HTML report, so check that line before blessing anything.
+
+Comparison is not pixel-exact. odiff runs at `--threshold 0.1`, a per-pixel colour distance that absorbs a differently
+blended edge, and a frame may differ by up to `--max-diff-pixels` (8) beyond that. The budget exists because rasterisers
+disagree on which side of a pixel centre a steep antialiased edge falls, and that flip is line colour against background
+— full contrast, which no colour distance can absorb. Frames inside the budget are reported as `tolerated`, with their
+pixel count and diff image, rather than passing quietly; anything past it fails.
+
+That budget is what lets baselines drawn on one rasteriser verify on another. It is not a licence to hand-copy testbed
+screenshots — those come from a different render path entirely.
 
 ## Verify Locally
 

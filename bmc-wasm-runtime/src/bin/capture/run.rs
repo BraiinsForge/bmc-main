@@ -1670,22 +1670,22 @@ pub fn write_default_capture_config(dir: &Path) -> Result<()> {
 # your widget. All fields are optional — sensible defaults are used when omitted.
 
 # ── Timing ───────────────────────────────────────────────────────────
-
-# Override the start time for deterministic rendering (default: 2026-01-01T12:00:00).
-# time = "2026-06-15T09:30:00"
+#
+# The start time comes from the fixture header, not from here.
 
 # Settlement timeout in frames before force-capturing (default: 300 = ~5s).
 # Increase for widgets with slow network I/O.
 # timeout = 300
 
-# Extra frames to wait after I/O settles before capturing (default: 0).
-# Useful when the widget animates after data arrives.
+# Extra frames to render before every capture, ahead of the I/O drain (default: 0).
+# Each one advances the replay clock by 16 ms and delivers timeline events.
+# A widget whose visuals follow the clock captures a later state than at 0.
 # settle_delay = 30
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
 # Paths to pre-recorded unified fixture files (one per size).
-# Record fixtures with: make record EXAMPLE=<name> SIZE=<size>
+# Record fixtures with: just wasm::record <widget> <size>
 #
 # [fixtures]
 # full   = "fixtures/full.jsonl.gz"

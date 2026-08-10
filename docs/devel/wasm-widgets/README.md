@@ -46,8 +46,8 @@ temporary compatibility fallback to `widget_size()` / `SizeVariant::{Small, Medi
 `tools/render_shots.py <widget>` renders every viewport the widget's manifest supports to a PNG under
 `.cache/screenshots/<widget>/`, populated with live data — it drives the capture binary's `--online` mode, where the
 widget fetches its own data source (non-hermetic) and each shot waits for the response, with round faces masked to their
-disc. Use it to eyeball a widget across sizes without the testbed. This is a preview aid only; the pixel-exact
-regression path stays [`just wasm::verify`](regression-testing.md).
+disc. Use it to eyeball a widget across sizes without the testbed. This is a preview aid only; baseline verification
+stays [`just wasm::verify`](regression-testing.md).
 
 ## Profiling
 

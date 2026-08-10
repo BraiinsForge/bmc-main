@@ -119,9 +119,8 @@ enum Command {
         /// Path to the widget's output directory (contains `current/`, `diff/`).
         #[arg(long)]
         output: PathBuf,
-        /// Color distance threshold for per-pixel comparison.
-        /// Small values tolerate minor anti-aliasing and image decode differences
-        /// across GPU/Mesa versions (e.g. CI vs local).
+        /// Color distance a pixel may differ by before it counts.
+        /// Absorbs a blended edge, never a flipped one — see `--max-diff-pixels`.
         #[arg(long, default_value = "0.1")]
         threshold: f64,
         /// Pixels a frame may differ by, wherever they sit, before it fails.
@@ -134,9 +133,8 @@ enum Command {
         /// Verify only this widget (omit to verify all).
         #[arg(long)]
         widget: Option<String>,
-        /// Color distance threshold for per-pixel comparison.
-        /// Small values tolerate minor anti-aliasing and image decode
-        /// differences across GPU/Mesa versions (e.g. CI vs local).
+        /// Color distance a pixel may differ by before it counts.
+        /// Absorbs a blended edge, never a flipped one — see `--max-diff-pixels`.
         #[arg(long, default_value = "0.1")]
         threshold: f64,
         /// Pixels a frame may differ by, wherever they sit, before it fails.
