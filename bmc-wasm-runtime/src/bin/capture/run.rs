@@ -28,6 +28,7 @@ use std::io::IsTerminal;
 #[cfg(target_os = "linux")]
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
+use std::sync::OnceLock;
 
 use anyhow::{Context as _, Result, bail};
 use glow::HasContext;
@@ -1331,6 +1332,38 @@ fn mask_round(rgba: &mut [u8], w: u32, h: u32) {
 // Linux  — glutin + Mesa EGL (llvmpipe for deterministic CI rendering)
 // macOS  — khronos-egl + ANGLE (Metal backend, loaded at runtime)
 
+/// The rasteriser this process captured through, as GL reports it.
+///
+/// Pixels compare only against baselines drawn by the same rasteriser.
+/// The platform picks it — llvmpipe on Linux, ANGLE's Metal backend on macOS.
+/// Naming it separates a cross-renderer difference from a real regression.
+static RENDERER: OnceLock<String> = OnceLock::new();
+
+/// Marks the rasteriser on a capture's stderr.
+pub(super) const RENDERER_PREFIX: &str = "renderer: ";
+
+/// The recorded rasteriser, once a capture has built a GL context.
+pub(super) fn renderer() -> Option<&'static str> {
+    RENDERER.get().map(String::as_str)
+}
+
+/// Adopt a rasteriser name a capture reported on its stderr.
+pub(super) fn note_renderer(name: &str) {
+    let _ = RENDERER.set(name.to_owned());
+}
+
+/// Record the rasteriser from a context that is current on this thread.
+fn record_renderer(gl: &glow::Context) {
+    if RENDERER.get().is_some() {
+        return;
+    }
+    // SAFETY: callers hold the GL context current for the duration.
+    let name = unsafe { gl.get_parameter_string(glow::RENDERER) };
+    // Printed too: a capture is its own process, so stderr carries it out.
+    eprintln!("{RENDERER_PREFIX}{name}");
+    let _ = RENDERER.set(name);
+}
+
 // ── Linux: glutin + Mesa EGL ────────────────────────────────────────
 
 #[cfg(target_os = "linux")]
@@ -1416,12 +1449,13 @@ fn setup_gl_and_runtime(
             gl_display.get_proc_address(&CString::new(s).unwrap_or_default())
         })
     };
+    record_renderer(&gl);
     let (fbo, texture) = create_fbo(&gl, ctx.width, ctx.height)?;
     let fbo_id = fbo.0.get();
 
     let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
-    // SAFETY: GL context is current on this thread for the lifetime of the
-    // returned `keep_alive` bundle, which holds `gl_context`.
+    // SAFETY: GL context is current on this thread for the lifetime
+    // of the returned `keep_alive` bundle, which holds `gl_context`.
     let renderer = unsafe {
         FemtoVgRenderer::new(
             |s| gl_display.get_proc_address(&CString::new(s).unwrap_or_default()),
@@ -1571,13 +1605,14 @@ fn setup_gl_and_runtime(
                 .map_or(std::ptr::null(), |f| f as *const _)
         })
     };
+    record_renderer(&gl);
 
     let (fbo, texture) = create_fbo(&gl, ctx.width, ctx.height)?;
     let fbo_id = fbo.0.get();
 
     let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
-    // SAFETY: ANGLE EGL context is current on this thread for the lifetime of
-    // the returned `keep_alive` bundle.
+    // SAFETY: ANGLE EGL context is current on this thread
+    // for the lifetime of the returned `keep_alive` bundle.
     let renderer = unsafe {
         FemtoVgRenderer::new(
             |s| {

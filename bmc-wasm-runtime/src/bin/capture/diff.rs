@@ -48,6 +48,8 @@ pub struct DiffArgs {
     pub output: PathBuf,
     /// Color distance threshold (0.0 = exact match).
     pub threshold: f64,
+    /// Isolated pixels a frame may differ by before it counts as a failure.
+    pub max_diff_pixels: usize,
     /// Suppress per-image progress output (for parallel execution).
     pub quiet_progress: bool,
 }
@@ -107,7 +109,10 @@ fn diff_one_widget(
         tmp.path(),
         &current_dir,
         &diff_dir,
-        args.threshold,
+        Limits {
+            threshold: args.threshold,
+            max_diff_pixels: args.max_diff_pixels,
+        },
         WidgetLabel {
             workspace: &args.workspace,
             widget: &widget_name,
@@ -129,11 +134,19 @@ struct WidgetLabel<'a> {
     widget: &'a str,
 }
 
+/// What a frame may differ by: colour distance per pixel, and the pixels
+/// [`verdict`] absorbs on top of it.
+#[derive(Copy, Clone)]
+struct Limits {
+    threshold: f64,
+    max_diff_pixels: usize,
+}
+
 fn diff_directories(
     baseline_dir: &Path,
     current_dir: &Path,
     diff_dir: &Path,
-    threshold: f64,
+    limits: Limits,
     label: WidgetLabel<'_>,
     odiff_bin: &Path,
     quiet: bool,
@@ -153,7 +166,7 @@ fn diff_directories(
     }
 
     // Spawn odiff server
-    let mut server = OdiffServer::spawn(odiff_bin, threshold)?;
+    let mut server = OdiffServer::spawn(odiff_bin, limits.threshold)?;
 
     for (i, baseline_file) in baseline_pngs.iter().enumerate() {
         let rel = baseline_file
@@ -186,27 +199,42 @@ fn diff_directories(
 
         let cmp = server.compare(baseline_file, &current_file, &diff_file)?;
 
-        if cmp.matched {
-            report.results.push(DiffResult {
-                rel: rel_str,
-                status: "pass".into(),
-                baseline_file: Some(baseline_file.clone()),
-                current_file: Some(current_file),
-                ..Default::default()
-            });
-            report.passed += 1;
-            // Clean up empty diff dirs (odiff doesn't write on pass)
-            cleanup_empty_parents(&diff_file, diff_dir);
-        } else {
-            report.results.push(DiffResult {
-                rel: rel_str,
-                status: "diff".into(),
-                diff: cmp.diff,
-                baseline_file: Some(baseline_file.clone()),
-                current_file: Some(current_file),
-                diff_file: Some(diff_file),
-            });
-            report.failed += 1;
+        match verdict(&cmp, limits.max_diff_pixels) {
+            Verdict::Pass => {
+                report.results.push(DiffResult {
+                    rel: rel_str,
+                    status: "pass".into(),
+                    baseline_file: Some(baseline_file.clone()),
+                    current_file: Some(current_file),
+                    ..Default::default()
+                });
+                report.passed += 1;
+                // Clean up empty diff dirs (odiff doesn't write on pass)
+                cleanup_empty_parents(&diff_file, diff_dir);
+            }
+            // Keeps odiff's diff image, so tolerated drift can be looked at.
+            Verdict::Tolerated => {
+                report.results.push(DiffResult {
+                    rel: rel_str,
+                    status: "tolerated".into(),
+                    diff: cmp.diff,
+                    baseline_file: Some(baseline_file.clone()),
+                    current_file: Some(current_file),
+                    diff_file: Some(diff_file),
+                });
+                report.tolerated += 1;
+            }
+            Verdict::Fail => {
+                report.results.push(DiffResult {
+                    rel: rel_str,
+                    status: "diff".into(),
+                    diff: cmp.diff,
+                    baseline_file: Some(baseline_file.clone()),
+                    current_file: Some(current_file),
+                    diff_file: Some(diff_file),
+                });
+                report.failed += 1;
+            }
         }
     }
 
@@ -394,6 +422,40 @@ struct OdiffResult {
     diff: Option<PixelDiff>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum Verdict {
+    Pass,
+    /// Differs, but by no more pixels than the budget.
+    Tolerated,
+    Fail,
+}
+
+/// Judge one frame against a budget of differing pixels.
+///
+/// Rasterisers disagree on which side of a pixel centre a steep antialiased edge falls.
+/// That flip is line colour against background: a full contrast step,
+/// which no colour-distance threshold can absorb.
+/// ANGLE and llvmpipe differ on one pixel per affected braiins-pool frame,
+/// while a moved line or a changed glyph runs to hundreds.
+///
+/// A count, with no test for where the pixels sit: odiff reports how many
+/// differ, not which, so a cluster of them spends the budget as freely as
+/// a scattering. The gap between the two is far below the hundreds a real
+/// visual change costs.
+///
+/// Only a colour difference reaches here — [`parse_odiff_response`] rejects a
+/// layout difference outright — so the budget can never absorb a size change.
+fn verdict(cmp: &OdiffResult, budget: usize) -> Verdict {
+    if cmp.matched {
+        return Verdict::Pass;
+    }
+    match cmp.diff {
+        Some(diff) if diff.count <= budget => Verdict::Tolerated,
+        // `parse_odiff_response` refuses a mismatch without measurements.
+        _ => Verdict::Fail,
+    }
+}
+
 // ── Report types (exported for verify orchestrator) ─────────────────
 
 #[derive(Default)]
@@ -405,6 +467,8 @@ pub struct WidgetReport {
     pub widget: String,
     pub results: Vec<DiffResult>,
     pub passed: u32,
+    /// Frames within the pixel budget — not failures, but reported.
+    pub tolerated: u32,
     pub failed: u32,
     pub missing: u32,
     pub new_count: u32,
@@ -441,11 +505,14 @@ pub struct DiffResult {
 struct ReportTemplate<'a> {
     reports: &'a [WidgetReportView],
     total_pass: u32,
+    total_tolerated: u32,
     total_fail: u32,
     total_missing: u32,
     total_new: u32,
     no_baseline_count: u32,
     has_failures: bool,
+    /// Absent when no capture ran in this process, as for a standalone `diff`.
+    renderer: Option<&'a str>,
 }
 
 /// View model for the template — owns the data URI strings.
@@ -454,12 +521,12 @@ struct WidgetReportView {
     widget: String,
     results: Vec<DiffResultView>,
     passed: u32,
+    tolerated: u32,
     failed: u32,
     missing: u32,
     new_count: u32,
     no_baseline: bool,
-    /// Total comparable frames (passed + failed + missing + new). Used for the
-    /// "n/total" headline on failing widgets.
+    /// Total comparable frames — the "n/total" headline on failing widgets.
     total: u32,
     /// True when nothing went wrong — used to decide whether the widget's
     /// `<details>` opens by default.
@@ -488,6 +555,7 @@ fn img_to_data_uri(path: &Path) -> Option<String> {
 
 pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<()> {
     let total_pass: u32 = reports.iter().map(|r| r.passed).sum();
+    let total_tolerated: u32 = reports.iter().map(|r| r.tolerated).sum();
     let total_fail: u32 = reports.iter().map(|r| r.failed).sum();
     let total_missing: u32 = reports.iter().map(|r| r.missing).sum();
     let total_new: u32 = reports.iter().map(|r| r.new_count).sum();
@@ -524,12 +592,12 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                 })
                 .collect();
 
-            let total = r.passed + r.failed + r.missing + r.new_count;
+            let total = r.passed + r.tolerated + r.failed + r.missing + r.new_count;
             let is_clean = !r.no_baseline && r.failed == 0 && r.missing == 0 && r.new_count == 0;
             let (minimap_status, minimap_count) = if r.no_baseline {
                 ("no-baseline", "—".to_owned())
             } else if is_clean {
-                ("pass", r.passed.to_string())
+                ("pass", total.to_string())
             } else {
                 ("fail", format!("{}/{total}", r.failed))
             };
@@ -538,6 +606,7 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                 widget: r.widget.clone(),
                 results,
                 passed: r.passed,
+                tolerated: r.tolerated,
                 failed: r.failed,
                 missing: r.missing,
                 new_count: r.new_count,
@@ -553,11 +622,13 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
     let template = ReportTemplate {
         reports: &views,
         total_pass,
+        total_tolerated,
         total_fail,
         total_missing,
         total_new,
         no_baseline_count,
         has_failures,
+        renderer: super::run::renderer(),
     };
 
     let html = template.render().context("failed to render HTML report")?;
@@ -848,16 +919,31 @@ fn clear_progress() {
 }
 
 pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
-    let total = report.passed + report.failed + report.missing + report.new_count;
+    let total =
+        report.passed + report.tolerated + report.failed + report.missing + report.new_count;
     let ok =
         !report.no_baseline && report.failed == 0 && report.missing == 0 && report.new_count == 0;
+
+    let tolerated_note = if report.tolerated > 0 {
+        format!(
+            "  {} tolerated ({})",
+            report.tolerated,
+            diff_totals(report, "tolerated")
+        )
+    } else {
+        String::new()
+    };
 
     let (mark, right_text) = if report.no_baseline {
         ("\u{2717}", "no baseline".to_owned())
     } else if !ok {
         let mut parts = Vec::new();
         if report.failed > 0 {
-            parts.push(format!("{}Δ {}", report.failed, diff_totals(report)));
+            parts.push(format!(
+                "{}Δ {}",
+                report.failed,
+                diff_totals(report, "diff")
+            ));
         }
         if report.missing > 0 {
             parts.push(format!("{} missing", report.missing));
@@ -865,9 +951,9 @@ pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
         if report.new_count > 0 {
             parts.push(format!("{} new", report.new_count));
         }
-        ("\u{2717}", parts.join(", "))
+        ("\u{2717}", format!("{}{tolerated_note}", parts.join(", ")))
     } else {
-        ("\u{2713}", total.to_string())
+        ("\u{2713}", format!("{total}{tolerated_note}"))
     };
 
     let time_str = format!("{elapsed:.1}s");
@@ -914,8 +1000,15 @@ pub fn widget_status_line(report: &WidgetReport, elapsed: f64) -> String {
 /// An intentional restyle drifts every frame; listing them all would bury the log.
 const MAX_FRAME_LINES: usize = 10;
 
-fn diff_totals(report: &WidgetReport) -> String {
-    let diffs: Vec<PixelDiff> = report.results.iter().filter_map(|r| r.diff).collect();
+/// Pixel totals across the frames of one status, so a tolerated frame's drift
+/// is never counted into the failure summary.
+fn diff_totals(report: &WidgetReport, status: &str) -> String {
+    let diffs: Vec<PixelDiff> = report
+        .results
+        .iter()
+        .filter(|r| r.status == status)
+        .filter_map(|r| r.diff)
+        .collect();
     let worst = diffs
         .iter()
         .fold(0.0_f64, |worst, diff| worst.max(diff.percentage));
@@ -948,7 +1041,11 @@ pub fn print_failure_details(reports: &[WidgetReport]) {
         }
         let mut parts = Vec::new();
         if report.failed > 0 {
-            parts.push(format!("Δ {} {}", report.failed, diff_totals(report)));
+            parts.push(format!(
+                "Δ {} {}",
+                report.failed,
+                diff_totals(report, "diff")
+            ));
         }
         if report.missing > 0 {
             parts.push(format!("{} missing", report.missing));
@@ -1069,7 +1166,7 @@ mod tests {
             percentage: 0.0,
         });
 
-        assert_eq!(diff_totals(&report), "3 px total");
+        assert_eq!(diff_totals(&report, "diff"), "3 px total");
     }
 
     #[test]
@@ -1079,7 +1176,7 @@ mod tests {
             percentage: 0.43,
         });
 
-        assert_eq!(diff_totals(&report), "900 px total (↑0.43% worst)");
+        assert_eq!(diff_totals(&report, "diff"), "900 px total (↑0.43% worst)");
     }
 
     #[test]
@@ -1113,5 +1210,61 @@ mod tests {
 
         assert!(html.contains("<span class=\"hint\">3 px</span>"));
         assert!(!html.contains("0.00%"));
+    }
+
+    fn pixel_diff(count: usize) -> OdiffResult {
+        OdiffResult {
+            matched: false,
+            diff: Some(PixelDiff {
+                count,
+                percentage: 0.0,
+            }),
+        }
+    }
+
+    #[test]
+    fn a_match_passes_whatever_the_budget() {
+        let cmp = OdiffResult {
+            matched: true,
+            diff: None,
+        };
+        assert_eq!(verdict(&cmp, 0), Verdict::Pass);
+    }
+
+    #[test]
+    fn pixels_up_to_the_budget_are_tolerated() {
+        assert_eq!(verdict(&pixel_diff(1), 8), Verdict::Tolerated);
+        assert_eq!(verdict(&pixel_diff(8), 8), Verdict::Tolerated);
+    }
+
+    #[test]
+    fn one_pixel_past_the_budget_fails() {
+        assert_eq!(verdict(&pixel_diff(9), 8), Verdict::Fail);
+    }
+
+    #[test]
+    fn a_zero_budget_tolerates_nothing() {
+        assert_eq!(verdict(&pixel_diff(1), 0), Verdict::Fail);
+    }
+
+    #[test]
+    fn tolerated_pixels_stay_out_of_the_failure_totals() {
+        let mut report = report_with_diff(PixelDiff {
+            count: 900,
+            percentage: 0.43,
+        });
+        report.results.push(DiffResult {
+            rel: "full/frame_0001.png".to_owned(),
+            status: "tolerated".to_owned(),
+            diff: Some(PixelDiff {
+                count: 4,
+                percentage: 0.0,
+            }),
+            ..Default::default()
+        });
+        report.tolerated = 1;
+
+        assert_eq!(diff_totals(&report, "diff"), "900 px total (↑0.43% worst)");
+        assert_eq!(diff_totals(&report, "tolerated"), "4 px total");
     }
 }

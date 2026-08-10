@@ -12,6 +12,8 @@ h1 { margin-bottom: 8px; }
 .summary { font-size: 1.1em; margin-bottom: 24px; color: #aaa; }
 .summary .fail { color: #f66; font-weight: bold; }
 .summary .pass { color: #6f6; }
+.summary .tolerated { color: #fd8; }
+.summary .renderer { font-size: 0.75em; color: #777; margin-top: 4px; }
 .widget { margin-bottom: 16px; border: 1px solid #2a2a2a; border-radius: 8px; background: #161616;
           scroll-margin-top: 16px; }
 .widget[open] { background: #1a1a1a; }
@@ -45,12 +47,14 @@ h1 { margin-bottom: 8px; }
 .status-extras { font-size: 0.8em; color: #888; }
 .status-extras .chip { display: inline-block; padding: 1px 8px; border-radius: 3px; margin-right: 4px;
                        background: #222; }
+.status-extras .chip.tolerated { background: #3a3010; color: #fd8; }
 .status-extras .chip.missing { background: #3a2a10; color: #fc8; }
 .status-extras .chip.new { background: #102a3a; color: #8cf; }
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; margin-bottom: 8px;
        padding: 12px; background: #1a1a1a; border-radius: 6px; border-left: 3px solid #333;
        overflow-x: auto; }
 .row.diff { border-left-color: #f66; }
+.row.tolerated { border-left-color: #fc0; }
 .row.missing { border-left-color: #fa0; }
 .row.new { border-left-color: #08f; }
 .row.no-baseline { border-left-color: #fa0; }
@@ -73,6 +77,7 @@ h1 { margin-bottom: 8px; }
 .tag { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 0.75em;
        font-weight: bold; text-transform: uppercase; }
 .tag.diff { background: #622; color: #faa; }
+.tag.tolerated { background: #543; color: #fd8; }
 .tag.missing { background: #542; color: #fa8; }
 .tag.new { background: #135; color: #8cf; }
 .tag.no-baseline { background: #542; color: #fa8; }
@@ -136,14 +141,17 @@ h1 { margin-bottom: 8px; }
 <div class="summary">
   <span class="pass">Pass: {{ total_pass }}</span> &nbsp;
   <span{% if total_fail > 0 %} class="fail"{% endif %}>Fail: {{ total_fail }}</span> &nbsp;
+  {% if total_tolerated > 0 %}<span class="tolerated">Tolerated: {{ total_tolerated }}</span> &nbsp;{% endif %}
   Missing: {{ total_missing }} &nbsp; New: {{ total_new }}
   {% if no_baseline_count > 0 %}&nbsp; No baseline: {{ no_baseline_count }}{% endif %}
   {% if !has_failures %}&nbsp; &#x2714; All clear{% endif %}
+  {% if let Some(name) = renderer %}<div class="renderer">rendered by {{ name }}</div>{% endif %}
 </div>
 
 <div class="filter">
   <button class="active" onclick="filterRows('all')">All</button>
   <button onclick="filterRows('diff')">Diff ({{ total_fail }})</button>
+  {% if total_tolerated > 0 %}<button onclick="filterRows('tolerated')">Tolerated ({{ total_tolerated }})</button>{% endif %}
   <button onclick="filterRows('missing')">Missing ({{ total_missing }})</button>
   <button onclick="filterRows('new')">New ({{ total_new }})</button>
   {% if no_baseline_count > 0 %}<button onclick="filterRows('no-baseline')">No baseline ({{ no_baseline_count }})</button>{% endif %}
@@ -157,10 +165,12 @@ h1 { margin-bottom: 8px; }
   {%- if report.no_baseline -%}
     <span class="status no-baseline">no baseline</span>
   {%- else if report.is_clean -%}
-    <span class="status pass"><span class="ratio">{{ report.passed }}</span>frames</span>
+    <span class="status pass"><span class="ratio">{{ report.total }}</span>frames</span>
+    {%- if report.tolerated > 0 -%}<span class="status-extras"><span class="chip tolerated">{{ report.tolerated }} tolerated</span></span>{%- endif -%}
   {%- else -%}
     <span class="status fail"><span class="ratio">{{ report.failed }}/{{ report.total }}</span>fail</span>
     <span class="status-extras">
+      {%- if report.tolerated > 0 -%}<span class="chip tolerated">{{ report.tolerated }} tolerated</span>{%- endif -%}
       {%- if report.missing > 0 -%}<span class="chip missing">{{ report.missing }} missing</span>{%- endif -%}
       {%- if report.new_count > 0 -%}<span class="chip new">{{ report.new_count }} new</span>{%- endif -%}
       {%- if report.passed > 0 -%}<span class="chip">{{ report.passed }} pass</span>{%- endif -%}

@@ -106,9 +106,12 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
     }
 
     let capture_elapsed = capture_t0.elapsed().as_secs_f64();
+    let via = super::run::renderer()
+        .map(|name| format!(" via {name}"))
+        .unwrap_or_default();
     eprintln!(
         "  {}",
-        format!("captured in {}", format_time(capture_elapsed)).dimmed()
+        format!("captured in {}{via}", format_time(capture_elapsed)).dimmed()
     );
 
     Ok(())
@@ -364,6 +367,15 @@ fn build_wasm_workspace(workspace: &Path, widgets: &[String]) -> Result<()> {
 // ── Per-example capture ─────────────────────────────────────────────
 
 /// Capture a single widget (all sizes × variants). Returns elapsed seconds.
+/// The rasteriser a capture named on its stderr, if the line is there.
+fn renderer_from_stderr(stderr: &[u8]) -> Option<&str> {
+    std::str::from_utf8(stderr).ok()?.lines().find_map(|line| {
+        line.strip_prefix(super::run::RENDERER_PREFIX)
+            .map(str::trim)
+            .filter(|name| !name.is_empty())
+    })
+}
+
 fn capture_widget(
     binary: &Path,
     output_dir: &Path,
@@ -432,6 +444,10 @@ fn capture_widget(
                 .output()
                 .with_context(|| format!("failed to spawn capture for {example} {size_label}"))?;
 
+            if let Some(name) = renderer_from_stderr(&result.stderr) {
+                super::run::note_renderer(name);
+            }
+
             if !result.status.success() {
                 // Strip terminal colouring once: the child paints for a TTY,
                 // but the captured stderr feeds a file and a line filter here,
@@ -474,6 +490,7 @@ fn distill_capture_error(stderr: &str) -> String {
                 && !l.starts_with("Captured frame ")
                 && !l.starts_with("Unified replay:")
                 && !l.starts_with("Capturing ")
+                && !l.starts_with(super::run::RENDERER_PREFIX)
                 && !is_tracing_line(l)
         })
         .collect::<Vec<_>>()
@@ -671,7 +688,7 @@ fn format_time(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::distill_capture_error;
+    use super::{distill_capture_error, renderer_from_stderr};
 
     #[test]
     fn distill_keeps_the_error_and_drops_capture_chatter() {
@@ -695,5 +712,33 @@ mod tests {
         let raw = "pci id for fd 9: 10de:2684, driver (null)\n\
                    Captured frame 0 → /x/frame_0000.png\n";
         assert_eq!(distill_capture_error(raw), raw.trim());
+    }
+
+    /// The marker is the only route out of a capture's own process, so the
+    /// prefix and the name it carries are a contract between the two.
+    #[test]
+    fn the_renderer_marker_is_read_off_a_capture_line() {
+        let raw = b"Capturing iss at 1280x480 (SDK 0.1.0)\n\
+                    renderer: llvmpipe (LLVM 21.1.8, 256 bits)\n" as &[u8];
+        assert_eq!(
+            renderer_from_stderr(raw),
+            Some("llvmpipe (LLVM 21.1.8, 256 bits)")
+        );
+    }
+
+    #[test]
+    fn stderr_without_a_renderer_marker_names_nothing() {
+        assert_eq!(renderer_from_stderr(b"Captured frame 0\n"), None);
+        assert_eq!(renderer_from_stderr(b"renderer: \n"), None);
+    }
+
+    #[test]
+    fn the_renderer_marker_is_dropped_from_a_distilled_failure() {
+        let raw = "renderer: llvmpipe (LLVM 21.1.8, 256 bits)\n\
+                   error: hermetic capture breach in iss (1280x480):\n";
+        assert_eq!(
+            distill_capture_error(raw),
+            "error: hermetic capture breach in iss (1280x480):"
+        );
     }
 }

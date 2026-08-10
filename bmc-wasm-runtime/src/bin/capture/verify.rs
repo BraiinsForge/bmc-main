@@ -35,6 +35,7 @@ use rayon::prelude::*;
 pub struct VerifyArgs {
     pub widget: Option<String>,
     pub threshold: f64,
+    pub max_diff_pixels: usize,
     pub html: Option<PathBuf>,
     pub workspaces: Vec<PathBuf>,
     pub wasm_dirs: Vec<PathBuf>,
@@ -52,12 +53,14 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         None => "off".to_owned(),
     };
     eprintln!(
-        "{} {} {filter}  {} {parallel_str}  {} {}",
+        "{} {} {filter}  {} {parallel_str}  {} {}  {} {}",
         "verify".bold(),
         "widgets:".dimmed(),
         "parallel:".dimmed(),
         "threshold:".dimmed(),
         args.threshold,
+        "budget:".dimmed(),
+        format_args!("{} px", args.max_diff_pixels),
     );
     eprintln!();
 
@@ -91,6 +94,7 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
                 capture_dir: cap_dir,
                 output: widget_output,
                 threshold: args.threshold,
+                max_diff_pixels: args.max_diff_pixels,
                 quiet_progress: widgets.len() > 1,
             })
         })

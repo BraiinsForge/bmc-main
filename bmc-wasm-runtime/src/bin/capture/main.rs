@@ -124,6 +124,9 @@ enum Command {
         /// across GPU/Mesa versions (e.g. CI vs local).
         #[arg(long, default_value = "0.1")]
         threshold: f64,
+        /// Pixels a frame may differ by, wherever they sit, before it fails.
+        #[arg(long, default_value = "8")]
+        max_diff_pixels: usize,
     },
     /// Capture every widget across the given workspaces
     /// and diff against baselines (CI entry point).
@@ -136,6 +139,9 @@ enum Command {
         /// differences across GPU/Mesa versions (e.g. CI vs local).
         #[arg(long, default_value = "0.1")]
         threshold: f64,
+        /// Pixels a frame may differ by, wherever they sit, before it fails.
+        #[arg(long, default_value = "8")]
+        max_diff_pixels: usize,
         /// Path to write HTML report.
         #[arg(long)]
         html: Option<PathBuf>,
@@ -290,12 +296,14 @@ fn dispatch() -> Result<()> {
             capture_dir,
             output,
             threshold,
+            max_diff_pixels,
         } => {
             let (report, _baseline_tmp, elapsed) = diff::execute(&diff::DiffArgs {
                 workspace: String::new(),
                 capture_dir,
                 output,
                 threshold,
+                max_diff_pixels,
                 quiet_progress: false,
             })?;
             eprintln!("{}", diff::widget_status_line(&report, elapsed));
@@ -304,6 +312,7 @@ fn dispatch() -> Result<()> {
         Command::Verify {
             widget,
             threshold,
+            max_diff_pixels,
             html,
             ws,
             output_dir,
@@ -311,6 +320,7 @@ fn dispatch() -> Result<()> {
         } => verify::execute(&verify::VerifyArgs {
             widget,
             threshold,
+            max_diff_pixels,
             html,
             workspaces: ws.workspace,
             wasm_dirs: ws.wasm_dir,
