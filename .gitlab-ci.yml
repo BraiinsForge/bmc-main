@@ -21,11 +21,11 @@
 
 include:
   - project: "nix/ci-tools"
-    ref: &ci-tools-rev ee804d609ad9971aefa7707f976bdeb5d00306cb # update using: `nix run git+ssh://git@gitlab.ii.zone/nix/ci-tools.git#update`
+    ref: &ci-tools-rev 04e3dc45e9c46dbac75ce71079d9d2c3febb8433 # update using: `nix run git+ssh://git@gitlab.ii.zone/nix/ci-tools.git#update`
     file: "ci.yml"
     inputs:
       rev: *ci-tools-rev
-      ci_tools_flake: "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=ee804d609ad9971aefa7707f976bdeb5d00306cb"
+      ci_tools_flake: "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=04e3dc45e9c46dbac75ce71079d9d2c3febb8433"
       # Paths excluded from the host workspace's clippy/fmt sweep:
       # vendored upstream forks (linted upstream) and separate cargo
       # workspaces (wasm widgets — different target, own lint configs).
@@ -36,6 +36,11 @@ include:
         ./tooling
         ./widgets-wasm
         ./widgets-wasm-examples
+        ./bmc-gallery
+      # bmc-gallery sits outside the workspace so the gallery framework's egui
+      # version stays clear of ours — leaving it no workspace to inherit either
+      # dependencies or lints from, hence its entry in both lists.
+      workspace_deps_ignore: "./bmc-gallery"
       # shellcheck: redundant with content-checks (braiinschk shell=true).
       # unused-deps: cargo-machete needs per-crate triage first.
       disabled_jobs: ["shellcheck", "unused-deps"]

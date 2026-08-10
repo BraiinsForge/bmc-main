@@ -103,6 +103,10 @@ strip = true
 incremental = false
 codegen-units = 512
 
+# Spelled out, though the sub-tables below would imply it: `check-workspace-lints`
+# looks the table up by that exact path and cannot see one that only exists implicitly.
+[workspace.lints]
+
 [workspace.lints.rust]
 # deny
 unused_must_use = "deny"
