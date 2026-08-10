@@ -126,8 +126,13 @@ Recovery leaves the binary-cache settings intact because deploy never cleared th
 
 ## Firmware Upgrades
 
-Firmware (BOS) upgrades are orchestrated by `bmc-upgrade`. They merge all enabled package servers just like a normal
-package upgrade, but scope each feed-linked server to the incoming firmware version. Every firmware tarball ships with:
+Every firmware (BOS) upgrade includes an application package upgrade. The coupling is enforced inside `sysupgrade` by
+the incoming tarball's `COMMAND`, not by starting a separate package operation before or after the firmware operation.
+See [`firmware-package-interlinking.md`](firmware-package-interlinking.md) for the cross-repository call chain.
+
+Firmware upgrades are orchestrated by `bmc-upgrade`. Their package step merges all enabled package servers just like a
+normal package upgrade, but scopes each feed-linked server to the incoming firmware version. Every firmware tarball
+ships with:
 
 - a copy of `bmc-nix-cli`, and
 - a `servers.json.default` registry whose server entries link package feeds.
