@@ -88,6 +88,11 @@ How the compositor derives widget lifecycle state from scene cycling and drag st
 `deck_widget_surface_v1.lifecycle` events over Wayland. Covers initial lifecycle emission after the configure batch,
 release/acquire batching, client flush ordering, valid transitions, and client-side event delivery.
 
+### [Frontend](frontend.md)
+
+Why the frontend and backend treat changes to their shared gRPC schema as one atomic product change, without preserving
+obsolete RPCs and fields, compatibility shims, or protobuf reservations solely for older frontend builds.
+
 ### [Scene Management gRPC](grpc/scene-management.md)
 
 Frontend-facing API contract for scene and widget management. Covers `SceneManagementService` RPCs, full-update
