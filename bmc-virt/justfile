@@ -2,7 +2,7 @@ mod harness 'harness/justfile'
 
 [private]
 default:
-    @just --justfile {{ justfile() }} --list
+    @just --justfile {{ source_file() }} --list
 
 # Rebuild the OpenWrt feed cache after changing packageList or openwrtVersion in dl-cache/openwrt-config.nix.
 update-cache:

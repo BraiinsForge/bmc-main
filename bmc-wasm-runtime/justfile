@@ -21,7 +21,7 @@ output_dir := dir + "/captures"
 
 [private]
 default:
-    @just --justfile {{ justfile() }} --list
+    @just --justfile {{ source_file() }} --list
 
 # === Build / clean ===
 

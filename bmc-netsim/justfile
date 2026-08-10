@@ -4,7 +4,7 @@ dir := source_directory()
 
 [private]
 default:
-    @just --justfile {{ justfile() }} --list
+    @just --justfile {{ source_file() }} --list
 
 # Regenerate the committed blueprint JSON schema from the Rust types.
 schema:
