@@ -46,6 +46,7 @@ let
     , enabled ? true
     , serviceConfig ? null
     , shebang ? "#!/bin/sh /etc/rc.common"
+    , dependsOn ? [ ]
     , variables ? { }
     , functions ? [ ]
     }:
@@ -60,10 +61,15 @@ let
       # deliberate because that firmware is being discontinued.
       assert lib.assertMsg (start > 62)
         "mkOpenWrtService(${name}): start must be greater than 62, got ${toString start}";
+      assert lib.assertMsg (!(variables ? DEPENDS_ON))
+        "mkOpenWrtService(${name}): use dependsOn instead of variables.DEPENDS_ON";
       let
         allVariables = { START = toString start; }
           // lib.optionalAttrs (stop != null) { STOP = toString stop; }
-          // variables;
+          // variables
+          // lib.optionalAttrs (dependsOn != [ ]) {
+          DEPENDS_ON = lib.concatStringsSep " " (map toString dependsOn);
+        };
         varLines = lib.concatMapStringsSep "\n"
           (k: ''${k}="${allVariables.${k}}"'')
           (builtins.attrNames allVariables);
@@ -111,6 +117,7 @@ let
     , stop ? 80
     , enabled ? true
     , serviceConfig ? null
+    , dependsOn ? [ ]
     , extraVariables ? { }
     , extraFunctions ? [ ]
     , stdout ? true
@@ -167,7 +174,7 @@ let
     assert lib.assertMsg (!(env ? BMC_SERVICE_NAME))
       "mkOpenWrtDaemon(${name}): env.BMC_SERVICE_NAME is reserved";
     mkOpenWrtService {
-      inherit name start stop enabled serviceConfig;
+      inherit name start stop enabled serviceConfig dependsOn;
       variables = { USE_PROCD = "1"; } // extraVariables;
       functions = generatedFunctions ++ extraFunctions;
     };

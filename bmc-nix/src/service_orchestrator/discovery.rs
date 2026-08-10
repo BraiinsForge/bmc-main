@@ -408,6 +408,38 @@ mod tests {
     }
 
     #[test]
+    fn dependency_line_change_classifies_service_as_upgraded() {
+        let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
+        let old_root = tempdir.path().join("old");
+        let new_root = tempdir.path().join("new");
+
+        write_file(
+            &old_root.join("etc/init.d/compositor"),
+            "START=\"95\"\nDEPENDS_ON=\"/nix/store/old-launcher\"\n",
+        );
+        write_file(
+            &new_root.join("etc/init.d/compositor"),
+            "START=\"95\"\nDEPENDS_ON=\"/nix/store/new-launcher\"\n",
+        );
+
+        let old = discover_generation(&old_root).expect("BUG: should discover old generation");
+        let new = discover_generation(&new_root).expect("BUG: should discover new generation");
+        let changes = compare_generation_services(&old, &new);
+
+        assert!(changes.new.is_empty());
+        assert!(changes.removed.is_empty());
+        assert!(changes.unchanged.is_empty());
+        assert_eq!(
+            changes
+                .upgraded
+                .iter()
+                .map(|change| change.name.as_str())
+                .collect::<Vec<_>>(),
+            ["compositor"]
+        );
+    }
+
+    #[test]
     fn empty_old_generation_classifies_all_services_as_new() {
         let tempdir = tempfile::tempdir().expect("BUG: should create temp dir");
         let new_root = tempdir.path().join("new");

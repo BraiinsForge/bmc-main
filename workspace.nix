@@ -626,6 +626,7 @@ in
   wasmWrapperTestPackages = {
     baked = bakedWasmWidgetsForTest.representativeWrapper;
     bakedModes = bakedWasmWidgetsForTest.wrapperModes;
+    inherit (wasmWidgetsModule) mkWasmLauncher;
   };
   inherit (initArtifacts) mkInitArtifacts;
   inherit (wasmWidgetsModule) wasmExamples wasmWidgetsBundle wasmWidgets;

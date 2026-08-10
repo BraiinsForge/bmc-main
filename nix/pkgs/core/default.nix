@@ -62,7 +62,8 @@ let
       ${testBusybox}/bin/ash \
         ${./tests/bmc-compositor-service.sh} \
         ${bmc-compositor.service} \
-        ${testBusybox}/bin/busybox
+        ${testBusybox}/bin/busybox \
+        ${wasmLauncher}
     ${testBusybox}/bin/touch $out
   '';
 
@@ -102,6 +103,7 @@ let
     start = 95;
     enabled = true;
     command = "${bmc-openwrt}/bin/bmc-openwrt";
+    dependsOn = [ wasmLauncher ];
     args = [ "--log-to-file" ];
     env = {
       MESA_SHADER_CACHE_MAX_SIZE = "16M";

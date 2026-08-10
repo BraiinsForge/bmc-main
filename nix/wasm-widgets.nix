@@ -120,19 +120,22 @@ let
     runtimeDeps = widgetRuntimeDeps.native profile.pkgs;
   };
 
-  wasmLauncher = (pkgs.writeTextFile {
-    name = launcherName;
-    executable = true;
-    destination = "/bin/${launcherName}";
-    text = ''
-      #!/bin/sh
-      exec ${thin}/bin/bmc-wasm-thin --host-bin ${host}/bin/bmc-wasm-host "$@"
-    '';
-  }).overrideAttrs (old: {
-    passthru = (old.passthru or { }) // {
-      inherit sdkMajor launcherName thin host;
-    };
-  });
+  mkWasmLauncher = { thin, host }:
+    (pkgs.writeTextFile {
+      name = launcherName;
+      executable = true;
+      destination = "/bin/${launcherName}";
+      text = ''
+        #!/bin/sh
+        exec ${thin}/bin/bmc-wasm-thin --host-bin ${host}/bin/bmc-wasm-host "$@"
+      '';
+    }).overrideAttrs (old: {
+      passthru = (old.passthru or { }) // {
+        inherit sdkMajor launcherName thin host;
+      };
+    });
+
+  wasmLauncher = mkWasmLauncher { inherit thin host; };
 
   # Per-widget packaging. Produces:
   #   $out/lib/bmc-widgets/<name>/bin/<name>          (shell wrapper)
@@ -196,5 +199,6 @@ let
     });
 in
 {
-  inherit sdkMajor launcherName wasmExamples wasmWidgetsBundle wasmWidgets thin host wasmLauncher mkWasmWidget;
+  inherit sdkMajor launcherName wasmExamples wasmWidgetsBundle wasmWidgets thin host
+    mkWasmLauncher wasmLauncher mkWasmWidget;
 }

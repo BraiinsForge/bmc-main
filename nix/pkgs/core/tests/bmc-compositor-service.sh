@@ -23,6 +23,7 @@ set -eu
 
 script="$1"
 busybox="$2"
+expected_launcher="$3"
 tmp="${TMPDIR:-/tmp}/bmc-compositor-service-test-$$"
 root="$tmp/root"
 calls="$tmp/calls"
@@ -78,6 +79,14 @@ logger() {
     record "logger $*"
 }
 
+stop() {
+    record stop
+}
+
+start() {
+    record start
+}
+
 procd_open_instance() {
     record procd_open_instance
 }
@@ -124,6 +133,8 @@ assert_script_contains 'mkdir -p /mnt/data/bmc/cache' \
     "generated service does not create the persistent cache directory"
 assert_script_contains 'chmod 0700 /mnt/data/bmc/cache' \
     "generated service does not secure the persistent cache directory"
+assert_script_contains "DEPENDS_ON=\"$expected_launcher\"" \
+    "generated service does not depend on the wasm launcher"
 
 # shellcheck source=/dev/null
 . "$script"
@@ -131,6 +142,12 @@ assert_script_contains 'chmod 0700 /mnt/data/bmc/cache' \
 "$busybox" mkdir -p "$root/.cache/mesa_shader_cache"
 "$busybox" touch "$root/.cache/mesa_shader_cache/entry"
 "$busybox" touch "$root/.cache/unrelated"
+
+: >"$calls"
+reload_service
+[ "$(cat "$calls")" = "$(printf 'stop\nstart')" ] \
+    || fail "reload_service must stop then start exactly once"
+
 : >"$calls"
 start_service
 
