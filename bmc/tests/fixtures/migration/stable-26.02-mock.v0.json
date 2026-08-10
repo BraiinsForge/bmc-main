@@ -1,0 +1,396 @@
+{
+  "scenes": [
+    {
+      "id": "bdc48fcf-f232-44a9-9a88-61148736f683",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "5b58eb9c-8a02-4864-97ef-add9a59d6308",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "Display real-time currency exchange rates and conversion information",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "https://widgets.braiinsforge.com/exchange-rate/icon?rev=ac6224936b035e71",
+            "params": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "4860313e-63cd-4f89-aec6-0b1bf1033f9a",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "4f11f812-4a76-40f8-8e91-23026eeed391",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=265c6ed448a7c013",
+            "params": {
+              "country": "cz",
+              "showDate": true
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "ba455067-f369-48a1-a7c6-bab79c098efc",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "eafc7c1c-4112-48c9-aad3-fd74373c3c3f",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Financial Ticker List",
+            "description": "Track multiple stocks, crypto, and commodities with live price updates and performance metrics",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
+            "params": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "0bb6d60c-c235-4146-9a84-5b38556e4910",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "ad726e0a-eaf7-4322-8e4f-2097d57420c7",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Visualize price movements with detailed candlestick chart showing open, high, low, and close values",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "cd57139b-9e27-48e1-839c-7fb20401f4c1",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "b55f0fec-9da7-4450-ae86-cc1366864687",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Compact price trend visualization with minimalist sparkline chart for quick insights",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "5a982f29-3c64-4315-bef9-f2c2249e762c",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "a4c226b2-ee09-4cb6-a054-f149d88cf647",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "Current conditions and forecast with temperature, precipitation, and wind information",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "https://widgets.braiinsforge.com/weather/icon?rev=1f494d0a8e5c98d7",
+            "params": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "b8286203-932f-447c-99fb-7c55b4b52beb",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "346b6b20-d30e-4a02-ab51-269e686b6b0d",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Debug Widget",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/debug",
+            "icon_url": "",
+            "params": {
+              "booleanParam": true,
+              "emailParam": "test@example.com",
+              "enumParam": "option1",
+              "integerParam": 52.0,
+              "numberArrayParam": [
+                10.0,
+                20.0,
+                30.0
+              ],
+              "numberParam": 42.5,
+              "stringArrayParam": [
+                "item1",
+                "item2",
+                "item3"
+              ],
+              "stringParam": "test value"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "a4cec6f9-da94-4578-a1c8-d8080ff951a1",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "6daaaea8-3eb4-4e66-a487-1ff580dc2d66",
+          "row": 0,
+          "col": 0,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Exchange Rate",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "icon_url": "",
+            "params": {}
+          }
+        },
+        {
+          "id": "fd88709a-4318-45ec-98e6-cd5405b72b43",
+          "row": 0,
+          "col": 1,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Nameday",
+            "description": "Display today’s nameday for the selected country.",
+            "widget_url": "https://widgets.braiinsforge.com/nameday",
+            "icon_url": "https://widgets.braiinsforge.com/nameday/icon?rev=baf9fcc58f8e24b8",
+            "params": null
+          }
+        },
+        {
+          "id": "b2dd7fec-87be-406e-9570-ca5966f175ae",
+          "row": 1,
+          "col": 1,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Candlestick",
+            "description": "Track stock, assets, crypto prices & more with a live candlestick chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-candlestick/icon?rev=37e9e9b0177a093d",
+            "params": null
+          }
+        },
+        {
+          "id": "67eb5e4f-d5fa-43bd-a01f-ab212e2aea1b",
+          "row": 1,
+          "col": 0,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Ticker - Single Sparkline",
+            "description": "Visualize stock, assets, crypto prices & more on a detailed line chart.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-single-sparkline/icon?rev=31e233defb663446",
+            "params": null
+          }
+        },
+        {
+          "id": "aa8219aa-dddf-4359-89b7-69e8b6b6f57c",
+          "row": 0,
+          "col": 2,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Financial Ticker List",
+            "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
+            "params": null
+          }
+        },
+        {
+          "id": "14ecc78c-89e7-4ec4-a520-57bfed68dccc",
+          "row": 0,
+          "col": 3,
+          "size": "small",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Weather",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/weather",
+            "icon_url": "",
+            "params": {
+              "location": "Helsinki"
+            }
+          }
+        },
+        {
+          "id": "06547f3f-df8d-4739-8b32-6201aea82c0a",
+          "row": 1,
+          "col": 2,
+          "size": "medium",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Financial Ticker List",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "",
+            "params": {}
+          }
+        }
+      ]
+    },
+    {
+      "id": "8fcc48f1-bb6d-44fc-8c5b-3873ff348135",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "24680a24-c522-4c2a-a9e3-b2747f2a02c3",
+          "row": 0,
+          "col": 0,
+          "size": "medium",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "c63dc8ce-4501-47ac-a10f-62b62abc6a94",
+          "row": 0,
+          "col": 2,
+          "size": "small",
+          "kind": "clock",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "6aaa30f6-2f50-4f0c-a905-44655824899c",
+          "row": 1,
+          "col": 0,
+          "size": "medium",
+          "kind": "ticker_btc",
+          "params": {
+            "time_frame": "day1"
+          }
+        }
+      ]
+    },
+    {
+      "id": "7596084d-5670-477b-97a9-50c65c70e21d",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "8fe6c545-5928-4a35-88e9-52d37b3f6a16",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Financial Ticker List",
+            "description": "Display multiple financial symbols with their prices, changes, and sparkline charts.",
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "icon_url": "https://widgets.braiinsforge.com/ticker-list/icon?rev=265c6ed448a7c013",
+            "params": null
+          }
+        }
+      ]
+    },
+    {
+      "id": "f4598d7e-7f6e-4cae-9342-43f39224dbb8",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "5249afb9-b1e6-4619-80de-398b82633436",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "halving_countdown"
+        }
+      ]
+    }
+  ],
+  "localization": {
+    "time_system": "Hour12",
+    "number_format": "SpaceGroupCommaDecimal",
+    "date_format": "DdMmYyyyDot",
+    "first_day_of_week": "Monday",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Celsius",
+    "unit_system": "Metric"
+  },
+  "data_collection": false,
+  "alarms": [
+    {
+      "id": "ec91af30-a760-45b6-a792-b62a8e58512a",
+      "enabled": true,
+      "name": "xxx",
+      "time": "10:50:00",
+      "repeat": [
+        "Tuesday",
+        "Saturday",
+        "Thursday",
+        "Friday",
+        "Wednesday",
+        "Sunday",
+        "Monday"
+      ],
+      "sound": "HashrateMelody",
+      "snooze_options": {
+        "limit": "Three",
+        "duration": "FiveMinutes"
+      }
+    }
+  ],
+  "boot_sound_enabled": true,
+  "autoupgrade": {
+    "enabled": true,
+    "cron": "14 55 20 * * 7"
+  },
+  "accounts": []
+}

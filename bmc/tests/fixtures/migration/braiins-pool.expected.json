@@ -74,6 +74,24 @@
         },
         {
           "col": 0,
+          "id": "268a0e9a-8baf-4467-835d-4813a58179d5",
+          "params": {
+            "pair": "BTC-USD",
+            "period": "1d",
+            "view": "sparkline"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        },
+        {
+          "col": 0,
           "id": "d9de2913-f795-4de6-b79f-d2a9469e204e",
           "params": {
             "clock_style": "digital",

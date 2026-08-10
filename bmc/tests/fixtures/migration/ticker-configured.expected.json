@@ -1,0 +1,91 @@
+{
+  "scenes": [
+    {
+      "enabled": true,
+      "id": "2e4621a9-cc37-4adc-9bfa-b8f74a524a90",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "f8c5226b-fd9f-430a-b991-e46940d847cc",
+          "params": {
+            "pair": "CZK-USD",
+            "period": "1d",
+            "view": "sparkline"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "42795335-1b54-4b03-b807-478943532101",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "aa7a878e-6a08-4b62-9944-a545da286df3",
+          "params": {
+            "pair": "ETH-USD",
+            "period": "1mo",
+            "view": "sparkline"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "1afeb263-2dfb-47e6-b7d1-b62fa986dc2e",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "793f9bec-49ea-4b38-a720-e9cedf480429",
+          "params": {
+            "pair": "NVDA",
+            "period": "1h",
+            "view": "candlestick"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "8fe7bce4-3ca9-4b88-b5e2-af687cfba6ee",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "a9edfa3e-88ac-467a-b8ce-51dd3b89fd7a",
+          "params": {
+            "period": "1d",
+            "symbol_1": "AAPL",
+            "symbol_2": "MSFT",
+            "symbol_3": "^GSPC",
+            "symbol_4": null,
+            "symbol_5": null,
+            "symbol_6": null,
+            "symbol_7": null,
+            "symbol_8": null
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "51f48290-a8fd-466d-8693-1911b06c68c8"
+        }
+      ]
+    }
+  ],
+  "version": 2
+}

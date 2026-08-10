@@ -1,0 +1,418 @@
+{
+  "alarms": [
+    {
+      "enabled": true,
+      "id": "ec91af30-a760-45b6-a792-b62a8e58512a",
+      "name": "xxx",
+      "repeat": [
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday"
+      ],
+      "snooze_options": {
+        "duration": "FiveMinutes",
+        "limit": "Three"
+      },
+      "sound": "HashrateMelody",
+      "time": "10:50:00"
+    }
+  ],
+  "autoupgrade": {
+    "cron": "14 55 20 * * 7",
+    "enabled": true
+  },
+  "boot_sound_enabled": true,
+  "data_collection": false,
+  "localization": {
+    "date_format": "DdMmYyyyDot",
+    "first_day_of_week": "Monday",
+    "number_format": "SpaceGroupCommaDecimal",
+    "show_seconds_in_status_bar": false,
+    "temperature_unit": "Celsius",
+    "time_system": "Hour12",
+    "unit_system": "Metric"
+  },
+  "scenes": [
+    {
+      "enabled": true,
+      "id": "bdc48fcf-f232-44a9-9a88-61148736f683",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "5b58eb9c-8a02-4864-97ef-add9a59d6308",
+          "params": {
+            "pair": "EUR-USD",
+            "period": "7d",
+            "view": "sparkline"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "4860313e-63cd-4f89-aec6-0b1bf1033f9a",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "4f11f812-4a76-40f8-8e91-23026eeed391",
+          "params": {
+            "country": "cz",
+            "show_date": true
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "5062553f-31eb-497c-b513-bb82f41a2809"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "ba455067-f369-48a1-a7c6-bab79c098efc",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "eafc7c1c-4112-48c9-aad3-fd74373c3c3f",
+          "params": {
+            "period": "7d",
+            "symbol_1": "NVDA",
+            "symbol_2": "AAPL",
+            "symbol_3": "TSLA",
+            "symbol_4": "MSTR",
+            "symbol_5": "JPM",
+            "symbol_6": "META",
+            "symbol_7": "SPY",
+            "symbol_8": "NFLX"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "51f48290-a8fd-466d-8693-1911b06c68c8"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "0bb6d60c-c235-4146-9a84-5b38556e4910",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "ad726e0a-eaf7-4322-8e4f-2097d57420c7",
+          "params": {
+            "pair": "BTC-USD",
+            "period": "7d",
+            "view": "candlestick"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "cd57139b-9e27-48e1-839c-7fb20401f4c1",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "b55f0fec-9da7-4450-ae86-cc1366864687",
+          "params": {
+            "pair": "BTC-USD",
+            "period": "7d",
+            "view": "sparkline"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "5a982f29-3c64-4315-bef9-f2c2249e762c",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "a4c226b2-ee09-4cb6-a054-f149d88cf647",
+          "params": {
+            "location": "Prague",
+            "time_zone": "location"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "2379712a-e573-46db-8e9c-94f6ed75d92c"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "a4cec6f9-da94-4578-a1c8-d8080ff951a1",
+      "kind": "combined",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "6daaaea8-3eb4-4e66-a487-1ff580dc2d66",
+          "params": {
+            "pair": "EUR-USD",
+            "period": "7d",
+            "view": "sparkline"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        },
+        {
+          "col": 1,
+          "id": "fd88709a-4318-45ec-98e6-cd5405b72b43",
+          "params": {
+            "country": "cz",
+            "show_date": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "5062553f-31eb-497c-b513-bb82f41a2809"
+        },
+        {
+          "col": 1,
+          "id": "b2dd7fec-87be-406e-9570-ca5966f175ae",
+          "params": {
+            "pair": "BTC-USD",
+            "period": "7d",
+            "view": "candlestick"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        },
+        {
+          "col": 0,
+          "id": "67eb5e4f-d5fa-43bd-a01f-ab212e2aea1b",
+          "params": {
+            "pair": "BTC-USD",
+            "period": "7d",
+            "view": "sparkline"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        },
+        {
+          "col": 2,
+          "id": "aa8219aa-dddf-4359-89b7-69e8b6b6f57c",
+          "params": {
+            "period": "7d",
+            "symbol_1": "NVDA",
+            "symbol_2": "AAPL",
+            "symbol_3": "TSLA",
+            "symbol_4": "MSTR",
+            "symbol_5": "JPM",
+            "symbol_6": "META",
+            "symbol_7": "SPY",
+            "symbol_8": "NFLX"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "51f48290-a8fd-466d-8693-1911b06c68c8"
+        },
+        {
+          "col": 3,
+          "id": "14ecc78c-89e7-4ec4-a520-57bfed68dccc",
+          "params": {
+            "location": "Helsinki",
+            "time_zone": "location"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "2379712a-e573-46db-8e9c-94f6ed75d92c"
+        },
+        {
+          "col": 2,
+          "id": "06547f3f-df8d-4739-8b32-6201aea82c0a",
+          "params": {
+            "period": "7d",
+            "symbol_1": "NVDA",
+            "symbol_2": "AAPL",
+            "symbol_3": "TSLA",
+            "symbol_4": "MSTR",
+            "symbol_5": "JPM",
+            "symbol_6": "META",
+            "symbol_7": "SPY",
+            "symbol_8": "NFLX"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "51f48290-a8fd-466d-8693-1911b06c68c8"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "8fcc48f1-bb6d-44fc-8c5b-3873ff348135",
+      "kind": "combined",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "24680a24-c522-4c2a-a9e3-b2747f2a02c3",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "semi-bold",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "fbc867c9-b722-4bdb-8738-c15d20fe2b88"
+        },
+        {
+          "col": 2,
+          "id": "c63dc8ce-4501-47ac-a10f-62b62abc6a94",
+          "params": {
+            "clock_style": "digital",
+            "numbers_font_style": "semi-bold",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 1,
+              "rows": 1
+            }
+          },
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "fbc867c9-b722-4bdb-8738-c15d20fe2b88"
+        },
+        {
+          "col": 0,
+          "id": "6aaa30f6-2f50-4f0c-a905-44655824899c",
+          "params": {
+            "pair": "BTC-USD",
+            "period": "1d",
+            "view": "sparkline"
+          },
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "7596084d-5670-477b-97a9-50c65c70e21d",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "8fe6c545-5928-4a35-88e9-52d37b3f6a16",
+          "params": {
+            "period": "7d",
+            "symbol_1": "NVDA",
+            "symbol_2": "AAPL",
+            "symbol_3": "TSLA",
+            "symbol_4": "MSTR",
+            "symbol_5": "JPM",
+            "symbol_6": "META",
+            "symbol_7": "SPY",
+            "symbol_8": "NFLX"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "51f48290-a8fd-466d-8693-1911b06c68c8"
+        }
+      ]
+    },
+    {
+      "enabled": true,
+      "id": "f4598d7e-7f6e-4cae-9342-43f39224dbb8",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "5249afb9-b1e6-4619-80de-398b82633436",
+          "params": {
+            "numbers_font_style": "bold"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "8a87742d-192d-4c80-bda2-d446e9b9aeae"
+        }
+      ]
+    }
+  ],
+  "version": 2
+}

@@ -1,0 +1,94 @@
+{
+  "scenes": [
+    {
+      "id": "2e4621a9-cc37-4adc-9bfa-b8f74a524a90",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "f8c5226b-fd9f-430a-b991-e46940d847cc",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "widget_url": "https://widgets.braiinsforge.com/exchange-rate",
+            "params": {
+              "base": "CZK",
+              "quote": "USD",
+              "period": "24h"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "42795335-1b54-4b03-b807-478943532101",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "aa7a878e-6a08-4b62-9944-a545da286df3",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-sparkline",
+            "params": {
+              "pair": "ETH-USD",
+              "period": "30d"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "1afeb263-2dfb-47e6-b7d1-b62fa986dc2e",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "793f9bec-49ea-4b38-a720-e9cedf480429",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "widget_url": "https://widgets.braiinsforge.com/ticker-single-candlestick",
+            "params": {
+              "pair": "NVDA",
+              "period": "1h"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "8fe7bce4-3ca9-4b88-b5e2-af687cfba6ee",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "a9edfa3e-88ac-467a-b8ce-51dd3b89fd7a",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "widget_url": "https://widgets.braiinsforge.com/ticker-list",
+            "params": {
+              "symbols": [
+                "AAPL",
+                " MSFT ",
+                "",
+                "^GSPC"
+              ],
+              "period": "24h"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
