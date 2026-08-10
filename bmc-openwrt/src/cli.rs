@@ -38,7 +38,9 @@ pub struct Args {
     #[clap(long)]
     pub headless_compositor: bool,
 
-    /// HTTP server bind address (default: 0.0.0.0:80)
+    /// HTTP server bind address (default 0.0.0.0).
+    /// The port defaults to 80 on the BMC100, and to 81 on the BMM/BFM units
+    /// where boser's web UI already holds port 80.
     #[clap(long)]
     pub address: Option<SocketAddr>,
 

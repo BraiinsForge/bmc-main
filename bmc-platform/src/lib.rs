@@ -104,6 +104,14 @@ impl Product {
             Self::Bfm100 => "Femto Miner",
         }
     }
+
+    #[must_use]
+    pub fn default_http_port(self) -> u16 {
+        match self {
+            Self::Bmc100 => 80,
+            Self::Bmm100 | Self::Bmm101 | Self::Bfm100 => 81,
+        }
+    }
 }
 
 impl BosPlatform {
@@ -589,6 +597,14 @@ mod test {
             );
             assert_eq!(platform.product(), product);
         }
+    }
+
+    #[test]
+    fn default_http_port_is_80_only_for_bmc100() {
+        assert_eq!(Product::Bmc100.default_http_port(), 80);
+        assert_eq!(Product::Bmm100.default_http_port(), 81);
+        assert_eq!(Product::Bmm101.default_http_port(), 81);
+        assert_eq!(Product::Bfm100.default_http_port(), 81);
     }
 
     #[test]

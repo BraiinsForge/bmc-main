@@ -73,6 +73,28 @@ async fn main() -> Result<()> {
         ..Configuration::default()
     };
 
+    let platform_override: Option<BosPlatform> =
+        match args.hardware_profile.parse::<HardwareProfileSelection>() {
+            Ok(selection) => selection.into(),
+            Err(err) => {
+                error!(%err, "invalid --hardware-profile");
+                return Err(err.into());
+            }
+        };
+
+    // Resolve the platform once so the HTTP port and the WiFi path agree.
+    // Port detection is best-effort: if it fails we keep the built-in default
+    // and the WiFi path resolution surfaces the error.
+    let detected_platform = match platform_override {
+        Some(platform) => Ok(platform),
+        None => BmcInfo::load().map(|info| info.bmc_platform),
+    };
+    if let Ok(platform) = &detected_platform {
+        config
+            .address
+            .set_port(platform.product().default_http_port());
+    }
+
     if let Some(address) = args.address {
         config.address = address;
     }
@@ -91,15 +113,6 @@ async fn main() -> Result<()> {
         .and_then(|timezone| Timezone::from_str(&timezone).ok())
         .unwrap_or_default();
 
-    let platform_override: Option<BosPlatform> =
-        match args.hardware_profile.parse::<HardwareProfileSelection>() {
-            Ok(selection) => selection.into(),
-            Err(err) => {
-                error!(%err, "invalid --hardware-profile");
-                return Err(err.into());
-            }
-        };
-
     let board_serial = match BoardSerial::load_stm32mp157() {
         Ok(serial) => {
             info!("Board serial: {serial}");
@@ -116,17 +129,12 @@ async fn main() -> Result<()> {
         info!("Using WiFi device path from BMC_WIFI_SYSPATH: {path}");
         WifiChip::Nl80211 { syspath: path }
     } else {
-        let platform = match platform_override {
-            Some(platform) => platform,
-            None => BmcInfo::load()
-                .map(|info| info.bmc_platform)
-                .inspect_err(|err| {
-                    error!(
-                        ?err,
-                        "cannot resolve platform for WiFi path; pass --hardware-profile"
-                    );
-                })?,
-        };
+        let platform = detected_platform.inspect_err(|err| {
+            error!(
+                ?err,
+                "cannot resolve platform for WiFi path; pass --hardware-profile"
+            );
+        })?;
         if let Some(chip) =
             HardwareProfile::for_product(platform.product()).locate_wifi_chip(board_serial.as_ref())
         {
