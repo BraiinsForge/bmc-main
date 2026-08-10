@@ -396,6 +396,7 @@ pub mod tree;
 pub mod tz;
 #[cfg(target_arch = "wasm32")]
 pub mod udp_broadcast;
+pub mod url;
 // Private module, types re-exported at the crate root below — so `units` can't
 // clash with the widget-local `units` crate some widgets still depend on.
 mod units;

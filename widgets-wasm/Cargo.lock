@@ -184,6 +184,7 @@ dependencies = [
  "bmc-shared-utils",
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
+ "percent-encoding",
  "ufmt",
  "unit-prefix",
 ]

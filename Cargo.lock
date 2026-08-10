@@ -1575,6 +1575,7 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-wasm-sdk-macros",
  "glam",
+ "percent-encoding",
  "ufmt",
  "unit-prefix",
 ]

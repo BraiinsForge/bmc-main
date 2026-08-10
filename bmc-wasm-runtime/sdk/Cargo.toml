@@ -20,6 +20,7 @@ bmc-render-skin = { path = "../../bmc-render/skin" }
 bmc-wasm-protocol = { path = "../protocol" }
 bmc-wasm-sdk-macros = { path = "../sdk-macros" }
 glam = { workspace = true, default-features = false, features = ["libm"], optional = true }
+percent-encoding.workspace = true
 ufmt = { workspace = true }
 unit-prefix = { workspace = true }
 
