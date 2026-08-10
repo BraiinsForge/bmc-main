@@ -1,6 +1,6 @@
 ---
 name: addressing-mr-review
-description: Use when working through the review threads on an MR to fix them, one by one — the fix-and-fold loop, not the reply half. Triggers on "we've got a review pass", "address the review", "work through the MR comments", "go through the reviewer's threads one by one", "fix the review feedback", "let's start on the review". For the mechanics of drafting and posting a single reply, defer to `gitlab-mr-reply`; for the `glab` transport, `gitlab-mr-inline-comments`.
+description: Use when working through the review threads on an MR to fix them, one by one — the fix-and-fold loop, not the reply half. Triggers on "we've got a review pass", "address the review", "work through the MR comments", "go through the reviewer's threads one by one", "fix the review feedback", "let's start on the review". For the mechanics of drafting and posting a single reply, defer to `gitlab-mr-reply`; for line-anchored comments and the `glab api` payloads, `gitlab-mr-inline-comments`.
 ---
 
 # Addressing an MR review pass
@@ -32,7 +32,7 @@ For each task, in order — do **not** batch:
 5. **Find the commit target and fold into it *now*.** See "Fold, don't stack" — this is the step that goes wrong.
 6. **Reply to the thread** via `gitlab-mr-reply` rules: grounded, terse, **cite the commit by its subject line in
    backticks — never a SHA** (the branch is being folded/rebased, SHAs go stale), attribution footer, and **never
-   resolve** the thread (the reviewer resolves). MCP is read-only for notes, so post through `glab`:
+   resolve** the thread (the reviewer resolves). Post through whichever client you picked; with `glab`:
    `glab api --method POST "projects/<id>/merge_requests/<iid>/discussions/<thread-id>/notes" -f "body=$(cat body.md)"`
    then confirm the returned `.id`/`.author.username`.
 7. **User pushes.** Never push yourself, even after a reply.

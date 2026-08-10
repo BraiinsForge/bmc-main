@@ -1,30 +1,18 @@
 ---
 name: gitlab-mr-inline-comments
-description: Use glab CLI for GitLab MR operations the MCP tools can't perform — primarily inline (per-line) diff comments, and as a fallback transport for general top-level notes or thread replies when the MCP path is unavailable. Triggers on "post inline comments on the MR diff", "leave review comments on these lines", "post review notes on the diff", "post via glab CLI", or any request to anchor a comment to a specific line/hunk.
+description: Anchor a review comment to a specific line or hunk of a GitLab MR diff, and post MR notes, replies, and thread resolutions through `glab api`. Covers the `position` payload, the silent-drop pitfall where a bad position is demoted to a general comment behind an HTTP 200, and the mandatory verification step. Triggers on "post inline comments on the MR diff", "leave review comments on these lines", "post review notes on the diff", "post via glab CLI", or any request to anchor a comment to a specific line/hunk.
 ---
 
-# GitLab MR posting via glab CLI
+# GitLab MR line-anchored comments
 
-End-to-end pipeline for posting MR comments via `glab api` when the connected GitLab MCP tools cannot do the operation.
-Default to the MCP path (see the `gitlab-mr-reply` skill) — this skill is the fallback transport, primarily for inline
-diff comments which the MCP proxy does not expose at the time of writing.
+Posting MR comments with `glab api`, and the mechanics of anchoring one to a diff line.
 
-The connected proxy may prepend transport-specific prefixes to GitLab tool names. Discover the actual tool IDs first; do
-not assume a fixed `mcp__mcp-proxy__...` prefix.
+Line anchoring is the reason this skill exists — no GitLab MCP server currently exposes per-line diff comments, so those
+go through `glab` whichever client the task started on. The other recipes here work equally well through a connected MCP
+server: top-level notes, thread replies, resolutions. See `gitlab-mr-reply` for picking a client, then use the one you
+picked.
 
-## When to use this skill vs the MCP one
-
-| Operation                                 | Tool                                    |
-| ----------------------------------------- | --------------------------------------- |
-| Top-level MR note                         | discovered MCP create-note tool         |
-| Reply to an existing thread               | discovered MCP discussion-reply tool    |
-| Resolve a thread                          | discovered MCP resolve-thread tool      |
-| Edit a posted note                        | discovered MCP update-note tool         |
-| **Inline (per-line) comment on the diff** | **glab CLI (this skill)**               |
-| MCP server unavailable / proxy down       | glab CLI (this skill, fallback section) |
-
-If the operation has an MCP equivalent and the MCP server works, use it. Reach for glab CLI only when MCP genuinely
-cannot help. Never `curl` the GitLab host directly.
+The payload rules below are about GitLab's API, not about `glab`. They hold no matter what sends the request.
 
 ## The critical pitfall (inline comments)
 
@@ -39,32 +27,35 @@ Every posted inline comment MUST be verified this way. Do not batch-post without
 
 `glab` uses `GITLAB_TOKEN` from the environment, or a prior `glab auth login`. Don't pass tokens on the command line.
 
-## Required tool discovery (read-side MCP context)
+## Reads
 
-Before the first GitLab read call, discover the connected tool names you have available:
+The MR metadata and diff can come from either client: a connected MCP server's discovered tool names, or the `glab api`
+calls the examples below use. `gitlab-mr-reply` covers the one-time check for which you have.
 
-```
-ToolSearch query="gitlab project merge request diffs discussions notes create reply resolve update"
-```
-
-Bind the discovered names for:
-
-- project lookup (optional)
-- get merge request
-- get merge request diffs
-- list discussions / notes (optional cleanup lookup)
-
-Use those discovered names below. If project lookup is not available, derive `project_id` from `git remote -v` and use
-the URL path form.
+When no project-lookup call is available, derive `project_id` from `git remote -v` and use the URL path form.
 
 ## Required context to gather first
 
-1. **Project ID** — numeric (if the discovered project-lookup tool can resolve it) or URL-encoded path. Numeric is safer
-   for `glab api` paths, but path form works.
-2. **MR IID** — from the discovered get-merge-request tool with `project_id` and `source_branch=<branch>`.
-3. **Diff refs** — from that same get-merge-request response, read `diff_refs.{base_sha, start_sha, head_sha}`.
-4. **New file paths and target line numbers** — read the MR diff via the discovered get-merge-request-diffs tool and
-   count line numbers in the *new* file. Don't eyeball; count from hunk headers `@@ -X,N +Y,M @@`.
+Items 1–3 all come out of one merge-request read, so fetch it once:
+
+```bash
+glab api "projects/<group>%2F<project>/merge_requests/<iid>" | jq '{project_id, iid, diff_refs}'
+```
+
+1. **Project ID** — numeric, or the URL-encoded path (`bos%2Fbmc-main`). Numeric is safer in `glab api` paths, but the
+   path form works and needs no lookup.
+
+2. **MR IID** — from the URL, or by `source_branch=<branch>` when you only know the branch.
+
+3. **Diff refs** — `diff_refs.{base_sha, start_sha, head_sha}` from that same response. All three are required in every
+   `position` payload.
+
+4. **New file paths and target line numbers** — read the MR diff and count line numbers in the *new* file. Don't
+   eyeball; count from hunk headers `@@ -X,N +Y,M @@`.
+
+   ```bash
+   glab api "projects/<project_id>/merge_requests/<iid>/diffs?per_page=50" | jq -r '.[] | "### \(.new_path)\n\(.diff)"'
+   ```
 
 ## Inline comments — line classification
 
@@ -142,9 +133,9 @@ When posting multiple inline comments, **post one and verify it landed correctly
 failure (wrong sha, wrong path casing, line off the hunk) reveals itself on the first attempt; you avoid spamming the MR
 with botched general comments that need cleanup.
 
-## General top-level note via glab CLI (fallback only)
+## General top-level note
 
-When MCP is unavailable, the equivalent of the create-note tool:
+A note with no `position` — the whole-MR comment:
 
 ```bash
 glab api --method POST -H "Content-Type: application/json" \
@@ -158,9 +149,9 @@ Prefer this `glab api .../notes --input <file>` form over `glab`'s porcelain not
 versions and carries the body as a file, so backticks/apostrophes never have to survive the shell. If you do reach for a
 porcelain subcommand, check `glab <cmd> --help` first — its flags and deprecations drift between versions.
 
-## Thread reply via glab CLI (fallback only)
+## Thread reply
 
-When MCP is unavailable, the equivalent of the discussion-reply tool:
+Appending to an existing discussion rather than starting one:
 
 ```bash
 glab api --method POST -H "Content-Type: application/json" \
@@ -170,7 +161,7 @@ glab api --method POST -H "Content-Type: application/json" \
 
 Where `<discussion_id>` is the hex thread ID and the JSON is `{"body": "..."}`.
 
-## Resolve a thread via glab CLI (fallback only)
+## Resolve a thread
 
 ```bash
 glab api --method PUT \
@@ -179,15 +170,14 @@ glab api --method PUT \
 
 ## Comment body conventions
 
-These rules apply equally to MCP-posted and glab-posted comments. The full set lives in the `gitlab-mr-reply` skill;
+These are about the comment, so they hold whichever client posts it. The full set lives in the `gitlab-mr-reply` skill;
 summary:
 
 - **Mirror the comment author's language.** Default to English for fresh top-level notes.
 - **No commit hashes.** SHAs become 404s after fixup/autosquash. Describe the change semantically.
 - **Footer:** `_drafted by Claude, reviewed by <name> before posting._` — `<name>` from `git config user.name`. Only add
   if the human actually reviewed before posting.
-- **Draft-first.** Show the body in chat, wait for ack. Never auto-post — this applies to glab CLI just as it does to
-  MCP.
+- **Draft-first.** Show the body in chat, wait for ack. Never auto-post.
 - GFM markdown renders. Backticks, code fences, bold, lists all work.
 - Keep each inline comment focused on ONE issue at ONE location. Cross-reference (`see :65`) rather than clubbing
   concerns.
@@ -195,7 +185,8 @@ summary:
 
 ## Hard rules — never
 
-- Never `curl` the GitLab host. Use `glab api` (handles auth) or the MCP tools.
+- Never `curl` the GitLab host by hand. Both clients handle auth and pagination; a raw `curl` puts a token in the
+  transcript and silently mis-encodes bodies.
 - Never assume a `glab` porcelain subcommand's flags are stable — prefer the `glab api` forms above, and check
   `glab <cmd> --help` before relying on one.
 - Never auto-post a reply.
