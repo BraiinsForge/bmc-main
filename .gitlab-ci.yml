@@ -194,9 +194,6 @@ test-armv7:
   stage: check
   needs:
     - workspace-deps-armv7
-  # Full-workspace tests under qemu-arm are unproven (EGL/compositor
-  # tests have no software GL stack in this profile yet).
-  allow_failure: true
   script:
     - nix build .#nextest-armv7 --no-link
 
