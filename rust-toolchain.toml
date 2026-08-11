@@ -1,5 +1,5 @@
 [toolchain]
-channel = "1.94.0" # NOTE: Always use full version numbers (`x.y.z` instead of `x.y`)
+channel = "1.97.1" # NOTE: Always use full version numbers (`x.y.z` instead of `x.y`)
 profile = "default"
 components = ["rust-src"]
 targets = [

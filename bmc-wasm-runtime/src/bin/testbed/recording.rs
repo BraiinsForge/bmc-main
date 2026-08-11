@@ -313,7 +313,7 @@ impl TestbedApp {
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::from_rgb(180, 80, 20)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(180, 80, 20)),
             egui::StrokeKind::Inside,
         );
 

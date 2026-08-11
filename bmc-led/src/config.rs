@@ -33,9 +33,9 @@ pub const RGB_ORANGE: Rgb = Rgb::new(255, 122, 13);
 pub const RGB_BLACK: Rgb = Rgb::new(0, 0, 0);
 pub const RGB_WHITE: Rgb = Rgb::new(255, 255, 255);
 
-pub const ERROR_DURATION: Duration = Duration::from_millis(2000);
-pub const SUCCESS_DURATION: Duration = Duration::from_millis(2000);
+pub const ERROR_DURATION: Duration = Duration::from_secs(2);
+pub const SUCCESS_DURATION: Duration = Duration::from_secs(2);
 
-pub const SNAKE_PERIOD: Duration = Duration::from_millis(1000);
-pub const KNIGHT_RIDER_PERIOD: Duration = Duration::from_millis(1000);
-pub const BREATHE_PERIOD: Duration = Duration::from_millis(4000);
+pub const SNAKE_PERIOD: Duration = Duration::from_secs(1);
+pub const KNIGHT_RIDER_PERIOD: Duration = Duration::from_secs(1);
+pub const BREATHE_PERIOD: Duration = Duration::from_secs(4);

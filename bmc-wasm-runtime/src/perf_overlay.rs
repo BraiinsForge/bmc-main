@@ -275,7 +275,7 @@ impl PerfOverlay {
             .iter()
             .filter(|s| s.rendered)
             .fold((0_u32, 0_u32), |(sum, count), s| (sum + s.us, count + 1));
-        if count > 0 { sum / count } else { 0 }
+        sum.checked_div(count).unwrap_or(0)
     }
 
     /// Live average per-component timings from the history window.

@@ -196,10 +196,10 @@ pub(crate) enum SnoozeDuration {
 impl SnoozeDuration {
     fn duration(&self) -> Duration {
         match self {
-            SnoozeDuration::FiveMinutes => Duration::from_secs(5 * 60),
-            SnoozeDuration::TenMinutes => Duration::from_secs(10 * 60),
-            SnoozeDuration::FifteenMinutes => Duration::from_secs(15 * 60),
-            SnoozeDuration::ThirtyMinutes => Duration::from_secs(30 * 60),
+            SnoozeDuration::FiveMinutes => Duration::from_mins(5),
+            SnoozeDuration::TenMinutes => Duration::from_mins(10),
+            SnoozeDuration::FifteenMinutes => Duration::from_mins(15),
+            SnoozeDuration::ThirtyMinutes => Duration::from_mins(30),
         }
     }
 }
@@ -397,7 +397,7 @@ struct AlarmScheduler {
 
 impl AlarmScheduler {
     const SCHEDULER_SOURCE: &str = "Alarm";
-    const ALARM_TIMEOUT: Duration = Duration::from_secs(60 * 10);
+    const ALARM_TIMEOUT: Duration = Duration::from_mins(10);
 
     fn init(
         scheduler: JobScheduler,

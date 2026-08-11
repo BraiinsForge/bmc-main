@@ -1002,7 +1002,7 @@ mod tests {
             create_generation(&profile_dir, n);
         }
         set_current(&profile_dir, 5);
-        let old = SystemTime::now() - std::time::Duration::from_secs(60 * 24 * 60 * 60);
+        let old = SystemTime::now() - std::time::Duration::from_hours(60 * 24);
         let times = std::fs::FileTimes::new().set_modified(old);
         let gen1 = std::fs::File::open(profile_dir.join("1-link")).expect("BUG: open gen 1");
         gen1.set_times(times).expect("BUG: set mtime");
@@ -1053,7 +1053,7 @@ mod tests {
         // Age generation 2 well past the retention window; generation 3 stays
         // fresh. Neither is current (1) nor latest (4), so with
         // keep_generations=0 their fate is decided solely by keep_days.
-        let old = SystemTime::now() - std::time::Duration::from_secs(60 * 24 * 60 * 60);
+        let old = SystemTime::now() - std::time::Duration::from_hours(60 * 24);
         let times = std::fs::FileTimes::new().set_modified(old);
         let gen2 = std::fs::File::open(profile_dir.join("2-link")).expect("BUG: open gen 2");
         gen2.set_times(times).expect("BUG: set mtime");

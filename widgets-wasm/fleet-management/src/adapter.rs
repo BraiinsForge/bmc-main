@@ -39,12 +39,12 @@ pub trait FamilyAdapter {
     fn parse_found(&self, json: &dyn JsonLookup) -> Option<DiscoveredDevice>;
 
     #[cfg_attr(
-        not(target_arch = "wasm32"),
+        all(not(target_arch = "wasm32"), test),
         expect(dead_code, reason = "used by the driver on wasm")
     )]
     fn api_base_path(&self) -> &'static str;
     #[cfg_attr(
-        not(target_arch = "wasm32"),
+        all(not(target_arch = "wasm32"), test),
         expect(dead_code, reason = "used by the driver on wasm")
     )]
     fn telemetry_endpoints(&self) -> &'static [&'static str];
@@ -73,7 +73,7 @@ pub trait FamilyAdapter {
         None
     }
     #[cfg_attr(
-        not(target_arch = "wasm32"),
+        all(not(target_arch = "wasm32"), test),
         expect(dead_code, reason = "used by the driver on wasm")
     )]
     fn login_body(&self, _password: &str) -> String {
@@ -83,7 +83,7 @@ pub trait FamilyAdapter {
         None
     }
     #[cfg_attr(
-        not(target_arch = "wasm32"),
+        all(not(target_arch = "wasm32"), test),
         expect(dead_code, reason = "used by the driver on wasm")
     )]
     fn auth_header(&self, token: &str) -> String {

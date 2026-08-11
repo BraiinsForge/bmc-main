@@ -1894,7 +1894,7 @@ pub(crate) fn build_taffy_node(
                 // flex > 0 acts like CSS `flex: N` (grow N, basis 0) so the item
                 // starts at zero and grows into available space.
                 flex_basis: if props.flex > 0.0 || (is_center && props.flex == 0.0) {
-                    length(0.0)
+                    length(0.0_f32)
                 } else {
                     Dimension::auto()
                 },

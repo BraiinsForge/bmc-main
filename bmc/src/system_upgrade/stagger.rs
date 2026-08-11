@@ -23,7 +23,7 @@ use std::time::Duration;
 use chrono::{DateTime, TimeZone, Timelike};
 use rand::Rng;
 
-pub(crate) const MAINTENANCE_MIN_DELAY: Duration = Duration::from_secs(30 * 60);
+pub(crate) const MAINTENANCE_MIN_DELAY: Duration = Duration::from_mins(30);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum HourParity {
@@ -50,7 +50,7 @@ impl MaintenanceStagger {
     pub(crate) fn draw<Tz: TimeZone>(now: &DateTime<Tz>, rng: &mut impl Rng) -> Self {
         // The one-second ceiling for fractional registration times can extend
         // the draw, so the maximum stays two seconds below the hour boundary.
-        let max_delay_secs = Duration::from_secs(60 * 60).as_secs() - 2;
+        let max_delay_secs = Duration::from_hours(1).as_secs() - 2;
         let delay =
             Duration::from_secs(rng.random_range(MAINTENANCE_MIN_DELAY.as_secs()..=max_delay_secs));
         Self::from_delay(now, delay)
@@ -93,8 +93,8 @@ mod tests {
     use rand::SeedableRng as _;
     use std::str::FromStr as _;
 
-    const HOUR: Duration = Duration::from_secs(60 * 60);
-    const PERIOD: Duration = Duration::from_secs(2 * 60 * 60);
+    const HOUR: Duration = Duration::from_hours(1);
+    const PERIOD: Duration = Duration::from_hours(2);
 
     fn at(tz: chrono_tz::Tz, hour: u32, minute: u32, second: u32) -> DateTime<chrono_tz::Tz> {
         tz.with_ymd_and_hms(2026, 7, 29, hour, minute, second)

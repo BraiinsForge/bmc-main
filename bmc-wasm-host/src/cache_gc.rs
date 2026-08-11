@@ -34,7 +34,7 @@ use std::time::{Duration, SystemTime};
 use bmc_wasm_thin_protocol::WIDGET_CACHE_DIR;
 
 /// Default refresh/reconcile cadence; coarse to avoid flash churn.
-const GC_PERIOD_DEFAULT: Duration = Duration::from_secs(30 * 60);
+const GC_PERIOD_DEFAULT: Duration = Duration::from_mins(30);
 
 /// Override the cadence (seconds) for on-device testing. Set it in the
 /// environment that launches `bmc-openwrt`; the host inherits it via the thin.
@@ -149,7 +149,7 @@ fn reconcile_in(cache_dir: &Path, roots_dir: &Path, now: SystemTime) -> GcStats 
 
     if let Ok(entries) = std::fs::read_dir(cache_dir) {
         for entry in entries.flatten() {
-            if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
+            if !entry.file_type().is_ok_and(|t| t.is_dir()) {
                 continue;
             }
             let token = entry.file_name().to_string_lossy().into_owned();
@@ -178,8 +178,7 @@ fn is_stale(path: &Path, now: SystemTime) -> bool {
         return false;
     };
     now.duration_since(mtime)
-        .map(|age| age > root_stale_after())
-        .unwrap_or(false)
+        .is_ok_and(|age| age > root_stale_after())
 }
 
 /// Collect a root file's tokens into `keep`, skipping blanks and '#' comments.
@@ -257,7 +256,7 @@ mod tests {
         write(&roots, "sdk-v0", &["tok-live"]);
         write(&roots, "sdk-v9", &["tok-dead"]);
 
-        let old = SystemTime::now() - (root_stale_after() + Duration::from_secs(60));
+        let old = SystemTime::now() - (root_stale_after() + Duration::from_mins(1));
         set_mtime(&roots.join("sdk-v9"), old);
 
         let stats = reconcile_in(&cache, &roots, SystemTime::now());

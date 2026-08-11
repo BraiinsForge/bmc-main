@@ -64,7 +64,7 @@ impl IiResolver {
                 }
                 Err(e) => warn!(
                     "Unable to resolve {:?} using tokio resovler (try: {}/{}): {}",
-                    &host,
+                    host,
                     attempt,
                     Self::TOKIO_RETRIES,
                     e
@@ -86,7 +86,7 @@ impl IiResolver {
             }
             Err(e) => warn!(
                 "Unable to resolve {:?} using hickory system resolver: {}",
-                &host, e
+                host, e
             ),
         }
 
@@ -104,12 +104,12 @@ impl IiResolver {
                 }
                 Err(e) => warn!(
                     "Unable to resolve {:?} using hickory google resolver: {}",
-                    &host, e
+                    host, e
                 ),
             }
         }
 
-        let err_msg = format!("Failed to resolve {:?}", &host);
+        let err_msg = format!("Failed to resolve {:?}", host);
         error!("{}", err_msg);
         Err(Error::other(err_msg))
     }

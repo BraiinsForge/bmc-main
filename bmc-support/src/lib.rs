@@ -336,7 +336,7 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
         pcap_result: Result<(String, Vec<u8>), PcapError>,
     ) -> Result<String> {
         let (interface_name, pcap) = pcap_result?;
-        let file_name = format!("pcap/{interface_name}.pcap",);
+        let file_name = format!("pcap/{interface_name}.pcap");
         self.write_file(&file_name, &pcap)?;
         Ok(interface_name)
     }

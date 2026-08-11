@@ -151,7 +151,7 @@ impl TypeSubscribers {
 const DAEMON_DISCOVERY_GRACE: Duration = Duration::from_secs(8);
 
 /// Ceiling for the watchdog's backed-off grace between recreates.
-const WATCHDOG_GRACE_CAP: Duration = Duration::from_secs(300);
+const WATCHDOG_GRACE_CAP: Duration = Duration::from_mins(5);
 
 /// The grace before the watchdog's next recreate: [`DAEMON_DISCOVERY_GRACE`]
 /// doubled per fruitless attempt, capped at [`WATCHDOG_GRACE_CAP`] —
@@ -166,7 +166,7 @@ fn watchdog_grace(fruitless_attempts: usize) -> Duration {
 /// First delay before re-attempting a browse the daemon rejected.
 const BROWSE_RETRY_BASE: Duration = Duration::from_secs(1);
 /// Ceiling for the backed-off per-type browse retry.
-const BROWSE_RETRY_CAP: Duration = Duration::from_secs(60);
+const BROWSE_RETRY_CAP: Duration = Duration::from_mins(1);
 
 /// The delay before re-attempting a rejected browse: [`BROWSE_RETRY_BASE`]
 /// doubled per prior failure and capped. A transient reject recovers quickly;

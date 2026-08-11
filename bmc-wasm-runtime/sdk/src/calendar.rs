@@ -46,6 +46,7 @@
 
 use crate::host::LocalDateTime;
 
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_expand_rrule(
         input_ptr: *const u8,

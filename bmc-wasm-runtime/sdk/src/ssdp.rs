@@ -47,6 +47,7 @@ use std::collections::HashMap;
 use bmc_wasm_protocol::SsdpSearchId;
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_ssdp_search(st_ptr: *const u8, st_len: u32, timeout: u32) -> u32;
     fn host_ssdp_stop(search_id: u32);

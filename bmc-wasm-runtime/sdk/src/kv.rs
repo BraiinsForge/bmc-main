@@ -42,6 +42,7 @@
 //! ```
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_kv_set(key_ptr: *const u8, key_len: u32, val_ptr: *const u8, val_len: u32);
     fn host_kv_get(key_ptr: *const u8, key_len: u32, out_ptr: *mut u8, out_cap: u32) -> i32;

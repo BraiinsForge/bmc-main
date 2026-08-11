@@ -49,6 +49,7 @@ use std::collections::HashMap;
 use bmc_wasm_protocol::{HttpListenerId, HttpRequestId};
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_http_listen(port: u32) -> u32;
     fn host_http_respond(

@@ -39,6 +39,7 @@
 //! ```
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_cache_put(
         tag_ptr: *const u8,

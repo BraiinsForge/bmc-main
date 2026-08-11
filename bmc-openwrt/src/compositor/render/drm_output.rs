@@ -267,12 +267,12 @@ impl DrmOutput {
 
         if self.frame_count == 0 {
             self.surface
-                .commit([plane_state].into_iter(), true)
+                .commit([plane_state], true)
                 .context("Initial commit failed")?;
             tracing::info!("Initial frame committed");
         } else {
             self.surface
-                .page_flip([plane_state].into_iter(), true)
+                .page_flip([plane_state], true)
                 .context("Page flip failed")?;
         }
 

@@ -57,6 +57,7 @@ use std::collections::HashMap;
 use bmc_wasm_protocol::SocketId;
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_tls_connect(host_ptr: *const u8, host_len: u32, port: u32) -> u32;
     fn host_tls_connect_insecure(host_ptr: *const u8, host_len: u32, port: u32) -> u32;

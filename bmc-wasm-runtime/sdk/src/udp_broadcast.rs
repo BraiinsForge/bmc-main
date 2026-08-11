@@ -31,6 +31,7 @@ use std::collections::HashMap;
 use bmc_wasm_protocol::UdpBroadcastId;
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_udp_broadcast(port: u32, msg_ptr: *const u8, msg_len: u32, timeout_secs: u32) -> u32;
     fn host_udp_broadcast_stop(broadcast_id: u32);

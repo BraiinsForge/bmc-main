@@ -30,6 +30,7 @@ pub struct NetworkInfo {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_network_info(out_ptr: *mut u8, out_cap: u32) -> u32;
 }

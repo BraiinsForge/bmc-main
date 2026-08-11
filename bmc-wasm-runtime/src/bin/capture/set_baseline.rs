@@ -77,9 +77,7 @@ pub fn execute(args: &SetBaselineArgs) -> Result<()> {
 
     let elapsed = t0.elapsed().as_secs_f64();
     #[expect(clippy::cast_precision_loss)]
-    let size_kb = std::fs::metadata(&baseline_path)
-        .map(|m| m.len() as f64 / 1_024.0)
-        .unwrap_or(0.0);
+    let size_kb = std::fs::metadata(&baseline_path).map_or(0.0, |m| m.len() as f64 / 1_024.0);
 
     eprintln!(
         "  {} {} {} {}",

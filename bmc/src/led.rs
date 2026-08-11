@@ -45,7 +45,7 @@ const EVENT_BUFFER_SIZE: usize = 4;
 
 /// Far-future deadline used when no temp scene is active. `tokio::time::Sleep`
 /// has no "never" state, so the select arm parks on a sleep this long instead.
-const IDLE_EXPIRY: Duration = Duration::from_secs(60 * 60 * 24 * 365);
+const IDLE_EXPIRY: Duration = Duration::from_hours(8760);
 
 /// Next instant the event loop must wake to re-resolve the system layer:
 /// the active temp's deadline, or the idle far-future when no temp is set.

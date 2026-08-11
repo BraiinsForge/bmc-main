@@ -49,6 +49,7 @@ use bmc_wasm_protocol::{MdnsBrowseId, MdnsRegId};
 use crate::fmt;
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_mdns_browse(svc_types_ptr: *const u8, svc_types_len: u32) -> u32;
     fn host_mdns_stop(browse_id: u32);

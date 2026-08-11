@@ -49,6 +49,7 @@ use std::collections::HashMap;
 use bmc_wasm_protocol::WebsocketId;
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_ws_connect(
         url_ptr: *const u8,

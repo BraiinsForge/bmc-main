@@ -100,7 +100,7 @@ pub fn ping_report(hosts: &[&str]) -> Result<String> {
                             if !labels.contains_key(&message) {
                                 err_counter += 1;
                             }
-                            let label = format!("ERR{err_counter}",);
+                            let label = format!("ERR{err_counter}");
                             labels.entry(message).or_insert_with(|| label.clone());
                             label
                         }

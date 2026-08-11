@@ -38,7 +38,7 @@ use tonic::transport::Channel;
 
 use common::{MockInstance, spawn_mock};
 
-const STREAM_TIMEOUT: Duration = Duration::from_secs(60);
+const STREAM_TIMEOUT: Duration = Duration::from_mins(1);
 
 fn spawn_mock_with_index(scenario_json: &str, index_json: &str) -> MockInstance {
     common::spawn_mock_inner(scenario_json, Some(index_json), true)
@@ -342,7 +342,7 @@ async fn firmware_with_packages_streams_nested_package_stages() {
     let mut firmware_phases = Vec::new();
     let mut package_phases = Vec::new();
     let mut downloads = 0;
-    tokio::time::timeout(Duration::from_secs(120), async {
+    tokio::time::timeout(Duration::from_mins(2), async {
         loop {
             let progress = stream
                 .message()
@@ -437,7 +437,7 @@ async fn firmware_success_closes_the_stream_cleanly_then_reboots() {
         .expect("BUG: start failed")
         .into_inner();
 
-    let deadline = Duration::from_secs(120);
+    let deadline = Duration::from_mins(2);
     tokio::time::timeout(deadline, async {
         loop {
             let progress = stream
@@ -507,7 +507,7 @@ async fn firmware_success_with_install_consumes_the_handoff() {
         .expect("BUG: start failed")
         .into_inner();
 
-    tokio::time::timeout(Duration::from_secs(120), async {
+    tokio::time::timeout(Duration::from_mins(2), async {
         loop {
             let progress = stream
                 .message()

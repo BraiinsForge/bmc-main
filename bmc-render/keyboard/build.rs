@@ -382,7 +382,7 @@ fn generate_layout(
 ) {
     // Generate letter rows (base)
     for (i, row) in rows.iter().enumerate() {
-        writeln!(out, "static {const_name}_ROW{i}: &[Key] = &[",)
+        writeln!(out, "static {const_name}_ROW{i}: &[Key] = &[")
             .expect("BUG: failed to write generated layout code to String");
 
         let default_width = row.default_width_pct.unwrap_or(10.0);
@@ -397,7 +397,7 @@ fn generate_layout(
 
     // Generate letter rows (shifted) — uppercase versions
     for (i, row) in rows.iter().enumerate() {
-        writeln!(out, "static {const_name}_SHIFTED_ROW{i}: &[Key] = &[",)
+        writeln!(out, "static {const_name}_SHIFTED_ROW{i}: &[Key] = &[")
             .expect("BUG: failed to write generated layout code to String");
 
         let default_width = row.default_width_pct.unwrap_or(10.0);

@@ -221,7 +221,7 @@ pub fn build_action_plan(
         }
     }
 
-    plan.sort_by(|left, right| left.priority.cmp(&right.priority));
+    plan.sort_by_key(|left| left.priority);
 
     plan
 }

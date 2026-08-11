@@ -1815,7 +1815,7 @@ impl TestbedApp {
         ui.painter().rect_stroke(
             rect,
             4.0,
-            egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
+            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
             egui::StrokeKind::Inside,
         );
 
@@ -1989,12 +1989,12 @@ fn paint_placeholder(painter: &egui::Painter, rect: egui::Rect, label: &str) {
     painter.rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0, egui::Color32::from_gray(38)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(38)),
         egui::StrokeKind::Inside,
     );
     let icon = rect.center() - egui::vec2(0.0, 16.0);
     let radius = 13.0;
-    let stroke = egui::Stroke::new(2.0, egui::Color32::from_gray(80));
+    let stroke = egui::Stroke::new(2.0_f32, egui::Color32::from_gray(80));
     painter.circle_stroke(icon, radius, stroke);
     let slash = radius * 0.72;
     painter.line_segment(
@@ -2166,7 +2166,7 @@ impl eframe::App for TestbedApp {
                         ui.painter().rect_stroke(
                             rect,
                             0.0,
-                            egui::Stroke::new(2.0, egui::Color32::from_rgb(255, 170, 80)),
+                            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 170, 80)),
                             egui::StrokeKind::Inside,
                         );
                     }

@@ -259,7 +259,7 @@ fn render_pad2d(
     painter.rect_stroke(
         rect,
         4.0,
-        egui::Stroke::new(1.0, border),
+        egui::Stroke::new(1.0_f32, border),
         egui::StrokeKind::Inside,
     );
 
@@ -269,14 +269,14 @@ fn render_pad2d(
             egui::pos2(mid.x, rect.min.y + 4.0),
             egui::pos2(mid.x, rect.max.y - 4.0),
         ],
-        egui::Stroke::new(1.0, cross),
+        egui::Stroke::new(1.0_f32, cross),
     );
     painter.line_segment(
         [
             egui::pos2(rect.min.x + 4.0, mid.y),
             egui::pos2(rect.max.x - 4.0, mid.y),
         ],
-        egui::Stroke::new(1.0, cross),
+        egui::Stroke::new(1.0_f32, cross),
     );
 
     let norm_x = if range_x > 0.0 {

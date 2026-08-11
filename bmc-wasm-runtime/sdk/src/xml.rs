@@ -40,6 +40,7 @@
 
 use bmc_wasm_protocol::XmlId;
 
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_xml_parse(body_ptr: *const u8, body_len: u32) -> u32;
     fn host_xml_get_str(

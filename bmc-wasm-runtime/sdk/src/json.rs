@@ -37,6 +37,7 @@
 
 use bmc_wasm_protocol::JsonId;
 
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_json_parse(body_ptr: *const u8, body_len: u32) -> u32;
     fn host_json_get_str(

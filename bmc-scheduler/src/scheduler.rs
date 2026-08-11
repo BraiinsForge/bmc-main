@@ -732,7 +732,7 @@ mod tests {
         let (scheduler, _temp_dir) = create_test_scheduler().await;
         let task = boxed_task();
         let job_id = scheduler
-            .schedule_after(Duration::from_secs(60), Task::Async(task))
+            .schedule_after(Duration::from_mins(1), Task::Async(task))
             .await
             .expect("BUG: Failed to schedule job");
         // Verify job exists
@@ -764,7 +764,7 @@ mod tests {
         let config2 = JobConfig::new("source2");
         let job_id1 = scheduler
             .schedule(
-                Schedule::OneShot(Duration::from_secs(60)),
+                Schedule::OneShot(Duration::from_mins(1)),
                 Task::Async(boxed_task()),
                 config1.clone(),
             )
@@ -772,7 +772,7 @@ mod tests {
             .expect("BUG: Failed to schedule job 1");
         let job_id2 = scheduler
             .schedule(
-                Schedule::OneShot(Duration::from_secs(60)),
+                Schedule::OneShot(Duration::from_mins(1)),
                 Task::Async(boxed_task()),
                 config1,
             )
@@ -780,7 +780,7 @@ mod tests {
             .expect("BUG: Failed to schedule job 2");
         let job_id3 = scheduler
             .schedule(
-                Schedule::OneShot(Duration::from_secs(60)),
+                Schedule::OneShot(Duration::from_mins(1)),
                 Task::Async(boxed_task()),
                 config2,
             )
@@ -816,11 +816,11 @@ mod tests {
     async fn test_list_jobs() {
         let (scheduler, _temp_dir) = create_test_scheduler().await;
         let _job_id1 = scheduler
-            .schedule_after(Duration::from_secs(60), Task::Async(boxed_task()))
+            .schedule_after(Duration::from_mins(1), Task::Async(boxed_task()))
             .await
             .expect("BUG: Failed to schedule job 1");
         let _job_id2 = scheduler
-            .schedule_after(Duration::from_secs(60), Task::Async(boxed_task()))
+            .schedule_after(Duration::from_mins(1), Task::Async(boxed_task()))
             .await
             .expect("BUG: Failed to schedule job 2");
         let jobs = scheduler

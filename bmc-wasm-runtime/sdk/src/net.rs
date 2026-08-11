@@ -104,6 +104,7 @@ impl FetchResponse {
 }
 
 // Host function imports
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_fetch(
         timeout_ms: u32,

@@ -151,8 +151,8 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     req.headers()
                         .get(CONTENT_TYPE)
                         .map(axum::http::HeaderValue::as_bytes)
-                        .filter(|content_type| content_type.starts_with(b"application/grpc"))
-                        .is_some(),
+                        .as_ref()
+                        .is_some_and(|content_type| content_type.starts_with(b"application/grpc")),
                 )
             },
         );

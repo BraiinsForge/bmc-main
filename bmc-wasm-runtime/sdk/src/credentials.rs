@@ -179,6 +179,7 @@ pub fn previous() -> Snapshot {
 // ── Wasm host bindings ──────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_credentials_snapshot(out_ptr: *mut u8, out_cap: u32) -> u32;
     fn host_credentials_version() -> u64;

@@ -28,6 +28,7 @@
 
 #[cfg(all(target_arch = "wasm32", feature = "profiling"))]
 mod imp {
+    #[link(wasm_import_module = "env")]
     unsafe extern "C" {
         fn host_fuel_remaining() -> u64;
         fn host_profile_section(name_ptr: *const u8, name_len: u32, fuel: u64);

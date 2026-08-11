@@ -31,6 +31,7 @@
 //! log_error!("API returned status {}", status);
 //! ```
 
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_log(ptr: *const u8, len: u32, level: u32);
 }

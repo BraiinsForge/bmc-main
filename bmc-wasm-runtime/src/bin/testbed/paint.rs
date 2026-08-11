@@ -440,7 +440,7 @@ pub(super) fn paint_timing_chart(
         if y > rect.min.y && y < rect.max.y {
             painter.line_segment(
                 [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-                egui::Stroke::new(1.0, grid_color),
+                egui::Stroke::new(1.0_f32, grid_color),
             );
         }
         grid_us += grid_step_us;
@@ -488,7 +488,7 @@ pub(super) fn paint_timing_chart(
         painter.line_segment(
             [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
             egui::Stroke::new(
-                1.0,
+                1.0_f32,
                 egui::Color32::from_rgba_unmultiplied(180, 180, 180, 140),
             ),
         );
@@ -583,7 +583,7 @@ pub(super) fn paint_round_overlay(painter: &egui::Painter, rect: egui::Rect) {
         center,
         radius,
         egui::Stroke::new(
-            1.5,
+            1.5_f32,
             egui::Color32::from_rgba_unmultiplied(200, 200, 220, 160),
         ),
     );

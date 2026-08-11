@@ -147,8 +147,7 @@ fn ms_to_next_second_boundary() -> i32 {
     let now = std::time::SystemTime::now();
     let millis_into_second = now
         .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_millis())
-        .unwrap_or(0);
+        .map_or(0, |d| d.subsec_millis());
     #[expect(clippy::cast_possible_wrap, reason = "millis < 1000, fits i32")]
     let remaining = (1_000 - millis_into_second) as i32;
     remaining.max(1)

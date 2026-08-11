@@ -502,7 +502,7 @@ mod tests {
 
         // Wake: resume restarts a fresh waiting period.
         state.set_suspended(false);
-        let later = now + Duration::from_secs(3600);
+        let later = now + Duration::from_hours(1);
         state.reevaluate(later, true, 2, false);
         assert!(matches!(
             state.phase(),

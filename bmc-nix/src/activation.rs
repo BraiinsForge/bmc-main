@@ -556,9 +556,7 @@ pub(crate) fn generation_number_from_link(link: &Path) -> Option<usize> {
 }
 
 pub(crate) fn is_executable(path: &Path) -> bool {
-    std::fs::metadata(path)
-        .map(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-        .unwrap_or(false)
+    std::fs::metadata(path).is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(test)]

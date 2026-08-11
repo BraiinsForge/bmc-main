@@ -667,7 +667,7 @@ impl WasmWidgetRuntime {
                     .iter()
                     .map(|(name, fuel)| (name.as_str(), *fuel))
                     .collect();
-                ranked.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+                ranked.sort_unstable_by_key(|(_, fuel)| std::cmp::Reverse(*fuel));
                 #[expect(
                     clippy::integer_division,
                     reason = "an integer percent is the intended log format"

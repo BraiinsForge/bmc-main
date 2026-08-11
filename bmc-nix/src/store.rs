@@ -460,7 +460,7 @@ pub fn statvfs_free_bytes(path: &Path) -> std::io::Result<u64> {
 /// so an unreachable one must not stall a caller holding the lock.
 /// Dropping the future reaps the child,
 /// since the command runner sets `kill_on_drop(true)`.
-pub const ESTIMATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+pub const ESTIMATE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(2);
 
 /// Free space a preflight requires beyond the dry-run estimate.
 ///
@@ -716,7 +716,7 @@ pub enum InitStoreError {
 }
 
 /// If no bytes arrive for this duration, the download is considered stalled.
-const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_mins(1);
 
 /// Maximum accepted size of the factory package feed, in bytes.
 ///

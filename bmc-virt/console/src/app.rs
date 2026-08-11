@@ -158,7 +158,7 @@ impl ConsoleApp {
         cc.egui_ctx.global_style_mut(|style| {
             style.spacing.window_margin = egui::Margin::same(6);
             style.visuals.window_corner_radius = egui::CornerRadius::ZERO;
-            style.visuals.window_stroke = egui::Stroke::new(1.0, egui::Color32::from_gray(50));
+            style.visuals.window_stroke = egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50));
         });
 
         // Try to connect to the relay via TCP IPC
@@ -996,7 +996,7 @@ fn compact_header(ui: &mut egui::Ui, title: &str) {
     let y = rect.max.y + 1.0;
     ui.painter().line_segment(
         [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-        egui::Stroke::new(1.0, egui::Color32::from_gray(50)),
+        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
     );
     ui.add_space(4.0);
 }
@@ -1165,7 +1165,7 @@ fn draw_app_marker(ui: &egui::Ui, slider_response: &egui::Response, frac: f32) {
     ui.painter().line_segment(
         [egui::pos2(x, r.min.y), egui::pos2(x, r.max.y)],
         egui::Stroke::new(
-            2.0,
+            2.0_f32,
             egui::Color32::from_rgba_unmultiplied(255, 255, 255, 100),
         ),
     );
@@ -1421,7 +1421,7 @@ fn set_macos_srgb_colorspace(cc: &eframe::CreationContext<'_>) {
 /// Draw an animated spinner arc at the given center point.
 fn draw_spinner(painter: &egui::Painter, center: egui::Pos2, time: f64, color: egui::Color32) {
     let radius = 12.0;
-    let stroke = egui::Stroke::new(2.0, color);
+    let stroke = egui::Stroke::new(2.0_f32, color);
     let segments = 40;
     let arc_len = std::f64::consts::TAU * 0.7;
     let start_angle = time * 4.0;
@@ -1445,7 +1445,7 @@ fn draw_spinner(painter: &egui::Painter, center: egui::Pos2, time: f64, color: e
 /// Draw a simple warning badge used when the relay is alive but framebuffer
 /// capture is unavailable.
 fn draw_warning_badge(painter: &egui::Painter, center: egui::Pos2, color: egui::Color32) {
-    painter.circle_stroke(center, 12.0, egui::Stroke::new(2.0, color));
+    painter.circle_stroke(center, 12.0, egui::Stroke::new(2.0_f32, color));
     painter.text(
         center,
         egui::Align2::CENTER_CENTER,

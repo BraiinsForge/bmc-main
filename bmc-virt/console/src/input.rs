@@ -92,7 +92,7 @@ impl InputHandler {
                     painter.circle_stroke(
                         pos,
                         16.0,
-                        egui::Stroke::new(2.0, egui::Color32::from_white_alpha(180)),
+                        egui::Stroke::new(2.0_f32, egui::Color32::from_white_alpha(180)),
                     );
                 } else {
                     // Hovering: subtle indicator
@@ -100,7 +100,7 @@ impl InputHandler {
                     painter.circle_stroke(
                         pos,
                         12.0,
-                        egui::Stroke::new(1.5, egui::Color32::from_white_alpha(140)),
+                        egui::Stroke::new(1.5_f32, egui::Color32::from_white_alpha(140)),
                     );
                 }
             }

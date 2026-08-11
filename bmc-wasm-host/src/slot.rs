@@ -1636,7 +1636,7 @@ mod tests {
             effect: LedEffect::Solid,
             color: red(),
             period_ms: 0,
-            duration: Some(Duration::from_millis(5_000)),
+            duration: Some(Duration::from_secs(5)),
             scope: LedScope::Local,
         };
         assert_eq!(
@@ -1707,7 +1707,7 @@ mod tests {
             effect: LedEffect::Solid,
             color: red(),
             period_ms: 0,
-            duration: Some(Duration::from_millis(5_000)),
+            duration: Some(Duration::from_secs(5)),
             scope: LedScope::Global,
         };
         assert_eq!(

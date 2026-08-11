@@ -57,7 +57,7 @@ pub(crate) struct LedSettings {
     pub(crate) led_enabled_night_mode: bool,
 }
 
-const BOOTLOADER_SYNC_INTERVAL: Duration = Duration::from_secs(60 * 60); // 1 hour
+const BOOTLOADER_SYNC_INTERVAL: Duration = Duration::from_hours(1); // 1 hour
 const BOOTLOADER_SYNC_DEBOUNCE: Duration = Duration::from_secs(5);
 const MIN_SCREEN_OFF_TIMEOUT_SECS: u32 = 5;
 
@@ -892,7 +892,7 @@ mod tests {
     fn night_mode_with_timeout_arms_timer_when_not_ringing() {
         assert_eq!(
             auto_off_decision(true, false, Some(60)),
-            AutoOffMode::ArmTimer(Duration::from_secs(60))
+            AutoOffMode::ArmTimer(Duration::from_mins(1))
         );
     }
 

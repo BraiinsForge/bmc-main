@@ -378,6 +378,7 @@ pub fn version() -> u64 {
 // ── Wasm host bindings ──────────────────────────────────────────────
 
 #[cfg(target_arch = "wasm32")]
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     /// Probe-then-allocate snapshot reader.
     /// `out_cap == 0` returns required byte length without writing;

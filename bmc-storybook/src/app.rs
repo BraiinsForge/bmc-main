@@ -240,15 +240,15 @@ impl StorybookApp {
         visuals.window_fill = PANEL_BG;
         visuals.window_stroke = egui::Stroke::NONE;
         visuals.faint_bg_color = HEADER_BG;
-        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0, c(colors::GRAY_80));
+        visuals.widgets.noninteractive.bg_stroke = egui::Stroke::new(1.0_f32, c(colors::GRAY_80));
 
         let input_bg = c(colors::GRAY_90);
         let input_border = c(colors::GRAY_70);
         visuals.widgets.inactive.bg_fill = input_bg;
-        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, c(colors::GRAY_80));
+        visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0_f32, c(colors::GRAY_80));
         visuals.widgets.inactive.corner_radius = egui::CornerRadius::ZERO;
         visuals.widgets.hovered.bg_fill = input_bg;
-        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, input_border);
+        visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0_f32, input_border);
         visuals.extreme_bg_color = input_bg;
         ctx.set_visuals(visuals);
 
@@ -890,7 +890,7 @@ impl StorybookApp {
         painter.circle_stroke(
             center,
             radius - 1.5,
-            egui::Stroke::new(1.5, Color32::from_gray(80)),
+            egui::Stroke::new(1.5_f32, Color32::from_gray(80)),
         );
     }
 
@@ -1034,13 +1034,13 @@ impl StorybookApp {
         ui.painter().rect_stroke(
             border_rect,
             0.0,
-            egui::Stroke::new(1.0, BORDER_COLOR),
+            egui::Stroke::new(1.0_f32, BORDER_COLOR),
             egui::StrokeKind::Outside,
         );
 
         // Threshold gridlines: 60fps (0.5) and 30fps (1.0).
         let grid_stroke = egui::Stroke::new(
-            1.0,
+            1.0_f32,
             Color32::from_rgba_premultiplied(0x50, 0x50, 0x50, 0x80),
         );
         let label_font = egui::FontId::monospace(7.0);
@@ -1134,7 +1134,7 @@ impl StorybookApp {
     ) {
         let total = ui.available_rect_before_wrap();
         let mid_x = total.min.x + total.width() * 0.5;
-        let border = egui::Stroke::new(1.0, BORDER_COLOR);
+        let border = egui::Stroke::new(1.0_f32, BORDER_COLOR);
 
         ui.painter().hline(total.x_range(), total.min.y, border);
         ui.painter().vline(mid_x, total.y_range(), border);

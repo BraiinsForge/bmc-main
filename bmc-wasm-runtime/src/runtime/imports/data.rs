@@ -553,8 +553,7 @@ fn register_date_imports(linker: &mut Linker<HostState>) -> Result<()> {
                 return i64::MIN;
             };
             s.parse::<DateTime<Utc>>()
-                .map(|dt| dt.timestamp())
-                .unwrap_or(i64::MIN)
+                .map_or(i64::MIN, |dt| dt.timestamp())
         },
     )?;
 

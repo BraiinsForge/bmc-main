@@ -53,7 +53,7 @@ use crate::ui::{Panel, WifiView};
 const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
 
 /// Idle wake cadence for re-reading the connectivity snapshot while up.
-const NETWORK_REFRESH: Duration = Duration::from_millis(2000);
+const NETWORK_REFRESH: Duration = Duration::from_secs(2);
 
 /// Idle period after which the tray auto-dismisses.
 const INACTIVITY_TIMEOUT: Duration = Duration::from_secs(15);

@@ -101,10 +101,7 @@ fn raw_sendmsg_with_fd(sender: &UnixStream, payload: &[u8], fd: std::os::fd::Bor
         (*cmsg).cmsg_level = libc::SOL_SOCKET;
         (*cmsg).cmsg_type = libc::SCM_RIGHTS;
         (*cmsg).cmsg_len = int_cmsg_len_for(1);
-        #[expect(
-            clippy::cast_ptr_alignment,
-            reason = "CMSG_DATA alignment is guaranteed by the kernel ABI"
-        )]
+        // CMSG_DATA alignment is guaranteed by the kernel ABI.
         std::ptr::write(libc::CMSG_DATA(cmsg).cast::<libc::c_int>(), fd_int);
         let n = libc::sendmsg(sender.as_raw_fd(), &raw const hdr, libc::MSG_NOSIGNAL);
         assert!(
@@ -261,10 +258,7 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
         (*cmsg).cmsg_level = libc::SOL_SOCKET;
         (*cmsg).cmsg_type = libc::SCM_RIGHTS;
         (*cmsg).cmsg_len = int_cmsg_len_for(2);
-        #[expect(
-            clippy::cast_ptr_alignment,
-            reason = "CMSG_DATA alignment is guaranteed by the kernel ABI"
-        )]
+        // CMSG_DATA alignment is guaranteed by the kernel ABI.
         let data = libc::CMSG_DATA(cmsg).cast::<libc::c_int>();
         std::ptr::write(data, fd_a.as_raw_fd());
         std::ptr::write(data.add(1), extra_a.as_raw_fd());
@@ -347,7 +341,7 @@ fn ack_decoder_rejects_oversize_frame_len() {
     let err = dec
         .push(&header)
         .expect_err("oversize frame_len must reject");
-    assert!(err.to_string().contains("MAX_FRAME_LEN"), "got {err}",);
+    assert!(err.to_string().contains("MAX_FRAME_LEN"), "got {err}");
 }
 
 #[test]
@@ -357,5 +351,5 @@ fn ack_decoder_rejects_wrong_version() {
     let mut header = 0xFFFF_u16.to_le_bytes().to_vec();
     header.extend_from_slice(&0_u32.to_le_bytes());
     let err = dec.push(&header).expect_err("wrong version must reject");
-    assert!(err.to_string().contains("protocol version"), "got {err}",);
+    assert!(err.to_string().contains("protocol version"), "got {err}");
 }

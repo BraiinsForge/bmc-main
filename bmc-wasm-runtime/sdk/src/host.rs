@@ -37,6 +37,9 @@ pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 mod ffi {
     use super::*;
 
+    // Names the module the host registers these under. Without it rustc 1.96+
+    // leaves the block as undefined symbols instead of imports, and lld fails.
+    #[link(wasm_import_module = "env")]
     unsafe extern "C" {
         fn host_fill_rect(x: i32, y: i32, w: u32, h: u32, color: u32);
         fn host_draw_text(

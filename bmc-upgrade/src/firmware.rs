@@ -33,7 +33,7 @@ use crate::downloader::Downloader;
 /// it is abandoned. A stalled TCP connection (alive but silent) would
 /// otherwise hold the upgrade run gate open forever. The timer resets on
 /// every received chunk, so a slow-but-progressing link is never penalised.
-const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
+const DOWNLOAD_IDLE_TIMEOUT: Duration = Duration::from_mins(2);
 
 #[async_trait::async_trait]
 pub trait FirmwareIndex: Send + Sync + Debug + 'static {

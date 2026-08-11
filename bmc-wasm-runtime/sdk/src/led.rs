@@ -28,6 +28,7 @@
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope};
 pub use bmc_wasm_protocol::Color;
 
+#[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_led_set_endless(effect: u8, r: u8, g: u8, b: u8, period_ms: u32, scope: u32);
     fn host_led_set_temporary(

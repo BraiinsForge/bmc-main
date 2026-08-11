@@ -2521,7 +2521,7 @@ mod drop_shadow_tests {
         // Second call replaces the first — params are the latest.
         assert_eq!((dx, blur), (9.0, 8.0));
         // The inner stays the original Rect, not a nested Shadow.
-        assert!(matches!(*inner, Draw::Rect { .. }), "shadows must not nest",);
+        assert!(matches!(*inner, Draw::Rect { .. }), "shadows must not nest");
     }
 
     #[test]

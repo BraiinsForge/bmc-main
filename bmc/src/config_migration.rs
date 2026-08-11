@@ -315,8 +315,7 @@ pub async fn save_with_backup(config: &Config, path: &Path) -> Result<()> {
 fn backup_path_for(path: &Path) -> PathBuf {
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+        .map_or(0, |d| d.as_secs());
     let mut s = path.as_os_str().to_owned();
     s.push(format!(".backup.{ts}"));
     PathBuf::from(s)
