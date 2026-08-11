@@ -246,48 +246,85 @@ fn request_cell(source: Source) -> &'static std::thread::LocalKey<RefCell<Option
     }
 }
 
+/// What absorbing a page leaves the chain in.
+#[derive(PartialEq, Eq)]
+enum PageOutcome {
+    /// Another page is on its way; nothing to commit yet.
+    Following,
+    /// The listing is whole and ready for [`DATA`].
+    Complete,
+    /// The listing cannot be completed, so it is dropped
+    /// and whatever [`DATA`] already holds stands.
+    Abandoned,
+}
+
+/// Merge a history page, reporting whether it could be read at all.
+fn merge_history(
+    chain: &mut PageChain,
+    json: &json::JsonDoc,
+    value_field: &str,
+    date: pool_api::ParseDate<'_>,
+) -> bool {
+    match pool_api::parse_history_page(json, value_field, date) {
+        Some(page) => {
+            chain.series.merge(page);
+            true
+        }
+        None => false,
+    }
+}
+
 /// Merge one page into the source's chain; follow the cursor
 /// when the reply names a next page, otherwise commit
 /// the merged result into [`DATA`].
 fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'_>) {
-    let next = pool_api::next_cursor(json);
-    // Read from the launch itself rather than from the cursor alone, so a page
-    // that names a next one it cannot ask for still commits,
-    // instead of stranding the chain until the next tick.
-    let following = chain_cell(source).with(|cell| {
+    let next = pool_api::next_page(json);
+    let outcome = chain_cell(source).with(|cell| {
         let mut cell = cell.borrow_mut();
         let Some(chain) = cell.as_mut() else {
-            return false;
+            return PageOutcome::Abandoned;
         };
         // This page is the one it was waiting on, if any.
         chain.outstanding = None;
-        match source {
-            Source::HashrateHistory => {
-                if let Some(page) = pool_api::parse_history_page(json, "hashrate_th_per_sec", date)
-                {
-                    chain.series.merge(page);
+        let parsed = match source {
+            Source::HashrateHistory => merge_history(chain, json, "hashrate_th_per_sec", date),
+            Source::WorkersHistory => merge_history(chain, json, "active_workers", date),
+            Source::PayoutsRecent => match pool_api::parse_payouts_page(json, date) {
+                Some(page) => {
+                    chain.payouts.extend(page);
+                    true
                 }
-            }
-            Source::WorkersHistory => {
-                if let Some(page) = pool_api::parse_history_page(json, "active_workers", date) {
-                    chain.series.merge(page);
-                }
-            }
-            Source::PayoutsRecent => {
-                chain
-                    .payouts
-                    .extend(pool_api::parse_payouts_page(json, date));
-            }
+                None => false,
+            },
             Source::HashrateCurrent
             | Source::RewardsLatest
             | Source::WorkersCurrent
             | Source::Financials => unreachable!("BUG: only windowed sources chain pages"),
+        };
+        // Both leave the listing incomplete. Committing the pages gathered so far
+        // would pass a hole off as the whole picture, so the chain is dropped
+        // and last cycle's data stands.
+        if !parsed {
+            log_warn!(
+                "{} page did not parse; keeping the last good data",
+                source.name()
+            );
+            *cell = None;
+            return PageOutcome::Abandoned;
+        }
+        if next == pool_api::NextPage::Malformed {
+            log_warn!(
+                "{} claims another page without naming it; keeping the last good data",
+                source.name()
+            );
+            *cell = None;
+            return PageOutcome::Abandoned;
         }
         // A follow-up repeats the window page 1 asked for.
         // The Overview payout query asked for none — it wants one latest page,
         // and its cursor would lead into a different query — so it never follows.
-        let (Some(cursor), Some((from, to))) = (&next, &chain.window) else {
-            return false;
+        let (pool_api::NextPage::Cursor(cursor), Some((from, to))) = (&next, &chain.window) else {
+            return PageOutcome::Complete;
         };
         let url = source.windowed_page_url(from, to, Some(cursor));
         let callback = match source {
@@ -307,12 +344,12 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
             // The follow-up page never launched; drop the chain and keep
             // last cycle's committed data — the next tick starts fresh.
             *cell = None;
-            return false;
+            return PageOutcome::Abandoned;
         }
         chain.outstanding = started;
-        true
+        PageOutcome::Following
     });
-    if !following {
+    if outcome == PageOutcome::Complete {
         commit_chain(source);
         request_frame();
     }

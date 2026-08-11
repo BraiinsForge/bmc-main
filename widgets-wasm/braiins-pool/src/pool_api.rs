@@ -143,13 +143,26 @@ pub type ParseDate<'a> = &'a dyn Fn(&str) -> Option<i64>;
 /// which the host renders in UTC.
 pub const RFC3339_UTC: &str = "%Y-%m-%dT%H:%M:%SZ";
 
-/// Cursor to the next page, if the reply says one exists.
+/// What a reply says about a page after this one.
+#[derive(Debug, PartialEq, Eq)]
+pub enum NextPage {
+    /// This page completes the listing: `has_next` is false, or the reply
+    /// carries no pagination at all, as a single-page listing may not.
+    Done,
+    Cursor(String),
+    /// `has_next` with no cursor to follow. The reply contradicts itself, so
+    /// the listing cannot be completed — and must not pass for a complete one.
+    Malformed,
+}
+
 #[must_use]
-pub fn next_cursor(json: &impl JsonLookup) -> Option<String> {
-    if json.bool("/pagination/has_next")? {
-        json.str("/pagination/next_cursor")
-    } else {
-        None
+pub fn next_page(json: &impl JsonLookup) -> NextPage {
+    match json.bool("/pagination/has_next") {
+        Some(true) => match json.str("/pagination/next_cursor") {
+            Some(cursor) if !cursor.is_empty() => NextPage::Cursor(cursor),
+            _ => NextPage::Malformed,
+        },
+        _ => NextPage::Done,
     }
 }
 
@@ -234,13 +247,20 @@ fn merge<T>(a: Option<T>, b: Option<T>, pick: fn(T, T) -> T) -> Option<T> {
 
 /// One page of `/user/payouts/recent`, filtered to COMPLETED payouts — the
 /// only status the widget shows (last payout amount, chart markers).
+///
+/// `None` when a completed payout cannot be read whole, the same rule
+/// [`parse_history_page`] follows.
+/// A listing short of an entry it should carry is not that listing:
+/// passing it off as complete moves the last payout to an older one.
 #[must_use]
-pub fn parse_payouts_page(json: &impl JsonLookup, date: ParseDate<'_>) -> Vec<Payout> {
+pub fn parse_payouts_page(json: &impl JsonLookup, date: ParseDate<'_>) -> Option<Vec<Payout>> {
     let mut payouts = Vec::new();
     for i in 0..PAGE_LIMIT {
         let Some(status) = json.str(&fmt!("/payouts/{i}/status")) else {
             break;
         };
+        // Only COMPLETED is shown, so another status is skipped rather than read:
+        // a pending payout missing its amount is not a broken page.
         if status != "COMPLETED" {
             continue;
         }
@@ -252,17 +272,15 @@ pub fn parse_payouts_page(json: &impl JsonLookup, date: ParseDate<'_>) -> Vec<Pa
         };
         let at = json
             .str(&fmt!("/payouts/{i}/occurred_at"))
-            .and_then(|s| date(&s));
-        let amount = json.f64(&fmt!("/payouts/{i}/amount_btc"));
-        if let (Some(at), Some(amount_btc)) = (at, amount) {
-            payouts.push(Payout {
-                at,
-                amount_btc,
-                kind,
-            });
-        }
+            .and_then(|s| date(&s))?;
+        let amount_btc = json.f64(&fmt!("/payouts/{i}/amount_btc"))?;
+        payouts.push(Payout {
+            at,
+            amount_btc,
+            kind,
+        });
     }
-    payouts
+    Some(payouts)
 }
 
 #[cfg(test)]
@@ -335,14 +353,31 @@ mod tests {
     }
 
     #[test]
-    fn next_cursor_needs_has_next() {
+    fn a_listing_is_complete_without_has_next() {
         let mut json = MapJson::default();
+        // A cursor alone says nothing: the reply has to claim another page.
         json.strings.insert("/pagination/next_cursor", "abc");
-        assert_eq!(next_cursor(&json), None);
+        assert_eq!(next_page(&json), NextPage::Done);
         json.bools.insert("/pagination/has_next", false);
-        assert_eq!(next_cursor(&json), None);
+        assert_eq!(next_page(&json), NextPage::Done);
+    }
+
+    #[test]
+    fn has_next_with_a_cursor_names_the_page_to_ask_for() {
+        let mut json = MapJson::default();
         json.bools.insert("/pagination/has_next", true);
-        assert_eq!(next_cursor(&json), Some("abc".to_owned()));
+        json.strings.insert("/pagination/next_cursor", "abc");
+        assert_eq!(next_page(&json), NextPage::Cursor("abc".to_owned()));
+    }
+
+    /// Reading this as `Done` would commit a truncated listing as a whole one.
+    #[test]
+    fn has_next_without_a_usable_cursor_is_malformed() {
+        let mut json = MapJson::default();
+        json.bools.insert("/pagination/has_next", true);
+        assert_eq!(next_page(&json), NextPage::Malformed);
+        json.strings.insert("/pagination/next_cursor", "");
+        assert_eq!(next_page(&json), NextPage::Malformed);
     }
 
     #[test]
@@ -396,7 +431,8 @@ mod tests {
         json.strings.insert("/payouts/1/type", "LIGHTNING");
         json.strings.insert("/payouts/1/occurred_at", "@200");
         json.floats.insert("/payouts/1/amount_btc", 0.25);
-        let payouts = parse_payouts_page(&json, &fixture_date);
+        let payouts = parse_payouts_page(&json, &fixture_date)
+            .expect("BUG: a page whose completed payouts read whole must parse");
         assert_eq!(payouts.len(), 1);
         assert_eq!(payouts[0].at, 200);
         assert_eq!(payouts[0].kind, Some(PayoutKind::Lightning));
@@ -419,6 +455,28 @@ mod tests {
         json.strings.insert("/payouts/0/type", "ONCHAIN");
         let named = parse_payouts_page(&json, &fixture_date).expect("BUG: a named rail parses");
         assert_eq!(named[0].kind, Some(PayoutKind::Onchain));
+    }
+
+    #[test]
+    fn a_completed_payout_missing_its_amount_voids_the_page() {
+        let mut json = MapJson::default();
+        json.strings.insert("/payouts/0/status", "COMPLETED");
+        json.strings.insert("/payouts/0/occurred_at", "@200");
+        assert_eq!(parse_payouts_page(&json, &fixture_date), None);
+        json.floats.insert("/payouts/0/amount_btc", 0.25);
+        assert!(parse_payouts_page(&json, &fixture_date).is_some());
+    }
+
+    #[test]
+    fn an_unreadable_pending_payout_leaves_the_page_whole() {
+        let mut json = MapJson::default();
+        json.strings.insert("/payouts/0/status", "PENDING");
+        json.strings.insert("/payouts/1/status", "COMPLETED");
+        json.strings.insert("/payouts/1/occurred_at", "@200");
+        json.floats.insert("/payouts/1/amount_btc", 0.25);
+        let payouts = parse_payouts_page(&json, &fixture_date)
+            .expect("BUG: a skipped status must not void the page");
+        assert_eq!(payouts.len(), 1);
     }
 
     #[test]
