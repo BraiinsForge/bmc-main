@@ -22,6 +22,7 @@
 //! dirty-render-gating paths as the main loop drives them, not their
 //! extracted helpers.
 
+use std::cell::Cell;
 use std::net::Ipv4Addr;
 use std::os::unix::net::UnixStream;
 use std::rc::Rc;
@@ -173,7 +174,12 @@ impl LifecycleEgl for StubEgl {
     }
 }
 
-struct StubFactory;
+#[derive(Default)]
+struct StubFactory {
+    allocations: Cell<usize>,
+    releases: Cell<usize>,
+}
+
 impl RenderTargetFactory for StubFactory {
     fn allocate(
         &self,
@@ -182,6 +188,7 @@ impl RenderTargetFactory for StubFactory {
         width: u32,
         height: u32,
     ) -> Result<RenderTarget, RenderTargetError> {
+        self.allocations.set(self.allocations.get() + 1);
         Ok(RenderTarget::new_stub(width, height))
     }
 
@@ -193,6 +200,7 @@ impl RenderTargetFactory for StubFactory {
         _: &dyn LifecycleEgl,
         _: &mut dyn LifecycleSurface,
     ) -> RenderTargetCleanup {
+        self.releases.set(self.releases.get() + 1);
         RenderTargetCleanup::Complete
     }
 }
@@ -272,6 +280,13 @@ fn hookless_widget_wat() -> String {
 }
 
 fn test_slot(wat: &str) -> WidgetSlot<StubSurface> {
+    test_slot_with_factory(wat, Rc::new(StubFactory::default()))
+}
+
+fn test_slot_with_factory(
+    wat: &str,
+    factory: Rc<dyn RenderTargetFactory>,
+) -> WidgetSlot<StubSurface> {
     let wasm = wat::parse_str(wat).expect("BUG: test WAT must parse");
     let runtime = WasmWidgetRuntime::new(
         &wasm,
@@ -293,7 +308,7 @@ fn test_slot(wat: &str) -> WidgetSlot<StubSurface> {
     WidgetSlot::from_parts(
         StubSurface::default(),
         runtime,
-        Rc::new(StubFactory),
+        factory,
         control_socket,
         led_rx,
     )
@@ -763,7 +778,118 @@ fn unchanged_network_delivers_nothing() {
     assert_eq!(slot.surface.mark_needs_render_calls, 0);
 }
 
-// ── needs_render / poll_inputs dirty gating ─────────────────────────
+// ── lifecycle resource ownership ────────────────────────────────────
+
+#[test]
+fn render_target_is_retained_until_the_slot_reaches_dormant() {
+    let factory = Rc::new(StubFactory::default());
+    let mut slot = test_slot_with_factory(&hookless_widget_wat(), factory.clone());
+
+    assert!(
+        slot.runtime.dormant_asset_registration_is_blocked(),
+        "a newly constructed slot must block renderer assets before its first wake"
+    );
+
+    for state in [
+        bmc_widget_protocol::LifecycleState::Prepared,
+        bmc_widget_protocol::LifecycleState::Entering,
+        bmc_widget_protocol::LifecycleState::Visible,
+        bmc_widget_protocol::LifecycleState::Leaving,
+    ] {
+        enter_state(&mut slot, state);
+        assert!(
+            slot.render_target.is_some(),
+            "{state:?} must retain the render target"
+        );
+        assert_eq!(
+            factory.allocations.get(),
+            1,
+            "moving between renderable states must reuse the original target"
+        );
+        assert_eq!(
+            factory.releases.get(),
+            0,
+            "{state:?} must not release the render target"
+        );
+        assert!(
+            !slot.runtime.dormant_asset_registration_is_blocked(),
+            "{state:?} must keep the runtime active"
+        );
+    }
+
+    dispatch_event(
+        &mut slot,
+        WidgetEvent::Lifecycle(bmc_widget_protocol::LifecycleState::Dormant),
+    );
+
+    assert!(
+        slot.render_target.is_some(),
+        "receiving Dormant must not release the target before lifecycle application"
+    );
+    assert_eq!(
+        factory.releases.get(),
+        0,
+        "receiving Dormant must not release the render target"
+    );
+    assert!(
+        !slot.runtime.dormant_asset_registration_is_blocked(),
+        "receiving Dormant must not mark the runtime before lifecycle application"
+    );
+
+    slot.apply_lifecycle(Instant::now(), &StubEgl);
+
+    assert!(
+        slot.render_target.is_none(),
+        "Dormant must release the render target"
+    );
+    assert_eq!(
+        factory.allocations.get(),
+        1,
+        "entering Dormant must not allocate a replacement target"
+    );
+    assert_eq!(
+        factory.releases.get(),
+        1,
+        "reaching Dormant must release the original target exactly once"
+    );
+    assert!(
+        slot.runtime.dormant_asset_registration_is_blocked(),
+        "the runtime must become dormant only after the slot applies Dormant"
+    );
+}
+
+#[test]
+fn waking_into_prepared_acquires_a_target_and_requests_a_guest_frame() {
+    let factory = Rc::new(StubFactory::default());
+    let mut slot = test_slot_with_factory(&hookless_widget_wat(), factory.clone());
+
+    assert!(
+        slot.render_target.is_none(),
+        "a Dormant slot must start without a render target"
+    );
+    assert!(
+        !slot.runtime.wants_next_frame(),
+        "no guest frame may be pending before the first wake edge"
+    );
+
+    enter_state(&mut slot, bmc_widget_protocol::LifecycleState::Prepared);
+
+    assert!(
+        slot.render_target.is_some(),
+        "Prepared must acquire a render target before waking the runtime"
+    );
+    assert_eq!(
+        factory.allocations.get(),
+        1,
+        "the Dormant-to-Prepared edge must allocate exactly one target"
+    );
+    assert!(
+        slot.runtime.wants_next_frame(),
+        "the wake edge must request an immediate guest frame for the fresh target"
+    );
+}
+
+// ── needs_render / poll_inputs dirty gating ────────────────────────
 
 #[test]
 fn off_screen_dirty_surface_is_held_back_and_does_not_busy_wake() {

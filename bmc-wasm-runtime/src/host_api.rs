@@ -1178,8 +1178,8 @@ mod tests {
         CancelDisposition, DelayedFetch, FetchState, FrameScheduleState, HermeticRun, HostState,
         Lifecycle, RendererAssetGate,
     };
-    use bmc_wasm_protocol::FetchRequestId;
     use crate::runtime_limits::RuntimeResourceLimits;
+    use bmc_wasm_protocol::FetchRequestId;
 
     /// A cancel names one request, and an id naming none can never settle.
     /// Remembering it would grow `cancelled` for as long as the widget runs,
