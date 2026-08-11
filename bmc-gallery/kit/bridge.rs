@@ -232,6 +232,12 @@ fn evict_stale(renderer: &mut FemtoVgRenderer, frames: &mut HashMap<Id, FrameSta
 /// Draw one frame into this stage's own femtovg image and return the content
 /// size the tree laid out to. Gallery composites the image itself, so nothing
 /// is copied out of it.
+#[expect(
+    clippy::integer_division,
+    clippy::cast_sign_loss,
+    reason = "elapsed milliseconds to whole seconds, and a GL framebuffer name \
+              that the query returns as a non-negative i32"
+)]
 fn draw_frame(
     state: &mut FrameState,
     target: [u32; 2],
@@ -304,7 +310,7 @@ fn draw_frame(
 ///
 /// A scene decides what to do with it: log to gallery's Actions panel with
 /// [`gallery::action`], write a knob back with `ctx.set_*`, or ignore it.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Fired {
     /// Taps and scrolls that landed on a keyed element.
     pub actions: Vec<ActionEvent>,
@@ -442,6 +448,10 @@ fn staged_tree(
     )
 }
 
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a device width is a small positive integer"
+)]
 fn staged_custom(
     ctx: &mut SceneCtx,
     ui: &mut Ui,
@@ -459,6 +469,16 @@ fn staged_custom(
 /// The shared flow: gallery's staged offscreen owns the target and its chrome;
 /// this fills it. Round faces are masked to their inscribed circle over the
 /// image gallery drew.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "device sizes and measured heights are small positive values, and \
+              each is clamped to its bound before the cast"
+)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one linear pass over a frame: size, target, draw, measure, present"
+)]
 fn deck_stage(
     ctx: &mut SceneCtx,
     ui: &mut Ui,

@@ -49,21 +49,42 @@ hot:
 update:
     cargo run --manifest-path bmc-gallery/Cargo.toml -- --check-updates
 
-# `gallery.toml`'s globs, spelled out again for the recipes that drive cargo directly:
-# the build script reads them from the environment alone, so a bare invocation
-# would compile a dylib with no scenes in it. The launcher passes them itself.
-scene_globs := '../**/*.scene.rs'
-
 # Type-check scenes + launcher without launching.
 check:
-    # `--locked` here and on `build`: the manifest says the lockfile beside it is what
-    # CI resolves through, and a bare cargo would rewrite it on any semver-compatible
-    # release of ~500 transitive deps rather than fail.
-    env GALLERY_SCENE_GLOBS='{{ scene_globs }}' cargo check --locked --manifest-path bmc-gallery/Cargo.toml
+    # `--locked` on every recipe that resolves: the manifest says the lockfile
+    # beside it is what CI resolves through, and a bare cargo would rewrite it
+    # on any semver-compatible release of ~500 transitive deps rather than fail.
+    cargo check --locked --manifest-path bmc-gallery/Cargo.toml
 
 # Codegen and link the scenes dylib, which `check` stops short of.
 build:
-    env GALLERY_SCENE_GLOBS='{{ scene_globs }}' cargo build --locked --manifest-path bmc-gallery/Cargo.toml
+    cargo build --locked --manifest-path bmc-gallery/Cargo.toml
+
+# Check the gallery's separate lockfile against the workspace's source policy.
+deny:
+    # `bans` is left out on purpose: its `multiple-versions = "deny"` and skip list
+    # are tuned to the workspace's graph while this crate resolves its own,
+    # and the duplicates it prevents cost size on a device the gallery never reaches.
+    #
+    # cargo-deny would be dead weight in the dev shell — nothing else uses it,
+    # so it comes from this flake's own pkgs at the one place that runs it.
+    nix run .#pkgs.cargo-deny -- --locked \
+        --manifest-path bmc-gallery/Cargo.toml check --config deny.toml sources
+
+# Assert the restated lint set still matches the workspace root's.
+lints:
+    # Cargo cannot inherit `[workspace.lints]` across a workspace boundary,
+    # so the set is copied into this crate's manifest — and nothing but this
+    # keeps the copy equal to the original.
+    python3 scripts/check_gallery_lints.py
+
+# Lint the scenes under the same set the workspace holds its own code to.
+clippy:
+    # Its own target dir, nested inside the ignored one. Sharing with `check`/`build`
+    # leaves the widget crates failing to resolve their own dependencies with E0463:
+    # they are path deps outside this crate's workspace, so they get no clippy wrapper.
+    env CARGO_TARGET_DIR=bmc-gallery/target/clippy \
+        cargo clippy --locked --manifest-path bmc-gallery/Cargo.toml -- -D warnings
 
 # Look at one scene as it declares itself, to `.tmp/gallery-preview/NAME.png`.
 preview SCENE NAME SIZE="1280x720" FRAMES="4":

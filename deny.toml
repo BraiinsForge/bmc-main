@@ -128,7 +128,9 @@ skip-tree = [
 # ── Sources ───────────────────────────────────────────────────────────
 [sources]
 unknown-registry = "deny"
-unknown-git = "warn"
+# Every git source in every lockfile here is listed below, so an unlisted one
+# is a new dependency nobody vetted rather than a gap in this list.
+unknown-git = "deny"
 allow-registry = [
     "https://github.com/rust-lang/crates.io-index",
 ]
@@ -137,7 +139,9 @@ allow-git = [
     # - egui_autocomplete: pulled by bmc-widget-wasm via bmc-wasm-runtime
     # - smithay: pulled by bmc-widget (compositor) and bmc-openwrt
     # - tokio-cron-scheduler: pulled by bmc-scheduler
+    # - rs-gallery: the gallery framework, in bmc-gallery's own lockfile only
     "https://github.com/BraiinsForge/tokio-cron-scheduler.git",
+    "https://github.com/kubijo/rs-gallery.git",
     "https://github.com/yvind/egui_autocomplete.git",
     "https://github.com/Smithay/smithay.git",
 ]

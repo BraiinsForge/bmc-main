@@ -137,6 +137,11 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
     view
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a stage hands its cell a size in whole positive logical pixels"
+)]
 fn offline_cell(flat: bool) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
@@ -146,6 +151,11 @@ fn offline_cell(flat: bool) -> CustomRenderFn {
     })
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a stage hands its cell a size in whole positive logical pixels"
+)]
 fn device_info_cell(view: DeviceInfoView, flat: bool) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
@@ -164,6 +174,11 @@ thread_local! {
         RefCell::new(AlarmRenderState::new(Instant::now()));
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a stage hands its cell a size in whole positive logical pixels"
+)]
 fn alarm_cell(
     view: AlarmView,
     state_key: &'static LocalKey<RefCell<AlarmRenderState>>,
@@ -212,6 +227,11 @@ upgrade_render_states!(
     PACKAGE_FAILURE,
 );
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a stage hands its cell a size in whole positive logical pixels"
+)]
 fn upgrade_cell(
     view: UpgradeView,
     state_key: &'static LocalKey<RefCell<UpgradeRenderState>>,
@@ -227,19 +247,46 @@ fn upgrade_cell(
     })
 }
 
+/// What a whole section shares: its caption and the surface its cards stage at.
+/// The phase is the only thing that varies card to card.
+#[derive(Clone, Copy)]
+struct Section {
+    title: &'static str,
+    size: (u32, u32),
+}
+
+const FIRMWARE: Section = Section {
+    title: "Firmware",
+    size: (DISPLAY_W, DISPLAY_H),
+};
+
+const PACKAGES: Section = Section {
+    title: "Packages",
+    size: PACKAGE_SURFACE_SIZE,
+};
+
 fn upgrade_stage(
     ctx: &mut SceneCtx,
     ui: &mut Ui,
-    title: &str,
+    section: Section,
     phase: &str,
-    size: (u32, u32),
     view: UpgradeView,
     state: &'static LocalKey<RefCell<UpgradeRenderState>>,
     flat: bool,
 ) {
-    ui.heading(title);
+    ui.heading(section.title);
     ui.label(phase);
-    ctx.custom_stage(ui, size, upgrade_cell(view, state, flat));
+    ctx.custom_stage(ui, section.size, upgrade_cell(view, state, flat));
+}
+
+/// What `matrix_with` measures its columns from: one entry per cell,
+/// every card in a section being staged at the same size.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "an overlay surface is a few hundred pixels across"
+)]
+fn matrix_sizes(size: (u32, u32), count: usize) -> Vec<egui::Vec2> {
+    vec![egui::vec2(size.0 as f32, size.1 as f32); count]
 }
 
 thread_local! {
@@ -275,6 +322,11 @@ thread_local! {
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a stage hands its cell a size in whole positive logical pixels"
+)]
 fn settings_tray_cell(
     view: SettingsTrayView,
     state_key: &'static LocalKey<RefCell<SettingsTrayRenderState>>,
@@ -345,6 +397,11 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
 
 /// One tray cell per capability and per new state, in a flat run down the scene.
 #[scene]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a flat catalogue: one stage per product and control-group variant, \
+              which reads worse split across helpers than listed in order"
+)]
 fn settings_tray(ctx: &mut SceneCtx, ui: &mut Ui) {
     let flat = ctx.toggle("Flat backdrop", false);
 
@@ -576,6 +633,11 @@ fn alarm(ctx: &mut SceneCtx, ui: &mut Ui) {
 }
 
 #[scene]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the two phase tables are the scene's content; naming each entry \
+              once here beats hiding them behind a builder"
+)]
 fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
     let flat = ctx.toggle("Flat backdrop", false);
 
@@ -657,18 +719,15 @@ fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
             &FIRMWARE_FAILURE,
         ),
     ];
-    for (phase, view, state) in firmware_phases {
-        upgrade_stage(
-            ctx,
-            ui,
-            "Firmware",
-            phase,
-            (DISPLAY_W, DISPLAY_H),
-            view,
-            state,
-            flat,
-        );
-    }
+    let firmware_sizes = matrix_sizes(FIRMWARE.size, firmware_phases.len());
+    ctx.matrix_with(ui, &firmware_sizes, |ctx, ui, at| {
+        let (phase, view, state) = firmware_phases[at];
+        // A grid counts every widget as a column, so the caption rides with its card
+        // as one block — the same reason a stage wraps itself.
+        ui.vertical(|ui| {
+            upgrade_stage(ctx, ui, FIRMWARE, phase, view, state, flat);
+        });
+    });
 
     let package_phases = [
         ("Preparing", packages(None, None), &PACKAGE_PREPARING),
@@ -712,16 +771,11 @@ fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
             &PACKAGE_FAILURE,
         ),
     ];
-    for (phase, view, state) in package_phases {
-        upgrade_stage(
-            ctx,
-            ui,
-            "Packages",
-            phase,
-            PACKAGE_SURFACE_SIZE,
-            view,
-            state,
-            flat,
-        );
-    }
+    let package_sizes = matrix_sizes(PACKAGES.size, package_phases.len());
+    ctx.matrix_with(ui, &package_sizes, |ctx, ui, at| {
+        let (phase, view, state) = package_phases[at];
+        ui.vertical(|ui| {
+            upgrade_stage(ctx, ui, PACKAGES, phase, view, state, flat);
+        });
+    });
 }

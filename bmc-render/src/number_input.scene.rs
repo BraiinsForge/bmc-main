@@ -27,6 +27,10 @@ scene_meta! { title: "Components / Controls / NumberInput" }
 const KEY: &str = "number";
 
 #[scene(default)]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a whole-step slider bounded to the inputs' own 0..=100 range"
+)]
 fn examples(ctx: &mut SceneCtx, ui: &mut Ui) {
     let value = ctx.slider("Value", 25.0, 0.0, 100.0, 1.0);
 

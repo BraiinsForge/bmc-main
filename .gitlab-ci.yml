@@ -170,6 +170,22 @@ gallery-build:
   script:
     - nix develop --command just gallery::build
 
+# Separate from the build: clippy stops at check, so it never links the dylib,
+# and the two cannot share a target dir.
+gallery-clippy:
+  stage: lint
+  needs: []
+  script:
+    - nix develop --command just gallery::lints
+    - nix develop --command just gallery::clippy
+
+# The gallery's lockfile is its own, so the workspace's cargo-deny never sees it.
+gallery-deny:
+  stage: lint
+  needs: []
+  script:
+    - nix develop --command just gallery::deny
+
 python-check:
   stage: check
   needs: []

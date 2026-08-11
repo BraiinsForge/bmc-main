@@ -60,6 +60,10 @@ fn labeled_demo(label: &str, draw: Draw) -> Node {
 // ── Scenes ───────────────────────────────────────────────────────────
 
 #[scene(default)]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one stage per easing variant, which is the catalogue itself"
+)]
 fn easing_curves(ctx: &mut SceneCtx, ui: &mut Ui) {
     ui.heading("Easing Functions");
     ui.label("All easing variants applied to TranslateX");
@@ -205,6 +209,10 @@ fn easing_curves(ctx: &mut SceneCtx, ui: &mut Ui) {
 }
 
 #[scene]
+#[expect(
+    clippy::too_many_lines,
+    reason = "one stage per animated property, which is the catalogue itself"
+)]
 fn properties(ctx: &mut SceneCtx, ui: &mut Ui) {
     ui.heading("Animated Properties");
     ui.label("Each AnimProperty variant");

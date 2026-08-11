@@ -30,6 +30,10 @@ const EXAMPLE_TEXT_EN: &str = "Lorem ipsum dolor sit amet, consectetuer adipisci
 /// First `chars` characters of `string`, or all of it when `chars` exceeds the
 /// character count. Slices on a `char_indices` boundary so multibyte text is
 /// never split mid-`char`.
+#[expect(
+    clippy::string_slice,
+    reason = "`end` is a `char_indices` offset, so it is a boundary by construction"
+)]
 fn get_string_prefix(string: &str, chars: usize) -> &str {
     match string.char_indices().nth(chars) {
         Some((end, _)) => &string[..end],
@@ -39,6 +43,13 @@ fn get_string_prefix(string: &str, chars: usize) -> &str {
 
 /// Shared "Text length" slider over `[1, min(EN, CZ) char count]`, returning the
 /// chosen length in characters.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a character count over a fixed sample paragraph, and the slider \
+              is bounded to it"
+)]
 fn text_length_slider(ctx: &mut SceneCtx, default: f32) -> usize {
     let max_len = min(
         EXAMPLE_TEXT_EN.chars().count(),
@@ -257,6 +268,11 @@ fn fit_modes(ctx: &mut SceneCtx, ui: &mut Ui) {
 // the box could fit a larger or smaller line. Uses ShrinkAndGrow so both
 // bounds are active.
 #[scene]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "font sizes off sliders bounded to 4..=160 points"
+)]
 fn explicit_bounds(ctx: &mut SceneCtx, ui: &mut Ui) {
     const W: f32 = 400.0;
     const H: f32 = 160.0;

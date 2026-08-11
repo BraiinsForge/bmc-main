@@ -23,6 +23,10 @@ use bmc_gallery::prelude::*;
 scene_meta! { title: "Components / Typography / Relative Time" }
 
 #[scene(default)]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "slider seconds are small whole numbers"
+)]
 fn relative_time(ctx: &mut SceneCtx, ui: &mut Ui) {
     let age = ctx.slider("Age (s)", 90.0, 0.0, 200_000.0, 1.0);
     let future = ctx.toggle("Countdown (in …)", false);

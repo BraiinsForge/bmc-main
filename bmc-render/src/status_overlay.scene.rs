@@ -23,6 +23,10 @@ use bmc_gallery::prelude::*;
 scene_meta! { title: "Components / Feedback / StatusOverlay" }
 
 #[scene(default)]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "slider seconds are small whole numbers"
+)]
 fn status_overlay(ctx: &mut SceneCtx, ui: &mut Ui) {
     let error = ctx.radio("Variant", &["Stale (age)", "Error (reason)"], 0) == 1;
     let age = ctx.slider("Last refresh age (s)", 120.0, 0.0, 200_000.0, 1.0);

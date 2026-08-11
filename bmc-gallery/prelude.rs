@@ -43,18 +43,21 @@ pub use bmc_wasm_sdk::*;
 /// for lossless `u32 → f32` conversion.
 #[must_use]
 #[inline]
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "the doc above is the contract: scene pixel coordinates are small"
+)]
 pub const fn px(v: u32) -> f32 {
     v as f32
 }
 
+/// Narrow an index for the tree's `u32` fields — scenes count in the dozens.
 #[must_use]
 #[inline]
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a scene indexes a handful of cells, never four billion"
+)]
 pub const fn idx(v: usize) -> u32 {
     v as u32
-}
-
-#[must_use]
-#[inline]
-pub const fn grid_div(a: u32, b: u32) -> u32 {
-    a / b
 }

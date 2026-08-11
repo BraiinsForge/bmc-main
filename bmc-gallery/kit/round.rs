@@ -38,6 +38,10 @@ const MASK_OPACITY: f32 = 0.82;
 /// Painted over the image rather than clipping it: egui draws a texture as one
 /// quad, and the corners have to go somewhere. An annulus from the circle's
 /// edge out past the corners covers them with the canvas behind.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "stepping a fixed, small segment count around the ring"
+)]
 pub(crate) fn mask(ui: &egui::Ui, rect: egui::Rect) {
     let painter = ui.painter_at(rect);
     let center = rect.center();

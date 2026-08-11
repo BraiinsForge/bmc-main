@@ -104,6 +104,10 @@ impl DeckSize {
 
     /// Layout width passed to `process_tree` (Auto → 0 for content-driven).
     #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a device width is a few hundred pixels"
+    )]
     pub fn layout_width(self) -> f32 {
         if self.is_auto_width() {
             0.0
@@ -114,6 +118,10 @@ impl DeckSize {
 
     /// Layout height passed to `process_tree` (Auto → 0 for content-driven).
     #[must_use]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a device height is a few hundred pixels"
+    )]
     pub fn layout_height(self) -> f32 {
         match self.div_height() {
             DivHeight::Px(h) => h as f32,
@@ -129,6 +137,11 @@ impl From<(u32, u32)> for DeckSize {
 }
 
 impl From<(f32, f32)> for DeckSize {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a design frame is a whole positive number of pixels"
+    )]
     fn from((w, h): (f32, f32)) -> Self {
         Self::Custom(w as usize, DivHeight::Px(h as usize))
     }

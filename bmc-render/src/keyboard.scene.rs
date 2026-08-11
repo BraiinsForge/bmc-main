@@ -83,6 +83,11 @@ fn keyboard_frame(
 }
 
 #[scene(default)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a 0..=1 slider interpolated between two positive device sizes"
+)]
 fn layouts(ctx: &mut SceneCtx, ui: &mut Ui) {
     let sound = ctx.toggle("Sound", true);
     let size = ctx.slider("Size", 0.4, 0.0, 1.0, 0.01);

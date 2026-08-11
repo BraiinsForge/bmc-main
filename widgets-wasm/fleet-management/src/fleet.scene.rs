@@ -47,6 +47,11 @@ fn log_back(fired: &Fired) {
 }
 
 #[scene(order = 1, default)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a whole-step slider bounded to 0..=8"
+)]
 fn dashboard(ctx: &mut SceneCtx, ui: &mut Ui) {
     // The auth-fail count only surfaces in Fleet Status when non-zero.
     let auth = ctx.slider("Auth fails", 0.0, 0.0, 8.0, 1.0) as usize;
@@ -56,6 +61,11 @@ fn dashboard(ctx: &mut SceneCtx, ui: &mut Ui) {
 }
 
 #[scene(order = 2)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a whole-step page slider bounded to 0..=2"
+)]
 fn table(ctx: &mut SceneCtx, ui: &mut Ui) {
     // Twelve mock models paginate four-per-page; the pager clicks drive the knob.
     let page = ctx.slider("Page", 0.0, 0.0, 2.0, 1.0);
@@ -66,6 +76,11 @@ fn table(ctx: &mut SceneCtx, ui: &mut Ui) {
 }
 
 #[scene(order = 3)]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a whole-step page slider bounded to 0..=2"
+)]
 fn model_detail(ctx: &mut SceneCtx, ui: &mut Ui) {
     // Ten device rows span three pages; the pager drives the knob, Back just logs.
     let page = ctx.slider("Page", 0.0, 0.0, 2.0, 1.0);

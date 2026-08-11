@@ -23,6 +23,13 @@ use bmc_gallery::prelude::*;
 scene_meta! { title: "Components / Canvas / Color Spaces" }
 
 #[scene(default)]
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "stepping 64 bands across a fixed bar, and channel lerps that stay \
+              between the two endpoint bytes"
+)]
 fn gradients(ctx: &mut SceneCtx, ui: &mut Ui) {
     ui.heading("Color Interpolation");
     ui.label("Red to Teal gradient in different color spaces");
