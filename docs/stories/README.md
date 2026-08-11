@@ -87,6 +87,11 @@ with per-category counts.
 The backend can discover available-but-not-installed widget packages and install them through the shared upgrade flow.
 The frontend picker integration and interactive installation experience will be delivered in a future change.
 
+### [Seamless Widget Upgrades](seamless-widget-upgrades.md)
+
+Widget-only upgrades replace changed widget instances without blanking or restarting the whole display. Host, thin, or
+compositor changes still converge safely through service dependencies and compositor-owned process identities.
+
 ### [Credential Accounts](credential-accounts.md)
 
 Saved accounts hold a service credential — a Braiins Pool token, an API key, a username and password — that the user
