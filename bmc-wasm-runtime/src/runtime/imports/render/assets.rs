@@ -25,7 +25,7 @@
 use anyhow::{Result, bail};
 use bmc_render::{
     MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_cover,
-    decode_scaled_to_fit,
+    decode_scaled_to_fit, renderer::AssetTagState,
 };
 use bmc_wasm_protocol::{BitmapId, ImageJobId, MeshId, SvgId};
 use wasmi::{Caller, Extern, Linker};
@@ -121,16 +121,22 @@ fn register_svg_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
-            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
+            let tag = caller.data().namespaced_tag(&raw_tag);
+            let state =
+                super::super::with_renderer(&mut caller, |renderer| renderer.svg_tag_state(&tag))?;
+            if let AssetTagState::Resident(id) = state {
+                return Ok(id.to_ffi());
+            }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return Ok(0);
             };
-            let tag = caller.data_mut().namespaced_tag(&tag);
-            super::super::with_renderer(&mut caller, |renderer| {
+            let id = super::super::with_renderer(&mut caller, |renderer| {
                 renderer.register_svg(&tag, &data).map_or(0, SvgId::to_ffi)
-            })
+            })?;
+            Ok(id)
         },
     )?;
     Ok(())
@@ -146,18 +152,25 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
-            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
+            let tag = caller.data().namespaced_tag(&raw_tag);
+            let state = super::super::with_renderer(&mut caller, |renderer| {
+                renderer.bitmap_tag_state(&tag)
+            })?;
+            if let AssetTagState::Resident(id) = state {
+                return Ok(id.to_ffi());
+            }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return Ok(0);
             };
-            let tag = caller.data_mut().namespaced_tag(&tag);
-            super::super::with_renderer(&mut caller, |renderer| {
+            let id = super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_bitmap(&tag, &data)
                     .map_or(0, BitmapId::to_ffi)
-            })
+            })?;
+            Ok(id)
         },
     )?;
     Ok(())
@@ -173,18 +186,25 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
-            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
+            let tag = caller.data().namespaced_tag(&raw_tag);
+            let state = super::super::with_renderer(&mut caller, |renderer| {
+                renderer.bitmap_tag_state(&tag)
+            })?;
+            if let AssetTagState::Resident(id) = state {
+                return Ok(id.to_ffi());
+            }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return Ok(0);
             };
-            let tag = caller.data_mut().namespaced_tag(&tag);
-            super::super::with_renderer(&mut caller, |renderer| {
+            let id = super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_bitmap_nearest(&tag, &data)
                     .map_or(0, BitmapId::to_ffi)
-            })
+            })?;
+            Ok(id)
         },
     )?;
     Ok(())
@@ -304,16 +324,22 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return Ok(0);
+            };
+            let tag = caller.data().namespaced_tag(&raw_tag);
+            let state =
+                super::super::with_renderer(&mut caller, |renderer| renderer.mesh_tag_state(&tag))?;
+            if let AssetTagState::Resident(id) = state {
+                return Ok(id.to_ffi());
+            }
+
             #[cfg(feature = "profiling")]
             let probe = bmc_render::profile::MemProbe::start();
 
-            let Some(tag) = read_tag(&caller, tag_ptr, tag_len) else {
-                return Ok(0);
-            };
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return Ok(0);
             };
-            let tag = caller.data_mut().namespaced_tag(&tag);
             let id: u32 = super::super::with_renderer(&mut caller, |renderer| {
                 renderer
                     .register_mesh(&tag, &data)
