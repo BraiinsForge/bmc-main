@@ -652,24 +652,116 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
 
 // ── A/B comparison media (exported for verify orchestrator) ─────────
 
-/// Wide sizes are stacked vertically (A on top, B below);
-/// square-ish sizes are placed side by side.
-const VERTICAL_SIZES: &[&str] = &["full", "medium"];
+#[derive(Clone, Copy)]
+enum Stack {
+    Vertical,
+    Horizontal,
+}
 
-fn comparison_filter(size: &str) -> String {
-    let stack = if VERTICAL_SIZES.contains(&size) {
-        "vstack"
-    } else {
-        "hstack"
-    };
-    format!("[0][1]{stack}")
+impl Stack {
+    /// A wide frame stacks vertically, so the pair stays near square.
+    fn for_frame((width, height): (u32, u32)) -> Self {
+        if width > height {
+            Self::Vertical
+        } else {
+            Self::Horizontal
+        }
+    }
+
+    fn filter(self) -> &'static str {
+        match self {
+            Self::Vertical => "vstack",
+            Self::Horizontal => "hstack",
+        }
+    }
+}
+
+/// The directory a frame was captured into: one dataset on one target,
+/// so every frame in it shares a size.
+fn frame_group(rel: &str) -> Option<&Path> {
+    Path::new(rel)
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+}
+
+/// The size every frame in a group shares.
+///
+/// ffmpeg answers unequal inputs with an exit code over a filtergraph,
+/// so reading the headers first names the odd frame.
+fn common_frame_size(pairs: &[(&Path, &Path)]) -> Result<(u32, u32)> {
+    let mut agreed: Option<((u32, u32), &Path)> = None;
+    for path in pairs.iter().flat_map(|(baseline, diff)| [*baseline, *diff]) {
+        let size = image::image_dimensions(path)
+            .with_context(|| format!("failed to read the size of {}", path.display()))?;
+        match agreed {
+            Some((first_size, first)) if first_size != size => bail!(
+                "frames differ in size: {} is {}×{}, {} is {}×{}",
+                first.display(),
+                first_size.0,
+                first_size.1,
+                path.display(),
+                size.0,
+                size.1,
+            ),
+            Some(_) => {}
+            None => agreed = Some((size, path)),
+        }
+    }
+    let (size, _) = agreed.expect("BUG: a group exists only because a pair went into it");
+    Ok(size)
 }
 
 struct ComparisonJob<'a> {
     widget: &'a str,
-    size: String,
-    results: Vec<&'a DiffResult>,
+    group: PathBuf,
+    pairs: Vec<(&'a Path, &'a Path)>,
     out_path: PathBuf,
+}
+
+/// One job per directory the widget's drifting frames were captured into.
+fn comparison_jobs<'a>(report: &'a WidgetReport, output_dir: &Path) -> Vec<ComparisonJob<'a>> {
+    let mut groups: std::collections::BTreeMap<&Path, Vec<(&Path, &Path)>> =
+        std::collections::BTreeMap::new();
+    for result in &report.results {
+        if result.status != "diff" {
+            continue;
+        }
+        let (Some(group), Some(baseline), Some(diff)) = (
+            frame_group(&result.rel),
+            result.baseline_file.as_deref(),
+            result.diff_file.as_deref(),
+        ) else {
+            continue;
+        };
+        groups.entry(group).or_default().push((baseline, diff));
+    }
+
+    let out_dir = output_dir.join(&report.widget);
+    groups
+        .into_iter()
+        .map(|(group, mut pairs)| {
+            pairs.sort_by_key(|(_, diff)| *diff);
+            let ext = if pairs.len() == 1 { "png" } else { "mp4" };
+            // A dataset name may carry a dot, so append the extension.
+            let mut out_path = out_dir.join(group);
+            out_path.as_mut_os_string().push(format!(".{ext}"));
+            ComparisonJob {
+                widget: &report.widget,
+                group: group.to_owned(),
+                pairs,
+                out_path,
+            }
+        })
+        .collect()
+}
+
+/// Render one group's A/B media: a still for a lone frame, a video for a run.
+fn render_comparison(ffmpeg: &Path, job: &ComparisonJob<'_>) -> Result<()> {
+    let stack = Stack::for_frame(common_frame_size(&job.pairs)?);
+    match job.pairs.as_slice() {
+        [(baseline, diff)] => render_comparison_image(ffmpeg, baseline, diff, stack, &job.out_path),
+        pairs => render_comparison_video(ffmpeg, pairs, stack, &job.out_path),
+    }
 }
 
 /// Generate A/B comparison media (PNG for single frame, video for animations).
@@ -687,30 +779,10 @@ pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Resu
     section("Video");
     let total_t0 = Instant::now();
 
-    let mut jobs = Vec::new();
-    for report in &failed_reports {
-        let mut sizes: std::collections::BTreeMap<String, Vec<&DiffResult>> =
-            std::collections::BTreeMap::new();
-        for result in &report.results {
-            if result.status != "diff" {
-                continue;
-            }
-            if let Some(size) = result.rel.split('/').next() {
-                sizes.entry(size.to_owned()).or_default().push(result);
-            }
-        }
-        let out_dir = output_dir.join(&report.widget);
-        for (size, results) in sizes {
-            let ext = if results.len() == 1 { "png" } else { "mp4" };
-            let out_path = out_dir.join(format!("{size}.{ext}"));
-            jobs.push(ComparisonJob {
-                widget: &report.widget,
-                size,
-                results,
-                out_path,
-            });
-        }
-    }
+    let jobs: Vec<_> = failed_reports
+        .iter()
+        .flat_map(|report| comparison_jobs(report, output_dir))
+        .collect();
 
     // Ensure output dirs exist before parallel work.
     for job in &jobs {
@@ -723,14 +795,9 @@ pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Resu
     let errors: Vec<_> = jobs
         .par_iter()
         .filter_map(|job| {
-            let result = if job.results.len() == 1 {
-                render_comparison_image(&ffmpeg_bin, job.results[0], &job.size, &job.out_path)
-            } else {
-                render_comparison_video(&ffmpeg_bin, &job.results, &job.size, &job.out_path)
-            };
-            result
+            render_comparison(&ffmpeg_bin, job)
                 .err()
-                .map(|e| format!("{} {}: {e:#}", job.widget, job.size))
+                .map(|e| format!("{} {}: {e:#}", job.widget, job.group.display()))
         })
         .collect();
 
@@ -748,7 +815,7 @@ pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Resu
     eprintln!("  {}", format!("rendered in {total_elapsed:.1}s").dimmed());
 
     if !errors.is_empty() {
-        bail!("ffmpeg failures:\n{}", errors.join("\n"));
+        bail!("comparison failures:\n{}", errors.join("\n"));
     }
     Ok(())
 }
@@ -756,14 +823,12 @@ pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Resu
 /// Render a single A/B composite PNG (baseline + diff).
 fn render_comparison_image(
     ffmpeg: &Path,
-    result: &DiffResult,
-    size: &str,
+    baseline: &Path,
+    diff: &Path,
+    stack: Stack,
     output: &Path,
 ) -> Result<()> {
-    let (Some(baseline), Some(diff)) = (&result.baseline_file, &result.diff_file) else {
-        return Ok(());
-    };
-    let filter = comparison_filter(size);
+    let filter = format!("[0][1]{}", stack.filter());
     let status = Command::new(ffmpeg)
         .args(["-nostdin", "-y", "-loglevel", "error", "-i"])
         .arg(baseline)
@@ -782,7 +847,7 @@ fn render_comparison_image(
     Ok(())
 }
 
-/// Render an A/B comparison video from diff results in a single ffmpeg call.
+/// Render an A/B comparison video from a group's pairs in one ffmpeg call.
 ///
 /// Instead of spawning N+1 processes (composite each frame, then concat+encode),
 /// we build one filtergraph that composites every pair, holds each still for 0.5 s,
@@ -793,31 +858,13 @@ const VIDEO_HOLD_FRAMES: u32 = 15;
 
 fn render_comparison_video(
     ffmpeg: &Path,
-    results: &[&DiffResult],
-    size: &str,
+    pairs: &[(&Path, &Path)],
+    stack: Stack,
     output: &Path,
 ) -> Result<()> {
     use std::fmt::Write;
 
-    let stack = if VERTICAL_SIZES.contains(&size) {
-        "vstack"
-    } else {
-        "hstack"
-    };
-
-    // Collect valid (baseline, diff) pairs in sorted order.
-    let mut pairs: Vec<_> = results
-        .iter()
-        .filter_map(|r| match (&r.baseline_file, &r.diff_file) {
-            (Some(b), Some(d)) => Some((b.as_path(), d.as_path())),
-            _ => None,
-        })
-        .collect();
-    pairs.sort_by_key(|(_, d)| d.to_path_buf());
-
-    if pairs.is_empty() {
-        return Ok(());
-    }
+    let stack = stack.filter();
 
     // Build -i args: baseline0 diff0 baseline1 diff1 …
     // `-nostdin` so ffmpeg doesn't enter its interactive console when one of
@@ -830,7 +877,7 @@ fn render_comparison_video(
         "-loglevel".into(),
         "error".into(),
     ];
-    for (baseline, diff) in &pairs {
+    for (baseline, diff) in pairs {
         args.extend(["-i".into(), baseline.as_os_str().to_owned()]);
         args.extend(["-i".into(), diff.as_os_str().to_owned()]);
     }
@@ -1093,7 +1140,7 @@ mod tests {
             workspace: "widgets".to_owned(),
             widget: "clock".to_owned(),
             results: vec![DiffResult {
-                rel: "full/frame_0000.png".to_owned(),
+                rel: "bmc100/full/bmc100-full/frame_0000.png".to_owned(),
                 status: "diff".to_owned(),
                 diff: Some(diff),
                 ..Default::default()
@@ -1254,7 +1301,7 @@ mod tests {
             percentage: 0.43,
         });
         report.results.push(DiffResult {
-            rel: "full/frame_0001.png".to_owned(),
+            rel: "bmc100/full/bmc100-full/frame_0001.png".to_owned(),
             status: "tolerated".to_owned(),
             diff: Some(PixelDiff {
                 count: 4,
@@ -1266,5 +1313,127 @@ mod tests {
 
         assert_eq!(diff_totals(&report, "diff"), "900 px total (↑0.43% worst)");
         assert_eq!(diff_totals(&report, "tolerated"), "4 px total");
+    }
+
+    // ── Comparison media ─────────────────────────────────────────────
+
+    fn drifted(rel: &str) -> DiffResult {
+        DiffResult {
+            rel: rel.to_owned(),
+            status: "diff".to_owned(),
+            baseline_file: Some(PathBuf::from("baseline.png")),
+            diff_file: Some(PathBuf::from(rel)),
+            ..Default::default()
+        }
+    }
+
+    fn jobs_for(rels: &[&str]) -> Vec<PathBuf> {
+        let report = WidgetReport {
+            widget: "clock".to_owned(),
+            results: rels.iter().copied().map(drifted).collect(),
+            ..Default::default()
+        };
+        comparison_jobs(&report, Path::new("out"))
+            .iter()
+            .map(|job| job.out_path.clone())
+            .collect()
+    }
+
+    #[test]
+    fn viewports_of_one_platform_do_not_share_a_comparison() {
+        assert_eq!(
+            jobs_for(&[
+                "bmc100/full/bmc100-full/frame_0000.png",
+                "bmc100/small/bmc100-small/frame_0000.png",
+            ]),
+            [
+                PathBuf::from("out/clock/bmc100/full/bmc100-full.png"),
+                PathBuf::from("out/clock/bmc100/small/bmc100-small.png"),
+            ],
+        );
+    }
+
+    #[test]
+    fn datasets_of_one_target_do_not_share_a_comparison() {
+        assert_eq!(
+            jobs_for(&[
+                "bmc100/full/practice/frame_0000.png",
+                "bmc100/full/qualifying/frame_0000.png",
+            ]),
+            [
+                PathBuf::from("out/clock/bmc100/full/practice.png"),
+                PathBuf::from("out/clock/bmc100/full/qualifying.png"),
+            ],
+        );
+    }
+
+    #[test]
+    fn a_run_of_frames_becomes_one_video() {
+        assert_eq!(
+            jobs_for(&[
+                "bmc100/full/qualifying/frame_0000.png",
+                "bmc100/full/qualifying/frame_0001.png",
+            ]),
+            [PathBuf::from("out/clock/bmc100/full/qualifying.mp4")],
+        );
+    }
+
+    #[test]
+    fn a_dataset_named_with_a_dot_keeps_all_of_it() {
+        assert_eq!(
+            jobs_for(&["bmc100/full/v1.2/frame_0000.png"]),
+            [PathBuf::from("out/clock/bmc100/full/v1.2.png")],
+        );
+    }
+
+    /// Every frame `frame_dir` writes sits three levels down,
+    /// so one that does not comes from a corrupt archive.
+    #[test]
+    fn a_frame_outside_any_directory_makes_no_comparison() {
+        assert_eq!(jobs_for(&["frame_0000.png"]), [] as [PathBuf; 0]);
+    }
+
+    #[test]
+    fn a_wide_frame_stacks_vertically() {
+        assert_eq!(Stack::for_frame((1_280, 480)).filter(), "vstack");
+    }
+
+    #[test]
+    fn a_square_frame_stacks_side_by_side() {
+        assert_eq!(Stack::for_frame((480, 480)).filter(), "hstack");
+    }
+
+    fn png(dir: &Path, name: &str, width: u32, height: u32) -> PathBuf {
+        let path = dir.join(name);
+        image::RgbImage::new(width, height)
+            .save(&path)
+            .expect("BUG: failed to write a test png");
+        path
+    }
+
+    #[test]
+    fn a_group_reports_the_size_its_frames_share() {
+        let dir = tempfile::tempdir().expect("BUG: failed to make a temp dir");
+        let baseline = png(dir.path(), "baseline.png", 638, 238);
+        let diff = png(dir.path(), "diff.png", 638, 238);
+
+        let size = common_frame_size(&[(baseline.as_path(), diff.as_path())])
+            .expect("frames of one size have a common size");
+        assert_eq!(size, (638, 238));
+    }
+
+    #[test]
+    fn mismatched_frames_are_named_rather_than_left_to_ffmpeg() {
+        let dir = tempfile::tempdir().expect("BUG: failed to make a temp dir");
+        let wide = png(dir.path(), "wide.png", 1_280, 480);
+        let small = png(dir.path(), "small.png", 317, 238);
+
+        let error = common_frame_size(&[(wide.as_path(), small.as_path())])
+            .expect_err("frames of two sizes cannot be stacked");
+        let message = error.to_string();
+        assert!(
+            message.contains("wide.png") && message.contains("small.png"),
+            "both frames belong in the error, got: {message}",
+        );
     }
 }

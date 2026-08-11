@@ -77,15 +77,6 @@ def format_time(seconds: float) -> str:
     return f'{minutes}m {secs:.0f}s'
 
 
-# Standard widget capture sizes: (name, WxH)
-CAPTURE_SIZES = [
-    ('full', '1280x480'),
-    ('large', '638x480'),
-    ('medium', '638x238'),
-    ('small', '317x238'),
-]
-
-
 def require_tools(*tools: tuple[str, str]) -> None:
     """Exit if any required CLI tool is missing. Each item is (binary, package)."""
     for binary, package in tools:

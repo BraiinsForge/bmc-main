@@ -24,7 +24,7 @@
 //! Discovers widgets (immediate `Cargo.toml`-bearing subdirs of each workspace),
 //! builds their WASM (one `cargo build --workspace` per workspace, or consumes
 //! pre-built `.wasm` files per workspace), then runs `capture run`
-//! for each size×variant combination.
+//! for every configured (dataset, target) pair.
 
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -42,7 +42,7 @@ use super::run::StackProfiling;
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
-use bmc_wasm_runtime::capture_config::CAPTURE_SIZES;
+use bmc_wasm_runtime::capture_config::CaptureConfig;
 
 /// Alignment column for right-side timings.
 const COL_WIDTH: usize = 50;
@@ -405,7 +405,6 @@ fn build_wasm_workspace(workspace: &Path, widgets: &[String]) -> Result<()> {
 
 // ── Per-example capture ─────────────────────────────────────────────
 
-/// Capture a single widget (all sizes × variants). Returns elapsed seconds.
 /// The rasteriser a capture named on its stderr, if the line is there.
 fn renderer_from_stderr(stderr: &[u8]) -> Option<&str> {
     std::str::from_utf8(stderr).ok()?.lines().find_map(|line| {
@@ -415,10 +414,8 @@ fn renderer_from_stderr(stderr: &[u8]) -> Option<&str> {
     })
 }
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "capture setup and the subprocess loop form one operation"
-)]
+/// Capture one widget across every configured target.
+/// Returns elapsed seconds and any stack high-water figure.
 fn capture_widget(
     binary: &Path,
     output_dir: &Path,
@@ -437,114 +434,97 @@ fn capture_widget(
         let _ = std::fs::remove_dir_all(&output_root);
     }
 
-    let fixture_sizes = configured_sizes(&cap_dir, stack_profiling)?;
-    if fixture_sizes.is_empty() {
+    // A widget with no config.toml loads an empty config and is skipped below;
+    // a config that exists but does not parse is an error, not a silent skip,
+    // which would drop the widget out of regression coverage.
+    let config = capture_config::load_from_capture_dir(&cap_dir)
+        .with_context(|| format!("{example}: capture config"))?;
+    let matrix = config.capture_matrix();
+    if matrix.is_empty() {
+        if stack_profiling.is_enabled() {
+            bail!("stack profile requires at least one configured dataset");
+        }
         return Ok((0.0, None));
     }
 
-    let variants = list_variants(
-        binary,
-        &wasm,
-        asset_root.as_deref(),
-        &cap_dir,
-        stack_profiling,
-    )?;
     let t0 = Instant::now();
     let mut stack_high_water = None;
 
-    for variant in &variants {
-        for &(size_name, w, h) in CAPTURE_SIZES {
-            let dimensions = format!("{w}x{h}");
-            if !fixture_sizes.contains(&size_name.to_owned()) {
-                continue;
-            }
+    for (dataset, target) in matrix {
+        let output = CaptureConfig::frame_dir(&output_root, dataset, target);
+        let label = format!("{target} {dataset}");
 
-            let output = if variant == "_default" {
-                output_root.join(size_name)
-            } else {
-                output_root.join(variant).join(size_name)
+        if show_progress {
+            progress(&format!("  {example} {label}..."));
+        }
+
+        let mut cmd = Command::new(binary);
+        cmd.args(["run"])
+            .arg(&wasm)
+            .arg(format!("--target={target}"))
+            .arg(format!("--dataset={dataset}"))
+            .arg(format!("--output={}", output.display()))
+            .arg(format!("--capture-dir={}", cap_dir.display()));
+        if let Some(asset_root) = &asset_root {
+            cmd.arg(format!("--asset-root={}", asset_root.display()));
+        }
+        if stack_profiling.is_enabled() {
+            let StackProfiling::Enabled { expected_origin } = stack_profiling else {
+                unreachable!("BUG: enabled stack profiling must carry its expected origin");
             };
+            cmd.arg(format!("--stack-profile={expected_origin}"));
+        }
+        // Give a failing run's replay.log the widget's own diagnostics —
+        // per-poll telemetry and the click/capture trace, not the frame trail.
+        // Respect an explicit RUST_LOG; the terminal stays clean
+        // because `distill_capture_error` drops these timeline lines.
+        if std::env::var_os("RUST_LOG").is_none() {
+            cmd.env("RUST_LOG", "bmc_wasm_runtime=info,capture=debug");
+        }
 
-            let size_label = if variant == "_default" {
-                size_name.to_owned()
-            } else {
-                format!("{variant}/{size_name}")
-            };
+        let result = cmd
+            .output()
+            .with_context(|| format!("failed to spawn capture for {example} {label}"))?;
 
-            if show_progress {
-                progress(&format!("  {example} {size_label}..."));
-            }
+        if let Some(name) = renderer_from_stderr(&result.stderr) {
+            super::run::note_renderer(name);
+        }
 
-            let mut cmd = Command::new(binary);
-            cmd.args(["run"])
-                .arg(&wasm)
-                .arg(format!("--size={dimensions}"))
-                .arg(format!("--output={}", output.display()))
-                .arg(format!("--capture-dir={}", cap_dir.display()));
-            if let Some(asset_root) = &asset_root {
-                cmd.arg(format!("--asset-root={}", asset_root.display()));
-            }
-            if variant != "_default" {
-                cmd.arg(format!("--variant={variant}"));
-            }
-            if stack_profiling.is_enabled() {
-                let StackProfiling::Enabled { expected_origin } = stack_profiling else {
-                    unreachable!("BUG: enabled stack profiling must carry its expected origin");
-                };
-                cmd.arg(format!("--stack-profile={expected_origin}"));
-            }
-            // Give a failing run's replay.log the widget's own diagnostics —
-            // per-poll telemetry and the click/capture trace, not the frame trail.
-            // Respect an explicit RUST_LOG; the terminal stays clean
-            // because `distill_capture_error` drops these timeline lines.
-            if std::env::var_os("RUST_LOG").is_none() {
-                cmd.env("RUST_LOG", "bmc_wasm_runtime=info,capture=debug");
-            }
-
-            let result = cmd
-                .output()
-                .with_context(|| format!("failed to spawn capture for {example} {size_label}"))?;
-
-            if let Some(name) = renderer_from_stderr(&result.stderr) {
-                super::run::note_renderer(name);
-            }
-
-            if !result.status.success() {
-                // Strip terminal colouring once: the child paints for a TTY,
-                // but the captured stderr feeds a file and a line filter here,
-                // both of which want plain text.
-                let stderr = console::strip_ansi_codes(&String::from_utf8_lossy(&result.stderr))
-                    .into_owned();
-                // Leave a trail a human or a follow-up agent can inspect:
-                // the frames the run captured plus the child's full stderr,
-                // not only the one-line distilled error. RUST_LOG=debug turns
-                // that log into a frame-by-frame replay trace.
-                let log_path = output.join("replay.log");
-                let _ = std::fs::create_dir_all(&output);
-                let _ = std::fs::write(&log_path, &stderr);
-                bail!(
-                    "capture failed for {example} {size_label}\n{}\n\
-                     frames captured: {}\n\
-                     replay log:      {}",
-                    distill_capture_error(&stderr),
-                    output.display(),
-                    log_path.display(),
-                );
-            }
-            if stack_profiling.is_enabled() {
-                let stdout = String::from_utf8(result.stdout)
-                    .context("capture stack profile emitted non-UTF-8 output")?;
-                let value = stdout
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("BMC_STACK_HIGH_WATER="))
-                    .map(str::parse::<u32>)
-                    .collect::<Result<Vec<_>, _>>()
-                    .context("capture stack profile emitted an invalid measurement")?
-                    .into_iter()
-                    .max()
-                    .context("capture stack profile emitted no measurement")?;
-                stack_high_water = Some(stack_high_water.map_or(value, |old: u32| old.max(value)));
-            }
+        if !result.status.success() {
+            // Strip terminal colouring once: the child paints for a TTY,
+            // but the captured stderr feeds a file and a line filter here,
+            // both of which want plain text.
+            let stderr =
+                console::strip_ansi_codes(&String::from_utf8_lossy(&result.stderr)).into_owned();
+            // Leave a trail a human or a follow-up agent can inspect:
+            // the frames the run captured plus the child's full stderr,
+            // not only the one-line distilled error. RUST_LOG=debug turns
+            // that log into a frame-by-frame replay trace.
+            let log_path = output.join("replay.log");
+            let _ = std::fs::create_dir_all(&output);
+            let _ = std::fs::write(&log_path, &stderr);
+            bail!(
+                "capture failed for {example} {label}\n{}\n\
+                 frames captured: {}\n\
+                 replay log:      {}",
+                distill_capture_error(&stderr),
+                output.display(),
+                log_path.display(),
+            );
+        }
+        if stack_profiling.is_enabled() {
+            let stdout = String::from_utf8(result.stdout)
+                .context("capture stack profile emitted non-UTF-8 output")?;
+            let value = stdout
+                .lines()
+                .filter_map(|line| line.strip_prefix("BMC_STACK_HIGH_WATER="))
+                .map(str::parse::<u32>)
+                .collect::<Result<Vec<_>, _>>()
+                .context("capture stack profile emitted an invalid measurement")?
+                .into_iter()
+                .max()
+                .context("capture stack profile emitted no measurement")?;
+            stack_high_water = Some(stack_high_water.map_or(value, |old: u32| old.max(value)));
         }
     }
 
@@ -727,71 +707,6 @@ fn report_capture_failures(failures: &[(&str, &str, String)]) -> Result<()> {
     bail!("capture failed for {ws}/{name}");
 }
 
-// ── Config helpers ──────────────────────────────────────────────────
-
-/// Read [fixtures] keys from capture/config.toml to determine which sizes have fixtures.
-fn configured_sizes(capture_dir: &Path, stack_profiling: StackProfiling) -> Result<Vec<String>> {
-    let config = match capture_config::load_from_capture_dir(capture_dir) {
-        Ok(config) => config,
-        Err(error) if stack_profiling.is_enabled() => {
-            return Err(error).context("stack profile requires a valid capture configuration");
-        }
-        Err(_) => return Ok(Vec::new()),
-    };
-    let sizes = config
-        .fixtures
-        .keys()
-        .filter(|size| config.sizes.is_empty() || config.sizes.contains(*size))
-        .cloned()
-        .collect::<Vec<_>>();
-    if sizes.is_empty() && stack_profiling.is_enabled() {
-        bail!("stack profile requires at least one configured fixture size");
-    }
-    Ok(sizes)
-}
-
-/// Query available KV variants via the capture binary.
-fn list_variants(
-    binary: &Path,
-    wasm: &Path,
-    asset_root: Option<&Path>,
-    capture_dir: &Path,
-    stack_profiling: StackProfiling,
-) -> Result<Vec<String>> {
-    let mut command = Command::new(binary);
-    command
-        .args(["run"])
-        .arg(wasm)
-        .arg("--list-variants")
-        .arg(format!("--capture-dir={}", capture_dir.display()));
-    if let Some(asset_root) = asset_root {
-        command.arg(format!("--asset-root={}", asset_root.display()));
-    }
-    let output = command.output();
-
-    let variants = match output {
-        Ok(out) if out.status.success() => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            stdout
-                .lines()
-                .map(|l| l.trim().to_owned())
-                .filter(|l| !l.is_empty())
-                .collect()
-        }
-        Ok(out) if stack_profiling.is_enabled() => {
-            bail!("stack profile could not discover variants: {}", out.status);
-        }
-        Err(error) if stack_profiling.is_enabled() => {
-            return Err(error).context("stack profile could not discover variants");
-        }
-        _ => vec!["_default".to_owned()],
-    };
-    if variants.is_empty() && stack_profiling.is_enabled() {
-        bail!("stack profile discovered no variants");
-    }
-    Ok(variants)
-}
-
 // ── Display helpers ─────────────────────────────────────────────────
 
 fn widget_status_line(ws: &str, name: &str, elapsed: f64) {
@@ -841,11 +756,9 @@ fn format_time(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
-
     use super::{
-        StackProfiling, WidgetEntry, configured_sizes, distill_capture_error,
-        ensure_profile_has_widgets, filter_profile_widgets, list_variants, renderer_from_stderr,
+        StackProfiling, WidgetEntry, distill_capture_error, ensure_profile_has_widgets,
+        filter_profile_widgets, renderer_from_stderr,
     };
 
     const STACK_PROFILING: StackProfiling = StackProfiling::Enabled {
@@ -905,59 +818,12 @@ mod tests {
     }
 
     #[test]
-    fn stack_profile_rejects_missing_capture_configuration() {
-        let missing = Path::new("/capture-config-that-does-not-exist");
-        assert!(configured_sizes(missing, STACK_PROFILING).is_err());
-        assert_eq!(
-            configured_sizes(missing, StackProfiling::Disabled)
-                .expect("missing configs remain skippable for ordinary capture"),
-            Vec::<String>::new()
-        );
-    }
-
-    #[test]
-    fn stack_profile_rejects_failed_variant_discovery() {
-        let missing = Path::new("/capture-binary-that-does-not-exist");
-        let placeholder = Path::new("/unused");
-        assert!(list_variants(missing, placeholder, None, placeholder, STACK_PROFILING).is_err());
-        assert_eq!(
-            list_variants(
-                missing,
-                placeholder,
-                None,
-                placeholder,
-                StackProfiling::Disabled,
-            )
-            .expect("variant discovery remains optional for ordinary capture"),
-            vec!["_default"]
-        );
-    }
-
-    #[test]
     fn stack_profile_rejects_an_empty_widget_set() {
         assert!(ensure_profile_has_widgets(&[], STACK_PROFILING).is_err());
         ensure_profile_has_widgets(&[], StackProfiling::Disabled)
             .expect("ordinary capture may select no widgets");
     }
 
-    #[test]
-    fn stack_profile_uses_only_fixture_sizes_enabled_by_the_config() {
-        let temp = tempfile::tempdir().expect("temporary capture directory must be created");
-        std::fs::write(temp.path().join("small.json"), "")
-            .expect("fixture placeholder must be writable");
-        std::fs::write(temp.path().join("full.json"), "")
-            .expect("fixture placeholder must be writable");
-        std::fs::write(
-            temp.path().join("config.toml"),
-            "sizes = [\"small\"]\n[fixtures]\nsmall = \"small.json\"\nfull = \"full.json\"\n",
-        )
-        .expect("capture config must be writable");
-
-        assert_eq!(
-            configured_sizes(temp.path(), STACK_PROFILING).expect("valid capture config must load"),
-            ["small"]
-        );
-    }
 
     #[test]
     fn stack_profile_skips_widgets_without_a_capture_config() {

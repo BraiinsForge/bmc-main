@@ -23,11 +23,12 @@
 """
 Render every viewport a WASM widget supports, populated with live data.
 
-Delegates to the capture tool's `--online --all-sizes` mode: the widget fetches
-its own data source (non-hermetic), the capture iterates the CAPTURE_SIZES the
-widget's manifest declares, and waits for the response before each shot — so the
-frames show real values instead of "-" placeholders. Each `<size>/frame_0000.png`
-is flattened up to `<out>/<size>.png`.
+Delegates to the capture tool's `--online --all-targets` mode: the widget fetches
+its own data source (non-hermetic), the capture iterates the configured targets
+the widget's manifest declares, and waits for the response before each shot — so
+the frames show real values instead of "-" placeholders. Each
+`<platform>/<viewport>/<dataset>/frame_0000.png` is flattened up to
+`<out>/<platform>-<viewport>.png`.
 
 Usage:
     ./tools/render_shots.py halving-countdown
@@ -74,7 +75,7 @@ def main() -> None:
             '--',
             'run',
             str(wasm_file),
-            '--all-sizes',
+            '--all-targets',
             '--online',
             '--output',
             str(output),
@@ -82,13 +83,19 @@ def main() -> None:
         check=True,
     )
 
-    # The capture writes `<out>/<size>/frame_0000.png`; flatten single-frame
-    # shots up to `<out>/<size>.png` for easy viewing.
-    for size_dir in sorted(p for p in output.iterdir() if p.is_dir()):
-        frames = sorted(size_dir.glob('*.png'))
+    # The capture writes `<out>/<platform>/<viewport>/<dataset>/frame_0000.png`;
+    # flatten single-frame shots up to `<out>/<platform>-<viewport>.png`.
+    # An online sweep renders one dataset per target, so that name is unique.
+    for frame_dir in sorted(p for p in output.glob('*/*/*') if p.is_dir()):
+        frames = sorted(frame_dir.glob('*.png'))
         if len(frames) == 1:
-            frames[0].rename(output / f'{size_dir.name}.png')
-            size_dir.rmdir()
+            platform, viewport, _dataset = frame_dir.relative_to(output).parts
+            frames[0].rename(output / f'{platform}-{viewport}.png')
+
+    # Prune what the flatten emptied, deepest first.
+    for path in sorted((p for p in output.rglob('*') if p.is_dir()), reverse=True):
+        if not any(path.iterdir()):
+            path.rmdir()
 
     print(f'done: {output}')
 

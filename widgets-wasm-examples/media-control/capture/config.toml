@@ -1,6 +1,9 @@
-record_timeout = 30
 settle_delay = 10
 
-[fixtures]
-full = "fixtures/full.jsonl.gz"
-large = "fixtures/large.jsonl.gz"
+[fixtures.bmc100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+targets = ["bmc100:full"]
+
+[fixtures.bmc100-large]
+path = "fixtures/bmc100-large.jsonl.gz"
+targets = ["bmc100:large"]

@@ -22,9 +22,9 @@ widgets-wasm/<widget>/
   manifest.json
   src/
   capture/
-    config.toml              # opts the widget into wasm-regression
-    fixtures/<size>.jsonl.gz # one per declared size
-    baselines.7z             # compressed reference frames
+    config.toml                 # opts the widget into wasm-regression
+    fixtures/<dataset>.jsonl.gz # one per recorded dataset
+    baselines.7z                # compressed reference frames
 ```
 
 `capture/baselines.7z` is tracked via Git LFS. Commit it like any other tracked file; the LFS smudge filter handles the
@@ -32,18 +32,21 @@ rest.
 
 ## Capture Config
 
-`capture/config.toml` declares which sizes the widget is captured at and tells the capture binary where to find each
-size's fixture.
+`capture/config.toml` names the datasets to replay and the targets each one runs against. A target is a
+`<platform>:<viewport>` pair drawn from the platform catalog (`bmc-wasm-runtime/src/platform_catalog.rs`), so the
+geometry, shape and DPI behind it are the device's own.
 
 ```toml
 # capture/config.toml
 settle_delay = 5
 
-[fixtures]
-small  = "fixtures/small.jsonl.gz"
-medium = "fixtures/medium.jsonl.gz"
-large  = "fixtures/large.jsonl.gz"
-full   = "fixtures/full.jsonl.gz"
+[fixtures.bmc100-small]
+path = "fixtures/bmc100-small.jsonl.gz"
+targets = ["bmc100:small"]
+
+[fixtures.bmc100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+targets = ["bmc100:full"]
 ```
 
 `settle_delay` is the number of extra frames rendered before **every** capture, ahead of the I/O drain that follows it.
@@ -53,14 +56,26 @@ Each settle frame advances the replay clock by 16 ms and delivers any timeline e
 visuals track the clock — a countdown, a progress meter, a time-windowed chart — captures a *later* state with a settle
 delay than without one, and the shift accumulates across a fixture's capture events. Changing it on such a widget
 therefore changes the frames, and baselines must be refreshed with them. The default zero is right for a widget that is
-ready as soon as its data lands.
+ready as soon as its data lands. A dataset may override it with its own `settle_delay`, and seed extra KV with
+`kv = { … }`.
 
 `honor_frame_schedule` replays at the widget's own `request_frame_after` cadence instead of rendering every virtual
 frame. Needed only by a widget that decouples its data fold from the render loop — fleet-management folds on a ~1 s
 interval — so replay samples the state hardware would.
 
-Only declare the sizes your widget actually supports. The capture binary skips sizes that don't have a fixture entry; CI
-will not invent baselines for missing sizes.
+Because a fixture carries no geometry of its own, one dataset can drive several targets:
+
+```toml
+[fixtures.common]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]
+```
+
+and one target can be driven by several datasets — give each a name that says what it holds. Frames land in
+`<output>/<platform>/<viewport>/<dataset>/`.
+
+Only declare targets your widget actually supports. Every target is validated against the catalog when the config loads,
+and against the manifest's `supported_viewports` (DPI bounds included) when it is captured.
 
 ## Fixtures Bake In The Whole Replay State
 
@@ -106,12 +121,12 @@ just wasm::record blockheight full
 
 Workflow:
 
-1. Pick the size first — the recipe argument selects which tile the testbed previews and which fixture filename it
-   writes to.
+1. Pick the size first — the recipe argument selects which tile the testbed previews.
 2. Adjust the Params panel and the System panel to the state you want frozen into the fixture header.
 3. Hit the Record button. From this point every fetch / websocket / param-update / system-update / user gesture is
    appended to the timeline. A `Capture` event marks where the visual snapshot is taken.
-4. Stop recording. The testbed writes `capture/fixtures/<size>.jsonl.gz` next to the widget.
+4. Stop recording. The testbed writes `capture/fixtures/<platform>-<viewport>.jsonl.gz` next to the widget and adds the
+   matching `[fixtures.<dataset>]` entry to `config.toml`, binding it to the target it was recorded at.
 
 For a widget with a credential slot, bind an account in the sidebar's Credentials section and pass the real secret via
 `just wasm::record <widget> <size> --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`, kept
@@ -120,7 +135,8 @@ recording session needs one real authenticated egress pass. The fixture stays se
 sees only the placeholder form, and substitution happens at the wire hop. Replay never needs the secret — recorded
 fetches are served by method + URL before substitution would run.
 
-Repeat per declared size. Each size produces an independent fixture file; sizes do not share state.
+Repeat per target you want covered. Each recording is an independent dataset; datasets do not share state. If several
+targets can replay the same recording, bind one dataset to all of them instead of recording it again.
 
 ## Request URLs Must Be Stable
 

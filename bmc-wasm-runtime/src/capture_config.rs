@@ -20,17 +20,17 @@
 
 //! Capture configuration parsing for visual regression testing.
 //!
-//! Shared between the capture binary and (in the future) testbed recording.
-//! Parses `capture/config.toml` from the widget crate root.
-//!
-//! Capture keeps its own `CAPTURE_SIZES` and does not yet consume the testbed
-//! platform catalog. Unifying capture sizes with the platform catalog is a
-//! separate later task.
+//! Parses `capture/config.toml` from the widget crate root,
+//! shared between the capture binary and testbed recording.
+//! Every target it names resolves through [`crate::platform_catalog`],
+//! so a config cannot describe a geometry the device does not have.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context as _, Result, bail};
+
+use crate::platform_catalog::Target;
 
 // ── Structured config errors ────────────────────────────────────────
 
@@ -50,46 +50,23 @@ impl std::fmt::Display for ConfigError {
 
 impl std::error::Error for ConfigError {}
 
-// ── Constants ────────────────────────────────────────────────────────
-
-/// Standard widget capture sizes: (name, width, height).
-pub const CAPTURE_SIZES: &[(&str, u32, u32)] = &[
-    ("full", 1280, 480),
-    ("large", 638, 480),
-    ("medium", 638, 238),
-    ("small", 317, 238),
-    ("round", 480, 480),
-    ("bmm101", 480, 320),
-];
-
-/// Valid size names for per-size fixture/interaction blocks.
-pub const VALID_SIZES: &[&str] = &["full", "large", "medium", "small", "round", "bmm101"];
-
-/// Look up a size name from pixel dimensions.
-#[must_use]
-pub fn size_name_from_dimensions(width: u32, height: u32) -> &'static str {
-    CAPTURE_SIZES
-        .iter()
-        .find(|(_, w, h)| *w == width && *h == height)
-        .map_or("custom", |(name, _, _)| name)
-}
-
-/// Format a size as "WxH" from its name. Returns `None` for unknown names.
-#[must_use]
-pub fn size_dimensions_str(name: &str) -> Option<String> {
-    CAPTURE_SIZES
-        .iter()
-        .find(|(n, _, _)| *n == name)
-        .map(|(_, w, h)| format!("{w}x{h}"))
-}
-
-/// Default settlement timeout in frames (~5s virtual time).
-pub const DEFAULT_TIMEOUT: u32 = 300;
-
-/// Hard wall-clock cap for recording mode (seconds).
-pub const RECORD_WALL_CAP_SECS: f64 = 120.0;
-
 // ── Types ────────────────────────────────────────────────────────────
+
+/// A named dataset and the targets it is replayed against.
+///
+/// A fixture carries no geometry of its own,
+/// so one dataset can drive several targets — and one target, several datasets.
+#[derive(Debug)]
+pub struct FixtureEntry {
+    /// Path to the `.jsonl.gz` recording, relative to the config directory
+    /// until [`load_from_capture_dir`] resolves it.
+    pub path: PathBuf,
+    pub targets: Vec<Target>,
+    /// KV seed applied on top of the fixture's own.
+    pub kv: HashMap<String, String>,
+    /// Overrides the config-wide `settle_delay` for this dataset.
+    pub settle_delay: Option<u32>,
+}
 
 #[derive(Debug, Default)]
 pub struct CaptureConfig {
@@ -104,28 +81,47 @@ pub struct CaptureConfig {
     ///
     /// Off by default, so every other widget keeps its per-frame baselines.
     pub honor_frame_schedule: bool,
-    /// Explicit list of sizes to capture (empty = all sizes).
-    pub sizes: Vec<String>,
-    pub timeout: u32,
-    /// Wall-clock cap for recording mode (seconds). Default: 120.
-    pub record_timeout: f64,
-    /// Default KV values applied to all variants.
-    pub kv: HashMap<String, String>,
-    /// Named KV variants (each merges on top of `kv`).
-    pub variants: Vec<CaptureVariant>,
-    /// Per-size unified fixture file paths (relative to `config_dir`).
-    /// Key = size name, value = path to `.json` fixture file.
-    pub fixtures: HashMap<String, PathBuf>,
+    /// Datasets by name. The name is the recorded file's stem, the config key,
+    /// and the last path component of the frames it produces.
+    pub fixtures: BTreeMap<String, FixtureEntry>,
     /// Directory containing `config.toml` (set by [`load_from_capture_dir`],
     /// `None` when parsed from a bare string). Used to resolve relative
     /// fixture paths.
     pub config_dir: Option<PathBuf>,
 }
 
-#[derive(Debug)]
-pub struct CaptureVariant {
-    pub name: String,
-    pub kv: HashMap<String, String>,
+impl CaptureConfig {
+    /// Every (dataset, target) pair to capture,
+    /// ordered by dataset name so a run's output is reproducible.
+    #[must_use]
+    pub fn capture_matrix(&self) -> Vec<(&str, Target)> {
+        self.fixtures
+            .iter()
+            .flat_map(|(name, entry)| {
+                entry
+                    .targets
+                    .iter()
+                    .map(move |target| (name.as_str(), *target))
+            })
+            .collect()
+    }
+
+    /// Frames to let a dataset settle after its I/O drains, before the shot.
+    #[must_use]
+    pub fn settle_delay_for(&self, dataset: &str) -> u32 {
+        self.fixtures
+            .get(dataset)
+            .and_then(|entry| entry.settle_delay)
+            .unwrap_or(self.settle_delay)
+    }
+
+    /// Where a (dataset, target) pair's frames live, under an output root.
+    #[must_use]
+    pub fn frame_dir(root: &Path, dataset: &str, target: Target) -> PathBuf {
+        root.join(target.platform.id)
+            .join(target.viewport.id)
+            .join(dataset)
+    }
 }
 
 // ── Config loading ───────────────────────────────────────────────────
@@ -137,11 +133,7 @@ pub fn load_from_capture_dir(capture_dir: &Path) -> Result<CaptureConfig> {
     if let Some(config) = try_load_from_dir(capture_dir)? {
         return Ok(config);
     }
-    Ok(CaptureConfig {
-        timeout: DEFAULT_TIMEOUT,
-        record_timeout: RECORD_WALL_CAP_SECS,
-        ..Default::default()
-    })
+    Ok(CaptureConfig::default())
 }
 
 /// Try to load and parse `config.toml` from a capture directory.
@@ -159,15 +151,21 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
     })?;
     // Resolve relative fixture paths against the config directory.
     config.config_dir = Some(capture_dir.to_owned());
-    for (size, path) in &mut config.fixtures {
-        if path.is_relative() {
-            *path = capture_dir.join(&*path);
+    for (dataset, entry) in &mut config.fixtures {
+        if entry.path.is_relative() {
+            entry.path = capture_dir.join(&entry.path);
         }
-        if !path.exists() {
+        if !entry.path.exists() {
             return Err(ConfigError {
                 path: candidate.clone(),
-                message: format!("fixture for size '{size}' not found: {}", path.display()),
-                hint: Some("record one with: make record EXAMPLE=<name> SIZE=<size>".into()),
+                message: format!("fixture '{dataset}' not found: {}", entry.path.display()),
+                hint: Some(format!(
+                    "record one with: just wasm::record <widget> {} {dataset}",
+                    entry
+                        .targets
+                        .first()
+                        .map_or_else(|| "<platform>:<viewport>".to_owned(), Target::to_string)
+                )),
             }
             .into());
         }
@@ -178,96 +176,116 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
 // ── Config parsing ───────────────────────────────────────────────────
 
 /// All known top-level keys in capture/config.toml.
-const KNOWN_CONFIG_KEYS: &[&str] = &[
-    "settle_delay",
-    "honor_frame_schedule",
-    "timeout",
-    "record_timeout",
-    "sizes",
-    "kv",
-    "variants",
-    "fixtures",
-];
+const KNOWN_CONFIG_KEYS: &[&str] = &["settle_delay", "honor_frame_schedule", "fixtures"];
 
-#[expect(clippy::cast_precision_loss)]
+/// All known keys inside a `[fixtures.<name>]` table.
+const KNOWN_FIXTURE_KEYS: &[&str] = &["path", "targets", "kv", "settle_delay"];
+
 pub fn parse_capture_config(content: &str) -> Result<CaptureConfig> {
     let table: toml::Table = content.parse().context("capture.toml is not valid TOML")?;
 
-    // Reject unknown keys early so typos don't silently vanish.
-    let unknown: Vec<&String> = table
-        .keys()
-        .filter(|k| !KNOWN_CONFIG_KEYS.contains(&k.as_str()))
-        .collect();
-    if !unknown.is_empty() {
-        bail!(
-            "unknown key(s): {}",
-            unknown
-                .iter()
-                .map(|k| format!("'{k}'"))
-                .collect::<Vec<_>>()
-                .join(", "),
-        );
-    }
-
-    let settle_delay = parse_optional_u32(&table, "settle_delay")?.unwrap_or(0);
-    let honor_frame_schedule =
-        parse_optional_bool(&table, "honor_frame_schedule")?.unwrap_or(false);
-    let timeout = parse_optional_u32(&table, "timeout")?.unwrap_or(DEFAULT_TIMEOUT);
-
-    let record_timeout = match table.get("record_timeout") {
-        Some(toml::Value::Float(f)) => *f,
-        Some(toml::Value::Integer(n)) => *n as f64,
-        Some(_) => bail!("'record_timeout' must be a number (seconds)"),
-        None => RECORD_WALL_CAP_SECS,
-    };
-
-    let sizes = parse_string_array(&table, "sizes")?;
-
-    let kv = match table.get("kv") {
-        Some(toml::Value::Table(t)) => parse_kv_table(t, "kv")?,
-        Some(_) => bail!("'[kv]' must be a table of string key-value pairs"),
-        None => HashMap::new(),
-    };
-
-    let variants = parse_variants(&table)?;
-
-    let fixtures = parse_fixtures_table(&table)?;
+    reject_unknown_keys(table.keys(), KNOWN_CONFIG_KEYS, "")?;
 
     Ok(CaptureConfig {
-        settle_delay,
-        honor_frame_schedule,
-        sizes,
-        timeout,
-        record_timeout,
-        kv,
-        variants,
-        fixtures,
+        settle_delay: parse_optional_u32(&table, "settle_delay")?.unwrap_or(0),
+        honor_frame_schedule: parse_optional_bool(&table, "honor_frame_schedule")?.unwrap_or(false),
+        fixtures: parse_fixtures_table(&table)?,
         config_dir: None,
     })
 }
 
-// ── [fixtures] table parsing ─────────────────────────────────────────
+fn reject_unknown_keys<'a>(
+    keys: impl Iterator<Item = &'a String>,
+    known: &[&str],
+    scope: &str,
+) -> Result<()> {
+    let unknown: Vec<String> = keys
+        .filter(|k| !known.contains(&k.as_str()))
+        .map(|k| format!("'{scope}{k}'"))
+        .collect();
+    if !unknown.is_empty() {
+        bail!(
+            "unknown key(s): {} — valid keys: {}",
+            unknown.join(", "),
+            known.join(", "),
+        );
+    }
+    Ok(())
+}
 
-fn parse_fixtures_table(table: &toml::Table) -> Result<HashMap<String, PathBuf>> {
-    let Some(toml::Value::Table(t)) = table.get("fixtures") else {
-        // No [fixtures] section or wrong type — that's fine for legacy configs.
-        if table.get("fixtures").is_some_and(|v| !v.is_table()) {
-            bail!("'[fixtures]' must be a table mapping size names to fixture file paths");
-        }
-        return Ok(HashMap::new());
+// ── [fixtures.<name>] table parsing ──────────────────────────────────
+
+fn parse_fixtures_table(table: &toml::Table) -> Result<BTreeMap<String, FixtureEntry>> {
+    let Some(value) = table.get("fixtures") else {
+        return Ok(BTreeMap::new());
+    };
+    let toml::Value::Table(fixtures) = value else {
+        bail!("'[fixtures]' must be a table of named datasets");
     };
 
-    let mut map = HashMap::with_capacity(t.len());
-    for (key, val) in t {
-        if !VALID_SIZES.contains(&key.as_str()) {
-            bail!("fixtures: unknown size '{key}' — valid sizes: {VALID_SIZES:?}");
-        }
-        let path = val
-            .as_str()
-            .with_context(|| format!("fixtures.{key} must be a string path"))?;
-        map.insert(key.clone(), PathBuf::from(path));
+    let mut map = BTreeMap::new();
+    for (dataset, value) in fixtures {
+        let toml::Value::Table(entry) = value else {
+            bail!(
+                "'[fixtures.{dataset}]' must be a table with 'path' and 'targets' \
+                 (a bare path is the retired size-keyed form)"
+            );
+        };
+        map.insert(
+            dataset.clone(),
+            parse_fixture_entry(dataset, entry).with_context(|| format!("fixtures.{dataset}"))?,
+        );
     }
     Ok(map)
+}
+
+/// Whether a dataset name is safe to use as one.
+///
+/// The name becomes a file name, a config key and an output directory,
+/// so anything path-like would put frames or fixtures somewhere unintended.
+#[must_use]
+pub fn is_valid_dataset_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && name != "."
+        && name != ".."
+}
+
+fn parse_fixture_entry(dataset: &str, entry: &toml::Table) -> Result<FixtureEntry> {
+    if !is_valid_dataset_name(dataset) {
+        bail!("dataset name must be non-empty and use only letters, digits, '-', '_' or '.'");
+    }
+
+    reject_unknown_keys(entry.keys(), KNOWN_FIXTURE_KEYS, &format!("{dataset}."))?;
+
+    let path = entry
+        .get("path")
+        .and_then(toml::Value::as_str)
+        .context("'path' is required and must be a string")?;
+
+    let target_names = parse_string_array(entry, "targets")?;
+    if target_names.is_empty() {
+        bail!("'targets' is required and must list at least one <platform>:<viewport>");
+    }
+    let targets = target_names
+        .iter()
+        .map(|name| name.parse::<Target>().map_err(anyhow::Error::from))
+        .collect::<Result<Vec<_>>>()?;
+
+    let kv = match entry.get("kv") {
+        Some(toml::Value::Table(t)) => parse_kv_table(t, "kv")?,
+        Some(_) => bail!("'kv' must be a table of string key-value pairs"),
+        None => HashMap::new(),
+    };
+
+    Ok(FixtureEntry {
+        path: PathBuf::from(path),
+        targets,
+        kv,
+        settle_delay: parse_optional_u32(entry, "settle_delay")?,
+    })
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -322,40 +340,6 @@ fn parse_kv_table(t: &toml::Table, ctx: &str) -> Result<HashMap<String, String>>
     Ok(map)
 }
 
-fn parse_variants(table: &toml::Table) -> Result<Vec<CaptureVariant>> {
-    match table.get("variants") {
-        Some(toml::Value::Array(arr)) => {
-            let mut out = Vec::with_capacity(arr.len());
-            for (i, v) in arr.iter().enumerate() {
-                let t = v
-                    .as_table()
-                    .with_context(|| format!("[[variants]][{i}] must be a table"))?;
-                let name = t
-                    .get("name")
-                    .and_then(toml::Value::as_str)
-                    .with_context(|| format!("[[variants]][{i}] must have a 'name' string"))?
-                    .to_owned();
-                let variant_kv = match t.get("kv") {
-                    Some(toml::Value::Table(kt)) => {
-                        parse_kv_table(kt, &format!("variants[{i}].kv"))?
-                    }
-                    Some(_) => {
-                        bail!("variants[{i}].kv must be a table of string key-value pairs")
-                    }
-                    None => HashMap::new(),
-                };
-                out.push(CaptureVariant {
-                    name,
-                    kv: variant_kv,
-                });
-            }
-            Ok(out)
-        }
-        Some(_) => bail!("'variants' must be an array of tables (use [[variants]])"),
-        None => Ok(Vec::new()),
-    }
-}
-
 // ── Tests ────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -395,14 +379,33 @@ mod tests {
     fn config_all_known_keys_accepted() {
         let toml = r#"
             settle_delay = 5
-            timeout = 100
-            record_timeout = 30
-            sizes = ["480x480"]
+            honor_frame_schedule = true
 
-            [kv]
-            theme = "dark"
+            [fixtures.mining]
+            path = "fixtures/mining.jsonl.gz"
+            targets = ["bmm100:full"]
+            settle_delay = 40
+            kv = { theme = "dark" }
         "#;
-        parse_capture_config(toml).expect("BUG: all known keys should be accepted");
+        let cfg = parse_capture_config(toml).expect("BUG: all known keys should be accepted");
+        assert_eq!(cfg.settle_delay_for("mining"), 40);
+        assert_eq!(cfg.fixtures["mining"].kv["theme"], "dark");
+    }
+
+    #[test]
+    fn retired_keys_are_rejected() {
+        for retired in [
+            "timeout = 100",
+            "record_timeout = 30",
+            r#"sizes = ["full"]"#,
+            "[kv]\ntheme = \"dark\"",
+            "[[variants]]\nname = \"dark\"",
+        ] {
+            assert!(
+                parse_capture_config(retired).is_err(),
+                "retired key must be rejected: {retired}"
+            );
+        }
     }
 
     #[test]
@@ -446,86 +449,172 @@ mod tests {
     }
 
     #[test]
-    fn config_sizes_parsed() {
+    fn settle_delay_falls_back_to_the_config_wide_value() {
         let toml = r#"
-            sizes = ["full", "small"]
+            settle_delay = 5
+
+            [fixtures.common]
+            path = "fixtures/common.jsonl.gz"
+            targets = ["bmc100:full"]
         "#;
-        let cfg = parse_capture_config(toml).expect("BUG: sizes config should parse");
-        assert_eq!(cfg.sizes, vec!["full", "small"]);
-    }
-
-    #[test]
-    fn config_kv_parsed() {
-        let toml = r#"
-            [kv]
-            theme = "dark"
-            lang = "en"
-        "#;
-        let cfg = parse_capture_config(toml).expect("BUG: kv config should parse");
-        assert_eq!(cfg.kv["theme"], "dark");
-        assert_eq!(cfg.kv["lang"], "en");
-    }
-
-    #[test]
-    fn config_variants_parsed() {
-        let toml = r#"
-            [[variants]]
-            name = "dark"
-
-            [variants.kv]
-            theme = "dark"
-
-            [[variants]]
-            name = "light"
-
-            [variants.kv]
-            theme = "light"
-        "#;
-        let cfg = parse_capture_config(toml).expect("BUG: variants config should parse");
-        assert_eq!(cfg.variants.len(), 2);
-        assert_eq!(cfg.variants[0].name, "dark");
-        assert_eq!(cfg.variants[0].kv["theme"], "dark");
-        assert_eq!(cfg.variants[1].name, "light");
+        let cfg = parse_capture_config(toml).expect("BUG: config should parse");
+        assert_eq!(cfg.settle_delay_for("common"), 5);
+        assert_eq!(
+            cfg.settle_delay_for("no-such-dataset"),
+            5,
+            "an unknown dataset still reports the config-wide default"
+        );
     }
 
     // ── [fixtures] table ─────────────────────────────────────────────
 
     #[test]
-    fn parse_fixtures_table_valid() {
+    fn one_dataset_binds_to_many_targets() {
         let toml = r#"
-            [fixtures]
-            full = "fixtures/full.json"
-            large = "fixtures/full.json"
-            small = "fixtures/small.json"
+            [fixtures.common]
+            path = "fixtures/common.jsonl.gz"
+            targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]
         "#;
-        let cfg = parse_capture_config(toml).expect("BUG: fixtures config should parse");
-        assert_eq!(cfg.fixtures.len(), 3);
-        assert_eq!(cfg.fixtures["full"], PathBuf::from("fixtures/full.json"));
-        assert_eq!(cfg.fixtures["small"], PathBuf::from("fixtures/small.json"));
+        let cfg = parse_capture_config(toml).expect("BUG: multi-target config should parse");
+        let matrix = cfg.capture_matrix();
+        assert_eq!(matrix.len(), 4);
+        assert!(matrix.iter().all(|(dataset, _)| *dataset == "common"));
+        assert_eq!(matrix[0].1.to_string(), "bmc100:full");
     }
 
     #[test]
-    fn parse_fixtures_invalid_size_rejected() {
+    fn one_target_takes_many_datasets() {
         let toml = r#"
-            [fixtures]
-            huge = "fixtures/huge.json"
+            [fixtures.mining]
+            path = "fixtures/mining.jsonl.gz"
+            targets = ["bfm100:full"]
+
+            [fixtures.idle]
+            path = "fixtures/idle.jsonl.gz"
+            targets = ["bfm100:full"]
         "#;
-        let err =
-            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
-        let msg = format!("{err:#}");
-        assert!(msg.contains("unknown size 'huge'"), "{msg}");
+        let cfg = parse_capture_config(toml).expect("BUG: multi-dataset config should parse");
+        let matrix = cfg.capture_matrix();
+        assert_eq!(matrix.len(), 2);
+        assert_eq!(
+            matrix.iter().map(|(d, _)| *d).collect::<Vec<_>>(),
+            ["idle", "mining"],
+            "datasets iterate in name order so a run is reproducible",
+        );
     }
 
     #[test]
-    fn parse_fixtures_non_string_rejected() {
-        let toml = r"
-            [fixtures]
-            full = 42
-        ";
+    fn frames_land_under_platform_viewport_dataset() {
+        let target: Target = "bmc100:small".parse().expect("BUG: target must parse");
+        assert_eq!(
+            CaptureConfig::frame_dir(Path::new("out"), "common", target),
+            PathBuf::from("out/bmc100/small/common"),
+        );
+    }
+
+    #[test]
+    fn fixture_entry_requires_path_and_targets() {
+        let missing_targets = r#"
+            [fixtures.mining]
+            path = "fixtures/mining.jsonl.gz"
+        "#;
+        let err = parse_capture_config(missing_targets)
+            .expect_err("BUG: a dataset without targets must fail");
+        assert!(format!("{err:#}").contains("targets"), "{err:#}");
+
+        let missing_path = r#"
+            [fixtures.mining]
+            targets = ["bmc100:full"]
+        "#;
+        let err = parse_capture_config(missing_path)
+            .expect_err("BUG: a dataset without a path must fail");
+        assert!(format!("{err:#}").contains("path"), "{err:#}");
+
+        let empty_targets = r#"
+            [fixtures.mining]
+            path = "fixtures/mining.jsonl.gz"
+            targets = []
+        "#;
         let err =
-            parse_capture_config(toml).expect_err("BUG: invalid capture config must fail to parse");
+            parse_capture_config(empty_targets).expect_err("BUG: an empty targets list must fail");
+        assert!(format!("{err:#}").contains("targets"), "{err:#}");
+    }
+
+    #[test]
+    fn unknown_targets_name_what_is_available() {
+        for (toml, expected) in [
+            (
+                r#"
+                [fixtures.mining]
+                path = "f.jsonl.gz"
+                targets = ["nope:full"]
+                "#,
+                "bmc100",
+            ),
+            (
+                r#"
+                [fixtures.mining]
+                path = "f.jsonl.gz"
+                targets = ["bmm100:small"]
+                "#,
+                "full",
+            ),
+            (
+                r#"
+                [fixtures.mining]
+                path = "f.jsonl.gz"
+                targets = ["bmc100"]
+                "#,
+                "<platform>:<viewport>",
+            ),
+        ] {
+            let err = parse_capture_config(toml).expect_err("BUG: a bad target must fail to parse");
+            assert!(format!("{err:#}").contains(expected), "{err:#}");
+        }
+    }
+
+    #[test]
+    fn the_retired_size_keyed_form_is_rejected_with_a_hint() {
+        let toml = r#"
+            [fixtures]
+            full = "fixtures/full.jsonl.gz"
+        "#;
+        let err = parse_capture_config(toml)
+            .expect_err("BUG: the size-keyed fixture form must fail to parse");
         let msg = format!("{err:#}");
-        assert!(msg.contains("fixtures.full"), "{msg}");
+        assert!(
+            msg.contains("targets") && msg.contains("size-keyed"),
+            "{msg}"
+        );
+    }
+
+    #[test]
+    fn a_path_like_dataset_name_is_rejected() {
+        for bad in ["..", "../escape", "a/b", "with space", "sub/dir"] {
+            let toml = format!(
+                r#"
+                [fixtures."{bad}"]
+                path = "f.jsonl.gz"
+                targets = ["bmc100:full"]
+                "#
+            );
+            assert!(
+                parse_capture_config(&toml).is_err(),
+                "dataset name '{bad}' becomes a path component and must be rejected",
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_fixture_key_is_rejected() {
+        let toml = r#"
+            [fixtures.mining]
+            path = "f.jsonl.gz"
+            targets = ["bmc100:full"]
+            sizes = ["full"]
+        "#;
+        let err = parse_capture_config(toml).expect_err("BUG: unknown fixture key must fail");
+        assert!(format!("{err:#}").contains("sizes"), "{err:#}");
     }
 
     #[test]
@@ -540,43 +629,18 @@ mod tests {
     }
 
     #[test]
-    fn config_with_only_fixtures_accepted() {
+    fn a_round_target_keeps_its_shape_through_the_config() {
         let toml = r#"
-            settle_delay = 10
-
-            [fixtures]
-            full = "fixtures/full.json"
-            large = "fixtures/large.json"
-        "#;
-        let cfg = parse_capture_config(toml).expect("BUG: fixtures-only config should parse");
-        assert_eq!(cfg.fixtures.len(), 2);
-    }
-
-    #[test]
-    fn round_size_name_is_recognized_from_480_square() {
-        assert_eq!(size_name_from_dimensions(480, 480), "round");
-        assert_eq!(size_dimensions_str("round").as_deref(), Some("480x480"));
-    }
-
-    #[test]
-    fn bmm101_size_name_is_recognized_from_480x320() {
-        assert_eq!(size_name_from_dimensions(480, 320), "bmm101");
-        assert_eq!(size_dimensions_str("bmm101").as_deref(), Some("480x320"));
-    }
-
-    #[test]
-    fn config_accepts_round_size_and_fixture() {
-        let toml = r#"
-            sizes = ["round"]
-
-            [fixtures]
-            round = "fixtures/round.jsonl.gz"
+            [fixtures.round]
+            path = "fixtures/round.jsonl.gz"
+            targets = ["bfm100:full"]
         "#;
         let cfg = parse_capture_config(toml).expect("BUG: round config should parse");
-        assert_eq!(cfg.sizes, vec!["round"]);
+        let (_, target) = cfg.capture_matrix()[0];
         assert_eq!(
-            cfg.fixtures["round"],
-            PathBuf::from("fixtures/round.jsonl.gz")
+            target.viewport.shape,
+            crate::platform_catalog::DisplayShape::Round
         );
+        assert_eq!((target.viewport.width, target.viewport.height), (480, 480));
     }
 }

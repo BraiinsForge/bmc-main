@@ -1,6 +1,5 @@
 settle_delay = 40
-timeout = 600
-sizes = ["round"]
 
-[fixtures]
-round = "fixtures/round.jsonl.gz"
+[fixtures.bfm100-full]
+path = "fixtures/bfm100-full.jsonl.gz"
+targets = ["bfm100:full"]

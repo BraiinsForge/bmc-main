@@ -181,8 +181,8 @@ verify-all:
         --workspace {{ dir }}/../widgets-wasm \
         --output-dir {{ output_dir }}
 
-# Preview a capture. Pass SIZE=small etc. to filter, or omit for all sizes.
-preview WIDGET SIZE="" ARGS="":
+# Preview a capture. Pass TARGET=bmc100:small etc. to filter, or omit for all.
+preview WIDGET TARGET="" ARGS="":
     cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- preview \
         --output={{ output_dir }}/{{ WIDGET }} \
-        {{ if SIZE != "" { "--size " + SIZE } else { "" } }} {{ ARGS }}
+        {{ if TARGET != "" { "--target " + TARGET } else { "" } }} {{ ARGS }}

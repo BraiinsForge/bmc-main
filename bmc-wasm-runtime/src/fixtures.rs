@@ -176,7 +176,7 @@ pub fn write_jsonl_fixture(
     Ok(())
 }
 
-/// Update `config.toml` to add/update a `[fixtures].<size>` entry.
+/// Update `config.toml` to add or refresh a `[fixtures.<dataset>]` entry.
 ///
 /// Creates the file if it doesn't exist.
 /// Edits in place with `toml_edit` so the file's comments
@@ -184,14 +184,26 @@ pub fn write_jsonl_fixture(
 /// round-trip drops both.
 pub fn update_config_toml_fixtures(
     config_path: &Path,
-    size_name: &str,
+    dataset: &str,
     fixture_rel_path: &str,
+    target: crate::platform_catalog::Target,
 ) -> Result<()> {
     let content = std::fs::read_to_string(config_path).unwrap_or_default();
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .with_context(|| format!("failed to parse {}", config_path.display()))?;
-    doc["fixtures"][size_name] = toml_edit::value(fixture_rel_path);
+    doc["fixtures"][dataset]["path"] = toml_edit::value(fixture_rel_path);
+
+    // Leave any targets the dataset already drives in place; a re-recording
+    // refreshes the data, it does not narrow the bindings.
+    let targets =
+        doc["fixtures"][dataset]["targets"].or_insert(toml_edit::value(toml_edit::Array::new()));
+    if let Some(array) = targets.as_array_mut() {
+        let wanted = target.to_string();
+        if !array.iter().any(|t| t.as_str() == Some(wanted.as_str())) {
+            array.push(wanted);
+        }
+    }
 
     if let Some(parent) = config_path.parent() {
         let _ = std::fs::create_dir_all(parent);

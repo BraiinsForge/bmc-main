@@ -1318,6 +1318,12 @@ impl TestbedApp {
         let recording_state = cli.record_size.as_ref().map(|size_name| {
             let active_tile = record_size_to_idx(size_name)
                 .expect("BUG: record size already validated by validate_recording_target");
+            let viewport = active_platform.viewports[active_tile];
+            let target = platform_catalog::Target {
+                platform: active_platform,
+                viewport: &active_platform.viewports[active_tile],
+            };
+            let dataset = format!("{}-{}", active_platform.id, viewport.id);
             let widget_root = cli.resolved_widget_root();
             // Capture's fixture-header parser requires a timezone suffix on the time
             // field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime is rejected.
@@ -1333,7 +1339,8 @@ impl TestbedApp {
                 .collect();
             RecordingState {
                 active_tile,
-                size_name: size_name.clone(),
+                target,
+                dataset,
                 events: Vec::new(),
                 gesture: None,
                 widget_root,

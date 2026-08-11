@@ -97,36 +97,72 @@ impl From<Option<i32>> for StackProfiling {
 pub struct RunArgs {
     pub wasm_path: PathBuf,
     pub asset_root: Option<PathBuf>,
-    pub size: Option<String>,
+    /// `<platform>:<viewport>` to render.
+    pub target: Option<String>,
+    /// Which dataset from `[fixtures]` to replay. Defaults to the only one
+    /// bound to the target.
+    pub dataset: Option<String>,
     pub output_dir: Option<PathBuf>,
     pub fixture: Option<PathBuf>,
-    pub variant: Option<String>,
-    pub list_variants: bool,
     /// Path to the `capture/` directory containing `config.toml` and fixtures.
     /// Optional in `--online` mode.
     pub capture_dir: Option<PathBuf>,
     /// Preview against live data: run non-hermetic so the widget fetches its
     /// own data source, and wait for the response before the shot.
     pub online: bool,
-    /// Render every `CAPTURE_SIZES` viewport the widget's manifest supports,
-    /// each into `<output>/<size>/`. Ignores `--size`.
-    pub all_sizes: bool,
+    /// Render every configured (dataset, target) pair the manifest supports,
+    /// or with `--online`, every target the catalog offers. Ignores `--target`.
+    pub all_targets: bool,
     pub stack_profiling: StackProfiling,
 }
 
-/// Parsed capture parameters (size string → width/height/name).
+/// One (dataset, target) capture.
 struct CaptureCtx {
     wasm_path: PathBuf,
     runtime_wasm_path: PathBuf,
     asset_root: PathBuf,
+    target: Target,
+    /// Dataset name, and the last component of the frame directory.
+    dataset: String,
+    /// The target viewport's dimensions, carried alongside it
+    /// because the render path reaches for them on nearly every line.
     width: u32,
     height: u32,
-    size_name: String,
     output_dir: PathBuf,
     fixture: Option<PathBuf>,
-    variant: Option<String>,
     online: bool,
     stack_profiling: StackProfiling,
+}
+
+impl CaptureCtx {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "one capture's whole identity, each part from a different source"
+    )]
+    fn new(
+        wasm_path: PathBuf,
+        prepared: &bmc_wasm_runtime::fixtures::PreparedWidget,
+        target: Target,
+        dataset: String,
+        output_dir: PathBuf,
+        fixture: Option<PathBuf>,
+        online: bool,
+        stack_profiling: StackProfiling,
+    ) -> Self {
+        Self {
+            wasm_path,
+            runtime_wasm_path: prepared.wasm_path().to_owned(),
+            asset_root: prepared.asset_root().to_owned(),
+            target,
+            dataset,
+            width: target.viewport.width,
+            height: target.viewport.height,
+            output_dir,
+            fixture,
+            online,
+            stack_profiling,
+        }
+    }
 }
 
 pub fn execute(args: RunArgs) -> Result<()> {
@@ -135,70 +171,77 @@ pub fn execute(args: RunArgs) -> Result<()> {
         None => CaptureConfig::default(),
     };
 
-    // --list-variants: print variant names and exit
-    if args.list_variants {
-        if config.variants.is_empty() {
-            println!("_default");
-        } else {
-            for v in &config.variants {
-                println!("{}", v.name);
-            }
-        }
-        return Ok(());
-    }
-
     let prepared = bmc_wasm_runtime::fixtures::PreparedWidget::new(
         &args.wasm_path,
         args.asset_root.as_deref(),
     )?;
 
-    if args.all_sizes {
-        return run_all_supported_sizes(&args, &config, &prepared);
+    if args.all_targets {
+        return run_all_supported_targets(&args, &config, &prepared);
     }
 
-    // Parse size string (required for actual capture)
-    let size_str = args.size.context("--size=<WxH> is required")?;
+    let target: Target = args
+        .target
+        .context("--target=<platform>:<viewport> is required")?
+        .parse()?;
     let output_dir = args.output_dir.context("--output=<dir> is required")?;
-    let (w, h) = size_str
-        .split_once('x')
-        .context("--size must be WxH (e.g. 1280x480)")?;
-    let width: u32 = w.parse().context("invalid width")?;
-    let height: u32 = h.parse().context("invalid height")?;
-
-    let size_name =
-        bmc_wasm_runtime::capture_config::size_name_from_dimensions(width, height).to_owned();
-
-    // Check if this size is in the allowed list (empty = all sizes allowed)
-    if !config.sizes.is_empty() && !config.sizes.contains(&size_name) {
-        eprintln!("Skipping size '{size_name}' (not in capture.toml sizes)");
-        return Ok(());
-    }
-
-    let ctx = CaptureCtx {
-        wasm_path: args.wasm_path,
-        runtime_wasm_path: prepared.wasm_path().to_owned(),
-        asset_root: prepared.asset_root().to_owned(),
-        width,
-        height,
-        size_name,
-        output_dir,
-        fixture: args.fixture,
-        variant: args.variant,
-        online: args.online,
-        stack_profiling: args.stack_profiling,
+    let dataset = match args.dataset {
+        Some(name) => name,
+        None => sole_dataset_for(&config, target, args.online || args.fixture.is_some())?,
     };
+
+    let ctx = CaptureCtx::new(
+        args.wasm_path,
+        &prepared,
+        target,
+        dataset,
+        output_dir,
+        args.fixture,
+        args.online,
+        args.stack_profiling,
+    );
 
     run_capture(&ctx, &config)
 }
 
+/// The one dataset bound to a target, when `--dataset` is omitted.
+///
+/// `--online` and an explicit `--fixture` bring their own data,
+/// so they need no configured dataset — only a name to file frames under.
+fn sole_dataset_for(
+    config: &CaptureConfig,
+    target: Target,
+    brings_own_data: bool,
+) -> Result<String> {
+    let bound: Vec<&str> = config
+        .capture_matrix()
+        .into_iter()
+        .filter(|(_, t)| t.platform.id == target.platform.id && t.viewport.id == target.viewport.id)
+        .map(|(dataset, _)| dataset)
+        .collect();
+    match bound.as_slice() {
+        [] if brings_own_data => Ok(target.viewport.id.to_owned()),
+        [] => bail!(
+            "target '{target}' has no dataset — add a [fixtures.<name>] entry \
+             for it, or pass --fixture or --online"
+        ),
+        [only] => Ok((*only).to_owned()),
+        many => bail!(
+            "target '{target}' has {} datasets ({}) — pass --dataset to pick one",
+            many.len(),
+            many.join(", "),
+        ),
+    }
+}
+
 // ── Capture entry point ─────────────────────────────────────────────
 
-/// Resolve the offline replay fixture for a size: an explicit `--fixture`
-/// wins, else the size's `config.toml` entry. `None` = no fixture recorded.
+/// Resolve the offline replay fixture: an explicit `--fixture` wins,
+/// else the dataset's `config.toml` entry. `None` = no such dataset.
 fn offline_fixture_path(ctx: &CaptureCtx, config: &CaptureConfig) -> Option<PathBuf> {
     ctx.fixture
         .clone()
-        .or_else(|| config.fixtures.get(&ctx.size_name).cloned())
+        .or_else(|| config.fixtures.get(&ctx.dataset).map(|e| e.path.clone()))
 }
 
 fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
@@ -212,8 +255,8 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
             .and_then(|r| r.file_name().map(|n| n.to_string_lossy().into_owned()))
             .unwrap_or_else(|| "<name>".into());
         format!(
-            "no unified fixture for size '{}' — record one with: make record EXAMPLE={} SIZE={}",
-            ctx.size_name, example_name, ctx.size_name
+            "no fixture '{}' — record one with: just wasm::record {example_name} {} {}",
+            ctx.dataset, ctx.target, ctx.dataset
         )
     })?;
     let fixture = load_unified_fixture(&fixture_path)
@@ -279,10 +322,13 @@ fn online_default_params(
     ))
 }
 
-/// Render every `CAPTURE_SIZES` viewport the widget's manifest supports, each
-/// into `<output>/<size>/`. The size list lives in one place (`CAPTURE_SIZES`);
-/// this only renders the subset the manifest declares.
-fn run_all_supported_sizes(
+/// Render every (dataset, target) pair into `<output>/<platform>/<viewport>/<dataset>/`,
+/// skipping targets the widget's manifest declines.
+///
+/// Offline that is the configured matrix. `--online` replays no dataset,
+/// so it sweeps the catalog and names each shot after its viewport,
+/// as `sole_dataset_for` does for a single target.
+fn run_all_supported_targets(
     args: &RunArgs,
     config: &CaptureConfig,
     prepared: &bmc_wasm_runtime::fixtures::PreparedWidget,
@@ -293,43 +339,68 @@ fn run_all_supported_sizes(
         .context("--output=<dir> is required")?;
     let manifest = load_widget_manifest(&args.wasm_path)?;
 
+    let matrix = if args.online {
+        catalog_matrix()
+    } else {
+        config.capture_matrix()
+    };
+    if matrix.is_empty() {
+        bail!("no datasets configured — add a [fixtures.<name>] entry or use --online");
+    }
+
     let mut rendered = 0_usize;
-    let mut skipped = 0_usize;
-    for &(name, width, height) in bmc_wasm_runtime::capture_config::CAPTURE_SIZES {
-        if !manifest.supports_viewport(manifest_shape_for_size(name), width, height) {
+    for (dataset, target) in matrix {
+        if !target_supported(&manifest, target) {
+            eprintln!("→ {target} {dataset}: manifest declines this viewport, skipping");
             continue;
         }
-        let ctx = CaptureCtx {
-            wasm_path: args.wasm_path.clone(),
-            runtime_wasm_path: prepared.wasm_path().to_owned(),
-            asset_root: prepared.asset_root().to_owned(),
-            width,
-            height,
-            size_name: name.to_owned(),
-            output_dir: output_base.join(name),
-            fixture: args.fixture.clone(),
-            variant: args.variant.clone(),
-            online: args.online,
-            stack_profiling: args.stack_profiling,
-        };
-        // Offline replay needs a recorded fixture; skip sizes without one so
-        // partial coverage (e.g. only `full`) renders what it can.
-        if !ctx.online && offline_fixture_path(&ctx, config).is_none() {
-            eprintln!("→ {name} ({width}x{height}): no fixture, skipping");
-            skipped += 1;
-            continue;
-        }
-        eprintln!("→ {name} ({width}x{height})");
-        run_capture(&ctx, config)?;
+        eprintln!("→ {target} {dataset}");
+        run_capture(
+            &CaptureCtx::new(
+                args.wasm_path.clone(),
+                prepared,
+                target,
+                dataset.to_owned(),
+                CaptureConfig::frame_dir(&output_base, dataset, target),
+                args.fixture.clone(),
+                args.online,
+                args.stack_profiling,
+            ),
+            config,
+        )?;
         rendered += 1;
     }
     if rendered == 0 {
-        if skipped > 0 {
-            bail!("no fixture recorded for any supported viewport — record one or use --online");
-        }
-        bail!("the widget's manifest declares no capturable viewports");
+        bail!("the widget's manifest declines every target on offer");
     }
     Ok(())
+}
+
+/// Every target the catalog offers, each named after its viewport.
+fn catalog_matrix() -> Vec<(&'static str, Target)> {
+    bmc_wasm_runtime::platform_catalog::PLATFORMS
+        .iter()
+        .flat_map(|platform| {
+            platform
+                .viewports
+                .iter()
+                .map(move |viewport| (viewport.id, Target { platform, viewport }))
+        })
+        .collect()
+}
+
+/// Whether the widget's manifest admits a target, DPI included.
+fn target_supported(manifest: &bmc_widget_manifest::Manifest, target: Target) -> bool {
+    let shape = match target.viewport.shape {
+        DisplayShape::Round => bmc_widget_manifest::ViewportShape::Round,
+        DisplayShape::Rectangular => bmc_widget_manifest::ViewportShape::Rectangular,
+    };
+    manifest.supports_viewport_at_dpi(
+        shape,
+        target.viewport.width,
+        target.viewport.height,
+        target.platform.display().dpi,
+    )
 }
 
 // ── Unified fixture replay ──────────────────────────────────────────
@@ -511,7 +582,7 @@ fn run_unified_capture(
                     // process network events and animate before capture.
                     // Both monotonic and fixture time advance so events
                     // continue to be delivered during the settle period.
-                    for _ in 0..config.settle_delay {
+                    for _ in 0..config.settle_delay_for(&ctx.dataset) {
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime, &mut renderer)?;
@@ -612,14 +683,10 @@ fn run_unified_capture(
                             .output_dir
                             .join(format!("frame_{captured_count:04}.png"));
                         let pixels = read_fbo_pixels(&gl, fbo, ctx.width, ctx.height);
-                        // Mask the round disc only for previews; regression
-                        // captures stay square so existing baselines (pixel-exact)
-                        // don't shift.
-                        let round = ctx.online
-                            && matches!(
-                                display_shape_for_size(&ctx.size_name),
-                                bmc_wasm_protocol::DisplayShape::Round
-                            );
+                        // Mask the round disc only for previews.
+                        // Regression captures stay square:
+                        // the corners outside the disc are free regression surface.
+                        let round = ctx.online && ctx.target.viewport.shape == DisplayShape::Round;
                         save_screenshot(&pixels, ctx.width, ctx.height, round, &path)?;
                         if !is_tty {
                             eprintln!("Captured frame {captured_count} → {}", path.display());
@@ -994,34 +1061,27 @@ fn deliver_all_io(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRendere
 /// Prepare a fresh KV directory for unified fixture replay.
 ///
 /// Seeds from the fixture header's KV map (not from secrets.ini — the fixture
-/// is self-contained). Config KV and variant KV are applied on top.
+/// is self-contained), with the dataset's `kv` overlay on top.
 fn prepare_unified_kv_dir(
     ctx: &CaptureCtx,
     config: &CaptureConfig,
     widget_name: &str,
     fixture: &UnifiedFixture,
 ) -> PathBuf {
-    let variant_suffix = ctx.variant.as_deref().unwrap_or("_default");
     let kv_dir = std::env::temp_dir()
         .join("bmc-wasm-capture")
         .join(widget_name)
-        .join(variant_suffix)
-        .join(&ctx.size_name);
+        .join(ctx.target.platform.id)
+        .join(ctx.target.viewport.id)
+        .join(&ctx.dataset);
     let _ = std::fs::remove_dir_all(&kv_dir);
     let _ = std::fs::create_dir_all(&kv_dir);
     // Fixture header KV (self-contained baseline)
     for (key, value) in &fixture.header.kv {
         let _ = std::fs::write(kv_dir.join(key), value.as_bytes());
     }
-    // Config KV overrides
-    for (key, value) in &config.kv {
-        let _ = std::fs::write(kv_dir.join(key), value.as_bytes());
-    }
-    // Variant KV overrides
-    if let Some(ref variant_name) = ctx.variant
-        && let Some(variant) = config.variants.iter().find(|v| &v.name == variant_name)
-    {
-        for (key, value) in &variant.kv {
+    if let Some(entry) = config.fixtures.get(&ctx.dataset) {
+        for (key, value) in &entry.kv {
             let _ = std::fs::write(kv_dir.join(key), value.as_bytes());
         }
     }
@@ -1211,46 +1271,6 @@ fn split_unified_events(
     }
 
     (fetches, network_events)
-}
-
-// ── Shape helpers ────────────────────────────────────────────────────
-
-/// The catalog target a capture size names — the size vocabulary mixes BMC100
-/// viewport names with bare platform names, so the mapping is explicit.
-/// `None` for an ad-hoc `--size=WxH` outside the catalog.
-fn target_for_size(size_name: &str) -> Option<Target> {
-    let (platform, viewport) = match size_name {
-        "full" => ("bmc100", "full"),
-        "large" => ("bmc100", "large"),
-        "medium" => ("bmc100", "medium"),
-        "small" => ("bmc100", "small"),
-        "round" => ("bfm100", "full"),
-        "bmm101" => ("bmm101", "full"),
-        _ => return None,
-    };
-    Some(Target::new(platform, viewport).unwrap_or_else(|e| {
-        panic!("BUG: capture size '{size_name}' must name a catalog target: {e}")
-    }))
-}
-
-fn manifest_shape_for_size(size_name: &str) -> bmc_widget_manifest::ViewportShape {
-    match target_for_size(size_name).map(|t| t.viewport.shape) {
-        Some(DisplayShape::Round) => bmc_widget_manifest::ViewportShape::Round,
-        _ => bmc_widget_manifest::ViewportShape::Rectangular,
-    }
-}
-
-fn viewport_shape_for_size(size_name: &str) -> bmc_wasm_protocol::ViewportShape {
-    target_for_size(size_name).map_or(bmc_wasm_protocol::ViewportShape::Rectangular, |t| {
-        t.viewport.runtime_viewport_shape()
-    })
-}
-
-fn display_shape_for_size(size_name: &str) -> bmc_wasm_protocol::DisplayShape {
-    match target_for_size(size_name).map(|t| t.platform.display().shape) {
-        Some(DisplayShape::Round) => bmc_wasm_protocol::DisplayShape::Round,
-        _ => bmc_wasm_protocol::DisplayShape::Rectangular,
-    }
 }
 
 // ── GL helpers ──────────────────────────────────────────────────────
@@ -1549,13 +1569,8 @@ fn setup_gl_and_runtime(
         &wasm_bytes,
         ctx.width,
         ctx.height,
-        viewport_shape_for_size(&ctx.size_name),
-        bmc_wasm_runtime::RuntimeDisplayInfo {
-            width: ctx.width,
-            height: ctx.height,
-            shape: display_shape_for_size(&ctx.size_name),
-            dpi: 1,
-        },
+        ctx.target.viewport.runtime_viewport_shape(),
+        ctx.target.platform.runtime_display_info(),
         initial_system_time,
         rt_config,
     )
@@ -1711,13 +1726,8 @@ fn setup_gl_and_runtime(
         &wasm_bytes,
         ctx.width,
         ctx.height,
-        viewport_shape_for_size(&ctx.size_name),
-        bmc_wasm_runtime::RuntimeDisplayInfo {
-            width: ctx.width,
-            height: ctx.height,
-            shape: display_shape_for_size(&ctx.size_name),
-            dpi: 1,
-        },
+        ctx.target.viewport.runtime_viewport_shape(),
+        ctx.target.platform.runtime_display_info(),
         initial_system_time,
         rt_config,
     )
@@ -1753,51 +1763,40 @@ pub fn write_default_capture_config(dir: &Path) -> Result<()> {
 #
 # The start time comes from the fixture header, not from here.
 
-# Settlement timeout in frames before force-capturing (default: 300 = ~5s).
-# Increase for widgets with slow network I/O.
-# timeout = 300
-
 # Extra frames to render before every capture, ahead of the I/O drain (default: 0).
 # Each one advances the replay clock by 16 ms and delivers timeline events.
 # A widget whose visuals follow the clock captures a later state than at 0.
 # settle_delay = 30
 
+# Replay at the widget's own frame cadence instead of every virtual frame.
+# Only needed when the widget folds its data off the render loop.
+# honor_frame_schedule = true
+
 # ── Fixtures ─────────────────────────────────────────────────────────
 
-# Paths to pre-recorded unified fixture files (one per size).
-# Record fixtures with: just wasm::record <widget> <size>
+# A fixture is a named dataset replayed against one or more targets, written
+# `<platform>:<viewport>`. Frames land in
+# `<output>/<platform>/<viewport>/<dataset>/`.
 #
-# [fixtures]
-# full   = "fixtures/full.jsonl.gz"
-# large  = "fixtures/large.jsonl.gz"
-# medium = "fixtures/medium.jsonl.gz"
-# small  = "fixtures/small.jsonl.gz"
-
-# ── Size filtering ───────────────────────────────────────────────────
-
-# Only capture specific sizes (default: all sizes).
-# Valid names: "full" (1280x480), "large" (638x480), "medium" (638x238), "small" (317x238).
-# sizes = ["full", "large"]
-
-# ── KV store defaults ────────────────────────────────────────────────
-
-# Default key-value pairs injected into the widget's KV store.
-# [kv]
-# theme = "dark"
-# language = "en"
-
-# ── Named variants ───────────────────────────────────────────────────
-
-# Each variant captures a separate set of screenshots with different KV values.
-# Variant KV is merged on top of the base [kv] section.
+# Record one with: just wasm::record <widget> <platform>:<viewport> <dataset>
 #
-# [[variants]]
-# name = "dark"
+# [fixtures.bmc100-full]
+# path = "fixtures/bmc100-full.jsonl.gz"
+# targets = ["bmc100:full"]
+
+# One dataset can drive several targets:
+#
+# [fixtures.common]
+# path = "fixtures/common.jsonl.gz"
+# targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]
+
+# And a dataset may override the settle delay or seed its own KV:
+#
+# [fixtures.slow-feed]
+# path = "fixtures/slow-feed.jsonl.gz"
+# targets = ["bfm100:full"]
+# settle_delay = 40
 # kv = { theme = "dark" }
-#
-# [[variants]]
-# name = "light"
-# kv = { theme = "light" }
 "#;
 
     std::fs::write(&path, template)
@@ -1811,32 +1810,109 @@ mod tests {
     use super::*;
 
     #[test]
-    fn round_size_uses_round_runtime_shape() {
+    fn a_round_target_carries_round_through_to_the_guest() {
+        let round: Target = "bfm100:full".parse().expect("BUG: target must parse");
         assert_eq!(
-            viewport_shape_for_size("round"),
+            round.viewport.runtime_viewport_shape(),
             bmc_wasm_protocol::ViewportShape::Round
         );
         assert_eq!(
-            display_shape_for_size("round"),
+            round.platform.runtime_display_info().shape,
             bmc_wasm_protocol::DisplayShape::Round
         );
+
+        let slot: Target = "bmc100:small".parse().expect("BUG: target must parse");
         assert_eq!(
-            viewport_shape_for_size("custom"),
+            slot.viewport.runtime_viewport_shape(),
             bmc_wasm_protocol::ViewportShape::Rectangular
         );
     }
 
     #[test]
-    fn every_capture_size_names_a_catalog_target_of_the_same_dimensions() {
-        for &(size_name, width, height) in bmc_wasm_runtime::capture_config::CAPTURE_SIZES {
-            let target = target_for_size(size_name)
-                .unwrap_or_else(|| panic!("BUG: size '{size_name}' must name a target"));
+    fn an_online_sweep_names_datasets_as_a_single_target_run_would() {
+        let swept = catalog_matrix();
+        let offered: usize = bmc_wasm_runtime::platform_catalog::PLATFORMS
+            .iter()
+            .map(|platform| platform.viewports.len())
+            .sum();
+        assert_eq!(
+            swept.len(),
+            offered,
+            "an online sweep must cover every target the catalog offers",
+        );
+
+        for (dataset, target) in swept {
+            let single = sole_dataset_for(&CaptureConfig::default(), target, true)
+                .expect("BUG: an unconfigured target must fall back to one name");
             assert_eq!(
-                (target.viewport.width, target.viewport.height),
-                (width, height),
-                "size '{size_name}' and its target disagree on dimensions",
+                dataset, single,
+                "swept and single-target runs must write the same frame directory",
             );
         }
+    }
+
+    /// Without one, the run would capture whatever the widget draws
+    /// with no data at all, and file it as if it were a fixture.
+    #[test]
+    fn an_offline_run_needs_a_dataset_to_replay() {
+        let target: Target = "bmc100:full".parse().expect("BUG: target must parse");
+        let refused = sole_dataset_for(&CaptureConfig::default(), target, false)
+            .expect_err("an offline run has nothing to replay");
+        assert!(
+            refused.to_string().contains("--online"),
+            "the refusal names the way out, got: {refused}",
+        );
+    }
+
+    #[test]
+    fn a_run_carrying_its_own_fixture_needs_no_configured_dataset() {
+        let target: Target = "bmc100:full".parse().expect("BUG: target must parse");
+        assert_eq!(
+            sole_dataset_for(&CaptureConfig::default(), target, true)
+                .expect("a run bringing its own data needs only a name"),
+            "full",
+        );
+    }
+
+    #[test]
+    fn a_slot_target_reports_the_whole_display_not_the_slot() {
+        let slot: Target = "bmc100:small".parse().expect("BUG: target must parse");
+        let display = slot.platform.runtime_display_info();
+
+        assert_eq!((slot.viewport.width, slot.viewport.height), (317, 238));
+        assert_eq!(
+            (display.width, display.height, display.dpi),
+            (1_280, 480, 217),
+            "a slot capture must tell the widget about the whole Deck panel",
+        );
+    }
+
+    #[test]
+    fn manifest_dpi_bounds_gate_a_target() {
+        let manifest: bmc_widget_manifest::Manifest = r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440200",
+            "version": "0.1.0",
+            "name": "dpi-picky",
+            "description": "declares a density floor",
+            "author": { "name": "Braiins Forge", "url": "https://braiinsforge.com" },
+            "binary": "bin/dpi-picky",
+            "icon": "assets/icon.svg",
+            "category": "utility",
+            "settings": [],
+            "supported_viewports": [{ "type": "rectangular", "min_dpi": 200 }],
+            "params": {}
+        }"#
+        .parse()
+        .expect("BUG: test manifest must parse");
+
+        assert!(
+            target_supported(&manifest, "bmc100:full".parse().expect("BUG: parse")),
+            "BMC100 is 217 dpi, inside the declared range",
+        );
+        assert!(
+            !target_supported(&manifest, "bmm100:full".parse().expect("BUG: parse")),
+            "BMM100 is 141 dpi, below the declared minimum",
+        );
     }
 
     #[test]

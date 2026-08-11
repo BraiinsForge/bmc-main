@@ -115,7 +115,10 @@ const GESTURE_THRESHOLD: f32 = 5.0;
 /// `None` on save/cancel. The recording UI panel reads this to render its event log.
 pub(super) struct RecordingState {
     pub(super) active_tile: usize,
-    pub(super) size_name: String,
+    /// The (platform, viewport) being recorded,
+    /// and the dataset name its fixture and config entry are written under.
+    pub(super) target: bmc_wasm_runtime::platform_catalog::Target,
+    pub(super) dataset: String,
     /// Unified timeline events (user actions + fetch recordings).
     pub(super) events: Vec<TimelineEvent>,
     pub(super) gesture: Option<GestureTracker>,
@@ -323,7 +326,7 @@ impl TestbedApp {
         let mut action: Option<RecordingAction> = None;
 
         child.label(
-            egui::RichText::new(format!("RECORDING — {}", rec.size_name))
+            egui::RichText::new(format!("RECORDING — {}", rec.target))
                 .color(egui::Color32::from_rgb(255, 170, 80))
                 .strong(),
         );
@@ -474,7 +477,7 @@ impl TestbedApp {
             return;
         };
         let fixture_dir = widget_root.join("capture").join("fixtures");
-        let fixture_path = fixture_dir.join(format!("{}.jsonl.gz", rec.size_name));
+        let fixture_path = fixture_dir.join(format!("{}.jsonl.gz", rec.dataset));
 
         if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
             eprintln!("warning: fixture validation failed: {e:#} (writing anyway)");
@@ -490,10 +493,13 @@ impl TestbedApp {
         );
 
         let config_path = widget_root.join("capture").join("config.toml");
-        let fixture_rel = format!("fixtures/{}.jsonl.gz", rec.size_name);
-        if let Err(e) =
-            fixtures::update_config_toml_fixtures(&config_path, &rec.size_name, &fixture_rel)
-        {
+        let fixture_rel = format!("fixtures/{}.jsonl.gz", rec.dataset);
+        if let Err(e) = fixtures::update_config_toml_fixtures(
+            &config_path,
+            &rec.dataset,
+            &fixture_rel,
+            rec.target,
+        ) {
             eprintln!("warning: failed to update config.toml: {e:#}");
         } else {
             eprintln!("updated: {}", config_path.display());

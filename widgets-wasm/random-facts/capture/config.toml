@@ -1,5 +1,3 @@
-[fixtures]
-full = "fixtures/common.jsonl.gz"
-large = "fixtures/common.jsonl.gz"
-medium = "fixtures/common.jsonl.gz"
-small = "fixtures/common.jsonl.gz"
+[fixtures.common]
+path = "fixtures/common.jsonl.gz"
+targets = ["bmc100:full", "bmc100:large", "bmc100:medium", "bmc100:small"]

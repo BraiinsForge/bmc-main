@@ -4,7 +4,14 @@
 # has parsed every miner and public response before the first capture.
 settle_delay = 5
 
-[fixtures]
-small = "fixtures/bmm100-mining.jsonl.gz"
-full = "fixtures/bmm101-info-overload.jsonl.gz"
-round = "fixtures/round.jsonl.gz"
+[fixtures.bmm100-full]
+path = "fixtures/bmm100-full.jsonl.gz"
+targets = ["bmm100:full"]
+
+[fixtures.bmm101-full]
+path = "fixtures/bmm101-full.jsonl.gz"
+targets = ["bmm101:full"]
+
+[fixtures.bfm100-full]
+path = "fixtures/bfm100-full.jsonl.gz"
+targets = ["bfm100:full"]

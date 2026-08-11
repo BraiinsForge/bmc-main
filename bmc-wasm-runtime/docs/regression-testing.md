@@ -10,7 +10,7 @@ internals: capture pipeline, nix wrapper, capture binary, fixture format, replay
 `capture verify` (the CI entry point) runs three phases sequentially:
 
 1. **Build** — compile all WASM widget examples (parallel)
-2. **Capture** — headless EGL render per configured size × variant (sequential, GPU-bound)
+2. **Capture** — headless EGL render per configured (dataset, target) pair (sequential, GPU-bound)
 3. **Compare** — pixel diff against baseline archives, generate HTML report with A/B media for failures
 
 ## CI integration
@@ -47,7 +47,7 @@ subcommands:
 
 | Command        | Purpose                                                  |
 | -------------- | -------------------------------------------------------- |
-| `run`          | Capture a single widget at a given size                  |
+| `run`          | Capture a single widget at one target                    |
 | `run-all`      | Build and capture all widget examples                    |
 | `diff`         | Compare captures against baselines, generate HTML report |
 | `verify`       | `run-all` + `diff` (CI entry point)                      |
@@ -57,8 +57,8 @@ subcommands:
 
 ## Design decisions
 
-1. **One size per invocation** — the binary renders at a single resolution. `run-all` orchestrates the size × variant
-   matrix by spawning `capture run` as a subprocess for process isolation.
+1. **One target per invocation** — the binary renders one `<platform>:<viewport>` target with one dataset. `run-all`
+   orchestrates the dataset × target matrix by spawning `capture run` as a subprocess for process isolation.
 
 2. **Host-provided time** — the runtime never calls `Instant::now()` or `Local::now()` for frame logic. `set_time()`
    sets `system_time` (`DateTime<FixedOffset>`) and `monotonic_ms` before each `render()`. The timezone from the fixture
@@ -88,7 +88,7 @@ The header `time` field must include a timezone offset (e.g. `"2026-03-10T18:00:
 with offset; the replay parser requires it.
 
 ```
-../widgets-wasm-examples/<widget>/capture/fixtures/<size>.jsonl.gz
+../widgets-wasm-examples/<widget>/capture/fixtures/<dataset>.jsonl.gz
 ```
 
 ### Replay timeline
@@ -111,4 +111,4 @@ inject_fixture_events(fixture_ms)  →  deliver_all_io()  →  render()  →  ad
 ## Baseline format
 
 Baselines are 7z archives per widget (`capture/baselines.7z`), compressed natively via `sevenz-rust2` with solid LZMA2.
-One archive per widget; one frame per declared size inside.
+One archive per widget; frames inside are keyed `<platform>/<viewport>/<dataset>/frame_NNNN.png`.

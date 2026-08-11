@@ -64,28 +64,26 @@ struct WorkspaceArgs {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Capture a single widget at a given size.
+    /// Capture a single widget at one `<platform>:<viewport>` target.
     Run {
         /// Path to the compiled .wasm widget file.
         wasm: PathBuf,
         /// Package asset root paired with an already stripped widget.
         #[arg(long)]
         asset_root: Option<PathBuf>,
-        /// Capture size as WxH (e.g. 1280x480). Required unless --list-variants.
+        /// Target to render, as `<platform>:<viewport>` (e.g. `bmc100:small`).
         #[arg(long)]
-        size: Option<String>,
-        /// Output directory for captured frames. Required unless --list-variants.
+        target: Option<String>,
+        /// Dataset from `[fixtures]` to replay. Defaults to the only one bound
+        /// to the target.
+        #[arg(long)]
+        dataset: Option<String>,
+        /// Output directory for captured frames.
         #[arg(long)]
         output: Option<PathBuf>,
         /// Path to a unified fixture file (overrides config lookup).
         #[arg(long)]
         fixture: Option<PathBuf>,
-        /// KV variant name to apply.
-        #[arg(long)]
-        variant: Option<String>,
-        /// List available KV variants and exit.
-        #[arg(long)]
-        list_variants: bool,
         /// Path to the `capture/` directory containing `config.toml` and fixtures.
         /// Optional in `--online` mode.
         #[arg(long)]
@@ -95,10 +93,11 @@ enum Command {
         /// response before the shot. Needs no fixture.
         #[arg(long)]
         online: bool,
-        /// Render every viewport the widget's manifest supports (ignores
-        /// `--size`), each into `<output>/<size>/`.
+        /// Render every configured (dataset, target) pair the manifest supports,
+        /// or with `--online`, every target the catalog offers. Ignores `--target`;
+        /// each pair lands in `<output>/<platform>/<viewport>/<dataset>/`.
         #[arg(long)]
-        all_sizes: bool,
+        all_targets: bool,
         /// Instrument the linked module and print its shadow-stack high-water use.
         #[arg(long, value_name = "RESERVED_BYTES")]
         stack_profile: Option<i32>,
@@ -169,9 +168,9 @@ enum Command {
         /// Path to the widget's output directory (contains `current/`).
         #[arg(long)]
         output: PathBuf,
-        /// Only generate previews for this size (e.g. "full").
+        /// Only generate previews for this target (e.g. "bmc100:full").
         #[arg(long)]
-        size: Option<String>,
+        target: Option<String>,
         /// Frame rate for the output video.
         #[arg(long, default_value = "4")]
         fps: u32,
@@ -251,6 +250,20 @@ fn print_error(err: &anyhow::Error) {
     eprintln!();
 }
 
+/// Honour targeted RUST_LOG directives (e.g. `bmc_wasm_runtime=info` from the
+/// justfile / run-all) so a failing replay.log carries the widget's own
+/// diagnostics; default to `info` when unset.
+fn init_replay_tracing() {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        // Logs to stderr; run-all reads the child's stderr into replay.log.
+        .with_writer(std::io::stderr)
+        .init();
+}
+
 fn dispatch() -> Result<()> {
     let cli = Cli::parse();
 
@@ -258,39 +271,26 @@ fn dispatch() -> Result<()> {
         Command::Run {
             wasm,
             asset_root,
-            size,
+            target,
+            dataset,
             output,
             fixture,
-            variant,
-            list_variants,
             capture_dir,
             online,
-            all_sizes,
+            all_targets,
             stack_profile,
         } => {
-            // Honour targeted RUST_LOG directives (e.g. `bmc_wasm_runtime=info`
-            // from the justfile / run-all) so a failing replay.log carries
-            // the widget's own diagnostics; default to `info` when unset.
-            tracing_subscriber::fmt()
-                .with_env_filter(
-                    tracing_subscriber::EnvFilter::try_from_default_env()
-                        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-                )
-                // Logs to stderr — stdout is data (`--list-variants`), and
-                // run-all reads the child's stderr for the replay.log.
-                .with_writer(std::io::stderr)
-                .init();
+            init_replay_tracing();
             run::execute(run::RunArgs {
                 wasm_path: wasm,
                 asset_root,
-                size,
+                target,
+                dataset,
                 output_dir: output,
                 fixture,
-                variant,
-                list_variants,
                 capture_dir,
                 online,
-                all_sizes,
+                all_targets,
                 stack_profiling: stack_profile.into(),
             })
         }
@@ -345,9 +345,15 @@ fn dispatch() -> Result<()> {
             parallel,
             stack_profiling: stack_profile.into(),
         }),
-        Command::Preview { output, size, fps } => {
-            preview::execute(&preview::PreviewArgs { output, size, fps })
-        }
+        Command::Preview {
+            output,
+            target,
+            fps,
+        } => preview::execute(&preview::PreviewArgs {
+            output,
+            target,
+            fps,
+        }),
         Command::SetBaseline {
             capture_dir,
             output,

@@ -4,8 +4,18 @@
 # transitions out of the Loading state before the first capture.
 settle_delay = 5
 
-[fixtures]
-small = "fixtures/small.jsonl.gz"
-medium = "fixtures/medium.jsonl.gz"
-large = "fixtures/large.jsonl.gz"
-full = "fixtures/full.jsonl.gz"
+[fixtures.bmc100-small]
+path = "fixtures/bmc100-small.jsonl.gz"
+targets = ["bmc100:small"]
+
+[fixtures.bmc100-medium]
+path = "fixtures/bmc100-medium.jsonl.gz"
+targets = ["bmc100:medium"]
+
+[fixtures.bmc100-large]
+path = "fixtures/bmc100-large.jsonl.gz"
+targets = ["bmc100:large"]
+
+[fixtures.bmc100-full]
+path = "fixtures/bmc100-full.jsonl.gz"
+targets = ["bmc100:full"]

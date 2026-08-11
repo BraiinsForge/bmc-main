@@ -36,8 +36,8 @@ use super::tools::resolve_tool;
 pub struct PreviewArgs {
     /// Path to the widget's output directory (contains `current/`).
     pub output: PathBuf,
-    /// Only generate previews for this size (e.g. "full").
-    pub size: Option<String>,
+    /// Only generate previews for this target (e.g. "bmc100:full").
+    pub target: Option<String>,
     /// Frame rate for the output video.
     pub fps: u32,
 }
@@ -67,17 +67,16 @@ pub fn execute(args: &PreviewArgs) -> Result<()> {
     }
 
     for dir in &dirs {
-        // The relative path from current/ gives us the size/variant label
         let rel = dir
             .strip_prefix(&current_dir)
             .expect("BUG: frame dir not under current/");
         let label = rel.to_string_lossy();
 
-        // Apply size filter if given
-        if let Some(filter) = args.size.as_deref() {
-            let parts: Vec<&str> = label.split('/').collect();
-            let size_part = parts.last().expect("BUG: empty path components");
-            if *size_part != filter {
+        // Frames live under <platform>/<viewport>/<dataset>,
+        // so a target filter matches the leading two components.
+        if let Some(filter) = args.target.as_deref() {
+            let prefix = filter.replace(':', "/");
+            if !label.starts_with(&prefix) {
                 continue;
             }
         }

@@ -336,13 +336,27 @@ impl Manifest {
     /// `width`×`height` pixels.
     #[must_use]
     pub fn supports_viewport(&self, shape: ViewportShape, width: u32, height: u32) -> bool {
-        self.supported_viewports.iter().any(|v| {
-            v.viewport_shape == shape
-                && v.min_width.is_none_or(|min| width >= min)
-                && v.max_width.is_none_or(|max| width <= max)
-                && v.min_height.is_none_or(|min| height >= min)
-                && v.max_height.is_none_or(|max| height <= max)
-        })
+        self.supported_viewports
+            .iter()
+            .any(|v| v.admits_size(shape, width, height))
+    }
+
+    /// Whether any declared viewport accepts a `shape` surface
+    /// of `width`×`height` pixels on a display of `dpi`.
+    ///
+    /// The DPI bounds are checked on the same constraint that admits the size,
+    /// since a widget may declare a different density range per geometry.
+    #[must_use]
+    pub fn supports_viewport_at_dpi(
+        &self,
+        shape: ViewportShape,
+        width: u32,
+        height: u32,
+        dpi: u32,
+    ) -> bool {
+        self.supported_viewports
+            .iter()
+            .any(|v| v.admits_size(shape, width, height) && v.admits_dpi(dpi))
     }
 
     pub fn from_reader<R: Read>(reader: R) -> Result<Self, ManifestError> {
@@ -523,6 +537,22 @@ pub struct WidgetViewportConstraint {
     pub min_dpi: Option<u32>,
     /// Inclusive maximum dpi, or unbounded.
     pub max_dpi: Option<u32>,
+}
+
+impl WidgetViewportConstraint {
+    #[must_use]
+    fn admits_size(&self, shape: ViewportShape, width: u32, height: u32) -> bool {
+        self.viewport_shape == shape
+            && self.min_width.is_none_or(|min| width >= min)
+            && self.max_width.is_none_or(|max| width <= max)
+            && self.min_height.is_none_or(|min| height >= min)
+            && self.max_height.is_none_or(|max| height <= max)
+    }
+
+    #[must_use]
+    fn admits_dpi(&self, dpi: u32) -> bool {
+        self.min_dpi.is_none_or(|min| dpi >= min) && self.max_dpi.is_none_or(|max| dpi <= max)
+    }
 }
 
 fn validate_viewport_constraint(vp: &WidgetViewportConstraint) -> Result<(), ManifestError> {

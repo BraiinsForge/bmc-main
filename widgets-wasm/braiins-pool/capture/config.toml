@@ -1,4 +1,13 @@
-[fixtures]
-large = "fixtures/large.jsonl.gz"
-medium = "fixtures/medium.jsonl.gz"
-full = "fixtures/full.jsonl.gz"
+# Dataset names carry the sim scenario; `idle` and `denied` go beside these.
+
+[fixtures.bmc100-medium-healthy]
+path = "fixtures/bmc100-medium-healthy.jsonl.gz"
+targets = ["bmc100:medium"]
+
+[fixtures.bmc100-large-healthy]
+path = "fixtures/bmc100-large-healthy.jsonl.gz"
+targets = ["bmc100:large"]
+
+[fixtures.bmc100-full-healthy]
+path = "fixtures/bmc100-full-healthy.jsonl.gz"
+targets = ["bmc100:full"]
