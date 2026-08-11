@@ -1,0 +1,620 @@
+// Copyright (C) 2026  Braiins Forge s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
+//! What the widget holds after a reply is read: plain data the screens
+//! render, plus the rules that turn wire values into it.
+//!
+//! Everything here is free of host calls so it can be exercised
+//! natively — by tests and by the storybook's fixtures.
+
+use bmc_wasm_sdk::Color;
+
+/// Livery colour shown for a team whose own colour is missing
+/// or unreadable, so the row still renders in team-neutral grey.
+pub const FALLBACK_TEAM_COLOR: Color = Color::from_hex(0x52_52_52);
+
+/// Read a wire livery colour: six hex digits,
+/// with or without a leading `#`.
+/// Anything else is [`FALLBACK_TEAM_COLOR`],
+/// so a bad value costs the row its colour but not its place.
+#[must_use]
+pub fn team_color(hex: &str) -> Color {
+    let digits = hex.strip_prefix('#').unwrap_or(hex);
+    if digits.len() != 6 {
+        return FALLBACK_TEAM_COLOR;
+    }
+    u32::from_str_radix(digits, 16).map_or(FALLBACK_TEAM_COLOR, Color::from_hex)
+}
+
+/// A car's racing number.
+///
+/// Distinct from a championship or grid position, which are small
+/// integers too: the driver card joins the two statistics resources on
+/// this number, so confusing the two would quietly show another
+/// driver's figures.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CarNumber(u8);
+
+impl CarNumber {
+    #[must_use]
+    pub fn new(number: u8) -> Self {
+        Self(number)
+    }
+
+    #[must_use]
+    pub fn get(self) -> u8 {
+        self.0
+    }
+}
+
+/// URL of a remote image — a headshot, team logo, flag, or circuit
+/// map. Empty when the server has none; the screens draw their own
+/// placeholder rather than a broken image.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ImageUrl(String);
+
+impl ImageUrl {
+    /// Whether there is an image to fetch at all.
+    #[must_use]
+    pub fn is_present(&self) -> bool {
+        !self.0.is_empty()
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for ImageUrl {
+    fn from(url: String) -> Self {
+        Self(url)
+    }
+}
+
+/// Wall-clock time at the circuit, as `YYYY-MM-DD HH:MM:SS`.
+///
+/// The server sends no offset, so this is not an instant:
+/// it places only against [`NextRace::venue_timezone`],
+/// and nothing here can turn it into one.
+/// Kept as the server's own text until it sends an offset,
+/// at which point this becomes a `SystemTime`
+/// and the schedule can be shown in the viewer's own zone.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct VenueTime(String);
+
+impl VenueTime {
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for VenueTime {
+    fn from(text: String) -> Self {
+        Self(text)
+    }
+}
+
+/// Timing text the server has already formatted — a gap, an interval,
+/// or a lap time, including the sentinels it uses in place of one
+/// (`LEADER`, `PIT`, `-`). Printed as received; deriving anything from
+/// it is the server's job, not ours.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct TimingText(String);
+
+impl TimingText {
+    /// Whether there is nothing to print —
+    /// an empty value, or the server's `-` placeholder.
+    #[must_use]
+    pub fn is_blank(&self) -> bool {
+        self.0.is_empty() || self.0 == "-"
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl From<String> for TimingText {
+    fn from(text: String) -> Self {
+        Self(text)
+    }
+}
+
+/// Tyre fitted to a car. The wire spells these as single letters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TireCompound {
+    Soft,
+    Medium,
+    Hard,
+    Intermediate,
+    Wet,
+}
+
+impl TireCompound {
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "S" => Some(Self::Soft),
+            "M" => Some(Self::Medium),
+            "H" => Some(Self::Hard),
+            "I" => Some(Self::Intermediate),
+            "W" => Some(Self::Wet),
+            _ => None,
+        }
+    }
+
+    /// Single-letter label, as the timing screens print it.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Soft => "S",
+            Self::Medium => "M",
+            Self::Hard => "H",
+            Self::Intermediate => "I",
+            Self::Wet => "W",
+        }
+    }
+}
+
+/// How a sector time compares with the rest of the session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SectorColor {
+    /// Slower than this driver's own best.
+    Normal,
+    /// This driver's best.
+    PersonalBest,
+    /// The session's best.
+    OverallBest,
+}
+
+impl SectorColor {
+    #[must_use]
+    pub fn from_wire(value: &str) -> Self {
+        match value {
+            "green" => Self::PersonalBest,
+            "purple" => Self::OverallBest,
+            _ => Self::Normal,
+        }
+    }
+}
+
+/// Where a driver stands in a running session.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DriverStatus {
+    Running,
+    Retired,
+    Disqualified,
+    DidNotFinish,
+    DidNotStart,
+    Finished,
+}
+
+impl DriverStatus {
+    /// Unknown values read as absent rather than failing the row:
+    /// a status this build has not seen
+    /// must not cost us the whole timing board.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
+        match value {
+            "RUN" => Some(Self::Running),
+            "RET" => Some(Self::Retired),
+            "DSQ" => Some(Self::Disqualified),
+            "DNF" => Some(Self::DidNotFinish),
+            "DNS" => Some(Self::DidNotStart),
+            "FIN" => Some(Self::Finished),
+            _ => None,
+        }
+    }
+
+    /// Whether the driver is still circulating.
+    #[must_use]
+    pub fn is_out(self) -> bool {
+        matches!(
+            self,
+            Self::Retired | Self::Disqualified | Self::DidNotFinish | Self::DidNotStart
+        )
+    }
+}
+
+/// One sector time and how it ranked.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Sector {
+    pub seconds: f32,
+    pub color: SectorColor,
+}
+
+/// A championship standings row.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StandingsRow {
+    pub position: u8,
+    pub driver_name: String,
+    pub driver_code: String,
+    pub team_name: String,
+    pub team_logo_url: ImageUrl,
+    pub team_color: Color,
+    pub country_code: String,
+    pub country_flag_url: ImageUrl,
+    pub points: u16,
+    pub headshot_url: ImageUrl,
+}
+
+/// A driver's season and career figures, as the statistics screens
+/// show them. The optional fields are absent for a driver the career
+/// source has no history for.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct DriverStats {
+    pub name: String,
+    pub number: CarNumber,
+    pub headshot_url: ImageUrl,
+    pub team: String,
+    pub team_color: Color,
+    pub ranking: u8,
+    pub points: u16,
+    pub nationality: String,
+    pub nationality_flag_url: ImageUrl,
+    pub gp_wins: Option<u8>,
+    pub world_titles: Option<u8>,
+    pub age: Option<u8>,
+    pub weight_kg: Option<u8>,
+    pub height_cm: Option<u16>,
+    pub race_engineer: Option<String>,
+    pub debut_year: Option<u16>,
+}
+
+/// One session of a race weekend.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Session {
+    pub name: String,
+    pub starts_at: VenueTime,
+}
+
+/// The upcoming race weekend.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NextRace {
+    pub gp_name: String,
+    pub country_name: String,
+    pub country_flag_url: ImageUrl,
+    /// IANA zone the circuit keeps, e.g. `Europe/Monaco`. The one
+    /// thing that turns a [`VenueTime`] into an instant.
+    pub venue_timezone: Option<String>,
+    pub date_start: String,
+    pub date_end: Option<String>,
+    pub circuit_name: String,
+    pub circuit_image_url: ImageUrl,
+    pub track_length_km: Option<f32>,
+    pub total_laps: Option<u16>,
+    pub race_distance_km: Option<f32>,
+    pub drs_zones: Option<u8>,
+    pub tire_compounds: Option<String>,
+    pub sessions: Vec<Session>,
+}
+
+/// A row of a running session's timing board. Not every column
+/// applies to every session type; qualifying has no gap to the leader,
+/// practice no interval.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimingRow {
+    pub position: u8,
+    pub driver_code: String,
+    pub driver_name: String,
+    pub team_logo_url: ImageUrl,
+    pub team_color: Color,
+    pub position_change: i8,
+    pub gap_to_leader: TimingText,
+    pub interval: TimingText,
+    pub last_lap_time: TimingText,
+    pub best_lap_time: TimingText,
+    pub total_time: TimingText,
+    pub tire_compound: Option<TireCompound>,
+    pub tire_age: u8,
+    pub sectors: [Option<Sector>; 3],
+    pub in_pit: bool,
+    pub is_out_lap: bool,
+    pub fastest_lap: bool,
+    pub status: Option<DriverStatus>,
+}
+
+/// A session's timing board.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TimingBoard {
+    /// The server's own header, e.g. `LAP 15/57` or `Q1 / 14:03`.
+    pub session_label: String,
+    pub gp_name: String,
+    pub country_flag_url: ImageUrl,
+    pub current_lap: u16,
+    pub total_laps: u16,
+    pub rows: Vec<TimingRow>,
+}
+
+/// What a live resource last said.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum LiveBoard {
+    /// Nothing fetched yet.
+    #[default]
+    Unknown,
+    /// The server answered, and no session is running.
+    Idle,
+    /// A session is running.
+    Running(Box<TimingBoard>),
+}
+
+impl LiveBoard {
+    /// A board with no rows is not a session in progress.
+    /// The server empties the entry list around a session's edges,
+    /// and the legacy widget likewise took "has entries"
+    /// as its test for a session being live.
+    #[must_use]
+    pub fn from_board(board: TimingBoard) -> Self {
+        if board.rows.is_empty() {
+            Self::Idle
+        } else {
+            Self::Running(Box::new(board))
+        }
+    }
+
+    #[must_use]
+    pub fn board(&self) -> Option<&TimingBoard> {
+        match self {
+            Self::Running(board) => Some(board),
+            Self::Unknown | Self::Idle => None,
+        }
+    }
+
+    #[must_use]
+    pub fn is_running(&self) -> bool {
+        matches!(self, Self::Running(_))
+    }
+}
+
+/// Everything fetched so far.
+/// A resource that has never answered — or answered
+/// while the server was still warming its caches — stays empty,
+/// and the screens show their own missing-data state for it.
+#[derive(Clone, Debug, Default)]
+pub struct Data {
+    pub standings: Vec<StandingsRow>,
+    pub driver_stats: Vec<DriverStats>,
+    pub driver: Option<DriverStats>,
+    pub next_race: Option<NextRace>,
+    pub live_race: LiveBoard,
+    pub live_quali: LiveBoard,
+    pub live_practice: LiveBoard,
+}
+
+impl Data {
+    /// The running session, preferring the race, then qualifying, then
+    /// practice — the order the legacy widget probed them in.
+    #[must_use]
+    pub fn running_board(&self) -> Option<&TimingBoard> {
+        self.live_race
+            .board()
+            .or_else(|| self.live_quali.board())
+            .or_else(|| self.live_practice.board())
+    }
+
+    /// Whether any live resource reports a session in progress.
+    #[must_use]
+    pub fn any_session_running(&self) -> bool {
+        self.live_race.is_running()
+            || self.live_quali.is_running()
+            || self.live_practice.is_running()
+    }
+
+    /// The statistics row for `slug`'s driver.
+    ///
+    /// The per-driver resource carries the slug but not the full
+    /// figures, while the all-drivers table carries the figures
+    /// but no slug. They share the car number,
+    /// which is unique within a season, so it joins the two.
+    #[must_use]
+    pub fn selected_driver_stats(&self) -> Option<&DriverStats> {
+        let number = self.driver.as_ref()?.number;
+        self.driver_stats
+            .iter()
+            .find(|row| row.number == number)
+            .or(self.driver.as_ref())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        CarNumber, Color, Data, DriverStats, DriverStatus, FALLBACK_TEAM_COLOR, ImageUrl,
+        LiveBoard, SectorColor, TimingBoard, TimingText, TireCompound, team_color,
+    };
+
+    fn board(gp: &str) -> LiveBoard {
+        LiveBoard::Running(Box::new(TimingBoard {
+            gp_name: gp.to_owned(),
+            ..TimingBoard::default()
+        }))
+    }
+
+    fn driver(number: u8, name: &str) -> DriverStats {
+        DriverStats {
+            number: CarNumber::new(number),
+            name: name.to_owned(),
+            ..DriverStats::default()
+        }
+    }
+
+    #[test]
+    fn a_livery_colour_reads_with_or_without_its_hash() {
+        let expected = Color::from_hex(0x00_D7_B6);
+        assert_eq!(team_color("00D7B6"), expected);
+        assert_eq!(team_color("#00D7B6"), expected);
+    }
+
+    #[test]
+    fn an_unusable_livery_colour_falls_back_rather_than_dropping_the_row() {
+        for hex in ["", "00D7B", "00D7B6AA", "ZZZZZZ", "#"] {
+            assert_eq!(
+                team_color(hex),
+                FALLBACK_TEAM_COLOR,
+                "`{hex}` must not yield a colour",
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_image_is_distinguishable_from_one_we_have() {
+        assert!(!ImageUrl::default().is_present());
+        assert!(ImageUrl::from("https://example.test/a.png".to_owned()).is_present());
+    }
+
+    #[test]
+    fn the_servers_dash_placeholder_counts_as_nothing_to_print() {
+        assert!(TimingText::default().is_blank());
+        assert!(TimingText::from("-".to_owned()).is_blank());
+        assert!(!TimingText::from("LEADER".to_owned()).is_blank());
+        assert!(!TimingText::from("+1.204".to_owned()).is_blank());
+    }
+
+    #[test]
+    fn tire_compounds_round_trip_their_wire_letters() {
+        for compound in [
+            TireCompound::Soft,
+            TireCompound::Medium,
+            TireCompound::Hard,
+            TireCompound::Intermediate,
+            TireCompound::Wet,
+        ] {
+            assert_eq!(TireCompound::from_wire(compound.label()), Some(compound));
+        }
+        assert_eq!(TireCompound::from_wire("X"), None);
+    }
+
+    #[test]
+    fn an_unrecognised_sector_colour_reads_as_normal() {
+        assert_eq!(SectorColor::from_wire("purple"), SectorColor::OverallBest);
+        assert_eq!(SectorColor::from_wire("green"), SectorColor::PersonalBest);
+        assert_eq!(SectorColor::from_wire("white"), SectorColor::Normal);
+        assert_eq!(SectorColor::from_wire("chartreuse"), SectorColor::Normal);
+    }
+
+    #[test]
+    fn an_unknown_driver_status_is_absent_rather_than_wrong() {
+        assert_eq!(DriverStatus::from_wire("RET"), Some(DriverStatus::Retired));
+        assert_eq!(DriverStatus::from_wire("BOX"), None);
+    }
+
+    #[test]
+    fn only_the_non_finishing_statuses_read_as_out() {
+        assert!(DriverStatus::Retired.is_out());
+        assert!(DriverStatus::Disqualified.is_out());
+        assert!(!DriverStatus::Running.is_out());
+        // A finisher is not "out" — the flag marks a car that stopped early.
+        assert!(!DriverStatus::Finished.is_out());
+    }
+
+    #[test]
+    fn the_race_outranks_qualifying_which_outranks_practice() {
+        let mut data = Data {
+            live_practice: board("practice"),
+            ..Data::default()
+        };
+        assert_eq!(
+            data.running_board().map(|b| b.gp_name.as_str()),
+            Some("practice")
+        );
+        data.live_quali = board("quali");
+        assert_eq!(
+            data.running_board().map(|b| b.gp_name.as_str()),
+            Some("quali")
+        );
+        data.live_race = board("race");
+        assert_eq!(
+            data.running_board().map(|b| b.gp_name.as_str()),
+            Some("race")
+        );
+    }
+
+    #[test]
+    fn a_board_without_rows_is_not_a_session_in_progress() {
+        // The server empties the entry list around a session's edges;
+        // an empty board must not outrank the next-race screen.
+        assert_eq!(
+            LiveBoard::from_board(TimingBoard::default()),
+            LiveBoard::Idle,
+        );
+        assert!(
+            LiveBoard::from_board(TimingBoard {
+                rows: vec![super::TimingRow::default()],
+                ..TimingBoard::default()
+            })
+            .is_running(),
+        );
+    }
+
+    #[test]
+    fn an_idle_board_is_not_a_running_session() {
+        let data = Data {
+            live_race: LiveBoard::Idle,
+            live_quali: LiveBoard::Unknown,
+            ..Data::default()
+        };
+        assert!(!data.any_session_running());
+        assert!(data.running_board().is_none());
+    }
+
+    #[test]
+    fn the_selected_driver_joins_the_stats_table_by_car_number() {
+        let data = Data {
+            driver: Some(driver(44, "Lewis Hamilton")),
+            driver_stats: vec![driver(1, "Max Verstappen"), {
+                let mut row = driver(44, "Lewis Hamilton");
+                row.gp_wins = Some(105);
+                row
+            }],
+            ..Data::default()
+        };
+        let selected = data
+            .selected_driver_stats()
+            .expect("BUG: the joined row must be found");
+        assert_eq!(selected.gp_wins, Some(105), "the full figures must win");
+    }
+
+    #[test]
+    fn a_driver_missing_from_the_stats_table_still_renders_what_we_have() {
+        // The tables come from different upstreams, so a driver can
+        // appear in one before the other. The thinner row beats nothing.
+        let data = Data {
+            driver: Some(driver(87, "Reserve Driver")),
+            driver_stats: vec![driver(1, "Max Verstappen")],
+            ..Data::default()
+        };
+        assert_eq!(
+            data.selected_driver_stats().map(|row| row.name.as_str()),
+            Some("Reserve Driver"),
+        );
+    }
+
+    #[test]
+    fn nothing_is_selected_before_the_driver_resource_answers() {
+        let data = Data {
+            driver_stats: vec![driver(1, "Max Verstappen")],
+            ..Data::default()
+        };
+        assert!(data.selected_driver_stats().is_none());
+    }
+}

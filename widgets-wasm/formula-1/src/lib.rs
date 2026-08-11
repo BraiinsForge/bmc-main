@@ -21,7 +21,15 @@
 //! Formula 1 widget — championship standings, driver stats,
 //! race info, and live timing.
 
+pub mod api;
+pub mod model;
+
 mod manifest_params;
+
+#[cfg(target_arch = "wasm32")]
+mod live;
+#[cfg(target_arch = "wasm32")]
+mod parse;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
@@ -31,17 +39,19 @@ mod wasm_glue {
     )]
     use bmc_wasm_sdk::*;
 
+    use crate::live;
     use crate::manifest_params::Params;
 
     #[unsafe(no_mangle)]
     pub extern "C" fn init() {
+        live::start();
         request_frame();
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let ws = widget_size();
-        let params = Params::current();
+        let standings = live::with_data(|data| data.standings.len());
         let root = col(
             props!(background: BLACK),
             [center(
@@ -51,7 +61,7 @@ mod wasm_glue {
                     [
                         text("Formula 1", style!(size: 28, color: WHITE)),
                         text(
-                            params.view.as_manifest_label(),
+                            fmt!("{} drivers", standings),
                             style!(size: 16, color: GRAY_60),
                         ),
                     ],
@@ -63,6 +73,13 @@ mod wasm_glue {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_params_update() {
+        let changed = Params::previous()
+            .map(|previous| Params::current().changed_keys(&previous))
+            .unwrap_or_default();
+        live::reconcile();
+        if changed.contains(&"driver") {
+            live::invalidate_driver();
+        }
         request_frame();
     }
 
