@@ -1404,6 +1404,7 @@ dependencies = [
  "askama",
  "base64 0.22.1",
  "bmc-led",
+ "bmc-platform",
  "bmc-render",
  "bmc-shared-time",
  "bmc-shared-utils",

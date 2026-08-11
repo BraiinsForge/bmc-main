@@ -126,19 +126,15 @@ Parameter and system-setting updates are delivered in place.
 
 ## Testbed
 
-The WASM testbed uses the same geometry model. The bundled platform catalog is
-`bmc-wasm-runtime/src/bin/testbed/platforms.default.json` and contains `BMC100`, `BMM100`, `BMM101`, and `BFM100`.
+The WASM testbed uses the same geometry model. The platform catalog is `bmc-wasm-runtime/src/platform_catalog.rs` and
+covers `BMC100`, `BMM100`, `BMM101`, and `BFM100`. It names the viewport geometries a widget may occupy on each
+platform; the display size, shape and DPI behind them come from `bmc_platform::HardwareProfile`, the same source the
+device uses.
 
 Run a widget against a specific platform with:
 
 ```bash
 just wasm::dev <widget-name> "--platform BMM101"
-```
-
-The testbed also accepts a custom platform catalog:
-
-```bash
-just wasm::dev <widget-name> "--platform-catalog /path/to/catalog.json --platform BFM100"
 ```
 
 Use `params-demo` when checking geometry plumbing. It renders the current viewport and display values on screen.

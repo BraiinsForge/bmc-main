@@ -35,6 +35,7 @@
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
+use bmc_wasm_runtime::platform_catalog::PLATFORMS;
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 use bmc_wasm_runtime::{NextAlarm, SystemSnapshot};
 
@@ -54,17 +55,17 @@ impl TestbedApp {
             .show(ui, |grid| {
                 grid.add(key_label("platform", 180));
                 let cell_w = grid.available_width();
-                let current_label = self.catalog.platform(&self.active_platform_id).map_or_else(
-                    || self.active_platform_id.clone(),
-                    |p| format!("{} ({})", p.id, p.label),
+                let current_label = format!(
+                    "{} ({})",
+                    self.active_platform.id, self.active_platform.label
                 );
                 combo_cell(grid, "platform", cell_w, current_label, |menu| {
                     let mut changed = false;
-                    for p in &self.catalog.platforms {
-                        let selected = p.id == self.active_platform_id;
+                    for p in PLATFORMS {
+                        let selected = p.id == self.active_platform.id;
                         let text = format!("{} ({})", p.id, p.label);
                         if menu.selectable_label(selected, text).clicked() && !selected {
-                            chosen = Some(p.id.clone());
+                            chosen = Some(p.id.to_owned());
                             changed = true;
                         }
                     }

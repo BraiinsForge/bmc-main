@@ -4,19 +4,18 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
-# The capture report askama template, the testbed's bundled platform list,
-# and the WAT guest fixtures the test suites embed; the nix source filter
-# keeps only rust/toml/lock otherwise.
+# The capture report askama template and the WAT guest fixtures the test
+# suites embed; the nix source filter keeps only rust/toml/lock otherwise.
 [package.metadata.nix]
 include = [
     "templates/**",
-    "src/bin/testbed/platforms.default.json",
     "tests/fixtures/*.wat",
 ]
 
 [dependencies]
 anyhow.workspace = true
 bmc-led.workspace = true
+bmc-platform.workspace = true
 bmc-render = { path = "../bmc-render" }
 bmc-shared-time = { path = "../bmc-shared/time" }
 bmc-shared-utils = { workspace = true }

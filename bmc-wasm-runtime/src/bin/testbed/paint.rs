@@ -39,7 +39,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use eframe::glow::HasContext as _;
 
-use super::{LED_STRIP_H, PreviewTile, platforms::DisplayShape};
+use bmc_wasm_runtime::platform_catalog::DisplayShape;
+
+use super::{LED_STRIP_H, PreviewTile};
 
 // ── GL helpers ──────────────────────────────────────────────────────
 
@@ -332,7 +334,6 @@ pub(super) fn paint_led_strip(
     let Some(led_count) = tile.led_count else {
         return;
     };
-    let led_count = led_count as usize;
     if led_count == 0 {
         return;
     }

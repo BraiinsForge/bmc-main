@@ -45,7 +45,6 @@
 mod credentials_ui;
 mod paint;
 mod params_ui;
-mod platforms;
 mod recording;
 mod system_ui;
 mod ui_helpers;
@@ -64,6 +63,7 @@ use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{
     self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
+use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Product, Viewport};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, PackageAssetStore, RenderStatus, RuntimeConfig,
@@ -140,8 +140,8 @@ const SINGLE_STATS_H: u32 = 220;
 pub(crate) struct PlacedTile {
     pub(crate) label: String,
     pub(crate) kv_key: String,
-    pub(crate) shape: platforms::DisplayShape,
-    pub(crate) led_count: Option<u32>,
+    pub(crate) shape: DisplayShape,
+    pub(crate) led_count: Option<usize>,
     pub(crate) x: u32,
     pub(crate) y: u32,
     pub(crate) w: u32,
@@ -155,13 +155,10 @@ struct RuntimeTileGeometry {
 }
 
 impl RuntimeTileGeometry {
-    fn for_viewport_shape(
-        platform: &platforms::Platform,
-        viewport_shape: platforms::DisplayShape,
-    ) -> Self {
+    fn for_viewport_shape(platform: &Platform, viewport_shape: DisplayShape) -> Self {
         Self {
-            viewport_shape: viewport_shape.to_runtime_viewport_shape(),
-            display: platform.display.to_runtime_display_info(),
+            viewport_shape: platform_catalog::runtime_viewport_shape(viewport_shape),
+            display: platform.runtime_display_info(),
         }
     }
 }
@@ -178,17 +175,17 @@ pub(crate) struct TileLayout {
 }
 
 impl TileLayout {
-    pub(crate) fn for_platform(platform: &platforms::Platform) -> Self {
-        if platform.id == "BMC100" {
+    pub(crate) fn for_platform(platform: &Platform) -> Self {
+        if platform.product == Product::Bmc100 {
             return Self::bmc100(platform);
         }
-        match platform.widget_viewports.as_slice() {
+        match platform.viewports {
             [single] => Self::single_viewport(platform, single),
             _ => Self::generic_flow(platform),
         }
     }
 
-    fn bmc100(platform: &platforms::Platform) -> Self {
+    fn bmc100(platform: &Platform) -> Self {
         let slots: [(u32, u32, u32, u32); 4] = [
             (M, ROW0_Y, TILE_FULL_W, TILE_FULL_H),
             (M, ROW1_Y, TILE_LARGE_W, TILE_LARGE_H),
@@ -200,17 +197,15 @@ impl TileLayout {
                 TILE_SMALL_H,
             ),
         ];
-        let kv_keys = ["full", "large", "medium", "small"];
-        let led_count = platform.led_strip.map(|strip| strip.led_count);
-        debug_assert_eq!(led_count, Some(LED_COUNT as u32));
+        let led_count = platform.led_count();
+        debug_assert_eq!(led_count, Some(LED_COUNT));
         let tiles = platform
-            .widget_viewports
+            .viewports
             .iter()
             .zip(slots.iter())
-            .zip(kv_keys.iter())
-            .map(|((v, &(x, y, w, h)), &kv_key)| PlacedTile {
-                label: v.label.clone(),
-                kv_key: kv_key.to_owned(),
+            .map(|(v, &(x, y, w, h))| PlacedTile {
+                label: v.label.to_owned(),
+                kv_key: v.id.to_owned(),
                 shape: v.shape,
                 led_count,
                 x,
@@ -230,12 +225,12 @@ impl TileLayout {
         }
     }
 
-    fn single_viewport(platform: &platforms::Platform, v: &platforms::WidgetViewport) -> Self {
-        let led_count = platform.led_strip.map(|strip| strip.led_count);
+    fn single_viewport(platform: &Platform, v: &Viewport) -> Self {
+        let led_count = platform.led_count();
         let led_strip_h = if led_count.is_some() { LED_STRIP_H } else { 0 };
         let tiles = vec![PlacedTile {
-            label: v.label.clone(),
-            kv_key: v.label.to_ascii_lowercase(),
+            label: v.label.to_owned(),
+            kv_key: v.id.to_owned(),
             shape: v.shape,
             led_count,
             x: PREVIEW_MARGIN,
@@ -262,23 +257,23 @@ impl TileLayout {
         }
     }
 
-    fn generic_flow(platform: &platforms::Platform) -> Self {
+    fn generic_flow(platform: &Platform) -> Self {
         let row_cap = platform
-            .widget_viewports
+            .viewports
             .iter()
             .map(|v| v.width)
             .max()
             .unwrap_or(1);
 
-        let mut tiles = Vec::with_capacity(platform.widget_viewports.len());
+        let mut tiles = Vec::with_capacity(platform.viewports.len());
         let mut cursor_x = PREVIEW_MARGIN;
         let mut row_y = PREVIEW_MARGIN;
         let mut row_h = 0_u32;
         let mut content_w = 0_u32;
-        let led_count = platform.led_strip.map(|strip| strip.led_count);
+        let led_count = platform.led_count();
         let led_strip_h = if led_count.is_some() { LED_STRIP_H } else { 0 };
 
-        for v in &platform.widget_viewports {
+        for v in platform.viewports {
             let needs_wrap =
                 cursor_x > PREVIEW_MARGIN && cursor_x + v.width > PREVIEW_MARGIN + row_cap;
             if needs_wrap {
@@ -287,8 +282,8 @@ impl TileLayout {
                 row_h = 0;
             }
             tiles.push(PlacedTile {
-                label: v.label.clone(),
-                kv_key: v.label.to_ascii_lowercase(),
+                label: v.label.to_owned(),
+                kv_key: v.id.to_owned(),
                 shape: v.shape,
                 led_count,
                 x: cursor_x,
@@ -331,36 +326,31 @@ fn requested_window_size(layout: &TileLayout) -> egui::Vec2 {
 }
 
 struct SwitchState {
-    active_platform_id: String,
+    platform: &'static Platform,
     layout: TileLayout,
     requested_size: egui::Vec2,
     needs_tile_rebuild: bool,
 }
 
 impl SwitchState {
-    fn new(active_platform_id: &str, platform: &platforms::Platform) -> Self {
+    fn new(platform: &'static Platform) -> Self {
         let layout = TileLayout::for_platform(platform);
         let requested_size = requested_window_size(&layout);
         Self {
-            active_platform_id: active_platform_id.to_owned(),
+            platform,
             layout,
             requested_size,
             needs_tile_rebuild: false,
         }
     }
 
-    fn switch_to(
-        &mut self,
-        catalog: &platforms::PlatformCatalog,
-        target_id: &str,
-    ) -> Result<bool, String> {
-        if target_id == self.active_platform_id {
+    fn switch_to(&mut self, target_id: &str) -> Result<bool, String> {
+        if target_id == self.platform.id {
             return Ok(false);
         }
-        let platform = catalog
-            .platform(target_id)
+        let platform = platform_catalog::platform(target_id)
             .ok_or_else(|| format!("platform '{target_id}' not found"))?;
-        target_id.clone_into(&mut self.active_platform_id);
+        self.platform = platform;
         self.layout = TileLayout::for_platform(platform);
         self.requested_size = requested_window_size(&self.layout);
         self.needs_tile_rebuild = true;
@@ -370,7 +360,7 @@ impl SwitchState {
 
 fn validate_recording_target(
     record_size: Option<&str>,
-    active_platform_id: &str,
+    platform: &Platform,
     layout: &TileLayout,
 ) -> Result<(), String> {
     let Some(size_name) = record_size else {
@@ -383,8 +373,8 @@ fn validate_recording_target(
     };
     if active_tile >= layout.tiles.len() {
         return Err(format!(
-            "record size '{size_name}' is not available on platform '{active_platform_id}' \
-             with {} tile(s)",
+            "record size '{size_name}' is not available on platform '{}' with {} tile(s)",
+            platform.id,
             layout.tiles.len()
         ));
     }
@@ -422,9 +412,6 @@ struct CliArgs {
     /// Record a capture fixture for this viewport size (e.g. `small`).
     #[arg(long = "record")]
     record_size: Option<String>,
-    /// Platform catalog JSON; the built-in catalog otherwise.
-    #[arg(long = "platform-catalog")]
-    platform_catalog_path: Option<PathBuf>,
     /// Platform id to select from the catalog.
     #[arg(long = "platform")]
     platform_id: Option<String>,
@@ -586,79 +573,20 @@ mod platforms_startup_tests {
         CliArgs::try_parse_from(args.iter().copied()).map_err(anyhow::Error::from)
     }
 
-    fn write_test_catalog() -> PathBuf {
-        let temp_dir = std::env::temp_dir();
-        let path = temp_dir.join(format!(
-            "testbed-platform-catalog-{}.json",
-            std::process::id()
-        ));
-        std::fs::write(
-            &path,
-            r#"{
-              "default_platform": "TEST",
-              "platforms": [
-                {
-                  "id": "TEST",
-                  "label": "Test Platform",
-                  "display": { "width": 111, "height": 222, "shape": "rectangular", "dpi": 1 },
-                  "slot_grid": null,
-                  "led_strip": null,
-                  "widget_viewports": [
-                    { "label": "Fullscreen", "placement": { "fullscreen": {} }, "shape": "rectangular", "width": 111, "height": 222 }
-                  ]
-                }
-              ]
-            }"#,
-        )
-        .expect("BUG: test catalog must be writable");
-        path
-    }
-
-    fn write_invalid_test_catalog() -> PathBuf {
-        let temp_dir = std::env::temp_dir();
-        let path = temp_dir.join(format!(
-            "testbed-invalid-platform-catalog-{}.json",
-            std::process::id()
-        ));
-        std::fs::write(&path, r#"{ "default_platform": "TEST", "platforms": [] }"#)
-            .expect("BUG: invalid test catalog must be writable");
-        path
-    }
-
     #[test]
     fn parse_args_accepts_platform_equals_forms() {
-        let cli = parse_test_args(&[
-            "testbed",
-            "widget.wasm",
-            "--platform-catalog=catalog.json",
-            "--platform=BMM100",
-        ])
-        .expect("BUG: platform equals args must parse");
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--platform=BMM100"])
+            .expect("BUG: platform equals args must parse");
 
         assert_eq!(cli.wasm_path, PathBuf::from("widget.wasm"));
-        assert_eq!(
-            cli.platform_catalog_path,
-            Some(PathBuf::from("catalog.json"))
-        );
         assert_eq!(cli.platform_id.as_deref(), Some("BMM100"));
     }
 
     #[test]
     fn parse_args_accepts_platform_space_forms() {
-        let cli = parse_test_args(&[
-            "testbed",
-            "widget.wasm",
-            "--platform-catalog",
-            "catalog.json",
-            "--platform",
-            "BMM101",
-        ])
-        .expect("BUG: platform space args must parse");
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--platform", "BMM101"])
+            .expect("BUG: platform space args must parse");
 
-        assert_eq!(
-            cli.platform_catalog_path,
-            Some(PathBuf::from("catalog.json"))
-        );
         assert_eq!(cli.platform_id.as_deref(), Some("BMM101"));
     }
 
@@ -835,67 +763,36 @@ mod platforms_startup_tests {
     }
 
     #[test]
-    fn load_catalog_and_platform_uses_bundled_default() {
+    fn startup_without_platform_arg_selects_the_default() {
         let cli =
             parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: minimal args must parse");
 
-        let (_catalog, selected_id) =
-            load_catalog_and_platform(&cli).expect("BUG: bundled default platform must load");
+        let platform = platform_catalog::select(cli.platform_id.as_deref())
+            .expect("BUG: default platform must resolve");
 
-        assert_eq!(selected_id, "BMC100");
+        assert_eq!(platform.id, "bmc100");
     }
 
     #[test]
-    fn load_catalog_and_platform_uses_requested_platform() {
+    fn startup_selects_the_requested_platform() {
         let cli = parse_test_args(&["testbed", "widget.wasm", "--platform", "BFM100"])
             .expect("BUG: platform arg must parse");
 
-        let (_catalog, selected_id) =
-            load_catalog_and_platform(&cli).expect("BUG: requested platform must load");
+        let platform = platform_catalog::select(cli.platform_id.as_deref())
+            .expect("BUG: requested platform must resolve");
 
-        assert_eq!(selected_id, "BFM100");
+        assert_eq!(platform.id, "bfm100");
     }
 
     #[test]
-    fn load_catalog_and_platform_reads_requested_catalog_path() {
-        let catalog_path = write_test_catalog();
-        let cli = parse_test_args(&[
-            "testbed",
-            "widget.wasm",
-            "--platform-catalog",
-            catalog_path.to_str().expect("BUG: temp path must be UTF-8"),
-        ])
-        .expect("BUG: catalog path arg must parse");
+    fn startup_rejects_an_unknown_platform() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--platform", "NOPE"])
+            .expect("BUG: platform arg must parse");
 
-        let (catalog, selected_id) =
-            load_catalog_and_platform(&cli).expect("BUG: catalog file must load");
+        let err = platform_catalog::select(cli.platform_id.as_deref())
+            .expect_err("BUG: unknown platform must fail");
 
-        assert_eq!(selected_id, "TEST");
-        let platform = catalog
-            .select(Some(&selected_id))
-            .expect("BUG: selected test platform must exist");
-        assert_eq!(platform.display.width, 111);
-        let _ = std::fs::remove_file(catalog_path);
-    }
-
-    #[test]
-    fn load_catalog_and_platform_reports_parse_path_context() {
-        let catalog_path = write_invalid_test_catalog();
-        let cli = parse_test_args(&[
-            "testbed",
-            "widget.wasm",
-            "--platform-catalog",
-            catalog_path.to_str().expect("BUG: temp path must be UTF-8"),
-        ])
-        .expect("BUG: catalog path arg must parse");
-
-        let err = load_catalog_and_platform(&cli)
-            .expect_err("BUG: invalid catalog file must fail with context");
-        let err = format!("{err:#}");
-
-        assert!(err.contains("failed to parse"), "{err}");
-        assert!(err.contains(&catalog_path.display().to_string()), "{err}");
-        let _ = std::fs::remove_file(catalog_path);
+        assert!(err.to_string().contains("NOPE"), "{err}");
     }
 }
 
@@ -918,24 +815,6 @@ fn load_manifest(
     let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&body)
         .with_context(|| format!("failed to parse {}", manifest_path.display()))?;
     Ok((manifest_path, manifest))
-}
-
-fn load_catalog_and_platform(cli: &CliArgs) -> Result<(platforms::PlatformCatalog, String)> {
-    let catalog = if let Some(path) = cli.platform_catalog_path.as_ref() {
-        let body = std::fs::read_to_string(path)
-            .with_context(|| format!("failed to read {}", path.display()))?;
-        platforms::PlatformCatalog::parse(&body)
-            .map_err(anyhow::Error::msg)
-            .with_context(|| format!("failed to parse {}", path.display()))?
-    } else {
-        platforms::PlatformCatalog::bundled().map_err(anyhow::Error::msg)?
-    };
-    let selected_id = catalog
-        .select(cli.platform_id.as_deref())
-        .map_err(anyhow::Error::msg)?
-        .id
-        .clone();
-    Ok((catalog, selected_id))
 }
 
 // ── Memory stats (Linux only) ───────────────────────────────────────
@@ -984,10 +863,7 @@ fn main() -> Result<()> {
         cli.resolved_widget_root(),
     )?;
     let params = bmc_wasm_runtime::manifest_default_params(&manifest);
-    let (catalog, active_platform_id) = load_catalog_and_platform(&cli)?;
-    let selected_platform = catalog
-        .select(Some(&active_platform_id))
-        .map_err(anyhow::Error::msg)?;
+    let selected_platform = platform_catalog::select(cli.platform_id.as_deref())?;
     let startup_layout = TileLayout::for_platform(selected_platform);
     let startup_size = requested_window_size(&startup_layout);
 
@@ -997,15 +873,16 @@ fn main() -> Result<()> {
         "Params:              {} key(s) from manifest defaults",
         params.len()
     );
+    let display = selected_platform.display();
     println!(
         "Platform: {} ({}) — display {}x{} {:?} dpi={}, {} viewport(s)",
-        active_platform_id,
+        selected_platform.id,
         selected_platform.label,
-        selected_platform.display.width,
-        selected_platform.display.height,
-        selected_platform.display.shape,
-        selected_platform.display.dpi,
-        selected_platform.widget_viewports.len()
+        display.logical_width,
+        display.logical_height,
+        display.shape,
+        display.dpi,
+        selected_platform.viewports.len()
     );
     if let Some(ref path) = cli.perf_report_path {
         println!(
@@ -1038,7 +915,7 @@ fn main() -> Result<()> {
         "WASM Widget Testbed",
         options,
         Box::new(move |cc| {
-            let app = TestbedApp::new(cc, cli, manifest, params, catalog, active_platform_id)?;
+            let app = TestbedApp::new(cc, cli, manifest, params, selected_platform)?;
             log_startup_memory(rss_before_gl);
             Ok(Box::new(app))
         }),
@@ -1201,7 +1078,7 @@ pub(crate) struct PreviewTile {
     pub(crate) gpu: TileGpu,
     pub(crate) x: u32,
     pub(crate) y: u32,
-    pub(crate) shape: platforms::DisplayShape,
+    pub(crate) shape: DisplayShape,
     label: String,
     dead: bool,
     ever_rendered: bool,
@@ -1213,7 +1090,7 @@ pub(crate) struct PreviewTile {
     next_render_at_ms: Option<u64>,
     /// A touch landed since the last render; forces the next tick to render.
     pending_interaction: bool,
-    pub(crate) led_count: Option<u32>,
+    pub(crate) led_count: Option<usize>,
     /// Receiver for LED requests from the widget (drained each frame).
     led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
     /// Current LED scene (from last `SetEffect` request).
@@ -1328,10 +1205,8 @@ pub(crate) struct TestbedApp {
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
-    /// Active platform catalog, kept for the runtime selector.
-    pub(crate) catalog: platforms::PlatformCatalog,
-    /// Id of the currently previewed platform.
-    pub(crate) active_platform_id: String,
+    /// The currently previewed platform.
+    pub(crate) active_platform: &'static Platform,
     /// Layout derived from the active platform's widget viewports.
     pub(crate) layout: TileLayout,
 }
@@ -1401,8 +1276,7 @@ impl TestbedApp {
             bmc_widget_manifest::ParamKey,
             bmc_widget_manifest::ParamValue,
         >,
-        catalog: platforms::PlatformCatalog,
-        active_platform_id: String,
+        active_platform: &'static Platform,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let gl = cc
             .gl
@@ -1421,11 +1295,8 @@ impl TestbedApp {
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
-        let platform = catalog
-            .platform(&active_platform_id)
-            .ok_or("BUG: selected platform id must exist in catalog")?;
-        let layout = TileLayout::for_platform(platform);
-        validate_recording_target(cli.record_size.as_deref(), &active_platform_id, &layout)
+        let layout = TileLayout::for_platform(active_platform);
+        validate_recording_target(cli.record_size.as_deref(), active_platform, &layout)
             .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
         let requested_size = requested_window_size(&layout);
 
@@ -1524,8 +1395,7 @@ impl TestbedApp {
                 state: recording_state,
                 fetch_events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             },
-            catalog,
-            active_platform_id,
+            active_platform,
             layout,
         })
     }
@@ -1572,13 +1442,7 @@ impl TestbedApp {
             tiles = self.tiles.len(),
             "hot reload: rebuilding tile runtime(s)"
         );
-        let Some(platform) = self.catalog.platform(&self.active_platform_id) else {
-            tracing::error!(
-                "hot reload: active platform '{}' not in catalog",
-                self.active_platform_id
-            );
-            return;
-        };
+        let platform = self.active_platform;
         let params = self.params.clone();
         let system = self.system.clone();
         // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
@@ -1647,24 +1511,17 @@ impl TestbedApp {
     /// active. Tiles are dropped so the lazy init path rebuilds runtime,
     /// renderer, and GPU resources at the new viewport sizes.
     pub(crate) fn switch_platform(&mut self, target_id: &str, ctx: &egui::Context) {
-        if target_id == self.active_platform_id {
+        if target_id == self.active_platform.id {
             return;
         }
         if let Err(reason) = can_switch_platform(self.recording_mode.state.is_some()) {
             tracing::warn!("switch: refusing platform switch to '{target_id}': {reason}");
             return;
         }
-        let Some(current_platform) = self.catalog.platform(&self.active_platform_id) else {
-            tracing::error!(
-                "switch: active platform '{}' not in catalog",
-                self.active_platform_id
-            );
-            return;
-        };
-        let mut switch = SwitchState::new(&self.active_platform_id, current_platform);
+        let mut switch = SwitchState::new(self.active_platform);
         switch.requested_size = self.requested_size;
 
-        match switch.switch_to(&self.catalog, target_id) {
+        match switch.switch_to(target_id) {
             Ok(false) => return,
             Ok(true) => {}
             Err(e) => {
@@ -1673,7 +1530,7 @@ impl TestbedApp {
             }
         }
 
-        self.active_platform_id = switch.active_platform_id;
+        self.active_platform = switch.platform;
         self.layout = switch.layout;
         self.requested_size = switch.requested_size;
         if switch.needs_tile_rebuild {
@@ -1705,10 +1562,7 @@ impl TestbedApp {
                 self.prepared_widget.wasm_path().display()
             )
         })?;
-        let platform = self
-            .catalog
-            .platform(&self.active_platform_id)
-            .ok_or_else(|| anyhow::anyhow!("BUG: active platform id must exist in catalog"))?;
+        let platform = self.active_platform;
         let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
         let widget_name = self
             .cli
@@ -2233,10 +2087,8 @@ fn viewport_supported(
     supported.iter().any(|c| {
         let shape_ok = matches!(
             (placed.shape, c.viewport_shape),
-            (
-                platforms::DisplayShape::Rectangular,
-                ViewportShape::Rectangular
-            ) | (platforms::DisplayShape::Round, ViewportShape::Round)
+            (DisplayShape::Rectangular, ViewportShape::Rectangular)
+                | (DisplayShape::Round, ViewportShape::Round)
         );
         shape_ok
             && c.min_width.is_none_or(|lo| placed.w >= lo)
@@ -2490,8 +2342,9 @@ impl eframe::App for TestbedApp {
 mod layout_tests {
     use super::*;
 
-    fn bundled() -> platforms::PlatformCatalog {
-        platforms::PlatformCatalog::bundled().expect("BUG: bundled catalog must parse")
+    fn platform(id: &str) -> &'static Platform {
+        platform_catalog::platform(id)
+            .unwrap_or_else(|| panic!("BUG: '{id}' must be in the catalog"))
     }
 
     /// Golden BMC100 geometry, copied from the pre-change compile-time layout.
@@ -2507,8 +2360,7 @@ mod layout_tests {
 
     #[test]
     fn bmc100_layout_is_pixel_identical_to_pre_change() {
-        let cat = bundled();
-        let p = cat.platform("BMC100").expect("BUG: BMC100 must exist");
+        let p = platform("bmc100");
         let layout = TileLayout::for_platform(p);
 
         assert_eq!(layout.tiles.len(), 4, "BMC100 must keep four preview tiles");
@@ -2540,11 +2392,8 @@ mod layout_tests {
 
     #[test]
     fn bmc100_catalog_viewport_sizes_match_golden_arrangement() {
-        let cat = bundled();
-        let p = cat.platform("BMC100").expect("BUG: BMC100 must exist");
-        for (v, &(_label, _x, _y, w, h)) in
-            p.widget_viewports.iter().zip(BMC100_GOLDEN_TILES.iter())
-        {
+        let p = platform("bmc100");
+        for (v, &(_label, _x, _y, w, h)) in p.viewports.iter().zip(BMC100_GOLDEN_TILES.iter()) {
             assert_eq!(
                 (v.width, v.height),
                 (w, h),
@@ -2555,22 +2404,20 @@ mod layout_tests {
 
     #[test]
     fn validate_recording_target_rejects_unknown_size_and_accepts_known() {
-        let cat = bundled();
-        let p = cat.platform("BMC100").expect("BUG: BMC100 must exist");
+        let p = platform("bmc100");
         let layout = TileLayout::for_platform(p);
         for s in ["full", "large", "medium", "small"] {
-            validate_recording_target(Some(s), "BMC100", &layout)
+            validate_recording_target(Some(s), p, &layout)
                 .unwrap_or_else(|e| panic!("BUG: known size '{s}' must validate: {e}"));
         }
-        let err = validate_recording_target(Some("SIZE=small"), "BMC100", &layout)
+        let err = validate_recording_target(Some("SIZE=small"), p, &layout)
             .expect_err("BUG: unknown size must be rejected, not defaulted to full");
         assert!(err.contains("unknown record size 'SIZE=small'"), "{err}");
     }
 
     #[test]
     fn bmm100_layout_has_single_tile() {
-        let cat = bundled();
-        let p = cat.platform("BMM100").expect("BUG: BMM100 must exist");
+        let p = platform("bmm100");
         let layout = TileLayout::for_platform(p);
         assert_eq!(layout.tiles.len(), 1);
         assert_eq!(
@@ -2582,8 +2429,7 @@ mod layout_tests {
 
     #[test]
     fn bmm100_stats_width_uses_stats_minimum() {
-        let cat = bundled();
-        let p = cat.platform("BMM100").expect("BUG: BMM100 must exist");
+        let p = platform("bmm100");
         let layout = TileLayout::for_platform(p);
 
         assert_eq!(layout.stats_w, STATS_MIN_W);
@@ -2595,8 +2441,7 @@ mod layout_tests {
 
     #[test]
     fn bmm101_layout_has_single_tile() {
-        let cat = bundled();
-        let p = cat.platform("BMM101").expect("BUG: BMM101 must exist");
+        let p = platform("bmm101");
         let layout = TileLayout::for_platform(p);
         assert_eq!(layout.tiles.len(), 1);
         assert_eq!((layout.tiles[0].w, layout.tiles[0].h), (480, 320));
@@ -2604,21 +2449,16 @@ mod layout_tests {
 
     #[test]
     fn bfm100_tile_carries_round_shape() {
-        let cat = bundled();
-        let p = cat.platform("BFM100").expect("BUG: BFM100 must exist");
+        let p = platform("bfm100");
         let layout = TileLayout::for_platform(p);
         assert_eq!(layout.tiles.len(), 1);
         assert_eq!((layout.tiles[0].w, layout.tiles[0].h), (480, 480));
-        assert!(matches!(
-            layout.tiles[0].shape,
-            platforms::DisplayShape::Round
-        ));
+        assert!(matches!(layout.tiles[0].shape, DisplayShape::Round));
     }
 
     #[test]
     fn bfm100_stats_width_uses_viewport_width() {
-        let cat = bundled();
-        let p = cat.platform("BFM100").expect("BUG: BFM100 must exist");
+        let p = platform("bfm100");
         let layout = TileLayout::for_platform(p);
 
         assert_eq!(layout.stats_w, 480);
@@ -2627,8 +2467,7 @@ mod layout_tests {
 
     #[test]
     fn bmc100_fullscreen_tile_preserves_legacy_kv_key() {
-        let cat = bundled();
-        let p = cat.platform("BMC100").expect("BUG: BMC100 must exist");
+        let p = platform("bmc100");
         let layout = TileLayout::for_platform(p);
 
         assert_eq!(layout.tiles[0].label, "Fullscreen");
@@ -2640,20 +2479,14 @@ mod layout_tests {
 
     #[test]
     fn switching_changes_layout_and_viewport_list() {
-        let cat = bundled();
-        let mut state = SwitchState::new(
-            "BMC100",
-            cat.platform("BMC100").expect("BUG: BMC100 must exist"),
-        );
+        let mut state = SwitchState::new(platform("bmc100"));
         assert_eq!(state.layout.tiles.len(), 4);
         let from_size = state.requested_size;
 
-        let changed = state
-            .switch_to(&cat, "BMM101")
-            .expect("BUG: BMM101 must exist");
+        let changed = state.switch_to("bmm101").expect("BUG: BMM101 must exist");
 
         assert!(changed);
-        assert_eq!(state.active_platform_id, "BMM101");
+        assert_eq!(state.platform.id, "bmm101");
         assert!(state.needs_tile_rebuild);
         assert_eq!(state.layout.tiles.len(), 1);
         assert_eq!(
@@ -2709,25 +2542,21 @@ mod layout_tests {
 
     #[test]
     fn invalid_recording_target_reports_platform_and_size() {
-        let cat = bundled();
-        let p = cat.platform("BMM100").expect("BUG: BMM100 must exist");
+        let p = platform("bmm100");
         let layout = TileLayout::for_platform(p);
-        let err = validate_recording_target(Some("small"), p.id.as_str(), &layout)
+        let err = validate_recording_target(Some("small"), p, &layout)
             .expect_err("BUG: one-tile platform cannot record BMC100 small tile");
 
         assert!(err.contains("small"), "{err}");
-        assert!(err.contains("BMM100"), "{err}");
+        assert!(err.contains("bmm100"), "{err}");
     }
 
     #[test]
     fn preview_area_encloses_every_tile() {
-        let cat = bundled();
-        for id in ["BMC100", "BMM100", "BMM101", "BFM100"] {
-            let p = cat
-                .platform(id)
-                .expect("BUG: bundled platform id must exist");
+        for p in platform_catalog::PLATFORMS {
+            let id = p.id;
             let layout = TileLayout::for_platform(p);
-            let led_h = if p.led_strip.is_some() {
+            let led_h = if p.led_count().is_some() {
                 LED_STRIP_H
             } else {
                 0
@@ -2747,8 +2576,7 @@ mod layout_tests {
 
     #[test]
     fn stripless_platforms_do_not_reserve_led_strip_height() {
-        let cat = bundled();
-        let p = cat.platform("BMM100").expect("BUG: BMM100 must exist");
+        let p = platform("bmm100");
         let layout = TileLayout::for_platform(p);
         assert_eq!(layout.tiles[0].led_count, None);
         assert_eq!(
@@ -2760,8 +2588,7 @@ mod layout_tests {
 
     #[test]
     fn bfm100_runtime_geometry_is_round_for_viewport_and_display() {
-        let cat = bundled();
-        let p = cat.platform("BFM100").expect("BUG: BFM100 must exist");
+        let p = platform("bfm100");
         let layout = TileLayout::for_platform(p);
         let tile = &layout.tiles[0];
 
@@ -2783,8 +2610,7 @@ mod layout_tests {
 
     #[test]
     fn bmm101_runtime_geometry_reports_selected_display_resolution() {
-        let cat = bundled();
-        let p = cat.platform("BMM101").expect("BUG: BMM101 must exist");
+        let p = platform("bmm101");
         let layout = TileLayout::for_platform(p);
         let tile = &layout.tiles[0];
 
@@ -2805,8 +2631,7 @@ mod layout_tests {
 
     #[test]
     fn bmc100_tile_geometry_keeps_tile_viewport_and_platform_display_separate() {
-        let cat = bundled();
-        let p = cat.platform("BMC100").expect("BUG: BMC100 must exist");
+        let p = platform("bmc100");
         let layout = TileLayout::for_platform(p);
         let medium = layout
             .tiles
