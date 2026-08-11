@@ -62,6 +62,7 @@ use crate::config::widget_uuids::{
     SPACEX_LAUNCH_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings};
+use crate::data::SceneCycling;
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
 };
@@ -137,7 +138,7 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report, Vec<Value>
     // lenient re-parse into its current type. A malformed value drops
     // that single field — never the migration.
     let settings = MigratedSettings {
-        scene_cycling: passthrough_setting("scene_cycling", v0.scene_cycling),
+        scene_cycling: migrate_scene_cycling(v0.scene_cycling),
         localization: passthrough_setting("localization", v0.localization),
         data_collection: passthrough_setting("data_collection", v0.data_collection),
         brightness_pct: passthrough_setting("brightness_pct", v0.brightness_pct),
@@ -590,7 +591,19 @@ fn parse_size(size: &str) -> WidgetSize {
     })
 }
 
-// --- Settings pass-through ---------------------------------------------------
+// --- Settings migration ------------------------------------------------------
+
+/// Pass `scene_cycling` through with `transition` pinned to Slide.
+/// Every v0 release persisted the field without exposing it in the UI
+/// (25.11-26.02 even serialized a Fade default), so the stored value
+/// is not a user choice and must not survive the upgrade.
+fn migrate_scene_cycling(raw: Option<Value>) -> Option<SceneCycling> {
+    let mut raw = raw?;
+    if let Some(section) = raw.as_object_mut() {
+        section.insert("transition".to_owned(), Value::from("slide"));
+    }
+    passthrough_setting("scene_cycling", Some(raw))
+}
 
 /// Re-parse one top-level v0 setting into its current typed form.
 /// The shape is identical on both sides so this is a validate step,
@@ -1364,6 +1377,29 @@ mod tests {
         assert_eq!(out["data_collection"], false);
         assert_eq!(out["night_mode"]["from"], "21:00:00");
         assert_eq!(out["alarms"][0]["time"], "07:00:00");
+    }
+
+    #[test]
+    fn scene_cycling_migration_forces_slide_and_keeps_the_rest() {
+        // 25.11-26.02 shape: `transition` carries the serialized Fade default
+        // the user never chose => forced to Slide.
+        let v0: v0::Config = serde_json::from_value(json!({
+            "scenes": [],
+            "scene_cycling": {
+                "automatic_cycling_enabled": false,
+                "automatic_cycling_default_duration": "45s",
+                "transition": "fade"
+            }
+        }))
+        .expect("BUG: v0 fixture must parse");
+        let (current, _, _) = upgrade_with_report(v0);
+        let out = serde_json::to_value(&current).expect("BUG: config must serialize");
+        assert_eq!(out["scene_cycling"]["automatic_cycling_enabled"], false);
+        assert_eq!(
+            out["scene_cycling"]["automatic_cycling_default_duration"],
+            "45s"
+        );
+        assert_eq!(out["scene_cycling"]["transition"], "slide");
     }
 
     #[test]
