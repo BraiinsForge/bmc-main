@@ -26,6 +26,44 @@
 
 use bmc_wasm_sdk::Color;
 
+/// The design's four frames. The widget renders the same screens in each,
+/// dropping columns and rows as the box shrinks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SizeBucket {
+    Small,
+    Medium,
+    Large,
+    Full,
+}
+
+impl SizeBucket {
+    /// Design reference sizes: S 317×238, M 638×238, L 638×480, Full 1280×480.
+    #[must_use]
+    pub fn design_size(self) -> (f32, f32) {
+        match self {
+            Self::Small => (317.0, 238.0),
+            Self::Medium => (638.0, 238.0),
+            Self::Large => (638.0, 480.0),
+            Self::Full => (1280.0, 480.0),
+        }
+    }
+}
+
+/// Which frame a viewport falls in. Thresholds sit between neighbouring
+/// design widths so each viewport snaps to its own band.
+#[must_use]
+pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
+    if width >= 900 {
+        SizeBucket::Full
+    } else if width <= 450 {
+        SizeBucket::Small
+    } else if height <= 330 {
+        SizeBucket::Medium
+    } else {
+        SizeBucket::Large
+    }
+}
+
 /// Livery colour shown for a team whose own colour is missing
 /// or unreadable, so the row still renders in team-neutral grey.
 pub const FALLBACK_TEAM_COLOR: Color = Color::from_hex(0x52_52_52);

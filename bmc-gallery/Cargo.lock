@@ -685,6 +685,7 @@ dependencies = [
  "braiins-pool",
  "femtovg",
  "fleet-management",
+ "formula-1",
  "gallery",
  "gallery-build",
  "rodio",
@@ -2282,6 +2283,13 @@ name = "formato"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61f6f3299260c1f4180ce881f8bb2bfc1195ceeafd54eea899af5859a6f882ad"
+
+[[package]]
+name = "formula-1"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
 
 [[package]]
 name = "fs-err"
