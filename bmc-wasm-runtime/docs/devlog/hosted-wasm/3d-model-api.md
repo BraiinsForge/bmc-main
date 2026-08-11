@@ -99,7 +99,7 @@ optional normal map perturbation, UV-rect highlight tint.
 
 Full vertical slice: proc macro, wire format, host renderer, FBO compositing, dirty-tracking.
 
-- `examples/mesh-demo/` — textured Suzanne (3000 tri, 512×512 baked clay texture)
+- `../../../../widgets-wasm-examples/mesh-demo/` — textured Suzanne (3000 tri, 512×512 baked clay texture)
 - Touch-drag rotation with relative cursor tracking
 
 ### Phase 2: Transforms + transitions

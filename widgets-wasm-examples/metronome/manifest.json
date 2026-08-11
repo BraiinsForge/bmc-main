@@ -1,17 +1,17 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440208",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440207",
   "version": "0.1.0",
-  "name": "Pomodoro",
-  "subname": "Focus timer",
-  "description": "Pomodoro timer with LED phase feedback and daily session tracking",
+  "name": "Metronome",
+  "subname": "Tempo",
+  "description": "Tap-to-tempo metronome with audible click track",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/pomodoro",
+  "binary": "bin/metronome",
   "icon": "assets/icon.svg",
-  "category": "utility",
+  "category": "media",
   "settings": [],
   "supported_viewports": [
     {

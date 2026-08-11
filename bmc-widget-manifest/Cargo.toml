@@ -13,7 +13,7 @@ description = "Widget manifest types — the on-disk schema for `manifest.json` 
 include = [
     "manifest.schema.json",
     "../widgets/*/manifest.json",
-    "../bmc-wasm-runtime/examples/*/manifest.json",
+    "../widgets-wasm-examples/*/manifest.json",
     "../widgets-wasm/*/manifest.json",
 ]
 

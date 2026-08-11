@@ -1,17 +1,17 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440206",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440205",
   "version": "0.1.0",
-  "name": "Mesh Demo",
-  "subname": "3D",
-  "description": "3D mesh rendering demo with Suzanne and dice tray",
+  "name": "Media Control",
+  "subname": "Remote",
+  "description": "UPnP/DLNA/Cast/Kodi media playback remote",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/mesh-demo",
+  "binary": "bin/media-control",
   "icon": "assets/icon.svg",
-  "category": "utility",
+  "category": "media",
   "settings": [],
   "supported_viewports": [
     {

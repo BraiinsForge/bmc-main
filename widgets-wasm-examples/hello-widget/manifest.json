@@ -1,15 +1,15 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440201",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440200",
   "version": "0.1.0",
-  "name": "Calendar",
-  "subname": "Agenda",
-  "description": "iCal agenda view of upcoming events",
+  "name": "Hello",
+  "subname": "Starter",
+  "description": "Minimal WASM widget",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/calendar",
+  "binary": "bin/hello-widget",
   "icon": "assets/icon.svg",
   "category": "utility",
   "settings": [],

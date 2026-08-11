@@ -1,5 +1,5 @@
 [package]
-name = "stress-test"
+name = "params-demo"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
@@ -8,7 +8,7 @@ license = "GPL-3.0-or-later"
 crate-type = ["cdylib"]
 
 [dependencies]
-bmc-wasm-sdk = { path = "../../sdk" }
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 
 [lints]
 workspace = true

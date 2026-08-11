@@ -51,7 +51,7 @@ fn example_manifests() -> Vec<(std::path::PathBuf, String)> {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .expect("BUG: workspace root");
-    let examples = workspace.join("bmc-wasm-runtime/examples");
+    let examples = workspace.join("widgets-wasm-examples");
     let mut out = vec![];
     for entry in std::fs::read_dir(&examples).expect("BUG: read examples dir") {
         let entry = entry.expect("BUG: read entry");

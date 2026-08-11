@@ -88,7 +88,7 @@ The header `time` field must include a timezone offset (e.g. `"2026-03-10T18:00:
 with offset; the replay parser requires it.
 
 ```
-examples/<widget>/capture/fixtures/<size>.jsonl.gz
+../widgets-wasm-examples/<widget>/capture/fixtures/<size>.jsonl.gz
 ```
 
 ### Replay timeline

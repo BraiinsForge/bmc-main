@@ -1,6 +1,6 @@
 ---
 name: repo-build-workflow
-description: Use when validating code locally, picking which `just` target to run, deciding whether to reach for raw cargo/nix commands, or making changes that touch the `bmc-wasm-runtime/` SDK or examples. Triggers on phrases like "validate the changes", "run clippy", "check if it builds", "before the fixup", "is this lint-clean", or when about to touch `bmc-wasm-runtime/sdk/Cargo.toml`, `bmc-wasm-runtime/examples/`, or workspace structure.
+description: Use when validating code locally, picking which `just` target to run, deciding whether to reach for raw cargo/nix commands, or making changes that touch the `bmc-wasm-runtime/` SDK or examples. Triggers on phrases like "validate the changes", "run clippy", "check if it builds", "before the fixup", "is this lint-clean", or when about to touch `bmc-wasm-runtime/sdk/Cargo.toml`, `widgets-wasm-examples/`, or workspace structure.
 ---
 
 # Repo build & validation workflow
@@ -65,10 +65,10 @@ The repo has **three** separate cargo workspaces with their own `Cargo.lock` fil
 
 1. Root workspace.
 2. `bmc-wasm-runtime/sdk/`.
-3. `bmc-wasm-runtime/examples/`.
+3. `widgets-wasm-examples/`.
 
 The `wasm-regression` CI job builds the examples workspace with `--locked`. When the SDK gains a new path dep (e.g.
-`bmc-led`), the new package needs to be in `bmc-wasm-runtime/examples/Cargo.lock` because the examples consume the SDK
+`bmc-led`), the new package needs to be in `widgets-wasm-examples/Cargo.lock` because the examples consume the SDK
 transitively. CI's `--locked` flag refuses to auto-update — the job fails with
 `cannot update the lock file ... because --locked was passed`.
 
@@ -77,14 +77,14 @@ transitively. CI's `--locked` flag refuses to auto-update — the job fails with
 refreshing the examples lock locally:
 
 ```
-(cd bmc-wasm-runtime/examples && cargo check --target wasm32-unknown-unknown -p hello-widget)
+(cd widgets-wasm-examples && cargo check --target wasm32-unknown-unknown -p hello-widget)
 ```
 
 Squash the lock-file change into the same commit that introduced the dep so verify-at-every-commit holds.
 
 ## Don't add nested cargo workspaces
 
-Hard no-go. The project is actively paying down the *existing* nested workspaces (`bmc-wasm-runtime/examples/`,
+Hard no-go. The project is actively paying down the *existing* nested workspaces (`widgets-wasm-examples/`,
 `sdk-macros/`, `sdk/`, `skin/`, `skin/tools/`) — the desired end-state is a single root cargo workspace. Adding another
 nested `[workspace]` runs counter to that direction.
 
@@ -110,5 +110,5 @@ hot-reload of an unrelated config file.
 - Never wrap `just validate` in shell chaining or redirection — breaks the agent permission allowlist.
 - Never propose a new nested cargo workspace as a workaround.
 - Never use `--no-verify` to bypass commit hooks. Fix the hook failure root cause instead.
-- Never skip refreshing `bmc-wasm-runtime/examples/Cargo.lock` after an SDK dep change; CI will catch it with
-  `--locked`, but the human reviewer will catch it first.
+- Never skip refreshing `widgets-wasm-examples/Cargo.lock` after an SDK dep change; CI will catch it with `--locked`,
+  but the human reviewer will catch it first.

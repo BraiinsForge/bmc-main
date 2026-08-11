@@ -266,7 +266,7 @@ let
     };
   };
 
-  workspaceWasmExamples = mkWasmWorkspace "bmc-wasm-runtime/examples";
+  workspaceWasmExamples = mkWasmWorkspace "widgets-wasm-examples";
   workspaceWasmWidgets = mkWasmWorkspace "widgets-wasm";
 
   # Roots that host wasm widget crates.
@@ -278,7 +278,7 @@ let
   wasmWidgetRoots = [
     {
       workspaceName = "wasmExamples";
-      src = ./bmc-wasm-runtime/examples;
+      src = ./widgets-wasm-examples;
       workspace = workspaceWasmExamples;
     }
     {

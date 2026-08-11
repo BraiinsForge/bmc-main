@@ -1,15 +1,15 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440200",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440206",
   "version": "0.1.0",
-  "name": "Hello",
-  "subname": "Starter",
-  "description": "Minimal WASM widget",
+  "name": "Mesh Demo",
+  "subname": "3D",
+  "description": "3D mesh rendering demo with Suzanne and dice tray",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/hello-widget",
+  "binary": "bin/mesh-demo",
   "icon": "assets/icon.svg",
   "category": "utility",
   "settings": [],

@@ -55,7 +55,7 @@ also declare `enum_values`; generated code turns those enum values into Rust enu
 Required params must declare `default_value`. Optional params may omit a default; when unset, the generated Rust field
 is `Option<T>` and evaluates to `None`.
 
-Use `bmc-wasm-runtime/examples/params-demo/manifest.json` as the reference example. It exercises every `ParamKind`, enum
+Use `widgets-wasm-examples/params-demo/manifest.json` as the reference example. It exercises every `ParamKind`, enum
 values, ranges, string formats, and optional-without-default params.
 
 ## Generate Typed Accessors
@@ -82,7 +82,7 @@ The generated file contains:
 - `Params::changed_keys(&previous)` for update-hook diffing.
 - Enum wrapper types for manifest `enum_values`.
 
-See `bmc-wasm-runtime/examples/params-demo/src/manifest_params.rs` for the generated shape.
+See `widgets-wasm-examples/params-demo/src/manifest_params.rs` for the generated shape.
 
 ## Read Params In A Widget
 

@@ -1,15 +1,15 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440204",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440201",
   "version": "0.1.0",
-  "name": "Home Assistant",
-  "subname": "Smart home",
-  "description": "Live Home Assistant entity state via WebSocket",
+  "name": "Calendar",
+  "subname": "Agenda",
+  "description": "iCal agenda view of upcoming events",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/home-assistant",
+  "binary": "bin/calendar",
   "icon": "assets/icon.svg",
   "category": "utility",
   "settings": [],

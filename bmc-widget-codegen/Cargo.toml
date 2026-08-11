@@ -11,8 +11,8 @@ description = "Reads a widget `manifest.json` and emits a typed-accessor `manife
 # scoped filter would otherwise drop) to assert the generator is up to date.
 [package.metadata.nix]
 include = [
-    "../bmc-wasm-runtime/examples/*/manifest.json",
-    "../bmc-wasm-runtime/examples/*/src/manifest_params.rs",
+    "../widgets-wasm-examples/*/manifest.json",
+    "../widgets-wasm-examples/*/src/manifest_params.rs",
     "../widgets-wasm/*/manifest.json",
     "../widgets-wasm/*/src/manifest_params.rs",
 ]

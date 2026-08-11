@@ -25,7 +25,7 @@ use std::str::FromStr;
 /// `workspace.nix:wasmWidgetRoots` + `bmc-wasm-runtime/tools/widget_root.py`
 /// for the wasm side, plus the native-widget `widgets/` root.
 /// Adding a root means updating all three lists.
-const MANIFEST_ROOTS: &[&str] = &["widgets", "bmc-wasm-runtime/examples", "widgets-wasm"];
+const MANIFEST_ROOTS: &[&str] = &["widgets", "widgets-wasm-examples", "widgets-wasm"];
 
 fn manifest_paths() -> Vec<std::path::PathBuf> {
     let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -62,14 +62,14 @@ fn every_shipping_manifest_loads_and_validates() {
 }
 
 #[test]
-fn shipping_manifests_include_wasm_runtime_examples() {
+fn shipping_manifests_include_wasm_examples() {
     let paths = manifest_paths();
-    let examples_root = std::path::Path::new("bmc-wasm-runtime/examples");
+    let examples_root = std::path::Path::new("widgets-wasm-examples");
     assert!(
         paths
             .iter()
             .any(|path| path.ends_with(examples_root.join("hello-widget/manifest.json"))),
-        "BUG: wasm runtime example manifests are not included in shipping manifest scan"
+        "BUG: wasm example manifests are not included in shipping manifest scan"
     );
 }
 

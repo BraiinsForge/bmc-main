@@ -8,6 +8,6 @@ python-version = "3.12"
 # and their own venv — they run ty separately via their own Makefile.
 [src]
 exclude = [
-    "bmc-wasm-runtime/examples/*/tools/",
+    "widgets-wasm-examples/*/tools/",
     "widgets-wasm/iss-position/tools/",
 ]

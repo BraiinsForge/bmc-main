@@ -1,9 +1,9 @@
 # WASM Widget Regression Testing
 
-Every widget under `widgets-wasm/` (and every example under `bmc-wasm-runtime/examples/`) can opt into pixel-level
-visual regression. The CI job `wasm-regression` runs one nix derivation per opted-in widget, each rendering the widget
-in a sandbox with headless EGL, then diffing the output against compressed baselines committed in the tree. Drift past
-the tolerances below fails the job and publishes an HTML report with A/B images as a build artifact.
+Every widget under `widgets-wasm/` (and every example under `widgets-wasm-examples/`) can opt into pixel-level visual
+regression. The CI job `wasm-regression` runs one nix derivation per opted-in widget, each rendering the widget in a
+sandbox with headless EGL, then diffing the output against compressed baselines committed in the tree. Drift past the
+tolerances below fails the job and publishes an HTML report with A/B images as a build artifact.
 
 This document is the widget-author view: what files a widget needs, how to record them, and how to refresh baselines
 after an intentional visual change. For the internals (capture binary, Mesa wrapper, fixture format, replay loop), see

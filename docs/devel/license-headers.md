@@ -75,7 +75,7 @@ Do not add Braiins headers to:
   fonts under `assets/fonts/` and `frontend/src/styles/fonts/`, `LICENSE-CARBON`, `LICENSE-AOSP`,
   `LICENSE-CIRCLE-FLAGS`, `LICENSE-PHOSPHOR`.
 - `frontend/src/lib/react/props.tsx` — carries the IBM Corp. Apache-2.0 notice.
-- `bmc-wasm-runtime/examples/media-control/proto/cast_channel.proto` — Chromium, BSD-style license.
+- `widgets-wasm-examples/media-control/proto/cast_channel.proto` — Chromium, BSD-style license.
 - `bmc-virt/kernel-patches/ref/spi-bmc-virt.c` — Linux kernel module reference, GPL-2.0-only.
 
 Files that embed fragments of third-party code under a Braiins header must keep an attribution note next to the fragment

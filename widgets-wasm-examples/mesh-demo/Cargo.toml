@@ -13,7 +13,7 @@ include = ["assets/**"]
 crate-type = ["cdylib"]
 
 [dependencies]
-bmc-wasm-sdk = { path = "../../sdk", features = ["math-3d"] }
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk", features = ["math-3d"] }
 
 [lints]
 workspace = true

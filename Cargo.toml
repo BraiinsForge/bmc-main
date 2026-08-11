@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
 exclude = [
-    "bmc-wasm-runtime/examples",
     "tooling",
+    "widgets-wasm-examples",
 ]
 members = [
     "bmc",

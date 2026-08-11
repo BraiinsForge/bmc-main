@@ -21,7 +21,7 @@
 //! Drift-guard: every widget's committed `manifest_params.rs` must match
 //! what the codegen would emit for its current `manifest.json`.
 //!
-//! Scans every wasm-widget workspace root (`bmc-wasm-runtime/examples/`
+//! Scans every wasm-widget workspace root (`widgets-wasm-examples/`
 //! for SDK examples and `widgets-wasm/` for production widgets)
 //! so the check stays in lock-step with the multi-root layout used
 //! by the Nix catalog (`workspace.nix:wasmWidgetCatalog`) and the justfile
@@ -48,7 +48,7 @@ fn widget_manifest_params_are_up_to_date() {
         .expect("BUG: bmc-widget-codegen has a parent workspace dir");
 
     let roots = [
-        repo_root.join("bmc-wasm-runtime/examples"),
+        repo_root.join("widgets-wasm-examples"),
         repo_root.join("widgets-wasm"),
     ];
 

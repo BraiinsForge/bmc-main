@@ -1,17 +1,17 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440205",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440208",
   "version": "0.1.0",
-  "name": "Media Control",
-  "subname": "Remote",
-  "description": "UPnP/DLNA/Cast/Kodi media playback remote",
+  "name": "Pomodoro",
+  "subname": "Focus timer",
+  "description": "Pomodoro timer with LED phase feedback and daily session tracking",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/media-control",
+  "binary": "bin/pomodoro",
   "icon": "assets/icon.svg",
-  "category": "media",
+  "category": "utility",
   "settings": [],
   "supported_viewports": [
     {

@@ -13,7 +13,7 @@ include = ["assets/**", "proto/**/*.proto"]
 crate-type = ["cdylib"]
 
 [dependencies]
-bmc-wasm-sdk = { path = "../../sdk" }
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 prost.workspace = true
 
 [build-dependencies]

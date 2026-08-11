@@ -94,7 +94,7 @@ Optimized for minimal GPU memory and fast upload:
 
 ```bash
 # Enter the examples workspace
-cd bmc-wasm-runtime/examples
+cd widgets-wasm-examples
 
 # Build the WASM module
 cargo build -p mesh-demo --target wasm32-unknown-unknown --release
@@ -111,13 +111,13 @@ pre-generation.
 
 ```bash
 # Regenerate a single die (e.g. D10)
-make -C bmc-wasm-runtime/examples/mesh-demo D10
+make -C widgets-wasm-examples/mesh-demo D10
 
 # Regenerate all models
-make -C bmc-wasm-runtime/examples/mesh-demo generate
+make -C widgets-wasm-examples/mesh-demo generate
 
 # Reset textures only (no Blender needed, still requires PIL)
-make -C bmc-wasm-runtime/examples/mesh-demo reset-D10
+make -C widgets-wasm-examples/mesh-demo reset-D10
 ```
 
 ## Constraints (GC400 / STM32MP157)

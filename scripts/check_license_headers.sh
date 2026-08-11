@@ -39,7 +39,7 @@ excludes=(
     "frontend/src/proto/gen/*"
     "frontend/src/lib/react/props.tsx"
     "frontend/src/styles/fonts/*"
-    "bmc-wasm-runtime/examples/media-control/proto/cast_channel.proto"
+    "widgets-wasm-examples/media-control/proto/cast_channel.proto"
     "bmc-virt/kernel-patches/*"
     "bmc-render/keyboard/assets/layouts/*"
     "*/src/manifest_params.rs"

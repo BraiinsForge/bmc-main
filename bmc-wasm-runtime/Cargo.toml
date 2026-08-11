@@ -12,7 +12,7 @@ license = "GPL-3.0-or-later"
 include = [
     "templates/**",
     "src/bin/testbed/platforms.default.json",
-    "examples/*/manifest.json",
+    "../widgets-wasm-examples/*/manifest.json",
     "tests/fixtures/*.wat",
 ]
 

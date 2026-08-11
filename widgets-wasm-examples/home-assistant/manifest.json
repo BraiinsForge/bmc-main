@@ -1,17 +1,17 @@
 {
-  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
-  "uid": "550e8400-e29b-41d4-a716-446655440207",
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440204",
   "version": "0.1.0",
-  "name": "Metronome",
-  "subname": "Tempo",
-  "description": "Tap-to-tempo metronome with audible click track",
+  "name": "Home Assistant",
+  "subname": "Smart home",
+  "description": "Live Home Assistant entity state via WebSocket",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
   },
-  "binary": "bin/metronome",
+  "binary": "bin/home-assistant",
   "icon": "assets/icon.svg",
-  "category": "media",
+  "category": "utility",
   "settings": [],
   "supported_viewports": [
     {

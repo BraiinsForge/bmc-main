@@ -5,7 +5,7 @@
 # Keep it that way — if a target needs real logic, write a script under
 # tools/ and call it from here.
 #
-# Multi-root: wasm widgets live in `examples/` (SDK examples)
+# Multi-root: wasm widgets live in `../widgets-wasm-examples/` (SDK examples)
 # and `widgets-wasm/` (production widgets). Each widget's workspace root
 # is resolved at recipe execution time via `tools/widget_root.py`.
 
@@ -153,7 +153,7 @@ capture WIDGET ARGS="":
 # Capture every widget in every workspace.
 capture-all ARGS="":
     cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- run-all \
-        --workspace {{ dir }}/examples \
+        --workspace {{ dir }}/../widgets-wasm-examples \
         --workspace {{ dir }}/../widgets-wasm \
         --output-dir {{ output_dir }} {{ ARGS }}
 
@@ -177,7 +177,7 @@ verify WIDGET:
 # Verify every widget in parallel, across every workspace.
 verify-all:
     cargo run --features capture --bin capture --manifest-path {{ dir }}/Cargo.toml -- verify --parallel \
-        --workspace {{ dir }}/examples \
+        --workspace {{ dir }}/../widgets-wasm-examples \
         --workspace {{ dir }}/../widgets-wasm \
         --output-dir {{ output_dir }}
 

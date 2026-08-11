@@ -33,9 +33,9 @@ include:
         ./bmc-shared/ii-net
         ./bmc-shared/ii-net-drv
         ./bmc-shared/ii-dns
-        ./bmc-wasm-runtime/examples
         ./tooling
         ./widgets-wasm
+        ./widgets-wasm-examples
       # shellcheck: redundant with content-checks (braiinschk shell=true).
       # unused-deps: cargo-machete needs per-crate triage first.
       disabled_jobs: ["shellcheck", "unused-deps"]

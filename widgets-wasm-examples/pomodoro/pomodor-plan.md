@@ -23,7 +23,7 @@ Host (`runtime_wasmi.rs`): 3 linker bindings forwarding to `HostState.led_reques
 
 ## Stage 3: Pomodoro Widget — Core — Complete
 
-Widget at `examples/pomodoro/` with:
+Widget at `widgets-wasm-examples/pomodoro/` with:
 
 - Phase state machine (Idle → Working → ShortBreak → Working → ... → LongBreak → Idle)
 - LED mapping per phase (Breathe red, Solid green/blue, Chase on cycle complete)
@@ -58,7 +58,7 @@ Widget at `examples/pomodoro/` with:
 
 ## Stage 5: Fixtures + Visual Regression — Not Started
 
-- Create `examples/pomodoro/config.toml` for capture configuration
+- Create `widgets-wasm-examples/pomodoro/config.toml` for capture configuration
 - Record fixtures, generate baseline screenshots
 - Verify via `make regression-test EXAMPLE=pomodoro`
 

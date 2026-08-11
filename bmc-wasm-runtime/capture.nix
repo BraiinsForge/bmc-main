@@ -82,14 +82,14 @@ let
       src = lib.fileset.toSource {
         root = ../.;
         fileset = lib.fileset.unions [
-          ./examples
+          ../widgets-wasm-examples
           ../widgets-wasm
         ];
       };
     } ''
     mkdir captures "$out"
     wasm-capture verify \
-      --workspace="$src/bmc-wasm-runtime/examples" \
+      --workspace="$src/widgets-wasm-examples" \
       --wasm-dir="${wasmExamples}" \
       --workspace="$src/widgets-wasm" \
       --wasm-dir="${wasmWidgetsBundle}" \

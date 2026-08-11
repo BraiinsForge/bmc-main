@@ -47,7 +47,7 @@ BMC_APP_LOG_PATH = OUTPUT_DIR / "bmc-openwrt.log"
 # Baked into bmc-wasm-host (see widgets/wasm/src/main.rs).
 REMOTE_WASM_LOG = "/var/log/bmc/wasm-widget.log"
 
-# UID from bmc-wasm-runtime/examples/hello-widget/manifest.json. The
+# UID from widgets-wasm-examples/hello-widget/manifest.json. The
 # legacy generic WASM runner UID has been retired; every packaged
 # widget now owns its own UID.
 HELLO_WIDGET_TYPE_ID = "550e8400-e29b-41d4-a716-446655440200"

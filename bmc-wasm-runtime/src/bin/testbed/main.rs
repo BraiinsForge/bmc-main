@@ -765,7 +765,7 @@ mod platforms_startup_tests {
     #[test]
     fn load_manifest_uses_widget_root_for_foreign_target_wasm() {
         let runtime_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let widget_root = runtime_dir.join("examples/hello-widget");
+        let widget_root = runtime_dir.join("../widgets-wasm-examples/hello-widget");
         let wasm_path = Path::new(
             "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
         );
@@ -780,7 +780,7 @@ mod platforms_startup_tests {
     #[test]
     fn resolved_widget_root_uses_cli_root_for_foreign_target_wasm() {
         let runtime_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let widget_root = runtime_dir.join("examples/hello-widget");
+        let widget_root = runtime_dir.join("../widgets-wasm-examples/hello-widget");
         let cli = parse_test_args(&[
             "testbed",
             "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",

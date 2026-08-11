@@ -50,7 +50,7 @@ from typing import NoReturn
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 WIDGET_ROOTS = [
-    REPO_ROOT / 'bmc-wasm-runtime' / 'examples',
+    REPO_ROOT / 'widgets-wasm-examples',
     REPO_ROOT / 'widgets-wasm',
 ]
 

@@ -25,7 +25,7 @@ let
   # Cargo config spells the stack size out again because the target-specific
   # environment variable replaces its rustflags array rather than merging it.
   wasmStackConfig = ../.cargo/config.toml;
-  examplesCargoConfig = ../bmc-wasm-runtime/examples + "/.cargo/config.toml";
+  examplesCargoConfig = ../widgets-wasm-examples + "/.cargo/config.toml";
   configuredStackSize = config:
     let
       sizes = lib.filter (match: match != null)
@@ -86,7 +86,7 @@ in
           ../rules
           ../bmc-wasm-runtime/sdk/src
           ../bmc-wasm-runtime/protocol/src
-          ../bmc-wasm-runtime/examples
+          ../widgets-wasm-examples
           ../widgets-wasm
         ];
       };
@@ -188,7 +188,7 @@ in
           ])
           # subprojects with their own nix dev shell, deps, and lint setup
           (lib.fileset.unions [
-            ../bmc-wasm-runtime/examples
+            ../widgets-wasm-examples
             ../widgets-wasm
             ../bmc-virt/harness
             ../bmc-tui

@@ -72,7 +72,7 @@ WIDGET_TYPE_ID = "550e8400-e29b-41d4-a716-446655440300"
 
 # Repo-relative: the pushed config carries this widget's own param defaults, and
 # reading them beats restating fourteen values that the manifest already holds.
-MANIFEST = Path("bmc-wasm-runtime/examples/params-demo/manifest.json")
+MANIFEST = Path("widgets-wasm-examples/params-demo/manifest.json")
 
 # 1x1 PNG. The widget has to receive something decodable so a decoder error
 # cannot be mistaken for the fetch never arriving.

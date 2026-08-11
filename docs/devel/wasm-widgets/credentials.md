@@ -139,5 +139,5 @@ restart authenticated work without repainting when the visible binding is unchan
 
 ## Reference Example
 
-`bmc-wasm-runtime/examples/params-demo` declares one slot per credential type — required and optional, single-field and
+`widgets-wasm-examples/params-demo` declares one slot per credential type — required and optional, single-field and
 two-field, pinned and unpinned — and renders each slot's bound account or a placeholder dash when unbound.
