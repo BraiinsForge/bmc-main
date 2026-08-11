@@ -184,6 +184,9 @@ pub struct FemtoVgRenderer {
     /// Cached static layers, keyed by owning widget instance. One renderer
     /// serves every slot, so these cannot be a single slot-agnostic layer.
     static_layers: HashMap<String, StaticLayer>,
+    /// 1x1 opaque white texture, tinted to paint solid rectangles through
+    /// femtovg's texture-copy fast path. See [`FemtoVgRenderer::solid_texture`].
+    solid_texture: Option<femtovg::ImageId>,
 }
 
 impl std::fmt::Debug for FemtoVgRenderer {
@@ -637,6 +640,7 @@ impl FemtoVgRenderer {
             #[cfg(feature = "profiling")]
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
             static_layers: HashMap::new(),
+            solid_texture: None,
         })
     }
 
@@ -845,14 +849,84 @@ fn draw_anchored_lines_with_outline(
 
 // ── Renderer trait implementation ───────────────────────────────────
 
+impl FemtoVgRenderer {
+    /// Paint that fills `(x, y, w, h)` with `color` through femtovg's
+    /// texture-copy fast path rather than its general fill shader.
+    ///
+    /// A plain colour fill runs `scissorMask()`, the edge-AA `strokeMask()` and
+    /// a `discard` for every fragment — the discard being especially unkind to a
+    /// tile-based GPU. Tinting a 1x1 texture instead selects
+    /// `ShaderType::TextureCopyUnclipped`, which samples once, multiplies by the
+    /// tint and returns before any of that. Measured at ~1.7x cheaper per pixel
+    /// on the Deck.
+    ///
+    /// Turning anti-aliasing off alone does **not** get there: it only sets the
+    /// stroke threshold so the discard never fires, while the shader still runs
+    /// it. `is_straight_tinted_image` additionally requires AA off, hence both.
+    ///
+    /// ⚠ **This gives up anti-aliasing, and femtovg's fallback does not give it
+    /// back.** AA there is geometry, not a shader flag: `expand_fill` emits a
+    /// fringe ribbon whose coverage ramp the fragment shader reads. In
+    /// `fill_path_internal` (femtovg 0.20.4, `src/lib.rs:875`) the fringe width
+    /// is decided from the AA flag and `expand_fill` runs *before* the fast-path
+    /// test below it, so a path that then declines the fast path is filled by
+    /// the general shader with no fringe to sample. Declining costs the speed
+    /// and keeps the hard edges.
+    ///
+    /// Two consequences, both live:
+    /// - A rotated rect fails `path_fill_is_rect` (`src/path/cache.rs:875`),
+    ///   which tests axis-alignment on transformed vertices, and renders with
+    ///   stepped edges. The clock's 1px second hand is the visible case.
+    ///   `is_straight_tinted_image` cannot catch this — it reads the *paint's*
+    ///   own angle, which is always the 0.0 passed below; the canvas transform
+    ///   never reaches it.
+    /// - An axis-aligned rect at a fractional position satisfies those
+    ///   equalities as readily as one on the grid, so it takes the fast path
+    ///   with binary coverage: its edge snaps to whole pixels, and sub-pixel
+    ///   position animation steps rather than slides.
+    ///
+    /// Gating on an axis-aligned transform would close the first; closing the
+    /// second needs whole-device-pixel placement too, over a narrower set than
+    /// the 1.7x was measured across.
+    fn solid_paint(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) -> Paint {
+        let Some(texture) = self.solid_texture() else {
+            return Paint::color(to_femtovg_color(color.to_u32()));
+        };
+        Paint::image_tint(texture, x, y, w, h, 0.0, to_femtovg_color(color.to_u32()))
+            .with_anti_alias(false)
+    }
+
+    /// The shared 1x1 white texture, allocated on first use.
+    ///
+    /// `NEAREST` filtering because the sample lands wherever the quad's
+    /// interpolated coordinate falls and there is nothing to interpolate
+    /// between; returns `None` if allocation fails, leaving the caller to paint
+    /// the ordinary way.
+    fn solid_texture(&mut self) -> Option<femtovg::ImageId> {
+        if self.solid_texture.is_none() {
+            let white = [femtovg::rgb::RGBA8::new(255, 255, 255, 255)];
+            let source = imgref::ImgRef::new(&white, 1, 1);
+            let image = self
+                .canvas
+                .create_image(
+                    femtovg::ImageSource::from(source),
+                    femtovg::ImageFlags::NEAREST,
+                )
+                .ok()?;
+            self.solid_texture = Some(image);
+        }
+        self.solid_texture
+    }
+}
+
 impl Renderer for FemtoVgRenderer {
     // -- Shapes --
 
     fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        self.canvas
-            .fill_path(&path, &Paint::color(to_femtovg_color(color.to_u32())));
+        let paint = self.solid_paint(x, y, w, h, color);
+        self.canvas.fill_path(&path, &paint);
     }
 
     fn fill_rounded_rect(&mut self, x: f32, y: f32, w: f32, h: f32, radius: f32, color: Color) {
@@ -872,11 +946,17 @@ impl Renderer for FemtoVgRenderer {
     fn fill_rect_paint(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &Fill) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        let paint = paint_for_fill(
-            fill,
-            (x, y, w, h),
-            (x + w / 2.0, y + h / 2.0, (w / 2.0).hypot(h / 2.0)),
-        );
+        // Canvas rectangles arrive here rather than through `fill_rect`, and a
+        // solid one is the same job, so it takes the same fast path. Gradients
+        // have to run the general shader.
+        let paint = match fill {
+            Fill::Solid(color) => self.solid_paint(x, y, w, h, *color),
+            Fill::Linear { .. } | Fill::Radial { .. } => paint_for_fill(
+                fill,
+                (x, y, w, h),
+                (x + w / 2.0, y + h / 2.0, (w / 2.0).hypot(h / 2.0)),
+            ),
+        };
         self.canvas.fill_path(&path, &paint);
     }
 
