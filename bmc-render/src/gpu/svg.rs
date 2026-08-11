@@ -20,8 +20,8 @@
 
 //! Svg registry — parses compact binary icon data into FemtoVG paths.
 //!
-//! Icons are registered once (on first use from WASM) and persist
-//! for the runtime lifetime. Each registered icon gets an opaque `u16` ID.
+//! Each registered icon gets an opaque `u16` ID. Dormancy drops parsed paths
+//! while preserving the tag and ID reservation for restoration after wake.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -34,6 +34,7 @@ use bmc_wasm_protocol::{
 use femtovg::{FillRule, Paint, Path};
 
 use super::text::to_femtovg_color;
+use crate::renderer::{AssetSuspendResult, AssetTagState};
 
 /// A single parsed path from an SVG icon.
 // Path doesn't impl Debug, so manual impl would be noisy — skip it.
@@ -61,10 +62,11 @@ pub struct RegisteredSvg {
     pub viewbox_h: f32,
 }
 
-/// Registry mapping opaque IDs to parsed FemtoVG icon data.
+/// Registry mapping tag reservations and opaque IDs to parsed FemtoVG icon data.
 ///
-/// User registrations are deduped by tag: re-registering
-/// the same tag returns the cached ID without re-parsing.
+/// Resident registrations return their ID without parsing.
+/// Suspended reservations restore their payload under the same ID.
+/// Only destructive eviction removes a reservation.
 pub struct SvgRegistry {
     icons: HashMap<SvgId, RegisteredSvg>,
     by_tag: HashMap<String, SvgId>,
@@ -90,38 +92,63 @@ impl SvgRegistry {
         }
     }
 
-    /// Parse binary icon data and register it under `tag`.
-    /// Idempotent: a second call with the same tag returns
-    /// the cached ID without re-parsing.
+    pub fn reserve(&mut self, tag: &str) -> Option<SvgId> {
+        match self.tag_state(tag) {
+            AssetTagState::Resident(id) | AssetTagState::Suspended(id) => Some(id),
+            AssetTagState::Unknown => {
+                if self.next_id >= SVG_RESERVED_MIN {
+                    tracing::error!(
+                        "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
+                        self.next_id,
+                    );
+                    return None;
+                }
+                let id = SvgId::alloc(&mut self.next_id);
+                self.by_tag.insert(tag.to_owned(), id);
+                Some(id)
+            }
+        }
+    }
+
+    /// Register binary icon data under `tag`.
     ///
-    /// The counter only advances on successful parse
-    /// — failed registrations don't burn an ID.
+    /// A resident tag returns its ID without parsing.
+    /// A suspended tag reparses `data` and restores its payload under the reserved ID.
+    /// Only destructive eviction removes the reservation.
+    ///
+    /// The counter advances only when a new tag parses successfully.
+    /// Failed registrations do not burn an ID.
     ///
     /// Returns `None` once user-icon allocation reaches `SVG_RESERVED_MIN`,
     /// to avoid colliding with builtin/dev icon IDs that share this map.
     pub fn register(&mut self, tag: &str, data: &[u8]) -> Option<SvgId> {
-        if let Some(&id) = self.by_tag.get(tag) {
-            return Some(id);
-        }
-        if self.next_id >= SVG_RESERVED_MIN {
-            tracing::error!(
-                "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
-                self.next_id,
-            );
-            return None;
-        }
-        let icon = match parse_svg(data) {
-            Ok(i) => i,
-            Err(e) => {
-                tracing::error!("failed to parse icon data ({tag}): {e}");
-                return None;
+        match self.tag_state(tag) {
+            AssetTagState::Resident(id) => Some(id),
+            AssetTagState::Suspended(id) => {
+                let icon = match parse_svg(data) {
+                    Ok(icon) => icon,
+                    Err(e) => {
+                        tracing::error!("failed to parse icon data ({tag}): {e}");
+                        return None;
+                    }
+                };
+                self.icons.insert(id, icon);
+                Some(id)
             }
-        };
+            AssetTagState::Unknown => {
+                let icon = match parse_svg(data) {
+                    Ok(icon) => icon,
+                    Err(e) => {
+                        tracing::error!("failed to parse icon data ({tag}): {e}");
+                        return None;
+                    }
+                };
 
-        let id = SvgId::alloc(&mut self.next_id);
-        self.icons.insert(id, icon);
-        self.by_tag.insert(tag.to_owned(), id);
-        Some(id)
+                let id = self.reserve(tag)?;
+                self.icons.insert(id, icon);
+                Some(id)
+            }
+        }
     }
 
     /// Parse binary icon data and register it with an explicit ID.
@@ -151,6 +178,38 @@ impl SvgRegistry {
         self.icons.get(&id)
     }
 
+    #[must_use]
+    pub fn tag_state(&self, tag: &str) -> AssetTagState<SvgId> {
+        let Some(&id) = self.by_tag.get(tag) else {
+            return AssetTagState::Unknown;
+        };
+        if self.icons.contains_key(&id) {
+            AssetTagState::Resident(id)
+        } else {
+            AssetTagState::Suspended(id)
+        }
+    }
+
+    pub fn suspend_exact(&mut self, tag: &str) -> AssetSuspendResult<SvgId> {
+        let Some(&id) = self.by_tag.get(tag) else {
+            return AssetSuspendResult::Unknown;
+        };
+        if self.icons.remove(&id).is_some() {
+            AssetSuspendResult::Suspended(id)
+        } else {
+            AssetSuspendResult::AlreadySuspended(id)
+        }
+    }
+
+    #[must_use]
+    pub fn resident_path_bytes(&self) -> u64 {
+        self.icons
+            .values()
+            .flat_map(|icon| &icon.paths)
+            .map(|path| u64::try_from(path.path.size()).unwrap_or(u64::MAX))
+            .sum()
+    }
+
     /// Evict a tag-registered icon. Returns `true` if a tag was found
     /// and removed. Built-in icons (registered via `register_with_id`,
     /// no tag) are unaffected.
@@ -161,7 +220,8 @@ impl SvgRegistry {
         let Some(id) = self.by_tag.remove(tag) else {
             return false;
         };
-        self.icons.remove(&id).is_some()
+        self.icons.remove(&id);
+        true
     }
 
     /// Evict every tag matching `prefix` at segment boundaries.
@@ -428,6 +488,7 @@ impl IconReader<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::renderer::{AssetSuspendResult, AssetTagState};
 
     /// Smallest valid icon binary: viewbox 100×100, zero paths.
     fn minimal_icon() -> Vec<u8> {
@@ -436,6 +497,122 @@ mod tests {
         buf.extend_from_slice(&100.0_f32.to_le_bytes());
         buf.extend_from_slice(&0_u16.to_le_bytes());
         buf
+    }
+
+    fn line_icon() -> Vec<u8> {
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&100.0_f32.to_le_bytes());
+        buf.extend_from_slice(&100.0_f32.to_le_bytes());
+        buf.extend_from_slice(&1_u16.to_le_bytes());
+        buf.push(0);
+        buf.extend_from_slice(&2_u16.to_le_bytes());
+        buf.push(SVG_OP_MOVE_TO);
+        buf.extend_from_slice(&0.0_f32.to_le_bytes());
+        buf.extend_from_slice(&0.0_f32.to_le_bytes());
+        buf.push(SVG_OP_LINE_TO);
+        buf.extend_from_slice(&100.0_f32.to_le_bytes());
+        buf.extend_from_slice(&100.0_f32.to_le_bytes());
+        buf
+    }
+
+    #[test]
+    fn suspend_preserves_tag_and_restores_same_id() {
+        let mut reg = SvgRegistry::new();
+        let data = line_icon();
+
+        let id = reg
+            .register("widget:icon", &data)
+            .expect("BUG: register should succeed");
+        assert_eq!(reg.tag_state("widget:icon"), AssetTagState::Resident(id));
+        let resident_path_bytes = reg.resident_path_bytes();
+        assert!(resident_path_bytes > 0);
+
+        assert_eq!(
+            reg.suspend_exact("widget:icon"),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(reg.tag_state("widget:icon"), AssetTagState::Suspended(id));
+        assert_eq!(reg.resident_path_bytes(), 0);
+        assert!(reg.get(id).is_none());
+
+        assert_eq!(reg.register("widget:icon", &data), Some(id));
+        assert_eq!(reg.tag_state("widget:icon"), AssetTagState::Resident(id));
+        assert_eq!(reg.resident_path_bytes(), resident_path_bytes);
+
+        let next_id = reg
+            .register("widget:next", &data)
+            .expect("BUG: register next icon should succeed");
+        assert_eq!(next_id.to_wire(), id.to_wire() + 1);
+    }
+
+    #[test]
+    fn failed_restore_keeps_svg_reservation() {
+        let mut reg = SvgRegistry::new();
+        let data = minimal_icon();
+
+        let id = reg
+            .register("widget:icon", &data)
+            .expect("BUG: register should succeed");
+        assert_eq!(
+            reg.suspend_exact("widget:icon"),
+            AssetSuspendResult::Suspended(id)
+        );
+
+        assert_eq!(reg.register("widget:icon", &[]), None);
+        assert_eq!(reg.tag_state("widget:icon"), AssetTagState::Suspended(id));
+
+        let next_id = reg
+            .register("widget:next", &data)
+            .expect("BUG: register next icon should succeed");
+        assert_eq!(next_id.to_wire(), id.to_wire() + 1);
+    }
+
+    #[test]
+    fn exact_reservation_and_suspension_preserve_svg_id() {
+        let mut registry = SvgRegistry::new();
+        let id = registry
+            .reserve("widget:icon")
+            .expect("BUG: SVG reservation should succeed");
+
+        assert_eq!(
+            registry.tag_state("widget:icon"),
+            AssetTagState::Suspended(id)
+        );
+        assert_eq!(
+            registry.suspend_exact("widget:icon"),
+            AssetSuspendResult::AlreadySuspended(id)
+        );
+        assert_eq!(registry.register("widget:icon", &minimal_icon()), Some(id));
+        assert_eq!(
+            registry.suspend_exact("widget:icon"),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(
+            registry.suspend_exact("missing"),
+            AssetSuspendResult::Unknown
+        );
+    }
+
+    #[test]
+    fn purge_removes_suspended_svg_reservation() {
+        let mut reg = SvgRegistry::new();
+        let data = minimal_icon();
+
+        let id = reg
+            .register("widget:icon", &data)
+            .expect("BUG: register should succeed");
+        assert_eq!(
+            reg.suspend_exact("widget:icon"),
+            AssetSuspendResult::Suspended(id)
+        );
+
+        assert!(reg.evict("widget:icon"));
+        assert_eq!(reg.tag_state("widget:icon"), AssetTagState::Unknown);
+
+        let new_id = reg
+            .register("widget:icon", &data)
+            .expect("BUG: re-register should succeed");
+        assert_ne!(new_id, id);
     }
 
     #[test]

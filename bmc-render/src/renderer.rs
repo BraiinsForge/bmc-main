@@ -31,6 +31,25 @@ use bmc_wasm_protocol::{
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{AutoFit, SpanData, TextStyle};
 
+/// State of an asset tag's registry reservation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetTagState<Id> {
+    /// The ID has a drawable payload without further registration work.
+    Resident(Id),
+    /// The ID and tag remain reserved, but it has no drawable payload.
+    /// Successful re-registration must restore its payload.
+    Suspended(Id),
+    /// No reservation is known for the tag.
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssetSuspendResult<Id> {
+    Suspended(Id),
+    AlreadySuspended(Id),
+    Unknown,
+}
+
 /// Base clear policy for a render frame.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FrameClear {
@@ -147,9 +166,16 @@ pub trait Renderer {
 
     // -- Icons --
 
-    /// Register icon data (compact binary from proc macro) under a stable
-    /// `tag`. Idempotent: re-registering the same tag returns the cached ID.
+    /// Register icon data under a stable `tag`.
+    /// A resident tag returns its ID; a suspended tag restores that reservation.
     fn register_svg(&mut self, tag: &str, data: &[u8]) -> Option<SvgId>;
+
+    /// Return the SVG reservation state for `tag`.
+    ///
+    /// The default does not inspect backend state and returns [`AssetTagState::Unknown`].
+    fn svg_tag_state(&self, _tag: &str) -> AssetTagState<SvgId> {
+        AssetTagState::Unknown
+    }
 
     /// Draw a registered SVG at the given position and size.
     ///
@@ -172,16 +198,17 @@ pub trait Renderer {
 
     // -- Bitmaps --
 
-    /// Register bitmap data (PNG/JPEG bytes), decode and upload to GPU. Idempotent
-    /// by `tag` — re-registering the same tag returns the cached ID.
+    /// Register bitmap data under a stable `tag`.
+    /// A resident tag returns its ID; a suspended tag restores that reservation.
     fn register_bitmap(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId>;
 
     /// Register bitmap with nearest-neighbor filtering (no bilinear interpolation).
     /// Use for pixel-art assets (9-patch skins) where bilinear filtering would
-    /// cause color bleeding across sub-rect boundaries. Idempotent by `tag`.
+    /// cause color bleeding across sub-rect boundaries. Resident and suspended
+    /// tags follow [`Self::register_bitmap`]'s reservation semantics.
     fn register_bitmap_nearest(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId>;
 
-    /// Upload a pre-decoded RGBA buffer (decoded off the render thread). Idempotent by `tag`.
+    /// Upload a pre-decoded RGBA buffer, replacing a tag's resident payload in place.
     fn register_bitmap_rgba(
         &mut self,
         tag: &str,
@@ -189,6 +216,13 @@ pub trait Renderer {
         width: u32,
         height: u32,
     ) -> Option<BitmapId>;
+
+    /// Return the bitmap reservation state for `tag`.
+    ///
+    /// The default does not inspect backend state and returns [`AssetTagState::Unknown`].
+    fn bitmap_tag_state(&self, _tag: &str) -> AssetTagState<BitmapId> {
+        AssetTagState::Unknown
+    }
 
     /// Draw a registered bitmap at the given position and size.
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId);
@@ -213,9 +247,16 @@ pub trait Renderer {
 
     // -- Meshes --
 
-    /// Register mesh binary data, upload VBO/IBO/texture to GPU. Idempotent
-    /// by `tag` — re-registering the same tag returns the cached ID.
+    /// Register mesh data under a stable `tag`.
+    /// A resident tag returns its ID; a suspended tag restores that reservation.
     fn register_mesh(&mut self, tag: &str, data: &[u8]) -> Option<MeshId>;
+
+    /// Return the mesh reservation state for `tag`.
+    ///
+    /// The default does not inspect backend state and returns [`AssetTagState::Unknown`].
+    fn mesh_tag_state(&self, _tag: &str) -> AssetTagState<MeshId> {
+        AssetTagState::Unknown
+    }
 
     /// Draw a 3D mesh with quaternion-based orientation and optional directional light.
     ///
@@ -359,6 +400,14 @@ pub trait Renderer {
     fn height(&self) -> f32;
 
     // -- Eviction --
+
+    /// Suspend resident assets whose tags match `prefix` at segment boundaries.
+    ///
+    /// Returns the number of resident assets newly suspended.
+    /// The default is a no-op that returns zero.
+    fn suspend_prefix(&mut self, _prefix: &str) -> usize {
+        0
+    }
 
     /// Drop every icon, bitmap, and mesh registered under a tag that starts
     /// with `prefix`, releasing the associated GPU resources.
