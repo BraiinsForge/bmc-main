@@ -48,6 +48,7 @@ use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_protocol::{MdnsBrowseId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId};
 use bmc_wasm_runtime::capture_config::CaptureConfig;
+use bmc_wasm_runtime::platform_catalog::{DisplayShape, Target};
 use bmc_wasm_runtime::unified_fixture::{
     FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture, load_unified_fixture,
     validate_fixture,
@@ -1214,27 +1215,41 @@ fn split_unified_events(
 
 // ── Shape helpers ────────────────────────────────────────────────────
 
+/// The catalog target a capture size names — the size vocabulary mixes BMC100
+/// viewport names with bare platform names, so the mapping is explicit.
+/// `None` for an ad-hoc `--size=WxH` outside the catalog.
+fn target_for_size(size_name: &str) -> Option<Target> {
+    let (platform, viewport) = match size_name {
+        "full" => ("bmc100", "full"),
+        "large" => ("bmc100", "large"),
+        "medium" => ("bmc100", "medium"),
+        "small" => ("bmc100", "small"),
+        "round" => ("bfm100", "full"),
+        "bmm101" => ("bmm101", "full"),
+        _ => return None,
+    };
+    Some(Target::new(platform, viewport).unwrap_or_else(|e| {
+        panic!("BUG: capture size '{size_name}' must name a catalog target: {e}")
+    }))
+}
+
 fn manifest_shape_for_size(size_name: &str) -> bmc_widget_manifest::ViewportShape {
-    if size_name == "round" {
-        bmc_widget_manifest::ViewportShape::Round
-    } else {
-        bmc_widget_manifest::ViewportShape::Rectangular
+    match target_for_size(size_name).map(|t| t.viewport.shape) {
+        Some(DisplayShape::Round) => bmc_widget_manifest::ViewportShape::Round,
+        _ => bmc_widget_manifest::ViewportShape::Rectangular,
     }
 }
 
 fn viewport_shape_for_size(size_name: &str) -> bmc_wasm_protocol::ViewportShape {
-    if size_name == "round" {
-        bmc_wasm_protocol::ViewportShape::Round
-    } else {
-        bmc_wasm_protocol::ViewportShape::Rectangular
-    }
+    target_for_size(size_name).map_or(bmc_wasm_protocol::ViewportShape::Rectangular, |t| {
+        t.viewport.runtime_viewport_shape()
+    })
 }
 
 fn display_shape_for_size(size_name: &str) -> bmc_wasm_protocol::DisplayShape {
-    if size_name == "round" {
-        bmc_wasm_protocol::DisplayShape::Round
-    } else {
-        bmc_wasm_protocol::DisplayShape::Rectangular
+    match target_for_size(size_name).map(|t| t.platform.display().shape) {
+        Some(DisplayShape::Round) => bmc_wasm_protocol::DisplayShape::Round,
+        _ => bmc_wasm_protocol::DisplayShape::Rectangular,
     }
 }
 
@@ -1809,6 +1824,19 @@ mod tests {
             viewport_shape_for_size("custom"),
             bmc_wasm_protocol::ViewportShape::Rectangular
         );
+    }
+
+    #[test]
+    fn every_capture_size_names_a_catalog_target_of_the_same_dimensions() {
+        for &(size_name, width, height) in bmc_wasm_runtime::capture_config::CAPTURE_SIZES {
+            let target = target_for_size(size_name)
+                .unwrap_or_else(|| panic!("BUG: size '{size_name}' must name a target"));
+            assert_eq!(
+                (target.viewport.width, target.viewport.height),
+                (width, height),
+                "size '{size_name}' and its target disagree on dimensions",
+            );
+        }
     }
 
     #[test]
