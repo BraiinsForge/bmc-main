@@ -27,7 +27,7 @@
 //! of the host-side public surface.
 
 use chrono::{DateTime, FixedOffset};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -44,8 +44,8 @@ use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
 use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey};
 use bmc_wasm_protocol::{
-    AudioId, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId, MdnsBrowseId,
-    MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
+    AudioId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId,
+    MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
 };
 
 use crate::audio_registry::AudioRegistry;
@@ -78,15 +78,15 @@ pub struct CompletedFetch {
     pub body: Vec<u8>,
 }
 
-/// The fetches a widget has outstanding, and the tally that bounds them.
+/// The fetches a widget has outstanding, and the accounting that bounds them.
 ///
-/// One rule holds the accounting together.
-/// [`FetchState::accept`] counts a request and hands back the channel that
+/// One rule holds that accounting together.
+/// [`FetchState::accept`] records a request and hands back the channel that
 /// settles it, and every answer travels that channel —
 /// whether a transport thread produced it or the host wrote it directly,
 /// as it does for a refusal.
 /// A slot is released only in [`FetchState::drain_settled`],
-/// so the tally cannot drift from what the widget was told.
+/// so the set cannot drift from what the widget was told.
 pub struct FetchState {
     /// Cloned into each background fetch thread,
     /// and used directly when the host settles a request itself.
@@ -94,8 +94,25 @@ pub struct FetchState {
     settle_rx: mpsc::Receiver<CompletedFetch>,
     /// Queued by `host_fetch_after`, still waiting for its firing time.
     delayed: Vec<DelayedFetch>,
-    /// Accepted and not yet drained.
-    in_flight: u32,
+    /// Accepted and not yet drained. Held by id, not counted: a cancel names
+    /// one request, and only the ids can say whether it names a real one.
+    in_flight: HashSet<FetchRequestId>,
+    /// In-flight requests the widget cancelled: their settlements are
+    /// rewritten to [`FetchOutcome::Aborted`], never delivered as data.
+    /// In-flight only, so the fetch limit bounds this set too.
+    cancelled: HashSet<FetchRequestId>,
+}
+
+/// What [`FetchState::cancel`] found to act on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum CancelDisposition {
+    /// Removed from the queue before it ran: gone, slot freed, nothing owed.
+    Stopped,
+    /// Already away: its own reply settles as [`FetchOutcome::Aborted`].
+    WillAbort,
+    /// Neither queued nor awaiting settlement: nothing to act on.
+    Unknown,
 }
 
 impl FetchState {
@@ -105,26 +122,46 @@ impl FetchState {
             settle_tx,
             settle_rx,
             delayed: Vec::new(),
-            in_flight: 0,
+            in_flight: HashSet::new(),
+            cancelled: HashSet::new(),
         }
     }
 
-    /// Count a request the host has accepted, and hand back its settling
+    /// Record a request the host has accepted, and hand back its settling
     /// channel. Dropping that channel without sending holds the slot until
     /// the runtime goes away.
-    pub fn accept(&mut self) -> mpsc::Sender<CompletedFetch> {
-        self.in_flight += 1;
+    pub fn accept(&mut self, request_id: FetchRequestId) -> mpsc::Sender<CompletedFetch> {
+        self.in_flight.insert(request_id);
         self.settle_tx.clone()
     }
 
     /// Settlements delivered since the last drain, each releasing its slot.
     pub fn drain_settled(&mut self) -> Vec<CompletedFetch> {
         let mut settled = Vec::new();
-        while let Ok(response) = self.settle_rx.try_recv() {
-            self.in_flight = self.in_flight.saturating_sub(1);
+        while let Ok(mut response) = self.settle_rx.try_recv() {
+            self.in_flight.remove(&response.request_id);
+            if self.cancelled.remove(&response.request_id) {
+                response.status = FetchOutcome::Aborted.to_wire();
+                response.body.clear();
+            }
             settled.push(response);
         }
         settled
+    }
+
+    /// Cancel a request. Freeing a queued one's slot here, not at the drain,
+    /// is what lets a caller cancel and re-send within one guest call.
+    pub fn cancel(&mut self, request_id: FetchRequestId) -> CancelDisposition {
+        let before = self.delayed.len();
+        self.delayed.retain(|fetch| fetch.request_id != request_id);
+        if self.delayed.len() != before {
+            return CancelDisposition::Stopped;
+        }
+        if self.in_flight.contains(&request_id) {
+            self.cancelled.insert(request_id);
+            return CancelDisposition::WillAbort;
+        }
+        CancelDisposition::Unknown
     }
 
     pub fn queue_delayed(&mut self, fetch: DelayedFetch) {
@@ -140,13 +177,13 @@ impl FetchState {
     /// Whether anything is owed: a queued request, or one awaiting settlement.
     #[must_use]
     pub fn has_pending(&self) -> bool {
-        !self.delayed.is_empty() || self.in_flight > 0
+        !self.delayed.is_empty() || !self.in_flight.is_empty()
     }
 
     /// Slots a widget is holding, against `max_fetches`.
     #[must_use]
     pub fn slots_used(&self) -> usize {
-        self.delayed.len().saturating_add(self.in_flight as usize)
+        self.delayed.len().saturating_add(self.in_flight.len())
     }
 
     /// A sender for a settlement no request is waiting on — teardown tests
@@ -1096,8 +1133,77 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
-    use super::{FrameScheduleState, HermeticRun, HostState};
+    use super::{
+        CancelDisposition, DelayedFetch, FetchState, FrameScheduleState, HermeticRun, HostState,
+    };
+    use bmc_wasm_protocol::FetchRequestId;
+
     use crate::runtime_limits::RuntimeResourceLimits;
+
+    /// A cancel names one request, and an id naming none can never settle.
+    /// Remembering it would grow `cancelled` for as long as the widget runs,
+    /// unnoticed by the fetch limit, which counts slots rather than cancels.
+    #[test]
+    fn cancelling_an_unknown_id_is_refused_and_remembers_nothing() {
+        // Ids start at 1; zero is the wire's "no request".
+        let mut counter = 1;
+        let mut fetches = FetchState::new();
+        let real = FetchRequestId::alloc(&mut counter);
+        let _settle = fetches.accept(real);
+
+        let unknown = FetchRequestId::alloc(&mut counter);
+        assert_eq!(
+            fetches.cancel(unknown),
+            CancelDisposition::Unknown,
+            "an id naming no request reports nothing to act on"
+        );
+        assert!(
+            fetches.cancelled.is_empty(),
+            "and leaves nothing behind to remember it by"
+        );
+        assert_eq!(fetches.slots_used(), 1, "nor does it take a fetch slot");
+
+        assert_eq!(
+            fetches.cancel(real),
+            CancelDisposition::WillAbort,
+            "an in-flight request cannot be stopped, only rewritten"
+        );
+        assert_eq!(
+            fetches.cancelled.len(),
+            1,
+            "and it is remembered, since its own reply is still coming"
+        );
+    }
+
+    /// The slot must free within the very call — a cancelling caller
+    /// re-sends before the host can drain.
+    #[test]
+    fn cancelling_a_queued_fetch_frees_its_slot_and_owes_nothing() {
+        let mut counter = 1;
+        let mut fetches = FetchState::new();
+        let queued = FetchRequestId::alloc(&mut counter);
+        fetches.queue_delayed(DelayedFetch {
+            fire_at_ms: 1_000,
+            method: "GET".to_owned(),
+            url: "https://example.test/delayed".to_owned(),
+            headers: Vec::new(),
+            body: None,
+            timeout: std::time::Duration::from_secs(10),
+            request_id: queued,
+        });
+        assert_eq!(fetches.slots_used(), 1, "a queued request reserves a slot");
+
+        assert_eq!(fetches.cancel(queued), CancelDisposition::Stopped);
+        assert_eq!(fetches.slots_used(), 0, "the reservation frees immediately");
+        assert!(
+            fetches.cancelled.is_empty(),
+            "nothing will settle, so nothing is owed or remembered"
+        );
+        assert!(
+            fetches.drain_settled().is_empty(),
+            "and no settlement was manufactured for it"
+        );
+    }
 
     #[test]
     fn refuse_live_io_records_only_in_a_hermetic_run() {

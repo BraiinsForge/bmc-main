@@ -34,6 +34,7 @@ const HOST_OUTCOME_BASE: u32 = 1_000;
 
 /// A match pattern cannot do arithmetic, so each outcome past the first is named.
 const WIRE_REFUSED: u32 = HOST_OUTCOME_BASE + 1;
+const WIRE_ABORTED: u32 = HOST_OUTCOME_BASE + 2;
 
 /// Widest range `http::StatusCode` accepts. A narrower cap would misread
 /// a genuine origin status as an unknown host outcome.
@@ -57,6 +58,10 @@ pub enum FetchOutcome {
     /// The host never sent it: a credential would not resolve,
     /// or its type pins egress away from this destination. Retrying is futile.
     Refused,
+    /// The widget cancelled it. Every request settles exactly once, so a
+    /// cancelled one settles here rather than going quiet — the caller can
+    /// tell "I stopped this" from "the origin never answered".
+    Aborted,
 }
 
 impl FetchOutcome {
@@ -67,6 +72,7 @@ impl FetchOutcome {
             Self::Network => 0,
             Self::BodyTooLarge => HOST_OUTCOME_BASE,
             Self::Refused => WIRE_REFUSED,
+            Self::Aborted => WIRE_ABORTED,
         }
     }
 
@@ -82,6 +88,7 @@ impl FetchOutcome {
             HTTP_STATUS_MIN..=HTTP_STATUS_MAX => Some(Self::Http(raw as u16)),
             HOST_OUTCOME_BASE => Some(Self::BodyTooLarge),
             WIRE_REFUSED => Some(Self::Refused),
+            WIRE_ABORTED => Some(Self::Aborted),
             _ => None,
         }
     }
@@ -107,6 +114,7 @@ mod tests {
             FetchOutcome::Network,
             FetchOutcome::BodyTooLarge,
             FetchOutcome::Refused,
+            FetchOutcome::Aborted,
         ] {
             assert_eq!(FetchOutcome::from_wire(outcome.to_wire()), Some(outcome));
         }
@@ -130,9 +138,12 @@ mod tests {
         );
     }
 
+    /// The probe is the slot the next outcome would take, so claiming it means
+    /// updating this — the reminder that a widget built before the addition
+    /// reads it as unknown rather than as something else.
     #[test]
     fn unknown_outcomes_decode_to_none() {
-        assert_eq!(FetchOutcome::from_wire(HOST_OUTCOME_BASE + 2), None);
+        assert_eq!(FetchOutcome::from_wire(HOST_OUTCOME_BASE + 3), None);
         assert_eq!(FetchOutcome::from_wire(u32::MAX), None);
     }
 

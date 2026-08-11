@@ -184,18 +184,17 @@ pub fn fetch_after(
 
 /// Cancel a previously scheduled fetch by its [`FetchRequestId`].
 ///
-/// Returns `true` only when the request was still queued (a delayed fetch that
-/// had not fired yet) and was removed before running. Returns `false` when it
-/// is already in flight — the host cannot stop an in-flight request, so its
-/// callback will still fire and the caller should wait for it rather than
-/// scheduling a replacement.
+/// `true`: it was still queued and is gone — no callback, and its fetch slot
+/// freed within this call, so a replacement can be sent immediately.
+/// `false`: it is already away and cannot be stopped — its callback still
+/// runs, once, with [`FetchOutcome::Aborted`] rather than with data.
 #[must_use]
 pub fn cancel(request_id: FetchRequestId) -> bool {
-    let cancelled = unsafe { host_fetch_cancel(request_id.to_wire()) } != 0;
-    if cancelled {
+    let stopped = unsafe { host_fetch_cancel(request_id.to_wire()) } != 0;
+    if stopped {
         PENDING.with(|p| p.borrow_mut().remove(&request_id));
     }
-    cancelled
+    stopped
 }
 
 /// Builder for HTTP fetch requests with method, headers, and optional body.

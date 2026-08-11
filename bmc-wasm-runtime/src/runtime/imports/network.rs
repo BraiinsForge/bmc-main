@@ -34,9 +34,9 @@ use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::{
     ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
-    ActiveUdpBroadcast, ActiveWebSocket, CompletedFetch, DelayedFetch, HostState,
-    HttpInboundRequest, HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent,
-    UdpBroadcastEvent, WsEvent, WsOutbound,
+    ActiveUdpBroadcast, ActiveWebSocket, CancelDisposition, CompletedFetch, DelayedFetch,
+    HostState, HttpInboundRequest, HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound,
+    SsdpEvent, UdpBroadcastEvent, WsEvent, WsOutbound,
 };
 
 use super::super::background::{
@@ -140,7 +140,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             }
             let request_id = FetchRequestId::alloc(&mut state.next_request_id);
-            let settle = state.fetches.accept();
+            let settle = state.fetches.accept(request_id);
             state
                 .fetch_keys
                 .insert(request_id, format!("{method} {url}"));
@@ -275,17 +275,24 @@ fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let state = caller.data_mut();
-            let delayed = state.fetches.delayed_mut();
-            let before = delayed.len();
-            delayed.retain(|fetch| fetch.request_id != request_id);
-            if delayed.len() == before {
-                // Not in the delayed queue: it is already in flight (a detached
-                // request thread we cannot stop) or unknown. Report no-op so the
-                // guest waits for the response instead of orphaning a slot.
-                return 0;
+            match state.fetches.cancel(request_id) {
+                CancelDisposition::Stopped => {
+                    state.fetch_keys.remove(&request_id);
+                    1
+                }
+                CancelDisposition::WillAbort => 0,
+                CancelDisposition::Unknown => {
+                    // An id below the counter was issued and settled; cancelling it
+                    // again is an ordinary race. Only a fabricated id earns the line.
+                    if request_id.to_wire() >= state.next_request_id {
+                        tracing::warn!(
+                            request_id = request_id.to_wire(),
+                            "host_fetch_cancel ignored: no such request was ever issued"
+                        );
+                    }
+                    0
+                }
             }
-            state.fetch_keys.remove(&request_id);
-            1
         },
     )?;
 

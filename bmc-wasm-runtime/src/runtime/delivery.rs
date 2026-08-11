@@ -996,7 +996,7 @@ impl WasmWidgetRuntime {
             state
                 .fetch_keys
                 .insert(request_id, format!("{method} {url}"));
-            let settle = state.fetches.accept();
+            let settle = state.fetches.accept(request_id);
 
             let intercepted = state
                 .fetch_interceptor
