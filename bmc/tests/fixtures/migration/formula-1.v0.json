@@ -1,0 +1,95 @@
+{
+  "scenes": [
+    {
+      "id": "f8b721ab-8d2f-44fa-9fe0-1ea633dab47e",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "df966091-6697-4d3c-9af7-85b9a7b971ed",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Formula 1 — 2026 Season",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/formula-1",
+            "icon_url": "",
+            "params": {
+              "driver": "37920803",
+              "localTime": false,
+              "view": "live"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "0b2fb94e-4534-4f51-8c83-1a54be3815d3",
+      "enabled": true,
+      "kind": "combined",
+      "widgets": [
+        {
+          "id": "e5348cd7-f409-48c5-8460-f2e18a709daa",
+          "row": 0,
+          "col": 0,
+          "size": "large",
+          "kind": "clock",
+          "params": {
+            "clock_style": "analog_rect",
+            "numbers_font_style": "medium",
+            "show_date": true,
+            "show_seconds": true,
+            "show_timezone": true
+          }
+        },
+        {
+          "id": "1cb0a772-8a80-47b0-b0fb-a53579c0b76c",
+          "row": 0,
+          "col": 2,
+          "size": "large",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Formula 1 — 2026 Season",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/formula-1",
+            "icon_url": "",
+            "params": {
+              "driver": "37920810",
+              "localTime": true,
+              "view": "driver"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "id": "3d1c2b4a-9e77-4c31-a0f2-6b5d8e4f1a20",
+      "enabled": true,
+      "cycle_duration": "1m",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "6f2a0c18-5b3d-4e91-8c47-2a9f7d6e5b31",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "remote_widget",
+          "params": {
+            "name": "Formula 1 — 2026 Season",
+            "description": "",
+            "widget_url": "https://widgets.braiinsforge.com/formula-1",
+            "icon_url": "",
+            "params": {
+              "driver": "37999999",
+              "localTime": false,
+              "view": "next-race"
+            }
+          }
+        }
+      ]
+    }
+  ],
+  "accounts": []
+}

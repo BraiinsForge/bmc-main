@@ -17,6 +17,7 @@ members = [
     "braiins-pool",
     "clock",
     "fleet-management",
+    "formula-1",
     "halving-countdown",
     "image",
     "iss-position",

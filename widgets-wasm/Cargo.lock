@@ -494,6 +494,13 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "61f6f3299260c1f4180ce881f8bb2bfc1195ceeafd54eea899af5859a6f882ad"
 
 [[package]]
+name = "formula-1"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
 name = "futures-core"
 version = "0.3.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"

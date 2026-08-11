@@ -60,9 +60,9 @@ use uuid::Uuid;
 
 use super::{Report, v0};
 use crate::config::widget_uuids::{
-    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, HALVING_COUNTDOWN_UID, ISS_POSITION_UID,
-    NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID,
-    TICKER_SINGLE_UID, WEATHER_UID,
+    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID, HALVING_COUNTDOWN_UID,
+    ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID,
+    TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings, fits_running_widgets};
 use crate::data::{AccountId, SceneCycling};
@@ -128,6 +128,39 @@ const TICKER_LIST_SYMBOL_DEFAULTS: [&str; 8] =
 /// meta defaults, so a param-less legacy widget keeps showing the same pair.
 const DEFAULT_EXCHANGE_BASE: &str = "EUR";
 const DEFAULT_EXCHANGE_QUOTE: &str = "USD";
+/// Formula 1 `driver` fallback — formula-1 manifest `default_value`.
+const DEFAULT_F1_DRIVER: &str = "max_verstappen";
+/// Formula 1 `view` fallback — formula-1 manifest `default_value`.
+const DEFAULT_F1_VIEW: &str = "auto";
+/// Legacy Formula 1 driver ids to the driver slugs the manifest now
+/// uses. The legacy widget keyed drivers by their upstream data-vendor
+/// id; only a config already written to disk can carry one, so this
+/// table is frozen history and never grows. Each pair was checked
+/// against the vendor id embedded in that driver's headshot URL.
+const F1_DRIVER_SLUGS_BY_LEGACY_ID: &[(&str, &str)] = &[
+    ("37920800", "max_verstappen"),
+    ("37920801", "lawson"),
+    ("37920802", "norris"),
+    ("37920803", "hamilton"),
+    ("37920804", "leclerc"),
+    ("37920805", "piastri"),
+    ("37920806", "russell"),
+    ("37920807", "antonelli"),
+    ("37920808", "stroll"),
+    ("37920809", "alonso"),
+    ("37920810", "gasly"),
+    ("37920812", "hadjar"),
+    ("37920814", "ocon"),
+    ("37920815", "bearman"),
+    ("37920816", "albon"),
+    ("37920817", "sainz"),
+    ("37920818", "hulkenberg"),
+    ("37920819", "bortoleto"),
+    ("37920820", "perez"),
+    ("37920825", "bottas"),
+    ("37920826", "colapinto"),
+    ("37926706", "arvid_lindblad"),
+];
 
 #[cfg(feature = "manifest-tests")]
 pub(crate) fn manifest_test_expectations()
@@ -809,6 +842,48 @@ fn dispatch_ticker_list_params(params: &Value) -> Value {
     Value::Object(out)
 }
 
+/// Translate the inner `params` of a legacy `formula-1` remote widget
+/// into the current native Formula 1 widget ([`FORMULA_1_UID`],
+/// `widgets-wasm/formula-1/manifest.json`).
+///
+/// Three params carry over, all renamed or re-keyed: `driver` moves
+/// from the upstream vendor id to the manifest's driver slug,
+/// camelCase `localTime` becomes `local_time`, and the `view` value
+/// `live` becomes `auto` — the legacy widget's "live" already meant
+/// "show the live session, else the next race, else the standings".
+/// All three are required and the boot-load path injects no defaults
+/// of its own, so this fills every one; a driver or view outside the
+/// manifest enum — which the widget's typed read would panic on —
+/// lands on the manifest default.
+fn dispatch_formula_1_widget_params(params: &Value) -> Value {
+    let driver = params
+        .get("driver")
+        .and_then(Value::as_str)
+        .and_then(|id| {
+            F1_DRIVER_SLUGS_BY_LEGACY_ID
+                .iter()
+                .find_map(|(legacy, slug)| (*legacy == id).then_some(*slug))
+        })
+        .unwrap_or(DEFAULT_F1_DRIVER);
+
+    let local_time = params
+        .get("localTime")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+
+    let view = match params.get("view").and_then(Value::as_str) {
+        Some("next-race") => "next_race",
+        Some(view @ ("standings" | "driver")) => view,
+        _ => DEFAULT_F1_VIEW,
+    };
+
+    json!({
+        "driver": driver,
+        "local_time": local_time,
+        "view": view
+    })
+}
+
 /// Map a legacy `remote_widget` to a native widget via its
 /// `widget_url` slug. Slugs with a native equivalent map to that
 /// widget's manifest UID with their inner `params` translated into
@@ -844,6 +919,10 @@ fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
     match slug {
         "weather" => Some((WEATHER_UID, dispatch_weather_widget_params(&inner_params))),
         "nameday" => Some((NAMEDAY_UID, dispatch_nameday_widget_params(&inner_params))),
+        "formula-1" => Some((
+            FORMULA_1_UID,
+            dispatch_formula_1_widget_params(&inner_params),
+        )),
         "iss-position" => Some((ISS_POSITION_UID, json!({}))),
         "random-facts" => Some((RANDOM_FACTS_UID, json!({}))),
         "spacex-launch" => Some((SPACEX_LAUNCH_UID, json!({}))),
@@ -1538,19 +1617,18 @@ mod tests {
     fn remote_widget_slug_without_native_equivalent_drops() {
         // Braiinsforge-hosted remote widgets without a native
         // counterpart drop until they gain one.
-        for slug in ["formula-1", "nasa-picture-of-the-day"] {
-            let w = mk_widget(
-                "remote_widget",
-                json!({
-                    "widget_url": format!("https://widgets.braiinsforge.com/{slug}"),
-                    "params": {},
-                }),
-            );
-            assert!(
-                upgrade_widget(&w).is_none(),
-                "slug `{slug}` has no native equivalent and must drop"
-            );
-        }
+        let slug = "nasa-picture-of-the-day";
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "widget_url": format!("https://widgets.braiinsforge.com/{slug}"),
+                "params": {},
+            }),
+        );
+        assert!(
+            upgrade_widget(&w).is_none(),
+            "slug `{slug}` has no native equivalent and must drop"
+        );
     }
 
     #[test]
@@ -1732,6 +1810,119 @@ mod tests {
             assert_eq!(upgraded.params["symbol_1"], str_param("NVDA"));
             assert_eq!(upgraded.params["symbol_8"], str_param("NFLX"));
             assert_eq!(upgraded.params["period"], str_param("7d"));
+        }
+    }
+
+    #[test]
+    fn remote_widget_formula_1_translates_driver_id_and_renames_local_time() {
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "widget_url": "https://widgets.braiinsforge.com/formula-1",
+                "params": { "driver": "37920803", "localTime": true, "view": "next-race" },
+            }),
+        );
+        let upgraded = upgrade_widget(&w).expect("BUG: formula-1 must survive the upgrade");
+        assert_eq!(upgraded.widget_type_id, FORMULA_1_UID);
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("driver", str_param("hamilton")),
+                ("local_time", ParamValue::Boolean(true)),
+                ("view", str_param("next_race")),
+            ])
+        );
+    }
+
+    #[test]
+    fn remote_widget_formula_1_maps_the_live_view_to_auto() {
+        // The legacy `live` view already meant "live session, else next
+        // race, else standings" — the behaviour the manifest names `auto`.
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "widget_url": "https://widgets.braiinsforge.com/formula-1",
+                "params": { "driver": "37926706", "localTime": false, "view": "live" },
+            }),
+        );
+        let upgraded = upgrade_widget(&w).expect("BUG: formula-1 must survive the upgrade");
+        assert_eq!(upgraded.params["view"], str_param("auto"));
+        assert_eq!(upgraded.params["driver"], str_param("arvid_lindblad"));
+    }
+
+    #[test]
+    fn remote_widget_formula_1_defaults_on_null_or_unknown_driver_and_view() {
+        // A driver id retired from the grid, or a view unknown to this
+        // build, must not reach the widget verbatim — its typed read
+        // would panic.
+        for inner in [
+            json!(null),
+            json!({ "driver": "1", "view": "telemetry" }),
+            json!({ "driver": 37_920_803_i64 }),
+        ] {
+            let w = mk_widget(
+                "remote_widget",
+                json!({
+                    "widget_url": "https://widgets.braiinsforge.com/formula-1",
+                    "params": inner,
+                }),
+            );
+            let upgraded = upgrade_widget(&w).expect("BUG: formula-1 must survive the upgrade");
+            assert_eq!(upgraded.params["driver"], str_param("max_verstappen"));
+            assert_eq!(upgraded.params["view"], str_param("auto"));
+            assert_eq!(upgraded.params["local_time"], ParamValue::Boolean(false));
+        }
+    }
+
+    #[test]
+    fn formula_1_translation_targets_exist_in_the_shipped_manifest() {
+        // Every slug and view this translation can emit must be one the
+        // manifest offers, and no legacy id may appear twice.
+        let manifest = <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(
+            include_str!("../../../widgets-wasm/formula-1/manifest.json"),
+        )
+        .expect("BUG: the shipped manifest must parse");
+        let driver = manifest
+            .params
+            .get("driver")
+            .expect("BUG: the manifest must declare a driver param");
+        let bmc_widget_manifest::ParamKind::String { enum_values, .. } = &driver.kind else {
+            panic!("BUG: the driver param must be a string enum");
+        };
+        let offered: Vec<&str> = enum_values.iter().map(|o| o.value.as_str()).collect();
+
+        for (legacy, slug) in F1_DRIVER_SLUGS_BY_LEGACY_ID {
+            assert!(
+                offered.contains(slug),
+                "legacy id {legacy} maps to `{slug}`, which the manifest does not offer",
+            );
+        }
+        let mut ids: Vec<&str> = F1_DRIVER_SLUGS_BY_LEGACY_ID
+            .iter()
+            .map(|(legacy, _)| *legacy)
+            .collect();
+        ids.sort_unstable();
+        let count = ids.len();
+        ids.dedup();
+        assert_eq!(ids.len(), count, "a legacy driver id is listed twice");
+        assert!(
+            offered.contains(&DEFAULT_F1_DRIVER),
+            "the fallback driver must be one the manifest offers",
+        );
+
+        let view = manifest
+            .params
+            .get("view")
+            .expect("BUG: the manifest must declare a view param");
+        let bmc_widget_manifest::ParamKind::String { enum_values, .. } = &view.kind else {
+            panic!("BUG: the view param must be a string enum");
+        };
+        let views: Vec<&str> = enum_values.iter().map(|o| o.value.as_str()).collect();
+        for emitted in [DEFAULT_F1_VIEW, "next_race", "standings", "driver"] {
+            assert!(
+                views.contains(&emitted),
+                "the translation emits view `{emitted}`, which the manifest does not offer",
+            );
         }
     }
 

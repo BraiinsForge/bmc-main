@@ -1,0 +1,155 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "20326ae9-741c-4374-b322-b91ad377a0a3",
+  "version": "0.1.0",
+  "name": "Formula 1",
+  "description": "Formula 1 championship standings, driver stats, race info, and live timing",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/formula-1",
+  "icon": "assets/icon.svg",
+  "category": "sports",
+  "settings": [
+    "localization",
+    "timezone"
+  ],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {
+    "view": {
+      "name": "Type of widget",
+      "description": "Automatic shows the live session while one is on, otherwise the next race, otherwise the standings",
+      "type": "string",
+      "default_value": "auto",
+      "enum_values": [
+        {
+          "value": "auto",
+          "label": "Automatic (live session, next race, or standings)"
+        },
+        {
+          "value": "next_race",
+          "label": "Next Race"
+        },
+        {
+          "value": "standings",
+          "label": "Driver Standings"
+        },
+        {
+          "value": "driver",
+          "label": "Driver Statistics"
+        }
+      ]
+    },
+    "local_time": {
+      "name": "Use my local time",
+      "description": "Show session times in your timezone instead of the circuit's",
+      "type": "boolean",
+      "default_value": false
+    },
+    "driver": {
+      "name": "Driver",
+      "description": "Driver shown in the Driver Statistics view",
+      "type": "string",
+      "default_value": "max_verstappen",
+      "enum_values": [
+        {
+          "value": "gasly",
+          "label": "ALP — Pierre Gasly"
+        },
+        {
+          "value": "colapinto",
+          "label": "ALP — Franco Colapinto"
+        },
+        {
+          "value": "alonso",
+          "label": "AST — Fernando Alonso"
+        },
+        {
+          "value": "stroll",
+          "label": "AST — Lance Stroll"
+        },
+        {
+          "value": "hulkenberg",
+          "label": "AUD — Nico Hulkenberg"
+        },
+        {
+          "value": "bortoleto",
+          "label": "AUD — Gabriel Bortoleto"
+        },
+        {
+          "value": "bottas",
+          "label": "CAD — Valtteri Bottas"
+        },
+        {
+          "value": "perez",
+          "label": "CAD — Sergio Perez"
+        },
+        {
+          "value": "leclerc",
+          "label": "FER — Charles Leclerc"
+        },
+        {
+          "value": "hamilton",
+          "label": "FER — Lewis Hamilton"
+        },
+        {
+          "value": "ocon",
+          "label": "HAA — Esteban Ocon"
+        },
+        {
+          "value": "bearman",
+          "label": "HAA — Oliver Bearman"
+        },
+        {
+          "value": "norris",
+          "label": "MCL — Lando Norris"
+        },
+        {
+          "value": "piastri",
+          "label": "MCL — Oscar Piastri"
+        },
+        {
+          "value": "russell",
+          "label": "MER — George Russell"
+        },
+        {
+          "value": "antonelli",
+          "label": "MER — Kimi Antonelli"
+        },
+        {
+          "value": "max_verstappen",
+          "label": "RBR — Max Verstappen"
+        },
+        {
+          "value": "hadjar",
+          "label": "RBR — Isack Hadjar"
+        },
+        {
+          "value": "lawson",
+          "label": "RCB — Liam Lawson"
+        },
+        {
+          "value": "arvid_lindblad",
+          "label": "RCB — Arvid Lindblad"
+        },
+        {
+          "value": "albon",
+          "label": "WIL — Alexander Albon"
+        },
+        {
+          "value": "sainz",
+          "label": "WIL — Carlos Sainz"
+        }
+      ]
+    }
+  }
+}

@@ -6,6 +6,7 @@ result**
 .tmp
 .cache/
 .ai/scratch/
+.tmp/
 
 # AI
 .claude/*.local.*

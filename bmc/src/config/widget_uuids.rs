@@ -65,3 +65,5 @@ pub(crate) const TICKER_SINGLE_UID: Uuid =
     Uuid::from_u128(0x69ed_377c_701b_4cdb_b4b6_0308_cfe5_6b64);
 /// `widgets-wasm/ticker-list`
 pub(crate) const TICKER_LIST_UID: Uuid = Uuid::from_u128(0x51f4_8290_a8fd_466d_8693_1911_b06c_68c8);
+/// `widgets-wasm/formula-1`
+pub(crate) const FORMULA_1_UID: Uuid = Uuid::from_u128(0x2032_6ae9_741c_4374_b322_b91a_d377_a0a3);

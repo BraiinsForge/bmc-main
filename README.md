@@ -24,11 +24,11 @@ The following widgets are currently supported:
 - SpaceX Launch
 - Financial Ticker — single (including old BTC Ticker widget)
 - Financial Ticker — list
+- Formula 1
 
 Not yet supported widgets:
 
 - NASA Picture of the Day
-- Formula 1
 - Braiins Pool
 - Bitcoin Mining Data
 
