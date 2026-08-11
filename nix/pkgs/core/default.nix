@@ -67,6 +67,22 @@ let
     ${testBusybox}/bin/touch $out
   '';
 
+  signal-widget-reload = armv7Pkgs.writeShellApplication {
+    name = "signal-widget-reload";
+    text = ''
+      # 28 = SIGWINCH; procd signals the instance pid it supervises
+      ubus call service signal '{ "name": "bmc-compositor", "signal": 28 }' || true
+      exit 0
+    '';
+  };
+  signalWidgetReloadTest = armv7Pkgs.runCommand "signal-widget-reload-test" { } ''
+    PATH=${testBusybox}/bin \
+      ${testBusybox}/bin/ash \
+        ${./tests/signal-widget-reload.sh} \
+        ${signal-widget-reload}/bin/signal-widget-reload
+    ${testBusybox}/bin/touch $out
+  '';
+
   bmcNix = profile.buildCrate crates.bmc-nix { };
   selectBmcNixBin = bmc.lib.selectBmcNixBin { pkgs = armv7Pkgs; inherit bmcNix; };
 
@@ -253,10 +269,11 @@ let
       { prefix = "055"; bin = selectBmcNixBin "bmc-activation-copy-files"; }
       { prefix = "060"; bin = firmware-init-services; }
       { prefix = "090"; bin = start-service-orchestrator; }
-      # Durable 'current' commit. Runs last, after every other activation
-      # step and before the 999-activated completion flag, so 'current'
-      # advances to the new generation only once its activation succeeds.
+      # Durable 'current' commit. Runs after state-changing setup and before
+      # the priority-999 notification/completion entries, so 'current'
+      # advances only once setup activation succeeds.
       { prefix = "998"; bin = selectBmcNixBin "bmc-activation-write-boundary"; }
+      { prefix = "999"; bin = signal-widget-reload; }
     ];
     services = [ bmc-compositor ];
     out = [
@@ -282,6 +299,26 @@ let
     ];
   };
 
+  activationLayoutTest = armv7Pkgs.runCommand "core-activation-layout-test" { } ''
+    scripts=${package}/core/activation/scripts
+    signal="$scripts/999-signal-widget-reload"
+    boundary="$scripts/998-bmc-activation-write-boundary"
+
+    test -x "$signal"
+    test -x "$boundary"
+    test -x ${package}/bin/${wasmLauncher.launcherName}
+    first="$(${testBusybox}/bin/printf '%s\n' "$signal" "$boundary" | ${testBusybox}/bin/sort | ${testBusybox}/bin/head -n 1)"
+    test "$first" = "$boundary"
+
+    set -- "$scripts"/999-*-999-activated
+    test -e "$1"
+    for candidate in "$scripts"/999-*-signal-widget-reload; do
+      test ! -e "$candidate"
+    done
+
+    ${testBusybox}/bin/touch $out
+  '';
+
   packageWithTests = package.overrideAttrs (old: {
     passthru = (old.passthru or { }) // {
       inherit wasmLauncher;
@@ -289,6 +326,8 @@ let
       tests.activator = nixActivatorTest;
       tests.compositor-service = bmcCompositorServiceTest;
       tests.firmware-init-services = firmwareInitServicesTest;
+      tests.signal-widget-reload = signalWidgetReloadTest;
+      tests.activation-layout = activationLayoutTest;
     };
   });
 in

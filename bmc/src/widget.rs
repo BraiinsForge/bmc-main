@@ -28,6 +28,7 @@ mod discovery;
 mod led_state;
 mod manager;
 mod registry;
+mod signals;
 mod spawner;
 
 pub(crate) use coordinator::UpgradeWidgetLifecycle;
@@ -35,6 +36,8 @@ pub use coordinator::{Coordinator, WidgetEnv};
 pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use manager::WidgetManager;
 pub use registry::{
-    RegistryError, ViewportDescriptor, WidgetInfo, WidgetRegistry, slot_span_descriptor,
+    RegistryError, ViewportDescriptor, WidgetIdentity, WidgetInfo, WidgetRegistry,
+    slot_span_descriptor,
 };
+pub(crate) use signals::spawn_reload_signal_task;
 pub use spawner::{SpawnError, WaylandSpawner};

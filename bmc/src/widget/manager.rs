@@ -31,7 +31,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use super::coordinator::WidgetEnv;
-use super::{SpawnError, WaylandSpawner, WidgetRegistry};
+use super::{SpawnError, WaylandSpawner, WidgetIdentity, WidgetRegistry};
 
 const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 
@@ -39,6 +39,19 @@ const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 /// resorting to SIGKILL. Widgets that hold GPU resources (GEM/DMA-BUF)
 /// need time to run destructors so the kernel can reclaim CMA memory.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ChildObservation {
+    Running,
+    Exited,
+    Missing,
+}
+
+pub(crate) struct SpawnedWidget {
+    pub pid: u32,
+    pub exit_rx: tokio::sync::oneshot::Receiver<u32>,
+    pub identity: WidgetIdentity,
+}
 
 #[derive(Debug)]
 pub struct WidgetManager {
@@ -83,8 +96,8 @@ impl WidgetManager {
 
     /// Re-scan the widget discovery paths so newly-installed widgets become
     /// available without a restart. A no-op if the registry is static.
-    pub async fn refresh(&self) {
-        self.registry.refresh().await;
+    pub async fn refresh(&self) -> Result<(), super::RegistryError> {
+        self.registry.refresh().await
     }
 
     /// Spawn a widget process and return its OS pid. The compositor needs
@@ -94,11 +107,11 @@ impl WidgetManager {
     /// Also returns a oneshot receiver that fires with the pid when the
     /// child process exits, so the caller can clear the pid from the
     /// compositor and prevent stale pid recycling.
-    pub async fn spawn_widget(
+    pub(crate) async fn spawn_widget(
         &self,
         widget_uid: Uuid,
         env: WidgetEnv,
-    ) -> Result<(u32, tokio::sync::oneshot::Receiver<u32>), SpawnError> {
+    ) -> Result<SpawnedWidget, SpawnError> {
         let widget = self.registry.get(&widget_uid).ok_or_else(|| {
             SpawnError::SpawnProcess(Error::new(
                 ErrorKind::NotFound,
@@ -177,7 +190,22 @@ impl WidgetManager {
 
         info!("widget instance {} spawned (pid={})", env.instance_id, pid);
 
-        Ok((pid, exit_rx))
+        Ok(SpawnedWidget {
+            pid,
+            exit_rx,
+            identity: widget.identity,
+        })
+    }
+
+    pub(crate) async fn observe_child(&self, instance_id: &str) -> Result<ChildObservation, Error> {
+        let mut children = self.children.write().await;
+        let Some(child) = children.get_mut(instance_id) else {
+            return Ok(ChildObservation::Missing);
+        };
+        child.try_wait().map(|status| match status {
+            Some(_) => ChildObservation::Exited,
+            None => ChildObservation::Running,
+        })
     }
 
     pub async fn stop_widget(&self, instance_id: &str) {
@@ -238,5 +266,89 @@ async fn graceful_stop(instance_id: String, mut child: Child) {
                 warn!("failed to SIGKILL widget {instance_id}: {e}");
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+    use std::time::Instant;
+
+    fn write_widget(root: &std::path::Path, body: &str) {
+        std::fs::create_dir_all(root).expect("BUG: create widget root");
+        std::fs::write(
+            root.join("manifest.json"),
+            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"1.0.0","name":"manager-test","description":"manager test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}]}"#,
+        )
+        .expect("BUG: write manifest");
+        let binary = root.join("widget");
+        std::fs::write(&binary, body).expect("BUG: write widget binary");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("BUG: chmod widget binary");
+    }
+
+    async fn spawn(manager: &WidgetManager, instance_id: &str) -> SpawnedWidget {
+        manager
+            .spawn_widget(
+                Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: widget uid"),
+                WidgetEnv {
+                    instance_id: instance_id.to_owned(),
+                    wayland_display: "wayland-test".to_owned(),
+                },
+            )
+            .await
+            .expect("BUG: spawn widget")
+    }
+
+    async fn wait_for_child_exit(manager: &WidgetManager, instance_id: &str) {
+        let deadline = Instant::now() + Duration::from_secs(1);
+        loop {
+            let observation = manager
+                .observe_child(instance_id)
+                .await
+                .expect("BUG: observe child");
+            if observation == ChildObservation::Exited {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "child did not exit before deadline: {observation:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn child_observation_distinguishes_running_exited_and_missing() {
+        let temp = tempfile::TempDir::new().expect("BUG: tempdir");
+        let running_dir = temp.path().join("running");
+        write_widget(&running_dir, "#!/bin/sh\nwhile :; do sleep 1; done\n");
+        let running_manager = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
+        let spawned = spawn(&running_manager, "running").await;
+        assert_eq!(spawned.identity.canonical_dir, running_dir);
+        assert_eq!(
+            running_manager
+                .observe_child("running")
+                .await
+                .expect("observe"),
+            ChildObservation::Running
+        );
+        running_manager.stop_widget("running").await;
+        assert_eq!(
+            running_manager
+                .observe_child("running")
+                .await
+                .expect("observe"),
+            ChildObservation::Missing
+        );
+
+        std::fs::remove_dir_all(&running_dir).expect("BUG: remove running widget");
+        let exited_dir = temp.path().join("exited");
+        write_widget(&exited_dir, "#!/bin/sh\nexit 0\n");
+        let exited_manager = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
+        let _ = spawn(&exited_manager, "exited").await;
+        wait_for_child_exit(&exited_manager, "exited").await;
+        exited_manager.stop_widget("exited").await;
     }
 }

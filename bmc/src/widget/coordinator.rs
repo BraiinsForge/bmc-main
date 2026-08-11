@@ -25,8 +25,8 @@ use bmc_widget_protocol::{
     Localization, NextAlarm, SettingUpdate, ViewportShape, WidgetInitialConfig,
 };
 use indexmap::IndexMap;
-use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{debug, info, warn};
 
@@ -40,7 +40,8 @@ use crate::credential;
 use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 use crate::secret_store::SecretStoreHandle;
 
-use super::{WidgetManager, WidgetRegistry};
+use super::manager::ChildObservation;
+use super::{WidgetIdentity, WidgetManager, WidgetRegistry};
 
 #[must_use]
 pub(crate) fn fullscreen_descriptor_for_widget(
@@ -69,6 +70,20 @@ fn placement_viewport_size(
         width: desc.width,
         height: desc.height,
     })
+}
+
+fn placement_viewport_descriptor(
+    widget: &Widget,
+    caps: &HardwareCapabilities,
+) -> Option<crate::widget::ViewportDescriptor> {
+    match &widget.placement {
+        crate::scene::WidgetPlacement::Fullscreen => {
+            Some(fullscreen_descriptor_for_widget(widget, caps))
+        }
+        crate::scene::WidgetPlacement::SlotSpan(span) => {
+            crate::widget::slot_span_descriptor(span.columns, span.rows)
+        }
+    }
 }
 
 /// Path-safe placement tag for the opaque instance token: `full` or `<cols>x<rows>`.
@@ -226,9 +241,38 @@ pub struct Coordinator {
     widget_registry: Arc<WidgetRegistry>,
     hardware_capabilities: HardwareCapabilities,
     /// Read on every spawn to resolve the widget's credential bindings.
-    /// Callers already hold the config lock when spawning,
-    /// which is the required order: config first, then secrets.
+    /// Lock order: config before secrets. A spawner takes the config lock
+    /// first or not at all, and never takes it while holding this one.
     secret_store: Arc<RwLock<SecretStoreHandle>>,
+    spawn_records: StdRwLock<HashMap<String, SpawnRecord>>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SpawnRecord {
+    scene_id: SceneId,
+    widget_uid: uuid::Uuid,
+    identity: WidgetIdentity,
+}
+
+fn record_needs_reload(registry: &WidgetRegistry, record: &SpawnRecord) -> bool {
+    registry
+        .get(&record.widget_uid)
+        .is_some_and(|installed| installed.identity != record.identity)
+}
+
+fn current_widget_for_record(
+    scenes: &IndexMap<SceneId, Scene>,
+    instance_id: &str,
+    record: &SpawnRecord,
+) -> Option<Widget> {
+    scenes
+        .get(&record.scene_id)?
+        .widgets
+        .values()
+        .find(|widget| {
+            widget.id.to_string() == instance_id && widget.widget_type_id == record.widget_uid
+        })
+        .cloned()
 }
 
 impl std::fmt::Debug for Coordinator {
@@ -443,6 +487,7 @@ impl Coordinator {
             widget_registry,
             hardware_capabilities,
             secret_store,
+            spawn_records: StdRwLock::new(HashMap::new()),
         }
     }
 
@@ -540,8 +585,119 @@ impl Coordinator {
 
     /// Re-scan the widget registry so a widget installed at runtime becomes
     /// available without a restart.
-    pub async fn refresh_widgets(&self) {
-        self.widget_manager.refresh().await;
+    pub async fn refresh_widgets(&self) -> Result<(), crate::widget::RegistryError> {
+        self.widget_manager.refresh().await
+    }
+
+    pub(crate) async fn reload_changed_widgets(&self, config_handle: &Arc<RwLock<ConfigHandle>>) {
+        if let Err(error) = self.refresh_widgets().await {
+            warn!(%error, "widget registry refresh failed; keeping running widgets");
+            return;
+        }
+
+        let records: Vec<_> = self
+            .spawn_records
+            .read()
+            .expect("BUG: widget spawn record lock poisoned")
+            .iter()
+            .map(|(instance_id, record)| (instance_id.clone(), record.clone()))
+            .collect();
+
+        for (instance_id, record) in records {
+            if !record_needs_reload(&self.widget_registry, &record) {
+                continue;
+            }
+            if self
+                .spawn_records
+                .read()
+                .expect("BUG: widget spawn record lock poisoned")
+                .get(&instance_id)
+                != Some(&record)
+            {
+                continue;
+            }
+            match self.widget_manager.observe_child(&instance_id).await {
+                Ok(ChildObservation::Running) => {}
+                Ok(ChildObservation::Exited | ChildObservation::Missing) => continue,
+                Err(error) => {
+                    warn!(%error, %instance_id, "failed to inspect widget before reload");
+                    continue;
+                }
+            }
+
+            let current = {
+                let config = config_handle.read().await;
+                current_widget_for_record(config.scenes(), &instance_id, &record)
+            };
+            let Some(widget) = current else {
+                continue;
+            };
+            let Some(descriptor) =
+                placement_viewport_descriptor(&widget, &self.hardware_capabilities)
+            else {
+                continue;
+            };
+            if !self
+                .widget_registry
+                .supports_viewport(&widget.widget_type_id, &descriptor)
+            {
+                warn!(%instance_id, "updated widget does not support its current viewport");
+                continue;
+            }
+
+            info!(%instance_id, widget_type = %record.widget_uid, "reloading changed widget");
+            self.stop_widget(&instance_id).await;
+            self.spawn_widget(&record.scene_id, &widget).await;
+        }
+
+        info!("finished handling widget reload");
+    }
+
+    fn record_spawn(
+        &self,
+        instance_id: String,
+        scene_id: SceneId,
+        widget_uid: uuid::Uuid,
+        identity: WidgetIdentity,
+    ) {
+        self.spawn_records
+            .write()
+            .expect("BUG: widget spawn record lock poisoned")
+            .insert(
+                instance_id,
+                SpawnRecord {
+                    scene_id,
+                    widget_uid,
+                    identity,
+                },
+            );
+    }
+
+    fn forget_spawn(&self, instance_id: &str) {
+        self.spawn_records
+            .write()
+            .expect("BUG: widget spawn record lock poisoned")
+            .remove(instance_id);
+    }
+
+    fn forget_all_spawns(&self) {
+        self.spawn_records
+            .write()
+            .expect("BUG: widget spawn record lock poisoned")
+            .clear();
+    }
+
+    fn observe_widget_exit(
+        &self,
+        instance_id: String,
+        exit_rx: tokio::sync::oneshot::Receiver<u32>,
+    ) {
+        let compositor = Arc::clone(&self.compositor);
+        tokio::spawn(async move {
+            if let Ok(exited_pid) = exit_rx.await {
+                let _ = compositor.clear_pid(&instance_id, exited_pid);
+            }
+        });
     }
 
     pub async fn spawn_initial_widgets(
@@ -657,7 +813,6 @@ impl Coordinator {
             );
             return;
         };
-        let size = viewport;
         let resolved = self.resolve_credentials(widget).await;
         let initial_config = WidgetInitialConfig {
             width: viewport.width,
@@ -680,7 +835,7 @@ impl Coordinator {
         // before the compositor knows what to emit.
         if let Err(e) =
             self.compositor
-                .register_widget(instance_id.clone(), position, size, initial_config)
+                .register_widget(instance_id.clone(), position, viewport, initial_config)
         {
             warn!(
                 scene_id = %scene_id,
@@ -714,7 +869,7 @@ impl Coordinator {
             "spawning widget"
         );
 
-        let (pid, exit_rx) = match self
+        let spawned = match self
             .widget_manager
             .spawn_widget(widget.widget_type_id, widget_env)
             .await
@@ -733,6 +888,7 @@ impl Coordinator {
             }
         };
 
+        let pid = spawned.pid;
         if let Err(e) = self.compositor.set_widget_pid(&instance_id, pid) {
             warn!(
                 scene_id = %scene_id,
@@ -745,16 +901,18 @@ impl Coordinator {
 
         // Clear the pid from the compositor when the child exits
         // so a recycled pid cannot be mistaken for this widget.
-        let compositor = Arc::clone(&self.compositor);
-        let clear_instance_id = instance_id.clone();
-        tokio::spawn(async move {
-            if let Ok(exited_pid) = exit_rx.await {
-                let _ = compositor.clear_pid(&clear_instance_id, exited_pid);
-            }
-        });
+        self.observe_widget_exit(instance_id.clone(), spawned.exit_rx);
+
+        self.record_spawn(
+            instance_id,
+            *scene_id,
+            widget.widget_type_id,
+            spawned.identity,
+        );
     }
 
     pub async fn stop_widget(&self, instance_id: &str) {
+        self.forget_spawn(instance_id);
         self.widget_manager.stop_widget(instance_id).await;
         let _ = self.compositor.unregister_widget(&instance_id.to_owned());
     }
@@ -835,6 +993,7 @@ impl Coordinator {
     /// The compositor is shut down second.
     pub async fn stop_all(&self) {
         info!("stopping all widgets and compositor");
+        self.forget_all_spawns();
         self.widget_manager.stop_all().await;
         if let Err(e) = self.compositor.shutdown() {
             warn!(error = %e, "failed to shut down compositor");
@@ -846,6 +1005,7 @@ impl Coordinator {
     /// applying the same per-instance cleanup as [`Self::stop_widget`] so
     /// widgets respawned later do not see stale compositor registrations.
     pub async fn stop_all_widgets(&self) {
+        self.forget_all_spawns();
         for instance_id in self.widget_manager.stop_all().await {
             let _ = self.compositor.unregister_widget(&instance_id);
         }
@@ -954,7 +1114,9 @@ impl crate::system_upgrade::WidgetLifecycle for UpgradeWidgetLifecycle {
     }
 
     async fn refresh_widgets(&self) {
-        self.coordinator.refresh_widgets().await;
+        if let Err(error) = self.coordinator.refresh_widgets().await {
+            warn!(%error, "failed to refresh widgets after package activation");
+        }
     }
 }
 
@@ -971,7 +1133,7 @@ fn params_to_json_map(
 mod tests {
     use super::*;
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
-    use crate::widget::ViewportDescriptor;
+    use crate::widget::{ViewportDescriptor, WidgetIdentity, WidgetInfo};
     use bmc_widget_manifest::ViewportShape;
 
     fn bmc100_capabilities() -> HardwareCapabilities {
@@ -1099,6 +1261,91 @@ mod tests {
             "BUG: combined scene with an allow-list span must be supported",
         );
     }
+
+    fn reload_registry(uid: uuid::Uuid, path: &str, version: u64) -> WidgetRegistry {
+        let manifest = bmc_widget_manifest::Manifest {
+            uid,
+            version: semver::Version::new(version, 0, 0),
+            name: "reload-test".to_owned(),
+            subname: None,
+            description: "reload test".to_owned(),
+            config_help: None,
+            author: None,
+            binary: std::path::PathBuf::from("widget"),
+            icon: None,
+            category: bmc_widget_manifest::WidgetCategory::Misc,
+            settings: vec![],
+            supported_viewports: vec![],
+            params: indexmap::IndexMap::new(),
+            credentials: indexmap::IndexMap::new(),
+        };
+        WidgetRegistry::new(vec![WidgetInfo::for_test(
+            manifest,
+            std::path::PathBuf::from(path),
+            std::path::PathBuf::from(path).join("widget"),
+            None,
+        )])
+    }
+
+    fn reload_record(scene_id: SceneId, uid: uuid::Uuid, path: &str, version: u64) -> SpawnRecord {
+        SpawnRecord {
+            scene_id,
+            widget_uid: uid,
+            identity: WidgetIdentity {
+                canonical_dir: std::path::PathBuf::from(path),
+                version: semver::Version::new(version, 0, 0),
+            },
+        }
+    }
+
+    #[test]
+    fn only_a_present_changed_identity_requests_reload() {
+        let uid = uuid::Uuid::new_v4();
+        let scene_id = SceneId::generate();
+        let unchanged = reload_record(scene_id, uid, "/widgets/current", 1);
+        assert!(!record_needs_reload(
+            &reload_registry(uid, "/widgets/current", 1),
+            &unchanged
+        ));
+        assert!(record_needs_reload(
+            &reload_registry(uid, "/widgets/replaced", 1),
+            &unchanged
+        ));
+        assert!(record_needs_reload(
+            &reload_registry(uid, "/widgets/current", 2),
+            &unchanged
+        ));
+        assert!(!record_needs_reload(
+            &WidgetRegistry::new(vec![]),
+            &unchanged
+        ));
+    }
+
+    #[test]
+    fn reload_resolves_the_current_widget_from_its_recorded_scene_and_uid() {
+        let uid = uuid::Uuid::new_v4();
+        let mut scene = Scene::fullscreen(uid, BTreeMap::new());
+        let widget = scene.widgets.values().next().expect("BUG: widget").clone();
+        let instance_id = widget.id.to_string();
+        let record = reload_record(scene.id, uid, "/widgets/old", 1);
+        let scenes = IndexMap::from([(scene.id, scene.clone())]);
+
+        assert_eq!(
+            current_widget_for_record(&scenes, &instance_id, &record)
+                .expect("current widget")
+                .id,
+            widget.id
+        );
+        assert!(current_widget_for_record(&IndexMap::new(), &instance_id, &record).is_none());
+
+        scene
+            .widgets
+            .get_mut(&widget.id)
+            .expect("BUG: widget")
+            .widget_type_id = uuid::Uuid::new_v4();
+        let changed_scenes = IndexMap::from([(scene.id, scene)]);
+        assert!(current_widget_for_record(&changed_scenes, &instance_id, &record).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -1149,12 +1396,12 @@ mod support_tests {
             params: indexmap::IndexMap::new(),
             credentials: indexmap::IndexMap::new(),
         };
-        WidgetRegistry::new(vec![WidgetInfo {
+        WidgetRegistry::new(vec![WidgetInfo::for_test(
             manifest,
-            widget_dir: PathBuf::from("/test/widgets/test-widget"),
-            binary_path: PathBuf::from("/test/widgets/test-widget/bin/widget"),
-            icon_path: None,
-        }])
+            PathBuf::from("/test/widgets/test-widget"),
+            PathBuf::from("/test/widgets/test-widget/bin/widget"),
+            None,
+        )])
     }
 
     fn fullscreen_scene_with(widget_type_id: Uuid, viewport_shape: ViewportShape) -> Scene {

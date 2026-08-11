@@ -885,6 +885,7 @@ dependencies = [
  "dirs",
  "futures",
  "ii-net",
+ "libc",
  "rand 0.9.1",
  "reqwest",
  "serde",

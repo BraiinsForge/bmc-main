@@ -59,6 +59,12 @@ pub struct PathDiscovery {
     paths: Vec<PathBuf>,
 }
 
+#[derive(Clone, Copy)]
+enum DiscoveryErrorPolicy {
+    Continue,
+    Fail,
+}
+
 impl PathDiscovery {
     /// Create a new path-based discovery with the given paths to scan.
     #[must_use]
@@ -66,8 +72,11 @@ impl PathDiscovery {
         Self { paths }
     }
 
-    async fn scan_directory(path: &Path) -> Result<Vec<WidgetInfo>, RegistryError> {
-        let widget_dirs = Self::discover_widget_dirs(path.to_path_buf()).await?;
+    async fn scan_directory(
+        path: &Path,
+        error_policy: DiscoveryErrorPolicy,
+    ) -> Result<Vec<WidgetInfo>, RegistryError> {
+        let widget_dirs = Self::discover_widget_dirs(path.to_path_buf(), error_policy).await?;
         let mut widgets = Vec::new();
 
         for widget_dir in widget_dirs {
@@ -86,14 +95,20 @@ impl PathDiscovery {
         Ok(widgets)
     }
 
-    async fn discover_widget_dirs(path: PathBuf) -> Result<Vec<PathBuf>, RegistryError> {
+    async fn discover_widget_dirs(
+        path: PathBuf,
+        error_policy: DiscoveryErrorPolicy,
+    ) -> Result<Vec<PathBuf>, RegistryError> {
         let scan_path = path.clone();
-        task::spawn_blocking(move || Self::walk_widget_dirs(&scan_path))
+        task::spawn_blocking(move || Self::walk_widget_dirs(&scan_path, error_policy))
             .await
-            .map_err(|source| RegistryError::DiscoveryTask { path, source })
+            .map_err(|source| RegistryError::DiscoveryTask { path, source })?
     }
 
-    fn walk_widget_dirs(path: &Path) -> Vec<PathBuf> {
+    fn walk_widget_dirs(
+        path: &Path,
+        error_policy: DiscoveryErrorPolicy,
+    ) -> Result<Vec<PathBuf>, RegistryError> {
         let mut widget_dirs = Vec::new();
         let mut entries = WalkDir::new(path)
             .follow_links(true)
@@ -104,10 +119,22 @@ impl PathDiscovery {
         while let Some(entry) = entries.next() {
             let entry = match entry {
                 Ok(entry) => entry,
-                Err(e) => {
+                Err(e) if e.loop_ancestor().is_some() => {
                     warn!("failed to walk widget directory: {}", e);
                     continue;
                 }
+                Err(e) => match error_policy {
+                    DiscoveryErrorPolicy::Continue => {
+                        warn!("failed to walk widget directory: {}", e);
+                        continue;
+                    }
+                    DiscoveryErrorPolicy::Fail => {
+                        return Err(RegistryError::WalkDirectory {
+                            path: e.path().unwrap_or(path).to_path_buf(),
+                            message: e.to_string(),
+                        });
+                    }
+                },
             };
 
             if !entry.file_type().is_dir() {
@@ -121,7 +148,7 @@ impl PathDiscovery {
             }
         }
 
-        widget_dirs
+        Ok(widget_dirs)
     }
 
     async fn load_widget(widget_dir: &Path) -> Result<WidgetInfo, RegistryError> {
@@ -142,6 +169,13 @@ impl PathDiscovery {
                     path: manifest_path,
                     source: e,
                 })?;
+
+        let canonical_dir = fs::canonicalize(widget_dir).await.map_err(|source| {
+            RegistryError::CanonicalizeWidgetDir {
+                path: widget_dir.to_path_buf(),
+                source,
+            }
+        })?;
 
         let binary_path = widget_dir.join(&manifest.binary);
 
@@ -185,35 +219,72 @@ impl PathDiscovery {
         });
 
         Ok(WidgetInfo {
+            identity: super::WidgetIdentity {
+                canonical_dir,
+                version: manifest.version.clone(),
+            },
             manifest,
             widget_dir: widget_dir.to_path_buf(),
             binary_path,
             icon_path,
         })
     }
+
+    async fn discover_with_policy(
+        &self,
+        error_policy: DiscoveryErrorPolicy,
+    ) -> Result<Vec<WidgetInfo>, RegistryError> {
+        let mut widgets = Vec::new();
+
+        for scan_path in &self.paths {
+            match fs::try_exists(scan_path).await {
+                Ok(false) => {
+                    if matches!(error_policy, DiscoveryErrorPolicy::Continue) {
+                        warn!("widget scan path does not exist: {}", scan_path.display());
+                    }
+                    continue;
+                }
+                Ok(true) => {}
+                Err(source) => match error_policy {
+                    DiscoveryErrorPolicy::Continue => {
+                        warn!(
+                            "failed to inspect widget scan path '{}': {source}",
+                            scan_path.display()
+                        );
+                        continue;
+                    }
+                    DiscoveryErrorPolicy::Fail => {
+                        return Err(RegistryError::InspectDiscoveryRoot {
+                            path: scan_path.clone(),
+                            source,
+                        });
+                    }
+                },
+            }
+            match Self::scan_directory(scan_path, error_policy).await {
+                Ok(discovered) => widgets.extend(discovered),
+                Err(error) => match error_policy {
+                    DiscoveryErrorPolicy::Continue => {
+                        warn!("failed to scan widget directory: {error}");
+                    }
+                    DiscoveryErrorPolicy::Fail => return Err(error),
+                },
+            }
+        }
+
+        Ok(widgets)
+    }
+
+    pub async fn discover_generation(&self) -> Result<Vec<WidgetInfo>, RegistryError> {
+        self.discover_with_policy(DiscoveryErrorPolicy::Fail).await
+    }
 }
 
 impl WidgetDiscovery for PathDiscovery {
     async fn discover(&self) -> Vec<WidgetInfo> {
-        let mut widgets = Vec::new();
-
-        for scan_path in &self.paths {
-            if !scan_path.exists() {
-                warn!("widget scan path does not exist: {}", scan_path.display());
-                continue;
-            }
-
-            match Self::scan_directory(scan_path).await {
-                Ok(mut discovered) => {
-                    widgets.append(&mut discovered);
-                }
-                Err(e) => {
-                    warn!("failed to scan widget directory: {}", e);
-                }
-            }
-        }
-
-        widgets
+        self.discover_with_policy(DiscoveryErrorPolicy::Continue)
+            .await
+            .expect("BUG: continue discovery policy must not return an error")
     }
 }
 
@@ -400,6 +471,11 @@ mod tests {
         assert_eq!(widgets.len(), 1);
         assert_eq!(widgets[0].manifest.name, "linked-widget");
         assert_eq!(widgets[0].widget_dir, link_path);
+        assert_eq!(
+            widgets[0].identity.canonical_dir,
+            std_fs::canonicalize(widget_dir).expect("BUG: canonicalize widget target"),
+            "identity follows the symlink target while public paths retain the discovery link"
+        );
     }
 
     #[tokio::test]

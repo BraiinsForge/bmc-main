@@ -2306,12 +2306,14 @@ mod tests {
     ) -> Coordinator {
         let mut manifest = manifest_with_credentials(slots);
         manifest.uid = widget_type_id;
-        let registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
-            manifest,
-            widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
-            binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
-            icon_path: None,
-        }]));
+        let registry = Arc::new(WidgetRegistry::new(vec![
+            crate::widget::WidgetInfo::for_test(
+                manifest,
+                std::path::PathBuf::from("/test/widgets/test-widget"),
+                std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+                None,
+            ),
+        ]));
         let compositor: Arc<dyn crate::compositor::Compositor> =
             Arc::new(RecordingCompositor::default());
         Coordinator::new(
@@ -2424,12 +2426,14 @@ mod tests {
 
         let mut manifest = manifest_with_credentials(declared_slots);
         manifest.uid = widget_type_id;
-        let registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
-            manifest,
-            widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
-            binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
-            icon_path: None,
-        }]));
+        let registry = Arc::new(WidgetRegistry::new(vec![
+            crate::widget::WidgetInfo::for_test(
+                manifest,
+                std::path::PathBuf::from("/test/widgets/test-widget"),
+                std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+                None,
+            ),
+        ]));
 
         let mut scene = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
         let widget = scene
@@ -3246,12 +3250,12 @@ mod tests {
                 "supported_viewports": [{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}}]
             }}"#
         );
-        let info = crate::widget::WidgetInfo {
-            manifest: bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
-            widget_dir: std::path::PathBuf::from("/w"),
-            binary_path: std::path::PathBuf::from("/w/bin/test"),
-            icon_path: None,
-        };
+        let info = crate::widget::WidgetInfo::for_test(
+            bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
+            std::path::PathBuf::from("/w"),
+            std::path::PathBuf::from("/w/bin/test"),
+            None,
+        );
 
         let slots = widget_info_to_proto(&info, &bmc100_platform_descriptor()).credentials;
 
@@ -3565,12 +3569,14 @@ mod tests {
             params: indexmap::IndexMap::new(),
             credentials: indexmap::IndexMap::new(),
         };
-        let widget_registry = Arc::new(WidgetRegistry::new(vec![crate::widget::WidgetInfo {
-            manifest,
-            widget_dir: std::path::PathBuf::from("/test/widgets/test-widget"),
-            binary_path: std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
-            icon_path: None,
-        }]));
+        let widget_registry = Arc::new(WidgetRegistry::new(vec![
+            crate::widget::WidgetInfo::for_test(
+                manifest,
+                std::path::PathBuf::from("/test/widgets/test-widget"),
+                std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
+                None,
+            ),
+        ]));
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
         let config_path = tmp.path().join("bmc-config.json");
@@ -4191,12 +4197,12 @@ mod tests {
         );
         let manifest = bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest");
 
-        let with_icon = crate::widget::WidgetInfo {
+        let with_icon = crate::widget::WidgetInfo::for_test(
             manifest,
-            widget_dir: std::path::PathBuf::from("/w"),
-            binary_path: std::path::PathBuf::from("/w/bin/test"),
-            icon_path: Some(std::path::PathBuf::from("/w/icon.svg")),
-        };
+            std::path::PathBuf::from("/w"),
+            std::path::PathBuf::from("/w/bin/test"),
+            Some(std::path::PathBuf::from("/w/icon.svg")),
+        );
         let proto = widget_info_to_proto(&with_icon, &bmc100_platform_descriptor());
         assert_eq!(proto.icon_url, Some(format!("/widgets/{uid}/icon")));
         assert_eq!(proto.subname, None, "no subname declared");
@@ -4225,12 +4231,12 @@ mod tests {
             }}"#,
             uuid::Uuid::new_v4()
         );
-        let info = crate::widget::WidgetInfo {
-            manifest: bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
-            widget_dir: std::path::PathBuf::from("/w"),
-            binary_path: std::path::PathBuf::from("/w/bin/test"),
-            icon_path: None,
-        };
+        let info = crate::widget::WidgetInfo::for_test(
+            bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
+            std::path::PathBuf::from("/w"),
+            std::path::PathBuf::from("/w/bin/test"),
+            None,
+        );
         let proto = widget_info_to_proto(&info, &bmc100_platform_descriptor());
         assert_eq!(proto.subname.as_deref(), Some("Analog"));
     }
@@ -4252,13 +4258,12 @@ mod tests {
                 }}"#,
                 uuid::Uuid::new_v4()
             );
-            let info = crate::widget::WidgetInfo {
-                manifest: bmc_widget_manifest::Manifest::from_str(&json)
-                    .expect("BUG: valid manifest"),
-                widget_dir: std::path::PathBuf::from("/w"),
-                binary_path: std::path::PathBuf::from("/w/bin/test"),
-                icon_path: None,
-            };
+            let info = crate::widget::WidgetInfo::for_test(
+                bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest"),
+                std::path::PathBuf::from("/w"),
+                std::path::PathBuf::from("/w/bin/test"),
+                None,
+            );
             widget_info_to_proto(&info, &bmc100_platform_descriptor()).category
         };
 

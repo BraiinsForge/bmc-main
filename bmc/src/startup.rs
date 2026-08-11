@@ -207,6 +207,7 @@ where
     led_coordinator: LedCoordinatorHandle,
     widget_coordinator: Arc<Coordinator>,
     widget_registry: Arc<WidgetRegistry>,
+    widget_reload_task: tokio::task::JoinHandle<()>,
     system_manager: SystemManager<U>,
     sound_controller: SoundController,
     alarm_controller: AlarmController,
@@ -304,6 +305,10 @@ where
             hardware_capabilities,
             secret_store.clone(),
         ));
+        let widget_reload_task = crate::widget::spawn_reload_signal_task(
+            widget_coordinator.clone(),
+            config_handle.clone(),
+        )?;
 
         let system_upgrade_service = SystemUpgradeService::new(
             firmware_index,
@@ -552,6 +557,7 @@ where
             led_coordinator,
             widget_coordinator,
             widget_registry,
+            widget_reload_task,
             system_manager,
             sound_controller,
             alarm_controller,
@@ -565,7 +571,8 @@ where
 
         tokio::spawn(self.button_manager.run());
 
-        WebService::new(
+        let widget_reload_task = self.widget_reload_task;
+        let server_result = WebService::new(
             self.manager,
             self.session_manager,
             self.config.server_config,
@@ -583,11 +590,13 @@ where
             self.hardware_capabilities,
         )
         .run(self.listener)
-        .await?;
+        .await;
 
         // In case the app panics, this is not executed.
         // The children are SIGKILL'd thanks to kill_on_drop(true).
+        widget_reload_task.abort();
         self.widget_coordinator.stop_all().await;
+        server_result?;
         Ok(())
     }
 

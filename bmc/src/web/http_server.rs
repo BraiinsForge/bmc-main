@@ -531,12 +531,12 @@ mod tests {
             }}"#
         );
         let manifest = bmc_widget_manifest::Manifest::from_str(&json).expect("BUG: valid manifest");
-        WidgetRegistry::new(vec![WidgetInfo {
+        WidgetRegistry::new(vec![WidgetInfo::for_test(
             manifest,
-            widget_dir: PathBuf::from("/widgets/t"),
-            binary_path: PathBuf::from("/widgets/t/bin/test"),
+            PathBuf::from("/widgets/t"),
+            PathBuf::from("/widgets/t/bin/test"),
             icon_path,
-        }])
+        )])
     }
 
     #[test]

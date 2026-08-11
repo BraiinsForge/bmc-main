@@ -24,10 +24,17 @@ use std::path::PathBuf;
 use std::sync::RwLock;
 
 use bmc_widget_manifest::{Manifest, ManifestError, ViewportShape, WidgetViewportConstraint};
+use semver::Version;
 use tracing::warn;
 use uuid::Uuid;
 
 use super::{PathDiscovery, WidgetDiscovery};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WidgetIdentity {
+    pub canonical_dir: PathBuf,
+    pub version: Version,
+}
 
 /// Information about a discovered widget.
 #[derive(Debug, Clone)]
@@ -40,6 +47,29 @@ pub struct WidgetInfo {
     pub binary_path: PathBuf,
     /// Resolved icon path when the manifest declares one; served by BMC.
     pub icon_path: Option<PathBuf>,
+    pub identity: WidgetIdentity,
+}
+
+#[cfg(test)]
+impl WidgetInfo {
+    pub(crate) fn for_test(
+        manifest: Manifest,
+        widget_dir: PathBuf,
+        binary_path: PathBuf,
+        icon_path: Option<PathBuf>,
+    ) -> Self {
+        let identity = WidgetIdentity {
+            canonical_dir: widget_dir.clone(),
+            version: manifest.version.clone(),
+        };
+        Self {
+            manifest,
+            widget_dir,
+            binary_path,
+            icon_path,
+            identity,
+        }
+    }
 }
 
 /// Error that can occur during widget registry operations.
@@ -76,6 +106,21 @@ pub enum RegistryError {
 
     #[error("binary at '{path}' is not executable")]
     BinaryNotExecutable { path: PathBuf },
+
+    #[error("failed to canonicalize widget directory '{path}': {source}")]
+    CanonicalizeWidgetDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("failed to inspect widget discovery root '{path}': {source}")]
+    InspectDiscoveryRoot {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+
+    #[error("failed to walk widget directory '{path}': {message}")]
+    WalkDirectory { path: PathBuf, message: String },
 }
 
 /// A concrete widget viewport derived from active hardware and a placement.
@@ -167,16 +212,17 @@ impl WidgetRegistry {
     /// A no-op for a static (`new`-built) registry. Discovery runs without the
     /// lock held; the write lock is taken only for the final swap, so no
     /// `.await` ever happens while holding it.
-    pub async fn refresh(&self) {
+    pub async fn refresh(&self) -> Result<(), RegistryError> {
         let Some(paths) = self.paths.clone() else {
-            return;
+            return Ok(());
         };
-        let widgets = PathDiscovery::new(paths).discover().await;
+        let widgets = PathDiscovery::new(paths).discover_generation().await?;
         let map = Self::build_map(widgets);
         *self
             .widgets
             .write()
             .expect("BUG: widget registry lock poisoned") = map;
+        Ok(())
     }
 
     fn build_map(widgets: impl IntoIterator<Item = WidgetInfo>) -> HashMap<Uuid, WidgetInfo> {
@@ -302,12 +348,13 @@ mod tests {
             credentials: indexmap::IndexMap::new(),
         };
 
-        WidgetInfo {
+        let widget_dir = PathBuf::from("/test/widgets").join(name);
+        WidgetInfo::for_test(
             manifest,
-            widget_dir: PathBuf::from("/test/widgets").join(name),
-            binary_path: PathBuf::from("/test/widgets").join(name).join("bin/widget"),
-            icon_path: None,
-        }
+            widget_dir.clone(),
+            widget_dir.join("bin/widget"),
+            None,
+        )
     }
 
     #[tokio::test]
@@ -618,7 +665,7 @@ mod tests {
             "second",
             "550e8400-e29b-41d4-a716-446655440001",
         );
-        registry.refresh().await;
+        registry.refresh().await.expect("BUG: refresh widgets");
 
         assert_eq!(registry.len(), 2);
         let second = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440001").expect("BUG: uid");
@@ -638,7 +685,7 @@ mod tests {
         assert_eq!(registry.len(), 1);
 
         std::fs::remove_dir_all(temp_dir.path().join("gone")).expect("BUG: remove widget");
-        registry.refresh().await;
+        registry.refresh().await.expect("BUG: refresh widgets");
 
         assert!(registry.is_empty());
     }
@@ -653,8 +700,80 @@ mod tests {
         let registry = WidgetRegistry::new(vec![widget]);
         assert_eq!(registry.len(), 1);
 
-        registry.refresh().await;
+        registry.refresh().await.expect("BUG: refresh widgets");
 
         assert_eq!(registry.len(), 1, "static registry must not be wiped");
+    }
+
+    #[tokio::test]
+    async fn refresh_of_missing_roots_commits_an_empty_generation() {
+        let parent = tempfile::TempDir::new().expect("BUG: tempdir");
+        let root = parent.path().join("widgets");
+        std::fs::create_dir(&root).expect("BUG: create widget root");
+        write_widget(&root, "present", "550e8400-e29b-41d4-a716-446655440000");
+        let registry = WidgetRegistry::discover(vec![root.clone()]).await;
+        assert_eq!(registry.len(), 1);
+
+        std::fs::remove_dir_all(&root).expect("BUG: remove widget root");
+        registry.refresh().await.expect("missing root is valid");
+
+        assert!(registry.is_empty());
+    }
+
+    #[tokio::test]
+    async fn walk_failure_preserves_the_previous_generation() {
+        let root = tempfile::TempDir::new().expect("BUG: tempdir");
+        let uid = "550e8400-e29b-41d4-a716-446655440000";
+        write_widget(root.path(), "retained", uid);
+        let registry = WidgetRegistry::discover(vec![root.path().to_path_buf()]).await;
+        let uid = Uuid::parse_str(uid).expect("BUG: uid");
+        let previous = registry.get(&uid).expect("BUG: initial widget").identity;
+
+        std::os::unix::fs::symlink(
+            root.path().join("missing-target"),
+            root.path().join("broken-link"),
+        )
+        .expect("BUG: create deterministic walk failure");
+        let error = registry
+            .refresh()
+            .await
+            .expect_err("walk failure must abort refresh");
+
+        assert!(matches!(error, RegistryError::WalkDirectory { .. }));
+        assert_eq!(
+            registry
+                .get(&uid)
+                .expect("old generation retained")
+                .identity,
+            previous
+        );
+    }
+
+    #[tokio::test]
+    async fn retargeted_widget_symlink_changes_identity_at_the_same_version() {
+        let scan = tempfile::TempDir::new().expect("BUG: scan tempdir");
+        let targets = tempfile::TempDir::new().expect("BUG: targets tempdir");
+        let uid = "550e8400-e29b-41d4-a716-446655440000";
+        write_widget(targets.path(), "first", uid);
+        write_widget(targets.path(), "second", uid);
+        let link = scan.path().join("current");
+        std::os::unix::fs::symlink(targets.path().join("first"), &link)
+            .expect("BUG: link first widget");
+
+        let registry = WidgetRegistry::discover(vec![scan.path().to_path_buf()]).await;
+        let uid = Uuid::parse_str(uid).expect("BUG: uid");
+        let first = registry.get(&uid).expect("BUG: first identity").identity;
+
+        std::fs::remove_file(&link).expect("BUG: remove first link");
+        std::os::unix::fs::symlink(targets.path().join("second"), &link)
+            .expect("BUG: link second widget");
+        registry
+            .refresh()
+            .await
+            .expect("BUG: refresh retargeted link");
+        let second = registry.get(&uid).expect("BUG: second identity").identity;
+
+        assert_eq!(first.version, second.version);
+        assert_ne!(first.canonical_dir, second.canonical_dir);
     }
 }
