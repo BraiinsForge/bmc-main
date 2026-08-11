@@ -465,6 +465,7 @@ mod title_truncation_tests {
             1_000,
             &mut TreeResult::default(),
             &mut AnimationContext {
+                emit: crate::tree::EmitMode::All,
                 animation_states: &mut animation_states,
                 transition_states: &mut transition_states,
                 delta_ms: 1_000,
