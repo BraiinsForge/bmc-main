@@ -20,12 +20,8 @@
 
 //! Bitmap registry — decodes raster images and uploads them as GPU textures.
 //!
-//! Bitmaps are registered once (on first use from WASM) and persist for the
-//! runtime lifetime. Each registered bitmap gets an opaque `u16` ID that maps
-//! to a FemtoVG `ImageId` (GPU texture handle).
-//!
-//! No registration path retains the decoded pixels, so a registered bitmap
-//! costs GPU memory only.
+//! Tags reserve opaque `u16` bitmap IDs until eviction.
+//! GPU textures exist only while their reservations are resident.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -37,6 +33,8 @@ use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};
 
+use crate::renderer::{AssetSuspendResult, AssetTagState};
+
 /// GPU texture handle and source dimensions for a registered bitmap.
 struct StoredBitmap {
     image_id: ImageId,
@@ -44,13 +42,18 @@ struct StoredBitmap {
     height: u32,
 }
 
-/// Registry mapping opaque widget-side IDs to FemtoVG GPU texture handles.
+#[derive(Debug, Clone, Copy)]
+struct BitmapReservation {
+    id: BitmapId,
+    flags: ImageFlags,
+}
+
+/// Registry for tagged bitmap reservations and their resident GPU textures.
 ///
-/// Registrations are deduped by tag: re-registering the same tag returns the
-/// cached ID without re-decoding or re-uploading.
+/// A tag reservation retains its ID and sampling flags across suspension.
 pub struct BitmapRegistry {
     bitmaps: HashMap<BitmapId, StoredBitmap>,
-    by_tag: HashMap<String, BitmapId>,
+    by_tag: HashMap<String, BitmapReservation>,
     next_id: u16,
 }
 
@@ -73,14 +76,28 @@ impl BitmapRegistry {
         }
     }
 
-    /// Decode image bytes (PNG, JPEG, etc.) and upload to GPU as a texture
-    /// under `tag`. Idempotent: a second call with the same tag returns the
-    /// cached ID without re-decoding. The `flags` from the first successful
-    /// call win.
+    pub fn reserve(&mut self, tag: &str, flags: ImageFlags) -> Option<BitmapId> {
+        if let Some(reservation) = self.by_tag.get(tag) {
+            if reservation.flags != flags {
+                tracing::error!("bitmap reservation sampling mismatch ({tag})");
+                return None;
+            }
+            return Some(reservation.id);
+        }
+        let id = BitmapId::alloc(&mut self.next_id);
+        self.by_tag
+            .insert(tag.to_owned(), BitmapReservation { id, flags });
+        Some(id)
+    }
+
+    /// Decode image bytes (PNG, JPEG, etc.) and upload a GPU texture under `tag`.
     ///
-    /// Pass `ImageFlags::empty()` for default bilinear filtering, or
-    /// `ImageFlags::NEAREST` for pixel-art / 9-patch assets where bilinear
-    /// filtering would cause color bleeding across sub-rect boundaries.
+    /// A resident tag returns its ID without re-decoding.
+    /// A suspended tag restores its payload using the stored image flags.
+    ///
+    /// Use `ImageFlags::empty()` for default bilinear filtering.
+    /// Use `ImageFlags::NEAREST` for pixel-art or 9-patch assets.
+    /// Bilinear filtering causes color bleeding across sub-rectangle boundaries.
     pub fn register(
         &mut self,
         tag: &str,
@@ -88,31 +105,56 @@ impl BitmapRegistry {
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
         flags: ImageFlags,
     ) -> Option<BitmapId> {
-        if let Some(&id) = self.by_tag.get(tag) {
-            return Some(id);
-        }
-        let (image_id, width, height) = match decode_and_upload(data, canvas, flags) {
-            Ok(t) => t,
-            Err(e) => {
-                tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
-                return None;
+        match self.tag_state(tag) {
+            AssetTagState::Resident(id) => Some(id),
+            AssetTagState::Suspended(id) => {
+                let reservation = self
+                    .by_tag
+                    .get(tag)
+                    .copied()
+                    .expect("BUG: suspended bitmap reservation must exist");
+                let (image_id, width, height) =
+                    match decode_and_upload(data, canvas, reservation.flags) {
+                        Ok(bitmap) => bitmap,
+                        Err(e) => {
+                            tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
+                            return None;
+                        }
+                    };
+                self.bitmaps.insert(
+                    id,
+                    StoredBitmap {
+                        image_id,
+                        width,
+                        height,
+                    },
+                );
+                Some(id)
             }
-        };
+            AssetTagState::Unknown => {
+                let (image_id, width, height) = match decode_and_upload(data, canvas, flags) {
+                    Ok(bitmap) => bitmap,
+                    Err(e) => {
+                        tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
+                        return None;
+                    }
+                };
 
-        let id = BitmapId::alloc(&mut self.next_id);
-        self.bitmaps.insert(
-            id,
-            StoredBitmap {
-                image_id,
-                width,
-                height,
-            },
-        );
-        self.by_tag.insert(tag.to_owned(), id);
-        Some(id)
+                let id = self.reserve(tag, flags)?;
+                self.bitmaps.insert(
+                    id,
+                    StoredBitmap {
+                        image_id,
+                        width,
+                        height,
+                    },
+                );
+                Some(id)
+            }
+        }
     }
 
-    /// Upload a pre-decoded RGBA buffer to GPU.
+    /// Upload a pre-decoded RGBA buffer to GPU; no CPU copy.
     /// Replaces any existing bitmap registered under `tag`.
     pub fn register_rgba(
         &mut self,
@@ -142,9 +184,8 @@ impl BitmapRegistry {
                 return None;
             }
         };
-        // Reuse the tag's existing id, swapping the GPU image in place, so a slot
-        // that re-registers every refresh doesn't march `next_id` toward overflow.
-        if let Some(&id) = self.by_tag.get(tag) {
+        if let Some(reservation) = self.by_tag.get_mut(tag) {
+            let id = reservation.id;
             if let Some(old) = self.bitmaps.insert(
                 id,
                 StoredBitmap {
@@ -155,6 +196,7 @@ impl BitmapRegistry {
             ) {
                 canvas.delete_image(old.image_id);
             }
+            reservation.flags = flags;
             return Some(id);
         }
         let id = BitmapId::alloc(&mut self.next_id);
@@ -166,8 +208,39 @@ impl BitmapRegistry {
                 height,
             },
         );
-        self.by_tag.insert(tag.to_owned(), id);
+        self.by_tag
+            .insert(tag.to_owned(), BitmapReservation { id, flags });
         Some(id)
+    }
+
+    /// Return the reservation state for `tag`.
+    #[must_use]
+    pub fn tag_state(&self, tag: &str) -> AssetTagState<BitmapId> {
+        let Some(reservation) = self.by_tag.get(tag) else {
+            return AssetTagState::Unknown;
+        };
+        if self.bitmaps.contains_key(&reservation.id) {
+            AssetTagState::Resident(reservation.id)
+        } else {
+            AssetTagState::Suspended(reservation.id)
+        }
+    }
+
+    pub fn suspend_exact(
+        &mut self,
+        tag: &str,
+        canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
+    ) -> AssetSuspendResult<BitmapId> {
+        let Some(reservation) = self.by_tag.get(tag) else {
+            return AssetSuspendResult::Unknown;
+        };
+        let id = reservation.id;
+        if let Some(bitmap) = self.bitmaps.remove(&id) {
+            canvas.delete_image(bitmap.image_id);
+            AssetSuspendResult::Suspended(id)
+        } else {
+            AssetSuspendResult::AlreadySuspended(id)
+        }
     }
 
     /// Get the FemtoVG `ImageId` for a registered bitmap.
@@ -201,8 +274,8 @@ impl BitmapRegistry {
         self.by_tag.clear();
     }
 
-    /// Evict a single tag's bitmap: drop the FemtoVG image and remove the
-    /// entry. Returns `true` if a tag was found and removed.
+    /// Evict a tag's bitmap reservation and any resident payload.
+    /// Returns `true` when a tag was found and removed.
     ///
     /// IDs are not recycled — registering a fresh tag after eviction
     /// allocates a new ID via `next_id`.
@@ -211,13 +284,12 @@ impl BitmapRegistry {
         tag: &str,
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     ) -> bool {
-        let Some(id) = self.by_tag.remove(tag) else {
+        let Some(reservation) = self.by_tag.remove(tag) else {
             return false;
         };
-        let Some(stored) = self.bitmaps.remove(&id) else {
-            return false;
-        };
-        canvas.delete_image(stored.image_id);
+        if let Some(stored) = self.bitmaps.remove(&reservation.id) {
+            canvas.delete_image(stored.image_id);
+        }
         true
     }
 
@@ -576,6 +648,7 @@ pub fn draw_bitmap(
 #[cfg(target_os = "linux")]
 mod tests {
     use super::*;
+    use crate::renderer::{AssetSuspendResult, AssetTagState};
     use crate::test_harness::GlHarness;
 
     /// 1×1 transparent RGBA PNG, encoded each call to keep the test
@@ -760,5 +833,255 @@ mod tests {
             .expect("BUG: re-register");
         // IDs are not recycled — eviction frees resources, not slots.
         assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn suspend_compressed_bitmap_releases_payload_and_restores_reservation() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id = reg
+            .register("widget:bitmap", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: compressed registration should succeed");
+        let image_id = reg.get(id).expect("BUG: compressed image should exist");
+        assert_eq!(reg.tag_state("widget:bitmap"), AssetTagState::Resident(id));
+        assert!(reg.resident_bytes() > 0);
+
+        assert_eq!(
+            reg.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(reg.tag_state("widget:bitmap"), AssetTagState::Suspended(id));
+        assert!(canvas.image_info(image_id).is_err());
+        assert_eq!(reg.resident_bytes(), 0);
+        assert!(reg.get(id).is_none());
+        assert_eq!(
+            reg.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::AlreadySuspended(id)
+        );
+
+        assert_eq!(
+            reg.register("widget:bitmap", &png, &mut canvas, ImageFlags::NEAREST),
+            Some(id)
+        );
+        assert_eq!(reg.tag_state("widget:bitmap"), AssetTagState::Resident(id));
+    }
+
+    #[test]
+    fn exact_reservation_and_suspension_preserve_bitmap_id_and_sampling() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut registry = BitmapRegistry::new();
+        let id = registry
+            .reserve("widget:bitmap", ImageFlags::NEAREST)
+            .expect("BUG: bitmap reservation should succeed");
+
+        assert_eq!(
+            registry.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::AlreadySuspended(id)
+        );
+        assert_eq!(registry.reserve("widget:bitmap", ImageFlags::empty()), None);
+        assert_eq!(
+            registry.register(
+                "widget:bitmap",
+                &minimal_png(),
+                &mut canvas,
+                ImageFlags::NEAREST,
+            ),
+            Some(id)
+        );
+        assert_eq!(
+            registry.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(
+            registry.suspend_exact("missing", &mut canvas),
+            AssetSuspendResult::Unknown
+        );
+    }
+
+    #[test]
+    fn suspend_rgba_bitmap_releases_payload_without_sampling_copy() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let rgba = [10, 20, 30, 255];
+
+        let id = reg
+            .register_rgba("widget:rgba", &rgba, 1, 1, &mut canvas, ImageFlags::empty())
+            .expect("BUG: RGBA registration should succeed");
+        let image_id = reg.get(id).expect("BUG: RGBA image should exist");
+        assert_eq!(reg.tag_state("widget:rgba"), AssetTagState::Resident(id));
+        assert!(reg.resident_bytes() > 0);
+
+        assert_eq!(
+            reg.suspend_exact("widget:rgba", &mut canvas),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(reg.tag_state("widget:rgba"), AssetTagState::Suspended(id));
+        assert!(canvas.image_info(image_id).is_err());
+        assert_eq!(reg.resident_bytes(), 0);
+        assert!(reg.get(id).is_none());
+        assert_eq!(
+            reg.suspend_exact("widget:rgba", &mut canvas),
+            AssetSuspendResult::AlreadySuspended(id)
+        );
+
+        assert_eq!(
+            reg.register_rgba("widget:rgba", &rgba, 1, 1, &mut canvas, ImageFlags::NEAREST,),
+            Some(id)
+        );
+        assert_eq!(reg.tag_state("widget:rgba"), AssetTagState::Resident(id));
+    }
+
+    #[test]
+    fn repeated_suspend_and_restore_preserves_allocator_state() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id = reg
+            .register("widget:bitmap", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: registration should succeed");
+        for _ in 0..2 {
+            assert_eq!(
+                reg.suspend_exact("widget:bitmap", &mut canvas),
+                AssetSuspendResult::Suspended(id)
+            );
+            assert_eq!(
+                reg.register("widget:bitmap", &png, &mut canvas, ImageFlags::NEAREST),
+                Some(id)
+            );
+        }
+
+        let next = reg
+            .register("widget:next", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: next registration should succeed");
+        assert_eq!(next.to_wire(), id.to_wire() + 1);
+    }
+
+    #[test]
+    fn failed_compressed_restore_keeps_reservation_and_allocator_state() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id = reg
+            .register("widget:bitmap", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: registration should succeed");
+        assert_eq!(
+            reg.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::Suspended(id)
+        );
+
+        assert_eq!(
+            reg.register("widget:bitmap", &[], &mut canvas, ImageFlags::NEAREST),
+            None
+        );
+        assert_eq!(reg.tag_state("widget:bitmap"), AssetTagState::Suspended(id));
+
+        let next = reg
+            .register("widget:next", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: next registration should succeed");
+        assert_eq!(next.to_wire(), id.to_wire() + 1);
+    }
+
+    #[test]
+    fn evict_removes_suspended_bitmap_reservation() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+
+        let id = reg
+            .register("widget:bitmap", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: registration should succeed");
+        assert_eq!(
+            reg.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::Suspended(id)
+        );
+
+        assert!(reg.evict("widget:bitmap", &mut canvas));
+        assert_eq!(reg.tag_state("widget:bitmap"), AssetTagState::Unknown);
+
+        let next = reg
+            .register("widget:bitmap", &png, &mut canvas, ImageFlags::empty())
+            .expect("BUG: re-registration should succeed");
+        assert_ne!(next, id);
+    }
+
+    #[test]
+    fn rgba_replacement_updates_and_preserves_restoration_flags() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut reg = BitmapRegistry::new();
+        let png = minimal_png();
+        let rgba = [10, 20, 30, 255];
+
+        let id = reg
+            .register("widget:bitmap", &png, &mut canvas, ImageFlags::NEAREST)
+            .expect("BUG: compressed registration should succeed");
+        let original = reg.get(id).expect("BUG: original image should exist");
+        assert_eq!(
+            reg.register_rgba(
+                "widget:bitmap",
+                &rgba,
+                1,
+                1,
+                &mut canvas,
+                ImageFlags::empty(),
+            ),
+            Some(id)
+        );
+        assert!(canvas.image_info(original).is_err());
+        let replacement = reg.get(id).expect("BUG: replacement image should exist");
+        assert_eq!(
+            canvas
+                .image_info(replacement)
+                .expect("BUG: replacement image info")
+                .flags(),
+            ImageFlags::empty()
+        );
+
+        assert_eq!(
+            reg.register_rgba(
+                "widget:bitmap",
+                &[10, 20, 30],
+                1,
+                1,
+                &mut canvas,
+                ImageFlags::NEAREST,
+            ),
+            None
+        );
+        assert_eq!(reg.get(id), Some(replacement));
+        assert_eq!(
+            canvas
+                .image_info(replacement)
+                .expect("BUG: replacement image info after failed update")
+                .flags(),
+            ImageFlags::empty()
+        );
+
+        assert_eq!(
+            reg.suspend_exact("widget:bitmap", &mut canvas),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(
+            reg.register("widget:bitmap", &png, &mut canvas, ImageFlags::NEAREST),
+            Some(id)
+        );
+        let restored = reg.get(id).expect("BUG: restored image should exist");
+        assert_eq!(
+            canvas
+                .image_info(restored)
+                .expect("BUG: restored image info")
+                .flags(),
+            ImageFlags::empty()
+        );
     }
 }
