@@ -1,3 +1,4 @@
+# Guest-side event daemon: build, deploy, and test.
 mod harness 'harness/justfile'
 
 [private]

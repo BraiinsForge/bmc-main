@@ -6,6 +6,10 @@ port := "49494"
 name := "Deck Test"
 host := "127.0.0.1:" + port
 
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
+
 # Spawn renderer and play built-in example 0 (default video).
 serve:
     {{ tools }} --port {{ port }} --name "{{ name }}" --example 0

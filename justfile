@@ -1,9 +1,15 @@
+# Frontend build, lint, test, and mock-backend serving.
 mod fe 'frontend/justfile'
 mod gallery 'bmc-gallery/justfile'
+# Widget manifest schema generation and drift checks.
 mod manifest 'bmc-widget-manifest/justfile'
+# Simulated miner network for widget development.
 mod netsim 'bmc-netsim/justfile'
+# Development VM: lifecycle, logs, and guest harness.
 mod virt 'bmc-virt/justfile'
+# WASM widget tooling: dev testbed, capture, profiling, size gates.
 mod wasm 'bmc-wasm-runtime/justfile'
+# Per-widget dev recipes.
 mod widgets 'widgets-wasm'
 
 # The flake's checks build the compositor stack, so they exist for Linux only.

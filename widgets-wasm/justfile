@@ -1,1 +1,6 @@
+# Braiins Pool widget: sim-backed dev, profiling, and fixture recording.
 mod braiins-pool 'braiins-pool'
+
+[private]
+default:
+    @just --justfile {{ source_file() }} --list

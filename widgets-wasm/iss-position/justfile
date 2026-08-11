@@ -7,6 +7,10 @@ mod root "../.."
 dir := justfile_directory()
 tools_dir := dir + "/tools"
 
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
+
 # Render the Natural Earth dark textures (supersampled, then downsampled).
 render:
     uv run --project {{ tools_dir }} {{ tools_dir }}/texture_render.py
