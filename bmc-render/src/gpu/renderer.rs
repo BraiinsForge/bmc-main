@@ -46,7 +46,7 @@ use super::svg::SvgRegistry;
 use super::text::{
     Fonts, ParagraphLayoutCache, WeightedFonts, autofit_bounds, search_fit_size, to_femtovg_color,
 };
-use crate::renderer::{FrameClear, Renderer};
+use crate::renderer::{AssetSuspendResult, AssetTagState, FrameClear, Renderer};
 use crate::tree::{AutoFit, SpanData, TextAlign, TextStyle, VerticalAlign};
 
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
@@ -903,6 +903,18 @@ impl Renderer for FemtoVgRenderer {
         self.icon_registry.register(tag, data)
     }
 
+    fn reserve_svg(&mut self, tag: &str) -> Option<SvgId> {
+        self.icon_registry.reserve(tag)
+    }
+
+    fn suspend_svg(&mut self, tag: &str) -> AssetSuspendResult<SvgId> {
+        self.icon_registry.suspend_exact(tag)
+    }
+
+    fn svg_tag_state(&self, tag: &str) -> AssetTagState<SvgId> {
+        self.icon_registry.tag_state(tag)
+    }
+
     fn draw_svg(
         &mut self,
         x: f32,
@@ -931,6 +943,26 @@ impl Renderer for FemtoVgRenderer {
             .register(tag, data, &mut self.canvas, femtovg::ImageFlags::NEAREST)
     }
 
+    fn reserve_bitmap(&mut self, tag: &str) -> Option<BitmapId> {
+        self.bitmap_registry
+            .reserve(tag, femtovg::ImageFlags::empty())
+    }
+
+    fn reserve_bitmap_nearest(&mut self, tag: &str) -> Option<BitmapId> {
+        self.bitmap_registry
+            .reserve(tag, femtovg::ImageFlags::NEAREST)
+    }
+
+    fn suspend_bitmap(&mut self, tag: &str) -> AssetSuspendResult<BitmapId> {
+        let result = self.bitmap_registry.suspend_exact(tag, &mut self.canvas);
+        if let AssetSuspendResult::Suspended(id) = result
+            && self.sphere_bitmap_id == Some(id)
+        {
+            self.sphere_bitmap_id = None;
+        }
+        result
+    }
+
     fn register_bitmap_rgba(
         &mut self,
         tag: &str,
@@ -938,14 +970,22 @@ impl Renderer for FemtoVgRenderer {
         width: u32,
         height: u32,
     ) -> Option<BitmapId> {
-        self.bitmap_registry.register_rgba(
+        let bitmap_id = self.bitmap_registry.register_rgba(
             tag,
             rgba,
             width,
             height,
             &mut self.canvas,
             femtovg::ImageFlags::empty(),
-        )
+        )?;
+        if self.sphere_bitmap_id == Some(bitmap_id) {
+            self.sphere_bitmap_id = None;
+        }
+        Some(bitmap_id)
+    }
+
+    fn bitmap_tag_state(&self, tag: &str) -> AssetTagState<BitmapId> {
+        self.bitmap_registry.tag_state(tag)
     }
 
     fn draw_bitmap(&mut self, x: f32, y: f32, w: f32, h: f32, bitmap_id: BitmapId) {
@@ -1096,9 +1136,8 @@ impl Renderer for FemtoVgRenderer {
             return;
         };
 
-        // Rebind the GL texture when the source bitmap changed. `BitmapId`
-        // is not recycled across evict+re-register (see `BitmapRegistry`),
-        // so equal ids guarantee the underlying texture is still live.
+        // RGBA replacement, exact suspension, and eviction clear the binding,
+        // so an equal BitmapId still refers to the bound native texture.
         if self.sphere_bitmap_id != Some(bitmap_id) {
             let Ok(tex) = self.canvas.get_native_texture(image_id) else {
                 self.sphere_bitmap_id = None;
@@ -1288,6 +1327,12 @@ impl Renderer for FemtoVgRenderer {
             n += mesh.evict_prefix(&self.gl, prefix);
         } else {
             n += self.pending_mesh_reservations.evict_prefix(prefix);
+        }
+        if self
+            .sphere_bitmap_id
+            .is_some_and(|id| self.bitmap_registry.get(id).is_none())
+        {
+            self.sphere_bitmap_id = None;
         }
         n
     }
@@ -1492,8 +1537,8 @@ fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path
 #[cfg(target_os = "linux")]
 mod tests {
     use super::{FemtoVgRenderer, femtovg_baseline};
-    use crate::renderer::Renderer;
-    use crate::test_harness::GlHarness;
+    use crate::renderer::{AssetSuspendResult, AssetTagState, Renderer};
+    use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
     use crate::tree::VerticalAlign;
     use glow::HasContext;
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
@@ -1635,6 +1680,210 @@ mod tests {
             Some(id_b),
             "BUG: rebind tracker must follow the new BitmapId",
         );
+    }
+
+    #[test]
+    fn sphere_rebinds_resident_rgba_replacement_with_same_bitmap_id() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let tag = "widget-42:sphere";
+
+        let bitmap_id = renderer
+            .register_bitmap_rgba(tag, &[255, 0, 0, 255], 1, 1)
+            .expect("BUG: initial RGBA registration should succeed");
+        let old_image_id = renderer
+            .bitmap_registry
+            .get(bitmap_id)
+            .expect("BUG: initial bitmap must have an image");
+
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
+        assert!(
+            center[0] > 240 && center[1] < 16 && center[2] < 16,
+            "initial red texture must be sampled at sphere center, got {center:?}"
+        );
+
+        let replacement_id = renderer
+            .register_bitmap_rgba(tag, &[0, 0, 255, 255], 1, 1)
+            .expect("BUG: replacement RGBA registration should succeed");
+        let replacement_image_id = renderer
+            .bitmap_registry
+            .get(replacement_id)
+            .expect("BUG: replacement bitmap must have an image");
+        assert_eq!(
+            replacement_id, bitmap_id,
+            "RGBA replacement must preserve its tag reservation"
+        );
+        assert_ne!(
+            replacement_image_id, old_image_id,
+            "RGBA replacement must install a new FemtoVG image"
+        );
+        assert!(
+            renderer.canvas.get_native_texture(old_image_id).is_err(),
+            "RGBA replacement must delete the previous native texture"
+        );
+
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            replacement_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
+        assert!(
+            center[2] > 240 && center[0] < 16 && center[1] < 16,
+            "replacement blue texture must be sampled at sphere center, got {center:?}"
+        );
+    }
+
+    #[test]
+    fn sphere_rebinds_bitmap_restored_after_suspension() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let tag = "widget-42:sphere";
+        let initial_png = one_px_png([255, 0, 0, 255]);
+        let restored_png = one_px_png([0, 0, 255, 255]);
+
+        let bitmap_id = renderer
+            .register_bitmap(tag, &initial_png)
+            .expect("BUG: bitmap registration should succeed");
+        let old_image_id = renderer
+            .bitmap_registry
+            .get(bitmap_id)
+            .expect("BUG: registered bitmap must have an image");
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        assert_eq!(renderer.sphere_bitmap_id, Some(bitmap_id));
+
+        assert_eq!(
+            renderer.suspend_bitmap(tag),
+            AssetSuspendResult::Suspended(bitmap_id)
+        );
+        assert_eq!(
+            renderer.bitmap_tag_state(tag),
+            AssetTagState::Suspended(bitmap_id)
+        );
+        assert!(renderer.bitmap_registry.get(bitmap_id).is_none());
+        assert!(renderer.canvas.get_native_texture(old_image_id).is_err());
+        assert_eq!(renderer.sphere_bitmap_id, None);
+
+        let restored_bitmap_id = renderer
+            .register_bitmap(tag, &restored_png)
+            .expect("BUG: suspended bitmap restoration should succeed");
+        let restored_image_id = renderer
+            .bitmap_registry
+            .get(restored_bitmap_id)
+            .expect("BUG: restored bitmap must have an image");
+        assert_eq!(restored_bitmap_id, bitmap_id);
+        assert_ne!(restored_image_id, old_image_id);
+        assert_eq!(
+            renderer.bitmap_tag_state(tag),
+            AssetTagState::Resident(bitmap_id)
+        );
+
+        drain_gl_errors(&harness.gl);
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            restored_bitmap_id,
+            0.0,
+            0.25,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        renderer.flush();
+        let err = unsafe { harness.gl.get_error() };
+        assert_eq!(
+            err,
+            glow::NO_ERROR,
+            "draw_sphere after bitmap restoration produced GL 0x{err:04X}"
+        );
+        assert_eq!(renderer.sphere_bitmap_id, Some(restored_bitmap_id));
+
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
+        assert!(
+            center[2] > 240 && center[0] < 16 && center[1] < 16,
+            "restored blue texture must be sampled at sphere center, got {center:?}"
+        );
+    }
+
+    #[test]
+    fn evicting_sphere_bitmap_namespace_clears_cached_binding() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+        let tag = "widget-42:sphere";
+        let png = one_px_png([255, 0, 0, 255]);
+        let bitmap_id = renderer
+            .register_bitmap(tag, &png)
+            .expect("BUG: bitmap registration should succeed");
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        assert_eq!(renderer.sphere_bitmap_id, Some(bitmap_id));
+
+        assert_eq!(renderer.evict_prefix("widget-42"), 1);
+        assert_eq!(renderer.bitmap_tag_state(tag), AssetTagState::Unknown);
+        assert!(renderer.bitmap_registry.get(bitmap_id).is_none());
+        assert_eq!(renderer.sphere_bitmap_id, None);
     }
 
     /// `draw_sphere` with an unregistered (or already-evicted) `BitmapId`

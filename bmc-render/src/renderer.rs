@@ -170,6 +170,14 @@ pub trait Renderer {
     /// A resident tag returns its ID; a suspended tag restores that reservation.
     fn register_svg(&mut self, tag: &str, data: &[u8]) -> Option<SvgId>;
 
+    fn reserve_svg(&mut self, _tag: &str) -> Option<SvgId> {
+        None
+    }
+
+    fn suspend_svg(&mut self, _tag: &str) -> AssetSuspendResult<SvgId> {
+        AssetSuspendResult::Unknown
+    }
+
     /// Return the SVG reservation state for `tag`.
     ///
     /// The default does not inspect backend state and returns [`AssetTagState::Unknown`].
@@ -207,6 +215,18 @@ pub trait Renderer {
     /// cause color bleeding across sub-rect boundaries. Resident and suspended
     /// tags follow [`Self::register_bitmap`]'s reservation semantics.
     fn register_bitmap_nearest(&mut self, tag: &str, data: &[u8]) -> Option<BitmapId>;
+
+    fn reserve_bitmap(&mut self, _tag: &str) -> Option<BitmapId> {
+        None
+    }
+
+    fn reserve_bitmap_nearest(&mut self, _tag: &str) -> Option<BitmapId> {
+        None
+    }
+
+    fn suspend_bitmap(&mut self, _tag: &str) -> AssetSuspendResult<BitmapId> {
+        AssetSuspendResult::Unknown
+    }
 
     /// Upload a pre-decoded RGBA buffer, replacing a tag's resident payload in place.
     fn register_bitmap_rgba(
@@ -250,6 +270,14 @@ pub trait Renderer {
     /// Register mesh data under a stable `tag`.
     /// A resident tag returns its ID; a suspended tag restores that reservation.
     fn register_mesh(&mut self, tag: &str, data: &[u8]) -> Option<MeshId>;
+
+    fn reserve_mesh(&mut self, _tag: &str) -> Option<MeshId> {
+        None
+    }
+
+    fn suspend_mesh(&mut self, _tag: &str) -> AssetSuspendResult<MeshId> {
+        AssetSuspendResult::Unknown
+    }
 
     /// Return the mesh reservation state for `tag`.
     ///
@@ -400,14 +428,6 @@ pub trait Renderer {
     fn height(&self) -> f32;
 
     // -- Eviction --
-
-    /// Suspend resident assets whose tags match `prefix` at segment boundaries.
-    ///
-    /// Returns the number of resident assets newly suspended.
-    /// The default is a no-op that returns zero.
-    fn suspend_prefix(&mut self, _prefix: &str) -> usize {
-        0
-    }
 
     /// Drop every icon, bitmap, and mesh registered under a tag that starts
     /// with `prefix`, releasing the associated GPU resources.
