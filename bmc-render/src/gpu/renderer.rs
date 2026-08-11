@@ -40,7 +40,7 @@ use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
 use super::curved_text::arc_glyph_layout;
-use super::mesh::{MeshDrawArgs, MeshRenderer};
+use super::mesh::{MeshDrawArgs, MeshRenderer, MeshReservations};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{
@@ -120,6 +120,7 @@ pub struct FemtoVgRenderer {
     /// the native texture so we never sample a deleted GL name.
     sphere_bitmap_id: Option<BitmapId>,
     mesh_renderer: Option<MeshRenderer>,
+    pending_mesh_reservations: MeshReservations,
     mesh_msaa_samples: u32,
     width: f32,
     height: f32,
@@ -353,6 +354,7 @@ impl FemtoVgRenderer {
             sphere: None,
             sphere_bitmap_id: None,
             mesh_renderer: None,
+            pending_mesh_reservations: MeshReservations::default(),
             mesh_msaa_samples,
             width: width as f32,
             height: height as f32,
@@ -371,8 +373,16 @@ impl FemtoVgRenderer {
         if self.mesh_renderer.is_some() {
             return;
         }
-        match MeshRenderer::new(&self.gl, &mut self.canvas, self.mesh_msaa_samples) {
-            Ok(r) => self.mesh_renderer = Some(r),
+        match MeshRenderer::new_with_reservations(
+            &self.gl,
+            &mut self.canvas,
+            self.mesh_msaa_samples,
+            self.pending_mesh_reservations.clone(),
+        ) {
+            Ok(r) => {
+                self.pending_mesh_reservations = MeshReservations::default();
+                self.mesh_renderer = Some(r);
+            }
             Err(e) => tracing::error!("mesh renderer init failed: {e}"),
         }
     }
@@ -384,6 +394,7 @@ impl FemtoVgRenderer {
     pub fn drop_all(&mut self) {
         self.release_gpu_assets();
         self.sphere_bitmap_id = None;
+        self.pending_mesh_reservations = MeshReservations::default();
         self.icon_registry = SvgRegistry::new();
         self.icon_registry.register_builtins();
     }
@@ -979,6 +990,30 @@ impl Renderer for FemtoVgRenderer {
         renderer.register_mesh(&self.gl, tag, data)
     }
 
+    fn reserve_mesh(&mut self, tag: &str) -> Option<MeshId> {
+        if let Some(renderer) = self.mesh_renderer.as_mut() {
+            renderer.reserve(tag)
+        } else {
+            self.pending_mesh_reservations.reserve(tag)
+        }
+    }
+
+    fn suspend_mesh(&mut self, tag: &str) -> AssetSuspendResult<MeshId> {
+        if let Some(renderer) = self.mesh_renderer.as_mut() {
+            renderer.suspend_exact(&self.gl, tag)
+        } else {
+            self.pending_mesh_reservations.suspend_exact(tag)
+        }
+    }
+
+    fn mesh_tag_state(&self, tag: &str) -> AssetTagState<MeshId> {
+        if let Some(renderer) = self.mesh_renderer.as_ref() {
+            renderer.tag_state(tag)
+        } else {
+            self.pending_mesh_reservations.tag_state(tag)
+        }
+    }
+
     fn draw_mesh(
         &mut self,
         x: f32,
@@ -1251,12 +1286,24 @@ impl Renderer for FemtoVgRenderer {
         n += self.bitmap_registry.evict_prefix(prefix, &mut self.canvas);
         if let Some(mesh) = self.mesh_renderer.as_mut() {
             n += mesh.evict_prefix(&self.gl, prefix);
+        } else {
+            n += self.pending_mesh_reservations.evict_prefix(prefix);
         }
         n
     }
 
     fn bitmap_resident_bytes(&self) -> u64 {
         self.bitmap_registry.resident_bytes()
+    }
+
+    fn svg_resident_path_bytes(&self) -> u64 {
+        self.icon_registry.resident_path_bytes()
+    }
+
+    fn mesh_resident_bytes(&self) -> u64 {
+        self.mesh_renderer
+            .as_ref()
+            .map_or(0, MeshRenderer::resident_bytes)
     }
 }
 
@@ -1466,6 +1513,26 @@ mod tests {
         assert_eq!(
             femtovg_baseline(VerticalAlign::Baseline),
             femtovg::Baseline::Alphabetic
+        );
+    }
+
+    #[test]
+    fn mesh_reservation_does_not_initialize_gpu_renderer() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+
+        let id = renderer
+            .reserve_mesh("widget:mesh")
+            .expect("BUG: first mesh reservation must allocate an ID");
+
+        assert!(
+            renderer.mesh_renderer.is_none(),
+            "a reservation without payload must not allocate the mesh atlas"
+        );
+        assert_eq!(
+            renderer.mesh_tag_state("widget:mesh"),
+            AssetTagState::Suspended(id)
         );
     }
 

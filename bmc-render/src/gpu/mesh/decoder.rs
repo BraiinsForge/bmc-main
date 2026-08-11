@@ -430,6 +430,37 @@ pub(super) fn parse_and_upload(gl: &glow::Context, data: &[u8]) -> Result<Upload
         None
     };
 
+    let resident_bytes = vertex_floats
+        .len()
+        .checked_mul(std::mem::size_of::<f32>())
+        .and_then(|bytes| bytes.checked_add(index_count.checked_mul(2)?))
+        .and_then(|bytes| {
+            bytes.checked_add(if has_texture {
+                if is_etc1 {
+                    etc1_data_size(tex_width, tex_height)
+                } else {
+                    rgba8_byte_len(tex_width, tex_height)
+                        .expect("BUG: rgba8 size validated in validate_mesh_header")
+                }
+            } else {
+                0
+            })
+        })
+        .and_then(|bytes| {
+            bytes.checked_add(if has_normal_map {
+                if is_etc1 {
+                    etc1_data_size(nmap_width, nmap_height)
+                } else {
+                    rgba8_byte_len(nmap_width, nmap_height)
+                        .expect("BUG: rgba8 size validated in validate_mesh_header")
+                }
+            } else {
+                0
+            })
+        })
+        .and_then(|bytes| u64::try_from(bytes).ok())
+        .expect("BUG: validated mesh resident byte count must fit u64");
+
     // All steps succeeded — defuse every guard so the handles survive into
     // the returned `UploadedMesh`.
     let vbo = vbo_guard.defuse();
@@ -452,6 +483,7 @@ pub(super) fn parse_and_upload(gl: &glow::Context, data: &[u8]) -> Result<Upload
         index_count: index_count as i32,
         texture,
         normal_map,
+        resident_bytes,
         has_uvs,
         has_tangents,
         is_msdf,

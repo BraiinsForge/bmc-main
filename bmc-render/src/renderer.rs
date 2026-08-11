@@ -416,4 +416,14 @@ pub trait Renderer {
 
     /// Total resident texture bytes across registered bitmaps.
     fn bitmap_resident_bytes(&self) -> u64;
+
+    /// Logical bytes held by resident SVG path commands across the renderer.
+    fn svg_resident_path_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Nominal bytes held by resident mesh buffers and textures.
+    fn mesh_resident_bytes(&self) -> u64 {
+        0
+    }
 }

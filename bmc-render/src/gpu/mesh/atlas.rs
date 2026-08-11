@@ -78,6 +78,12 @@ impl SlotState {
         }
         dirty
     }
+
+    pub(super) fn invalidate_mesh(&mut self, mesh_id: MeshId) {
+        if self.prev_mesh_id == Some(mesh_id) {
+            self.prev_mesh_id = None;
+        }
+    }
 }
 
 /// `NaN` is the sentinel for "lighting disabled" (see `MeshView::light: None`
@@ -115,7 +121,37 @@ pub(super) fn mesh_id_to_storage_index(mesh_id: MeshId) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{DIRTY_EPSILON, is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index};
+    use super::{
+        DIRTY_EPSILON, SlotState, is_dirty, mesh_id_from_storage_index, mesh_id_to_storage_index,
+    };
+    use crate::gpu::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform};
+
+    fn draw_args() -> MeshDrawArgs {
+        MeshDrawArgs {
+            transform: MeshTransform {
+                fov: 0.0,
+                distance: 0.0,
+                quat: [0.0; 4],
+                position: [0.0; 3],
+                scale: 0.0,
+            },
+            lighting: MeshLighting {
+                pitch: 0.0,
+                yaw: 0.0,
+                ambient: 0.0,
+                specular: 0.0,
+            },
+            highlight: MeshHighlight {
+                u_min: 0.0,
+                v_min: 0.0,
+                u_max: 0.0,
+                v_max: 0.0,
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+        }
+    }
 
     #[test]
     fn mesh_ids_are_one_based() {
@@ -140,5 +176,35 @@ mod tests {
         assert!(!is_dirty(1.0, 1.0));
         assert!(!is_dirty(1.0, 1.0 + DIRTY_EPSILON / 2.0));
         assert!(is_dirty(1.0, 1.0 + DIRTY_EPSILON * 2.0));
+    }
+
+    #[test]
+    fn invalidating_matching_mesh_keeps_args_and_forces_redraw() {
+        let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must produce an ID");
+        let args = draw_args();
+        let mut slot = SlotState::new();
+        assert!(slot.check_and_update(id, &args));
+        let prev_args = slot.prev_args;
+
+        slot.invalidate_mesh(id);
+
+        assert_eq!(slot.prev_mesh_id, None);
+        assert_eq!(slot.prev_args, prev_args);
+        assert!(slot.check_and_update(id, &args));
+    }
+
+    #[test]
+    fn invalidating_nonmatching_mesh_leaves_slot_unchanged() {
+        let id = mesh_id_from_storage_index(0).expect("BUG: index 0 must produce an ID");
+        let other = mesh_id_from_storage_index(1).expect("BUG: index 1 must produce an ID");
+        let args = draw_args();
+        let mut slot = SlotState::new();
+        assert!(slot.check_and_update(id, &args));
+        let prev_args = slot.prev_args;
+
+        slot.invalidate_mesh(other);
+
+        assert_eq!(slot.prev_mesh_id, Some(id));
+        assert_eq!(slot.prev_args, prev_args);
     }
 }

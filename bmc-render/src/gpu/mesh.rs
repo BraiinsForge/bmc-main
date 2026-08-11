@@ -28,6 +28,8 @@
 
 #![expect(clippy::cast_precision_loss, clippy::cast_possible_wrap)]
 
+use std::collections::HashMap;
+
 use anyhow::{Result, bail};
 use femtovg::renderer::OpenGl;
 use femtovg::{Canvas, ImageFlags, ImageId, ImageInfo, PixelFormat};
@@ -39,6 +41,8 @@ mod math;
 mod raii;
 
 use bmc_wasm_protocol::MeshId;
+
+use crate::renderer::{AssetSuspendResult, AssetTagState};
 
 use atlas::{
     ATLAS_COLS, ATLAS_H, ATLAS_ROWS, ATLAS_W, MAX_SLOTS, SLOT_SIZE, SlotState, is_dirty,
@@ -265,6 +269,7 @@ pub struct UploadedMesh {
     index_count: i32,
     texture: Option<glow::Texture>,
     normal_map: Option<glow::Texture>,
+    resident_bytes: u64,
     has_uvs: bool,
     has_tangents: bool,
     /// `true` when the texture is an MSDF (multi-channel signed distance
@@ -301,6 +306,52 @@ impl UploadedMesh {
 }
 
 // ── MeshRenderer ────────────────────────────────────────────────────
+
+#[derive(Clone, Debug, Default)]
+pub(crate) struct MeshReservations {
+    by_tag: HashMap<String, MeshId>,
+    slot_count: usize,
+}
+
+impl MeshReservations {
+    pub(crate) fn reserve(&mut self, tag: &str) -> Option<MeshId> {
+        if let Some(&id) = self.by_tag.get(tag) {
+            return Some(id);
+        }
+        let Some(id) = mesh_id_from_storage_index(self.slot_count) else {
+            tracing::error!("mesh reservation failed: id space exhausted ({tag})");
+            return None;
+        };
+        self.slot_count += 1;
+        self.by_tag.insert(tag.to_owned(), id);
+        Some(id)
+    }
+
+    pub(crate) fn tag_state(&self, tag: &str) -> AssetTagState<MeshId> {
+        self.by_tag
+            .get(tag)
+            .copied()
+            .map_or(AssetTagState::Unknown, AssetTagState::Suspended)
+    }
+
+    pub(crate) fn suspend_exact(&self, tag: &str) -> AssetSuspendResult<MeshId> {
+        self.by_tag.get(tag).copied().map_or(
+            AssetSuspendResult::Unknown,
+            AssetSuspendResult::AlreadySuspended,
+        )
+    }
+
+    pub(crate) fn evict_prefix(&mut self, prefix: &str) -> usize {
+        let before = self.by_tag.len();
+        self.by_tag
+            .retain(|tag, _| !bmc_wasm_protocol::tag_matches_prefix(tag, prefix));
+        before - self.by_tag.len()
+    }
+
+    fn into_parts(self) -> (HashMap<String, MeshId>, usize) {
+        (self.by_tag, self.slot_count)
+    }
+}
 
 /// Offscreen GL renderer for 3D meshes using a single atlas FBO.
 ///
@@ -366,6 +417,19 @@ impl MeshRenderer {
     ///
     /// `msaa_samples`: 0 = disabled, 4 = 4× MSAA. Only effective on desktop GL.
     pub fn new(gl: &glow::Context, canvas: &mut Canvas<OpenGl>, msaa_samples: u32) -> Result<Self> {
+        Self::new_with_reservations(gl, canvas, msaa_samples, MeshReservations::default())
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "mesh GPU initialization keeps cleanup-sensitive GL setup in one scope"
+    )]
+    pub(crate) fn new_with_reservations(
+        gl: &glow::Context,
+        canvas: &mut Canvas<OpenGl>,
+        msaa_samples: u32,
+        reservations: MeshReservations,
+    ) -> Result<Self> {
         unsafe {
             let program = compile_program(gl)?;
 
@@ -445,6 +509,8 @@ impl MeshRenderer {
             );
 
             let slots = (0..MAX_SLOTS).map(|_| SlotState::new()).collect();
+            let (by_tag, slot_count) = reservations.into_parts();
+            let meshes = std::iter::repeat_with(|| None).take(slot_count).collect();
 
             Ok(Self {
                 program,
@@ -470,8 +536,8 @@ impl MeshRenderer {
                 u_specular,
                 u_highlight_rect,
                 u_highlight_color,
-                meshes: Vec::new(),
-                by_tag: std::collections::HashMap::new(),
+                meshes,
+                by_tag,
                 slots,
                 #[cfg(feature = "profiling")]
                 setup_w: ii_stopwatch::StopWatch::default(),
@@ -485,52 +551,115 @@ impl MeshRenderer {
         }
     }
 
-    /// Upload mesh binary data to GPU (VBO + IBO + optional texture) under
-    /// `tag`. Idempotent: a second call with the same tag returns the cached
-    /// ID without re-uploading.
+    /// Upload mesh binary data to GPU (VBO + IBO + optional texture) under `tag`.
+    /// Existing resident tags return their cached ID; suspended tags
+    /// restore their reserved slot without allocating a new ID.
     pub fn register_mesh(&mut self, gl: &glow::Context, tag: &str, data: &[u8]) -> Option<MeshId> {
-        if let Some(&id) = self.by_tag.get(tag) {
-            return Some(id);
-        }
+        match self.tag_state(tag) {
+            AssetTagState::Resident(id) => Some(id),
+            AssetTagState::Suspended(id) => {
+                #[cfg(feature = "profiling")]
+                let profile_before = profile::RegisterMeshProbe::start();
 
-        #[cfg(feature = "profiling")]
-        let profile_before = profile::RegisterMeshProbe::start();
+                let index = mesh_id_to_storage_index(id);
+                assert!(
+                    self.meshes
+                        .get(index)
+                        .expect("BUG: mesh tag ID must point into mesh storage")
+                        .is_none(),
+                    "BUG: suspended mesh slot must be empty"
+                );
+                let mesh = match parse_and_upload(gl, data) {
+                    Ok(mesh) => mesh,
+                    Err(error) => {
+                        tracing::error!("mesh upload failed ({tag}): {error}");
+                        return None;
+                    }
+                };
+                let slot = self
+                    .meshes
+                    .get_mut(index)
+                    .expect("BUG: mesh tag ID must point into mesh storage");
+                *slot = Some(mesh);
 
-        // Reserve the ID before uploading so an exhausted id space
-        // doesn't leak the freshly-allocated VBO/IBO/textures —
-        // `UploadedMesh` has no `Drop` impl that frees GPU handles.
-        let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
-            tracing::error!("mesh registration failed: id space exhausted ({tag})");
-            return None;
-        };
+                #[cfg(feature = "profiling")]
+                profile_before.finish(id.to_wire(), data.len());
 
-        let mesh = match parse_and_upload(gl, data) {
-            Ok(m) => m,
-            Err(e) => {
-                tracing::error!("mesh upload failed ({tag}): {e}");
-                return None;
+                Some(id)
             }
+            AssetTagState::Unknown => {
+                #[cfg(feature = "profiling")]
+                let profile_before = profile::RegisterMeshProbe::start();
+
+                let id = self.reserve(tag)?;
+                let mesh = match parse_and_upload(gl, data) {
+                    Ok(mesh) => mesh,
+                    Err(error) => {
+                        assert_eq!(
+                            self.by_tag.remove(tag),
+                            Some(id),
+                            "BUG: failed upload must roll back its own tag reservation"
+                        );
+                        assert!(
+                            matches!(self.meshes.pop(), Some(None)),
+                            "BUG: failed upload must roll back its empty storage slot"
+                        );
+                        tracing::error!("mesh upload failed ({tag}): {error}");
+                        return None;
+                    }
+                };
+
+                let index = mesh_id_to_storage_index(id);
+                *self
+                    .meshes
+                    .get_mut(index)
+                    .expect("BUG: fresh mesh reservation must have a storage slot") = Some(mesh);
+
+                #[cfg(feature = "profiling")]
+                profile_before.finish(id.to_wire(), data.len());
+
+                Some(id)
+            }
+        }
+    }
+
+    pub fn reserve(&mut self, tag: &str) -> Option<MeshId> {
+        match self.tag_state(tag) {
+            AssetTagState::Resident(id) | AssetTagState::Suspended(id) => Some(id),
+            AssetTagState::Unknown => {
+                let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
+                    tracing::error!("mesh reservation failed: id space exhausted ({tag})");
+                    return None;
+                };
+                self.meshes.push(None);
+                self.by_tag.insert(tag.to_owned(), id);
+                Some(id)
+            }
+        }
+    }
+
+    /// Return the reservation state for `tag`.
+    #[must_use]
+    pub fn tag_state(&self, tag: &str) -> AssetTagState<MeshId> {
+        let Some(&id) = self.by_tag.get(tag) else {
+            return AssetTagState::Unknown;
         };
-
-        self.meshes.push(Some(mesh));
-        self.by_tag.insert(tag.to_owned(), id);
-        // No slot invalidation needed: `id` is fresh (one-based index of
-        // the just-pushed entry), so no existing slot's `prev_mesh_id` can
-        // collide. `SlotState::check_and_update` already triggers a redraw
-        // when a slot is first bound to this mesh via the `prev_mesh_id !=
-        // mesh_id` check.
-
-        #[cfg(feature = "profiling")]
-        profile_before.finish(id.to_wire(), data.len());
-
-        Some(id)
+        let index = mesh_id_to_storage_index(id);
+        let slot = self
+            .meshes
+            .get(index)
+            .expect("BUG: mesh tag ID must point into mesh storage");
+        if slot.is_some() {
+            AssetTagState::Resident(id)
+        } else {
+            AssetTagState::Suspended(id)
+        }
     }
 
     /// Render a mesh into an atlas slot. Returns the atlas image ID and sub-rect
     /// `(src_x, src_y, src_w, src_h)` for sampling with `draw_bitmap_subrect`,
-    /// or `None` when the slot index is out of range or the mesh has been
-    /// evicted — callers must skip the draw in that case so stale slot pixels
-    /// aren't sampled.
+    /// or `None` when the slot index is out of range or the mesh is not resident.
+    /// Callers must skip the draw then so stale atlas pixels aren't sampled.
     ///
     /// Skips GL work if the slot's parameters haven't changed (dirty check).
     #[expect(clippy::too_many_lines)]
@@ -841,6 +970,34 @@ impl MeshRenderer {
         }
     }
 
+    pub fn suspend_exact(&mut self, gl: &glow::Context, tag: &str) -> AssetSuspendResult<MeshId> {
+        let Some(&id) = self.by_tag.get(tag) else {
+            return AssetSuspendResult::Unknown;
+        };
+        let index = mesh_id_to_storage_index(id);
+        let slot = self
+            .meshes
+            .get_mut(index)
+            .expect("BUG: mesh tag ID must point into mesh storage");
+        let Some(mesh) = slot.take() else {
+            return AssetSuspendResult::AlreadySuspended(id);
+        };
+        unsafe { mesh.drop_gl(gl) };
+        for slot in &mut self.slots {
+            slot.invalidate_mesh(id);
+        }
+        AssetSuspendResult::Suspended(id)
+    }
+
+    #[must_use]
+    pub fn resident_bytes(&self) -> u64 {
+        self.meshes
+            .iter()
+            .flatten()
+            .map(|mesh| mesh.resident_bytes)
+            .sum()
+    }
+
     /// Evict a single tag's mesh: drop its GL handles and clear the storage
     /// slot. The `MeshId` returned by earlier `register_mesh(tag, …)` calls
     /// becomes invalid; subsequent renders that reference it no-op safely
@@ -856,14 +1013,14 @@ impl MeshRenderer {
         let Some(id) = self.by_tag.remove(tag) else {
             return false;
         };
-        let idx = mesh_id_to_storage_index(id);
-        let Some(slot) = self.meshes.get_mut(idx) else {
-            return false;
-        };
-        let Some(mesh) = slot.take() else {
-            return false;
-        };
-        unsafe { mesh.drop_gl(gl) };
+        let index = mesh_id_to_storage_index(id);
+        let slot = self
+            .meshes
+            .get_mut(index)
+            .expect("BUG: mesh tag ID must point into mesh storage");
+        if let Some(mesh) = slot.take() {
+            unsafe { mesh.drop_gl(gl) };
+        }
         true
     }
 
@@ -1135,9 +1292,22 @@ mod profile {
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
-    use super::UploadedMesh;
+    use super::{MeshRenderer, UploadedMesh, atlas};
+    use crate::renderer::{AssetSuspendResult, AssetTagState};
     use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
     use glow::HasContext;
+
+    fn minimal_mesh() -> Vec<u8> {
+        let body_offset = bmc_wasm_protocol::mesh::HEADER_SIZE + atlas::AABB_SIZE;
+        let mut data = vec![0_u8; body_offset];
+        data[0..4].copy_from_slice(&bmc_wasm_protocol::mesh::MESH_MAGIC.to_le_bytes());
+        let offset = u32::try_from(body_offset)
+            .expect("BUG: minimal mesh offset fits u32")
+            .to_le_bytes();
+        data[12..16].copy_from_slice(&offset);
+        data[16..20].copy_from_slice(&offset);
+        data
+    }
 
     /// Build an `UploadedMesh` whose GL handles are real, freshly allocated
     /// objects (not wrapped in any draw state). Used to verify `drop_gl`
@@ -1153,6 +1323,7 @@ mod tests {
             index_count: 0,
             texture: with_texture.then(|| create_real_texture(gl)),
             normal_map: with_normal_map.then(|| create_real_texture(gl)),
+            resident_bytes: 42,
             has_uvs: false,
             has_tangents: false,
             is_msdf: false,
@@ -1199,6 +1370,38 @@ mod tests {
     }
 
     #[test]
+    fn resident_bytes_sum_only_live_mesh_payloads() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
+        renderer
+            .meshes
+            .push(Some(build_test_mesh(gl, false, false)));
+        renderer.meshes.push(None);
+        renderer
+            .meshes
+            .push(Some(build_test_mesh(gl, false, false)));
+
+        assert_eq!(renderer.resident_bytes(), 84);
+        renderer.destroy(gl, &mut canvas);
+    }
+
+    #[test]
+    fn failed_initial_registration_does_not_leave_a_reservation() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
+
+        assert_eq!(renderer.register_mesh(gl, "broken", &[]), None);
+        assert_eq!(renderer.tag_state("broken"), AssetTagState::Unknown);
+        assert!(renderer.meshes.is_empty());
+
+        renderer.destroy(gl, &mut canvas);
+    }
+
+    #[test]
     fn drop_gl_handles_optional_textures() {
         let harness = GlHarness::new().expect("BUG: headless GL setup failed");
         let gl = &harness.gl;
@@ -1218,5 +1421,134 @@ mod tests {
             assert!(!gl.is_buffer(vbo), "BUG: vbo leaked past drop_gl");
             assert!(!gl.is_buffer(ibo), "BUG: ibo leaked past drop_gl");
         }
+    }
+
+    #[test]
+    fn suspending_meshes_retains_slots_and_ids_until_destructive_eviction() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
+        let mesh = minimal_mesh();
+
+        let id_1 = renderer
+            .register_mesh(gl, "widget-1:mesh", &mesh)
+            .expect("BUG: first mesh registration should succeed");
+        let id_10 = renderer
+            .register_mesh(gl, "widget-10:mesh", &mesh)
+            .expect("BUG: second mesh registration should succeed");
+        assert_eq!(
+            renderer.tag_state("widget-1:mesh"),
+            AssetTagState::Resident(id_1)
+        );
+        assert_eq!(
+            renderer.tag_state("widget-10:mesh"),
+            AssetTagState::Resident(id_10)
+        );
+        let registered_slots = renderer.meshes.len();
+        let vbo = renderer.meshes[0]
+            .as_ref()
+            .expect("BUG: registered mesh must occupy its slot")
+            .vbo;
+        let ibo = renderer.meshes[0]
+            .as_ref()
+            .expect("BUG: registered mesh must occupy its slot")
+            .ibo;
+
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget-1:mesh"),
+            AssetSuspendResult::Suspended(id_1)
+        );
+        assert_eq!(
+            renderer.tag_state("widget-1:mesh"),
+            AssetTagState::Suspended(id_1)
+        );
+        assert_eq!(
+            renderer.tag_state("widget-10:mesh"),
+            AssetTagState::Resident(id_10)
+        );
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget-1:mesh"),
+            AssetSuspendResult::AlreadySuspended(id_1)
+        );
+        unsafe {
+            assert!(
+                !gl.is_buffer(vbo),
+                "BUG: suspended mesh VBO must be released"
+            );
+            assert!(
+                !gl.is_buffer(ibo),
+                "BUG: suspended mesh IBO must be released"
+            );
+        }
+
+        assert_eq!(
+            renderer.register_mesh(gl, "widget-1:mesh", &mesh),
+            Some(id_1)
+        );
+        assert_eq!(renderer.meshes.len(), registered_slots);
+
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget-1:mesh"),
+            AssetSuspendResult::Suspended(id_1)
+        );
+        assert_eq!(
+            renderer.register_mesh(gl, "widget-1:mesh", &mesh),
+            Some(id_1)
+        );
+        assert_eq!(renderer.meshes.len(), registered_slots);
+
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget-1:mesh"),
+            AssetSuspendResult::Suspended(id_1)
+        );
+        assert_eq!(renderer.register_mesh(gl, "widget-1:mesh", &[]), None);
+        assert_eq!(
+            renderer.tag_state("widget-1:mesh"),
+            AssetTagState::Suspended(id_1)
+        );
+        assert_eq!(renderer.meshes.len(), registered_slots);
+        assert!(renderer.evict(gl, "widget-1:mesh"));
+        assert_eq!(renderer.tag_state("widget-1:mesh"), AssetTagState::Unknown);
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget-1:mesh"),
+            AssetSuspendResult::Unknown
+        );
+
+        let replacement = renderer
+            .register_mesh(gl, "widget-1:mesh", &mesh)
+            .expect("BUG: re-registration after eviction should succeed");
+        assert_ne!(replacement, id_1);
+        assert_eq!(renderer.meshes.len(), registered_slots + 1);
+
+        renderer.destroy(gl, &mut canvas);
+    }
+
+    #[test]
+    fn exact_reservation_and_suspension_preserve_mesh_id() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
+        let id = renderer
+            .reserve("widget:mesh")
+            .expect("BUG: mesh reservation should succeed");
+
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget:mesh"),
+            AssetSuspendResult::AlreadySuspended(id)
+        );
+        assert_eq!(
+            renderer.register_mesh(gl, "widget:mesh", &minimal_mesh()),
+            Some(id)
+        );
+        assert_eq!(
+            renderer.suspend_exact(gl, "widget:mesh"),
+            AssetSuspendResult::Suspended(id)
+        );
+        assert_eq!(
+            renderer.suspend_exact(gl, "missing"),
+            AssetSuspendResult::Unknown
+        );
     }
 }
