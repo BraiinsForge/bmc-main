@@ -2862,7 +2862,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("BUG: system time should be after Unix epoch")
             .as_nanos();
-        let dir = PathBuf::from("/tmp/claude-1001/bmc-openwrt-tests");
+        let dir = std::env::temp_dir().join("bmc-openwrt-tests");
         std::fs::create_dir_all(&dir).expect("BUG: test socket directory should be creatable");
         dir.join(format!("clear-pid-{timestamp}-{}", std::process::id()))
     }

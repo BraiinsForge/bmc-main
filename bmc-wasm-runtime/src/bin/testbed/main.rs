@@ -786,9 +786,8 @@ mod platforms_startup_tests {
             }"#,
         )
         .expect("BUG: write manifest fixture");
-        let wasm_path = Path::new(
-            "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
-        );
+        let wasm_path =
+            Path::new("/tmp/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm");
 
         let (manifest_path, manifest) = load_manifest(wasm_path, None, Some(widget_root.clone()))
             .expect("BUG: explicit widget root must resolve manifest");
@@ -802,7 +801,7 @@ mod platforms_startup_tests {
         let widget_root = PathBuf::from("fixtures/hello-widget");
         let cli = parse_test_args(&[
             "testbed",
-            "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
+            "/tmp/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
             "--widget-root",
             widget_root
                 .to_str()
