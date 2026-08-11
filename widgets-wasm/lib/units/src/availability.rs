@@ -18,10 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+/// What a widget has to show for one value it reads from a source.
+///
+/// `Unavailable` and `Failed` both mean "no value", and a widget is free to
+/// draw them alike — but only `Failed` says asking has already been tried, so
+/// waiting will not help. A screen that draws its loading state for both
+/// leaves a source that failed before its first answer loading forever.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Availability<T> {
     Available(T),
+    /// No answer yet.
     Unavailable,
+    /// Asked, and came back without a value.
+    Failed,
 }
 
 #[expect(
@@ -38,8 +47,26 @@ impl<T> Availability<T> {
     pub fn as_option(&self) -> Option<&T> {
         match self {
             Self::Available(value) => Some(value),
-            Self::Unavailable => None,
+            Self::Unavailable | Self::Failed => None,
         }
+    }
+
+    /// Whether asking has been tried and did not produce a value.
+    #[must_use]
+    pub fn failed(&self) -> bool {
+        matches!(self, Self::Failed)
+    }
+
+    /// Record that asking failed — unless a value has already arrived, which
+    /// stands: one bad answer is worth less than the data it would blank.
+    /// Reports whether this changed anything, so a caller can spare a redraw
+    /// for the failure it already knows about.
+    pub fn mark_failed(&mut self) -> bool {
+        let unset = matches!(self, Self::Unavailable);
+        if unset {
+            *self = Self::Failed;
+        }
+        unset
     }
 }
 
@@ -66,6 +93,18 @@ mod tests {
     fn default_is_unavailable() {
         let value = Availability::<u32>::default();
         assert_eq!(value, Availability::Unavailable);
+    }
+
+    #[test]
+    fn failure_does_not_displace_a_value_already_read() {
+        let mut value = Availability::Available(42_u32);
+        assert!(!value.mark_failed(), "a value already read changed state");
+        assert_eq!(value, Availability::Available(42));
+
+        let mut nothing = Availability::<u32>::Unavailable;
+        assert!(nothing.mark_failed(), "the first failure went unrecorded");
+        assert_eq!(nothing, Availability::Failed);
+        assert!(!nothing.mark_failed(), "a repeated failure changed state");
     }
 
     #[test]

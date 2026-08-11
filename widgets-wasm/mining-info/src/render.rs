@@ -436,7 +436,7 @@ fn info_overload_header(
     let change_color = match public.btc_change_24h_percent {
         Availability::Available(value) if value.raw() >= 0.0 => GREEN_50,
         Availability::Available(_) => RED_60,
-        Availability::Unavailable => TITLE,
+        Availability::Unavailable | Availability::Failed => TITLE,
     };
 
     let mut blocks = vec![block(

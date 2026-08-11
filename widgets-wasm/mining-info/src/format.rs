@@ -35,7 +35,7 @@ pub(crate) fn approx_fixed<Q: Quantity>(value: Availability<Q>, decimals: u32) -
                 unit: Some(Q::UNIT),
             }
         }
-        Availability::Unavailable => unavailable().into(),
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 
@@ -51,7 +51,7 @@ pub(crate) fn signed_percent<Q: Quantity>(value: Availability<Q>, decimals: u32)
                 unit: Some(Q::UNIT),
             }
         }
-        Availability::Unavailable => unavailable().into(),
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 
@@ -76,7 +76,7 @@ pub(crate) fn temperature(value: Availability<TemperatureRange>) -> Rendered {
                 unit: Some(DegreeCelsius::UNIT),
             }
         }
-        Availability::Unavailable => unavailable().into(),
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 
@@ -90,7 +90,7 @@ pub(crate) fn chip_temperature(value: Availability<TemperatureRange>) -> Rendere
                 unit: Some(DegreeCelsius::UNIT),
             }
         }
-        Availability::Unavailable => unavailable().into(),
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 
@@ -106,7 +106,7 @@ pub(crate) fn money(value: Availability<Money>, decimals: u32) -> Rendered {
             out.push_str(&group(value.abs(), decimals));
             out.into()
         }
-        Availability::Unavailable => unavailable().into(),
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 
@@ -119,7 +119,7 @@ pub(crate) fn money_symbol(value: Availability<Money>) -> Option<&'static str> {
             Currency::Usd => "$",
             Currency::Eur => "€",
         }),
-        Availability::Unavailable => None,
+        Availability::Unavailable | Availability::Failed => None,
     }
 }
 
@@ -128,7 +128,7 @@ pub(crate) fn money_symbol(value: Availability<Money>) -> Option<&'static str> {
 pub(crate) fn money_amount(value: Availability<Money>, decimals: u32) -> String {
     match value {
         Availability::Available(Money { value, .. }) => group(value.abs(), decimals),
-        Availability::Unavailable => unavailable(),
+        Availability::Unavailable | Availability::Failed => unavailable(),
     }
 }
 
@@ -142,7 +142,7 @@ pub(crate) fn public_integer(value: Availability<u64>) -> Rendered {
             let magnitude = value as f64;
             group(magnitude, 0).into()
         }
-        Availability::Unavailable => unavailable().into(),
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 

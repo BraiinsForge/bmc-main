@@ -119,7 +119,9 @@ pub fn fixed<Q: Quantity>(value: Availability<Q>, decimals: u32) -> Rendered {
                 unit: Some(Q::UNIT),
             }
         }
-        Availability::Unavailable => unavailable().into(),
+        // A number has nothing to say about why it is missing; a screen that
+        // wants to distinguish the two reads the state, not this string.
+        Availability::Unavailable | Availability::Failed => unavailable().into(),
     }
 }
 
