@@ -59,6 +59,7 @@ const CATEGORY_ORDER: pb.WidgetCategory[] = [
     pb.WidgetCategory.SPACE,
     pb.WidgetCategory.MEDIA,
     pb.WidgetCategory.KNOWLEDGE,
+    pb.WidgetCategory.SPORTS,
     pb.WidgetCategory.UTILITY,
     pb.WidgetCategory.MISC,
 ];
@@ -93,6 +94,9 @@ function categoryLabel(intl: IntlShape, category: pb.WidgetCategory): string {
 
         case pb.WidgetCategory.KNOWLEDGE:
             return formatMessage({ defaultMessage: 'Knowledge' });
+
+        case pb.WidgetCategory.SPORTS:
+            return formatMessage({ defaultMessage: 'Sports' });
 
         case pb.WidgetCategory.UTILITY:
             return formatMessage({ defaultMessage: 'Utility' });

@@ -530,6 +530,11 @@
           "const": "knowledge"
         },
         {
+          "description": "Sports results, standings, and live timing.",
+          "type": "string",
+          "const": "sports"
+        },
+        {
           "description": "Diagnostic, demo, and system tools.",
           "type": "string",
           "const": "utility"

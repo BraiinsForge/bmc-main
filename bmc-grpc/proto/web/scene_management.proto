@@ -188,6 +188,7 @@ enum WidgetCategory {
   WIDGET_CATEGORY_MEDIA = 8;
   WIDGET_CATEGORY_KNOWLEDGE = 9;
   WIDGET_CATEGORY_FINANCE = 10;
+  WIDGET_CATEGORY_SPORTS = 11;
 }
 
 message WidgetManifest {

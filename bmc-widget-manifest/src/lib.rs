@@ -515,6 +515,8 @@ pub enum WidgetCategory {
     Space,
     /// Facts & trivia.
     Knowledge,
+    /// Sports results, standings, and live timing.
+    Sports,
     /// Diagnostic, demo, and system tools.
     Utility,
     /// Audio, video, and image media.
