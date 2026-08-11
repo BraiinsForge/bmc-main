@@ -69,10 +69,21 @@ thread_local! {
 /// A query window as the API takes it: RFC 3339 UTC `from` and `to`.
 type Window = (String, String);
 
+/// The sources that page through a listing, and so chain cursors.
+const CHAINING: [Source; 3] = [
+    Source::HashrateHistory,
+    Source::WorkersHistory,
+    Source::PayoutsRecent,
+];
+
 struct PageChain {
     /// `None` for the Overview payout page, which asks for no window
     /// and so has none to repeat on a follow-up.
     window: Option<Window>,
+    /// The follow-up page this chain waits on.
+    /// Abandoning the chain cancels it, so its reply settles as `Aborted`
+    /// rather than merging into whatever chain is open by then.
+    outstanding: Option<FetchRequestId>,
     series: Series,
     payouts: Vec<crate::model::Payout>,
 }
@@ -203,6 +214,7 @@ fn start_chain(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
     let window = request_cell(source).with(|cell| cell.borrow_mut().take());
     let chain = PageChain {
         window,
+        outstanding: None,
         series: Series::default(),
         payouts: Vec::new(),
     };
@@ -238,11 +250,7 @@ fn request_cell(source: Source) -> &'static std::thread::LocalKey<RefCell<Option
 /// when the reply names a next page, otherwise commit
 /// the merged result into [`DATA`].
 fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'_>) {
-    // The Overview's payout query is one unwindowed latest page; following
-    // its cursor would continue with windowed page URLs, a different query.
-    let follows_cursor =
-        !(source == Source::PayoutsRecent && Params::current().style == Style::Overview);
-    let next = pool_api::next_cursor(json).filter(|_| follows_cursor);
+    let next = pool_api::next_cursor(json);
     // Read from the launch itself rather than from the cursor alone, so a page
     // that names a next one it cannot ask for still commits,
     // instead of stranding the chain until the next tick.
@@ -251,6 +259,8 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
         let Some(chain) = cell.as_mut() else {
             return false;
         };
+        // This page is the one it was waiting on, if any.
+        chain.outstanding = None;
         match source {
             Source::HashrateHistory => {
                 if let Some(page) = pool_api::parse_history_page(json, "hashrate_th_per_sec", date)
@@ -273,8 +283,9 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
             | Source::WorkersCurrent
             | Source::Financials => unreachable!("BUG: only windowed sources chain pages"),
         }
-        // A follow-up repeats the window its page 1 asked for;
-        // a request made without one has no next page to ask for.
+        // A follow-up repeats the window page 1 asked for.
+        // The Overview payout query asked for none — it wants one latest page,
+        // and its cursor would lead into a different query — so it never follows.
         let (Some(cursor), Some((from, to))) = (&next, &chain.window) else {
             return false;
         };
@@ -298,6 +309,7 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
             *cell = None;
             return false;
         }
+        chain.outstanding = started;
         true
     });
     if !following {
@@ -351,7 +363,27 @@ fn continue_payouts(response: &FetchResponse) {
     continue_chain(Source::PayoutsRecent, response);
 }
 
+/// Drop each source's chain, cancelling the page it waits on.
+///
+/// Invalidating a poll does not reach these hand-rolled follow-ups.
+/// Without this, a page fetched under the old account or window merges into
+/// the chain started under the new one.
+/// Cancelling settles that page as `Aborted`, which [`continue_chain`] ignores.
+fn abandon_chains(sources: &[Source]) {
+    for &source in sources {
+        let abandoned = chain_cell(source).with(|cell| cell.borrow_mut().take());
+        if let Some(id) = abandoned.and_then(|chain| chain.outstanding) {
+            let _ = net::cancel(id);
+        }
+    }
+}
+
 fn continue_chain(source: Source, response: &FetchResponse) {
+    if response.outcome() == Some(FetchOutcome::Aborted) {
+        // Whoever cancelled this page already dropped the chain it belonged to.
+        // Anything in the cell now was started afterwards, so leave it be.
+        return;
+    }
     if !response.ok() {
         // A broken chain keeps last cycle's committed data;
         // the next poll tick starts a fresh chain.
@@ -407,14 +439,22 @@ pub extern "C" fn on_params_update() {
         .map(|previous| Params::current().changed_keys(&previous))
         .unwrap_or_default();
     reconcile();
-    if changed.contains(&"chart_frame") {
+    // A param outdates whatever its requests were built from.
+    // The frame sets every window; the style only decides whether the payout
+    // query carries one, the histories asking the same URL under either.
+    let outdated: &[Source] = if changed.contains(&"chart_frame") {
+        &CHAINING
+    } else if changed.contains(&"style") {
+        &[Source::PayoutsRecent]
+    } else {
+        &[]
+    };
+    if !outdated.is_empty() {
+        abandon_chains(outdated);
         HANDLES.with(|handles| {
             if let Some(handles) = handles.borrow().as_ref() {
                 for handle in handles {
-                    if matches!(
-                        source_of(*handle),
-                        Source::HashrateHistory | Source::WorkersHistory | Source::PayoutsRecent
-                    ) {
+                    if outdated.contains(&source_of(*handle)) {
                         handle.invalidate();
                     }
                 }
@@ -428,6 +468,7 @@ pub extern "C" fn on_params_update() {
 pub extern "C" fn on_credentials_update() {
     // A rebind may point at a different account: blank and refetch everything.
     DATA.with(|data| *data.borrow_mut() = PoolData::default());
+    abandon_chains(&CHAINING);
     reconcile();
     HANDLES.with(|handles| {
         if let Some(handles) = handles.borrow().as_ref() {
