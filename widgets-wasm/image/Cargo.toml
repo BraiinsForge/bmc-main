@@ -24,6 +24,11 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+# SVG assets embedded at compile time via the SDK include_svg! macro;
+# the nix source filter keeps only rust/toml/lock unless opted in here.
+[package.metadata.nix]
+include = ["assets/**"]
+
 [lib]
 name = "image"
 crate-type = ["cdylib"]
