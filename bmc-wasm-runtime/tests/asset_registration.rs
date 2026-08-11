@@ -20,20 +20,28 @@
 
 #![cfg(target_os = "linux")]
 
-use std::fmt::Write as _;
-use std::ptr::NonNull;
+use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::{AssetTagState, Renderer};
 use bmc_wasm_protocol::{BitmapId, MeshId, SvgId};
-use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
-use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+use bmc_wasm_runtime::{DiskCache, RuntimeConfig, WasmWidgetRuntime};
 
+#[path = "common/asset_fixtures.rs"]
+mod asset_fixtures;
 mod common;
+use asset_fixtures::{compiled_empty_svg, one_px_png, renderer_ptr, wat_string_literal};
 use common::headless_egl;
 
 const REGISTERED_TAG: &str = "resident";
 const UNKNOWN_TAG: &str = "unknown";
+const DORMANT_SVG_TAG: &str = "dormant-svg";
+const DORMANT_BITMAP_TAG: &str = "dormant-bitmap";
+const DORMANT_NEAREST_TAG: &str = "dormant-nearest";
+const DORMANT_MESH_TAG: &str = "dormant-mesh";
+const DORMANT_FIT_TAG: &str = "dormant-fit";
+const DORMANT_CACHE_TAG: &str = "dormant-cache";
+const IMAGE_DECODE_COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug)]
 enum AssetKind {
@@ -41,12 +49,6 @@ enum AssetKind {
     Bitmap,
     BitmapNearest,
     Mesh,
-}
-
-#[derive(Clone, Copy)]
-enum ExpectedState {
-    Resident,
-    Suspended,
 }
 
 impl AssetKind {
@@ -62,65 +64,29 @@ impl AssetKind {
     fn fixture(self) -> Vec<u8> {
         match self {
             Self::Svg => compiled_empty_svg(),
-            Self::Bitmap | Self::BitmapNearest => one_px_png(),
+            Self::Bitmap | Self::BitmapNearest => one_px_png([0, 255, 0, 255]),
             Self::Mesh => minimal_empty_mesh(),
         }
     }
 
-    fn assert_state(
-        self,
-        renderer: &FemtoVgRenderer,
-        tag: &str,
-        expected_id: u32,
-        expected_state: ExpectedState,
-    ) {
+    fn assert_resident(self, renderer: &FemtoVgRenderer, tag: &str, expected_id: u32) {
         match self {
             Self::Svg => {
                 let id = SvgId::from_ffi(expected_id).expect("BUG: SVG import returned invalid ID");
-                let expected = match expected_state {
-                    ExpectedState::Resident => AssetTagState::Resident(id),
-                    ExpectedState::Suspended => AssetTagState::Suspended(id),
-                };
-                assert_eq!(renderer.svg_tag_state(tag), expected);
+                assert_eq!(renderer.svg_tag_state(tag), AssetTagState::Resident(id));
             }
             Self::Bitmap | Self::BitmapNearest => {
                 let id = BitmapId::from_ffi(expected_id)
                     .expect("BUG: bitmap import returned invalid ID");
-                let expected = match expected_state {
-                    ExpectedState::Resident => AssetTagState::Resident(id),
-                    ExpectedState::Suspended => AssetTagState::Suspended(id),
-                };
-                assert_eq!(renderer.bitmap_tag_state(tag), expected);
+                assert_eq!(renderer.bitmap_tag_state(tag), AssetTagState::Resident(id));
             }
             Self::Mesh => {
                 let id =
                     MeshId::from_ffi(expected_id).expect("BUG: mesh import returned invalid ID");
-                let expected = match expected_state {
-                    ExpectedState::Resident => AssetTagState::Resident(id),
-                    ExpectedState::Suspended => AssetTagState::Suspended(id),
-                };
-                assert_eq!(renderer.mesh_tag_state(tag), expected);
+                assert_eq!(renderer.mesh_tag_state(tag), AssetTagState::Resident(id));
             }
         }
     }
-}
-
-fn compiled_empty_svg() -> Vec<u8> {
-    let mut data = Vec::with_capacity(10);
-    data.extend_from_slice(&1.0_f32.to_le_bytes());
-    data.extend_from_slice(&1.0_f32.to_le_bytes());
-    data.extend_from_slice(&0_u16.to_le_bytes());
-    data
-}
-
-fn one_px_png() -> Vec<u8> {
-    let image: ImageBuffer<Rgba<u8>, Vec<u8>> =
-        ImageBuffer::from_pixel(1, 1, Rgba([0, 255, 0, 255]));
-    let mut data = std::io::Cursor::new(Vec::new());
-    DynamicImage::ImageRgba8(image)
-        .write_to(&mut data, ImageFormat::Png)
-        .expect("BUG: PNG fixture must encode");
-    data.into_inner()
 }
 
 fn minimal_empty_mesh() -> Vec<u8> {
@@ -133,14 +99,6 @@ fn minimal_empty_mesh() -> Vec<u8> {
     data[12..16].copy_from_slice(&body_offset);
     data[16..20].copy_from_slice(&body_offset);
     data
-}
-
-fn wat_string_literal(bytes: &[u8]) -> String {
-    let mut output = String::with_capacity(bytes.len() * 4);
-    for byte in bytes {
-        write!(output, "\\{byte:02x}").expect("BUG: write to String cannot fail");
-    }
-    output
 }
 
 fn asset_registration_wat(kind: AssetKind, fixture: &[u8]) -> String {
@@ -182,12 +140,7 @@ fn asset_registration_wat(kind: AssetKind, fixture: &[u8]) -> String {
               (i32.const {unknown_tag_len})
               (i32.const -1)
               (i32.const 1)))
-          (func (export "register_suspended_invalid") (result i32)
-            (call $register
-              (i32.const {registered_tag_ptr})
-              (i32.const {registered_tag_len})
-              (i32.const -1)
-              (i32.const 1))))
+          )
         "#,
         import_name = kind.import_name(),
         registered_tag_len = REGISTERED_TAG.len(),
@@ -197,9 +150,145 @@ fn asset_registration_wat(kind: AssetKind, fixture: &[u8]) -> String {
     )
 }
 
-fn renderer_ptr(renderer: &mut FemtoVgRenderer) -> NonNull<dyn Renderer> {
-    let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
-    NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null")
+#[expect(
+    clippy::too_many_lines,
+    reason = "one WAT probe declares and invokes all six renderer registration imports"
+)]
+fn dormant_registration_probe_wat() -> String {
+    let svg = compiled_empty_svg();
+    let bitmap = one_px_png([0, 255, 0, 255]);
+    let mesh = minimal_empty_mesh();
+    let mut data = Vec::new();
+    let mut append = |bytes: &[u8]| {
+        let ptr = data.len();
+        data.extend_from_slice(bytes);
+        ptr
+    };
+    let svg_tag_ptr = append(DORMANT_SVG_TAG.as_bytes());
+    let bitmap_tag_ptr = append(DORMANT_BITMAP_TAG.as_bytes());
+    let nearest_tag_ptr = append(DORMANT_NEAREST_TAG.as_bytes());
+    let mesh_tag_ptr = append(DORMANT_MESH_TAG.as_bytes());
+    let fit_tag_ptr = append(DORMANT_FIT_TAG.as_bytes());
+    let cache_tag_ptr = append(DORMANT_CACHE_TAG.as_bytes());
+    let svg_ptr = append(&svg);
+    let bitmap_ptr = append(&bitmap);
+    let mesh_ptr = append(&mesh);
+    let data = wat_string_literal(&data);
+
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_svg"
+            (func $svg (param i32 i32 i32 i32) (result i32)))
+          (import "env" "host_register_bitmap"
+            (func $bitmap (param i32 i32 i32 i32) (result i32)))
+          (import "env" "host_register_bitmap_nearest"
+            (func $nearest (param i32 i32 i32 i32) (result i32)))
+          (import "env" "host_register_mesh"
+            (func $mesh (param i32 i32 i32 i32) (result i32)))
+          (import "env" "host_register_bitmap_fit"
+            (func $fit (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+          (import "env" "host_register_bitmap_from_cache"
+            (func $cache (param i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $svg_id (mut i32) (i32.const 0))
+          (global $bitmap_id (mut i32) (i32.const 0))
+          (global $nearest_id (mut i32) (i32.const 0))
+          (global $mesh_id (mut i32) (i32.const 0))
+          (global $fit_id (mut i32) (i32.const 0))
+          (global $cache_id (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32))
+          (func (export "register_reservations") (result i32)
+            i32.const {svg_tag_ptr}
+            i32.const {svg_tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $svg
+            global.set $svg_id
+            i32.const {bitmap_tag_ptr}
+            i32.const {bitmap_tag_len}
+            i32.const {bitmap_ptr}
+            i32.const {bitmap_len}
+            call $bitmap
+            global.set $bitmap_id
+            i32.const {nearest_tag_ptr}
+            i32.const {nearest_tag_len}
+            i32.const {bitmap_ptr}
+            i32.const {bitmap_len}
+            call $nearest
+            global.set $nearest_id
+            i32.const {mesh_tag_ptr}
+            i32.const {mesh_tag_len}
+            i32.const {mesh_ptr}
+            i32.const {mesh_len}
+            call $mesh
+            global.set $mesh_id
+            i32.const {cache_tag_ptr}
+            i32.const {cache_tag_len}
+            call $cache
+            global.set $cache_id
+            i32.const 1)
+          (func (export "attempt_while_dormant") (result i32)
+            i32.const {svg_tag_ptr}
+            i32.const {svg_tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $svg
+            global.set $svg_id
+            i32.const {bitmap_tag_ptr}
+            i32.const {bitmap_tag_len}
+            i32.const {bitmap_ptr}
+            i32.const {bitmap_len}
+            call $bitmap
+            global.set $bitmap_id
+            i32.const {nearest_tag_ptr}
+            i32.const {nearest_tag_len}
+            i32.const {bitmap_ptr}
+            i32.const {bitmap_len}
+            call $nearest
+            global.set $nearest_id
+            i32.const {mesh_tag_ptr}
+            i32.const {mesh_tag_len}
+            i32.const {mesh_ptr}
+            i32.const {mesh_len}
+            call $mesh
+            global.set $mesh_id
+            i32.const {fit_tag_ptr}
+            i32.const {fit_tag_len}
+            i32.const {bitmap_ptr}
+            i32.const {bitmap_len}
+            i32.const 1
+            i32.const 1
+            i32.const 0
+            i32.const 0
+            i32.const 0
+            call $fit
+            global.set $fit_id
+            i32.const {cache_tag_ptr}
+            i32.const {cache_tag_len}
+            call $cache
+            global.set $cache_id
+            i32.const 1)
+          (func (export "svg_id") (result i32) global.get $svg_id)
+          (func (export "bitmap_id") (result i32) global.get $bitmap_id)
+          (func (export "nearest_id") (result i32) global.get $nearest_id)
+          (func (export "mesh_id") (result i32) global.get $mesh_id)
+          (func (export "fit_id") (result i32) global.get $fit_id)
+          (func (export "cache_id") (result i32) global.get $cache_id))
+        "#,
+        svg_tag_len = DORMANT_SVG_TAG.len(),
+        bitmap_tag_len = DORMANT_BITMAP_TAG.len(),
+        nearest_tag_len = DORMANT_NEAREST_TAG.len(),
+        mesh_tag_len = DORMANT_MESH_TAG.len(),
+        fit_tag_len = DORMANT_FIT_TAG.len(),
+        cache_tag_len = DORMANT_CACHE_TAG.len(),
+        svg_len = svg.len(),
+        bitmap_len = bitmap.len(),
+        mesh_len = mesh.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
 }
 
 fn call_export(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer, name: &str) -> u32 {
@@ -237,12 +326,7 @@ fn run_registration_contract(kind: AssetKind) {
 
     let original_id = call_export(&mut runtime, &mut renderer, "register_valid");
     assert_ne!(original_id, 0, "{kind:?} fixture must register");
-    kind.assert_state(
-        &renderer,
-        &renderer_tag,
-        original_id,
-        ExpectedState::Resident,
-    );
+    kind.assert_resident(&renderer, &renderer_tag, original_id);
 
     assert_eq!(
         call_export(&mut runtime, &mut renderer, "register_resident_invalid"),
@@ -255,24 +339,7 @@ fn run_registration_contract(kind: AssetKind) {
         "{kind:?} unknown registration must still read its payload",
     );
 
-    assert_eq!(renderer.suspend_prefix(&namespace), 1);
-    kind.assert_state(
-        &renderer,
-        &renderer_tag,
-        original_id,
-        ExpectedState::Suspended,
-    );
-    assert_eq!(
-        call_export(&mut runtime, &mut renderer, "register_suspended_invalid"),
-        0,
-        "{kind:?} suspended registration must still read its payload",
-    );
-    kind.assert_state(
-        &renderer,
-        &renderer_tag,
-        original_id,
-        ExpectedState::Suspended,
-    );
+    kind.assert_resident(&renderer, &renderer_tag, original_id);
 }
 
 #[test]
@@ -293,4 +360,190 @@ fn nearest_bitmap_registration_skips_resident_payload_copy() {
 #[test]
 fn mesh_registration_skips_resident_payload_copy() {
     run_registration_contract(AssetKind::Mesh);
+}
+
+#[test]
+fn initially_dormant_runtime_rejects_renderer_asset_registration() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let fixture = compiled_empty_svg();
+    let wat = asset_registration_wat(AssetKind::Svg, &fixture);
+    let wasm = wat::parse_str(&wat).expect("BUG: asset registration WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: runtime must construct");
+    let renderer_tag = format!("{}:{REGISTERED_TAG}", runtime.asset_namespace());
+
+    runtime.initialize_dormant();
+
+    assert_eq!(
+        call_export(&mut runtime, &mut renderer, "register_valid"),
+        0,
+        "an initially dormant widget must not create renderer assets"
+    );
+    assert_eq!(
+        renderer.svg_tag_state(&renderer_tag),
+        AssetTagState::Unknown,
+        "rejected registration must not leave an asset reservation"
+    );
+}
+
+#[test]
+#[expect(
+    clippy::too_many_lines,
+    reason = "the contract checks six return values and every affected registry state"
+)]
+fn dormant_widget_rejects_renderer_mutation_but_allows_cache_decode() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
+    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
+    let mut metadata = Vec::from(1_u32.to_le_bytes());
+    metadata.extend_from_slice(&1_u32.to_le_bytes());
+    metadata.extend_from_slice(b"cache identity");
+    cache
+        .put(DORMANT_CACHE_TAG, 1, &metadata, &[0x11, 0x22, 0x33, 0xFF])
+        .expect("BUG: cache fixture must be writable");
+    let wasm = wat::parse_str(dormant_registration_probe_wat())
+        .expect("BUG: dormant registration WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let config = RuntimeConfig {
+        asset_cache: Some(cache.clone()),
+        ..RuntimeConfig::default()
+    };
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        config,
+    )
+    .expect("BUG: runtime must construct");
+    let namespace = runtime.asset_namespace();
+
+    assert_eq!(
+        call_export(&mut runtime, &mut renderer, "register_reservations"),
+        1
+    );
+    let svg_id = SvgId::from_ffi(call_export(&mut runtime, &mut renderer, "svg_id"))
+        .expect("BUG: initial SVG registration must return an ID");
+    let bitmap_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "bitmap_id"))
+        .expect("BUG: initial bitmap registration must return an ID");
+    let nearest_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "nearest_id"))
+        .expect("BUG: initial nearest bitmap registration must return an ID");
+    let mesh_id = MeshId::from_ffi(call_export(&mut runtime, &mut renderer, "mesh_id"))
+        .expect("BUG: initial mesh registration must return an ID");
+    let cache_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "cache_id"))
+        .expect("BUG: initial cache registration must return an ID");
+
+    runtime.notify_dormant();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    let svg_tag = format!("{namespace}:{DORMANT_SVG_TAG}");
+    let bitmap_tag = format!("{namespace}:{DORMANT_BITMAP_TAG}");
+    let nearest_tag = format!("{namespace}:{DORMANT_NEAREST_TAG}");
+    let mesh_tag = format!("{namespace}:{DORMANT_MESH_TAG}");
+    let fit_tag = format!("{namespace}:{DORMANT_FIT_TAG}");
+    let cache_tag = format!("{namespace}:{DORMANT_CACHE_TAG}");
+    assert_eq!(
+        renderer.svg_tag_state(&svg_tag),
+        AssetTagState::Resident(svg_id)
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&bitmap_tag),
+        AssetTagState::Resident(bitmap_id)
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&nearest_tag),
+        AssetTagState::Resident(nearest_id)
+    );
+    assert_eq!(
+        renderer.mesh_tag_state(&mesh_tag),
+        AssetTagState::Resident(mesh_id)
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&cache_tag),
+        AssetTagState::Resident(cache_id)
+    );
+
+    assert_eq!(
+        call_export(&mut runtime, &mut renderer, "attempt_while_dormant"),
+        1
+    );
+    for export in ["svg_id", "bitmap_id", "nearest_id", "mesh_id", "cache_id"] {
+        assert_eq!(
+            call_export(&mut runtime, &mut renderer, export),
+            0,
+            "{export} must be rejected while dormant"
+        );
+    }
+    assert_ne!(
+        call_export(&mut runtime, &mut renderer, "fit_id"),
+        0,
+        "bitmap-fit must still populate the disk cache while dormant"
+    );
+    assert!(
+        runtime.has_pending_image_decodes(),
+        "dormant bitmap-fit must start the cache-producing decode job"
+    );
+    let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
+    while runtime.has_pending_image_decodes() && Instant::now() < deadline {
+        runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+        std::thread::yield_now();
+    }
+    assert!(
+        !runtime.has_pending_image_decodes(),
+        "dormant bitmap-fit did not complete within {IMAGE_DECODE_COMPLETION_TIMEOUT:?}"
+    );
+    let cached_fit = cache
+        .get(DORMANT_FIT_TAG)
+        .expect("BUG: dormant bitmap-fit must populate the disk cache");
+    assert_eq!(
+        cached_fit.metadata(),
+        [1_u32.to_le_bytes(), 1_u32.to_le_bytes()].concat(),
+        "cached bitmap-fit metadata must retain the decoded dimensions"
+    );
+    assert_eq!(
+        cached_fit.bytes(),
+        [0, 255, 0, 255],
+        "cached bitmap-fit must retain the decoded pixel"
+    );
+    assert_eq!(
+        renderer.svg_tag_state(&svg_tag),
+        AssetTagState::Resident(svg_id)
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&bitmap_tag),
+        AssetTagState::Resident(bitmap_id)
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&nearest_tag),
+        AssetTagState::Resident(nearest_id)
+    );
+    assert_eq!(
+        renderer.mesh_tag_state(&mesh_tag),
+        AssetTagState::Resident(mesh_id)
+    );
+    assert_eq!(renderer.bitmap_tag_state(&fit_tag), AssetTagState::Unknown);
+    assert_eq!(
+        renderer.bitmap_tag_state(&cache_tag),
+        AssetTagState::Resident(cache_id)
+    );
 }

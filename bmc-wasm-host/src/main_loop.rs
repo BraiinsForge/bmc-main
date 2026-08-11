@@ -508,6 +508,28 @@ fn run_loop(
             let now = Instant::now();
             slot.apply_lifecycle(now, &shared.egl);
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
+            if slot.runtime.has_pending_lifecycle() {
+                let delivery_result = (|| -> anyhow::Result<()> {
+                    let gpu_render_lock =
+                        shared.acquire_gpu_render_lock("host_widget_lifecycle")?;
+                    slot.runtime
+                        .flush_pending_lifecycle_with_renderer(renderer_ptr);
+                    shared.flush_and_wait_gl();
+                    drop(gpu_render_lock);
+                    Ok(())
+                })();
+                if let Err(e) = delivery_result {
+                    if shared.is_context_lost() {
+                        return Err(FatalError::EglContextLost);
+                    }
+                    tracing::error!(
+                        peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
+                        "widget lifecycle delivery failed; tearing down slot"
+                    );
+                    to_teardown.push(*id);
+                    continue;
+                }
+            }
             if let Err(e) = slot.runtime.poll_deliveries_with_renderer(renderer_ptr) {
                 tracing::error!(
                     peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,

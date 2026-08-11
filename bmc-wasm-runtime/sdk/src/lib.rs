@@ -244,11 +244,13 @@
 //!
 //! Optional, paired with the dormancy edge. `on_sleep` fires when the widget
 //! scrolls off-scene; `on_wake` fires before the first frame when it returns.
-//! A lifecycle hook is a callback, not a signal —
-//! the host never touches a widget's assets on its own.
-//! A widget sheds its own assets in `on_sleep` (`Slot::evict()`,
-//! or `evict_all()` for the whole namespace) and re-registers in `on_wake`.
-//! `on_sleep` is also where it persists state to rebuild on wake.
+//! Renderer assets remain resident across sleep. Their IDs stay drawable after wake.
+//! Renderer asset registration remains blocked until wake, and eviction from later
+//! dormant callbacks is ignored. Explicit `Slot::evict()` or
+//! `evict_all()` in `on_sleep` is destructive, so use it only when those
+//! reservations should be lost.
+//! If sleep and wake coalesce before delivery, both hooks still run.
+//! `on_sleep` remains the place to persist guest state needed after wake.
 //!
 //! ## Lifecycle guard matrix
 //!

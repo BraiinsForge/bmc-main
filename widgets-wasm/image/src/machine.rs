@@ -114,7 +114,6 @@ pub enum Action {
     /// Seed the staleness anchor from a restored cache timestamp.
     SeedAnchor(i64),
     RequestFrame,
-    EvictBitmap,
 }
 
 /// Fold an event into the view, returning the next view and its side effects.
@@ -266,10 +265,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 vec![A::ResumePoll, A::RequestFrame],
             ),
         },
-        E::Sleep => (
-            View::Loading { decode: None },
-            vec![A::DisablePoll, A::EvictBitmap],
-        ),
+        E::Sleep => (View::Loading { decode: None }, vec![A::DisablePoll]),
     }
 }
 
@@ -497,8 +493,6 @@ mod tests {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::ParamsChanged);
         assert!(matches!(next, View::Loading { decode: None }));
         assert_eq!(actions, vec![Action::ResumePoll, Action::RequestFrame]);
-        // evict() is a renderer host import; from on_params_update it traps.
-        assert!(!actions.contains(&Action::EvictBitmap));
     }
 
     #[test]
@@ -568,10 +562,10 @@ mod tests {
     }
 
     #[test]
-    fn dormant_drops_bitmap_and_disables_poll() {
+    fn dormant_releases_view_and_disables_poll() {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::Sleep);
         assert!(matches!(next, View::Loading { decode: None }));
-        assert_eq!(actions, vec![Action::DisablePoll, Action::EvictBitmap]);
+        assert_eq!(actions, vec![Action::DisablePoll]);
     }
 
     #[test]

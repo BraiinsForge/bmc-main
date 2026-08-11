@@ -298,10 +298,13 @@ impl Default for RuntimeConfig {
     }
 }
 
-/// A lifecycle edge awaiting its guest hook.
+/// Coalesced lifecycle work awaiting renderer-backed delivery.
+/// Sleep supersedes an unobserved wake. A wake following a pending sleep
+/// delivers both hooks in order.
 enum PendingHook {
     Wake,
     Sleep,
+    SleepThenWake,
 }
 
 /// WebAssembly widget runtime.
@@ -346,7 +349,6 @@ pub struct WasmWidgetRuntime {
     /// Optional guest exports fired on the dormancy/wake edge.
     on_wake_func: Option<wasmi::TypedFunc<(), ()>>,
     on_sleep_func: Option<wasmi::TypedFunc<(), ()>>,
-    /// Lifecycle edge awaiting its hook (fired in `poll_deliveries` scope).
     pending_hook: Option<PendingHook>,
     sdk_version: (u16, u16, u16),
     /// Instruction budget reset before each WASM frame execution.
@@ -363,8 +365,6 @@ pub struct WasmWidgetRuntime {
     lifecycle_trap: Option<anyhow::Error>,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
-    /// Off-screen (`on_sleep` fired); suppresses async-decode GPU uploads.
-    pub(super) dormant: bool,
     /// How many consecutive fuel-outs before the widget is killed.
     max_fuel_strikes: u32,
     #[cfg(feature = "profiling")]
@@ -561,7 +561,6 @@ impl WasmWidgetRuntime {
             #[cfg(feature = "capture")]
             lifecycle_trap: None,
             fuel_dead: false,
-            dormant: false,
             max_fuel_strikes: 5,
             #[cfg(feature = "profiling")]
             wasm_w: ii_stopwatch::StopWatch::default(),
@@ -607,7 +606,6 @@ impl WasmWidgetRuntime {
         if self.fuel_dead {
             state.interaction.begin_frame();
             state.begin_render_frame();
-            Self::render_cached_tree(state, delta_ms);
             Self::draw_dead_overlay(state);
             tracing::trace!(instance_id = %state.instance_id, "render skipped because widget is dead");
             return Ok(RenderStatus::Dead);
@@ -727,7 +725,6 @@ impl WasmWidgetRuntime {
                 if self.fuel_strikes >= self.max_fuel_strikes {
                     self.fuel_dead = true;
                     let state = self.store.data_mut();
-                    Self::render_cached_tree(state, delta_ms);
                     Self::draw_dead_overlay(state);
                     return Ok(RenderStatus::Dead);
                 }
@@ -859,6 +856,9 @@ impl WasmWidgetRuntime {
     pub fn reset_fuel_state(&mut self) {
         self.fuel_strikes = 0;
         self.fuel_dead = false;
+        let state = self.store.data_mut();
+        let now = state.monotonic_ms;
+        state.frame_schedule.request_frame_after(0, now);
     }
 
     /// Set the wall-clock time and monotonic clock for the next render.
@@ -1040,31 +1040,66 @@ impl WasmWidgetRuntime {
         )
     }
 
+    /// Mark a newly attached runtime dormant without delivering a lifecycle hook.
+    pub fn initialize_dormant(&mut self) {
+        debug_assert!(
+            self.pending_hook.is_none(),
+            "initial dormancy must be established before lifecycle edges are queued"
+        );
+        self.store.data_mut().mark_renderer_assets_dormant();
+    }
+
     /// Queue the dormant edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_dormant(&mut self) -> bool {
+        self.store.data_mut().mark_renderer_assets_dormant();
         self.pending_hook = Some(PendingHook::Sleep);
-        self.dormant = true;
         self.on_sleep_func.is_some()
     }
 
     /// Queue the wake edge; the hook fires later, in `poll_deliveries` scope.
     pub fn notify_wake(&mut self) -> bool {
-        self.pending_hook = Some(PendingHook::Wake);
-        self.dormant = false;
+        self.pending_hook = match self.pending_hook.take() {
+            Some(PendingHook::Sleep | PendingHook::SleepThenWake) => {
+                Some(PendingHook::SleepThenWake)
+            }
+            Some(PendingHook::Wake) | None => Some(PendingHook::Wake),
+        };
+        let state = self.store.data_mut();
+        state.mark_renderer_assets_active();
+        let now = state.monotonic_ms;
+        state.frame_schedule.request_frame_after(0, now);
         self.on_wake_func.is_some()
     }
 
-    /// Fire the queued hook here, where the renderer is parked, so `on_wake` can restore assets.
+    #[must_use]
+    pub fn has_pending_lifecycle(&self) -> bool {
+        self.pending_hook.is_some()
+    }
+
+    /// Deliver queued hooks with renderer access for suspension and wake restoration.
     pub(super) fn flush_pending_lifecycle(&mut self) {
+        if self.pending_hook.is_some() && self.store.data().renderer_ptr.is_none() {
+            return;
+        }
         match self.pending_hook.take() {
             Some(PendingHook::Wake) => {
                 self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
             }
             Some(PendingHook::Sleep) => {
+                self.fire_sleep();
+            }
+            Some(PendingHook::SleepThenWake) => {
+                self.store.data_mut().mark_renderer_assets_dormant();
                 self.fire_update_hook(self.on_sleep_func, "on_sleep", Lifecycle::Sleep);
+                self.store.data_mut().mark_renderer_assets_active();
+                self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
             }
             None => {}
         }
+    }
+
+    fn fire_sleep(&mut self) {
+        self.fire_update_hook(self.on_sleep_func, "on_sleep", Lifecycle::Sleep);
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:
@@ -1296,6 +1331,15 @@ impl WasmWidgetRuntime {
             .get_global(&self.store, name)?
             .get(&self.store)
             .i32()
+    }
+
+    /// Observe whether dormant state blocks renderer asset registration.
+    ///
+    /// Hidden from the supported runtime API; exposed for integration testing.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn dormant_asset_registration_is_blocked(&self) -> bool {
+        self.store.data().renderer_assets_are_dormant()
     }
 
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.

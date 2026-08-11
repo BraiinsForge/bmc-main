@@ -657,6 +657,13 @@ impl FrameScheduleState {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RendererAssetGate {
+    Active,
+    Dormant,
+    DormantWarned,
+}
+
 /// Host-side state accessible to WASM via host functions.
 pub(crate) struct HostState {
     /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
@@ -664,6 +671,8 @@ pub(crate) struct HostState {
     /// trap the guest with `wasmi::Error::new("renderer accessed outside render scope")`
     /// rather than panic the host.
     pub renderer_ptr: Option<NonNull<dyn Renderer>>,
+
+    renderer_asset_gate: RendererAssetGate,
 
     /// Interaction state (hit testing, pending clicks)
     pub interaction: InteractionState,
@@ -932,6 +941,37 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
+    pub(crate) fn mark_renderer_assets_dormant(&mut self) {
+        self.renderer_asset_gate = RendererAssetGate::Dormant;
+    }
+
+    pub(crate) fn mark_renderer_assets_active(&mut self) {
+        self.renderer_asset_gate = RendererAssetGate::Active;
+    }
+
+    pub(crate) fn renderer_assets_are_dormant(&self) -> bool {
+        self.renderer_asset_gate != RendererAssetGate::Active
+    }
+
+    pub(crate) fn renderer_asset_mutation_is_enabled(&mut self) -> bool {
+        match self.renderer_asset_gate {
+            RendererAssetGate::Active => true,
+            RendererAssetGate::Dormant => {
+                self.renderer_asset_gate = RendererAssetGate::DormantWarned;
+                tracing::warn!(
+                    instance_id = %self.instance_id,
+                    "renderer asset mutation ignored while widget is dormant"
+                );
+                false
+            }
+            RendererAssetGate::DormantWarned => false,
+        }
+    }
+
+    pub(crate) fn renderer_asset_eviction_is_enabled(&self) -> bool {
+        self.current_lifecycle == Lifecycle::Sleep || !self.renderer_assets_are_dormant()
+    }
+
     /// In a hermetic run, record a breach and return `true`; else `false`.
     /// Call sites: `if state.refuse_live_io(kind, target) { return reject; }`.
     pub(crate) fn refuse_live_io(&mut self, kind: &str, target: &str) -> bool {
@@ -953,6 +993,7 @@ impl HostState {
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
+            renderer_asset_gate: RendererAssetGate::Active,
             interaction: InteractionState::new(),
             frame_schedule: FrameScheduleState::new(),
             tree_clicks: HashMap::new(),
@@ -1135,9 +1176,9 @@ impl HostState {
 mod tests {
     use super::{
         CancelDisposition, DelayedFetch, FetchState, FrameScheduleState, HermeticRun, HostState,
+        Lifecycle, RendererAssetGate,
     };
     use bmc_wasm_protocol::FetchRequestId;
-
     use crate::runtime_limits::RuntimeResourceLimits;
 
     /// A cancel names one request, and an id naming none can never settle.
@@ -1203,6 +1244,29 @@ mod tests {
             fetches.drain_settled().is_empty(),
             "and no settlement was manufactured for it"
         );
+    }
+
+    #[test]
+    fn dormant_eviction_does_not_consume_the_registration_warning() {
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+        );
+
+        state.mark_renderer_assets_dormant();
+        assert!(!state.renderer_asset_eviction_is_enabled());
+        assert_eq!(state.renderer_asset_gate, RendererAssetGate::Dormant);
+
+        assert!(!state.renderer_asset_mutation_is_enabled());
+        assert_eq!(state.renderer_asset_gate, RendererAssetGate::DormantWarned);
+
+        state.mark_renderer_assets_dormant();
+        state.current_lifecycle = Lifecycle::Sleep;
+        assert!(state.renderer_asset_eviction_is_enabled());
+        assert_eq!(state.renderer_asset_gate, RendererAssetGate::Dormant);
+
+        state.mark_renderer_assets_active();
+        assert!(state.renderer_asset_mutation_is_enabled());
     }
 
     #[test]

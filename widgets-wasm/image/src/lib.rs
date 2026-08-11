@@ -89,7 +89,6 @@ mod wasm_glue {
                 Action::MarkStale => with_poll(PollHandle::mark_stale),
                 Action::SeedAnchor(secs) => with_poll(|h| h.restore_anchor(secs)),
                 Action::RequestFrame => request_frame(),
-                Action::EvictBitmap => IMAGE.evict(),
             }
         }
     }

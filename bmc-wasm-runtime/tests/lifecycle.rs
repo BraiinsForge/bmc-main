@@ -48,17 +48,25 @@
 #![cfg(target_os = "linux")]
 
 use std::collections::BTreeMap;
+use std::time::{Duration, Instant};
 
+use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::renderer::{AssetTagState, Renderer};
+use bmc_wasm_protocol::SvgId;
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
 use bmc_wasm_runtime::{
-    CredentialView, NextAlarm, RuntimeConfig, SystemSettings, SystemSnapshot, WasmWidgetRuntime,
+    CredentialView, DiskCache, NextAlarm, RenderStatus, RuntimeConfig, SystemSettings,
+    SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_widget_manifest::{ParamKey, ParamValue};
 use bmc_widget_protocol::CredentialSecrets;
 
+#[path = "common/asset_fixtures.rs"]
+mod asset_fixtures;
 mod common;
+use asset_fixtures::{compiled_empty_svg, one_px_png, renderer_ptr, wat_string_literal};
 use common::headless_egl;
 
 // ── Probe widget fixtures (hand-rolled WAT) ─────────────────────────
@@ -349,6 +357,351 @@ fn network_probe_widget_wat() -> String {
     )
 }
 
+const LIFECYCLE_ASSET_TAG: &str = "static";
+const DORMANT_IMAGE_DECODE_TAG: &str = "late-image";
+const IMAGE_DECODE_COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
+
+fn sleep_asset_probe_wat(on_sleep_export: &str) -> String {
+    let svg = compiled_empty_svg();
+    let svg_ptr = LIFECYCLE_ASSET_TAG.len();
+    let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
+    data.extend_from_slice(&svg);
+    let data = wat_string_literal(&data);
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_svg"
+            (func $register_svg (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $asset_id (mut i32) (i32.const 0))
+          (global $sleep_count (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32)
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $register_svg
+            global.set $asset_id)
+          {on_sleep_export}
+          (func (export "asset_id") (result i32) global.get $asset_id)
+          (func (export "sleep_count") (result i32) global.get $sleep_count))
+        "#,
+        tag_len = LIFECYCLE_ASSET_TAG.len(),
+        svg_len = svg.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
+fn deferred_sleep_then_wake_probe_wat() -> String {
+    let svg = compiled_empty_svg();
+    let svg_ptr = LIFECYCLE_ASSET_TAG.len();
+    let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
+    data.extend_from_slice(&svg);
+    let data = wat_string_literal(&data);
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_svg"
+            (func $register_svg (param i32 i32 i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $asset_id (mut i32) (i32.const 0))
+          (global $event_order (mut i32) (i32.const 0))
+          (global $sleep_registration_id (mut i32) (i32.const 0))
+          (global $wake_probe_id (mut i32) (i32.const 0))
+          (global $wake_restore_id (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32)
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $register_svg
+            global.set $asset_id)
+          (func (export "on_sleep")
+            global.get $event_order
+            i32.const 10
+            i32.mul
+            i32.const 1
+            i32.add
+            global.set $event_order
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $register_svg
+            global.set $sleep_registration_id
+            unreachable)
+          (func (export "on_wake")
+            global.get $event_order
+            i32.const 10
+            i32.mul
+            i32.const 2
+            i32.add
+            global.set $event_order
+            i32.const 0
+            i32.const {tag_len}
+            i32.const -1
+            i32.const 1
+            call $register_svg
+            global.set $wake_probe_id
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $register_svg
+            global.set $wake_restore_id
+            unreachable)
+          (func (export "asset_id") (result i32) global.get $asset_id)
+          (func (export "event_order") (result i32) global.get $event_order)
+          (func (export "reset_event_order") (result i32)
+            i32.const 0
+            global.set $event_order
+            i32.const 0)
+          (func (export "sleep_registration_id") (result i32)
+            global.get $sleep_registration_id)
+          (func (export "wake_probe_id") (result i32) global.get $wake_probe_id)
+          (func (export "wake_restore_id") (result i32) global.get $wake_restore_id))
+        "#,
+        tag_len = LIFECYCLE_ASSET_TAG.len(),
+        svg_len = svg.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
+fn dormant_image_decode_probe_wat() -> String {
+    let png = one_px_png([0, 255, 0, 255]);
+    let png_ptr = DORMANT_IMAGE_DECODE_TAG.len();
+    let mut data = DORMANT_IMAGE_DECODE_TAG.as_bytes().to_vec();
+    data.extend_from_slice(&png);
+    let data = wat_string_literal(&data);
+
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_bitmap_fit"
+            (func $register_fit
+              (param i32 i32 i32 i32 i32 i32 i32 i32 i32)
+              (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $ready_count (mut i32) (i32.const 0))
+          (global $dropped_count (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32))
+          (func (export "start_decode") (result i32)
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {png_ptr}
+            i32.const {png_len}
+            i32.const 1
+            i32.const 1
+            i32.const 0
+            i32.const 0
+            i32.const 0
+            call $register_fit)
+          (func (export "__on_image_ready") (param i32 i32)
+            global.get $ready_count
+            i32.const 1
+            i32.add
+            global.set $ready_count)
+          (func (export "__on_image_dropped") (param i32)
+            global.get $dropped_count
+            i32.const 1
+            i32.add
+            global.set $dropped_count)
+          (func (export "ready_count") (result i32) global.get $ready_count)
+          (func (export "dropped_count") (result i32) global.get $dropped_count))
+        "#,
+        tag_len = DORMANT_IMAGE_DECODE_TAG.len(),
+        png_len = png.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
+fn cache_lifecycle_probe_wat() -> String {
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_bitmap_from_cache"
+            (func $register_cache (param i32 i32) (result i32)))
+          (import "env" "host_evict_prefix"
+            (func $evict_prefix (param i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "image")
+          (global $initial_bitmap_id (mut i32) (i32.const 0))
+          (global $wake_bitmap_id (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32)
+            i32.const 0
+            i32.const 5
+            call $register_cache
+            global.set $initial_bitmap_id)
+          (func (export "on_sleep")
+            i32.const 0
+            i32.const 5
+            call $evict_prefix
+            drop)
+          (func (export "on_wake")
+            i32.const 0
+            i32.const 5
+            call $register_cache
+            global.set $wake_bitmap_id)
+          (func (export "initial_bitmap_id") (result i32)
+            global.get $initial_bitmap_id)
+          (func (export "wake_bitmap_id") (result i32)
+            global.get $wake_bitmap_id))
+        "#,
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
+fn active_asset_tree_bytes() -> Vec<u8> {
+    let svg_id = SvgId::from_ffi(1).expect("BUG: first SVG registry ID must be valid");
+    let draw = bmc_wasm_sdk::Draw::svg_builtin(
+        0.0,
+        0.0,
+        32.0,
+        32.0,
+        svg_id,
+        bmc_wasm_protocol::colors::Color::from_rgba(0xFF, 0xFF, 0xFF, 0xFF),
+    )
+    .animate(
+        bmc_wasm_sdk::AnimProperty::Alpha,
+        1.0,
+        0.5,
+        10_000,
+        bmc_wasm_sdk::Easing::Linear,
+        bmc_wasm_sdk::LoopMode::Forever,
+    );
+    let node = bmc_wasm_sdk::canvas(bmc_wasm_sdk::PropsData::default(), [draw]);
+    bmc_wasm_sdk::serialize_node_to_bytes(&node)
+}
+
+fn active_asset_probe_wat(burn_after_first_render: bool) -> String {
+    let svg = compiled_empty_svg();
+    let tree = active_asset_tree_bytes();
+    let svg_ptr = LIFECYCLE_ASSET_TAG.len();
+    let tree_ptr = svg_ptr + svg.len();
+    let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
+    data.extend_from_slice(&svg);
+    data.extend_from_slice(&tree);
+    let data = wat_string_literal(&data);
+    let burn = if burn_after_first_render {
+        r"
+            global.get $render_count
+            i32.const 1
+            i32.gt_u
+            global.get $render_count
+            i32.const 6
+            i32.le_u
+            i32.and
+            if
+              loop $burn
+                br $burn
+              end
+            end
+        "
+    } else {
+        ""
+    };
+    let (request_frame_import, request_frame_call) = if burn_after_first_render {
+        (
+            r#"(import "env" "host_request_frame" (func $request_frame))"#,
+            "call $request_frame",
+        )
+    } else {
+        ("", "")
+    };
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_svg"
+            (func $register_svg (param i32 i32 i32 i32) (result i32)))
+          (import "env" "host_submit_tree"
+            (func $submit_tree (param i32 i32 i32 i32)))
+          {request_frame_import}
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $asset_id (mut i32) (i32.const 0))
+          (global $render_count (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32)
+            global.get $render_count
+            i32.const 1
+            i32.add
+            global.set $render_count
+            {burn}
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $register_svg
+            global.set $asset_id
+            i32.const {tree_ptr}
+            i32.const {tree_len}
+            i32.const 320
+            i32.const 240
+            call $submit_tree
+            {request_frame_call})
+          (func (export "asset_id") (result i32) global.get $asset_id)
+          (func (export "render_count") (result i32) global.get $render_count))
+        "#,
+        tag_len = LIFECYCLE_ASSET_TAG.len(),
+        svg_len = svg.len(),
+        tree_len = tree.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
+fn dormant_callback_probe_wat() -> String {
+    let svg = compiled_empty_svg();
+    let svg_ptr = LIFECYCLE_ASSET_TAG.len();
+    let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
+    data.extend_from_slice(&svg);
+    let data = wat_string_literal(&data);
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_svg"
+            (func $register_svg (param i32 i32 i32 i32) (result i32)))
+          (import "env" "host_evict_prefix"
+            (func $evict_prefix (param i32 i32) (result i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $asset_id (mut i32) (i32.const 0))
+          (global $callback_id (mut i32) (i32.const -1))
+          (global $callback_evicted (mut i32) (i32.const -1))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func $register (result i32)
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {svg_ptr}
+            i32.const {svg_len}
+            call $register_svg)
+          (func (export "render") (param i32)
+            call $register
+            global.set $asset_id)
+          (func (export "on_network_update")
+            i32.const 0
+            i32.const {tag_len}
+            call $evict_prefix
+            global.set $callback_evicted
+            call $register
+            global.set $callback_id)
+          (func (export "asset_id") (result i32) global.get $asset_id)
+          (func (export "callback_evicted") (result i32)
+            global.get $callback_evicted)
+          (func (export "callback_id") (result i32) global.get $callback_id))
+        "#,
+        tag_len = LIFECYCLE_ASSET_TAG.len(),
+        svg_len = svg.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────
 
 fn credential_update_probe_widget_wat() -> String {
@@ -429,6 +782,52 @@ fn build_runtime_with_system(
     )
     .expect("BUG: probe runtime must construct");
     (runtime, renderer)
+}
+
+fn build_runtime_with_config(
+    wat: impl AsRef<str>,
+    gl: &headless_egl::HeadlessGl,
+    config: RuntimeConfig,
+) -> (WasmWidgetRuntime, FemtoVgRenderer) {
+    let wasm = wat::parse_str(wat).expect("BUG: probe WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let renderer = unsafe { FemtoVgRenderer::new(&mut proc, 320, 240, gl.fbo_id, 0) }
+        .expect("BUG: probe renderer must construct");
+    let runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
+        config,
+    )
+    .expect("BUG: probe runtime must construct");
+    (runtime, renderer)
+}
+
+fn render_frame(
+    runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
+    delta_ms: u32,
+) -> RenderStatus {
+    renderer.begin_frame(320, 240, 1.0);
+    let status = runtime
+        .with_renderer(renderer_ptr(renderer), |runtime| runtime.render(delta_ms))
+        .expect("BUG: probe render must not trap");
+    renderer.flush();
+    status
+}
+
+fn lifecycle_svg_state(
+    runtime: &WasmWidgetRuntime,
+    renderer: &FemtoVgRenderer,
+) -> AssetTagState<SvgId> {
+    renderer.svg_tag_state(&format!(
+        "{}:{LIFECYCLE_ASSET_TAG}",
+        runtime.asset_namespace()
+    ))
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -934,5 +1333,500 @@ fn widget_without_on_network_update_is_silently_skipped() {
     assert!(
         !runtime.wants_next_frame(),
         "no hook means no request_frame; the widget sees the new info on its next natural render"
+    );
+}
+
+#[test]
+fn dormant_widget_without_sleep_hook_retains_guest_memory_assets() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) =
+        build_runtime_with_config(sleep_asset_probe_wat(""), &gl, RuntimeConfig::default());
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let asset_id = SvgId::from_ffi(
+        u32::try_from(
+            runtime
+                .call_export_i32("asset_id")
+                .expect("BUG: sleep probe must export asset_id"),
+        )
+        .expect("BUG: asset ID must fit u32"),
+    )
+    .expect("BUG: initial SVG registration must return an ID");
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+
+    assert!(!runtime.notify_dormant());
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id),
+        "guest-memory assets must stay drawable after wake"
+    );
+}
+
+#[test]
+fn trapping_sleep_hook_still_retains_assets() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) = build_runtime_with_config(
+        sleep_asset_probe_wat(r#"(func (export "on_sleep") unreachable)"#),
+        &gl,
+        RuntimeConfig::default(),
+    );
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let asset_id = SvgId::from_ffi(
+        u32::try_from(
+            runtime
+                .call_export_i32("asset_id")
+                .expect("BUG: sleep probe must export asset_id"),
+        )
+        .expect("BUG: asset ID must fit u32"),
+    )
+    .expect("BUG: initial SVG registration must return an ID");
+
+    assert!(runtime.notify_dormant());
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+}
+
+#[test]
+fn rendererless_delivery_retains_pending_sleep_edge() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let on_sleep = r#"
+        (func (export "on_sleep")
+          global.get $sleep_count
+          i32.const 1
+          i32.add
+          global.set $sleep_count)
+    "#;
+    let (mut runtime, mut renderer) = build_runtime_with_config(
+        sleep_asset_probe_wat(on_sleep),
+        &gl,
+        RuntimeConfig::default(),
+    );
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let AssetTagState::Resident(asset_id) = lifecycle_svg_state(&runtime, &renderer) else {
+        panic!("BUG: initial SVG must be resident");
+    };
+    assert!(
+        !runtime.has_pending_lifecycle(),
+        "an idle runtime must not require a GPU-locked lifecycle flush"
+    );
+
+    assert!(runtime.notify_dormant());
+    assert!(runtime.has_pending_lifecycle());
+    runtime.poll_deliveries();
+    assert_eq!(runtime.call_export_i32("sleep_count"), Some(0));
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id),
+        "rendererless delivery must not consume the sleep edge"
+    );
+
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert!(!runtime.has_pending_lifecycle());
+    assert_eq!(runtime.call_export_i32("sleep_count"), Some(1));
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+}
+
+#[test]
+fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) = build_runtime_with_config(
+        deferred_sleep_then_wake_probe_wat(),
+        &gl,
+        RuntimeConfig::default(),
+    );
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let AssetTagState::Resident(asset_id) = lifecycle_svg_state(&runtime, &renderer) else {
+        panic!("BUG: initial SVG must be resident");
+    };
+
+    assert!(runtime.notify_dormant());
+    runtime.poll_deliveries();
+    assert_eq!(runtime.call_export_i32("event_order"), Some(0));
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id),
+        "rendererless delivery must retain the sleep edge"
+    );
+
+    assert!(runtime.notify_wake());
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+
+    assert_eq!(
+        runtime.call_export_i32("event_order"),
+        Some(12),
+        "sleep must run before wake when both edges await a renderer"
+    );
+    assert_eq!(
+        runtime.call_export_i32("sleep_registration_id"),
+        Some(0),
+        "the deferred sleep hook must remain dormant and reject registration"
+    );
+    assert_eq!(
+        runtime.call_export_i32("wake_probe_id"),
+        Some(i32::try_from(asset_id.to_ffi()).expect("BUG: SVG ID must fit i32")),
+        "coalesced sleep and wake must preserve the resident asset"
+    );
+    assert_eq!(
+        runtime.call_export_i32("wake_restore_id"),
+        Some(i32::try_from(asset_id.to_ffi()).expect("BUG: SVG ID must fit i32"))
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+}
+
+#[test]
+fn sleep_after_deferred_wake_coalesces_to_final_dormant_state() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) = build_runtime_with_config(
+        deferred_sleep_then_wake_probe_wat(),
+        &gl,
+        RuntimeConfig::default(),
+    );
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let AssetTagState::Resident(asset_id) = lifecycle_svg_state(&runtime, &renderer) else {
+        panic!("BUG: initial SVG must be resident");
+    };
+    runtime.notify_dormant();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert_eq!(runtime.call_export_i32("reset_event_order"), Some(0));
+
+    runtime.notify_wake();
+    runtime.poll_deliveries();
+    runtime.notify_dormant();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+
+    assert_eq!(
+        runtime.call_export_i32("event_order"),
+        Some(1),
+        "the unobserved wake must collapse into the final sleep edge"
+    );
+    assert_eq!(
+        runtime.call_export_i32("wake_restore_id"),
+        Some(0),
+        "the superseded wake must not restore the asset"
+    );
+    assert!(
+        runtime.dormant_asset_registration_is_blocked(),
+        "the final sleep must remain active"
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+}
+
+#[test]
+fn rendererless_dormant_poll_drops_completed_image_decode() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) = build_runtime_with_config(
+        dormant_image_decode_probe_wat(),
+        &gl,
+        RuntimeConfig::default(),
+    );
+    let job_id = runtime
+        .with_renderer(renderer_ptr(&mut renderer), |runtime| {
+            runtime.call_export_i32("start_decode")
+        })
+        .expect("BUG: decode probe must export start_decode");
+    assert_ne!(job_id, 0, "active decode registration must start a job");
+
+    runtime.notify_dormant();
+    let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
+    while runtime.has_pending_image_decodes() && Instant::now() < deadline {
+        runtime.poll_deliveries();
+        std::thread::yield_now();
+    }
+
+    assert!(
+        !runtime.has_pending_image_decodes(),
+        "one-pixel image decode did not complete within {IMAGE_DECODE_COMPLETION_TIMEOUT:?}"
+    );
+    assert_eq!(
+        runtime.call_export_i32("dropped_count"),
+        Some(1),
+        "the dormant completion must reclaim the guest's pending job"
+    );
+    assert_eq!(
+        runtime.call_export_i32("ready_count"),
+        Some(0),
+        "the dormant completion must not drive the active callback"
+    );
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert_eq!(
+        renderer.bitmap_tag_state(&format!(
+            "{}:{DORMANT_IMAGE_DECODE_TAG}",
+            runtime.asset_namespace()
+        )),
+        AssetTagState::Unknown,
+        "the renderer-less dormant completion must not create a reservation"
+    );
+}
+
+#[test]
+fn sleep_eviction_and_wake_cache_restore_allocate_a_fresh_bitmap_id() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
+    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
+    let mut metadata = Vec::from(1_u32.to_le_bytes());
+    metadata.extend_from_slice(&1_u32.to_le_bytes());
+    metadata.extend_from_slice(b"arbitrary identity");
+    cache
+        .put("image", 1, &metadata, &[0x11, 0x22, 0x33, 0xFF])
+        .expect("BUG: cache fixture must be writable");
+    let config = RuntimeConfig {
+        asset_cache: Some(cache),
+        ..RuntimeConfig::default()
+    };
+    let (mut runtime, mut renderer) =
+        build_runtime_with_config(cache_lifecycle_probe_wat(), &gl, config);
+    let renderer_tag = format!("{}:image", runtime.asset_namespace());
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let first_raw = u32::try_from(
+        runtime
+            .call_export_i32("initial_bitmap_id")
+            .expect("BUG: cache probe must export initial_bitmap_id"),
+    )
+    .expect("BUG: bitmap ID must fit u32");
+    let first_id = bmc_wasm_protocol::BitmapId::from_ffi(first_raw)
+        .expect("BUG: initial cache restore must return an ID");
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Resident(first_id)
+    );
+
+    assert!(runtime.notify_dormant());
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Unknown
+    );
+
+    assert!(runtime.notify_wake());
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    let wake_raw = u32::try_from(
+        runtime
+            .call_export_i32("wake_bitmap_id")
+            .expect("BUG: cache probe must export wake_bitmap_id"),
+    )
+    .expect("BUG: bitmap ID must fit u32");
+    let wake_id = bmc_wasm_protocol::BitmapId::from_ffi(wake_raw)
+        .expect("BUG: wake cache restore must return a nonzero ID");
+    assert_ne!(
+        wake_id, first_id,
+        "explicit on_sleep eviction must retire the old ID"
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Resident(wake_id)
+    );
+}
+
+#[test]
+fn first_wake_frame_runs_guest_with_resident_asset() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) =
+        build_runtime_with_config(active_asset_probe_wat(false), &gl, RuntimeConfig::default());
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    assert_eq!(runtime.call_export_i32("render_count"), Some(1));
+    let AssetTagState::Resident(asset_id) = lifecycle_svg_state(&runtime, &renderer) else {
+        panic!("BUG: initial SVG must be resident");
+    };
+    assert_eq!(
+        asset_id.to_ffi(),
+        1,
+        "cached tree fixture uses the first SVG ID"
+    );
+    assert!(
+        runtime.wants_next_frame(),
+        "looping animation must make cached-tree replay eligible"
+    );
+
+    runtime.notify_dormant();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+
+    runtime.notify_wake();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+
+    assert_eq!(
+        runtime.call_export_i32("render_count"),
+        Some(2),
+        "wake must force exactly one full guest frame instead of animation-only replay"
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id),
+        "the first wake render must preserve the asset ID"
+    );
+}
+
+#[test]
+fn renderer_scoped_callback_cannot_mutate_assets_while_dormant() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let (mut runtime, mut renderer) =
+        build_runtime_with_config(dormant_callback_probe_wat(), &gl, RuntimeConfig::default());
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let AssetTagState::Resident(asset_id) = lifecycle_svg_state(&runtime, &renderer) else {
+        panic!("BUG: initial SVG must be resident");
+    };
+    runtime.notify_dormant();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+
+    let callback_ran = runtime.with_renderer(renderer_ptr(&mut renderer), |runtime| {
+        runtime.deliver_network_update()
+    });
+
+    assert!(callback_ran, "network callback must reach the guest");
+    assert_eq!(
+        runtime.call_export_i32("callback_evicted"),
+        Some(0),
+        "a dormant callback must not destroy the resident reservation"
+    );
+    assert_eq!(runtime.call_export_i32("callback_id"), Some(0));
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+}
+
+#[test]
+fn fuel_dead_frames_skip_cached_assets_and_reset_forces_guest_execution() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let config = RuntimeConfig {
+        fuel_per_frame: 5_000,
+        ..RuntimeConfig::default()
+    };
+    let (mut runtime, mut renderer) =
+        build_runtime_with_config(active_asset_probe_wat(true), &gl, config);
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    let AssetTagState::Resident(asset_id) = lifecycle_svg_state(&runtime, &renderer) else {
+        panic!("BUG: initial SVG must be resident");
+    };
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+
+    for strike in 1..5 {
+        assert_eq!(
+            render_frame(&mut runtime, &mut renderer, 16),
+            RenderStatus::FuelExhausted,
+            "strike {strike} must remain transient"
+        );
+    }
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Dead
+    );
+    assert!(
+        !runtime.wants_next_frame(),
+        "first permanent-death frame must not replay the animated cached tree"
+    );
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Dead
+    );
+    assert!(
+        !runtime.wants_next_frame(),
+        "already-dead frames must draw only the self-contained overlay"
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
+    );
+
+    runtime.reset_fuel_state();
+    assert!(
+        runtime.wants_next_frame(),
+        "reset must request an immediate frame"
+    );
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    assert_eq!(
+        runtime.call_export_i32("render_count"),
+        Some(7),
+        "reset must force guest execution instead of cached-tree replay"
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(asset_id)
     );
 }

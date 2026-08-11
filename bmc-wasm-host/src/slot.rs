@@ -414,12 +414,13 @@ impl<S: SlotSurface> WidgetSlot<S> {
 
     fn from_parts_with_identity(
         surface: S,
-        runtime: WasmWidgetRuntime,
+        mut runtime: WasmWidgetRuntime,
         factory: Rc<dyn RenderTargetFactory>,
         control_socket: UnixStream,
         led_rx: mpsc::Receiver<LedRequest>,
         identity: SlotIdentity,
     ) -> Self {
+        runtime.initialize_dormant();
         Self {
             surface,
             runtime,

@@ -41,6 +41,10 @@ fn read_tag(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String
     String::from_utf8(bytes).ok()
 }
 
+fn registration_is_enabled(caller: &mut Caller<'_, HostState>) -> bool {
+    caller.data_mut().renderer_asset_mutation_is_enabled()
+}
+
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_svg_import(linker)?;
     register_bitmap_import(linker)?;
@@ -68,6 +72,9 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
          tag_ptr: u32,
          tag_len: u32|
          -> Result<u32, wasmi::Error> {
+            if !registration_is_enabled(&mut caller) {
+                return Ok(0);
+            }
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
@@ -121,6 +128,9 @@ fn register_svg_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
+            if !registration_is_enabled(&mut caller) {
+                return Ok(0);
+            }
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
@@ -152,6 +162,9 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
+            if !registration_is_enabled(&mut caller) {
+                return Ok(0);
+            }
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
@@ -186,6 +199,9 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
+            if !registration_is_enabled(&mut caller) {
+                return Ok(0);
+            }
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
@@ -324,6 +340,9 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
          data_ptr: u32,
          data_len: u32|
          -> Result<u32, wasmi::Error> {
+            if !registration_is_enabled(&mut caller) {
+                return Ok(0);
+            }
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };

@@ -262,9 +262,13 @@ impl WasmWidgetRuntime {
 
     /// Upload completed off-thread image decodes and notify
     /// the guest via `__on_image_ready`.
-    /// A render-less poll defers them to the next render.
+    /// An active renderer-less poll defers them until a renderer is available.
+    /// A dormant renderer-less poll drops them through `__on_image_dropped`
+    /// without uploading renderer assets.
     pub fn deliver_image_decode_results(&mut self) {
-        if self.store.data().renderer_ptr.is_none() {
+        if self.store.data().renderer_ptr.is_none()
+            && !self.store.data().renderer_assets_are_dormant()
+        {
             return;
         }
 
@@ -291,7 +295,7 @@ impl WasmWidgetRuntime {
             .get_typed_func::<u32, ()>(&self.store, "__on_image_dropped")
             .ok();
 
-        let dormant = self.dormant;
+        let dormant = self.store.data().renderer_assets_are_dormant();
         for done in completed {
             self.store
                 .data_mut()

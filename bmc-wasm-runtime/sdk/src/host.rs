@@ -92,7 +92,6 @@ mod ffi {
             data_ptr: *const u8,
             data_len: u32,
         ) -> u32;
-
         // Bitmap registration. The host dedups by tag.
         pub(super) fn host_register_bitmap(
             tag_ptr: *const u8,
@@ -126,7 +125,6 @@ mod ffi {
             data_ptr: *const u8,
             data_len: u32,
         ) -> u32;
-
         // Audio registration and playback
         fn host_register_audio(
             data_ptr: *const u8,
