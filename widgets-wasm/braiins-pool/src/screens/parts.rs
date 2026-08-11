@@ -551,7 +551,7 @@ pub const WORKERS_ROOMY: WorkersSpec = WorkersSpec {
 /// per state.
 #[must_use]
 pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -> Node {
-    let line = |state: WorkerState, count: Option<u64>| {
+    let line = |state: WorkerState, count: Option<usize>| {
         let count_line = match count {
             Some(count) => text(
                 format_number!(count, 0),
@@ -570,7 +570,14 @@ pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -
     let rows = |counts: Option<&WorkerCounts>| {
         let mut lines = vec![];
         if spec.include_all {
-            let total = counts.map(|c| c.active + c.low + c.offline + c.disabled);
+            // Saturating: `usize` is 32-bit on wasm32, and the parse admits any
+            // count up to `u32::MAX`, so four of them need not sum inside one.
+            let total = counts.map(|c| {
+                c.active
+                    .saturating_add(c.low)
+                    .saturating_add(c.offline)
+                    .saturating_add(c.disabled)
+            });
             lines.push(line(WorkerState::All, total));
         }
         lines.push(line(WorkerState::Active, counts.map(|c| c.active)));

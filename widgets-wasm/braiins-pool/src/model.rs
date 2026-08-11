@@ -184,10 +184,10 @@ fn merge_bound(a: Option<i64>, b: Option<i64>, pick: fn(i64, i64) -> i64) -> Opt
 /// Worker counts by state, straight from `/user/workers/current`.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct WorkerCounts {
-    pub active: u64,
-    pub low: u64,
-    pub offline: u64,
-    pub disabled: u64,
+    pub active: usize,
+    pub low: usize,
+    pub offline: usize,
+    pub disabled: usize,
 }
 
 /// Today's reward estimate from `/user/rewards/latest`.

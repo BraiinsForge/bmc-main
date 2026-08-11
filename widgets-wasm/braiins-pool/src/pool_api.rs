@@ -181,7 +181,7 @@ pub fn parse_rewards(json: &impl JsonLookup) -> Option<Rewards> {
 
 #[must_use]
 pub fn parse_workers_current(json: &impl JsonLookup) -> Option<WorkerCounts> {
-    let count = |path: &str| json.i64(path).and_then(|v| u64::try_from(v).ok());
+    let count = |path: &str| json.i64(path).and_then(|v| usize::try_from(v).ok());
     Some(WorkerCounts {
         active: count("/active_workers")?,
         low: count("/low_workers")?,
