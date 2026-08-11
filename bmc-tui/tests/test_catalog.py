@@ -1134,7 +1134,7 @@ def test_await_package_activation_aborts_when_the_orchestrator_lingers() -> None
 
 
 def test_await_package_activation_rejects_a_core_without_targeted_reload() -> None:
-    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "111", "test -x": ""}))
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "111", "test -x": "no"}))
     with pytest.raises(Abort, match="deploy a current core"):
         catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
     assert not _restarted(backend)

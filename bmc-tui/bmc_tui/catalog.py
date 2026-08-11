@@ -632,7 +632,16 @@ def register_default_servers(
 
 
 _WASM_HOST = "bmc-wasm-host"
-_WIDGET_RELOAD_HOOK = "/run/current-profile/core/activation/scripts/999-signal-widget-reload"
+_WIDGET_RELOAD_PROBE = (
+    "if test -x /run/current-profile/core/activation/scripts/"
+    "999-signal-widget-reload; then echo yes; else echo no; fi"
+)
+
+
+def widget_reload_available(read: Callable[[str], str]) -> bool:
+    result = read(_WIDGET_RELOAD_PROBE).strip()
+    require(result in {"yes", "no"}, f"unexpected widget reload hook probe output: {result!r}")
+    return result == "yes"
 
 
 @stage("Stop compositor")
@@ -717,7 +726,7 @@ def await_package_activation(dev: Device, *, old_pid: Pid | None) -> str:
         return f"compositor started during activation (pid {now})"
     if now != old_pid:
         return f"compositor restarted by the service orchestrator (pid {now})"
-    if dev.read(f"test -x {_WIDGET_RELOAD_HOOK} && echo yes || true") == "yes":
+    if widget_reload_available(dev.read):
         return "activation completed; compositor undisturbed (widget reload hook present)"
 
     raise Abort("active core cannot reload widgets; deploy a current core package first")

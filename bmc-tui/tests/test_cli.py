@@ -31,6 +31,7 @@ from bmc_tui.procedures.e2e_grpc_sysupgrade import E2eGrpcSysupgrade
 from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
+from bmc_tui.procedures.widget_host_e2e import WidgetHostE2e
 
 
 def test_init_parses_args() -> None:
@@ -86,3 +87,13 @@ def test_register_server_is_a_deck_subcommand(capsys: pytest.CaptureFixture[str]
     with pytest.raises(SystemExit):
         cli.main(["register-server", "--help"])
     assert "register-server" in capsys.readouterr().out
+
+
+def test_widget_host_e2e_parses_args() -> None:
+    cmd = tyro.cli(
+        WidgetHostE2e,
+        args=["--device", "h", "--profile", "debug", "--max-jobs", "2"],
+    )
+    assert cmd.device == "h"
+    assert cmd.profile == "debug"
+    assert cmd.max_jobs == 2
