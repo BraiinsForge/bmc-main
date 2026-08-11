@@ -18,7 +18,17 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-{ pkgs, ty-bin, profiles, deckPackages, wasmExamples, wasmWidgetsBundle, wasmStackSize }:
+{ pkgs
+, ty-bin
+, profiles
+, crates
+, deckPackages
+, wasmExamples
+, wasmWidgetsBundle
+, wasmStackSize
+, wasmWrapperTestPackages
+,
+}:
 
 let
   lib = pkgs.lib;
@@ -38,10 +48,161 @@ let
   publicJpg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpg";
   publicJpeg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpeg";
   rejects = value: !(builtins.tryEval (builtins.deepSeq value true)).success;
+  parseSdkMajor = import ./sdk-major.nix { inherit lib; };
+  sdkMajor = parseSdkMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
+  launcher = deckPackages.core.pkg.wasmLauncher;
+  profileWrapper = deckPackages.widget-clock.pkg;
+  bakedWrapper = wasmWrapperTestPackages.baked;
+  inherit (wasmWrapperTestPackages) mkWasmLauncher;
+  serviceLib = import ./service.nix { inherit pkgs lib; };
+  fakeThin = pkgs.writeShellApplication {
+    name = "bmc-wasm-thin";
+    text = "exit 0";
+  };
+  changedThin = pkgs.writeShellApplication {
+    name = "bmc-wasm-thin";
+    text = "exit 1";
+  };
+  fakeHost = pkgs.writeShellApplication {
+    name = "bmc-wasm-host";
+    text = "exit 0";
+  };
+  changedHost = pkgs.writeShellApplication {
+    name = "bmc-wasm-host";
+    text = "exit 1";
+  };
+  dependencyLauncher = mkWasmLauncher { thin = fakeThin; host = fakeHost; };
+  hostChangedLauncher = mkWasmLauncher { thin = fakeThin; host = changedHost; };
+  thinChangedLauncher = mkWasmLauncher { thin = changedThin; host = fakeHost; };
+  mkDependencyService = dependsOn: serviceLib.mkOpenWrtService {
+    name = "dependency-test";
+    start = 63;
+    inherit dependsOn;
+  };
+  noDependencyService = mkDependencyService [ ];
+  dependencyService = mkDependencyService [ dependencyLauncher ];
+  hostChangedService = mkDependencyService [ hostChangedLauncher ];
+  thinChangedService = mkDependencyService [ thinChangedLauncher ];
+  orderedDependencyService = mkDependencyService [ fakeThin fakeHost ];
+  productionDependencyService = mkDependencyService [ launcher ];
+
+  productionCrates = {
+    inherit (crates) bmc bmc-openwrt wasm-thin wasm-host;
+  };
+  productionSourceFiles = lib.unique (lib.concatLists (lib.mapAttrsToList
+    (_: crate: (profiles.fast.buildCrate crate { }).srcFiles)
+    productionCrates));
+  expectedProductionRoots = [
+    "bmc/Cargo.toml"
+    "bmc-openwrt/Cargo.toml"
+    "bmc-wasm-thin/Cargo.toml"
+    "bmc-wasm-host/Cargo.toml"
+  ];
+  forbiddenSourceRoots = [ "widgets" "widgets-wasm" "widgets-wasm-examples" ];
+  isUnder = root: path: path == root || lib.hasPrefix "${root}/" path;
+  sourceBoundaryViolations = builtins.filter
+    (path: builtins.any (root: isUnder root path) forbiddenSourceRoots)
+    productionSourceFiles;
+  leafCrateLeaks = builtins.filter
+    (isUnder "bmc-widget-manifest-tests")
+    productionSourceFiles;
   licenseHeaderExtensions = lib.filter (extension: extension != "")
     (lib.splitString "\n" (builtins.readFile ../scripts/license_header_extensions.txt));
 in
 {
+  production-widget-source-boundary =
+    assert lib.assertMsg
+      (builtins.all (path: builtins.elem path productionSourceFiles) expectedProductionRoots)
+      "production source-boundary check is missing an expected crate root";
+    assert lib.assertMsg (sourceBoundaryViolations == [ ])
+      "widget sources leaked into a production closure: ${builtins.toJSON sourceBoundaryViolations}";
+    assert lib.assertMsg (leafCrateLeaks == [ ])
+      "bmc-widget-manifest-tests leaked into a production closure";
+    pkgs.runCommand "production-widget-source-boundary" { } ''
+      touch $out
+    '';
+
+  service-depends-on =
+    assert rejects (serviceLib.mkOpenWrtService {
+      name = "variables-collision";
+      start = 63;
+      variables.DEPENDS_ON = "invalid";
+    }).name;
+    assert rejects (serviceLib.mkOpenWrtDaemon {
+      name = "extra-variables-collision";
+      start = 63;
+      command = "/bin/true";
+      extraVariables.DEPENDS_ON = "invalid";
+    }).name;
+    assert toString dependencyLauncher.thin == toString hostChangedLauncher.thin;
+    assert toString dependencyLauncher.host != toString hostChangedLauncher.host;
+    assert toString dependencyLauncher.thin != toString thinChangedLauncher.thin;
+    assert toString dependencyLauncher.host == toString thinChangedLauncher.host;
+    pkgs.runCommand "service-depends-on" { } ''
+      if grep -F 'DEPENDS_ON=' ${noDependencyService.service}; then
+        echo "empty dependsOn rendered a dependency line" >&2
+        exit 1
+      fi
+      grep -Fx 'DEPENDS_ON="${fakeThin} ${fakeHost}"' ${orderedDependencyService.service}
+      grep -Fx 'DEPENDS_ON="${launcher}"' ${productionDependencyService.service}
+      test '${dependencyLauncher}' != '${hostChangedLauncher}'
+      test '${dependencyLauncher}' != '${thinChangedLauncher}'
+      ! cmp -s ${dependencyService.service} ${hostChangedService.service}
+      ! cmp -s ${dependencyService.service} ${thinChangedService.service}
+      touch $out
+    '';
+
+  wasm-sdk-major =
+    assert sdkMajor == 0;
+    assert rejects (parseSdkMajor "pub const SDK_VERSION:(u16, u16, u16) = (0, 2, 0);");
+    assert rejects
+      (parseSdkMajor ''
+        pub const SDK_VERSION: (u16, u16, u16) = (0, 2, 0);
+        pub const SDK_VERSION: (u16, u16, u16) = (1, 0, 0);
+      '');
+    pkgs.runCommand "wasm-sdk-major" { } ''
+      touch $out
+    '';
+
+  wasm-launcher =
+    assert launcher.sdkMajor == sdkMajor;
+    assert launcher.launcherName == "bmc-wasm-thin-v${toString sdkMajor}";
+    pkgs.runCommand "wasm-launcher" { } ''
+      script=${launcher}/bin/${launcher.launcherName}
+      test -x "$script"
+      grep -F '#!/bin/sh' "$script"
+      grep -F 'exec ${launcher.thin}/bin/bmc-wasm-thin --host-bin ${launcher.host}/bin/bmc-wasm-host "$@"' "$script"
+      touch $out
+    '';
+
+  wasm-wrapper-profile =
+    assert profileWrapper.wrapperMode == "profile";
+    pkgs.runCommand "wasm-wrapper-profile" { } ''
+      script=${profileWrapper}/lib/bmc-widgets/${profileWrapper.name}/bin/${profileWrapper.name}
+      grep -F '/run/current-profile/bin/${launcher.launcherName}' "$script"
+      grep -F '"$@"' "$script"
+      if grep -F '${launcher.thin}' "$script" || grep -F '${launcher.host}' "$script"; then
+        echo "profile wrapper contains a baked runtime path" >&2
+        exit 1
+      fi
+      touch $out
+    '';
+
+  wasm-wrapper-baked =
+    assert builtins.all (mode: mode == "baked") wasmWrapperTestPackages.bakedModes;
+    assert bakedWrapper.wrapperMode == "baked";
+    pkgs.runCommand "wasm-wrapper-baked" { } ''
+      script=${bakedWrapper}/lib/bmc-widgets/${bakedWrapper.name}/bin/${bakedWrapper.name}
+      grep -F '${launcher.thin}/bin/bmc-wasm-thin' "$script"
+      grep -F -- '--host-bin ${launcher.host}/bin/bmc-wasm-host' "$script"
+      grep -F '"$@"' "$script"
+      if grep -F '/run/current-profile/bin/${launcher.launcherName}' "$script"; then
+        echo "baked wrapper contains the profile launcher" >&2
+        exit 1
+      fi
+      touch $out
+    '';
+
   public-widget-assets =
     assert builtins.readFileType publicJpg == "regular";
     assert publicJpg == publicJpeg;
@@ -86,8 +247,8 @@ in
           ../rules
           ../bmc-wasm-runtime/sdk/src
           ../bmc-wasm-runtime/protocol/src
-          ../widgets-wasm-examples
           ../widgets-wasm
+          ../widgets-wasm-examples
         ];
       };
     } ''
@@ -188,8 +349,8 @@ in
           ])
           # subprojects with their own nix dev shell, deps, and lint setup
           (lib.fileset.unions [
-            ../widgets-wasm-examples
             ../widgets-wasm
+            ../widgets-wasm-examples
             ../bmc-virt/harness
             ../bmc-tui
           ]);

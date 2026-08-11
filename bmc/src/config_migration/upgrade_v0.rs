@@ -81,10 +81,8 @@ const BRAIINSFORGE_URL_PREFIX: &str = "https://widgets.braiinsforge.com/";
 // manifest defaults, so the migration must fill every required param with
 // a value the widget accepts. Each constant below re-states the
 // `default_value` (or `enum_values`) its widget's own `manifest.json`
-// already declares; they are the source of truth. The
-// `migration_fallbacks_match_the_shipped_manifests` test pins every one
-// to its manifest so a firmware change to a widget's default can't leave
-// the migration filling a stale value.
+// already declares. Cross-crate tests keep these static fallbacks aligned
+// with the shipped manifests.
 
 /// Clock `numbers_font_style` fallback — clock manifest `default_value`.
 const CLOCK_FONT_DEFAULT: &str = "semi-bold";
@@ -113,6 +111,31 @@ const NAMEDAY_COUNTRIES: &[&str] = &[
     "at", "cz", "de", "dk", "ee", "es", "fi", "fr", "hr", "hu", "it", "lt", "lv", "pl", "se", "sk",
     "us",
 ];
+
+#[cfg(feature = "manifest-tests")]
+pub(crate) fn manifest_test_expectations()
+-> crate::manifest_test_support::MigrationManifestExpectations {
+    crate::manifest_test_support::MigrationManifestExpectations {
+        clock_font: CLOCK_FONT_DEFAULT,
+        block_height_font: BLOCK_HEIGHT_FONT_DEFAULT,
+        weather_location: DEFAULT_WEATHER_LOCATION,
+        weather_time_zone: DEFAULT_WEATHER_TIME_ZONE,
+        image_refresh_seconds: DEFAULT_REFRESH_SECONDS,
+        nameday_country: DEFAULT_NAMEDAY_COUNTRY,
+        nameday_countries: NAMEDAY_COUNTRIES,
+        translated_font_styles: ["light", "medium", "bold"].map(|style| {
+            translate_font_style(style).expect("BUG: known v0 font style must translate")
+        }),
+        pool_style: POOL_STYLE_DEFAULT,
+        pool_chart_frame: POOL_CHART_FRAME_DEFAULT,
+        pool_worker_states: POOL_WORKER_STATES_DEFAULT,
+        pool_styles: ["overview", "big_chart"],
+        translated_pool_chart_frames: ["hours4", "hours12", "hours24", "days7"].map(|frame| {
+            translate_chart_frame(frame).expect("BUG: known v0 chart frame must translate")
+        }),
+        pool_credential_slot: POOL_CREDENTIAL_SLOT,
+    }
+}
 
 // --- Upgrade entry point -----------------------------------------------------
 
@@ -756,182 +779,6 @@ mod tests {
     /// Shorthand for a `ParamValue::String`.
     fn str_param(value: &str) -> ParamValue {
         ParamValue::String(value.to_owned())
-    }
-
-    // --- manifest cross-check ------------------------------------------------
-
-    /// Every migration fallback must equal the `default_value` (or, for
-    /// the country list, the `enum_values`) that the target widget's own
-    /// `manifest.json` declares, and every value `translate_font_style`
-    /// emits must be a real member of the shared font enum.
-    /// This is the guard the review asked for: the fallbacks live here
-    /// rather than being read from the manifest at runtime, so this test
-    /// is what keeps them from drifting out of sync with the shipped widgets.
-    #[test]
-    fn migration_fallbacks_match_the_shipped_manifests() {
-        use std::collections::BTreeSet;
-        use std::str::FromStr;
-
-        use bmc_widget_manifest::{Manifest, ParamKind};
-
-        fn manifest(json: &str) -> Manifest {
-            Manifest::from_str(json).expect("BUG: in-tree manifest must parse")
-        }
-
-        fn kind<'m>(manifest: &'m Manifest, key: &str) -> &'m ParamKind {
-            &manifest
-                .params
-                .get(key)
-                .unwrap_or_else(|| panic!("BUG: manifest has no param {key:?}"))
-                .kind
-        }
-
-        fn string_default(manifest: &Manifest, key: &str) -> String {
-            let ParamKind::String { default_value, .. } = kind(manifest, key) else {
-                panic!("BUG: manifest param {key:?} is not a string");
-            };
-            default_value
-                .clone()
-                .unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
-        }
-
-        fn integer_default(manifest: &Manifest, key: &str) -> i32 {
-            let ParamKind::Integer { default_value, .. } = kind(manifest, key) else {
-                panic!("BUG: manifest param {key:?} is not an integer");
-            };
-            default_value.unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
-        }
-
-        fn string_enum(manifest: &Manifest, key: &str) -> BTreeSet<String> {
-            let ParamKind::String { enum_values, .. } = kind(manifest, key) else {
-                panic!("BUG: manifest param {key:?} is not a string");
-            };
-            enum_values.iter().map(|o| o.value.clone()).collect()
-        }
-
-        let clock = manifest(include_str!("../../../widgets-wasm/clock/manifest.json"));
-        let block_height = manifest(include_str!(
-            "../../../widgets-wasm/blockheight/manifest.json"
-        ));
-        let weather = manifest(include_str!("../../../widgets-wasm/weather/manifest.json"));
-        let image = manifest(include_str!("../../../widgets-wasm/image/manifest.json"));
-        let nameday = manifest(include_str!("../../../widgets-wasm/nameday/manifest.json"));
-
-        assert_eq!(
-            string_default(&clock, "numbers_font_style"),
-            CLOCK_FONT_DEFAULT
-        );
-        assert_eq!(
-            string_default(&block_height, "numbers_font_style"),
-            BLOCK_HEIGHT_FONT_DEFAULT
-        );
-        assert_eq!(
-            string_default(&weather, "location"),
-            DEFAULT_WEATHER_LOCATION
-        );
-        assert_eq!(
-            string_default(&weather, "time_zone"),
-            DEFAULT_WEATHER_TIME_ZONE
-        );
-        assert_eq!(
-            integer_default(&image, "refresh_seconds"),
-            DEFAULT_REFRESH_SECONDS
-        );
-        assert_eq!(string_default(&nameday, "country"), DEFAULT_NAMEDAY_COUNTRY);
-
-        // The migration's country whitelist must be exactly the manifest
-        // enum — an entry the manifest dropped would let a stale country
-        // through into a value the widget's typed read rejects.
-        let manifest_countries = string_enum(&nameday, "country");
-        let migration_countries: BTreeSet<String> =
-            NAMEDAY_COUNTRIES.iter().map(|c| (*c).to_owned()).collect();
-        assert_eq!(migration_countries, manifest_countries);
-
-        // Every weight the v0 remap can emit must be a valid font-enum
-        // value, or a migrated clock/block-height widget would carry a
-        // value its typed read rejects.
-        let font_enum = string_enum(&clock, "numbers_font_style");
-        for v0_weight in ["light", "medium", "bold"] {
-            let mapped = translate_font_style(v0_weight)
-                .expect("BUG: v0 font weight must remap")
-                .to_owned();
-            assert!(
-                font_enum.contains(&mapped),
-                "remapped weight {mapped:?} is not in the manifest font enum"
-            );
-        }
-    }
-
-    /// The pool half of the manifest contract: its param defaults, the
-    /// vocabularies the v0 remap can emit, and the slot it binds.
-    #[test]
-    fn pool_fallbacks_match_the_shipped_manifest() {
-        use std::collections::BTreeSet;
-        use std::str::FromStr;
-
-        use bmc_widget_manifest::{Manifest, ParamKind};
-
-        let pool = Manifest::from_str(include_str!(
-            "../../../widgets-wasm/braiins-pool/manifest.json"
-        ))
-        .expect("BUG: in-tree manifest must parse");
-
-        let kind = |key: &str| {
-            &pool
-                .params
-                .get(key)
-                .unwrap_or_else(|| panic!("BUG: manifest has no param {key:?}"))
-                .kind
-        };
-        let string_default = |key: &str| {
-            let ParamKind::String { default_value, .. } = kind(key) else {
-                panic!("BUG: manifest param {key:?} is not a string");
-            };
-            default_value
-                .clone()
-                .unwrap_or_else(|| panic!("BUG: manifest param {key:?} has no default"))
-        };
-        let string_enum = |key: &str| -> BTreeSet<String> {
-            let ParamKind::String { enum_values, .. } = kind(key) else {
-                panic!("BUG: manifest param {key:?} is not a string");
-            };
-            enum_values.iter().map(|o| o.value.clone()).collect()
-        };
-
-        assert_eq!(string_default("style"), POOL_STYLE_DEFAULT);
-        assert_eq!(string_default("chart_frame"), POOL_CHART_FRAME_DEFAULT);
-        let ParamKind::Boolean { default_value, .. } = kind("worker_states") else {
-            panic!("BUG: manifest param worker_states is not a boolean");
-        };
-        assert_eq!(*default_value, Some(POOL_WORKER_STATES_DEFAULT));
-
-        // A value outside the manifest enum fails the widget's typed param read.
-        let frame_enum = string_enum("chart_frame");
-        for v0_frame in ["hours4", "hours12", "hours24", "days7"] {
-            let mapped = translate_chart_frame(v0_frame)
-                .expect("BUG: v0 chart frame must remap")
-                .to_owned();
-            assert!(
-                frame_enum.contains(&mapped),
-                "remapped window {mapped:?} is not in the manifest frame enum"
-            );
-        }
-        let style_enum = string_enum("style");
-        for style in ["overview", "big_chart"] {
-            assert!(
-                style_enum.contains(style),
-                "v0 pool style {style:?} is not in the manifest style enum"
-            );
-        }
-
-        // A binding on an undeclared slot is one the widget never reads.
-        assert!(
-            pool.credentials.contains_key(
-                &CredentialKey::try_new(POOL_CREDENTIAL_SLOT.to_owned())
-                    .expect("BUG: slot key is valid")
-            ),
-            "the migration binds a slot the pool manifest does not declare"
-        );
     }
 
     // --- clock ---------------------------------------------------------------

@@ -4,11 +4,6 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
-# The forbid-filters test scans every shipping widget SVG under widgets-wasm
-# (a separate workspace the scoped filter would otherwise drop).
-[package.metadata.nix]
-include = ["../../widgets-wasm/**/*.svg"]
-
 [dependencies]
 usvg.workspace = true
 

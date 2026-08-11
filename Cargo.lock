@@ -1617,6 +1617,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-widget-manifest-tests"
+version = "0.1.0"
+dependencies = [
+ "bmc",
+ "bmc-platform",
+ "bmc-svg-compiler",
+ "bmc-widget-manifest",
+ "jsonschema",
+ "roxmltree 0.20.0",
+ "serde_json",
+]
+
+[[package]]
 name = "bmc-widget-protocol"
 version = "0.1.0"
 dependencies = [

@@ -82,8 +82,9 @@
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin;
           deckPackages = workspace.legacyPackages.deck-packages;
-          inherit (workspace.bmc) profiles;
+          inherit (workspace.bmc) profiles crates;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
+          inherit (workspace) wasmWrapperTestPackages;
         };
         wasmRegression = import ./nix/wasm-regression.nix {
           inherit pkgs capture;

@@ -23,7 +23,7 @@
 # `profile` and `openwrtFeatures` are supplied by the caller so a debug build
 # can flip on the compositor's `profiling` feature (ii-stopwatch timing + the
 # mesh::profile observability channel) without forking this file.
-{ bmc, armv7Pkgs, deps, profile, openwrtFeatures ? [ ] }:
+{ bmc, armv7Pkgs, deps, profile, wasmLauncher, openwrtFeatures ? [ ] }:
 let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService mkOpenWrtDaemon;
@@ -260,6 +260,10 @@ let
     out = [
       { src = ./scripts; dest = "bin"; }
     ];
+    postBuild = ''
+      chmod u+w $out/bin
+      cp ${wasmLauncher}/bin/${wasmLauncher.launcherName} $out/bin/
+    '';
     copyFiles = [
       { src = ./files/profile; dest = "/root/.profile"; }
     ];
@@ -278,6 +282,7 @@ let
 
   packageWithTests = package.overrideAttrs (old: {
     passthru = (old.passthru or { }) // {
+      inherit wasmLauncher;
       tests.activation = nixConfActivationTest;
       tests.activator = nixActivatorTest;
       tests.compositor-service = bmcCompositorServiceTest;

@@ -38,6 +38,7 @@
 #                   selected profile (typically armv7-glibc-release)
 #   - host:         cross-compiled bmc-wasm-host + autopatchelf for the
 #                   selected profile (typically armv7-glibc-release)
+#   - wasmLauncher: per-SDK-major launcher that pins thin and host together
 #   - mkWasmWidget: build one lib/bmc-widgets/<name>/ tree (shell wrapper
 #                   + .wasm blob + manifest) that execs the thin wrapper
 { pkgs
@@ -52,6 +53,9 @@
 let
   lib = pkgs.lib;
   inherit (import ./public-asset.nix { inherit lib; }) mkPublicIcon;
+  parseSdkMajor = import ./sdk-major.nix { inherit lib; };
+  sdkMajor = parseSdkMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
+  launcherName = "bmc-wasm-thin-v${toString sdkMajor}";
 
   # Reference-cleaning installPhase shared by the examples-bundle and per-widget
   # wasm builds. rustc bakes panic-location strings that point into
@@ -116,13 +120,27 @@ let
     runtimeDeps = widgetRuntimeDeps.native profile.pkgs;
   };
 
+  wasmLauncher = (pkgs.writeTextFile {
+    name = launcherName;
+    executable = true;
+    destination = "/bin/${launcherName}";
+    text = ''
+      #!/bin/sh
+      exec ${thin}/bin/bmc-wasm-thin --host-bin ${host}/bin/bmc-wasm-host "$@"
+    '';
+  }).overrideAttrs (old: {
+    passthru = (old.passthru or { }) // {
+      inherit sdkMajor launcherName thin host;
+    };
+  });
+
   # Per-widget packaging. Produces:
   #   $out/lib/bmc-widgets/<name>/bin/<name>          (shell wrapper)
   #   $out/lib/bmc-widgets/<name>/lib/wasm/<name>.wasm
   #   $out/lib/bmc-widgets/<name>/manifest.json
   #
-  # The wrapper bakes an absolute Nix-store path for both the host and
-  # the .wasm blob — no $(dirname $0) tricks.
+  # Device-profile wrappers select the active per-major launcher. Other
+  # bundles remain self-contained by baking the thin and host store paths.
   mkWasmWidget =
     { name          # e.g. "hello-widget"
     , wasmDir       # derivation with all *.wasm files flat in $out/
@@ -130,6 +148,7 @@ let
     , manifest      # path to per-widget manifest.json
     , thin          # thin derivation with bin/bmc-wasm-thin
     , host          # host derivation with bin/bmc-wasm-host
+    , wrapperMode
     }:
     let
       # The .wasm embeds its runtime assets; only the manifest icon needs
@@ -138,8 +157,21 @@ let
       # can't accept an icon the published index copy rejects.
       icon = (builtins.fromJSON (builtins.readFile manifest)).icon or null;
       iconSrc = if icon == null then null else mkPublicIcon manifest icon;
+      wrapperExec =
+        if wrapperMode == "profile" then ''
+          exec /run/current-profile/bin/${launcherName} \\
+            --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
+            "\$@"
+        '' else ''
+          exec ${thin}/bin/bmc-wasm-thin \\
+            --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
+            --host-bin ${host}/bin/bmc-wasm-host \\
+            "\$@"
+        '';
     in
-    pkgs.runCommand "bmc-widget-${name}" { } ''
+    assert lib.assertMsg (builtins.elem wrapperMode [ "profile" "baked" ])
+      "wrapperMode must be either profile or baked";
+    (pkgs.runCommand "bmc-widget-${name}" { } ''
       base=$out/lib/bmc-widgets/${name}
       mkdir -p "$base/bin" "$base/lib/wasm"
 
@@ -150,19 +182,19 @@ let
         cp ${iconSrc} "$base/${icon}"
       ''}
 
-      # Unquoted heredoc on purpose: we want $out expanded now (at build
-      # time) to bake the absolute store path into the wrapper, while
-      # \$@ must survive into the generated script for runtime args.
+      # Unquoted heredoc expands $out to the packaged wasm path. The escaped
+      # runtime argument vector survives into the generated script.
       cat > "$base/bin/${name}" <<EOF
       #!/bin/sh
-      exec ${thin}/bin/bmc-wasm-thin \\
-        --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
-        --host-bin ${host}/bin/bmc-wasm-host \\
-        "\$@"
+      ${wrapperExec}
       EOF
       chmod +x "$base/bin/${name}"
-    '';
+    '').overrideAttrs (old: {
+      passthru = (old.passthru or { }) // {
+        inherit name wrapperMode;
+      };
+    });
 in
 {
-  inherit wasmExamples wasmWidgetsBundle wasmWidgets thin host mkWasmWidget;
+  inherit sdkMajor launcherName wasmExamples wasmWidgetsBundle wasmWidgets thin host wasmLauncher mkWasmWidget;
 }

@@ -13,7 +13,6 @@ include = [
     "../assets/fonts/*",
     "assets/**",
     "../bmc-wasm-runtime/sdk/assets/icons/star.svg",
-    "../widgets-wasm-examples/mesh-demo/assets/suzanne.glb",
 ]
 
 [dependencies]

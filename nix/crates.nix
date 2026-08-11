@@ -37,6 +37,11 @@ let
     wasmWidgetCatalog;
 in
 wasmWidgetCrates // {
+  bmc = defineCrate {
+    path = "bmc";
+    packageName = "bmc";
+    binName = false;
+  };
   bmc-mock = defineCrate {
     path = "bmc-mock";
     packageName = "bmc-mock";

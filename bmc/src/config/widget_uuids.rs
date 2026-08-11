@@ -24,9 +24,7 @@
 //! widget's `manifest.json` under `widgets-wasm/`. They are shared by
 //! the built-in default scenes ([`crate::config::defaults`]) and the
 //! v0 → current migration ([`crate::config_migration`]), so both refer
-//! to the same source of truth instead of re-hardcoding literals. The
-//! `manifest_uids_match_the_shipped_manifests` test cross-checks every
-//! constant against its shipped manifest.
+//! to the same source of truth instead of re-hardcoding literals.
 
 use uuid::Uuid;
 
@@ -59,84 +57,3 @@ pub(crate) const SPACEX_LAUNCH_UID: Uuid =
 /// `widgets-wasm/braiins-pool`
 pub(crate) const BRAIINS_POOL_UID: Uuid =
     Uuid::from_u128(0xb4e0_608d_d38c_4494_8bee_7df2_a030_c9b1);
-
-#[cfg(test)]
-mod tests {
-    use std::str::FromStr;
-
-    use bmc_widget_manifest::Manifest;
-
-    use super::*;
-
-    /// Every UID constant must equal the `uid` of the manifest it names.
-    /// This is the single guard that keeps both the default scenes and
-    /// the migration table pointing at real, shipped widgets.
-    #[test]
-    fn manifest_uids_match_the_shipped_manifests() {
-        let cases = [
-            (
-                "clock",
-                CLOCK_UID,
-                include_str!("../../../widgets-wasm/clock/manifest.json"),
-            ),
-            (
-                "weather",
-                WEATHER_UID,
-                include_str!("../../../widgets-wasm/weather/manifest.json"),
-            ),
-            (
-                "blockheight",
-                BLOCK_HEIGHT_UID,
-                include_str!("../../../widgets-wasm/blockheight/manifest.json"),
-            ),
-            (
-                "mining-info",
-                MINING_INFO_UID,
-                include_str!("../../../widgets-wasm/mining-info/manifest.json"),
-            ),
-            (
-                "mining-clock",
-                MINING_CLOCK_UID,
-                include_str!("../../../widgets-wasm/mining-clock/manifest.json"),
-            ),
-            (
-                "image",
-                REMOTE_IMAGE_UID,
-                include_str!("../../../widgets-wasm/image/manifest.json"),
-            ),
-            (
-                "iss-position",
-                ISS_POSITION_UID,
-                include_str!("../../../widgets-wasm/iss-position/manifest.json"),
-            ),
-            (
-                "nameday",
-                NAMEDAY_UID,
-                include_str!("../../../widgets-wasm/nameday/manifest.json"),
-            ),
-            (
-                "random-facts",
-                RANDOM_FACTS_UID,
-                include_str!("../../../widgets-wasm/random-facts/manifest.json"),
-            ),
-            (
-                "spacex-launch",
-                SPACEX_LAUNCH_UID,
-                include_str!("../../../widgets-wasm/spacex-launch/manifest.json"),
-            ),
-            (
-                "braiins-pool",
-                BRAIINS_POOL_UID,
-                include_str!("../../../widgets-wasm/braiins-pool/manifest.json"),
-            ),
-        ];
-
-        for (name, uid, json) in cases {
-            let manifest = Manifest::from_str(json).expect("BUG: in-tree manifest must parse");
-            assert_eq!(
-                manifest.uid, uid,
-                "{name} UID constant does not match its shipped manifest"
-            );
-        }
-    }
-}

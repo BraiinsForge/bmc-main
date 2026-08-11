@@ -43,7 +43,7 @@
 //! See `docs/stories/config-migration.md` for user-facing behaviour
 //! and `docs/devlogs/BDK-346/design.md` for design notes.
 
-mod upgrade_v0;
+pub(crate) mod upgrade_v0;
 mod upgrade_v1;
 pub mod v0;
 

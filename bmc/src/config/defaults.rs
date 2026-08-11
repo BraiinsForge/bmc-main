@@ -217,10 +217,6 @@ fn bmm_scenes() -> IndexMap<SceneId, Scene> {
 
 #[cfg(test)]
 mod tests {
-    use std::str::FromStr;
-
-    use bmc_widget_manifest::{Manifest, ParamKind};
-
     use super::*;
 
     #[test]
@@ -256,83 +252,6 @@ mod tests {
                     .values()
                     .all(|scene| scene.kind == SceneKind::Fullscreen)
             );
-        }
-    }
-
-    #[test]
-    fn every_default_widget_matches_its_manifest() {
-        let manifests = [
-            include_str!("../../../widgets-wasm/clock/manifest.json"),
-            include_str!("../../../widgets-wasm/weather/manifest.json"),
-            include_str!("../../../widgets-wasm/blockheight/manifest.json"),
-            include_str!("../../../widgets-wasm/mining-info/manifest.json"),
-            include_str!("../../../widgets-wasm/mining-clock/manifest.json"),
-        ]
-        .map(|json| Manifest::from_str(json).expect("BUG: in-tree manifest must parse"));
-
-        for product in [
-            Product::Bmc100,
-            Product::Bmm100,
-            Product::Bmm101,
-            Product::Bfm100,
-        ] {
-            for scene in scenes_for(product).values() {
-                for widget in scene.widgets.values() {
-                    let manifest = manifests
-                        .iter()
-                        .find(|manifest| manifest.uid == widget.widget_type_id)
-                        .expect("BUG: default scene uses a widget without an in-tree manifest");
-                    for (key, definition) in &manifest.params {
-                        assert!(
-                            definition.is_optional || widget.params.contains_key(key),
-                            "{product:?} default for {} is missing required param {key:?}",
-                            manifest.name
-                        );
-                    }
-                    for (key, value) in &widget.params {
-                        let definition = manifest.params.get(key).unwrap_or_else(|| {
-                            panic!(
-                                "{product:?} default for {} carries param {key:?} \
-                                 that the manifest does not declare",
-                                manifest.name
-                            )
-                        });
-                        let kind_matches = match value {
-                            ParamValue::Null => definition.is_optional,
-                            ParamValue::Boolean(_) => {
-                                matches!(definition.kind, ParamKind::Boolean { .. })
-                            }
-                            ParamValue::Integer(_) => {
-                                matches!(definition.kind, ParamKind::Integer { .. })
-                            }
-                            ParamValue::Double(_) => {
-                                matches!(definition.kind, ParamKind::Double { .. })
-                            }
-                            ParamValue::String(_) => matches!(
-                                definition.kind,
-                                ParamKind::String { .. } | ParamKind::Timezone { .. }
-                            ),
-                        };
-                        assert!(
-                            kind_matches,
-                            "{product:?} default for {} sets param {key:?} to {value:?} \
-                             which does not match the manifest type",
-                            manifest.name
-                        );
-                        if let (ParamValue::String(value), ParamKind::String { enum_values, .. }) =
-                            (value, &definition.kind)
-                        {
-                            assert!(
-                                enum_values.is_empty()
-                                    || enum_values.iter().any(|option| option.value == *value),
-                                "{product:?} default for {} sets param {key:?} to {value:?} \
-                                 which is not a declared enum value",
-                                manifest.name
-                            );
-                        }
-                    }
-                }
-            }
         }
     }
 

@@ -6,16 +6,9 @@ license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
 description = "Widget manifest types — the on-disk schema for `manifest.json` shared between the compositor, the wasm host runtime, and tooling"
 
-# The committed JSON schema embedded by the schema/fixture tests, plus every
-# shipped manifest.json the tests load at runtime from the widget/example trees
-# (each lives in a separate workspace the scoped filter would otherwise drop).
+# The committed JSON schema embedded by the schema/fixture tests.
 [package.metadata.nix]
-include = [
-    "manifest.schema.json",
-    "../widgets/*/manifest.json",
-    "../widgets-wasm-examples/*/manifest.json",
-    "../widgets-wasm/*/manifest.json",
-]
+include = ["manifest.schema.json"]
 
 [dependencies]
 bmc-field-schema.workspace = true

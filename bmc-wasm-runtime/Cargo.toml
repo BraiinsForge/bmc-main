@@ -5,14 +5,12 @@ edition = "2024"
 license = "GPL-3.0-or-later"
 
 # The capture report askama template, the testbed's bundled platform list,
-# the example manifests the testbed tests resolve at runtime, and the WAT
-# guest fixtures the test suites embed; the nix source filter keeps only
-# rust/toml/lock otherwise.
+# and the WAT guest fixtures the test suites embed; the nix source filter
+# keeps only rust/toml/lock otherwise.
 [package.metadata.nix]
 include = [
     "templates/**",
     "src/bin/testbed/platforms.default.json",
-    "../widgets-wasm-examples/*/manifest.json",
     "tests/fixtures/*.wat",
 ]
 

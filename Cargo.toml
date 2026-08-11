@@ -48,6 +48,7 @@ members = [
     "bmc-widget",
     "bmc-widget-codegen",
     "bmc-widget-manifest",
+    "bmc-widget-manifest-tests",
     "bmc-widget-protocol",
     "deck-alarm-v1",
     "deck-screen-edge-v1",

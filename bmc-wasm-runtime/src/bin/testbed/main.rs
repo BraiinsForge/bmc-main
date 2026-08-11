@@ -764,8 +764,28 @@ mod platforms_startup_tests {
 
     #[test]
     fn load_manifest_uses_widget_root_for_foreign_target_wasm() {
-        let runtime_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let widget_root = runtime_dir.join("../widgets-wasm-examples/hello-widget");
+        let temp = tempfile::tempdir().expect("BUG: create manifest fixture directory");
+        let widget_root = temp.path().join("hello-widget");
+        std::fs::create_dir(&widget_root).expect("BUG: create widget fixture directory");
+        std::fs::write(
+            widget_root.join("manifest.json"),
+            r#"{
+                "uid": "550e8400-e29b-41d4-a716-446655440200",
+                "version": "0.1.0",
+                "name": "Hello",
+                "description": "Test fixture",
+                "binary": "bin/hello-widget",
+                "supported_viewports": [{
+                    "type": "rectangular",
+                    "min_width": 317,
+                    "max_width": 1280,
+                    "min_height": 238,
+                    "max_height": 480
+                }],
+                "params": {}
+            }"#,
+        )
+        .expect("BUG: write manifest fixture");
         let wasm_path = Path::new(
             "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",
         );
@@ -779,8 +799,7 @@ mod platforms_startup_tests {
 
     #[test]
     fn resolved_widget_root_uses_cli_root_for_foreign_target_wasm() {
-        let runtime_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let widget_root = runtime_dir.join("../widgets-wasm-examples/hello-widget");
+        let widget_root = PathBuf::from("fixtures/hello-widget");
         let cli = parse_test_args(&[
             "testbed",
             "/tmp/claude-1001/foreign-target/wasm32-unknown-unknown/release/hello_widget.wasm",

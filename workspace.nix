@@ -566,26 +566,36 @@ let
     let
       m = wasmWidgetsFor profile hostFeatures;
       shippable = lib.filterAttrs (_: w: w.isShippable) wasmWidgetCatalog;
-    in
-    pkgs.symlinkJoin {
-      name = "bmc-wasm-widgets";
-      paths = lib.mapAttrsToList
+      widgetPackages = lib.mapAttrsToList
         (name: entry: m.mkWasmWidget {
           inherit name;
+          wrapperMode = "baked";
           inherit (entry) wasmFile manifest;
           wasmDir = m.wasmWidgets.${name};
           thin = m.thin;
           host = m.host;
         })
         shippable;
+    in
+    pkgs.symlinkJoin {
+      name = "bmc-wasm-widgets";
+      paths = widgetPackages;
+      passthru = {
+        wrapperModes = map (package: package.wrapperMode) widgetPackages;
+        representativeWrapper = builtins.head widgetPackages;
+      };
     };
+
+  bakedWasmWidgetsForTest = mkAllWasmWidgets {
+    profile = bmc.profiles.armv7-glibc-release;
+  };
 
   armv7PackageDefs = import ./nix/packages.nix {
     inherit bmc armv7Pkgs deps;
     inherit wasmWidgetCatalog;
     profile = bmc.profiles.armv7-glibc-release;
     openwrtFeatures = [ ];
-    inherit (wasmWidgetsModule) wasmWidgets thin host mkWasmWidget;
+    inherit (wasmWidgetsModule) wasmWidgets thin host wasmLauncher mkWasmWidget;
   };
 
   # Same package set, built debug with the `profiling` feature on the
@@ -599,7 +609,7 @@ let
     inherit wasmWidgetCatalog;
     profile = bmc.profiles.armv7-glibc-debug;
     openwrtFeatures = [ "profiling" ];
-    inherit (wasmWidgetsModuleDebug) wasmWidgets thin host mkWasmWidget;
+    inherit (wasmWidgetsModuleDebug) wasmWidgets thin host wasmLauncher mkWasmWidget;
   };
 
   initArtifacts = import ./nix/init-artifacts.nix {
@@ -613,6 +623,10 @@ let
 in
 {
   inherit commonDeps bmc deps makeRustflagsEnv wasmWidgetCatalog wasmStackSize;
+  wasmWrapperTestPackages = {
+    baked = bakedWasmWidgetsForTest.representativeWrapper;
+    bakedModes = bakedWasmWidgetsForTest.wrapperModes;
+  };
   inherit (initArtifacts) mkInitArtifacts;
   inherit (wasmWidgetsModule) wasmExamples wasmWidgetsBundle wasmWidgets;
   checks = frontend.checks;

@@ -29,6 +29,7 @@
 , wasmWidgets
 , thin
 , host
+, wasmLauncher
 , mkWasmWidget
 , wasmWidgetCatalog
 , profile
@@ -73,6 +74,7 @@ let
     let
       pkg = mkWasmWidget {
         inherit name thin host;
+        wrapperMode = "profile";
         wasmDir = wasmWidgets.${name};
         inherit (entry) wasmFile manifest;
       };
@@ -92,7 +94,9 @@ let
     shippableCatalog;
 in
 wasmWidgetPackages // {
-  core = import ./pkgs/core { inherit bmc armv7Pkgs deps profile openwrtFeatures; };
+  core = import ./pkgs/core {
+    inherit bmc armv7Pkgs deps profile openwrtFeatures wasmLauncher;
+  };
   bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
   bmc-nix-cli = {
     pkg = profile.buildCrate crates.bmc-nix-cli { };

@@ -20,7 +20,7 @@
 
 use crate::prelude::*;
 
-static SUZANNE: Mesh = include_mesh!("widgets-wasm-examples/mesh-demo/assets/suzanne.glb");
+static SUZANNE: Mesh = include_mesh!("bmc-render/assets/suzanne.glb");
 static WATER_BOTTLE: Mesh = include_mesh!("bmc-render/assets/water_bottle.glb");
 
 story_meta! { title: "Canvas/Mesh" }

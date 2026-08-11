@@ -1,0 +1,29 @@
+[package]
+name = "bmc-widget-manifest-tests"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+publish = false
+
+[package.metadata.nix]
+include = [
+    "../bmc-widget-manifest/manifest.schema.json",
+    "../widgets/*/manifest.json",
+    "../widgets-wasm/*/manifest.json",
+    "../widgets-wasm/**/*.svg",
+    "../widgets-wasm-examples/*/manifest.json",
+]
+
+[dependencies]
+
+[dev-dependencies]
+bmc = { workspace = true, features = ["manifest-tests"] }
+bmc-platform.workspace = true
+bmc-svg-compiler.workspace = true
+bmc-widget-manifest.workspace = true
+jsonschema.workspace = true
+roxmltree.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

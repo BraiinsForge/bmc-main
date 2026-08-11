@@ -20,21 +20,10 @@
 
 //! Fixture suite that locks the validation split between the JSON Schema and the Rust validator.
 //!
-//! Two test surfaces:
-//!
-//!  - `every_example_manifest_validates_against_both` — every shipping example `manifest.json`
-//!    accepts under both the committed JSON Schema and `Manifest::from_str`. Catches schema /
-//!    parser drift in the happy direction.
-//!
-//!  - `negative_fixtures_lock_schema_vs_validator_split` — table-driven negative cases per
-//!    `ParamKind` variant. For each variant we assert one structurally-invalid case that *both*
-//!    validators reject and one semantically-invalid case that *only* the Rust validator rejects
-//!    (the schema is unable to express cross-field invariants like
-//!    `default_value` ∈ `[min, max]` or `default_value` ∈ `enum_values`).
-//!
-//! The two together pin down the split:
-//! structural constraints live in the schema,
-//! cross-field invariants live in `ParamDefinition::validate`.
+//! The table covers every `ParamKind` variant with one structural error rejected by both
+//! validators and one semantic error rejected only by Rust.
+//! Structural constraints live in the schema; cross-field invariants live in
+//! `ParamDefinition::validate`.
 
 use bmc_widget_manifest::{MAX_PARAM_KEY_LENGTH, MAX_PARAM_STRING_LENGTH, Manifest};
 use std::str::FromStr;
@@ -45,48 +34,6 @@ fn schema_validator() -> jsonschema::Validator {
     let schema: serde_json::Value =
         serde_json::from_str(COMMITTED_SCHEMA).expect("BUG: committed schema must parse as JSON");
     jsonschema::validator_for(&schema).expect("BUG: committed schema must compile to a validator")
-}
-
-fn example_manifests() -> Vec<(std::path::PathBuf, String)> {
-    let workspace = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .expect("BUG: workspace root");
-    let examples = workspace.join("widgets-wasm-examples");
-    let mut out = vec![];
-    for entry in std::fs::read_dir(&examples).expect("BUG: read examples dir") {
-        let entry = entry.expect("BUG: read entry");
-        let path = entry.path().join("manifest.json");
-        if path.exists() {
-            let body = std::fs::read_to_string(&path).expect("BUG: read manifest");
-            out.push((path, body));
-        }
-    }
-    out
-}
-
-#[test]
-fn every_example_manifest_validates_against_both() {
-    let validator = schema_validator();
-    let manifests = example_manifests();
-    assert!(!manifests.is_empty(), "BUG: no example manifests found");
-
-    for (path, body) in manifests {
-        let instance: serde_json::Value = serde_json::from_str(&body)
-            .unwrap_or_else(|e| panic!("BUG: {path:?} is not valid JSON: {e}"));
-
-        assert!(
-            validator.is_valid(&instance),
-            "{path:?} failed the JSON Schema validator. Errors:\n  - {}",
-            validator
-                .iter_errors(&instance)
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n  - "),
-        );
-
-        Manifest::from_str(&body)
-            .unwrap_or_else(|e| panic!("BUG: {path:?} failed Manifest::from_str: {e}"));
-    }
 }
 
 /// One row per negative fixture.
