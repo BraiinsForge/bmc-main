@@ -42,7 +42,6 @@ class Deploy:
     packages: list[str] = field(default_factory=list)
     profile: Literal["release", "debug"] = "release"  # debug → profiling build (mesh::profile)
     dry_run: bool = False  # build + probe for real; log device mutations without executing
-    no_restart: bool = False  # leave the display alone; widgets load on the next start
     max_jobs: int | None = None  # nix --max-jobs for the build; None → use nix's own config
 
     def run(self) -> None:
@@ -66,7 +65,7 @@ class Deploy:
         old_pid = catalog.compositor_pid(dev)
         catalog.register_packages(dev, plan)
         catalog.clear_upgrade_servers(dev)
-        catalog.restart_compositor(dev, old_pid=old_pid, skip=self.no_restart)
+        catalog.await_package_activation(dev, old_pid=old_pid)
 
 
 @entrypoint

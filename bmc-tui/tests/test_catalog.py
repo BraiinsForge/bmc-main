@@ -1102,24 +1102,49 @@ def test_restart_compositor_restarts_by_default() -> None:
     assert _restarted(backend)
 
 
-def test_restart_compositor_skips_on_request() -> None:
-    backend = _Exec(_routes({}))
-    catalog.restart_compositor(Device("h", backend=backend), skip=True)
-    assert backend.runs == []
-
-
-def test_restart_compositor_defers_to_the_orchestrator() -> None:
+def test_await_package_activation_reports_orchestrator_restart() -> None:
     """A pid that moved across the activation means the reload already ran."""
-    backend = _Exec(_routes({"pidof": "999"}))
-    catalog.restart_compositor(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "999"}))
+    catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
     assert not _restarted(backend)
 
 
-def test_restart_compositor_restarts_when_the_pid_held() -> None:
-    """An unchanged pid means only widgets moved, so nothing reloaded them."""
-    backend = _Exec(_routes({"pidof": "111"}))
-    catalog.restart_compositor(Device("h", backend=backend), old_pid=catalog.Pid("111"))
-    assert _restarted(backend)
+def test_await_package_activation_reports_compositor_start() -> None:
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "999"}))
+    catalog.await_package_activation(Device("h", backend=backend), old_pid=None)
+    assert not _restarted(backend)
+
+
+def test_await_package_activation_reports_targeted_reload(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "111", "test -x": "yes"}))
+    catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    assert not _restarted(backend)
+    assert "compositor undisturbed" in capsys.readouterr().out
+
+
+def test_await_package_activation_aborts_when_the_orchestrator_lingers() -> None:
+    """Sampling the compositor while reconciliation still runs
+    would let the stage claim an outcome the orchestrator is about to invalidate."""
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "555", "pidof": "111"}))
+    with pytest.raises(Abort, match="still reconciling"):
+        catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    assert not _restarted(backend)
+
+
+def test_await_package_activation_rejects_a_core_without_targeted_reload() -> None:
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": "111", "test -x": ""}))
+    with pytest.raises(Abort, match="deploy a current core"):
+        catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    assert not _restarted(backend)
+
+
+def test_await_package_activation_rejects_a_stopped_compositor() -> None:
+    backend = _Exec(_routes({"bmc-nix-service-orchestrator": "", "pidof": ""}))
+    with pytest.raises(Abort, match="not running"):
+        catalog.await_package_activation(Device("h", backend=backend), old_pid=catalog.Pid("111"))
+    assert not _restarted(backend)
 
 
 def test_restart_compositor_skips_under_dry_run() -> None:
@@ -1127,6 +1152,16 @@ def test_restart_compositor_skips_under_dry_run() -> None:
     backend = _Exec(_routes({}))
     try:
         catalog.restart_compositor(Device("h", backend=backend))
+    finally:
+        dry_run.reset(token)
+    assert backend.runs == []
+
+
+def test_await_package_activation_skips_under_dry_run() -> None:
+    token = dry_run.set(True)
+    backend = _Exec(_routes({}))
+    try:
+        catalog.await_package_activation(Device("h", backend=backend), old_pid=None)
     finally:
         dry_run.reset(token)
     assert backend.runs == []

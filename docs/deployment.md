@@ -57,7 +57,9 @@ nix run .#deck -- deploy --device 192.168.1.2 --packages '.#armv7-nixpkgs.strace
 
 The deployed packages are installed into the bmc profile and activated immediately. Executables are available under
 `/run/current-profile/bin/` for core and nixpkgs packages. Widget packages (native and wasm) are installed under
-`/run/current-profile/lib/bmc-widgets/<name>/`.
+`/run/current-profile/lib/bmc-widgets/<name>/`. Changed widgets reload during activation without bmc-tui restarting the
+compositor. Core changes still let the service orchestrator restart the compositor when its executable dependencies
+change.
 
 `--profile {release,debug}` selects the build (default `release`). `debug` deploys the parallel
 `.#deck-packages-debug.*` set — the same package names built with the `profiling` feature on the compositor and the wasm

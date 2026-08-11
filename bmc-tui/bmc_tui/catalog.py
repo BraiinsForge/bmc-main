@@ -632,6 +632,7 @@ def register_default_servers(
 
 
 _WASM_HOST = "bmc-wasm-host"
+_WIDGET_RELOAD_HOOK = "/run/current-profile/core/activation/scripts/999-signal-widget-reload"
 
 
 @stage("Stop compositor")
@@ -682,40 +683,44 @@ def _await_orchestrator(dev: Device, timeout: int = _ORCHESTRATOR_TIMEOUT) -> No
     That lets it bounce the compositor after `add-packages` has returned,
     so sampling before it settles would miss the restart it is about to make.
     """
-    dev.read(
+    lingering = dev.read(
         f"i=0; while pidof {_ORCHESTRATOR} >/dev/null 2>&1 && [ $i -lt {timeout} ]; "
-        "do sleep 1; i=$((i+1)); done"
+        f"do sleep 1; i=$((i+1)); done; pidof {_ORCHESTRATOR} || true"
+    )
+    require(
+        not lingering,
+        f"service orchestrator still reconciling after {timeout} s (pid(s) {lingering})",
     )
 
 
 @stage("Restart compositor")
-def restart_compositor(dev: Device, *, old_pid: Pid | None = None, skip: bool = False) -> str:
-    """Restart the compositor so it reloads the widget set.
-
-    The orchestrator only reloads it when its init script changed.
-    That happens for a compositor package change, not a widget-only one.
-    Pass `old_pid`, sampled ahead of the activation, to tell those apart:
-    a changed pid means the reload already happened.
-
-    Deliberately not a question. The prompt it replaces defaulted to no,
-    answering itself that way whenever stdin was not a TTY — so a deploy
-    could report success having loaded nothing.
-    `skip` is the explicit opt-out for leaving a running display alone.
-    """
+def restart_compositor(dev: Device) -> str:
+    """Hard-restart the compositor for diagnostic procedure cleanup."""
     if dry_run.get():
         return "skipped (dry-run)"
 
-    if skip:
-        return "skipped on request — widgets load on the compositor's next start"
-
-    if old_pid is not None:
-        _await_orchestrator(dev)
-        now = compositor_pid(dev)
-        if now is not None and now != old_pid:
-            return f"already restarted by the service orchestrator (pid {now})"
-
     dev.run("/etc/init.d/bmc-compositor restart")
     return "restarted"
+
+
+@stage("Wait for package activation")
+def await_package_activation(dev: Device, *, old_pid: Pid | None) -> str:
+    """Wait for activation to reload widgets or reconcile the compositor service."""
+    if dry_run.get():
+        return "skipped (dry-run)"
+
+    _await_orchestrator(dev)
+    now = compositor_pid(dev)
+    if now is None:
+        raise Abort("compositor is not running after package activation")
+    if old_pid is None:
+        return f"compositor started during activation (pid {now})"
+    if now != old_pid:
+        return f"compositor restarted by the service orchestrator (pid {now})"
+    if dev.read(f"test -x {_WIDGET_RELOAD_HOOK} && echo yes || true") == "yes":
+        return "activation completed; compositor undisturbed (widget reload hook present)"
+
+    raise Abort("active core cannot reload widgets; deploy a current core package first")
 
 
 def _generation_number(register_stdout: str | None) -> str | None:

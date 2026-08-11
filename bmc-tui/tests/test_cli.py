@@ -46,7 +46,9 @@ def test_deploy_parses_args() -> None:
 
 
 def test_deploy_defaults_to_empty_package_set() -> None:
-    assert tyro.cli(Deploy, args=["--device", "h"]).packages == []
+    cmd = tyro.cli(Deploy, args=["--device", "h"])
+    assert cmd.packages == []
+    assert not hasattr(cmd, "no_restart")
 
 
 def test_upgrade_e2e_parses_args() -> None:
