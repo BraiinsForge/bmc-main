@@ -295,6 +295,19 @@ impl PerfOverlay {
             layout_us: rendered.iter().map(|s| s.timings.layout_us).sum::<u32>() / n,
             render_us: rendered.iter().map(|s| s.timings.render_us).sum::<u32>() / n,
             flush_us: rendered.iter().map(|s| s.timings.flush_us).sum::<u32>() / n,
+            taffy_build_us: rendered
+                .iter()
+                .map(|s| s.timings.taffy_build_us)
+                .sum::<u32>()
+                / n,
+            taffy_compute_us: rendered
+                .iter()
+                .map(|s| s.timings.taffy_compute_us)
+                .sum::<u32>()
+                / n,
+            // Diagnostics rather than durations; averaging them would be
+            // meaningless, and the overlay does not display them.
+            ..FrameTimings::default()
         }
     }
 
