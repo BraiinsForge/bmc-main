@@ -52,17 +52,35 @@ pub fn default_lockfile_path() -> std::path::PathBuf {
 }
 
 #[must_use]
+pub fn default_owner_record_path() -> std::path::PathBuf {
+    derive_owner_record_path(&default_socket_path())
+}
+
+#[must_use]
 pub fn derive_lockfile_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    derive_socket_sibling_path(socket_path, "lock")
+}
+
+#[must_use]
+pub fn derive_owner_record_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    derive_socket_sibling_path(socket_path, "owner")
+}
+
+fn derive_socket_sibling_path(
+    socket_path: &std::path::Path,
+    extension: &str,
+) -> std::path::PathBuf {
     if socket_path
         .extension()
         .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
     {
         let mut p = socket_path.to_path_buf();
-        p.set_extension("lock");
+        p.set_extension(extension);
         return p;
     }
     let mut s = socket_path.as_os_str().to_owned();
-    s.push(".lock");
+    s.push(".");
+    s.push(extension);
     std::path::PathBuf::from(s)
 }
 

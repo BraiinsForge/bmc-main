@@ -25,8 +25,9 @@
 use std::env;
 use std::fmt::Write as FmtWrite;
 use std::fs::File;
+use std::io;
 use std::io::Write as IoWrite;
-use std::os::unix::net::UnixListener;
+use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::time::Duration;
 
@@ -39,20 +40,54 @@ fn main() {
     let accepts: usize = env::var("BMC_THIN_FAKE_HOST_ACCEPTS")
         .ok()
         .map_or(1, |s| s.parse().expect("BUG: fake host accepts integer"));
+    if env::var_os("BMC_THIN_FAKE_HOST_IGNORE_TERM").is_some() {
+        unsafe {
+            libc::signal(libc::SIGTERM, libc::SIG_IGN);
+        }
+    }
     if let Ok(report_path) = env::var("BMC_THIN_FAKE_HOST_FD_REPORT") {
         report_inherited_fds(Path::new(&report_path), lock_fd);
     }
-    let listener = UnixListener::bind(&socket).expect("BUG: fake host bind");
+    let listener = bind_listener(Path::new(&socket));
     std::thread::sleep(Duration::from_millis(100));
     unsafe {
         libc::close(lock_fd);
     }
+    let err_ack_drop_marker = env::var("BMC_THIN_FAKE_HOST_ERR_ACK_DROP").ok();
     let mut accepted = Vec::new();
     for _ in 0..accepts {
-        let (stream, _addr) = listener.accept().expect("BUG: fake host accept");
-        accepted.push(stream);
+        let (mut stream, _addr) = listener.accept().expect("BUG: fake host accept");
+        if let Some(marker) = &err_ack_drop_marker {
+            IoWrite::write_all(&mut stream, b"err-ack").expect("BUG: fake host err ack");
+            drop(stream);
+            File::create(marker).expect("BUG: fake host err ack marker");
+        } else {
+            accepted.push(stream);
+        }
+    }
+    if env::var_os("BMC_THIN_FAKE_HOST_HOLD").is_some() {
+        loop {
+            std::thread::park();
+        }
     }
     std::process::exit(0);
+}
+
+fn bind_listener(socket: &Path) -> UnixListener {
+    match UnixListener::bind(socket) {
+        Ok(listener) => listener,
+        Err(error) if error.kind() == io::ErrorKind::AddrInUse => {
+            match UnixStream::connect(socket) {
+                Ok(_) => panic!("BUG: fake host socket already has a listener"),
+                Err(connect_error) if connect_error.raw_os_error() == Some(libc::ECONNREFUSED) => {
+                    std::fs::remove_file(socket).expect("BUG: remove stale fake host socket");
+                    UnixListener::bind(socket).expect("BUG: fake host rebind")
+                }
+                Err(connect_error) => panic!("BUG: fake host stale probe: {connect_error}"),
+            }
+        }
+        Err(error) => panic!("BUG: fake host bind: {error}"),
+    }
 }
 
 fn report_inherited_fds(report_path: &Path, lock_fd: i32) {

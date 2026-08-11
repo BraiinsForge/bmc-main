@@ -21,6 +21,7 @@
 pub mod args;
 pub mod host_client;
 pub mod logging;
+pub mod ownership;
 pub mod paths;
 pub mod signal;
 pub mod spawn;
@@ -40,6 +41,7 @@ pub fn run(config: Config) -> Result<()> {
         host_socket = %config.host_socket.display(),
         host_bin = %config.host_bin.display(),
         lockfile = %config.lockfile.display(),
+        owner_record = %config.owner_record.display(),
         host_wait_ms = config.host_wait.as_millis(),
         ack_wait_ms = config.ack_wait.as_millis(),
         "starting bmc-wasm-thin"

@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-pub use bmc_wasm_thin_protocol::derive_lockfile_path;
+pub use bmc_wasm_thin_protocol::{derive_lockfile_path, derive_owner_record_path};
 
 #[must_use]
 pub fn resolve_wayland_display_path(

@@ -11,6 +11,7 @@ workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 libc = { workspace = true }
+nix = { workspace = true }
 rustix = { workspace = true }
 signal-hook = { workspace = true }
 tracing = { workspace = true }
