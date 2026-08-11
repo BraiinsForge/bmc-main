@@ -110,6 +110,115 @@ struct ShadowFboPool {
 ///
 /// Geometry is recorded so a resize can be detected — the texture is the wrong
 /// shape then and must be reallocated rather than reused.
+/// A textured-quad program: two triangles, one `texture2D`, nothing else.
+///
+/// Compositing the static layer is a straight copy, and femtovg's own fast path
+/// still costs ~27 ms for a full screen on the Deck against ~13 ms for this —
+/// same texture, same destination, same pixels, so the difference is the shader
+/// it selects. Worth 14 ms a frame on a static-heavy widget.
+///
+/// This does not close the whole gap: the compositor draws a comparable quad in
+/// ~512 us, so something beyond the shader remains, most likely that this
+/// texture is also a framebuffer's colour attachment.
+struct RawBlit {
+    program: glow::Program,
+    vbo: glow::Buffer,
+    pos_loc: u32,
+    uv_loc: u32,
+}
+
+/// Size of the vertex components; four per vertex, position then texture
+/// coordinate.
+const F32_BYTES: i32 = 4;
+
+impl RawBlit {
+    const VERT: &'static str = r"#version 100
+attribute vec2 a_pos;
+attribute vec2 a_uv;
+varying vec2 v_uv;
+void main() {
+    v_uv = a_uv;
+    gl_Position = vec4(a_pos, 0.0, 1.0);
+}
+";
+
+    const FRAG: &'static str = r"#version 100
+precision mediump float;
+varying vec2 v_uv;
+uniform sampler2D u_tex;
+void main() {
+    gl_FragColor = texture2D(u_tex, v_uv);
+}
+";
+
+    fn new(gl: &glow::Context) -> Option<Self> {
+        // SAFETY: the caller holds the renderer's current GL context.
+        unsafe {
+            let program = gl.create_program().ok()?;
+            for (kind, src) in [
+                (glow::VERTEX_SHADER, Self::VERT),
+                (glow::FRAGMENT_SHADER, Self::FRAG),
+            ] {
+                let Ok(shader) = gl.create_shader(kind) else {
+                    gl.delete_program(program);
+                    return None;
+                };
+                gl.shader_source(shader, src);
+                gl.compile_shader(shader);
+                if !gl.get_shader_compile_status(shader) {
+                    tracing::warn!(log = %gl.get_shader_info_log(shader), "raw blit shader");
+                    gl.delete_shader(shader);
+                    gl.delete_program(program);
+                    return None;
+                }
+                gl.attach_shader(program, shader);
+                gl.delete_shader(shader);
+            }
+            gl.link_program(program);
+            if !gl.get_program_link_status(program) {
+                gl.delete_program(program);
+                return None;
+            }
+
+            // No Y flip: the layer and the frame are both GL framebuffers with a
+            // bottom-left origin, so a straight copy preserves orientation.
+            // femtovg's paint needs `ImageFlags::FLIP_Y` because its image
+            // sampling applies its own convention, not because the texture is
+            // stored upside down — flipping here to match it renders the static
+            // half mirrored.
+            let verts: [f32; 16] = [
+                -1.0, -1.0, 0.0, 0.0, //
+                1.0, -1.0, 1.0, 0.0, //
+                -1.0, 1.0, 0.0, 1.0, //
+                1.0, 1.0, 1.0, 1.0,
+            ];
+            let Ok(vbo) = gl.create_buffer() else {
+                gl.delete_program(program);
+                return None;
+            };
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
+            let bytes: Vec<u8> = verts.iter().flat_map(|v| v.to_ne_bytes()).collect();
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, &bytes, glow::STATIC_DRAW);
+
+            let (Some(pos_loc), Some(uv_loc)) = (
+                gl.get_attrib_location(program, "a_pos"),
+                gl.get_attrib_location(program, "a_uv"),
+            ) else {
+                gl.delete_buffer(vbo);
+                gl.delete_program(program);
+                return None;
+            };
+
+            Some(Self {
+                program,
+                vbo,
+                pos_loc,
+                uv_loc,
+            })
+        }
+    }
+}
+
 struct StaticLayer {
     image: femtovg::ImageId,
     width: u32,
@@ -187,6 +296,9 @@ pub struct FemtoVgRenderer {
     /// 1x1 opaque white texture, tinted to paint solid rectangles through
     /// femtovg's texture-copy fast path. See [`FemtoVgRenderer::solid_texture`].
     solid_texture: Option<femtovg::ImageId>,
+    /// Minimal textured-quad program used to composite the static layer
+    /// without going through femtovg. See [`FemtoVgRenderer::raw_blit`].
+    raw_blit: Option<RawBlit>,
 }
 
 impl std::fmt::Debug for FemtoVgRenderer {
@@ -641,6 +753,7 @@ impl FemtoVgRenderer {
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
             static_layers: HashMap::new(),
             solid_texture: None,
+            raw_blit: None,
         })
     }
 
@@ -850,6 +963,53 @@ fn draw_anchored_lines_with_outline(
 // ── Renderer trait implementation ───────────────────────────────────
 
 impl FemtoVgRenderer {
+    /// Composite the static layer with [`RawBlit`] instead of femtovg.
+    ///
+    /// Flushes first: femtovg has the frame's clear queued and raw GL would
+    /// otherwise land underneath it. Returns `false` if the program or the
+    /// layer's texture is unavailable, so a failure degrades to femtovg's own
+    /// blit rather than to a blank frame.
+    fn blit_static_layer_raw(&mut self, image: femtovg::ImageId) -> bool {
+        let Ok(texture) = self.canvas.get_native_texture(image) else {
+            return false;
+        };
+        self.canvas.flush();
+        if self.raw_blit.is_none() {
+            self.raw_blit = RawBlit::new(&self.gl);
+        }
+        let Some(blit) = self.raw_blit.as_ref() else {
+            return false;
+        };
+
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        unsafe {
+            self.gl.disable(glow::BLEND);
+            self.gl.disable(glow::STENCIL_TEST);
+            self.gl.disable(glow::SCISSOR_TEST);
+            self.gl.use_program(Some(blit.program));
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(blit.vbo));
+            let stride = 4 * F32_BYTES;
+            self.gl.enable_vertex_attrib_array(blit.pos_loc);
+            self.gl
+                .vertex_attrib_pointer_f32(blit.pos_loc, 2, glow::FLOAT, false, stride, 0);
+            self.gl.enable_vertex_attrib_array(blit.uv_loc);
+            self.gl.vertex_attrib_pointer_f32(
+                blit.uv_loc,
+                2,
+                glow::FLOAT,
+                false,
+                stride,
+                2 * F32_BYTES,
+            );
+            self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            self.gl.disable_vertex_attrib_array(blit.pos_loc);
+            self.gl.disable_vertex_attrib_array(blit.uv_loc);
+        }
+        true
+    }
+
     /// Paint that fills `(x, y, w, h)` with `color` through femtovg's
     /// texture-copy fast path rather than its general fill shader.
     ///
@@ -2112,6 +2272,9 @@ impl Renderer for FemtoVgRenderer {
             return false;
         }
         let (image, w, h) = (layer.image, layer.width as f32, layer.height as f32);
+        if self.blit_static_layer_raw(image) {
+            return true;
+        }
 
         // No canvas transform here on purpose — the fast path below ignores
         // it. The Y-flip this texture needs comes from `ImageFlags::FLIP_Y`,
