@@ -25,7 +25,7 @@ use bmc_wasm_sdk::Hashrate;
 use units::availability::Availability;
 
 use crate::model::{
-    NextPayout, PayoutKind, PoolData, Rewards, Sample, Series, SizeBucket, WorkerCounts,
+    NextPayout, PayoutKind, PoolData, Rewards, Sample, Series, SizeBucket, Source, WorkerCounts,
 };
 use crate::screens::big_chart::BigChartViewData;
 use crate::screens::overview::OverviewViewData;
@@ -180,6 +180,17 @@ pub fn empty_data() -> PoolData {
     }
 }
 
+/// What every source failing before its first answer leaves behind: no data
+/// and nothing more to wait for.
+#[must_use]
+pub fn failed_data() -> PoolData {
+    let mut data = PoolData::default();
+    for source in Source::ALL {
+        data.mark_failed(source);
+    }
+    data
+}
+
 fn denied_data() -> PoolData {
     PoolData {
         access_denied: true,
@@ -224,6 +235,12 @@ pub fn sample_overview_loading(bucket: SizeBucket) -> OverviewViewData {
 #[must_use]
 pub fn sample_overview_empty(bucket: SizeBucket) -> OverviewViewData {
     overview_with(bucket, empty_data())
+}
+
+/// Overview screen with every source failed before its first answer.
+#[must_use]
+pub fn sample_overview_failed(bucket: SizeBucket) -> OverviewViewData {
+    overview_with(bucket, failed_data())
 }
 
 /// The hint the host fills from the deck's own network state.
@@ -309,6 +326,12 @@ pub fn sample_big_chart_loading(bucket: SizeBucket) -> BigChartViewData {
 #[must_use]
 pub fn sample_big_chart_empty(bucket: SizeBucket) -> BigChartViewData {
     big_chart_with(bucket, empty_data())
+}
+
+/// Big Chart screen with every source failed before its first answer.
+#[must_use]
+pub fn sample_big_chart_failed(bucket: SizeBucket) -> BigChartViewData {
+    big_chart_with(bucket, failed_data())
 }
 
 /// Big Chart screen with the account's key refused by the API.

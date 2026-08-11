@@ -239,6 +239,22 @@ pub struct PoolData {
     pub access_denied: bool,
 }
 
+impl PoolData {
+    /// Record that `source` was asked and produced nothing usable
+    /// [`Availability::mark_failed`].
+    pub fn mark_failed(&mut self, source: Source) -> bool {
+        match source {
+            Source::HashrateCurrent => self.hashrate_5m.mark_failed(),
+            Source::RewardsLatest => self.rewards.mark_failed(),
+            Source::HashrateHistory => self.hashrate_history.mark_failed(),
+            Source::WorkersCurrent => self.workers.mark_failed(),
+            Source::WorkersHistory => self.workers_history.mark_failed(),
+            Source::Financials => self.next_payout.mark_failed(),
+            Source::PayoutsRecent => self.payouts.mark_failed(),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

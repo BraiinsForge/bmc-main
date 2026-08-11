@@ -105,6 +105,14 @@ fn overview_empty(ctx: &mut StoryCtx) {
 }
 
 #[story]
+fn overview_failed(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        let view = fixtures::sample_overview_failed(bucket);
+        (overview::overview_view(&view), view.width, view.height)
+    });
+}
+
+#[story]
 fn overview_denied(ctx: &mut StoryCtx) {
     size_frames(ctx, |bucket| {
         let view = fixtures::sample_overview_denied(bucket);
@@ -132,6 +140,14 @@ fn big_chart_loading(ctx: &mut StoryCtx) {
 fn big_chart_empty(ctx: &mut StoryCtx) {
     size_frames(ctx, |bucket| {
         let view = fixtures::sample_big_chart_empty(bucket);
+        (big_chart::big_chart_view(&view), view.width, view.height)
+    });
+}
+
+#[story]
+fn big_chart_failed(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        let view = fixtures::sample_big_chart_failed(bucket);
         (big_chart::big_chart_view(&view), view.width, view.height)
     });
 }

@@ -225,7 +225,12 @@ fn chart(view: &BigChartViewData, width: f32, height: f32, spec: &ChartSpec) -> 
     let Some(history) = view.data.hashrate_history.as_option() else {
         let plot_w = width - spec.left_gutter - spec.right_gutter;
         let plot_h = height - spec.x_band.unwrap_or(0.0);
-        return center(props!(flex: 1.0), [parts::skeleton_block(plot_w, plot_h)]);
+        let plot = parts::placeholder(
+            &view.data.hashrate_history,
+            parts::absent_block(plot_w, plot_h, parts::callout::HISTORY),
+            parts::skeleton_block(plot_w, plot_h),
+        );
+        return center(props!(flex: 1.0), [plot]);
     };
     let workers_history = view
         .worker_states
@@ -285,7 +290,11 @@ fn payout_markers(
 fn hashrate_hero(data: &PoolData) -> Node {
     match hero_hashrate(data) {
         Some((label, value)) => parts::stat_pair(&label, &value, color::HASHRATE_VALUE),
-        None => parts::skeleton(chars::HERO_PAIR),
+        None => parts::placeholder(
+            &data.hashrate_5m,
+            parts::absent(parts::callout::HASHRATE),
+            parts::skeleton(chars::HERO_PAIR),
+        ),
     }
 }
 
@@ -300,7 +309,11 @@ fn legend(view: &BigChartViewData) -> Node {
                 &format_number!(workers.active, 0),
                 color::WORKERS,
             ),
-            None => parts::skeleton(chars::WORKERS_PAIR),
+            None => parts::placeholder(
+                &view.data.workers,
+                parts::absent(parts::callout::WORKERS),
+                parts::skeleton(chars::WORKERS_PAIR),
+            ),
         });
     }
     row(props!(gap: 16.0, cross_align: CrossAlign::Center), cells)
@@ -310,14 +323,21 @@ fn legend(view: &BigChartViewData) -> Node {
 fn compact_hero(view: &BigChartViewData) -> Node {
     // The run's spans share one paragraph, and a paragraph cannot hold
     // a skeleton node mid-line — while either source is pending,
-    // the whole line loads as one bar.
-    let workers_pending = view.worker_states && view.data.workers.as_option().is_none();
+    // the whole line loads as one bar. A failed workers source instead drops
+    // its own spans below, leaving the hashrate standing.
+    let workers_pending = view.worker_states
+        && view.data.workers.as_option().is_none()
+        && !view.data.workers.failed();
     let Some(hashrate) = view.data.hashrate_5m.as_option() else {
-        return parts::skeleton(if view.worker_states {
-            chars::COMPACT_FULL
-        } else {
-            chars::COMPACT_HERO
-        });
+        return parts::placeholder(
+            &view.data.hashrate_5m,
+            parts::absent(parts::callout::HASHRATE),
+            parts::skeleton(if view.worker_states {
+                chars::COMPACT_FULL
+            } else {
+                chars::COMPACT_HERO
+            }),
+        );
     };
     if workers_pending {
         return parts::skeleton(chars::COMPACT_FULL);

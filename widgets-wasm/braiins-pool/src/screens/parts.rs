@@ -149,6 +149,50 @@ pub fn absent(callout: &str) -> Node {
     )
 }
 
+/// What a slot says for a source that failed. A slot under a title of its
+/// own takes the bare word; an unlabelled one names what it stands for.
+pub mod callout {
+    pub const UNAVAILABLE: &str = "Unavailable";
+    pub const HASHRATE: &str = "Hashrate unavailable";
+    pub const HISTORY: &str = "History unavailable";
+    pub const LAST_PAYOUT: &str = "Last payout unavailable";
+    pub const WORKERS: &str = "Workers unavailable";
+}
+
+/// The placeholder for a slot whose source produced no value: `loading`
+/// while an answer may still come, `unavailable` once one came back without
+/// one. Both nodes are the caller's — a slot's shape is its own business.
+#[must_use]
+pub fn placeholder<T>(source: &Availability<T>, unavailable: Node, loading: Node) -> Node {
+    if source.failed() {
+        unavailable
+    } else {
+        loading
+    }
+}
+
+/// A value slot's content: the rendered value, or — when its source gave
+/// none — the state that explains why. `Loading` may still become a value;
+/// `Unavailable` will not.
+#[derive(Clone, Copy, Debug)]
+pub enum Slot<'a> {
+    Value(&'a str),
+    Loading,
+    Unavailable,
+}
+
+impl<'a> Slot<'a> {
+    /// The slot for a `value` its caller rendered from `source`.
+    #[must_use]
+    pub fn new<T>(value: Option<&'a str>, source: &Availability<T>) -> Self {
+        match value {
+            Some(value) => Self::Value(value),
+            None if source.failed() => Self::Unavailable,
+            None => Self::Loading,
+        }
+    }
+}
+
 // Loading placeholders come from the SDK's Carbon skeleton builders; the
 // widget only fixes the colour and the slots' text sizes.
 
@@ -179,6 +223,33 @@ pub fn skeleton_meter() -> Node {
         props!(height: METER_ROW_H, cross_align: CrossAlign::Center),
         [skeleton::fill(METER_TRACK_H, color::SKELETON)],
     )
+}
+
+/// A callout in a value line's own box: the text stays body-sized, the box
+/// keeps the line's height, so a card whose neighbour did load holds its
+/// title and footer on the row's shared baselines.
+#[must_use]
+pub fn absent_value(callout: &str, size: u32) -> Node {
+    #[expect(clippy::cast_precision_loss, reason = "a font size is exact in f32")]
+    let height = size as f32;
+    row(
+        props!(height: height, cross_align: CrossAlign::Center),
+        [absent(callout)],
+    )
+}
+
+/// A body line's empty box: the footer of a slot with nothing to say and
+/// nothing to wait for.
+fn blank_line() -> Node {
+    #[expect(clippy::cast_precision_loss, reason = "a font size is exact in f32")]
+    let height = font::BODY as f32;
+    row(props!(height: height), [])
+}
+
+/// A callout centered in a chart's plot area, in place of its loading block.
+#[must_use]
+pub fn absent_block(width: f32, height: f32, callout: &str) -> Node {
+    center(props!(width: width, height: height), [absent(callout)])
 }
 
 /// The meter's slot when no payout is underway, spanning the title gap
@@ -329,14 +400,14 @@ pub const STAT_ROOMY: StatGaps = StatGaps {
 };
 
 /// A label / value / sub stack, optionally led by a legend dot in the
-/// colour of the chart line the value belongs to. `None` values render
-/// loading skeletons in the lines' places, holding the layout still;
-/// `value_chars` sizes the value's bar to the string it stands in for.
+/// colour of the chart line the value belongs to. A slot without a value
+/// keeps its place — loading or unavailable, the stack holds still — and
+/// `value_chars` sizes the loading bar to the string it stands in for.
 #[must_use]
 pub fn stat_block(
     dot: Option<Color>,
     block_label: &str,
-    value: Option<&str>,
+    value: Slot<'_>,
     sub: Option<&str>,
     gaps: StatGaps,
     value_chars: f32,
@@ -355,13 +426,17 @@ pub fn stat_block(
         None => label(block_label),
     };
     let value_line: Node = match value {
-        Some(value) => text(
+        Slot::Value(value) => text(
             value,
             style!(size: font::VALUE, weight: FontWeight::SEMIBOLD, color: color::TEXT, family: FontFamily::DeckSans, line_height: 1.0),
         ),
-        None => skeleton_value(value_chars, font::VALUE),
+        Slot::Loading => skeleton_value(value_chars, font::VALUE),
+        Slot::Unavailable => absent_value(callout::UNAVAILABLE, font::VALUE),
     };
+    // A sub qualifies a value ("5m Average", "≈ 10.038 USD"), so it goes with
+    // one: the slot keeps its height, with nothing left to say or wait for.
     let sub_line = match sub {
+        _ if matches!(value, Slot::Unavailable) => blank_line(),
         Some(sub) => label(sub),
         // Subs run "5m Average" to "≈ 10.038 USD".
         None => skeleton(10.0),
@@ -492,20 +567,25 @@ pub fn workers_panel(workers: &Availability<WorkerCounts>, spec: &WorkersSpec) -
             [inline_icon(svg, spec.icon, glyph_color), count_line],
         )
     };
-    let counts = workers.as_option();
-    let mut lines = vec![];
-    if spec.include_all {
-        let total = counts.map(|c| c.active + c.low + c.offline + c.disabled);
-        lines.push(line(WorkerState::All, total));
-    }
-    lines.push(line(WorkerState::Active, counts.map(|c| c.active)));
-    lines.push(line(WorkerState::Low, counts.map(|c| c.low)));
-    lines.push(line(WorkerState::Offline, counts.map(|c| c.offline)));
+    let rows = |counts: Option<&WorkerCounts>| {
+        let mut lines = vec![];
+        if spec.include_all {
+            let total = counts.map(|c| c.active + c.low + c.offline + c.disabled);
+            lines.push(line(WorkerState::All, total));
+        }
+        lines.push(line(WorkerState::Active, counts.map(|c| c.active)));
+        lines.push(line(WorkerState::Low, counts.map(|c| c.low)));
+        lines.push(line(WorkerState::Offline, counts.map(|c| c.offline)));
+        col(props!(gap: spec.rows_gap), lines)
+    };
+    // One callout for the panel, not the same word down every state's row.
+    let body = placeholder(
+        workers,
+        absent(callout::UNAVAILABLE),
+        rows(workers.as_option()),
+    );
 
-    col(
-        props!(gap: 10.0),
-        vec![label("Workers"), col(props!(gap: spec.rows_gap), lines)],
-    )
+    col(props!(gap: 10.0), vec![label("Workers"), body])
 }
 
 /// Where the unbound state points the operator: the Deck web app on the

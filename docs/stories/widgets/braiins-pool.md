@@ -81,6 +81,9 @@ four widget sizes, each size showing as much of the picture as its frame holds.
 - A slot the pool answered with nothing shows an explicit dimmed callout instead — *No payouts yet* where the last
   payout would be, *No payout scheduled* in the meter's place. An empty meter track alone reads as a skeleton, which is
   why the meter slot carries words.
+- A slot whose source failed before it ever answered says *Unavailable* instead of holding a skeleton that would never
+  resolve. A source that had already delivered keeps its last good numbers, because one failed refresh is worth less
+  than the data blanking it would cost.
 - A zero that the pool actually reported is shown as a zero. It is a measurement, not an absence.
 
 ### Understand a key that cannot read my stats

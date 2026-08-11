@@ -159,10 +159,21 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
             source.name(),
             response.status
         );
-        // The API knows the key and still refuses its reads — every source fails alike,
-        // and the screens must say so rather than keep their loading skeletons up forever.
-        if let Some(FetchOutcome::Http(401 | 403)) = response.outcome() {
-            DATA.with(|data| data.borrow_mut().access_denied = true);
+        let changed = DATA.with(|data| {
+            let mut data = data.borrow_mut();
+            let mut changed = data.mark_failed(source);
+            // The API knows the key and still refuses its reads — every source fails
+            // alike, so the whole screen says so rather than each slot on its own.
+            if let Some(FetchOutcome::Http(401 | 403)) = response.outcome()
+                && !data.access_denied
+            {
+                data.access_denied = true;
+                changed = true;
+            }
+            changed
+        });
+        // An outage repeats this reply every tick; only the first one is news.
+        if changed {
             request_frame();
         }
         return;
@@ -182,16 +193,22 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
                     data.hashrate_5m = units::availability::Availability::Available(
                         Hashrate::from_terahashes_per_second(th),
                     );
+                } else {
+                    unreadable(&mut data, source);
                 }
             }
             Source::RewardsLatest => {
                 if let Some(rewards) = pool_api::parse_rewards(&json) {
                     data.rewards = units::availability::Availability::Available(rewards);
+                } else {
+                    unreadable(&mut data, source);
                 }
             }
             Source::WorkersCurrent => {
                 if let Some(counts) = pool_api::parse_workers_current(&json) {
                     data.workers = units::availability::Availability::Available(counts);
+                } else {
+                    unreadable(&mut data, source);
                 }
             }
             Source::Financials => {
@@ -206,6 +223,13 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
         }
     });
     request_frame();
+}
+
+/// A reply that arrived whole but says nothing the parser can use: the source
+/// answered, so its slots stop waiting.
+fn unreadable(data: &mut crate::model::PoolData, source: Source) {
+    log_warn!("{} reply did not parse", source.name());
+    data.mark_failed(source);
 }
 
 fn start_chain(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'_>) {
@@ -247,7 +271,6 @@ fn request_cell(source: Source) -> &'static std::thread::LocalKey<RefCell<Option
 }
 
 /// What absorbing a page leaves the chain in.
-#[derive(PartialEq, Eq)]
 enum PageOutcome {
     /// Another page is on its way; nothing to commit yet.
     Following,
@@ -349,9 +372,19 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
         chain.outstanding = started;
         PageOutcome::Following
     });
-    if outcome == PageOutcome::Complete {
-        commit_chain(source);
-        request_frame();
+    match outcome {
+        PageOutcome::Complete => {
+            commit_chain(source);
+            request_frame();
+        }
+        // Last cycle's data stands where there is any; a source still on its
+        // first listing has none, and says so instead of loading forever.
+        PageOutcome::Abandoned => {
+            if DATA.with(|data| data.borrow_mut().mark_failed(source)) {
+                request_frame();
+            }
+        }
+        PageOutcome::Following => {}
     }
 }
 
@@ -425,6 +458,9 @@ fn continue_chain(source: Source, response: &FetchResponse) {
         // A broken chain keeps last cycle's committed data;
         // the next poll tick starts a fresh chain.
         chain_cell(source).with(|cell| *cell.borrow_mut() = None);
+        if DATA.with(|data| data.borrow_mut().mark_failed(source)) {
+            request_frame();
+        }
         return;
     }
     let json = response.json();

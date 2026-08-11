@@ -131,17 +131,24 @@ fn header(account: Option<&str>) -> Node {
 /// A single centered hashrate hero, no card.
 fn small(view: &OverviewViewData) -> Node {
     let (value, label) = hashrate_strings(&view.data);
-    let hero = match value.as_deref() {
-        Some(value) => parts::hero_value(value),
-        None => parts::skeleton_value(chars::HASHRATE, font::HERO),
+    let slot = parts::Slot::new(value.as_deref(), &view.data.hashrate_5m);
+    let hero = match slot {
+        parts::Slot::Value(value) => parts::hero_value(value),
+        parts::Slot::Loading => parts::skeleton_value(chars::HASHRATE, font::HERO),
+        parts::Slot::Unavailable => parts::absent_value(parts::callout::UNAVAILABLE, font::HERO),
     };
+    let mut lines = vec![parts::label(&label), hero];
+    // The sub qualifies a value, so it goes where there is one to qualify.
+    if !matches!(slot, parts::Slot::Unavailable) {
+        lines.push(parts::label("5m Average"));
+    }
     frame(vec![
         header(None),
         center(
             props!(flex: 1.0),
             [col(
                 props!(gap: 12.0, cross_align: CrossAlign::Center),
-                [parts::label(&label), hero, parts::label("5m Average")],
+                lines,
             )],
         ),
     ])
@@ -150,7 +157,6 @@ fn small(view: &OverviewViewData) -> Node {
 /// Borderless stat blocks beside a compact workers card; the card centers
 /// on the whole frame height, so the columns split before the header.
 fn medium(view: &OverviewViewData) -> Node {
-    let (hr_value, hr_label) = hashrate_strings(&view.data);
     let left = col(
         props!(gap: space::GAP, flex: 1.0),
         vec![
@@ -162,14 +168,7 @@ fn medium(view: &OverviewViewData) -> Node {
                 [row(
                     props!(gap: 32.0),
                     [
-                        parts::stat_block(
-                            None,
-                            &hr_label,
-                            hr_value.as_deref(),
-                            Some("5m Average"),
-                            parts::STAT_OPEN,
-                            chars::HASHRATE,
-                        ),
+                        hashrate_block(&view.data, None, parts::STAT_OPEN),
                         reward_block(&view.data, parts::STAT_OPEN),
                     ],
                 )],
@@ -194,7 +193,6 @@ fn medium(view: &OverviewViewData) -> Node {
 
 /// Full-width payout card, two stat cards, and a bare sparkline.
 fn large(view: &OverviewViewData) -> Node {
-    let (hr_value, hr_label) = hashrate_strings(&view.data);
     let content_w = view.width - 2.0 * space::PADDING;
     let content_h = view.height - 2.0 * space::PADDING - budget::HEADER - space::GAP;
     let spark_h = content_h - budget::L_PAYOUT - budget::L_TILES - 2.0 * space::GAP;
@@ -215,14 +213,7 @@ fn large(view: &OverviewViewData) -> Node {
                     props!(flex: 1.0),
                     [parts::card(
                         parts::CARD_L,
-                        parts::stat_block(
-                            Some(color::HASHRATE),
-                            &hr_label,
-                            hr_value.as_deref(),
-                            Some("5m Average"),
-                            parts::STAT_TIGHT,
-                            chars::HASHRATE,
-                        ),
+                        hashrate_block(&view.data, Some(color::HASHRATE), parts::STAT_TIGHT),
                     )],
                 ),
                 col(
@@ -237,14 +228,17 @@ fn large(view: &OverviewViewData) -> Node {
     ];
     rows.push(match view.data.hashrate_history.as_option() {
         Some(history) => plot::line_chart(history, None, content_w, spark_h, &SPARKLINE, &[], &[]),
-        None => parts::skeleton_block(content_w, spark_h),
+        None => parts::placeholder(
+            &view.data.hashrate_history,
+            parts::absent_block(content_w, spark_h, parts::callout::HISTORY),
+            parts::skeleton_block(content_w, spark_h),
+        ),
     });
     frame(rows)
 }
 
 /// Carded tiles row, the chart section, and the roomy workers card.
 fn full(view: &OverviewViewData) -> Node {
-    let (hr_value, hr_label) = hashrate_strings(&view.data);
     let content_w = view.width - 2.0 * space::PADDING;
     let content_h = view.height - 2.0 * space::PADDING - budget::HEADER - space::GAP;
     let main_w = if view.worker_states {
@@ -261,14 +255,7 @@ fn full(view: &OverviewViewData) -> Node {
                 props!(flex: 1.0),
                 [parts::card(
                     parts::CARD_FULL_TILE,
-                    parts::stat_block(
-                        Some(color::HASHRATE),
-                        &hr_label,
-                        hr_value.as_deref(),
-                        Some("5m Average"),
-                        parts::STAT_ROOMY,
-                        chars::HASHRATE,
-                    ),
+                    hashrate_block(&view.data, Some(color::HASHRATE), parts::STAT_ROOMY),
                 )],
             ),
             col(
@@ -315,7 +302,11 @@ fn full(view: &OverviewViewData) -> Node {
             &[],
         ));
     } else {
-        main.push(parts::skeleton_block(main_w, budget::FULL_CHART));
+        main.push(parts::placeholder(
+            &view.data.hashrate_history,
+            parts::absent_block(main_w, budget::FULL_CHART, parts::callout::HISTORY),
+            parts::skeleton_block(main_w, budget::FULL_CHART),
+        ));
     }
 
     let main_col = col(
@@ -351,6 +342,20 @@ fn hashrate_strings(data: &PoolData) -> (Option<String>, String) {
     }
 }
 
+/// The hashrate stat block, dot-led in the layouts that pair it with the
+/// chart's own legend colour.
+fn hashrate_block(data: &PoolData, dot: Option<Color>, gaps: parts::StatGaps) -> Node {
+    let (value, block_label) = hashrate_strings(data);
+    parts::stat_block(
+        dot,
+        &block_label,
+        parts::Slot::new(value.as_deref(), &data.hashrate_5m),
+        Some("5m Average"),
+        gaps,
+        chars::HASHRATE,
+    )
+}
+
 fn reward_block(data: &PoolData, gaps: parts::StatGaps) -> Node {
     match data.rewards.as_option() {
         Some(rewards) => {
@@ -359,13 +364,20 @@ fn reward_block(data: &PoolData, gaps: parts::StatGaps) -> Node {
             parts::stat_block(
                 None,
                 "Todays Reward",
-                Some(&fmt!("{btc} BTC")),
+                parts::Slot::Value(&fmt!("{btc} BTC")),
                 Some(&fmt!("≈ {usd} USD")),
                 gaps,
                 chars::REWARD,
             )
         }
-        None => parts::stat_block(None, "Todays Reward", None, None, gaps, chars::REWARD),
+        None => parts::stat_block(
+            None,
+            "Todays Reward",
+            parts::Slot::new(None, &data.rewards),
+            None,
+            gaps,
+            chars::REWARD,
+        ),
     }
 }
 
@@ -396,28 +408,30 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
         None => parts::label("Next Payout"),
     };
     // Every line keeps its slot while loading, so the card never reflows
-    // as the sources land one by one. A skeleton stands for a source that
-    // has not answered yet; one that answered empty says so outright —
+    // as the sources land one by one. A skeleton stands for a source still
+    // to answer; one that answered empty — or failed — says so outright,
     // with the title gap folded into its slot [`parts::absent_meter`],
     // so the stack gets that gap zeroed to keep the footer in place.
-    let (meter, gaps) = match payout {
-        Some(p) => match p.progress_pct {
-            Some(pct) => {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    reason = "a 0–100 percentage is exact in f32"
-                )]
-                let fraction = (pct / 100.0).clamp(0.0, 1.0) as f32;
-                (parts::meter_row(fraction), gaps)
-            }
-            None => (
-                parts::absent_meter("No payout scheduled", gaps),
-                parts::StatGaps {
-                    label_value: 0.0,
-                    ..gaps
-                },
-            ),
-        },
+    let stated = |callout: &str| {
+        (
+            parts::absent_meter(callout, gaps),
+            parts::StatGaps {
+                label_value: 0.0,
+                ..gaps
+            },
+        )
+    };
+    let (meter, gaps) = match payout.map(|p| p.progress_pct) {
+        Some(Some(pct)) => {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a 0–100 percentage is exact in f32"
+            )]
+            let fraction = (pct / 100.0).clamp(0.0, 1.0) as f32;
+            (parts::meter_row(fraction), gaps)
+        }
+        Some(None) => stated("No payout scheduled"),
+        None if data.next_payout.failed() => stated(parts::callout::UNAVAILABLE),
         None => (parts::skeleton_meter(), gaps),
     };
     let last_line = match data.payouts.as_option() {
@@ -434,7 +448,11 @@ fn payout_body(data: &PoolData, gaps: parts::StatGaps) -> Node {
             }
             None => parts::absent("No payouts yet"),
         },
-        None => parts::skeleton(chars::LAST_PAYOUT),
+        None => parts::placeholder(
+            &data.payouts,
+            parts::absent(parts::callout::LAST_PAYOUT),
+            parts::skeleton(chars::LAST_PAYOUT),
+        ),
     };
     parts::stat_stack(title, meter, last_line, gaps)
 }
