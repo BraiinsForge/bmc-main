@@ -78,6 +78,85 @@ pub struct CompletedFetch {
     pub body: Vec<u8>,
 }
 
+/// The fetches a widget has outstanding, and the tally that bounds them.
+///
+/// One rule holds the accounting together.
+/// [`FetchState::accept`] counts a request and hands back the channel that
+/// settles it, and every answer travels that channel —
+/// whether a transport thread produced it or the host wrote it directly,
+/// as it does for a refusal.
+/// A slot is released only in [`FetchState::drain_settled`],
+/// so the tally cannot drift from what the widget was told.
+pub struct FetchState {
+    /// Cloned into each background fetch thread,
+    /// and used directly when the host settles a request itself.
+    settle_tx: mpsc::Sender<CompletedFetch>,
+    settle_rx: mpsc::Receiver<CompletedFetch>,
+    /// Queued by `host_fetch_after`, still waiting for its firing time.
+    delayed: Vec<DelayedFetch>,
+    /// Accepted and not yet drained.
+    in_flight: u32,
+}
+
+impl FetchState {
+    fn new() -> Self {
+        let (settle_tx, settle_rx) = mpsc::channel();
+        Self {
+            settle_tx,
+            settle_rx,
+            delayed: Vec::new(),
+            in_flight: 0,
+        }
+    }
+
+    /// Count a request the host has accepted, and hand back its settling
+    /// channel. Dropping that channel without sending holds the slot until
+    /// the runtime goes away.
+    pub fn accept(&mut self) -> mpsc::Sender<CompletedFetch> {
+        self.in_flight += 1;
+        self.settle_tx.clone()
+    }
+
+    /// Settlements delivered since the last drain, each releasing its slot.
+    pub fn drain_settled(&mut self) -> Vec<CompletedFetch> {
+        let mut settled = Vec::new();
+        while let Ok(response) = self.settle_rx.try_recv() {
+            self.in_flight = self.in_flight.saturating_sub(1);
+            settled.push(response);
+        }
+        settled
+    }
+
+    pub fn queue_delayed(&mut self, fetch: DelayedFetch) {
+        self.delayed.push(fetch);
+    }
+
+    /// The delayed queue: fire the requests whose time has come,
+    /// or drop one the widget cancelled before it ran.
+    pub fn delayed_mut(&mut self) -> &mut Vec<DelayedFetch> {
+        &mut self.delayed
+    }
+
+    /// Whether anything is owed: a queued request, or one awaiting settlement.
+    #[must_use]
+    pub fn has_pending(&self) -> bool {
+        !self.delayed.is_empty() || self.in_flight > 0
+    }
+
+    /// Slots a widget is holding, against `max_fetches`.
+    #[must_use]
+    pub fn slots_used(&self) -> usize {
+        self.delayed.len().saturating_add(self.in_flight as usize)
+    }
+
+    /// A sender for a settlement no request is waiting on — teardown tests
+    /// keep one alive to prove a dropped runtime hangs up on its threads.
+    #[cfg(feature = "testing")]
+    pub fn test_settle_sender(&self) -> mpsc::Sender<CompletedFetch> {
+        self.settle_tx.clone()
+    }
+}
+
 /// A completed off-thread image decode, ready for GPU upload and delivery.
 pub struct CompletedImageDecode {
     pub job_id: ImageJobId,
@@ -611,17 +690,7 @@ pub(crate) struct HostState {
     /// Next fetch request ID counter (for `FetchRequestId::alloc`).
     pub next_request_id: u32,
 
-    /// Receiver for completed fetch responses from background threads.
-    pub fetch_rx: mpsc::Receiver<CompletedFetch>,
-
-    /// Sender cloned into each background fetch thread.
-    pub fetch_tx: mpsc::Sender<CompletedFetch>,
-
-    /// Pending delayed fetches.
-    pub delayed_fetches: Vec<DelayedFetch>,
-
-    /// Number of HTTP fetches currently in flight (spawned but not yet completed).
-    pub in_flight_fetches: u32,
+    pub fetches: FetchState,
 
     /// Receiver for completed off-thread image decodes.
     pub image_decode_rx: mpsc::Receiver<CompletedImageDecode>,
@@ -844,7 +913,6 @@ impl HostState {
     /// and installed on `renderer_ptr` per-frame via
     /// `WasmWidgetRuntime::with_renderer`.
     pub fn new(resource_limits: RuntimeResourceLimits, system_time: DateTime<FixedOffset>) -> Self {
-        let (fetch_tx, fetch_rx) = mpsc::channel();
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
@@ -864,10 +932,7 @@ impl HostState {
             params: VersionedSnapshotCache::new(ParamsSnapshot::new(BTreeMap::new())),
             current_lifecycle: Lifecycle::Idle,
             next_request_id: 1,
-            fetch_rx,
-            fetch_tx,
-            delayed_fetches: Vec::new(),
-            in_flight_fetches: 0,
+            fetches: FetchState::new(),
             image_decode_rx,
             image_decode_tx,
             next_image_job_id: 1,
@@ -953,9 +1018,7 @@ impl HostState {
 
     #[must_use]
     pub fn fetch_slots_used(&self) -> usize {
-        self.delayed_fetches
-            .len()
-            .saturating_add(self.in_flight_fetches as usize)
+        self.fetches.slots_used()
     }
 
     /// Accumulate `us` wall-clock micros into the named profile section. The

@@ -140,7 +140,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             }
             let request_id = FetchRequestId::alloc(&mut state.next_request_id);
-            state.in_flight_fetches += 1;
+            let settle = state.fetches.accept();
             state
                 .fetch_keys
                 .insert(request_id, format!("{method} {url}"));
@@ -150,7 +150,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 .as_ref()
                 .and_then(|f| f(&method, &url));
             if let Some((status, body)) = intercepted {
-                let _ = state.fetch_tx.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch {
                     request_id,
                     status,
                     body,
@@ -159,7 +159,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             }
 
             if state.refuse_live_io("fetch", &format!("{method} {url}")) {
-                let _ = state.fetch_tx.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Network.to_wire(),
                     body: Vec::new(),
@@ -171,7 +171,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             // form — the fetch key, the interceptor, the hermetic-breach
             // record — so no diagnostic, fixture or log can hold a secret.
             let Some(spent) = super::credentials::spend(state, &url, &headers, body) else {
-                let _ = state.fetch_tx.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Refused.to_wire(),
                     body: Vec::new(),
@@ -186,7 +186,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             } = spent;
             let redirects = Redirects::for_request(carries_secret);
 
-            let tx = state.fetch_tx.clone();
+            let tx = settle;
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
                 let (status, resp_body) = do_fetch(
@@ -249,7 +249,7 @@ fn register_fetch_after_import(linker: &mut Linker<HostState>) -> Result<()> {
             let request_id = FetchRequestId::alloc(&mut state.next_request_id);
 
             let fire_at_ms = state.monotonic_ms + u64::from(delay_ms);
-            state.delayed_fetches.push(DelayedFetch {
+            state.fetches.queue_delayed(DelayedFetch {
                 fire_at_ms,
                 method,
                 url,
@@ -275,11 +275,10 @@ fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let state = caller.data_mut();
-            let before = state.delayed_fetches.len();
-            state
-                .delayed_fetches
-                .retain(|fetch| fetch.request_id != request_id);
-            if state.delayed_fetches.len() == before {
+            let delayed = state.fetches.delayed_mut();
+            let before = delayed.len();
+            delayed.retain(|fetch| fetch.request_id != request_id);
+            if delayed.len() == before {
                 // Not in the delayed queue: it is already in flight (a detached
                 // request thread we cannot stop) or unknown. Report no-op so the
                 // guest waits for the response instead of orphaning a slot.

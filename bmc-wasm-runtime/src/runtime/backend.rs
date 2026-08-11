@@ -1338,8 +1338,8 @@ impl WasmWidgetRuntime {
 impl WasmWidgetRuntime {
     pub fn test_kick_fetch(&mut self) -> std::thread::JoinHandle<()> {
         let state = self.store.data_mut();
-        let fetch_tx = state.fetch_tx.clone();
-        state.delayed_fetches.push(crate::host_api::DelayedFetch {
+        let fetch_tx = state.fetches.test_settle_sender();
+        state.fetches.queue_delayed(crate::host_api::DelayedFetch {
             fire_at_ms: 0,
             method: String::new(),
             url: String::new(),

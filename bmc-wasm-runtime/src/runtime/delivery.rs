@@ -195,15 +195,11 @@ impl WasmWidgetRuntime {
     pub fn deliver_fetch_responses(&mut self) {
         self.fire_ready_delayed_fetches();
 
-        let mut responses = Vec::new();
         let state = self.store.data_mut();
-        while let Ok(resp) = state.fetch_rx.try_recv() {
-            state.in_flight_fetches = state.in_flight_fetches.saturating_sub(1);
-            responses.push(resp);
-            #[cfg(feature = "testing")]
-            {
-                state.delivered_events += 1;
-            }
+        let responses = state.fetches.drain_settled();
+        #[cfg(feature = "testing")]
+        {
+            state.delivered_events += responses.len() as u64;
         }
 
         if responses.is_empty() {
@@ -361,7 +357,7 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn has_pending_fetches(&self) -> bool {
         let state = self.store.data();
-        !state.delayed_fetches.is_empty() || state.in_flight_fetches > 0
+        state.fetches.has_pending()
     }
 
     /// Drain WebSocket events from all active connections and deliver them
@@ -979,7 +975,7 @@ impl WasmWidgetRuntime {
         let state = self.store.data_mut();
         let now_ms = state.monotonic_ms;
         let mut ready: Vec<DelayedFetchRequest> = Vec::new();
-        state.delayed_fetches.retain(|df| {
+        state.fetches.delayed_mut().retain(|df| {
             if now_ms >= df.fire_at_ms {
                 ready.push((
                     df.method.clone(),
@@ -1000,14 +996,14 @@ impl WasmWidgetRuntime {
             state
                 .fetch_keys
                 .insert(request_id, format!("{method} {url}"));
-            state.in_flight_fetches += 1;
+            let settle = state.fetches.accept();
 
             let intercepted = state
                 .fetch_interceptor
                 .as_ref()
                 .and_then(|f| f(&method, &url));
             if let Some((status, body)) = intercepted {
-                let _ = state.fetch_tx.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch {
                     request_id,
                     status,
                     body,
@@ -1016,7 +1012,7 @@ impl WasmWidgetRuntime {
             }
 
             if state.refuse_live_io("fetch", &format!("{method} {url}")) {
-                let _ = state.fetch_tx.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Network.to_wire(),
                     body: Vec::new(),
@@ -1029,7 +1025,7 @@ impl WasmWidgetRuntime {
             // and the queue never holds a secret at all.
             let Some(spent) = super::imports::credentials::spend(state, &url, &headers, body)
             else {
-                let _ = state.fetch_tx.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Refused.to_wire(),
                     body: Vec::new(),
@@ -1044,7 +1040,7 @@ impl WasmWidgetRuntime {
             } = spent;
             let redirects = Redirects::for_request(carries_secret);
 
-            let tx = state.fetch_tx.clone();
+            let tx = settle;
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
                 let (status, resp_body) = do_fetch(
