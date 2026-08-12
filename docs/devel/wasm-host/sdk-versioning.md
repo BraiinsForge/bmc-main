@@ -50,6 +50,27 @@ The check runs after instantiation (since it calls the export) but before any wi
 | Major version mismatch            | Reject — error shows both versions                     |
 | Minor/patch differ, major matches | Accept — log the version for diagnostics               |
 
+### Retiring a host import
+
+Removing a host function is not the same as removing its import. wasmi resolves every import at instantiation, so a
+widget importing `env.host_foo` fails to load outright against a host that no longer registers that name — and a widget
+already on a device cannot be recompiled by the host that is rejecting it.
+
+A retired host function therefore keeps its `Linker` registration as an inert stub: same name, same signature, ignoring
+its arguments and returning whatever value the SDK wrapper already mapped to "unavailable". Deployed widgets keep
+loading and silently take their fallback path. That silence is why the retirement is a host-side behavioural change and
+takes a minor bump — the version is the only signal a reader gets.
+
+If a retired function has no such sentinel in its return type, the retirement is not backwards compatible at all and
+needs a major bump instead of a stub.
+
+An inert stub may be deleted at the next **major** bump, and not before. That is the point where `check_sdk_version`
+begins rejecting every widget that could have imported it, so the registration becomes dead weight rather than a
+compatibility shim.
+
+`env.host_bitmap_sample` is the first of these: retired in 0.3.0, droppable at 1.0.0. Its contract — instantiation plus
+the sentinel return — is pinned by `bmc-wasm-runtime/tests/bitmap_sample_abi.rs`.
+
 ### Key files
 
 | File                                       | Role                                                                             |
@@ -57,6 +78,7 @@ The check runs after instantiation (since it calls the export) but before any wi
 | `bmc-wasm-runtime/protocol/src/version.rs` | `SDK_VERSION` constant, export name, pack/unpack helpers                         |
 | `bmc-wasm-runtime/sdk/src/lib.rs`          | `#[no_mangle] __bmc_sdk_init()` — auto-exported from every widget                |
 | `bmc-wasm-runtime/src/runtime/backend.rs`  | `check_sdk_version()` — calls export after instantiation; `sdk_version()` getter |
+| `bmc-wasm-runtime/src/runtime/imports/`    | `Linker` registrations for the `env.host_*` surface, including inert stubs       |
 | `bmc-wasm-runtime/src/bin/testbed/main.rs` | Prints version to CLI, shows in window title (including on hot-reload)           |
 
 ## Phase 2: multi-version hosting (future)
