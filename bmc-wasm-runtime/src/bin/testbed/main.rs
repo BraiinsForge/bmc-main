@@ -20,12 +20,12 @@
 
 //! Widget development testbed with hot-reloading.
 //!
-//! Built on [`eframe`] so the same egui patterns used by `bmc-virt-console`
-//! carry over (window + GL context owned by eframe, custom GL via the `glow` backend,
-//! native textures registered with the egui frame for painting).
+//! Owns its window, GL context and event loop directly, on winit and glutin.
+//! Each view registers a native texture and has to replace and release it
+//! as views open, close and resize, which is what eframe would not expose.
 //!
-//! Renders all four widget-size variants in a fixed-layout window
-//! plus stats / LED-strip / recording UI overlays.
+//! Renders every viewport of the active platform, plus stats / LED-strip /
+//! recording UI overlays.
 //!
 //! Split into sibling modules so each concern is reviewable on its own:
 //! - [`paint`] — GL plumbing (FBO+texture), checkerboard, LED strip, timing chart, perf report.
@@ -49,12 +49,13 @@ mod recording;
 mod system_ui;
 mod ui_helpers;
 mod view;
+mod window;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context as _, Result};
-use eframe::glow::HasContext as _;
+use egui_glow::glow::HasContext as _;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
@@ -846,7 +847,7 @@ fn current_rss_kb() -> Option<u64> {
 }
 
 /// Log RSS deltas at app startup once GL + the WASM runtime are wired up.
-/// The pre-GL baseline is taken before `eframe::run_native` is called, so the difference
+/// The pre-GL baseline is taken before the event loop starts, so the difference
 /// reported here captures GL initialisation + first-runtime construction.
 fn log_startup_memory(rss_before_gl_kb: Option<u64>) {
     let now = current_rss_kb();
@@ -856,7 +857,7 @@ fn log_startup_memory(rss_before_gl_kb: Option<u64>) {
     eprintln!("\n=== Memory (startup) ===");
     if let (Some(before), Some(now)) = (rss_before_gl_kb, now) {
         let delta = now.saturating_sub(before);
-        eprintln!("Pre-eframe RSS:    {before:>6} kB");
+        eprintln!("Pre-GL RSS:        {before:>6} kB");
         eprintln!("Post-init RSS:     {now:>6} kB ({delta:+} kB)");
     }
     for line in status.lines() {
@@ -920,31 +921,38 @@ fn main() -> Result<()> {
 
     let rss_before_gl = current_rss_kb();
 
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size(startup_size)
-            .with_title("WASM Widget Testbed"),
-        renderer: eframe::Renderer::Glow,
-        vsync: true,
-        // Persistence defaults to true — eframe saves/restores window size across runs,
-        // which silently undoes `with_inner_size` once the user has launched once. The
-        // testbed's window dimensions are derived from constants every launch, so saved
-        // state is purely harmful.
-        persist_window: false,
-        ..Default::default()
-    };
-
-    eframe::run_native(
-        "WASM Widget Testbed",
-        options,
-        Box::new(move |cc| {
-            let app =
-                TestbedApp::new(cc, cli, manifest, params, selected_platform, record_request)?;
-            log_startup_memory(rss_before_gl);
-            Ok(Box::new(app))
+    let event_loop = winit::event_loop::EventLoop::<UserEvent>::with_user_event()
+        .build()
+        .map_err(|e| anyhow::anyhow!("event loop: {e}"))?;
+    let mut handler = TestbedHandler {
+        proxy: event_loop.create_proxy(),
+        seed: Some(AppSeed {
+            cli,
+            manifest,
+            params,
+            platform: selected_platform,
+            record_request,
+            inner_size: winit::dpi::LogicalSize::new(
+                f64::from(startup_size.x),
+                f64::from(startup_size.y),
+            ),
+            rss_before_gl,
         }),
-    )
-    .map_err(|e| anyhow::anyhow!("eframe: {e}"))
+        window: None,
+        egui_glow: None,
+        app: None,
+        repaint_after: std::time::Duration::MAX,
+        frame_started_at: None,
+        fatal_error: None,
+    };
+    event_loop
+        .run_app(&mut handler)
+        .map_err(|e| anyhow::anyhow!("event loop: {e}"))?;
+
+    match handler.fatal_error {
+        Some(e) => Err(e),
+        None => Ok(()),
+    }
 }
 
 // ── Hot reload ──────────────────────────────────────────────────────
@@ -1090,14 +1098,15 @@ fn dispatch_touch_events(
 pub(crate) struct TestbedApp {
     cli: CliArgs,
     prepared_widget: PreparedWidget,
-    /// Requested window size. Sent as `ViewportCommand::InnerSize` repeatedly until the
-    /// compositor actually applies it — `with_inner_size` at startup gets silently clamped
-    /// on some GNOME/Wayland setups regardless of `persist_window: false`.
+    /// Window size the active layout wants, kept so a platform switch can ask
+    /// the window to follow it.
     requested_size: egui::Vec2,
-    /// Frames remaining in the size-pin retry budget. Counts down from a small cap; we stop
-    /// requesting repaints once it hits zero so we never end up in an infinite resize loop
-    /// when the compositor refuses the requested size outright.
-    size_pin_attempts: u8,
+    /// Set when the layout changed; the host applies it and clears it.
+    pending_resize: Option<egui::Vec2>,
+    /// Set once the perf report is sealed, so the host can close the window.
+    exit_requested: bool,
+    /// Builds the per-view `FemtoVgRenderer` GL contexts.
+    get_proc: GlProcAddress,
     /// Parsed manifest — read by the param-mutation panel to render type-appropriate inputs
     /// (ComboBox for enums, DragValue for numerics with min/max/step, etc.).
     pub(crate) manifest: bmc_widget_manifest::Manifest,
@@ -1119,7 +1128,7 @@ pub(crate) struct TestbedApp {
     pub(crate) secrets: bmc_widget_protocol::CredentialSecrets,
     /// Base-URL rewrites from `--rewrite-url`, installed on every runtime.
     url_rewrites: Vec<(String, String)>,
-    gl: Arc<eframe::glow::Context>,
+    gl: Arc<egui_glow::glow::Context>,
     pub(crate) tiles: Vec<DeviceView>,
     gpu_pool: Vec<TileGpu>,
     clock: Clock,
@@ -1192,7 +1201,8 @@ pub(crate) struct RecordingMode {
 
 impl TestbedApp {
     fn new(
-        cc: &eframe::CreationContext<'_>,
+        gl: Arc<egui_glow::glow::Context>,
+        get_proc: GlProcAddress,
         cli: CliArgs,
         manifest: bmc_widget_manifest::Manifest,
         params: std::collections::BTreeMap<
@@ -1202,20 +1212,6 @@ impl TestbedApp {
         active_platform: &'static Platform,
         record_request: Option<RecordRequest>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
-        let gl = cc
-            .gl
-            .as_ref()
-            .ok_or("glow backend required (eframe::Renderer::Glow)")?
-            .clone();
-        let get_proc = cc
-            .get_proc_address
-            .clone()
-            .ok_or("glow backend must expose get_proc_address")?;
-        // Stash the loader so `init_tiles` can pull it back when the eframe::Frame
-        // is in scope (the lazy init path). Cleared on Drop so a fresh app instance
-        // doesn't inherit stale handles.
-        GET_PROC_ADDRESS.with(|cell| *cell.borrow_mut() = Some(get_proc));
-
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
@@ -1287,10 +1283,9 @@ impl TestbedApp {
             secrets,
             url_rewrites,
             requested_size,
-            // 30 attempts at ~16ms = ~0.5 s of negotiation.
-            // More than enough for any compositor to settle,
-            // far less than long enough to feel like the UI froze.
-            size_pin_attempts: 30,
+            pending_resize: None,
+            exit_requested: false,
+            get_proc,
             manifest,
             params,
             system: pending_system,
@@ -1453,21 +1448,23 @@ impl TestbedApp {
             }
             debug_assert_eq!(self.gpu_pool.len(), expected_pool_len);
         }
-        self.size_pin_attempts = 30;
-        ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(true));
+        // The window follows the new layout once.
+        // The operator is free to resize away from it afterwards.
+        self.pending_resize = Some(switch.requested_size);
         ctx.request_repaint();
     }
 
-    /// Build the four widget tiles on first `ui` call (where `eframe::Frame` is available
-    /// for `register_native_glow_texture`).
+    /// Build one view per viewport of the active platform.
+    ///
+    /// Runs outside the egui pass, because registering a texture and painting
+    /// with it both want the painter.
     #[expect(
         clippy::too_many_lines,
         reason = "single tile-setup pass: read wasm bytes, resolve platform, build runtime + \
                   GPU + renderer per tile, register textures, log SDK version"
     )]
-    fn init_tiles(&mut self, frame: &mut eframe::Frame) -> Result<()> {
-        let get_proc = Self::gl_proc_address()
-            .ok_or_else(|| anyhow::anyhow!("BUG: get_proc_address vanished after construction"))?;
+    fn init_tiles(&mut self, painter: &mut egui_glow::Painter) -> Result<()> {
+        let get_proc = self.get_proc.clone();
         let wasm_bytes = std::fs::read(self.prepared_widget.wasm_path()).with_context(|| {
             format!(
                 "failed to read {}",
@@ -1498,7 +1495,7 @@ impl TestbedApp {
                 gpu.reinitialize(&self.gl, w, h)?;
                 gpu
             } else {
-                TileGpu::new(&self.gl, frame, w, h)?
+                TileGpu::new(&self.gl, painter, w, h)?
             };
             let (led_tx, led_rx) = if placed.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
@@ -1591,12 +1588,6 @@ impl TestbedApp {
         Ok(())
     }
 
-    /// Retrieve `get_proc_address` from the process-wide cell populated in `new`.
-    /// Associated (no `&self`) because the loader lives in a thread-local, not on the app.
-    fn gl_proc_address() -> Option<GlProcAddress> {
-        GET_PROC_ADDRESS.with(|cell| cell.borrow().clone())
-    }
-
     /// Write the perf report once, from whatever samples were collected so far.
     /// Idempotent, so the `--perf-frames` threshold and an early window close
     /// can each seal the run without double-writing.
@@ -1629,10 +1620,12 @@ impl TestbedApp {
     fn render_tiles(&mut self, now: std::time::Instant) -> Option<u64> {
         // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
         let (prev_fbo, prev_viewport) = unsafe {
-            let prev_fbo = self.gl.get_parameter_i32(eframe::glow::FRAMEBUFFER_BINDING);
+            let prev_fbo = self
+                .gl
+                .get_parameter_i32(egui_glow::glow::FRAMEBUFFER_BINDING);
             let mut vp = [0_i32; 4];
             self.gl
-                .get_parameter_i32_slice(eframe::glow::VIEWPORT, &mut vp);
+                .get_parameter_i32_slice(egui_glow::glow::VIEWPORT, &mut vp);
             (prev_fbo, vp)
         };
 
@@ -1688,8 +1681,9 @@ impl TestbedApp {
             // 0 maps to the default framebuffer; any non-zero prior binding goes back as a
             // `NativeFramebuffer`. The cast through `NonZeroU32` filters the 0 case correctly.
             let target =
-                std::num::NonZeroU32::new(prev_fbo as u32).map(eframe::glow::NativeFramebuffer);
-            self.gl.bind_framebuffer(eframe::glow::FRAMEBUFFER, target);
+                std::num::NonZeroU32::new(prev_fbo as u32).map(egui_glow::glow::NativeFramebuffer);
+            self.gl
+                .bind_framebuffer(egui_glow::glow::FRAMEBUFFER, target);
             self.gl.viewport(
                 prev_viewport[0],
                 prev_viewport[1],
@@ -1930,64 +1924,273 @@ fn paint_tile_texture(ui: &egui::Ui, tile: &DeviceView, rect: egui::Rect) {
     }
 }
 
-// Process-wide cell holding the eframe-provided GL proc address loader,
-// populated in `TestbedApp::new` and read by `init_tiles` / `poll_hot_reload`.
-//
-// A thread-local sidesteps the `dyn Fn` capture lifetime question while
-// keeping the closure trivially cloneable. `thread_local!` is a macro,
-// so this stays a regular `//` comment — doc comments don't attach
-// to macro invocations.
-thread_local! {
-    static GET_PROC_ADDRESS: std::cell::RefCell<Option<GlProcAddress>>
-        = const { std::cell::RefCell::new(None) };
-}
-
 /// Host wake floor when nothing sooner is scheduled: drains deliveries
 /// and animates chrome (the LED strip) without running widget WASM
 /// — real renders are gated per tile.
 /// ~30 Hz keeps LEDs smooth; it is not a render rate.
 const DRAIN_TICK_MS: u64 = 33;
 
-impl eframe::App for TestbedApp {
-    fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
-        // A manual window close still seals the perf report from whatever
-        // was collected, so an operator who closed early instead of waiting
-        // for `--perf-frames` doesn't lose the run.
-        if root_ui.ctx().input(|i| i.viewport().close_requested()) {
-            self.finish_perf_report();
+// ── Event loop ──────────────────────────────────────────────────────
+
+/// egui asks for repaints from inside its own pass, so the request is routed
+/// back into the loop as an event rather than acted on immediately.
+#[derive(Debug)]
+enum UserEvent {
+    Redraw(std::time::Duration),
+}
+
+/// What the app needs to exist, held until the loop hands us a display.
+///
+/// winit builds windows in `resumed` and not before,
+/// so the app cannot be constructed in `main` where these values are produced.
+struct AppSeed {
+    cli: CliArgs,
+    manifest: bmc_widget_manifest::Manifest,
+    params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    platform: &'static Platform,
+    record_request: Option<RecordRequest>,
+    inner_size: winit::dpi::LogicalSize<f64>,
+    rss_before_gl: Option<u64>,
+}
+
+struct TestbedHandler {
+    proxy: winit::event_loop::EventLoopProxy<UserEvent>,
+    /// Taken by the first `resumed`; a later one finds the window already built.
+    seed: Option<AppSeed>,
+    window: Option<window::GlWindow>,
+    egui_glow: Option<egui_glow::EguiGlow>,
+    app: Option<TestbedApp>,
+    /// How long until egui wants the next frame; `MAX` means "only on input".
+    repaint_after: std::time::Duration,
+    /// When the last frame began, which is what `repaint_after` counts from.
+    frame_started_at: Option<std::time::Instant>,
+    /// Reported by `main` once the loop returns, since a handler cannot fail outward.
+    fatal_error: Option<anyhow::Error>,
+}
+
+impl TestbedHandler {
+    /// Build the window, GL context, egui integration and app.
+    fn start(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) -> Result<()> {
+        let seed = self
+            .seed
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("BUG: resumed twice with no window"))?;
+
+        let (window, gl, get_proc) =
+            window::GlWindow::new(event_loop, seed.inner_size, "WASM Widget Testbed")?;
+        let gl = Arc::new(gl);
+
+        let egui_glow = egui_glow::EguiGlow::new(
+            event_loop,
+            Arc::clone(&gl),
+            None,
+            None,
+            /* dithering */ true,
+        );
+        let proxy = egui::mutex::Mutex::new(self.proxy.clone());
+        egui_glow
+            .egui_ctx
+            .set_request_repaint_callback(move |info| {
+                // A send failure means the loop is already gone,
+                // so there is nothing left to repaint.
+                drop(proxy.lock().send_event(UserEvent::Redraw(info.delay)));
+            });
+
+        let app = TestbedApp::new(
+            gl,
+            get_proc,
+            seed.cli,
+            seed.manifest,
+            seed.params,
+            seed.platform,
+            seed.record_request,
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // The window stays hidden until something paints it,
+        // and nothing has asked for a frame yet.
+        window.window().request_redraw();
+
+        self.window = Some(window);
+        self.egui_glow = Some(egui_glow);
+        self.app = Some(app);
+        log_startup_memory(seed.rss_before_gl);
+        Ok(())
+    }
+
+    /// One full frame: widget FBOs, the egui pass, then present.
+    fn redraw(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        self.frame_started_at = Some(std::time::Instant::now());
+
+        let (Some(window), Some(egui_glow), Some(app)) = (
+            self.window.as_ref(),
+            self.egui_glow.as_mut(),
+            self.app.as_mut(),
+        ) else {
+            return;
+        };
+
+        // Registering a texture and painting with it both want the painter,
+        // so views are (re)built here rather than inside the pass below.
+        if app.tiles.is_empty()
+            && let Err(e) = app.init_tiles(&mut egui_glow.painter)
+        {
+            self.fatal_error = Some(e.context("failed to build views"));
+            event_loop.exit();
             return;
         }
-        // One-shot resize lock. Avoid min/max size commands:
-        // on Wayland they can fail protocol validation while switching
-        // between narrow and wide platform layouts.
-        if self.size_pin_attempts > 0 {
-            let ctx = root_ui.ctx();
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(self.requested_size));
-            let actual = ctx.input(|i| i.viewport().inner_rect).map(|r| r.size());
-            let matches = actual.is_some_and(|s| {
-                (s.x - self.requested_size.x).abs() < 1.0
-                    && (s.y - self.requested_size.y).abs() < 1.0
-            });
-            if matches {
-                ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
-                self.size_pin_attempts = 0;
-            } else {
-                self.size_pin_attempts -= 1;
-                if self.size_pin_attempts == 0 {
-                    // Final attempt exhausted; lock down whatever size we have anyway.
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Resizable(false));
-                }
-                ctx.request_repaint();
+
+        egui_glow.run(window.window(), |ui| app.ui(ui));
+
+        if let Some(size) = app.pending_resize.take() {
+            // `Some` means the platform applied the size on the spot and will
+            // send no `Resized` event, so the surface must be resized here or
+            // it keeps the old buffer and the frame paints into its corner.
+            // `None` defers to the display server; `Resized` follows.
+            if let Some(physical) =
+                window
+                    .window()
+                    .request_inner_size(winit::dpi::LogicalSize::new(
+                        f64::from(size.x),
+                        f64::from(size.y),
+                    ))
+            {
+                window.resize(physical);
             }
         }
-        // Lazy tile construction — `frame.register_native_glow_texture` needs the
-        // `eframe::Frame`, which isn't available in `CreationContext`.
-        if self.tiles.is_empty()
-            && let Err(e) = self.init_tiles(frame)
-        {
-            root_ui.label(format!("Failed to init tiles: {e:#}"));
+
+        // SAFETY: the context is current on this thread for the window's lifetime.
+        unsafe {
+            use egui_glow::glow::HasContext as _;
+            app.gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            app.gl.clear(egui_glow::glow::COLOR_BUFFER_BIT);
+        }
+        egui_glow.paint(window.window());
+
+        if let Err(e) = window.swap_buffers() {
+            tracing::error!("present failed: {e:#}");
+        }
+        window.show();
+
+        if app.exit_requested {
+            event_loop.exit();
+        }
+    }
+}
+
+impl winit::application::ApplicationHandler<UserEvent> for TestbedHandler {
+    fn resumed(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        if self.window.is_some() {
             return;
         }
+        if let Err(e) = self.start(event_loop) {
+            self.fatal_error = Some(e);
+            event_loop.exit();
+        }
+    }
+
+    fn window_event(
+        &mut self,
+        event_loop: &winit::event_loop::ActiveEventLoop,
+        _window_id: winit::window::WindowId,
+        event: winit::event::WindowEvent,
+    ) {
+        use winit::event::WindowEvent;
+
+        // Closing early still seals the perf report from whatever was collected,
+        // so an operator who did not wait for `--perf-frames` keeps the run.
+        if matches!(event, WindowEvent::CloseRequested | WindowEvent::Destroyed) {
+            if let Some(app) = self.app.as_mut() {
+                app.finish_perf_report();
+            }
+            event_loop.exit();
+            return;
+        }
+        if matches!(event, WindowEvent::RedrawRequested) {
+            self.redraw(event_loop);
+            return;
+        }
+        if let WindowEvent::Resized(size) = &event
+            && let Some(window) = self.window.as_ref()
+        {
+            window.resize(*size);
+        }
+
+        // Everything else is input, and egui decides whether it changed
+        // anything worth drawing.
+        let (Some(window), Some(egui_glow)) = (self.window.as_ref(), self.egui_glow.as_mut())
+        else {
+            return;
+        };
+        if egui_glow.on_window_event(window.window(), &event).repaint {
+            window.window().request_redraw();
+        }
+    }
+
+    /// Turn an expired `WaitUntil` deadline into a frame.
+    ///
+    /// Waking at the deadline is all winit does; without asking for the redraw
+    /// here, the only thing left driving frames is input, and every animation
+    /// stalls the moment the pointer stops moving.
+    fn new_events(
+        &mut self,
+        _event_loop: &winit::event_loop::ActiveEventLoop,
+        cause: winit::event::StartCause,
+    ) {
+        if matches!(cause, winit::event::StartCause::ResumeTimeReached { .. })
+            && let Some(window) = self.window.as_ref()
+        {
+            window.window().request_redraw();
+        }
+    }
+
+    fn user_event(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop, event: UserEvent) {
+        let UserEvent::Redraw(delay) = event;
+        self.repaint_after = delay;
+    }
+
+    /// Release GL objects while their context is still current and alive.
+    ///
+    /// Views own framebuffers and their own femtovg contexts,
+    /// and the painter owns egui's textures.
+    /// In field order every one of them outlives the window,
+    /// so leaving this to `Drop` frees them against a dead context.
+    fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        drop(self.app.take());
+        if let Some(mut egui_glow) = self.egui_glow.take() {
+            egui_glow.destroy();
+        }
+        drop(self.window.take());
+    }
+
+    fn about_to_wait(&mut self, event_loop: &winit::event_loop::ActiveEventLoop) {
+        let Some(window) = self.window.as_ref() else {
+            return;
+        };
+        // The delay counts from the frame that asked for it, not from now.
+        // vsync holds `swap_buffers` for most of a frame interval and this runs
+        // after that, so measuring from here would sleep the requested delay
+        // on top of the wait already served, landing between two vblanks.
+        let deadline = self
+            .frame_started_at
+            .and_then(|start| start.checked_add(self.repaint_after));
+        event_loop.set_control_flow(match deadline {
+            // Already due, so the next frame is owed immediately; vsync is what
+            // paces it from here.
+            Some(deadline) if deadline <= std::time::Instant::now() => {
+                window.window().request_redraw();
+                winit::event_loop::ControlFlow::Poll
+            }
+            Some(deadline) => winit::event_loop::ControlFlow::WaitUntil(deadline),
+            // Nothing pending: sleep until input arrives.
+            None => winit::event_loop::ControlFlow::Wait,
+        });
+    }
+}
+
+impl TestbedApp {
+    fn ui(&mut self, root_ui: &mut egui::Ui) {
         // Hot reload check — rebuild runtimes if the wasm changed on disk.
         self.poll_hot_reload();
 
@@ -2006,7 +2209,7 @@ impl eframe::App for TestbedApp {
         // Seal the report and close once enough real renders are collected.
         if self.cli.perf_report_path.is_some() && self.perf.frame_count >= self.cli.perf_frames {
             self.finish_perf_report();
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            self.exit_requested = true;
             return;
         }
         let time_s = now.duration_since(self.clock.start_instant).as_secs_f32();

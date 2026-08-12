@@ -1417,9 +1417,9 @@ dependencies = [
  "chrono-tz",
  "clap",
  "console",
- "eframe",
  "egui",
  "egui_autocomplete",
+ "egui_glow",
  "femtovg",
  "flate2",
  "glow 0.16.0",
@@ -2700,6 +2700,7 @@ checksum = "a3b28d39ab6c0cac238190e6cb1e8c9047d02cb470ab942a7a3302e4cb3a8e74"
 dependencies = [
  "bytemuck",
  "egui",
+ "egui-winit",
  "glow 0.17.0",
  "log",
  "memoffset 0.9.1",

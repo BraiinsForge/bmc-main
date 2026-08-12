@@ -234,12 +234,11 @@ eframe = { version = "0.34", default-features = false, features = ["default_font
 egui = "0.34"
 egui-notify = "0.22"
 strsim = "0.11.1"
-# Pinned to yvind/master (open PR #53 upstream — egui 0.34 bump unmerged
-# as of 2026-04-07). Drop back to a crates.io release once that PR lands;
-# follow-up tracked in BDK-477.
-# https://github.com/JakeHandsome/egui_autocomplete/pull/53
+# Pinned to yvind/master (open PR #53 upstream — egui 0.34 bump unmerged as of 2026-04-07). Drop back to a crates.io release once that PR lands;
+# follow-up tracked in BDK-477. https://github.com/JakeHandsome/egui_autocomplete/pull/53
 egui_autocomplete = { git = "https://github.com/yvind/egui_autocomplete.git", rev = "01153df7c1915bb1196d0d97acf44a2783890016", features = ["serde"] }
 egui_extras = { version = "0.34", features = ["syntect"] }
+egui_glow = { version = "0.34", features = ["clipboard", "wayland", "winit", "x11"] }
 egui_virtual_list = "0.10"
 embedded-hal = { version = "1.0.0" }
 embedded-hal-async = { version = "1.0.0" }

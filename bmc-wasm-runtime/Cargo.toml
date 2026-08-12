@@ -68,12 +68,10 @@ tracing-subscriber = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 
 # Testbed only
-notify = { workspace = true, optional = true }
-# Testbed UI — eframe + egui own the event loop, window, and GL context.
-# Mirrors what `bmc-virt-console` does so patterns stay consistent across host UIs.
-eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 egui_autocomplete = { workspace = true, optional = true }
+egui_glow = { workspace = true, optional = true }
+notify = { workspace = true, optional = true }
 
 # Fixtures (shared between capture and testbed)
 flate2 = { workspace = true, optional = true }
@@ -101,7 +99,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "bmc-wasm-assets", "flate2", "owo-colors", "tempfile", "toml", "toml_edit"]
-testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete", "clap"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "egui", "egui_autocomplete", "egui_glow", "clap", "bmc-led/apa102_spi"]
 capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder"]
 
 [[bin]]

@@ -19,7 +19,13 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-mod config;
+// Public alongside `effects`: anything driving those functions needs the same
+// strip geometry and brightness scale the driver passes them.
+pub mod config;
 pub mod effects;
+
+// `effects` is generic over where the pixels go, so callers must name these.
+// Re-exported so they cannot resolve a different version of the trait.
+pub use apa102_spi::{Apa102Pixel, SmartLedsWrite};
 mod embedded_hal;
 pub mod platform_led_driver;

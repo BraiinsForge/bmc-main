@@ -276,7 +276,7 @@ impl DeviceView {
         self.inbox.clear();
     }
 
-    pub(crate) fn into_pooled_gpu(mut self, gl: &eframe::glow::Context) -> TileGpu {
+    pub(crate) fn into_pooled_gpu(mut self, gl: &egui_glow::glow::Context) -> TileGpu {
         self.renderer.drop_all();
         self.gpu.detach_render_target(gl);
         self.gpu
