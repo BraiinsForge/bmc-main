@@ -50,8 +50,20 @@ def build_and_optimize(example: str) -> tuple[Path, Path]:
     release = build_example_wasm(example)
     optimized = release.with_suffix('.opt.wasm')
 
+    # Rust's wasm32 target emits bulk-memory and nontrapping-float-to-int
+    # by default, and `strip = true` drops the target_features section
+    # wasm-opt would read them from — so name them explicitly.
+    # Only these two: the gate should still reject features wasmi disables.
     subprocess.run(
-        ['wasm-opt', '-Oz', str(release), '-o', str(optimized)],
+        [
+            'wasm-opt',
+            '-Oz',
+            '--enable-bulk-memory',
+            '--enable-nontrapping-float-to-int',
+            str(release),
+            '-o',
+            str(optimized),
+        ],
         check=True,
     )
 
