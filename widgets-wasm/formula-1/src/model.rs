@@ -24,7 +24,7 @@
 //! Everything here is free of host calls so it can be exercised
 //! natively — by tests and by the storybook's fixtures.
 
-use bmc_wasm_sdk::Color;
+use bmc_wasm_sdk::{CalendarDate, Color, Length, LocalDateTime};
 
 /// The design's four frames. The widget renders the same screens in each,
 /// dropping columns and rows as the box shrinks.
@@ -124,30 +124,6 @@ impl ImageUrl {
 impl From<String> for ImageUrl {
     fn from(url: String) -> Self {
         Self(url)
-    }
-}
-
-/// Wall-clock time at the circuit, as `YYYY-MM-DD HH:MM:SS`.
-///
-/// The server sends no offset, so this is not an instant:
-/// it places only against [`NextRace::venue_timezone`],
-/// and nothing here can turn it into one.
-/// Kept as the server's own text until it sends an offset,
-/// at which point this becomes a `SystemTime`
-/// and the schedule can be shown in the viewer's own zone.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct VenueTime(String);
-
-impl VenueTime {
-    #[must_use]
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl From<String> for VenueTime {
-    fn from(text: String) -> Self {
-        Self(text)
     }
 }
 
@@ -323,7 +299,9 @@ pub struct DriverStats {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Session {
     pub name: String,
-    pub starts_at: VenueTime,
+    /// Wall clock at the circuit, or in the viewer's own zone where they
+    /// asked for that — the host resolves the instant and converts it.
+    pub starts_at: Option<LocalDateTime>,
 }
 
 /// The upcoming race weekend.
@@ -333,15 +311,15 @@ pub struct NextRace {
     pub country_name: String,
     pub country_flag_url: ImageUrl,
     /// IANA zone the circuit keeps, e.g. `Europe/Monaco`. The one
-    /// thing that turns a [`VenueTime`] into an instant.
+    /// thing that turns a session's wall clock into an instant.
     pub venue_timezone: Option<String>,
-    pub date_start: String,
-    pub date_end: Option<String>,
+    pub date_start: Option<CalendarDate>,
+    pub date_end: Option<CalendarDate>,
     pub circuit_name: String,
     pub circuit_image_url: ImageUrl,
-    pub track_length_km: Option<f32>,
+    pub track_length: Option<Length>,
     pub total_laps: Option<u16>,
-    pub race_distance_km: Option<f32>,
+    pub race_distance: Option<Length>,
     pub drs_zones: Option<u8>,
     pub tire_compounds: Option<String>,
     pub sessions: Vec<Session>,

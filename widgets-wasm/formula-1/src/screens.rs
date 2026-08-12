@@ -26,5 +26,6 @@
 
 pub mod fixtures;
 pub mod icons;
+pub mod next_race;
 pub mod parts;
 pub mod standings;

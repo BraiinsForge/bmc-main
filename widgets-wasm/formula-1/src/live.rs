@@ -82,7 +82,9 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
             Resource::Standings => data.standings = parse::standings(&json),
             Resource::DriverStats => data.driver_stats = parse::driver_stats(&json),
             Resource::Driver => data.driver = parse::driver(&json),
-            Resource::NextRace => data.next_race = parse::next_race(&json),
+            Resource::NextRace => {
+                data.next_race = parse::next_race(&json, Params::current().local_time);
+            }
             Resource::LiveRace => data.live_race = parse::live_board(&json),
             Resource::LiveQuali => data.live_quali = parse::live_board(&json),
             Resource::LivePractice => data.live_practice = parse::live_board(&json),

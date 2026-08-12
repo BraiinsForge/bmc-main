@@ -23,7 +23,7 @@
 
 use bmc_gallery::prelude::*;
 use formula_1::model::SizeBucket;
-use formula_1::screens::{fixtures, standings};
+use formula_1::screens::{fixtures, next_race, standings};
 
 scene_meta! { title: "Widgets / Formula 1" }
 
@@ -79,5 +79,36 @@ fn standings_season_start(ctx: &mut SceneCtx, ui: &mut Ui) {
 fn standings_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
     size_stages(ctx, ui, |bucket| {
         move || standings::standings_view(&fixtures::standings_widest(bucket))
+    });
+}
+
+#[story]
+fn next_race(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        next_race::next_race_view(&fixtures::next_race(bucket))
+    });
+}
+
+/// Between seasons, or before the first reply has landed.
+#[story]
+fn next_race_unavailable(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        next_race::next_race_view(&fixtures::next_race_unavailable(bucket))
+    });
+}
+
+/// A weekend announced before any of its detail was.
+#[story]
+fn next_race_sparse(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        next_race::next_race_view(&fixtures::next_race_sparse(bucket))
+    });
+}
+
+/// The longest names the rows have to seat, on a sprint weekend.
+#[story]
+fn next_race_widest(ctx: &mut StoryCtx) {
+    size_frames(ctx, |bucket| {
+        next_race::next_race_view(&fixtures::next_race_widest(bucket))
     });
 }

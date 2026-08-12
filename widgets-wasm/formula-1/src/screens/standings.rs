@@ -204,7 +204,10 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
 #[must_use]
 pub fn standings_view(view: &StandingsViewData) -> Node {
     let cols = columns(view.bucket);
-    let mut children = vec![parts::header("Drivers Standing", cols.stripe)];
+    let mut children = vec![parts::header(
+        vec![parts::title("Drivers Standing")],
+        cols.stripe,
+    )];
     if view.rows.is_empty() {
         children.push(center(
             props!(flex: 1.0),

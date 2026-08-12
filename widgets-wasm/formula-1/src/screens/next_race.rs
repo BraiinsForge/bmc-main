@@ -1,0 +1,367 @@
+// Copyright (C) 2026  Braiins Forge s.r.o.
+//
+// This program is free software: you can redistribute it and/or modify
+// it under the terms of the GNU General Public License as published by
+// the Free Software Foundation, either version 3 of the License, or
+// (at your option) any later version.
+//
+// This program is distributed in the hope that it will be useful,
+// but WITHOUT ANY WARRANTY; without even the implied warranty of
+// MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+// GNU General Public License for more details.
+//
+// You should have received a copy of the GNU General Public License
+// along with this program.  If not, see <https://www.gnu.org/licenses/>.
+//
+// Braiins Systems s.r.o. and Braiins Forge s.r.o. each reserve the right
+// to grant any party a license to this program, or any part thereof,
+// under any terms, and such a grant shall be considered distinct from
+// the grant above.
+
+//! The upcoming race weekend: where it is run, and when.
+
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "screen code uses many SDK builders, macros, and tokens"
+    )
+)]
+use bmc_wasm_sdk::*;
+
+use crate::model::{NextRace, SizeBucket};
+use crate::screens::parts::{self, color, font, space};
+
+/// Everything the screen draws.
+#[derive(Clone, Debug)]
+pub struct NextRaceViewData {
+    pub bucket: SizeBucket,
+    pub race: Option<NextRace>,
+}
+
+/// What the server had nothing for, in the legacy widget's own wording.
+const UNKNOWN: &str = "N/A";
+
+/// The design's gap between columns.
+const COLUMN_GAP: f32 = 40.0;
+/// The Grand Prix name, the largest type on the widget.
+const GP_NAME: u32 = 32;
+/// What the design leaves between the Grand Prix block and the columns.
+const GP_BLOCK_GAP: f32 = 48.0;
+const TRACK_MAP_RADIUS: f32 = 8.0;
+
+/// What the schedule column beside the circuit's stats carries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Schedule {
+    /// No column at all: the smallest frame keeps the stats alone.
+    Absent,
+    Sessions,
+    /// The frames whose header has no room for the weekend's dates
+    /// open the schedule with them instead.
+    DatedSessions,
+}
+
+/// How a stat's label is set against its value.
+#[derive(Clone, Copy, Debug)]
+enum LabelWeight {
+    /// The design's quieter label beside a bold value.
+    Muted,
+    /// The smallest frame sets both alike, so the pair reads as one line.
+    Strong,
+}
+
+/// Which pieces a frame keeps, from the legacy widget's four layouts.
+#[derive(Clone, Copy, Debug)]
+struct Layout {
+    stripe: bool,
+    /// The Grand Prix name and country, above the columns.
+    gp_block: bool,
+    schedule: Schedule,
+    /// The circuit outline, which only the widest frame has room for.
+    track_map: bool,
+    info_font: u32,
+    labels: LabelWeight,
+}
+
+fn layout(bucket: SizeBucket) -> Layout {
+    match bucket {
+        SizeBucket::Full => Layout {
+            stripe: true,
+            gp_block: true,
+            schedule: Schedule::Sessions,
+            track_map: true,
+            info_font: font::TITLE,
+            labels: LabelWeight::Muted,
+        },
+        SizeBucket::Large => Layout {
+            stripe: true,
+            gp_block: true,
+            schedule: Schedule::DatedSessions,
+            track_map: false,
+            info_font: font::TITLE,
+            labels: LabelWeight::Muted,
+        },
+        SizeBucket::Medium => Layout {
+            stripe: false,
+            gp_block: false,
+            schedule: Schedule::DatedSessions,
+            track_map: false,
+            info_font: font::ROW,
+            labels: LabelWeight::Muted,
+        },
+        SizeBucket::Small => Layout {
+            stripe: false,
+            gp_block: false,
+            schedule: Schedule::Absent,
+            track_map: false,
+            info_font: font::ROW,
+            labels: LabelWeight::Strong,
+        },
+    }
+}
+
+/// One of the three columns the widest frame divides into.
+fn third(bucket: SizeBucket) -> f32 {
+    let (width, _) = bucket.design_size();
+    (width - space::PADDING * 2.0 - COLUMN_GAP * 2.0) / 3.0
+}
+
+fn count(value: Option<u16>) -> String {
+    value.map_or_else(|| UNKNOWN.to_owned(), |value| fmt!("{}", value))
+}
+
+/// A distance in the operator's own units — kilometres, or miles.
+fn distance(value: Option<Length>, decimals: u32) -> String {
+    value.map_or_else(|| UNKNOWN.to_owned(), |value| value.format(decimals))
+}
+
+fn session_time(at: Option<LocalDateTime>) -> String {
+    at.map_or_else(
+        || UNKNOWN.to_owned(),
+        |at| fmt!("{} {}", at.weekday_short(), parts::clock(at)),
+    )
+}
+
+fn info_row(label: &str, value: String, layout: Layout) -> Node {
+    let label = match layout.labels {
+        LabelWeight::Strong => text(
+            label,
+            style!(size: layout.info_font, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+        ),
+        LabelWeight::Muted => text(
+            label,
+            style!(size: layout.info_font, color: color::TEXT_MUTED),
+        ),
+    };
+    row(
+        props!(
+            flex: 1.0,
+            gap: space::GAP * 2.0,
+            cross_align: CrossAlign::Center,
+            justify_content: Justify::SpaceBetween
+        ),
+        [
+            label,
+            text(
+                value,
+                style!(size: layout.info_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right),
+            ),
+        ],
+    )
+}
+
+/// Rows sharing the column's height, ruled off from one another.
+fn info_col(rows: Vec<Node>) -> Node {
+    let mut children = Vec::new();
+    for (index, row) in rows.into_iter().enumerate() {
+        if index > 0 {
+            children.push(parts::divider());
+        }
+        children.push(row);
+    }
+    col(props!(flex: 1.0), children)
+}
+
+fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
+    vec![
+        info_row("Number of Laps", count(race.total_laps), layout),
+        info_row("Circuit Length", distance(race.track_length, 3), layout),
+        info_row("Race Distance", distance(race.race_distance, 1), layout),
+        info_row("DRS Zones", count(race.drs_zones.map(u16::from)), layout),
+    ]
+}
+
+fn schedule_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
+    let mut rows = Vec::new();
+    if let (Schedule::DatedSessions, Some(start)) = (layout.schedule, race.date_start) {
+        rows.push(info_row(
+            "Date",
+            parts::date_range(start, race.date_end),
+            layout,
+        ));
+    }
+    for session in &race.sessions {
+        rows.push(info_row(
+            &session.name,
+            session_time(session.starts_at),
+            layout,
+        ));
+    }
+    rows
+}
+
+fn gp_block(race: &NextRace) -> Node {
+    col(
+        props!(gap: 4.0),
+        [
+            row(
+                props!(gap: 10.0, cross_align: CrossAlign::Center),
+                [
+                    text(
+                        race.gp_name.as_str(),
+                        style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+                    ),
+                    parts::flag(32.0),
+                ],
+            ),
+            text(
+                race.country_name.as_str(),
+                style!(size: font::TITLE, color: color::TEXT_MUTED),
+            ),
+        ],
+    )
+}
+
+/// Holds the circuit outline's box, naming the circuit until it lands.
+///
+/// The fixed width sits on this column rather than on the `center` it
+/// wraps: a `center` given no flex is grown to fill instead, which would
+/// take half the frame and squeeze the stats beside it.
+fn track_map(race: &NextRace, bucket: SizeBucket) -> Node {
+    col(
+        props!(
+            width: third(bucket),
+            padding: space::PADDING,
+            border_width: 1.0,
+            border_color: color::DIVIDER,
+            border_radius: TRACK_MAP_RADIUS
+        ),
+        [center(
+            props!(flex: 1.0),
+            [text(
+                race.circuit_name.as_str(),
+                style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center),
+            )],
+        )],
+    )
+}
+
+fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
+    let dates = race
+        .date_start
+        .map(|start| parts::date_range(start, race.date_end));
+    let content = match bucket {
+        SizeBucket::Full | SizeBucket::Large => vec![
+            parts::title("Next Race"),
+            parts::subtitle(&dates.unwrap_or_default(), bucket),
+        ],
+        SizeBucket::Medium => vec![
+            parts::title("Next Race"),
+            parts::subtitle(&race.gp_name, bucket),
+            parts::flag(24.0),
+        ],
+        // The smallest frame has room for one name, and prefers the
+        // country's: it fits where a Grand Prix's full title would not.
+        SizeBucket::Small => {
+            let name = if race.country_name.is_empty() {
+                &race.gp_name
+            } else {
+                &race.country_name
+            };
+            vec![parts::subtitle(name, bucket), parts::flag(18.0)]
+        }
+    };
+    parts::header(content, layout.stripe)
+}
+
+/// The columns of stats, and the schedule where the frame keeps one.
+fn columns(race: &NextRace, layout: Layout) -> Node {
+    let circuit = info_col(circuit_rows(race, layout));
+    if layout.schedule == Schedule::Absent {
+        return circuit;
+    }
+    row(
+        props!(flex: 1.0, gap: COLUMN_GAP),
+        [circuit, info_col(schedule_rows(race, layout))],
+    )
+}
+
+/// The next race, or the empty state while nothing has arrived.
+#[must_use]
+pub fn next_race_view(view: &NextRaceViewData) -> Node {
+    let layout = layout(view.bucket);
+    let Some(race) = view.race.as_ref() else {
+        return parts::frame(vec![
+            parts::header(vec![parts::title("Next Race")], layout.stripe),
+            center(
+                props!(flex: 1.0),
+                [text(
+                    "Next race unavailable",
+                    style!(size: font::ROW, color: color::TEXT_MUTED),
+                )],
+            ),
+        ]);
+    };
+
+    let mut body = if layout.gp_block {
+        col(
+            props!(flex: 1.0, gap: GP_BLOCK_GAP),
+            [gp_block(race), columns(race, layout)],
+        )
+    } else {
+        columns(race, layout)
+    };
+    if layout.track_map {
+        body = row(
+            props!(flex: 1.0, gap: COLUMN_GAP),
+            [body, track_map(race, view.bucket)],
+        );
+    }
+    parts::frame(vec![header(race, view.bucket, layout), body])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Schedule, layout};
+    use crate::model::SizeBucket;
+
+    /// The legacy widget's per-frame rules, which this screen replicates.
+    #[test]
+    fn every_frame_matches_the_legacy_widgets_layout() {
+        let expected = [
+            (SizeBucket::Full, true, true, Schedule::Sessions, true),
+            (
+                SizeBucket::Large,
+                true,
+                true,
+                Schedule::DatedSessions,
+                false,
+            ),
+            (
+                SizeBucket::Medium,
+                false,
+                false,
+                Schedule::DatedSessions,
+                false,
+            ),
+            (SizeBucket::Small, false, false, Schedule::Absent, false),
+        ];
+        for (bucket, stripe, gp_block, schedule, track_map) in expected {
+            let layout = layout(bucket);
+            assert_eq!(layout.stripe, stripe, "{bucket:?} header stripe");
+            assert_eq!(layout.gp_block, gp_block, "{bucket:?} Grand Prix block");
+            assert_eq!(layout.schedule, schedule, "{bucket:?} schedule column");
+            assert_eq!(layout.track_map, track_map, "{bucket:?} track map");
+        }
+    }
+}

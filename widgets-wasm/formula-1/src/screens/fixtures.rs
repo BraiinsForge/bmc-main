@@ -23,7 +23,10 @@
 //! Typed fixtures rather than recorded payloads: the states worth
 //! reviewing are the ones a live server rarely serves on demand.
 
-use crate::model::{ImageUrl, SizeBucket, StandingsRow, team_color};
+use bmc_wasm_sdk::{CalendarDate, Length, LocalDateTime};
+
+use crate::model::{ImageUrl, NextRace, Session, SizeBucket, StandingsRow, team_color};
+use crate::screens::next_race::NextRaceViewData;
 use crate::screens::standings::StandingsViewData;
 
 /// The top ten as the server sends them, down to the spelling of a
@@ -127,6 +130,116 @@ pub fn standings_widest(bucket: SizeBucket) -> StandingsViewData {
         driver.clone_into(&mut row.driver_name);
         team.clone_into(&mut row.team_name);
         row.points = 400 + u16::from(row.position);
+    }
+    view
+}
+
+/// The weekend below opens on Friday the 21st of August 2026 and runs to
+/// Sunday the 23rd, so each day advances the weekday by one.
+const OPENING_DAY: u8 = 21;
+const FRIDAY: u8 = 4;
+
+/// A day of that weekend, carrying the weekday the host would have
+/// resolved for it.
+#[must_use]
+pub fn weekend_day(day: u8) -> CalendarDate {
+    CalendarDate {
+        year: 2026,
+        month: 8,
+        day,
+        weekday: FRIDAY + (day - OPENING_DAY),
+    }
+}
+
+/// A moment of one of those days.
+#[must_use]
+pub fn weekend_time(day: u8, hour: u8, minute: u8) -> LocalDateTime {
+    let date = weekend_day(day);
+    LocalDateTime {
+        year: date.year,
+        month: date.month,
+        day: date.day,
+        hour,
+        minute,
+        second: 0,
+        weekday: date.weekday,
+    }
+}
+
+fn session(name: &str, day: u8, hour: u8, minute: u8) -> Session {
+    Session {
+        name: name.to_owned(),
+        starts_at: Some(weekend_time(day, hour, minute)),
+    }
+}
+
+/// Zandvoort as the server sends it — a sprint weekend, so the schedule
+/// is the longest the screens have to seat.
+#[must_use]
+pub fn next_race_weekend() -> NextRace {
+    NextRace {
+        gp_name: "Dutch GP".to_owned(),
+        country_name: "Netherlands".to_owned(),
+        country_flag_url: some_image(),
+        venue_timezone: Some("Europe/Brussels".to_owned()),
+        date_start: Some(weekend_day(21)),
+        date_end: Some(weekend_day(23)),
+        circuit_name: "Circuit Zandvoort".to_owned(),
+        circuit_image_url: some_image(),
+        track_length: Some(Length::from_kilometers(4.259)),
+        total_laps: Some(72),
+        race_distance: Some(Length::from_kilometers(306.648)),
+        drs_zones: Some(2),
+        tire_compounds: Some("C1, C2, C3".to_owned()),
+        sessions: vec![
+            session("P1", 21, 10, 30),
+            session("Sprint Quali", 21, 14, 30),
+            session("Sprint Race", 22, 10, 0),
+            session("Quali", 22, 14, 0),
+            session("Race", 23, 13, 0),
+        ],
+    }
+}
+
+#[must_use]
+pub fn next_race(bucket: SizeBucket) -> NextRaceViewData {
+    NextRaceViewData {
+        bucket,
+        race: Some(next_race_weekend()),
+    }
+}
+
+/// Between seasons, or before the first reply has landed.
+#[must_use]
+pub fn next_race_unavailable(bucket: SizeBucket) -> NextRaceViewData {
+    NextRaceViewData { bucket, race: None }
+}
+
+/// A weekend the upstream knows of but has no detail for yet — every
+/// stat null, no session times published.
+#[must_use]
+pub fn next_race_sparse(bucket: SizeBucket) -> NextRaceViewData {
+    let mut view = next_race(bucket);
+    if let Some(race) = view.race.as_mut() {
+        race.track_length = None;
+        race.total_laps = None;
+        race.race_distance = None;
+        race.drs_zones = None;
+        for session in &mut race.sessions {
+            session.starts_at = None;
+        }
+    }
+    view
+}
+
+/// The longest names on the calendar against the same sprint schedule.
+#[must_use]
+pub fn next_race_widest(bucket: SizeBucket) -> NextRaceViewData {
+    let mut view = next_race(bucket);
+    if let Some(race) = view.race.as_mut() {
+        "Emilia-Romagna GP".clone_into(&mut race.gp_name);
+        "United Arab Emirates".clone_into(&mut race.country_name);
+        "Autodromo Enzo e Dino Ferrari".clone_into(&mut race.circuit_name);
     }
     view
 }

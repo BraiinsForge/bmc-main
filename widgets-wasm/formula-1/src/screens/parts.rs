@@ -30,6 +30,9 @@
 )]
 use bmc_wasm_sdk::*;
 
+use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
+
+use crate::model::SizeBucket;
 use crate::screens::icons;
 
 // The legacy widget's palette, which the Figma variables agree with:
@@ -49,6 +52,9 @@ pub mod font {
     pub const TITLE: u32 = 24;
     /// Every table row, at every frame.
     pub const ROW: u32 = 20;
+    /// The subtitle, which the narrow frames set smaller.
+    pub const SUBTITLE_MEDIUM: u32 = 20;
+    pub const SUBTITLE_SMALL: u32 = 18;
 }
 
 pub mod space {
@@ -75,17 +81,15 @@ pub fn frame(children: Vec<Node>) -> Node {
     )
 }
 
-/// The `F1` mark, the screen's title, and optionally the swept bars.
-/// Which frames carry the bars is the screen's call.
+/// The `F1` mark, whatever the screen names itself, and optionally the
+/// swept bars. Which frames carry the bars is the screen's call.
 #[must_use]
-pub fn header(title: &str, stripe: bool) -> Node {
-    let mut children = vec![
-        text(
-            "F1",
-            style!(size: font::TITLE, weight: FontWeight::BOLD, color: color::TEXT),
-        ),
-        text(title, style!(size: font::TITLE, color: color::TEXT_MUTED)),
-    ];
+pub fn header(content: Vec<Node>, stripe: bool) -> Node {
+    let mut children = vec![text(
+        "F1",
+        style!(size: font::TITLE, weight: FontWeight::BOLD, color: color::TEXT),
+    )];
+    children.extend(content);
     if stripe {
         children.push(spacer(1.0));
         children.push(canvas(
@@ -107,9 +111,78 @@ pub fn header(title: &str, stripe: bool) -> Node {
     )
 }
 
+/// What the screen is, in the design's quieter weight.
+#[must_use]
+pub fn title(label: &str) -> Node {
+    text(label, style!(size: font::TITLE, color: color::TEXT_MUTED))
+}
+
+/// What the screen is showing — a date range, a Grand Prix, a country.
+#[must_use]
+pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
+    let size = match bucket {
+        SizeBucket::Full | SizeBucket::Large => font::TITLE,
+        SizeBucket::Medium => font::SUBTITLE_MEDIUM,
+        SizeBucket::Small => font::SUBTITLE_SMALL,
+    };
+    text(
+        label,
+        style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+    )
+}
+
 #[must_use]
 pub fn divider() -> Node {
     col(props!(height: 1.0, background: color::DIVIDER), [])
+}
+
+/// A wall clock in the operator's 12- or 24-hour preference.
+#[must_use]
+pub fn clock(at: LocalDateTime) -> String {
+    let minute = at.minute;
+    // `fmt!` takes no width specifier, so the leading zero is our own.
+    let lead = if minute < 10 { "0" } else { "" };
+    match system::current().time_format().unwrap_or_default() {
+        TimeFormat::Hour24 => fmt!("{}:{}{}", at.hour, lead, minute),
+        TimeFormat::Hour12 => {
+            let (hour, half) = match at.hour {
+                0 => (12, "AM"),
+                hour @ 1..=11 => (hour, "AM"),
+                12 => (12, "PM"),
+                hour => (hour - 12, "PM"),
+            };
+            fmt!("{}:{}{} {}", hour, lead, minute, half)
+        }
+    }
+}
+
+/// A day as `14 Jul`, or `Jul 14` where the operator puts the month first.
+fn day_and_month(at: CalendarDate, month_first: bool) -> String {
+    let (day, month) = (at.day, at.month_short());
+    if month_first {
+        fmt!("{} {}", month, day)
+    } else {
+        fmt!("{} {}", day, month)
+    }
+}
+
+/// A race weekend's span, which drops to one day when it is only one:
+/// the opening day carries no month, the closing day does.
+#[must_use]
+pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
+    let month_first = matches!(
+        system::current().date_format().unwrap_or_default(),
+        DateFormat::MDYyyySlash
+    );
+    let Some(end) = end.filter(|end| *end != start) else {
+        return day_and_month(start, month_first);
+    };
+    let opening = if month_first {
+        day_and_month(start, month_first)
+    } else {
+        fmt!("{}", start.day)
+    };
+    fmt!("{} \u{2013} {}", opening, day_and_month(end, month_first))
 }
 
 /// A team's mark, or its livery colour where this build carries no
@@ -125,6 +198,15 @@ pub fn team_mark(size: f32, team_name: &str, livery: Color) -> Node {
     )
 }
 
+/// A country's flag, at the 10:7 box a flag is drawn in.
+#[must_use]
+pub fn flag(width: f32) -> Node {
+    col(
+        props!(width: width, height: width * 0.7, background: color::PLACEHOLDER),
+        [],
+    )
+}
+
 /// Holds an image's box before it arrives, so the row does not reflow
 /// when it lands. A livery fills a team's square; anything else is neutral.
 #[must_use]
@@ -137,4 +219,28 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
         ),
         [],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clock, date_range};
+    use crate::screens::fixtures::{weekend_day, weekend_time};
+
+    #[test]
+    fn a_weekend_spanning_days_names_its_month_once() {
+        let range = date_range(weekend_day(21), Some(weekend_day(23)));
+        assert_eq!(range, "21 \u{2013} 23 Aug");
+    }
+
+    #[test]
+    fn a_weekend_of_one_day_reads_as_that_day() {
+        assert_eq!(date_range(weekend_day(23), None), "23 Aug");
+        assert_eq!(date_range(weekend_day(23), Some(weekend_day(23))), "23 Aug",);
+    }
+
+    #[test]
+    fn the_clock_keeps_the_leading_zero_of_a_minute() {
+        assert_eq!(clock(weekend_time(23, 13, 0)), "13:00");
+        assert_eq!(clock(weekend_time(21, 9, 5)), "9:05");
+    }
 }

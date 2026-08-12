@@ -25,12 +25,12 @@
 //! every rule that plain values can decide lives in `model.rs`,
 //! where it is natively testable.
 
-use bmc_wasm_sdk::JsonDoc;
+use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, calendar};
 
 use crate::api::wire;
 use crate::model::{
     CarNumber, DriverStats, DriverStatus, ImageUrl, LiveBoard, NextRace, Sector, SectorColor,
-    Session, StandingsRow, TimingBoard, TimingRow, TimingText, TireCompound, VenueTime, team_color,
+    Session, StandingsRow, TimingBoard, TimingRow, TimingText, TireCompound, team_color,
 };
 
 /// Rows are read until a probe field comes back absent, which is how
@@ -54,6 +54,25 @@ fn image(json: &JsonDoc, path: &str) -> ImageUrl {
 
 fn timing(json: &JsonDoc, path: &str) -> TimingText {
     TimingText::from(text(json, path))
+}
+
+/// A session's start, resolved to an instant and put back into wall clock
+/// for `zone`.
+///
+/// The instant is what the widget lacks while the server sends no offset:
+/// the host's parser refuses such text rather than guessing a zone, so
+/// these read as absent until Nexus sends one.
+fn session_start(json: &JsonDoc, path: &str, zone: &str) -> Option<LocalDateTime> {
+    let unix_secs = calendar::parse_datetime(&json.str(path)?)?;
+    calendar::tz_convert(unix_secs, zone)
+}
+
+fn weekend_date(json: &JsonDoc, path: &str) -> Option<CalendarDate> {
+    calendar::parse_calendar_date(&json.str(path)?)
+}
+
+fn kilometers(json: &JsonDoc, path: &str) -> Option<Length> {
+    json.f64(path).map(Length::from_kilometers)
 }
 
 fn color(json: &JsonDoc, path: &str) -> bmc_wasm_sdk::Color {
@@ -151,8 +170,20 @@ pub fn driver(json: &JsonDoc) -> Option<DriverStats> {
 }
 
 #[must_use]
-pub fn next_race(json: &JsonDoc) -> Option<NextRace> {
+pub fn next_race(json: &JsonDoc, local_time: bool) -> Option<NextRace> {
     let gp_name = json.str(&wire::field("gp_name"))?;
+    let venue_timezone = json.str(&wire::field("venue_timezone"));
+    // The viewer's own zone is the host's `Local`; otherwise the schedule
+    // stays on the circuit's clock, as a race weekend is always quoted.
+    // Without the circuit's zone there is no circuit clock to show, and
+    // the viewer's own is the only one we know — UTC would read as the
+    // circuit's while being neither.
+    let zone = if local_time {
+        "Local"
+    } else {
+        venue_timezone.as_deref().unwrap_or("Local")
+    };
+
     let mut sessions = Vec::new();
     for index in 0.. {
         let Some(name) = json.str(&wire::session(index, "name")) else {
@@ -160,27 +191,23 @@ pub fn next_race(json: &JsonDoc) -> Option<NextRace> {
         };
         sessions.push(Session {
             name,
-            starts_at: VenueTime::from(text(json, &wire::session(index, "date_start"))),
+            starts_at: session_start(json, &wire::session(index, "date_start"), zone),
         });
     }
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "track and race distances are read for display only"
-    )]
     Some(NextRace {
         gp_name,
         country_name: text(json, &wire::field("country_name")),
         country_flag_url: image(json, &wire::field("country_flag_url")),
-        venue_timezone: json.str(&wire::field("venue_timezone")),
-        date_start: text(json, &wire::field("date_start")),
-        date_end: json.str(&wire::field("date_end")),
+        venue_timezone,
+        date_start: weekend_date(json, &wire::field("date_start")),
+        date_end: weekend_date(json, &wire::field("date_end")),
         circuit_name: text(json, &wire::field("circuit_name")),
         circuit_image_url: image(json, &wire::field("circuit_image_url")),
-        track_length_km: json.f64(&wire::field("track_length_km")).map(|v| v as f32),
+        track_length: kilometers(json, &wire::field("track_length_km")),
         total_laps: json
             .i64(&wire::field("total_laps"))
             .and_then(|v| u16::try_from(v).ok()),
-        race_distance_km: json.f64(&wire::field("race_distance_km")).map(|v| v as f32),
+        race_distance: kilometers(json, &wire::field("race_distance_km")),
         drs_zones: json
             .i64(&wire::field("drs_zones"))
             .and_then(|v| u8::try_from(v).ok()),
