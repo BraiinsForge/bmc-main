@@ -276,10 +276,17 @@ impl DeviceView {
         self.inbox.clear();
     }
 
-    pub(crate) fn into_pooled_gpu(mut self, gl: &egui_glow::glow::Context) -> TileGpu {
+    /// Tear the view down, giving its GPU resources back.
+    ///
+    /// Kept separate from `Drop` because both halves need the GL context
+    /// current and the painter in hand, and neither is reachable from there.
+    pub(crate) fn release(
+        mut self,
+        gl: &egui_glow::glow::Context,
+        painter: &mut egui_glow::Painter,
+    ) {
         self.renderer.drop_all();
-        self.gpu.detach_render_target(gl);
-        self.gpu
+        self.gpu.destroy(gl, painter);
     }
 
     // ── Drive ────────────────────────────────────────────────────────

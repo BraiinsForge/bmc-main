@@ -49,12 +49,10 @@ use super::view::DeviceView;
 /// FBO + texture pair on the window's glow context, one per tile.
 /// `WasmWidgetRuntime` renders into the FBO; egui paints the texture.
 pub(super) struct TileGpu {
-    fbo: Option<egui_glow::glow::Framebuffer>,
-    rbo: Option<egui_glow::glow::Renderbuffer>,
-    /// Registered with the painter, which keys an `egui::TextureId` to it.
-    /// A platform switch recycles that registration, tearing down only the
-    /// framebuffer and renderbuffer.
-    texture: egui_glow::glow::Texture,
+    fbo: egui_glow::glow::Framebuffer,
+    rbo: egui_glow::glow::Renderbuffer,
+    /// Keys the painter's registration of the texture, which the painter owns
+    /// from then on — including deleting it.
     pub(super) egui_tex_id: egui::TextureId,
     pub(super) width: u32,
     pub(super) height: u32,
@@ -81,9 +79,8 @@ impl TileGpu {
             let egui_tex_id = painter.register_native_texture(texture);
 
             Ok(Self {
-                fbo: Some(fbo),
-                rbo: Some(rbo),
-                texture,
+                fbo,
+                rbo,
                 egui_tex_id,
                 width,
                 height,
@@ -91,48 +88,22 @@ impl TileGpu {
         }
     }
 
-    /// Reuse this already-registered texture for a new tile size.
+    /// Release everything this tile holds on the GPU.
     ///
-    /// `egui_tex_id` stays unchanged, since the same native texture is resized
-    /// in place. The FBO and RBO attach to it and are recreated here.
-    pub(super) fn reinitialize(
-        &mut self,
-        gl: &egui_glow::glow::Context,
-        width: u32,
-        height: u32,
-    ) -> Result<()> {
-        self.destroy_render_target(gl);
-        configure_texture(gl, self.texture, width, height);
-        let (fbo, rbo) = create_render_target(gl, self.texture, width, height)?;
-        self.fbo = Some(fbo);
-        self.rbo = Some(rbo);
-        self.width = width;
-        self.height = height;
-        Ok(())
+    /// The texture is left to `free_texture`, which deletes the GL object
+    /// as well as dropping the registration; deleting it here would double free.
+    pub(super) fn destroy(self, gl: &egui_glow::glow::Context, painter: &mut egui_glow::Painter) {
+        // SAFETY: the context is current on this thread for the window's lifetime.
+        unsafe {
+            gl.delete_framebuffer(self.fbo);
+            gl.delete_renderbuffer(self.rbo);
+        }
+        painter.free_texture(self.egui_tex_id);
     }
 
     /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`.
     pub(super) fn fbo_id(&self) -> u32 {
-        self.fbo
-            .expect("BUG: TileGpu framebuffer used after destroy")
-            .0
-            .get()
-    }
-
-    pub(super) fn detach_render_target(&mut self, gl: &egui_glow::glow::Context) {
-        self.destroy_render_target(gl);
-    }
-
-    fn destroy_render_target(&mut self, gl: &egui_glow::glow::Context) {
-        // SAFETY: the context is current on this thread for the window's lifetime.
-        unsafe {
-            if let Some(fbo) = self.fbo.take() {
-                gl.delete_framebuffer(fbo);
-            }
-            if let Some(rbo) = self.rbo.take() {
-                gl.delete_renderbuffer(rbo);
-            }
-        }
+        self.fbo.0.get()
     }
 }
 

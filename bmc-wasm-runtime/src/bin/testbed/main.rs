@@ -1130,7 +1130,9 @@ pub(crate) struct TestbedApp {
     url_rewrites: Vec<(String, String)>,
     gl: Arc<egui_glow::glow::Context>,
     pub(crate) tiles: Vec<DeviceView>,
-    gpu_pool: Vec<TileGpu>,
+    /// Views taken out of service, waiting for a pass that can free their
+    /// textures. Never holds more than one platform's worth.
+    retired: Vec<DeviceView>,
     clock: Clock,
     /// Offline toggle: seals every tile's live I/O so refreshes fail.
     offline: bool,
@@ -1292,7 +1294,7 @@ impl TestbedApp {
             credentials: serde_json::Map::new(),
             gl,
             tiles: Vec::new(),
-            gpu_pool: Vec::new(),
+            retired: Vec::new(),
             clock: Clock {
                 last_frame: now,
                 start_instant: now,
@@ -1441,12 +1443,8 @@ impl TestbedApp {
         self.layout = switch.layout;
         self.requested_size = switch.requested_size;
         if switch.needs_tile_rebuild {
-            let expected_pool_len =
-                gpu_pool_len_after_detach(self.gpu_pool.len(), self.tiles.len());
-            for tile in self.tiles.drain(..) {
-                self.gpu_pool.push(tile.into_pooled_gpu(&self.gl));
-            }
-            debug_assert_eq!(self.gpu_pool.len(), expected_pool_len);
+            // Releasing them needs the painter, which the egui pass is holding.
+            self.retired.append(&mut self.tiles);
         }
         // The window follows the new layout once.
         // The operator is free to resize away from it afterwards.
@@ -1458,11 +1456,6 @@ impl TestbedApp {
     ///
     /// Runs outside the egui pass, because registering a texture and painting
     /// with it both want the painter.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "single tile-setup pass: read wasm bytes, resolve platform, build runtime + \
-                  GPU + renderer per tile, register textures, log SDK version"
-    )]
     fn init_tiles(&mut self, painter: &mut egui_glow::Painter) -> Result<()> {
         let get_proc = self.get_proc.clone();
         let wasm_bytes = std::fs::read(self.prepared_widget.wasm_path()).with_context(|| {
@@ -1486,17 +1479,11 @@ impl TestbedApp {
             .join("widget_data")
             .join(&widget_name);
 
-        let initial_pool_len = self.gpu_pool.len();
         let mut tiles = Vec::with_capacity(self.layout.tiles.len());
         for (tile_idx, placed) in self.layout.tiles.iter().enumerate() {
             let (w, h) = (placed.w, placed.h);
             let label = placed.label.clone();
-            let gpu = if let Some(mut gpu) = self.gpu_pool.pop() {
-                gpu.reinitialize(&self.gl, w, h)?;
-                gpu
-            } else {
-                TileGpu::new(&self.gl, painter, w, h)?
-            };
+            let gpu = TileGpu::new(&self.gl, painter, w, h)?;
             let (led_tx, led_rx) = if placed.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
                 (Some(led_tx), Some(led_rx))
@@ -1569,10 +1556,6 @@ impl TestbedApp {
             };
             tiles.push(DeviceView::new(placed, runtime, renderer, gpu, led_rx));
         }
-        debug_assert_eq!(
-            self.gpu_pool.len(),
-            gpu_pool_len_after_init(initial_pool_len, self.layout.tiles.len())
-        );
         if let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::sdk_version) {
             println!("Widget SDK version: {major}.{minor}.{patch}");
         }
@@ -1845,14 +1828,6 @@ fn can_switch_platform(recording_active: bool) -> Result<(), &'static str> {
     }
 }
 
-fn gpu_pool_len_after_detach(pool_len: usize, active_tiles: usize) -> usize {
-    pool_len + active_tiles
-}
-
-fn gpu_pool_len_after_init(pool_len: usize, needed_tiles: usize) -> usize {
-    pool_len.saturating_sub(needed_tiles)
-}
-
 /// Whether a widget's `supported` viewports admit a tile of this shape and size.
 /// An empty list is unconstrained — every tile qualifies.
 fn viewport_supported(
@@ -2032,7 +2007,10 @@ impl TestbedHandler {
         };
 
         // Registering a texture and painting with it both want the painter,
-        // so views are (re)built here rather than inside the pass below.
+        // so views are retired and (re)built here rather than in the pass below.
+        for view in std::mem::take(&mut app.retired) {
+            view.release(&app.gl, &mut egui_glow.painter);
+        }
         if app.tiles.is_empty()
             && let Err(e) = app.init_tiles(&mut egui_glow.painter)
         {
@@ -2157,6 +2135,14 @@ impl winit::application::ApplicationHandler<UserEvent> for TestbedHandler {
     /// In field order every one of them outlives the window,
     /// so leaving this to `Drop` frees them against a dead context.
     fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
+        if let (Some(app), Some(egui_glow)) = (self.app.as_mut(), self.egui_glow.as_mut()) {
+            let gl = Arc::clone(&app.gl);
+            let mut views = std::mem::take(&mut app.tiles);
+            views.append(&mut app.retired);
+            for view in views {
+                view.release(&gl, &mut egui_glow.painter);
+            }
+        }
         drop(self.app.take());
         if let Some(mut egui_glow) = self.egui_glow.take() {
             egui_glow.destroy();
@@ -2538,32 +2524,6 @@ mod layout_tests {
             can_switch_platform(true),
             Err("recording is active"),
             "recording must keep active tile indexes and runtimes intact",
-        );
-    }
-
-    #[test]
-    fn gpu_pool_count_is_bounded_by_max_active_tiles() {
-        let mut pooled = 0;
-
-        pooled = gpu_pool_len_after_detach(pooled, 4);
-        assert_eq!(pooled, 4, "switching away from BMC100 pools four GPUs");
-
-        pooled = gpu_pool_len_after_init(pooled, 1);
-        assert_eq!(
-            pooled, 3,
-            "switching to one-tile BMM101 reuses one pooled GPU",
-        );
-
-        pooled = gpu_pool_len_after_detach(pooled, 1);
-        assert_eq!(
-            pooled, 4,
-            "switching away from BMM101 returns the reused GPU to the pool",
-        );
-
-        pooled = gpu_pool_len_after_init(pooled, 4);
-        assert_eq!(
-            pooled, 0,
-            "switching back to BMC100 reuses all four registered GPUs",
         );
     }
 
