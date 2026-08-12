@@ -659,12 +659,8 @@ impl Coordinator {
                 continue;
             }
             match self.widget_manager.observe_child(&instance_id).await {
-                Ok(ChildObservation::Running) => {}
-                Ok(ChildObservation::Exited | ChildObservation::Missing) => continue,
-                Err(error) => {
-                    warn!(%error, %instance_id, "failed to inspect widget before reload");
-                    continue;
-                }
+                ChildObservation::Running => {}
+                ChildObservation::Missing => continue,
             }
 
             let current = {
