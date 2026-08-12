@@ -39,7 +39,9 @@ use std::net::IpAddr;
 use anyhow::bail;
 use async_trait::async_trait;
 
+pub mod buildroot;
 mod command;
+pub mod mock;
 pub mod openwrt;
 pub mod provisioning;
 use bmc_net_types::network::{
@@ -81,6 +83,29 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
     async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()>;
     /// Sets the system hostname and restarts networking to apply it.
     async fn set_hostname(&self, hostname: String) -> anyhow::Result<()>;
+    /// Applies a protocol configuration and/or a hostname in a single pass.
+    ///
+    /// Callers changing both must use this rather than calling
+    /// [`set_network_config`] and [`set_hostname`] in sequence: each restarts
+    /// networking on its own, so back-to-back calls disrupt the link twice and
+    /// leave the device half-configured if interrupted in between. Backends
+    /// override this to write both in one transaction and restart once.
+    ///
+    /// [`set_network_config`]: NetworkConfig::set_network_config
+    /// [`set_hostname`]: NetworkConfig::set_hostname
+    async fn apply_network_settings(
+        &self,
+        config: Option<NetworkProtocolConfig>,
+        hostname: Option<String>,
+    ) -> anyhow::Result<()> {
+        if let Some(config) = config {
+            self.set_network_config(config).await?;
+        }
+        if let Some(hostname) = hostname {
+            self.set_hostname(hostname).await?;
+        }
+        Ok(())
+    }
     /// Aggregated interface/hostname/DNS/gateway snapshot for display and PAPI.
     async fn network_info(&self) -> anyhow::Result<NetworkInfo>;
     /// Interface data (IP + MAC) for the manager's primary interface.

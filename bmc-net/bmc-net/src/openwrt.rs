@@ -172,6 +172,46 @@ impl UciNetworkManager {
             .collect()
     }
 
+    /// UCI `set`/`delete` lines for the network section, without the commit.
+    fn uci_net_lines(&self, config: NetworkProtocolConfig) -> Vec<String> {
+        let proto = self.uci_net_opt("proto");
+        let ipaddr = self.uci_net_opt("ipaddr");
+        let netmask = self.uci_net_opt("netmask");
+        let gateway = self.uci_net_opt("gateway");
+        let dns = self.uci_net_opt("dns");
+        match config {
+            NetworkProtocolConfig::Dhcp => vec![
+                format!("set {proto}='{UCI_NET_LAN_PROTO_DHCP}'"),
+                format!("delete {ipaddr}"),
+                format!("delete {netmask}"),
+                format!("delete {gateway}"),
+                format!("delete {dns}"),
+            ],
+            NetworkProtocolConfig::Static(config) => vec![
+                format!("set {proto}='{UCI_NET_LAN_PROTO_STATIC}'"),
+                format!("set {ipaddr}='{}'", config.address),
+                format!("set {netmask}='{}'", config.netmask),
+                // `UNSPECIFIED` (0.0.0.0) is the shared in-memory marker for "no
+                // gateway"; drop the option rather than persisting a bogus
+                // `gateway='0.0.0.0'`, matching the buildroot backend.
+                if config.gateway == Ipv4Addr::UNSPECIFIED {
+                    format!("delete {gateway}")
+                } else {
+                    format!("set {gateway}='{}'", config.gateway)
+                },
+                format!(
+                    "set {dns}='{}'",
+                    config
+                        .dns_servers
+                        .iter()
+                        .map(Ipv4Addr::to_string)
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                ),
+            ],
+        }
+    }
+
     async fn calculate_wifi_ssid(&self) -> Result<String> {
         let mac = run_defaults_script_output("wifi_mac").await?;
         Ok(format!(
@@ -269,43 +309,37 @@ impl NetworkConfig for UciNetworkManager {
     }
 
     async fn set_network_config(&self, config: NetworkProtocolConfig) -> Result<()> {
-        let proto = self.uci_net_opt("proto");
-        let ipaddr = self.uci_net_opt("ipaddr");
-        let netmask = self.uci_net_opt("netmask");
-        let gateway = self.uci_net_opt("gateway");
-        let dns = self.uci_net_opt("dns");
-        let mut stdin = match config {
-            NetworkProtocolConfig::Dhcp => vec![
-                format!("set {proto}='{UCI_NET_LAN_PROTO_DHCP}'"),
-                format!("delete {ipaddr}"),
-                format!("delete {netmask}"),
-                format!("delete {gateway}"),
-                format!("delete {dns}"),
-            ],
-            NetworkProtocolConfig::Static(config) => vec![
-                format!("set {proto}='{UCI_NET_LAN_PROTO_STATIC}'"),
-                format!("set {ipaddr}='{}'", config.address),
-                format!("set {netmask}='{}'", config.netmask),
-                // `UNSPECIFIED` (0.0.0.0) is the shared in-memory marker for "no
-                // gateway"; drop the option rather than persisting a bogus
-                // `gateway='0.0.0.0'`, matching the buildroot backend.
-                if config.gateway == Ipv4Addr::UNSPECIFIED {
-                    format!("delete {gateway}")
-                } else {
-                    format!("set {gateway}='{}'", config.gateway)
-                },
-                format!(
-                    "set {dns}='{}'",
-                    config
-                        .dns_servers
-                        .iter()
-                        .map(Ipv4Addr::to_string)
-                        .collect::<Vec<_>>()
-                        .join(" ")
-                ),
-            ],
-        };
-        stdin.push(format!("commit {}", self.uci_net()));
+        self.apply_network_settings(Some(config), None).await
+    }
+
+    async fn set_hostname(&self, hostname: String) -> Result<()> {
+        self.apply_network_settings(None, Some(hostname)).await
+    }
+
+    /// Writes both the network section and the hostname in one `uci batch`
+    /// and restarts networking once, so a request that changes both does not
+    /// bounce the link twice (and cannot leave the two halves committed
+    /// separately if it is interrupted).
+    async fn apply_network_settings(
+        &self,
+        config: Option<NetworkProtocolConfig>,
+        hostname: Option<String>,
+    ) -> Result<()> {
+        if let Some(hostname) = hostname.as_deref() {
+            crate::validate_hostname(hostname)?;
+        }
+        let mut stdin = Vec::new();
+        if let Some(config) = config {
+            stdin.extend(self.uci_net_lines(config));
+            stdin.push(format!("commit {}", self.uci_net()));
+        }
+        if let Some(hostname) = hostname.as_deref() {
+            stdin.push(format!("set {UCI_SYSTEM_HOSTNAME}='{hostname}'"));
+            stdin.push("commit system".to_owned());
+        }
+        if stdin.is_empty() {
+            return Ok(());
+        }
 
         let output = call_command_stdin("uci", &["-q", "batch"], &stdin.join("\n")).await?;
         // Judge success by the exit status alone. The batch has already
@@ -326,18 +360,9 @@ impl NetworkConfig for UciNetworkManager {
             );
         }
 
-        call_command(INIT_SCRIPT_NETWORK, &["restart"]).await
-    }
-
-    async fn set_hostname(&self, hostname: String) -> Result<()> {
-        crate::validate_hostname(&hostname)?;
-        call_command(
-            "uci",
-            &["set", &format!("{UCI_SYSTEM_HOSTNAME}={hostname}")],
-        )
-        .await?;
-        call_command("uci", &["commit", "system"]).await?;
-        call_command(INIT_SCRIPT_SYSTEM, &["reload"]).await?;
+        if hostname.is_some() {
+            call_command(INIT_SCRIPT_SYSTEM, &["reload"]).await?;
+        }
         // NOTE: this intentionally restarts networking, which drops the client
         // connection that issued the request. udhcpc only re-advertises the
         // hostname (`-x hostname:<name>`) when the network service (re)starts;

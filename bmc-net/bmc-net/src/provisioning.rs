@@ -282,6 +282,14 @@ impl ProvisioningState for MockProvisioningState {
             BmcState::FactoryDefault => {
                 self.factory_default.send_replace(false);
                 self.wifi_reconfig.send_replace(false);
+                // A factory image ships with both flags set, so clearing
+                // factory-default on real hardware reveals the already-present
+                // setup-pending flag and the device-setup wizard runs next. The
+                // mock is seeded from a single CLI flag and cannot express that,
+                // so set it here — otherwise every SetupPending-gated surface
+                // (the wizard route, the `check_precondition` gRPC calls) is
+                // unreachable against bmc-mock after WiFi setup.
+                self.setup_pending.send_replace(true);
             }
             BmcState::SetupPending => {
                 self.setup_pending.send_replace(false);
