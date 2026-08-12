@@ -42,6 +42,7 @@ use bmc_wasm_runtime::{NextAlarm, SystemSnapshot};
 use super::TestbedApp;
 use super::recording::record_delivery;
 use super::ui_helpers::{combo_cell, key_label};
+use super::view::{Delivery, ViewCommand};
 
 impl TestbedApp {
     /// Render the platform selector dropdown. Returns the newly chosen
@@ -87,12 +88,10 @@ impl TestbedApp {
         if new_system == self.system {
             return;
         }
-        for tile in &mut self.tiles {
-            if !tile.dead
-                && let Some(runtime) = tile.runtime.as_mut()
-            {
-                runtime.deliver_system_update(new_system.clone());
-            }
+        for view in &mut self.tiles {
+            view.send(ViewCommand::Deliver(Delivery::System(Box::new(
+                new_system.clone(),
+            ))));
         }
         self.system = new_system;
 

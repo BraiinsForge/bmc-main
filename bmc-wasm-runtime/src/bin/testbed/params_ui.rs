@@ -33,6 +33,7 @@ use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
 use super::recording::record_delivery;
 use super::ui_helpers::{RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell};
+use super::view::{Delivery, ViewCommand};
 use super::{PARAM_PANEL_W, TestbedApp};
 
 impl TestbedApp {
@@ -52,14 +53,10 @@ impl TestbedApp {
         if new_params == self.params {
             return;
         }
-        // Fire `on_params_update` on every tile — operator-driven changes apply to all
-        // size variants previewed in the testbed, not just the active recording tile.
-        for tile in &mut self.tiles {
-            if !tile.dead
-                && let Some(runtime) = tile.runtime.as_mut()
-            {
-                runtime.deliver_params_update(new_params.clone());
-            }
+        // Fire `on_params_update` on every view: an operator-driven change
+        // applies to every previewed viewport, not just the one being recorded.
+        for view in &mut self.tiles {
+            view.send(ViewCommand::Deliver(Delivery::Params(new_params.clone())));
         }
         self.params = new_params;
 

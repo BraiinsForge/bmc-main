@@ -38,6 +38,7 @@ use bmc_wasm_runtime::unified_fixture::{
 };
 
 use super::TestbedApp;
+use super::view::DeviceView;
 
 // ── Recording state ─────────────────────────────────────────────────
 
@@ -398,14 +399,11 @@ impl TestbedApp {
 
         // Pull network events out of the active tile's runtime, plus the fetch events the
         // observer pushed into the shared buffer.
-        let runtime_events = match self
+        let runtime_events = self
             .tiles
             .get_mut(rec.active_tile)
-            .and_then(|tile| tile.runtime.as_mut())
-        {
-            Some(runtime) => runtime.take_recorded_events(),
-            None => Vec::new(),
-        };
+            .map(DeviceView::take_recorded_events)
+            .unwrap_or_default();
         let network_timeline = fixtures::fixture_events_to_timeline(&runtime_events);
         let fetch_timeline: Vec<TimelineEvent> = std::mem::take(
             &mut *self

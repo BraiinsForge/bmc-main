@@ -41,7 +41,8 @@ use eframe::glow::HasContext as _;
 
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
 
-use super::{LED_STRIP_H, PreviewTile};
+use super::LED_STRIP_H;
+use super::view::DeviceView;
 
 // ── GL helpers ──────────────────────────────────────────────────────
 
@@ -327,11 +328,11 @@ fn led_brightness(
 /// the prior FemtoVG-based strip needed.
 pub(super) fn paint_led_strip(
     painter: &egui::Painter,
-    tile: &PreviewTile,
+    tile: &DeviceView,
     tile_origin: egui::Pos2,
     time_s: f32,
 ) {
-    let Some(led_count) = tile.led_count else {
+    let Some(led_count) = tile.led_count() else {
         return;
     };
     if led_count == 0 {
@@ -348,7 +349,7 @@ pub(super) fn paint_led_strip(
     // diffuser gap — full black flattened the gap into a hard bar.
     painter.rect_filled(strip_rect, 0.0, egui::Color32::from_black_alpha(75));
 
-    let Some(scene) = tile.led_scene.as_ref().filter(|_| tile.led_enabled) else {
+    let Some(scene) = tile.led_scene() else {
         return;
     };
     let (cr, cg, cb) = match &scene.effect {

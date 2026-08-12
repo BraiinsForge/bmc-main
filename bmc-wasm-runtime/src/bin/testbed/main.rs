@@ -48,6 +48,7 @@ mod params_ui;
 mod recording;
 mod system_ui;
 mod ui_helpers;
+mod view;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -59,15 +60,13 @@ use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
-use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{
     self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
 use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Product, Viewport};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{
-    DiskCache, LedEffect, LedRequest, PackageAssetStore, RenderStatus, RuntimeConfig,
-    SystemSnapshot, WasmWidgetRuntime,
+    DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 use clap::Parser;
 
@@ -76,6 +75,7 @@ use paint::{
     paint_timing_legend, proc_loader, write_perf_report,
 };
 use recording::{GestureTracker, RecordingAction, RecordingState, classify_and_record_gesture};
+use view::{DeviceView, ViewCommand};
 
 // ── Layout constants ────────────────────────────────────────────────
 
@@ -1000,7 +1000,7 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Re
 
 // ── Touch routing ───────────────────────────────────────────────────
 
-/// Translate egui pointer events on a tile rect into `TouchEvent`s pushed to the runtime.
+/// Translate egui pointer events on a tile rect into `TouchEvent`s sent to the view.
 ///
 /// Click / drag semantics mirror what the prior winit-based testbed forwarded:
 /// a quick click fires `Down` then `Up`; a drag fires `Down` on start,
@@ -1012,13 +1012,13 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Re
 fn dispatch_touch_events(
     response: &egui::Response,
     rect: egui::Rect,
-    runtime: &mut WasmWidgetRuntime,
+    view: &mut DeviceView,
     recording: Option<&mut RecordingState>,
-) -> bool {
+) {
     // Mirror the device host: a widget that doesn't export `on_touch` is
     // non-interactive, so it never receives touch events.
-    if !runtime.exports_on_touch() {
-        return false;
+    if !view.exports_on_touch() {
+        return;
     }
     // Carry the recording reborrow through each branch by hand instead of `as_deref_mut`
     // (which clippy rejects since the `Option`'s inner type is already a `&mut`).
@@ -1028,13 +1028,13 @@ fn dispatch_touch_events(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
-        runtime.push_touch_event(TouchEvent::Down { x, y });
-        runtime.push_touch_event(TouchEvent::Up);
+        view.send(ViewCommand::Touch(TouchEvent::Down { x, y }));
+        view.send(ViewCommand::Touch(TouchEvent::Up));
         touched = true;
         if let Some(r) = rec.as_mut() {
             // A quick click never triggers `drag_started` — synthesise + immediately classify
             // a zero-distance gesture so it's recorded as a click on the hit element.
-            let start_element = runtime.hit_test(x, y);
+            let start_element = view.hit_test(x, y);
             let gesture = GestureTracker {
                 start_pos: (x, y),
                 current_pos: (x, y),
@@ -1047,10 +1047,10 @@ fn dispatch_touch_events(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
-        runtime.push_touch_event(TouchEvent::Down { x, y });
+        view.send(ViewCommand::Touch(TouchEvent::Down { x, y }));
         touched = true;
         if let Some(r) = rec.as_mut() {
-            let start_element = runtime.hit_test(x, y);
+            let start_element = view.hit_test(x, y);
             r.gesture = Some(GestureTracker {
                 start_pos: (x, y),
                 current_pos: (x, y),
@@ -1061,7 +1061,7 @@ fn dispatch_touch_events(
         && let Some(pos) = response.interact_pointer_pos()
     {
         let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
-        runtime.push_touch_event(TouchEvent::Move { x, y });
+        view.send(ViewCommand::Touch(TouchEvent::Move { x, y }));
         touched = true;
         if let Some(r) = rec.as_mut()
             && let Some(g) = r.gesture.as_mut()
@@ -1070,7 +1070,7 @@ fn dispatch_touch_events(
         }
     }
     if response.drag_stopped() {
-        runtime.push_touch_event(TouchEvent::Up);
+        view.send(ViewCommand::Touch(TouchEvent::Up));
         touched = true;
         if let Some(r) = rec.as_mut()
             && let Some(gesture) = r.gesture.take()
@@ -1080,109 +1080,8 @@ fn dispatch_touch_events(
     }
     if touched {
         // Fire `on_touch` once for the gesture, mirroring the host's per-drain
-        // delivery; the caller arms `pending_interaction` so the reaction renders.
-        runtime.deliver_touch();
-    }
-    touched
-}
-
-// ── Tile ────────────────────────────────────────────────────────────
-
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent per-tile status flags (dead/rendered/touch/led), not a state machine"
-)]
-pub(crate) struct PreviewTile {
-    /// `None` for a placeholder — a size the manifest declines: no runtime built
-    /// (no live widget, no discovery), painted as a "not supported" slab.
-    pub(crate) runtime: Option<WasmWidgetRuntime>,
-    /// Caller-owned renderer drawn alongside `runtime`. Bracket each
-    /// `runtime.render(...)` call with `runtime.with_renderer(ptr, ...)`.
-    pub(crate) renderer: FemtoVgRenderer,
-    pub(crate) gpu: TileGpu,
-    pub(crate) x: u32,
-    pub(crate) y: u32,
-    pub(crate) shape: DisplayShape,
-    label: String,
-    dead: bool,
-    ever_rendered: bool,
-    /// Monotonic-ms deadline for this tile's next WASM render,
-    /// armed from `next_frame_delay()` at each render.
-    ///
-    /// `None` = idle until a delivery or touch.
-    /// Absolute, not per-tick relative, so it fires rather than receding.
-    next_render_at_ms: Option<u64>,
-    /// A touch landed since the last render; forces the next tick to render.
-    pending_interaction: bool,
-    pub(crate) led_count: Option<usize>,
-    /// Receiver for LED requests from the widget (drained each frame).
-    led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
-    /// Current LED scene (from last `SetEffect` request).
-    pub(crate) led_scene: Option<bmc_led::data::LedScene>,
-    /// Whether LEDs are enabled.
-    pub(crate) led_enabled: bool,
-}
-
-enum DeliveryPollOutcome {
-    Ready { immediate: bool },
-    Trapped(anyhow::Error),
-}
-
-fn delivery_poll_outcome(
-    result: Result<bool>,
-    next_frame_is_immediate: impl FnOnce() -> bool,
-) -> DeliveryPollOutcome {
-    match result {
-        Ok(_) => DeliveryPollOutcome::Ready {
-            immediate: next_frame_is_immediate(),
-        },
-        Err(error) => DeliveryPollOutcome::Trapped(error),
-    }
-}
-
-impl PreviewTile {
-    /// Drain pending LED requests; update `led_scene` / `led_enabled`.
-    fn drain_led_commands(&mut self) {
-        let Some(led_rx) = self.led_rx.as_ref() else {
-            return;
-        };
-        while let Ok(req) = led_rx.try_recv() {
-            match req {
-                LedRequest::SetEffect {
-                    effect,
-                    color,
-                    period_ms,
-                    duration,
-                    ..
-                } => {
-                    let hw_effect = match effect {
-                        LedEffect::Chase => bmc_led::data::LedEffect::Chase(color),
-                        LedEffect::KnightRider => bmc_led::data::LedEffect::KnightRider(color),
-                        LedEffect::Scan => bmc_led::data::LedEffect::Scan(color),
-                        LedEffect::Snake => bmc_led::data::LedEffect::Snake(color),
-                        LedEffect::Breathe => bmc_led::data::LedEffect::Breathe(color),
-                        LedEffect::Solid => bmc_led::data::LedEffect::Solid(color),
-                    };
-                    self.led_scene = Some(bmc_led::data::LedScene {
-                        effect: hw_effect,
-                        period: (period_ms > 0)
-                            .then(|| std::time::Duration::from_millis(u64::from(period_ms))),
-                        duration,
-                    });
-                    self.led_enabled = true;
-                }
-                LedRequest::Stop { .. } => {
-                    self.led_scene = None;
-                    self.led_enabled = false;
-                }
-            }
-        }
-    }
-
-    fn into_pooled_gpu(mut self, gl: &eframe::glow::Context) -> TileGpu {
-        self.renderer.drop_all();
-        self.gpu.detach_render_target(gl);
-        self.gpu
+        // delivery. Pushing the events already armed the view to render.
+        view.send(ViewCommand::DeliverTouch);
     }
 }
 
@@ -1221,7 +1120,7 @@ pub(crate) struct TestbedApp {
     /// Base-URL rewrites from `--rewrite-url`, installed on every runtime.
     url_rewrites: Vec<(String, String)>,
     gl: Arc<eframe::glow::Context>,
-    pub(crate) tiles: Vec<PreviewTile>,
+    pub(crate) tiles: Vec<DeviceView>,
     gpu_pool: Vec<TileGpu>,
     clock: Clock,
     /// Offline toggle: seals every tile's live I/O so refreshes fail.
@@ -1477,14 +1376,13 @@ impl TestbedApp {
         // a credential-fed widget back to its unbound state.
         let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
         let secrets = self.secrets.clone();
-        let mut replacements = Vec::new();
         for idx in 0..self.tiles.len() {
             let placed_shape = self.layout.tiles[idx].shape;
-            let tile = &self.tiles[idx];
-            if tile.runtime.is_none() {
-                continue;
+            let view = &mut self.tiles[idx];
+            if !view.is_live() {
+                continue; // placeholder — no runtime to rebuild
             }
-            let (led_tx, led_rx) = if tile.led_count.is_some() {
+            let (led_tx, led_rx) = if view.led_count().is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
                 (Some(led_tx), Some(led_rx))
             } else {
@@ -1502,8 +1400,8 @@ impl TestbedApp {
             let geometry = RuntimeTileGeometry::for_viewport_shape(platform, placed_shape);
             match WasmWidgetRuntime::new(
                 &wasm_bytes,
-                tile.gpu.width,
-                tile.gpu.height,
+                view.gpu.width,
+                view.gpu.height,
                 geometry.viewport_shape,
                 geometry.display,
                 chrono::Local::now().fixed_offset(),
@@ -1512,23 +1410,10 @@ impl TestbedApp {
                 Ok(mut rt) => {
                     rt.set_network_info(stub_network());
                     rt.deliver_credentials_update(credentials.clone(), secrets.clone());
-                    replacements.push((idx, rt, led_rx));
+                    view.replace_runtime(Some(rt), led_rx);
                 }
-                Err(e) => {
-                    tracing::warn!("hot reload: {}: {e}", tile.label);
-                    return;
-                }
+                Err(e) => tracing::warn!("hot reload: {}: {e}", view.label()),
             }
-        }
-        for (idx, runtime, led_rx) in replacements {
-            let tile = &mut self.tiles[idx];
-            tile.renderer.drop_all();
-            tile.runtime = Some(runtime);
-            tile.led_rx = led_rx;
-            tile.led_scene = None;
-            tile.led_enabled = false;
-            tile.dead = false;
-            tile.ever_rendered = false;
         }
         self.prepared_widget = prepared_widget;
     }
@@ -1607,7 +1492,7 @@ impl TestbedApp {
         let initial_pool_len = self.gpu_pool.len();
         let mut tiles = Vec::with_capacity(self.layout.tiles.len());
         for (tile_idx, placed) in self.layout.tiles.iter().enumerate() {
-            let (x, y, w, h) = (placed.x, placed.y, placed.w, placed.h);
+            let (w, h) = (placed.w, placed.h);
             let label = placed.label.clone();
             let gpu = if let Some(mut gpu) = self.gpu_pool.pop() {
                 gpu.reinitialize(&self.gl, w, h)?;
@@ -1685,32 +1570,13 @@ impl TestbedApp {
             } else {
                 None
             };
-            tiles.push(PreviewTile {
-                runtime,
-                renderer,
-                gpu,
-                x,
-                y,
-                shape: placed.shape,
-                label,
-                dead: false,
-                ever_rendered: false,
-                next_render_at_ms: None,
-                pending_interaction: false,
-                led_count: placed.led_count,
-                led_rx,
-                led_scene: None,
-                led_enabled: false,
-            });
+            tiles.push(DeviceView::new(placed, runtime, renderer, gpu, led_rx));
         }
         debug_assert_eq!(
             self.gpu_pool.len(),
             gpu_pool_len_after_init(initial_pool_len, self.layout.tiles.len())
         );
-        if let Some((major, minor, patch)) = tiles
-            .iter()
-            .find_map(|t| t.runtime.as_ref().map(WasmWidgetRuntime::sdk_version))
-        {
+        if let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::sdk_version) {
             println!("Widget SDK version: {major}.{minor}.{patch}");
         }
         // Snapshot the active recording tile's KV directory at start
@@ -1760,10 +1626,6 @@ impl TestbedApp {
     ///
     /// Clock and delivery drain run every tick; the WASM render is gated,
     /// so idle tiles cost nothing — the contract the device host honours.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one on-demand drive pass: per-tile clock, delivery drain, render gate, deadline arming, perf sample"
-    )]
     fn render_tiles(&mut self, delta_ms: u32) -> Option<u64> {
         // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
         let (prev_fbo, prev_viewport) = unsafe {
@@ -1783,13 +1645,18 @@ impl TestbedApp {
         let system_time = (chrono::Local::now()
             + chrono::Duration::milliseconds(offset_ms.cast_signed()))
         .fixed_offset();
-        let offline = self.offline;
-        // In recording mode, only the active tile renders; the others are painted as blank
-        // slabs in `App::ui`. Skipping the WASM render here both clarifies the visual focus
-        // and keeps non-active runtimes from spending fuel on frames nobody will keep.
+        let tick = view::ViewTick {
+            system_time,
+            monotonic_ms,
+            delta_ms,
+            offline: self.offline,
+        };
+        // In recording mode only the active view runs; `App::ui` paints the rest
+        // as blank slabs. Skipping their render keeps the visual focus clear,
+        // and stops idle runtimes spending fuel on frames nobody keeps.
         let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
-        // Perf report samples the first live tile (placeholders have no runtime).
-        let perf_idx = self.tiles.iter().position(|t| t.runtime.is_some());
+        // The perf report follows the first live view (placeholders have none).
+        let perf_idx = self.tiles.iter().position(DeviceView::is_live);
         let mut next_wake_ms: Option<u64> = None;
         // Captured only on a real render, so `--perf-frames` counts widget
         // renders, not idle ticks.
@@ -1797,130 +1664,16 @@ impl TestbedApp {
             bmc_render::FrameTimings,
             std::collections::BTreeMap<String, u64>,
         )> = None;
-        for (tile_idx, tile) in self.tiles.iter_mut().enumerate() {
-            if active_record_idx.is_some_and(|active| active != tile_idx) {
+        for (idx, view) in self.tiles.iter_mut().enumerate() {
+            if active_record_idx.is_some_and(|active| active != idx) {
                 continue;
             }
-            if tile.runtime.is_none() || tile.dead {
-                continue;
-            }
-            tile.drain_led_commands();
-
-            // `*mut FemtoVgRenderer` → `*mut dyn Renderer` is a coercion, not an `as` cast.
-            let renderer_raw: *mut dyn bmc_render::renderer::Renderer =
-                core::ptr::addr_of_mut!(tile.renderer);
-            let renderer_ptr = std::ptr::NonNull::new(renderer_raw)
-                .expect("BUG: addr_of_mut! cannot produce null");
-
-            // Clock + delivery drain every tick (renderer parked
-            // so bitmap-registering delivery callbacks work).
-            //
-            // No `begin_frame` — it clears the FBO,
-            // so it must bracket a real render, not a drain.
-            let delivery_outcome = {
-                let rt = tile
-                    .runtime
-                    .as_mut()
-                    .expect("BUG: placeholder skipped above");
-                rt.set_hermetic(offline);
-                rt.set_time(system_time, monotonic_ms);
-                let result = rt.poll_deliveries_with_renderer(renderer_ptr);
-                delivery_poll_outcome(result, || rt.next_frame_delay() == Some(0))
-            };
-            let immediate = match delivery_outcome {
-                DeliveryPollOutcome::Ready { immediate } => immediate,
-                DeliveryPollOutcome::Trapped(error) => {
-                    tile.dead = true;
-                    tracing::error!("{}: delivery trapped: {error}", tile.label);
-                    continue;
-                }
-            };
-
-            // Render only when the tile's scheduler asks: first frame,
-            // queued touch, deadline reached, or an immediate (maybe delivery-raised) request.
-            let due = !tile.ever_rendered
-                || tile.pending_interaction
-                || tile.next_render_at_ms.is_some_and(|at| monotonic_ms >= at)
-                || immediate;
-            if !due {
-                // Delivery armed a future (non-immediate) frame: set the deadline once.
-                if tile.next_render_at_ms.is_none() {
-                    let rt = tile
-                        .runtime
-                        .as_mut()
-                        .expect("BUG: placeholder skipped above");
-                    if rt.wants_next_frame() {
-                        tile.next_render_at_ms =
-                            Some(monotonic_ms + u64::from(rt.next_frame_delay().unwrap_or(0)));
-                    }
-                }
-                if let Some(at) = tile.next_render_at_ms {
-                    let delay = at.saturating_sub(monotonic_ms);
-                    next_wake_ms = Some(next_wake_ms.map_or(delay, |w| w.min(delay)));
-                }
-                continue;
-            }
-            tile.pending_interaction = false;
-
-            tile.renderer
-                .begin_frame(tile.gpu.width, tile.gpu.height, 1.0);
-            let outcome = tile
-                .runtime
-                .as_mut()
-                .expect("BUG: placeholder skipped above")
-                .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
-            match outcome {
-                Ok(RenderStatus::Ok) => {
-                    if !tile.ever_rendered {
-                        tracing::info!(
-                            label = %tile.label,
-                            instance_id = %tile
-                                .runtime
-                                .as_ref()
-                                .expect("BUG: placeholder skipped above")
-                                .asset_namespace(),
-                            "tile: first render after construction/reload"
-                        );
-                        tile.ever_rendered = true;
-                    }
-                }
-                Ok(RenderStatus::FuelExhausted) => {
-                    tracing::warn!("{}: fuel exhausted", tile.label);
-                }
-                Ok(RenderStatus::Dead) => {
-                    if !tile.dead {
-                        tracing::error!("{}: widget killed (repeated fuel overages)", tile.label);
-                        tile.dead = true;
-                    }
-                }
-                Err(e) => {
-                    tracing::error!("{}: render failed: {e}", tile.label);
-                }
-            }
-            tile.renderer.flush();
-
-            // Arm the next deadline from what the widget just requested (`None` = idle).
-            // Set only here, never per idle tick, so it can't recede.
-            let next_at = {
-                let rt = tile
-                    .runtime
-                    .as_mut()
-                    .expect("BUG: placeholder skipped above");
-                rt.wants_next_frame()
-                    .then(|| monotonic_ms + u64::from(rt.next_frame_delay().unwrap_or(0)))
-            };
-            tile.next_render_at_ms = next_at;
-            if let Some(at) = next_at {
-                let delay = at.saturating_sub(monotonic_ms);
+            let ticked = view.tick(&tick);
+            if let Some(delay) = ticked.next_wake_ms {
                 next_wake_ms = Some(next_wake_ms.map_or(delay, |w| w.min(delay)));
             }
-
-            if Some(tile_idx) == perf_idx {
-                let rt = tile
-                    .runtime
-                    .as_mut()
-                    .expect("BUG: placeholder skipped above");
-                perf_capture = Some((rt.last_timings(), rt.take_profile_sections()));
+            if ticked.rendered && Some(idx) == perf_idx {
+                perf_capture = view.take_perf_sample();
             }
         }
         if let Some((timings, sections)) = perf_capture {
@@ -2020,12 +1773,7 @@ impl TestbedApp {
                 g.add(lbl(""));
                 g.label(cell_fps(fps));
                 g.end_row();
-                if let Some(t) = self
-                    .tiles
-                    .first()
-                    .and_then(|t| t.runtime.as_ref())
-                    .map(WasmWidgetRuntime::last_timings)
-                {
+                if let Some(t) = self.tiles.first().and_then(DeviceView::last_timings) {
                     g.add(lbl("FULL wasm:"));
                     g.label(cell_us(t.wasm_us));
                     g.add(lbl("deser:"));
@@ -2162,7 +1910,7 @@ fn paint_placeholder(painter: &egui::Painter, rect: egui::Rect, label: &str) {
     );
 }
 
-fn paint_tile_texture(ui: &egui::Ui, tile: &PreviewTile, rect: egui::Rect) {
+fn paint_tile_texture(ui: &egui::Ui, tile: &DeviceView, rect: egui::Rect) {
     // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
     ui.painter()
@@ -2280,8 +2028,8 @@ impl eframe::App for TestbedApp {
                         egui::vec2(tile.gpu.width as f32, tile.gpu.height as f32),
                     );
                     // A declined size gets the "not supported" slab, not a texture.
-                    if tile.runtime.is_none() {
-                        paint_placeholder(ui.painter(), rect, &tile.label);
+                    if !tile.is_live() {
+                        paint_placeholder(ui.painter(), rect, tile.label());
                         continue;
                     }
                     // Recording mode focuses on a single size — non-active tiles get
@@ -2300,9 +2048,6 @@ impl eframe::App for TestbedApp {
                     }
 
                     paint_tile_texture(ui, tile, rect);
-                    if tile.dead {
-                        continue;
-                    }
 
                     if active_record_idx == Some(tile_idx) {
                         // `Inside` so the bottom edge stays inside the tile rect
@@ -2328,17 +2073,9 @@ impl eframe::App for TestbedApp {
                     } else {
                         None
                     };
-                    let touched = dispatch_touch_events(
-                        &response,
-                        rect,
-                        tile.runtime
-                            .as_mut()
-                            .expect("BUG: placeholder skipped above"),
-                        rec_for_tile,
-                    );
-                    tile.pending_interaction |= touched;
+                    dispatch_touch_events(&response, rect, tile, rec_for_tile);
 
-                    if tile.led_count.is_some() {
+                    if tile.led_count().is_some() {
                         paint_led_strip(ui.painter(), tile, origin, time_s);
                     }
                 }
@@ -2739,19 +2476,5 @@ mod layout_tests {
             (1280, 480)
         );
         assert_eq!((medium.w, medium.h), (638, 238));
-    }
-}
-
-#[cfg(test)]
-mod delivery_tests {
-    use super::*;
-
-    #[test]
-    fn a_delivery_trap_does_not_query_the_runtime_again() {
-        let outcome = delivery_poll_outcome(Err(anyhow::anyhow!("guest trapped")), || {
-            panic!("a trapped runtime must not be driven again")
-        });
-
-        assert!(matches!(outcome, DeliveryPollOutcome::Trapped(_)));
     }
 }

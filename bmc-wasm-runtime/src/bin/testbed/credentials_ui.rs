@@ -39,6 +39,7 @@ use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
 use super::TestbedApp;
 use super::recording::record_delivery;
+use super::view::{Delivery, ViewCommand};
 
 /// Wire-shape entry for one bound slot, matching the `credentials` event.
 fn bound_entry(type_id: &str, account: &str) -> serde_json::Value {
@@ -63,13 +64,12 @@ impl TestbedApp {
         if new_credentials == self.credentials {
             return;
         }
-        let view = bmc_wasm_runtime::parse_credentials_json(&new_credentials);
-        for tile in &mut self.tiles {
-            if !tile.dead
-                && let Some(runtime) = tile.runtime.as_mut()
-            {
-                runtime.deliver_credentials_update(view.clone(), self.secrets.clone());
-            }
+        let bound = bmc_wasm_runtime::parse_credentials_json(&new_credentials);
+        for view in &mut self.tiles {
+            view.send(ViewCommand::Deliver(Delivery::Credentials {
+                view: Box::new(bound.clone()),
+                secrets: Box::new(self.secrets.clone()),
+            }));
         }
         self.credentials = new_credentials;
 

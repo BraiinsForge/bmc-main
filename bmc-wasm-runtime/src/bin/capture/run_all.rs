@@ -43,6 +43,7 @@ use super::run::StackProfiling;
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
 use bmc_wasm_runtime::capture_config::CaptureConfig;
+use bmc_wasm_runtime::platform_catalog::Target;
 
 /// Alignment column for right-side timings.
 const COL_WIDTH: usize = 50;
@@ -440,10 +441,8 @@ fn capture_widget(
     let config = capture_config::load_from_capture_dir(&cap_dir)
         .with_context(|| format!("{example}: capture config"))?;
     let matrix = config.capture_matrix();
+    ensure_profile_has_datasets(&matrix, stack_profiling)?;
     if matrix.is_empty() {
-        if stack_profiling.is_enabled() {
-            bail!("stack profile requires at least one configured dataset");
-        }
         return Ok((0.0, None));
     }
 
@@ -541,6 +540,19 @@ fn ensure_profile_has_widgets(
 ) -> Result<()> {
     if widgets.is_empty() && stack_profiling.is_enabled() {
         bail!("stack profile discovered no widgets");
+    }
+    Ok(())
+}
+
+/// A widget with nothing configured to replay is skipped by ordinary capture,
+/// but under stack profiling it would contribute no measurement while looking
+/// like a success.
+fn ensure_profile_has_datasets(
+    matrix: &[(&str, Target)],
+    stack_profiling: StackProfiling,
+) -> Result<()> {
+    if matrix.is_empty() && stack_profiling.is_enabled() {
+        bail!("stack profile requires at least one configured dataset");
     }
     Ok(())
 }
@@ -757,8 +769,8 @@ fn format_time(seconds: f64) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        StackProfiling, WidgetEntry, distill_capture_error, ensure_profile_has_widgets,
-        filter_profile_widgets, renderer_from_stderr,
+        StackProfiling, WidgetEntry, distill_capture_error, ensure_profile_has_datasets,
+        ensure_profile_has_widgets, filter_profile_widgets, renderer_from_stderr,
     };
 
     const STACK_PROFILING: StackProfiling = StackProfiling::Enabled {
@@ -815,6 +827,13 @@ mod tests {
             distill_capture_error(raw),
             "error: hermetic capture breach in iss (1280x480):"
         );
+    }
+
+    #[test]
+    fn stack_profile_rejects_a_widget_with_nothing_to_replay() {
+        assert!(ensure_profile_has_datasets(&[], STACK_PROFILING).is_err());
+        ensure_profile_has_datasets(&[], StackProfiling::Disabled)
+            .expect("a widget without datasets is skippable for ordinary capture");
     }
 
     #[test]
