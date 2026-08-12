@@ -245,8 +245,6 @@
           config.exclude = [
             # Frontend specifies it's own formatting rules
             "frontend/*"
-            # Upstream crates shall be formatted upstream
-            "bmc-shared/ii-net-drv/*"
             # Harness has its own formatter config (bmc-virt/harness/pyproject.toml)
             "bmc-virt/harness/**/*.py"
             # bmc-tui has its own formatter config (bmc-tui/pyproject.toml)

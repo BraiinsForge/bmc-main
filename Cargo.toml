@@ -202,10 +202,6 @@ bmc-overlay-upgrade = { path = "system-overlays/bmc-overlay-upgrade" }
 bmc-platform = { path = "bmc-platform" }
 bmc-render = { path = "bmc-render" }
 bmc-scheduler = { path = "bmc-scheduler" }
-bmc-shared-esp32 = { path = "bmc-shared/esp32" }
-bmc-shared-ii-dns = { package = "ii-dns", path = "bmc-shared/ii-dns" }
-bmc-shared-ii-net = { package = "ii-net", path = "bmc-shared/ii-net" }
-bmc-shared-ii-net-drv = { package = "ii-net-drv", path = "bmc-shared/ii-net-drv" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
