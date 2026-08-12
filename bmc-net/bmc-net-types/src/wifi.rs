@@ -20,9 +20,16 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use strum_macros::{Display, EnumString};
+use strum_macros::{Display, EnumIter};
+use thiserror::Error;
 
-#[derive(Default, EnumString, Debug, Display, Eq, PartialEq, Clone)]
+/// Returned by network-manager backends for boards without Wi-Fi hardware
+/// when a Wi-Fi operation is requested.
+#[derive(Debug, Error)]
+#[error("This board does not support Wi-Fi")]
+pub struct WifiUnsupportedError;
+
+#[derive(Default, Debug, Display, Eq, PartialEq, Clone)]
 pub enum WifiMode {
     #[default]
     Station,
@@ -31,22 +38,24 @@ pub enum WifiMode {
 
 impl WifiMode {
     #[must_use]
-    pub fn to_uci_mode(&self) -> String {
+    pub fn to_uci_mode(&self) -> &'static str {
         match self {
-            WifiMode::Ap => "ap".to_owned(),
-            WifiMode::Station => "sta".to_owned(),
+            WifiMode::Ap => "ap",
+            WifiMode::Station => "sta",
         }
     }
 
     #[must_use]
-    pub fn to_uci_network(&self) -> String {
+    pub fn to_uci_network(&self) -> &'static str {
         match self {
-            WifiMode::Ap => "wifi_ap".to_owned(),
-            WifiMode::Station => "wifi_sta".to_owned(),
+            WifiMode::Ap => "wifi_ap",
+            WifiMode::Station => "wifi_sta",
         }
     }
 }
 
+/// Coarse signal-strength bucket, ordered `Offline < Low < Fair < Excellent`
+/// (the derived `Ord` relies on this variant order).
 #[derive(Debug, Eq, PartialEq, Clone, Copy, Default, Display, PartialOrd, Ord)]
 pub enum SignalStrength {
     #[default]
@@ -56,19 +65,29 @@ pub enum SignalStrength {
     Excellent,
 }
 
+/// dBm level reported when there is no signal at all (offline).
+const NO_SIGNAL_DBM: i32 = 0;
+/// Minimum dBm level bucketed as [`SignalStrength::Excellent`].
+const EXCELLENT_MIN_DBM: i32 = -60;
+/// Minimum dBm level bucketed as [`SignalStrength::Fair`].
+const FAIR_MIN_DBM: i32 = -75;
+
 impl SignalStrength {
+    /// Buckets a signal level given in **dBm**. A level of `0` means "no
+    /// signal / offline"; thresholds are `>= -60` Excellent, `>= -75` Fair,
+    /// otherwise Low.
     #[must_use]
     pub fn new(signal: i32) -> Self {
         match signal {
-            0 => SignalStrength::Offline,
-            x if x >= -60 => SignalStrength::Excellent,
-            x if x >= -75 => SignalStrength::Fair,
+            NO_SIGNAL_DBM => SignalStrength::Offline,
+            x if x >= EXCELLENT_MIN_DBM => SignalStrength::Excellent,
+            x if x >= FAIR_MIN_DBM => SignalStrength::Fair,
             _ => SignalStrength::Low,
         }
     }
 }
 
-#[derive(Debug, EnumString, PartialEq, Eq, PartialOrd, Ord, Default, Clone, Copy, Display)]
+#[derive(Debug, EnumIter, PartialEq, Eq, PartialOrd, Ord, Default, Clone, Copy, Display)]
 pub enum EncryptionType {
     #[default]
     None,
@@ -83,7 +102,7 @@ pub enum EncryptionType {
 
 impl EncryptionType {
     #[must_use]
-    pub fn to_uci_str(&self) -> &str {
+    pub fn to_uci_str(&self) -> &'static str {
         match self {
             EncryptionType::None => "none",
             EncryptionType::Wep => "wep",
@@ -96,6 +115,13 @@ impl EncryptionType {
         }
     }
 
+    /// Parses a UCI encryption keyword (the inverse of [`to_uci_str`]).
+    ///
+    /// Returns `None` for an unrecognized keyword. This is a pure conversion:
+    /// the caller is responsible for logging/handling the unknown case (the
+    /// types crate is intentionally free of logging side effects).
+    ///
+    /// [`to_uci_str`]: EncryptionType::to_uci_str
     #[must_use]
     pub fn from_uci_str(s: &str) -> Option<Self> {
         match s {
@@ -107,19 +133,20 @@ impl EncryptionType {
             "psk2" => Some(EncryptionType::Wpa2),
             "sae-mixed" => Some(EncryptionType::Wpa2_3),
             "sae" => Some(EncryptionType::Wpa3),
-            s => {
-                log::warn!("Encryption type not recognized: {s}");
-                None
-            }
+            _ => None,
         }
     }
 }
 
+/// A single access point returned by a scan.
 #[derive(Debug, Clone)]
 pub struct WifiScanItem {
     pub ssid: String,
+    /// Received signal level in dBm (negative; closer to 0 is stronger).
     pub signal_level: i32,
     pub encryption_type: EncryptionType,
+    /// Whether the station is currently connected to this network.
+    pub connected: bool,
 }
 
 impl WifiScanItem {
@@ -129,6 +156,7 @@ impl WifiScanItem {
             ssid,
             signal_level,
             encryption_type,
+            connected: false,
         }
     }
 
@@ -170,5 +198,22 @@ impl WifiLinkState {
     #[must_use]
     pub fn signal_strength(&self) -> SignalStrength {
         SignalStrength::new(self.signal_level)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use strum::IntoEnumIterator;
+
+    use super::*;
+
+    #[test]
+    fn encryption_type_uci_roundtrip() {
+        for encryption_type in EncryptionType::iter() {
+            assert_eq!(
+                EncryptionType::from_uci_str(encryption_type.to_uci_str()),
+                Some(encryption_type)
+            );
+        }
     }
 }

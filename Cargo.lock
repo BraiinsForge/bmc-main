@@ -918,6 +918,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-net-types"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "strum",
+ "strum_macros",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "bmc-netsim"
 version = "0.1.0"
 dependencies = [

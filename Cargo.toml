@@ -20,6 +20,7 @@ members = [
     "bmc-led",
     "bmc-log",
     "bmc-mock",
+    "bmc-net/*",
     "bmc-netsim",
     "bmc-nix",
     "bmc-openwrt",
@@ -186,6 +187,7 @@ bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led", default-features = false }
 bmc-log = { path = "bmc-log" }
+bmc-net-types = { path = "bmc-net/bmc-net-types" }
 bmc-nix = { path = "bmc-nix" }
 bmc-overlay-alarm = { path = "system-overlays/bmc-overlay-alarm" }
 bmc-overlay-device-info = { path = "system-overlays/bmc-overlay-device-info" }
