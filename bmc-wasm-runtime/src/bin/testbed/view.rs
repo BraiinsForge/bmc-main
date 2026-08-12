@@ -42,9 +42,12 @@ use super::paint::TileGpu;
 /// The host state a view needs to advance one tick.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct ViewTick {
+    /// Reading for this pass, from which each view derives its own render gap.
+    /// `monotonic_ms` cannot serve: it carries the operator's fast-forward,
+    /// which is not time that passed.
+    pub(crate) now: std::time::Instant,
     pub(crate) system_time: chrono::DateTime<chrono::FixedOffset>,
     pub(crate) monotonic_ms: u64,
-    pub(crate) delta_ms: u32,
     /// Seal live I/O so refreshes fail, mirroring an offline device.
     pub(crate) offline: bool,
 }
@@ -82,6 +85,13 @@ struct ViewSched {
     next_render_at_ms: Option<u64>,
     /// A touch landed since the last render; forces the next tick to render.
     pending_interaction: bool,
+    /// When this view last rendered, or `None` while it is idle.
+    /// Animations advance by the gap since then, not by the host's frame time,
+    /// so a view due every other pass does not animate at half speed.
+    last_render_at: Option<std::time::Instant>,
+    /// How late the last deadline-driven render ran against its own deadline.
+    /// `None` when the render was not deadline-driven.
+    last_slip_ms: Option<u64>,
 }
 
 pub(crate) struct DeviceView {
@@ -193,6 +203,12 @@ impl DeviceView {
     /// Timings from the last render, for the stats panel.
     pub(crate) fn last_timings(&self) -> Option<bmc_render::FrameTimings> {
         self.runtime.as_ref().map(WasmWidgetRuntime::last_timings)
+    }
+
+    /// How late the last deadline-driven render ran, in ms.
+    /// `None` when a touch or a delivery drove it instead.
+    pub(crate) fn last_slip_ms(&self) -> Option<u64> {
+        self.sched.last_slip_ms
     }
 
     /// The scene to draw on the strip, or `None` when it is off.
@@ -324,13 +340,25 @@ impl DeviceView {
         }
         self.sched.pending_interaction = false;
 
+        // Must be read before `arm_next_deadline` below overwrites it.
+        // Only a render that passed its own deadline counts as slipped;
+        // a touch or a delivery arrives whenever it arrives.
+        self.sched.last_slip_ms = self
+            .sched
+            .next_render_at_ms
+            .filter(|at| tick.monotonic_ms >= *at)
+            .map(|at| tick.monotonic_ms - at);
+
+        let delta_ms = animation_delta_ms(self.sched.last_render_at, tick.now);
+        self.sched.last_render_at = Some(tick.now);
+
         self.renderer
             .begin_frame(self.gpu.width, self.gpu.height, 1.0);
         let outcome = self
             .runtime
             .as_mut()
             .expect("BUG: checked above")
-            .with_renderer(renderer_ptr, |rt| rt.render(tick.delta_ms));
+            .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
         self.log_render_outcome(&outcome);
         self.renderer.flush();
 
@@ -361,6 +389,11 @@ impl DeviceView {
         self.sched.next_render_at_ms = rt
             .wants_next_frame()
             .then(|| monotonic_ms + u64::from(rt.next_frame_delay().unwrap_or(0)));
+        // Idle time is not animation time: whatever eventually wakes this view
+        // begins a new animation rather than continuing one.
+        if self.sched.next_render_at_ms.is_none() {
+            self.sched.last_render_at = None;
+        }
         self.sched
             .next_render_at_ms
             .map(|at| at.saturating_sub(monotonic_ms))
@@ -466,5 +499,54 @@ mod delivery_tests {
         });
 
         assert!(matches!(outcome, DeliveryPollOutcome::Trapped(_)));
+    }
+}
+
+/// How much animation time to hand the widget for a render at `now`.
+///
+/// Capped because the host advances transition state by this value:
+/// an oversized step would jump a transition most of the way to its end.
+/// An animating view is scheduled at most one cap apart, so a wider gap
+/// means the view stalled, and is worth exactly one step.
+fn animation_delta_ms(last_render_at: Option<std::time::Instant>, now: std::time::Instant) -> u32 {
+    last_render_at
+        .map_or(0, |last| now.duration_since(last).as_millis() as u32)
+        .min(bmc_wasm_runtime::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{Duration, Instant};
+
+    use super::animation_delta_ms;
+
+    const CAP: u32 = bmc_wasm_runtime::RuntimeConfig::DEFAULT_ANIMATION_FRAME_DELAY_MS;
+
+    #[test]
+    fn idle_view_starts_its_animation_from_zero() {
+        assert_eq!(
+            animation_delta_ms(None, Instant::now()),
+            0,
+            "a view with no prior render has no animation time to advance"
+        );
+    }
+
+    #[test]
+    fn gap_within_the_cap_passes_through() {
+        let last = Instant::now();
+        assert_eq!(
+            animation_delta_ms(Some(last), last + Duration::from_millis(16)),
+            16
+        );
+    }
+
+    #[test]
+    fn long_stall_is_worth_one_animation_step() {
+        let last = Instant::now();
+        assert_eq!(
+            animation_delta_ms(Some(last), last + Duration::from_secs(30)),
+            CAP,
+            "an unclamped 30 s delta would finish an in-flight transition in a single frame"
+        );
     }
 }

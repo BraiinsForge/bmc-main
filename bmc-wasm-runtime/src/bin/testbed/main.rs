@@ -1626,7 +1626,7 @@ impl TestbedApp {
     ///
     /// Clock and delivery drain run every tick; the WASM render is gated,
     /// so idle tiles cost nothing — the contract the device host honours.
-    fn render_tiles(&mut self, delta_ms: u32) -> Option<u64> {
+    fn render_tiles(&mut self, now: std::time::Instant) -> Option<u64> {
         // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
         let (prev_fbo, prev_viewport) = unsafe {
             let prev_fbo = self.gl.get_parameter_i32(eframe::glow::FRAMEBUFFER_BINDING);
@@ -1640,15 +1640,15 @@ impl TestbedApp {
         // ages out; "reset" rewinds only the display clock, never the monotonic
         // one (which uses its own ratcheting offset).
         let offset_ms = self.clock.offset_ms;
-        let monotonic_ms =
-            self.clock.start_instant.elapsed().as_millis() as u64 + self.clock.monotonic_offset_ms;
+        let monotonic_ms = now.duration_since(self.clock.start_instant).as_millis() as u64
+            + self.clock.monotonic_offset_ms;
         let system_time = (chrono::Local::now()
             + chrono::Duration::milliseconds(offset_ms.cast_signed()))
         .fixed_offset();
         let tick = view::ViewTick {
+            now,
             system_time,
             monotonic_ms,
-            delta_ms,
             offline: self.offline,
         };
         // In recording mode only the active view runs; `App::ui` paints the rest
@@ -1763,12 +1763,18 @@ impl TestbedApp {
                 .font(mono.clone())
                 .color(val_color)
         };
+        let cell_ms = |ms: Option<u64>| {
+            let val = ms.map_or_else(|| "—".to_owned(), |ms| ms.to_string());
+            egui::RichText::new(format!("{val:>5} ms"))
+                .font(mono.clone())
+                .color(val_color)
+        };
         egui::Grid::new("testbed_stats_table")
             .num_columns(4)
             .spacing([12.0, 2.0])
             .min_col_width(0.0)
             .show(&mut child, |g| {
-                g.add(lbl("frame avg:"));
+                g.add(lbl("host frame:"));
                 g.label(cell_us(avg_us));
                 g.add(lbl(""));
                 g.label(cell_fps(fps));
@@ -1786,8 +1792,12 @@ impl TestbedApp {
                     g.end_row();
                     g.add(lbl("flush:"));
                     g.label(cell_us(t.flush_us));
-                    g.add(lbl(""));
-                    g.add(lbl(""));
+                    // How late the render ran against the cadence the widget asked for;
+                    // climbing numbers mean animations running slower than intended.
+                    g.add(lbl("slip:"));
+                    g.label(cell_ms(
+                        self.tiles.first().and_then(DeviceView::last_slip_ms),
+                    ));
                     g.end_row();
                 }
             });
@@ -1939,10 +1949,6 @@ thread_local! {
 const DRAIN_TICK_MS: u64 = 33;
 
 impl eframe::App for TestbedApp {
-    #[expect(
-        clippy::too_many_lines,
-        reason = "one egui frame: resize lock, lazy tile init, render, side panels, per-tile paint + touch"
-    )]
     fn ui(&mut self, root_ui: &mut egui::Ui, frame: &mut eframe::Frame) {
         // A manual window close still seals the perf report from whatever
         // was collected, so an operator who closed early instead of waiting
@@ -1986,9 +1992,7 @@ impl eframe::App for TestbedApp {
         self.poll_hot_reload();
 
         let now = std::time::Instant::now();
-        let delta = now.duration_since(self.clock.last_frame);
-        let delta_ms = delta.as_millis() as u32;
-        let frame_us = delta.as_micros() as u32;
+        let frame_us = now.duration_since(self.clock.last_frame).as_micros() as u32;
         self.clock.last_frame = now;
         self.record_frame_us(frame_us);
 
@@ -1997,7 +2001,7 @@ impl eframe::App for TestbedApp {
         // Render each widget into its FBO before egui submits its own draw list.
         // Must happen before checkerboard / image draws to keep GL state contained.
         // On-demand per tile; `next_wake` = earliest a tile wants a frame (ms).
-        let next_wake = self.render_tiles(delta_ms);
+        let next_wake = self.render_tiles(now);
 
         // Seal the report and close once enough real renders are collected.
         if self.cli.perf_report_path.is_some() && self.perf.frame_count >= self.cli.perf_frames {
@@ -2005,7 +2009,7 @@ impl eframe::App for TestbedApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             return;
         }
-        let time_s = self.clock.start_instant.elapsed().as_secs_f32();
+        let time_s = now.duration_since(self.clock.start_instant).as_secs_f32();
 
         // Right-side sidebar housing Params (top) and System (bottom) —
         // must be added BEFORE the CentralPanel so it claims its 320 px
