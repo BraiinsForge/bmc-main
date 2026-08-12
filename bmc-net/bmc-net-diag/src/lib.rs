@@ -259,8 +259,10 @@ pub fn pcap(interface: &NetworkInterface, duration: Duration) -> Result<Vec<u8>,
     Ok(buffer)
 }
 
-/// One interface's capture result: `(interface_name, pcapng_bytes)` on success.
-pub type PcapResult = Result<(String, Vec<u8>), PcapError>;
+/// One interface's capture result: the interface name paired with the pcapng
+/// bytes or the [`PcapError`]. The name is captured before the capture starts,
+/// so a failed capture still says which interface it belongs to.
+pub type PcapResult = (String, Result<Vec<u8>, PcapError>);
 
 /// A set of per-interface packet captures running concurrently, returned by
 /// [`pcap_all`]. Enumeration and threading are internal so callers do not need
@@ -279,16 +281,20 @@ pub fn pcap_all(duration: Duration) -> PcapCapture {
     let handles = datalink::interfaces()
         .into_iter()
         .map(|interface| {
-            thread::spawn(move || pcap(&interface, duration).map(|data| (interface.name, data)))
+            thread::spawn(move || {
+                // Bind the name up front so the pairing survives a failure.
+                let name = interface.name.clone();
+                (name, pcap(&interface, duration))
+            })
         })
         .collect();
     PcapCapture { handles }
 }
 
 impl PcapCapture {
-    /// Waits for every capture to finish and returns each interface's result
-    /// (the pcapng bytes on success, or the [`PcapError`]). Threads that panic
-    /// are logged and dropped from the result.
+    /// Waits for every capture to finish and returns each interface's name with
+    /// its result (the pcapng bytes on success, or the [`PcapError`]). Threads
+    /// that panic are logged and dropped from the result.
     #[must_use]
     pub fn collect(self) -> Vec<PcapResult> {
         self.handles

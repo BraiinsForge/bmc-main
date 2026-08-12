@@ -22,20 +22,19 @@
 pub mod constants;
 pub mod encrypt;
 mod filters;
-pub mod network;
+pub use bmc_net_diag as network;
 
 use crate::constants::{
     BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION,
     ETC_DNSMASQ_CONF, ETC_HOSTS, ETC_RESOLV_CONF, FACTORY_DEFAULT, PROC_CPUINFO, PROC_MTD,
     SETUP_PENDING, SRC_ETC_CONF, SRC_LOGS,
 };
-use crate::network::PcapError;
-use anyhow::Result;
+use crate::network::PcapResult;
+use anyhow::{Context, Result};
 use std::fs::File;
 use std::io::{Cursor, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 use walkdir::WalkDir;
@@ -141,15 +140,9 @@ pub fn collect(
         }
     }
 
-    // spawn minipcap for each interface...
-    let pcap_handles: Vec<_> = pnet::datalink::interfaces()
-        .into_iter()
-        .map(|interface| {
-            thread::spawn(move || {
-                network::pcap(&interface, PCAP_DURATION).map(|pcap| (interface.name, pcap))
-            })
-        })
-        .collect();
+    // Start a pcap capture on every interface concurrently; enumeration and
+    // threading live in bmc-net-diag so this crate stays free of pnet.
+    let pcap_capture = network::pcap_all(PCAP_DURATION);
 
     // include output of builtin routines
     // Again these commands may produce some logs so log collection must be done after this.
@@ -199,12 +192,7 @@ pub fn collect(
     }
 
     // collect pcap results and include them as well
-    for handle in pcap_handles {
-        let Ok(pcap_result) = handle.join() else {
-            error!("Thread panicked while capturing pcap data");
-            continue;
-        };
-
+    for pcap_result in pcap_capture.collect() {
         match archive.add_pcap(pcap_result) {
             Ok(interface_name) => info!("Added pcap of interface '{}'", interface_name),
             Err(err) => error!("Error adding pcap: {:#}", err),
@@ -331,11 +319,9 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
         Ok(())
     }
 
-    pub fn add_pcap(
-        &mut self,
-        pcap_result: Result<(String, Vec<u8>), PcapError>,
-    ) -> Result<String> {
-        let (interface_name, pcap) = pcap_result?;
+    pub fn add_pcap(&mut self, pcap_result: PcapResult) -> Result<String> {
+        let (interface_name, pcap) = pcap_result;
+        let pcap = pcap.with_context(|| format!("capture on '{interface_name}' failed"))?;
         let file_name = format!("pcap/{interface_name}.pcap");
         self.write_file(&file_name, &pcap)?;
         Ok(interface_name)

@@ -20,6 +20,7 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
+bmc-net-observe.workspace = true
 bmc-platform.workspace = true
 bmc-render.workspace = true
 bmc-render-macros = { path = "../../bmc-render/macros" }

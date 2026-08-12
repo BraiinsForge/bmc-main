@@ -46,9 +46,6 @@ use crate::dismiss::Pt;
 use crate::fsm::{ButtonState, FsmAction, RestartAction, RestartState};
 use crate::ui::{Panel, WifiView};
 
-/// Kernel hostname, exposed by procfs.
-const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
-
 /// Idle wake cadence for re-reading the connectivity snapshot while up.
 const NETWORK_REFRESH: Duration = Duration::from_secs(2);
 
@@ -72,14 +69,6 @@ const FAST_WAKE: Duration = Duration::from_millis(33);
 /// the overlay does not implement, so the reconfigure button is hidden there.
 fn wifi_reconfig_supported(product: Product) -> bool {
     matches!(product, Product::Bmc100 | Product::Bfm100)
-}
-
-/// Device hostname from procfs, trimmed of its trailing newline. `None` when
-/// the file is unreadable or empty.
-fn read_hostname() -> Option<String> {
-    let raw = std::fs::read_to_string(HOSTNAME_PATH).ok()?;
-    let trimmed = raw.trim();
-    (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
 /// Injected connectivity source for testing.
@@ -461,7 +450,7 @@ impl Default for SettingsTrayOverlay {
         let product = BmcInfo::load()
             .map(|info| info.bmc_platform.product())
             .expect("BUG: platform detection must succeed for the settings tray");
-        Self::new_for_product(product, read_hostname(), Instant::now())
+        Self::new_for_product(product, bmc_net_observe::hostname(), Instant::now())
     }
 }
 

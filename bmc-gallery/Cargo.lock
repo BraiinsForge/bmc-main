@@ -729,6 +729,13 @@ name = "bmc-led"
 version = "0.1.0"
 
 [[package]]
+name = "bmc-net-observe"
+version = "0.1.0"
+dependencies = [
+ "get_if_addrs",
+]
+
+[[package]]
 name = "bmc-overlay-alarm"
 version = "0.1.0"
 dependencies = [
@@ -762,6 +769,7 @@ name = "bmc-overlay-settings-tray"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "bmc-net-observe",
  "bmc-platform",
  "bmc-render",
  "bmc-render-macros",
@@ -892,13 +900,13 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-gpu-render-lock",
+ "bmc-net-observe",
  "bmc-render",
  "bmc-widget",
  "deck-alarm-v1",
  "deck-screen-edge-v1",
  "deck-settings-v1",
  "deck-upgrade-v1",
- "get_if_addrs",
  "glow 0.16.0",
  "libc",
  "taffy",
