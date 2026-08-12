@@ -108,8 +108,8 @@ python:
     {{ NIX_DEV }} uv run pytest
 
 # Run nextest for a single crate with mem-box caps (auto-enters nix shell).
-test crate:
-    {{ NIX_DEV }} scripts/mem-box.sh cargo nextest run -p {{ crate }}
+test crate *FEATURES="--all-features":
+    {{ NIX_DEV }} scripts/mem-box.sh cargo nextest run -p {{ crate }} {{ FEATURES }}
 
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:
