@@ -35,6 +35,11 @@ How a widget opts into the `wasm-regression` CI gate: the `capture/config.toml` 
 and system snapshots baked into the header), setting baselines, verifying locally, and refreshing baselines after
 intentional visual changes.
 
+### [Memory](memory.md)
+
+How guest linear memory is split between the stack, static data, and heap; why release widgets reserve a 64 KiB stack;
+the measured stack high-water marks behind that budget; and how to keep future widgets within it.
+
 ### [Display Geometry](display-geometry.md)
 
 How a widget reads its assigned viewport and the active logical display through `widget_viewport()` and

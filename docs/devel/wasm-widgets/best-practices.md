@@ -74,6 +74,19 @@ failed. Keep independent data sources independent: one source failing must not b
 Network, API, and auth failures are normal operating conditions. Log a warning and keep the last good data; never panic.
 Reserve `expect("BUG: ...")` for genuine internal invariants.
 
+## Keep stack use bounded
+
+Use `Vec<T>`, `String`, or `Box<[T]>` for large and runtime-sized values. Their small descriptors live on the stack,
+while their payloads live on the guest heap. Avoid large local arrays and large structs composed of inline arrays;
+`Box::new([value; N])` can still construct the array on the stack before moving it, so build large buffers with `Vec`
+and convert to a boxed slice when fixed ownership is useful.
+
+Do not recurse to a depth controlled by fetched data, params, collection length, or UI input. Use an explicit
+heap-backed worklist for tree and graph traversal. Keep UI trees shallow as well as bounded: sibling nodes collected in
+a `Vec<Node>` do not add recursive depth, but nested containers deepen the SDK's recursive tree serialization.
+
+See [Memory](memory.md) for the 64 KiB stack budget, measured high-water marks, and scaling implications.
+
 ## Build strings with the SDK macro
 
 Use the SDK `fmt!` macro, not `std`'s `format!`/`write!`. The `no-fmt-in-wasm` CI gate rejects the allocating `std`
