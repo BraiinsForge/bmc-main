@@ -29,7 +29,7 @@ use bmc_render::{
     renderer::{AssetSuspendResult, AssetTagState},
 };
 use bmc_wasm_protocol::{
-    BitmapSampling, FetchRequestId, ImageJobId, PackageAssetId, PackageAssetKind,
+    BitmapSampling, FetchRequestId, ImageJobId, PackageAssetId, PackageAssetKind, encode_image_meta,
 };
 use wasmi::{Caller, Extern, Linker};
 
@@ -613,10 +613,7 @@ fn start_bitmap_fit(
         // Write-at-decode, off the render thread; the first draw restores from it.
         let cache_write = if let (Ok(decoded), Some(cache)) = (&result, &cache) {
             let (rgba, width, height) = decoded.into();
-            let mut meta = Vec::with_capacity(8 + identity.len());
-            meta.extend_from_slice(&width.to_le_bytes());
-            meta.extend_from_slice(&height.to_le_bytes());
-            meta.extend_from_slice(&identity);
+            let meta = encode_image_meta(width, height, &identity);
             match cache.put(&raw_tag, saved_at, &meta, rgba) {
                 Ok(()) => CacheWriteOutcome::Stored,
                 Err(error) => CacheWriteOutcome::Failed(error.to_string()),

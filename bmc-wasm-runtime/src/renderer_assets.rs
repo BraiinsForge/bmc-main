@@ -20,12 +20,12 @@
 
 use std::collections::{BTreeMap, HashSet};
 
-use bmc_wasm_protocol::{BitmapId, BitmapSampling, MeshId, PackageAssetId, SvgId};
+use bmc_wasm_protocol::{
+    BitmapId, BitmapSampling, MeshId, PackageAssetId, SvgId, decode_image_meta,
+};
 
 pub(crate) fn cached_bitmap_dimensions(blob: &crate::disk_cache::CachedBlob) -> Option<(u32, u32)> {
-    let metadata = blob.metadata();
-    let width = u32::from_le_bytes(metadata.get(..4)?.try_into().ok()?);
-    let height = u32::from_le_bytes(metadata.get(4..8)?.try_into().ok()?);
+    let (width, height, _identity) = decode_image_meta(blob.metadata())?;
     let expected = usize::try_from(width)
         .ok()?
         .checked_mul(usize::try_from(height).ok()?)?
