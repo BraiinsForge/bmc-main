@@ -180,11 +180,16 @@ pub enum RenderStatus {
 
 /// A callback that can intercept fetch requests before they hit the network.
 /// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
-pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<(u32, Vec<u8>)>>;
+///
+/// `Send`, so a host can build the config on one thread
+/// and construct the runtime on another; the runtime stays where it is built.
+pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<(u32, Vec<u8>)> + Send>;
 
 /// A callback invoked when a fetch response is delivered.
 /// Called with `(method_and_url, status, body)`.
-pub type FetchObserver = Box<dyn Fn(&str, u32, &[u8])>;
+///
+/// `Send` for the same reason as [`FetchInterceptor`].
+pub type FetchObserver = Box<dyn Fn(&str, u32, &[u8]) + Send>;
 
 /// Host-side limits for resources spawned on behalf of a widget.
 pub use crate::runtime_limits::RuntimeResourceLimits;
