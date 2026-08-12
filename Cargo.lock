@@ -918,6 +918,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-net-dns"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "hickory-resolver",
+ "log",
+ "rand 0.9.1",
+ "tokio",
+]
+
+[[package]]
 name = "bmc-net-types"
 version = "0.1.0"
 dependencies = [

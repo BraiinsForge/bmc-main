@@ -1,13 +1,12 @@
 [package]
-name = "ii-dns"
+name = "bmc-net-dns"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 futures = { workspace = true, features = ["executor"] }
 hickory-resolver = { workspace = true, features = ["system-config"] }
 log.workspace = true
 rand = { workspace = true, features = ["std", "std_rng"] }
-tokio = { workspace = true, features = ["full"] }
+tokio = { workspace = true, features = ["net", "rt", "time"] }

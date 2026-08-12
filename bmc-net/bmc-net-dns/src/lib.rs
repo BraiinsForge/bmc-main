@@ -20,6 +20,14 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
+//! DNS resolution for the `bmc-net` crate set.
+//!
+//! [`IiResolver`] resolves host names through a fallback ladder — the tokio
+//! (OS `getaddrinfo`) resolver first, then hickory's system resolver, then an
+//! optional Google-DNS fallback gated on a flag file — and [`IiTcpStream`]
+//! layers TCP connection on top. Both accept anything implementing
+//! [`ToHostAndPortTuple`], including bracketed IPv6 literals (`[::1]`).
+
 use std::{fmt::Debug, io::Error, net::SocketAddr, path::Path, time::Duration};
 
 use log::{error, info, warn};
@@ -32,13 +40,22 @@ use crate::hickory::HickoryResolverBuilder;
 
 mod hickory;
 
+/// Conversion into the `(host, port)` pair the resolvers accept.
 pub trait ToHostAndPortTuple {
+    /// Returns the host (with any surrounding IPv6 brackets stripped) and port.
     fn to_host_and_port_tuple(&self) -> (String, u16);
 }
 
 impl<T: ToString> ToHostAndPortTuple for (T, u16) {
     fn to_host_and_port_tuple(&self) -> (String, u16) {
-        (self.0.to_string(), self.1)
+        let host = self.0.to_string();
+        // Normalize bracketed IPv6 literals (e.g. "[::1]" -> "::1") so both the
+        // tuple-based tokio path and hickory's `lookup_ip` accept the host.
+        let host = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+            Some(unbracketed) => unbracketed.to_owned(),
+            None => host,
+        };
+        (host, self.1)
     }
 }
 
@@ -63,7 +80,7 @@ impl IiResolver {
                     return Ok(iterator.collect::<Vec<SocketAddr>>().into_iter());
                 }
                 Err(e) => warn!(
-                    "Unable to resolve {:?} using tokio resovler (try: {}/{}): {}",
+                    "Unable to resolve {:?} using tokio resolver (try: {}/{}): {}",
                     host,
                     attempt,
                     Self::TOKIO_RETRIES,
@@ -114,11 +131,20 @@ impl IiResolver {
         Err(Error::other(err_msg))
     }
 
+    /// Blocking wrapper around [`lookup_host`](Self::lookup_host) for use from
+    /// synchronous code (e.g. the support-archive collector).
+    ///
+    /// It builds a dedicated current-thread Tokio runtime so the async lookup
+    /// has the reactor and timer it needs. Do **not** call this from inside an
+    /// async task — use [`lookup_host`](Self::lookup_host) there instead.
     pub fn lookup_host_sync<T>(host: T) -> Result<impl Iterator<Item = SocketAddr> + Send, Error>
     where
         T: ToHostAndPortTuple + Debug + Clone + Send + Sync,
     {
-        futures::executor::block_on(Self::lookup_host(host))
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(Self::lookup_host(host))
     }
 }
 #[derive(Debug)]
@@ -129,6 +155,7 @@ impl IiTcpStream {
     where
         T: ToHostAndPortTuple + Debug + Clone + Send + Sync,
     {
+        let host_desc = format!("{host:?}");
         let addrs: Vec<SocketAddr> = IiResolver::lookup_host(host).await?.collect();
         let mut last_err = None;
         for addr in addrs {
@@ -141,6 +168,7 @@ impl IiTcpStream {
             }
         }
 
-        Err(last_err.unwrap_or_else(|| Error::other("This should not happen")))
+        Err(last_err
+            .unwrap_or_else(|| Error::other(format!("no addresses resolved for {host_desc}"))))
     }
 }

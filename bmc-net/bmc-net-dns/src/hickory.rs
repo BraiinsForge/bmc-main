@@ -36,16 +36,22 @@ use rand::seq::SliceRandom;
 
 use crate::ToHostAndPortTuple;
 
+/// Holds the hickory system resolver (built from `/etc/resolv.conf`) and builds
+/// the Google-DNS fallback resolver on demand.
 pub struct HickoryResolverBuilder {
     system_resolver: Option<Resolver<GenericConnector<TokioRuntimeProvider>>>,
-    google_resolver: Resolver<GenericConnector<TokioRuntimeProvider>>,
+}
+
+impl Default for HickoryResolverBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HickoryResolverBuilder {
     pub fn new() -> Self {
         Self {
             system_resolver: Self::build_system_resolver(),
-            google_resolver: Self::build_google_resolver(),
         }
     }
 
@@ -88,7 +94,7 @@ impl HickoryResolverBuilder {
     where
         T: ToHostAndPortTuple + Debug + Clone + Send + Sync,
     {
-        self.lookup_host_internal(self.google_resolver.clone(), host)
+        self.lookup_host_internal(Self::build_google_resolver(), host)
             .await
     }
 

@@ -187,6 +187,7 @@ bmc-ipc = { path = "bmc-ipc" }
 bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led", default-features = false }
 bmc-log = { path = "bmc-log" }
+bmc-net-dns = { path = "bmc-net/bmc-net-dns" }
 bmc-net-types = { path = "bmc-net/bmc-net-types" }
 bmc-nix = { path = "bmc-nix" }
 bmc-overlay-alarm = { path = "system-overlays/bmc-overlay-alarm" }
