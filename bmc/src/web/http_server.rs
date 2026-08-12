@@ -200,7 +200,11 @@ impl<T: BmcManager> HttpServer<T> {
     async fn wifi_setup_index_handler(
         State(IndexState { storage, manager }): State<IndexState<T>>,
     ) -> Response {
-        let state = manager.device_state().await;
+        let state = manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await;
         if !matches!(
             state,
             BmcState::FactoryDefault | BmcState::WifiReconfiguration
@@ -223,7 +227,13 @@ impl<T: BmcManager> HttpServer<T> {
     async fn device_setup_handler(
         State(IndexState { storage, manager }): State<IndexState<T>>,
     ) -> Response {
-        if manager.device_state().await != BmcState::SetupPending {
+        if manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await
+            != BmcState::SetupPending
+        {
             return (
                 StatusCode::PERMANENT_REDIRECT,
                 [(http::header::LOCATION.as_str(), Self::ROOT_URL_ENDPOINT)],

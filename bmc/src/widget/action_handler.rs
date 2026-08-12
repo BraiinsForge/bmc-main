@@ -236,8 +236,12 @@ async fn dispatch_settings_command<T, U>(
             }
         }
         SettingsCommand::ReconfigureWifi => {
-            if let Err(e) = manager.enter_wifi_reconfig().await {
-                warn!("settings overlay reconfigure_wifi failed: {e}");
+            if let Some(wifi) = manager.network_manager().wifi() {
+                if let Err(e) = wifi.enter_wifi_reconfiguration().await {
+                    warn!("settings overlay reconfigure_wifi failed: {e}");
+                }
+            } else {
+                warn!("settings overlay reconfigure_wifi: no WiFi on this platform");
             }
         }
     }

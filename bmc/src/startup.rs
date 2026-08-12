@@ -335,7 +335,12 @@ where
         let firmware_marker = manager.consume_upgrade_marker().await;
         let service_marker = manager.consume_service_upgrade_marker().await;
         if let Some(kind) = post_upgrade_kind(firmware_marker, service_marker)
-            && manager.device_state().await == BmcState::Operational
+            && manager
+                .network_manager()
+                .provisioning()
+                .device_state()
+                .await
+                == BmcState::Operational
         {
             system_upgrade_service.publish_post_reboot_success(kind);
         }
@@ -540,7 +545,10 @@ where
         crate::widget::coordinator::start_wifi_reconfig_listener(
             compositor.clone(),
             manager.clone(),
-            manager.watch_wifi_reconfig(),
+            manager
+                .network_manager()
+                .provisioning()
+                .watch_setup_ap_active(),
         );
 
         Ok(Self {

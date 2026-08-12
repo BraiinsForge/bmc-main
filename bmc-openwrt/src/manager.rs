@@ -22,43 +22,37 @@
 use crate::pwd::{PasswordHashType, SHADOW_FILE_MODE, SHADOW_PATH, ShadowFile};
 use crate::session::OpenwrtSessionManager;
 use crate::uboot_env::UbootEnvManager;
+use crate::unix::call_command;
 use crate::unix::system_reboot;
-use crate::unix::{
-    call_command, call_command_stdin, call_command_to_string, get_hostname, get_ip_address,
-};
 use crate::{ROOT_USERNAME, pwd, unix};
-use anyhow::{anyhow, bail};
+use anyhow::anyhow;
+use bmc::BmcManager;
 use bmc::bootloader_config::BootloaderConfig;
 use bmc::manager::{
-    BmcState, IfaceData, InitialSetupError, SERVICE_NAME_ENV, UpgradeError, UpgradeMarker,
-    WifiData, WifiEvent, WifiNetworkConfig, consume_upgrade_marker, service_upgrade_marker_path,
+    SERVICE_NAME_ENV, UpgradeError, UpgradeMarker, consume_upgrade_marker,
+    service_upgrade_marker_path,
 };
-use bmc::{
-    BmcManager,
-    manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
-};
+use bmc_net::NetworkManager;
+use bmc_net::openwrt::UciNetworkManager;
+use bmc_net_drv::wifi::WifiDriver;
 use bmc_platform::serial_number::BoardSerial;
 use bmc_platform::{BmcInfo, BosPlatform, BosVersion};
-use bmc_shared_ii_net::MacAddr;
-use bmc_shared_ii_net::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
-use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
-use bmc_shared_ii_net_drv::{NetworkInterface, get_primary_interface};
 use bmc_shared_time::time::Timezone;
 use bmc_support::SupportArchiveFormat;
 use std::io;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    net::{IpAddr, Ipv4Addr},
-    path::Path,
-};
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tracing::{debug, error, info, trace, warn};
 
 #[derive(Debug)]
-#[expect(clippy::struct_field_names)]
+#[expect(
+    clippy::struct_field_names,
+    reason = "the *_manager fields name the subsystem they own; renaming them would be less clear"
+)]
 pub struct Manager {
     bmc_info: Arc<Option<BmcInfo>>,
     /// Factory-burned OTP serial, `None` when it is unavailable or invalid.
@@ -66,11 +60,7 @@ pub struct Manager {
     platform_override: Option<BosPlatform>,
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
-    wifi_manager: Arc<OpenwrtWifiManager>,
-    /// Resolved WiFi network interface name (e.g. "wlan0", "phy0-sta0").
-    wifi_iface_name: String,
-    wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
-    wifi_reconfig_sender: tokio::sync::watch::Sender<bool>,
+    network_manager: Arc<UciNetworkManager>,
     uboot_env_manager: UbootEnvManager,
     upgrade_in_progress: AtomicBool,
 }
@@ -80,31 +70,20 @@ impl Manager {
     const SYSUPGRADE_ARG_NO_SAVE: &str = "-n";
     const UPGRADE_RESULT_FILE_PATH: &str = "/etc/upgrade_result";
     const DEFAULT_INTERFACE: &str = "wlan0";
+    const NETWORK_SECTION: &str = "wifi_sta";
 
     const UCI_SYSTEM_ZONENAME: &str = "system.@system[0].zonename";
     const UCI_SYSTEM_TIMEZONE: &str = "system.@system[0].timezone";
-    const UCI_SYSTEM_HOSTNAME: &str = "system.@system[0].hostname";
-    const UCI_NET_LAN: &str = "network.wifi_sta";
-    const UCI_NET_LAN_PROTO_DHCP_VARIANT: &str = "dhcp";
-    const UCI_NET_LAN_PROTO_STATIC_VARIANT: &str = "static";
-    const UCI_NET_LAN_PROTO: &str = "network.wifi_sta.proto";
-    const UCI_NET_LAN_IPADDR: &str = "network.wifi_sta.ipaddr";
-    const UCI_NET_LAN_NETMASK: &str = "network.wifi_sta.netmask";
-    const UCI_NET_LAN_GATEWAY: &str = "network.wifi_sta.gateway";
-    const UCI_NET_LAN_DNS: &str = "network.wifi_sta.dns";
-    const WIFI_EVENTS_CAPACITY: usize = 10;
 
     #[must_use]
     pub async fn new(
         session_manager: OpenwrtSessionManager,
         timezone: Timezone,
-        wifi_manager: Arc<OpenwrtWifiManager>,
+        wifi_manager: Option<Arc<dyn WifiDriver>>,
         platform_override: Option<BosPlatform>,
         board_serial: Option<BoardSerial>,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
-        let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
-        let (wifi_reconfig_sender, _) = tokio::sync::watch::channel(false);
 
         let bmc_info = match BmcInfo::load() {
             Ok(bmc_info) => Some(bmc_info),
@@ -115,39 +94,41 @@ impl Manager {
         };
 
         // Resolve WiFi interface name once from wifi_manager (reads sysfs net/ dir).
-        // Falls back to DEFAULT_INTERFACE if the device isn't ready yet.
-        let wifi_iface_name = wifi_manager
-            .get_wifi_device_name()
-            .await
-            .unwrap_or_else(|err| {
+        // Falls back to DEFAULT_INTERFACE if the device isn't ready yet, and on a
+        // board without a radio, where there is no driver to ask.
+        let wifi_iface_name = match wifi_manager.as_ref() {
+            Some(wifi) => wifi.wifi_device_name().await.unwrap_or_else(|err| {
                 error!(?err, "failed to resolve WiFi interface name, using default");
                 Self::DEFAULT_INTERFACE.to_owned()
-            });
+            }),
+            None => Self::DEFAULT_INTERFACE.to_owned(),
+        };
 
-        let manager = Self {
+        // `new()` resolves the platform eagerly, so a missing /etc/bos_platform
+        // without --hardware-profile panics here; this is intended.
+        let platform = resolve_platform(platform_override, bmc_info.as_ref());
+        let product_name = platform.product().display_name().to_owned();
+
+        let network_manager = Arc::new(
+            UciNetworkManager::new(
+                Self::NETWORK_SECTION,
+                wifi_manager,
+                wifi_iface_name,
+                product_name,
+            )
+            .await,
+        );
+
+        Self {
             bmc_info: Arc::new(bmc_info),
             board_serial,
             platform_override,
             session_manager,
             timezone_sender,
-            wifi_manager,
-            wifi_iface_name,
-            wifi_event_sender,
-            wifi_reconfig_sender,
+            network_manager,
             uboot_env_manager: UbootEnvManager::new(),
             upgrade_in_progress: AtomicBool::new(false),
-        };
-
-        // Seed the WiFi-reconfig watch from real state so the settings tray
-        // reflects setup mode correctly if bmc starts while it is already active.
-        // Both FactoryDefault and WifiReconfiguration run the setup AP.
-        let setup_ap_active = matches!(
-            manager.device_state().await,
-            BmcState::FactoryDefault | BmcState::WifiReconfiguration
-        );
-        let _ = manager.wifi_reconfig_sender.send(setup_ap_active);
-
-        manager
+        }
     }
 
     #[must_use]
@@ -202,163 +183,6 @@ impl Manager {
         call_command("/etc/init.d/system", &["restart"]).await?;
         Ok(())
     }
-
-    async fn get_network_protocol(&self) -> Option<NetworkProtocol> {
-        let output = Command::new("uci")
-            .arg("get")
-            .arg(Self::UCI_NET_LAN_PROTO)
-            .output()
-            .await
-            .ok()?;
-        if output.status.success() {
-            match String::from_utf8(output.stdout).as_deref().map(str::trim) {
-                Ok(Self::UCI_NET_LAN_PROTO_DHCP_VARIANT) => Some(NetworkProtocol::Dhcp),
-                Ok(Self::UCI_NET_LAN_PROTO_STATIC_VARIANT) => Some(NetworkProtocol::Static),
-                _ => None,
-            }
-        } else {
-            None
-        }
-    }
-
-    fn get_mac_address(&self) -> Option<String> {
-        NetworkInterface::get_by_name(&self.wifi_iface_name)
-            .and_then(|network| network.mac_address().map(|mac| mac.to_string()))
-    }
-
-    fn get_network_ip_by_name(name: &str) -> Option<IpAddr> {
-        NetworkInterface::get_by_name(name).and_then(|network| network.ipv4_address())
-    }
-
-    fn get_mac_short_id(mac: &str) -> String {
-        let mac = mac.replace(MacAddr::DELIMITER, "");
-        let mac = mac.as_bytes();
-
-        mac.len()
-            .checked_sub(3)
-            .map_or("UNK".to_owned(), |start_idx| {
-                String::from_utf8_lossy(&mac[start_idx..]).to_string()
-            })
-    }
-
-    async fn configure_wifi_ap(&self) -> Result<(), InitialSetupError> {
-        let ssid = self
-            .calculate_wifi_ssid()
-            .await
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
-        info!(ssid = %ssid, "Configuring WiFi AP for initial setup");
-        let wifi_manager = self.wifi_manager.as_ref();
-
-        wifi_manager
-            .reset_config()
-            .await
-            .inspect_err(|err| error!(error = %err, "Failed to reset WiFi config"))
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
-        wifi_manager
-            .configure_ap_mode(ssid, None, EncryptionType::None)
-            .await
-            .inspect_err(|err| error!(error = %err, "Failed to configure WiFi AP mode"))
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
-        wifi_manager
-            .enable_radio(true)
-            .await
-            .inspect_err(|err| error!(error = %err, "Failed to enable WiFi radio"))
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
-
-        info!("WiFi AP configured successfully");
-        Ok(())
-    }
-
-    async fn disable_captive_portal(&self) -> Result<(), InitialSetupError> {
-        debug!("Disabling captive portal configuration");
-
-        call_command(
-            "sh",
-            &[
-                "-c",
-                ". /lib/functions/bos-factory-default.sh && disable_captive_portal && /etc/init.d/dnsmasq restart",
-            ],
-        )
-        .await
-        .inspect_err(|err| error!(error = %err, "Failed to disable captive portal"))
-        .map_err(|err| InitialSetupError::UnexpectedFailure(format!("Failed to disable captive portal: {err}")))?;
-
-        info!("Captive portal disabled successfully");
-        Ok(())
-    }
-
-    async fn enable_captive_portal(&self) -> Result<(), InitialSetupError> {
-        debug!("Enabling captive portal configuration");
-
-        call_command(
-            "sh",
-            &[
-                "-c",
-                ". /lib/functions/bos-factory-default.sh && enable_captive_portal $FACTORY_DEFAULT_AP_IP_ADDR && /etc/init.d/dnsmasq restart",
-            ],
-        )
-        .await
-        .inspect_err(|err| error!(error = %err, "Failed to enable captive portal"))
-        .map_err(|err| InitialSetupError::UnexpectedFailure(format!("Failed to enable captive portal: {err}")))?;
-
-        info!("Captive portal enabled successfully");
-        Ok(())
-    }
-
-    async fn set_wifi_reconfig_flag(&self) -> Result<(), InitialSetupError> {
-        call_command(
-            "sh",
-            &[
-                "-c",
-                ". /lib/functions/bos-defaults.sh && set_wifi_reconfig",
-            ],
-        )
-        .await
-        .inspect_err(|err| error!(error = %err, "Failed to set wifi reconfig flag"))
-        .map_err(|err| {
-            InitialSetupError::UnexpectedFailure(format!("Failed to set wifi reconfig flag: {err}"))
-        })?;
-
-        Ok(())
-    }
-
-    async fn unset_wifi_reconfig_flag(&self) -> Result<(), InitialSetupError> {
-        call_command(
-            "sh",
-            &[
-                "-c",
-                ". /lib/functions/bos-defaults.sh && unset_wifi_reconfig",
-            ],
-        )
-        .await
-        .inspect_err(|err| error!(error = %err, "Failed to unset wifi reconfig flag"))
-        .map_err(|err| {
-            InitialSetupError::UnexpectedFailure(format!(
-                "Failed to unset wifi reconfig flag: {err}"
-            ))
-        })?;
-
-        Ok(())
-    }
-
-    fn make_wifi_ssid_for_mac(&self, mac_short_id: &str) -> String {
-        format!(
-            "{} {mac_short_id}",
-            self.platform().product().display_name()
-        )
-    }
-
-    async fn calculate_wifi_ssid(&self) -> anyhow::Result<String> {
-        let mac = call_command_to_string(
-            "sh",
-            &["-c", ". /lib/functions/bos-defaults.sh && wifi_mac"],
-        )
-        .await
-        .inspect_err(|err| error!(error = %err, "Failed to read Wi-Fi MAC address"))?;
-
-        let mac_id = Self::get_mac_short_id(mac.trim());
-        Ok(self.make_wifi_ssid_for_mac(&mac_id))
-    }
 }
 
 #[async_trait::async_trait]
@@ -374,17 +198,11 @@ impl BmcManager for Manager {
     }
 
     fn platform(&self) -> BosPlatform {
-        if let Some(platform) = self.platform_override {
-            return platform;
-        }
-        self.bmc_info
-            .as_ref()
-            .as_ref()
-            .map(|info| info.bmc_platform)
-            .expect(
-                "BUG: bmc-openwrt requires /etc/bos_platform; \
-                 use --hardware-profile to override during development",
-            )
+        resolve_platform(self.platform_override, self.bmc_info.as_ref().as_ref())
+    }
+
+    fn network_manager(&self) -> &dyn NetworkManager {
+        self.network_manager.as_ref()
     }
 
     async fn upgrade(
@@ -477,22 +295,6 @@ impl BmcManager for Manager {
         self.timezone_sender.subscribe()
     }
 
-    fn watch_wifi_reconfig(&self) -> tokio::sync::watch::Receiver<bool> {
-        self.wifi_reconfig_sender.subscribe()
-    }
-
-    async fn is_factory_default(&self) -> bool {
-        call_command(
-            "sh",
-            &[
-                "-c",
-                ". /lib/functions/bos-defaults.sh && is_factory_default",
-            ],
-        )
-        .await
-        .is_ok()
-    }
-
     async fn factory_reset(&self, hard: bool) -> Result<(), Self::Error> {
         let mut args = vec!["factory_reset"];
         if hard {
@@ -502,358 +304,8 @@ impl BmcManager for Manager {
         Ok(())
     }
 
-    async fn is_setup_pending(&self) -> bool {
-        call_command(
-            "sh",
-            &["-c", ". /lib/functions/bos-defaults.sh && is_setup_pending"],
-        )
-        .await
-        .is_ok()
-    }
-
-    async fn is_wifi_reconfig(&self) -> bool {
-        call_command(
-            "sh",
-            &["-c", ". /lib/functions/bos-defaults.sh && is_wifi_reconfig"],
-        )
-        .await
-        .is_ok()
-    }
-
-    async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError> {
-        info!("Entering WiFi reconfiguration mode");
-
-        self.set_wifi_reconfig_flag().await?;
-        self.configure_wifi_ap().await?;
-        self.enable_captive_portal().await?;
-
-        let _ = self.wifi_reconfig_sender.send(true);
-
-        info!("WiFi reconfiguration mode enabled");
-        Ok(())
-    }
-
-    async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
-        if !self.is_wifi_reconfig().await {
-            debug!("Not in WiFi reconfiguration mode, nothing to exit");
-            return Ok(());
-        }
-
-        info!("Exiting WiFi reconfiguration mode");
-
-        self.disable_captive_portal().await?;
-        self.unset_wifi_reconfig_flag().await?;
-
-        let _ = self.wifi_reconfig_sender.send(false);
-
-        info!("WiFi reconfiguration mode disabled");
-        Ok(())
-    }
-
-    async fn hostname(&self) -> Option<String> {
-        match uci_get_opt(Self::UCI_SYSTEM_HOSTNAME).await {
-            None => get_hostname().await,
-            hostname => hostname,
-        }
-    }
-
-    fn mac_address(&self) -> Option<String> {
-        self.get_mac_address()
-    }
-
-    async fn ip_address(&self) -> Option<IpAddr> {
-        if let Some(ip) = Self::get_network_ip_by_name(&self.wifi_iface_name) {
-            return Some(ip);
-        }
-        get_ip_address()
-    }
-
-    async fn network_config(&self) -> Option<NetworkProtocolConfig> {
-        let protocol = match self.get_network_protocol().await? {
-            NetworkProtocol::Dhcp => NetworkProtocolConfig::Dhcp,
-            NetworkProtocol::Static => NetworkProtocolConfig::Static(NetworkProtocolConfigStatic {
-                address: uci_get_opt(Self::UCI_NET_LAN_IPADDR).await?.parse().ok()?,
-                netmask: uci_get_opt(Self::UCI_NET_LAN_NETMASK).await?.parse().ok()?,
-                gateway: uci_get_opt(Self::UCI_NET_LAN_GATEWAY).await?.parse().ok()?,
-                dns_servers: uci_get_opt(Self::UCI_NET_LAN_DNS)
-                    .await
-                    .unwrap_or_else(String::new)
-                    .split_whitespace()
-                    .map(str::parse)
-                    .map(Result::ok)
-                    .collect::<Option<Vec<_>>>()?,
-            }),
-        };
-
-        Some(protocol)
-    }
-
-    async fn set_network_config(&self, config: NetworkProtocolConfig) -> anyhow::Result<()> {
-        let mut stdin = vec![];
-
-        match config {
-            NetworkProtocolConfig::Dhcp => {
-                stdin.extend_from_slice(&[
-                    format!(
-                        "set {}='{}'",
-                        Self::UCI_NET_LAN_PROTO,
-                        Self::UCI_NET_LAN_PROTO_DHCP_VARIANT
-                    ),
-                    format!("delete {}", Self::UCI_NET_LAN_IPADDR),
-                    format!("delete {}", Self::UCI_NET_LAN_NETMASK),
-                    format!("delete {}", Self::UCI_NET_LAN_GATEWAY),
-                    format!("delete {}", Self::UCI_NET_LAN_DNS),
-                ]);
-            }
-            NetworkProtocolConfig::Static(config) => {
-                stdin.extend_from_slice(&[
-                    format!(
-                        "set {}='{}'",
-                        Self::UCI_NET_LAN_PROTO,
-                        Self::UCI_NET_LAN_PROTO_STATIC_VARIANT
-                    ),
-                    format!("set {}='{}'", Self::UCI_NET_LAN_IPADDR, config.address),
-                    format!("set {}='{}'", Self::UCI_NET_LAN_NETMASK, config.netmask),
-                    format!("set {}='{}'", Self::UCI_NET_LAN_GATEWAY, config.gateway),
-                    format!(
-                        "set {}='{}'",
-                        Self::UCI_NET_LAN_DNS,
-                        config
-                            .dns_servers
-                            .iter()
-                            .map(Ipv4Addr::to_string)
-                            .collect::<Vec<_>>()
-                            .join(" ")
-                    ),
-                ]);
-            }
-        }
-
-        stdin.push(format!("commit {}", Self::UCI_NET_LAN));
-
-        let output = call_command_stdin("uci", &["-q", "batch"], &stdin.join("\n")).await?;
-        if !output.status.success() || !output.stderr.is_empty() {
-            let msg = String::from_utf8_lossy(&output.stderr).to_string();
-            bail!(msg);
-        }
-
-        call_command("/etc/init.d/network", &["restart"]).await?;
-
-        Ok(())
-    }
-
-    async fn captive_portal_redirect_host(&self) -> Option<String> {
-        self.ip_address().await.map(|ip| ip.to_string())
-    }
-
-    async fn wifi_initial_setup(&self, config: WifiNetworkConfig) -> Result<(), InitialSetupError> {
-        let has_password = config.password.is_some();
-        info!(
-            ssid = %config.ssid,
-            has_password = has_password,
-            encryption = ?config.encryption,
-            "Connecting to WiFi for initial setup"
-        );
-
-        self.wifi_save_and_connect(config.ssid.clone(), config.password, config.encryption)
-            .await
-            .inspect_err(|err| {
-                error!(
-                    error = %err,
-                    ssid = %config.ssid,
-                    "Failed to save and connect to WiFi"
-                );
-            })
-            .map_err(|err| InitialSetupError::WifiConnectionFailure(err.to_string()))?;
-
-        info!(ssid = %config.ssid, "WiFi connection established successfully");
-
-        self.disable_captive_portal().await?;
-
-        self.update_device_state()
-            .await
-            .inspect_err(|err| error!(error = %err, "Failed to update device state"))
-            .map_err(|err| InitialSetupError::UnexpectedFailure(err.to_string()))?;
-
-        Ok(())
-    }
-
-    async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
-        if !self.is_factory_default().await {
-            return Err(InitialSetupError::NotSupported);
-        }
-
-        self.configure_wifi_ap().await
-    }
-
-    async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
-        // NOTE: Future can be cancelled before returning result, but it is necessary to signal that scan has ended
-        struct DropGuard {
-            wifi_event_sender: tokio::sync::broadcast::Sender<WifiEvent>,
-        }
-
-        impl Drop for DropGuard {
-            fn drop(&mut self) {
-                if let Err(err) = self.wifi_event_sender.send(WifiEvent::ScanEnded) {
-                    debug!(error = %err, "Failed to send WiFi scan ended event");
-                }
-            }
-        }
-
-        let _guard = DropGuard {
-            wifi_event_sender: self.wifi_event_sender.clone(),
-        };
-
-        if let Err(err) = self.wifi_event_sender.send(WifiEvent::ScanStarted) {
-            debug!(error = %err, "Failed to send WiFi scan started event");
-        }
-
-        self.wifi_manager.scan().await
-    }
-
-    fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent> {
-        self.wifi_event_sender.subscribe()
-    }
-
     async fn reboot(&self) -> anyhow::Result<()> {
         system_reboot().await.map_err(|e| anyhow!(e))
-    }
-
-    async fn device_state(&self) -> BmcState {
-        // check wifi reconfiguration flag first (highest priority for operational devices)
-        if self.is_wifi_reconfig().await {
-            BmcState::WifiReconfiguration
-        }
-        // check factory default flag
-        else if self.is_factory_default().await {
-            BmcState::FactoryDefault
-        }
-        // check flag if setup is pending
-        else if self.is_setup_pending().await {
-            BmcState::SetupPending
-        } else {
-            BmcState::Operational
-        }
-    }
-
-    async fn update_device_state(&self) -> anyhow::Result<()> {
-        match self.device_state().await {
-            BmcState::FactoryDefault => {
-                // Remove factory default flag
-                let result = call_command(
-                    "sh",
-                    &[
-                        "-c",
-                        ". /lib/functions/bos-defaults.sh && unset_factory_default",
-                    ],
-                )
-                .await
-                .map_err(|e| anyhow!("Failed to remove factory default flag, error: {e}"));
-                if result.is_ok() {
-                    let _ = self.wifi_reconfig_sender.send(false);
-                }
-                result
-            }
-            BmcState::SetupPending => {
-                // Remove setup pending flag
-                call_command(
-                    "sh",
-                    &[
-                        "-c",
-                        ". /lib/functions/bos-defaults.sh && unset_setup_pending",
-                    ],
-                )
-                .await
-                .map_err(|e| anyhow!("Failed to remove setup pending flag, error: {e}"))
-            }
-            BmcState::WifiReconfiguration => {
-                // Remove wifi reconfig flag (return to Operational)
-                // NOTE: Intentionally duplicates unset_wifi_reconfig_flag() to match
-                // the pattern used by other states (FactoryDefault, SetupPending) and
-                // to avoid error type conversion from InitialSetupError to anyhow::Error
-                let result = call_command(
-                    "sh",
-                    &[
-                        "-c",
-                        ". /lib/functions/bos-defaults.sh && unset_wifi_reconfig",
-                    ],
-                )
-                .await
-                .map_err(|e| anyhow!("Failed to remove wifi reconfig flag, error: {e}"));
-                if result.is_ok() {
-                    let _ = self.wifi_reconfig_sender.send(false);
-                }
-                result
-            }
-            BmcState::Operational => Ok(()),
-        }
-    }
-
-    async fn wifi_ssid(&self) -> anyhow::Result<String> {
-        self.wifi_manager
-            .get_ap_ssid()
-            .await
-            .ok_or(anyhow!("Wi-Fi interface not in AP mode."))
-    }
-
-    async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
-        let state = self.device_state().await;
-        if matches!(
-            state,
-            BmcState::FactoryDefault | BmcState::WifiReconfiguration
-        ) {
-            self.configure_wifi_ap()
-                .await
-                .map_err(|e| self::Error::InitialSetupWifiAp(e.to_string()))?;
-        }
-        // Enable captive portal for wifi reconfig (factory default has it pre-configured)
-        if state == BmcState::WifiReconfiguration {
-            self.enable_captive_portal()
-                .await
-                .map_err(|e| self::Error::InitialSetupWifiAp(e.to_string()))?;
-        }
-        Ok(())
-    }
-
-    async fn wifi_save_and_connect(
-        &self,
-        ssid: String,
-        password: Option<String>,
-        encryption: EncryptionType,
-    ) -> Result<(), Self::Error> {
-        self.wifi_manager
-            .save_and_connect(ssid, password, encryption)
-            .await
-            .map_err(|e| Error::WifiError(e.to_string()))
-    }
-
-    async fn wifi_status(&self) -> anyhow::Result<WifiData> {
-        let iface = get_primary_interface()
-            .ok_or(Error::WifiError("No Wi-Fi interface found".to_owned()))?;
-        let status = self.wifi_manager.status().await?;
-
-        Ok(WifiData {
-            iface: IfaceData {
-                ip: iface.ipv4_address(),
-                mac: iface.mac_address(),
-            },
-            status,
-        })
-    }
-
-    async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
-        Ok(self
-            .wifi_manager
-            .status_all()
-            .await?
-            .into_iter()
-            .filter(|status| {
-                status
-                    .clone()
-                    .configuration
-                    .is_some_and(|conf| conf.mode == WifiMode::Station)
-            })
-            .collect::<Vec<WifiStatus>>())
     }
 
     async fn handle_graceful_shutdown(&self) {
@@ -870,6 +322,19 @@ impl BmcManager for Manager {
             .await
             .map_err(|e| Error::UbootEnv(e.to_string()))
     }
+}
+
+/// Resolve the platform from an explicit override or the loaded BMC info.
+fn resolve_platform(
+    platform_override: Option<BosPlatform>,
+    bmc_info: Option<&BmcInfo>,
+) -> BosPlatform {
+    platform_override.unwrap_or_else(|| {
+        bmc_info.map(|info| info.bmc_platform).expect(
+            "BUG: bmc-openwrt requires /etc/bos_platform; \
+             use --hardware-profile to override during development",
+        )
+    })
 }
 
 /// `-UBUS_STATUS_CONNECTION_FAILED` (-10) as a shell exit code. sysupgrade's
@@ -945,31 +410,6 @@ async fn drain_lines(reader: impl tokio::io::AsyncRead + Unpin, mut on_line: imp
     }
 }
 
-async fn uci_get_opt(opt: &str) -> Option<String> {
-    call_command_to_string("uci", &["get", opt])
-        .await
-        .ok()
-        .map(|value| value.trim().to_owned())
-}
-
-#[must_use]
-pub fn get_default_net_data(default_interface: &str) -> IfaceData {
-    debug!("Getting net data... {default_interface}");
-
-    let (ip, mac) = NetworkInterface::get_by_name(default_interface)
-        .ok_or(bmc_shared_ii_net_drv::NetworkInterface::find_default)
-        .map_or((None, None), |net_iface_default| {
-            (
-                net_iface_default.ipv4_address(),
-                net_iface_default.mac_address(),
-            )
-        });
-
-    debug!("IP: {ip:?}, MAC: {mac:?}");
-
-    IfaceData { ip, mac }
-}
-
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
@@ -978,12 +418,6 @@ pub enum Error {
     Io(#[from] io::Error),
     #[error(transparent)]
     Unix(#[from] unix::Error),
-    #[error("Wi-Fi is not present")]
-    WifiNotPresent,
-    #[error("Cannot configure WiFi AP for initial setup: {0}")]
-    InitialSetupWifiAp(String),
-    #[error("Wrong password or other error: {0}")]
-    WifiError(String),
     #[error("U-Boot environment error: {0}")]
     UbootEnv(String),
 }

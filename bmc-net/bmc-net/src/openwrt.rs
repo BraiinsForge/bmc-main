@@ -448,6 +448,10 @@ impl WifiControl for UciNetworkManager {
             .collect())
     }
 
+    async fn ap_ssid(&self) -> Option<String> {
+        self.wifi_driver().ok()?.ap_ssid().await
+    }
+
     async fn ssid(&self) -> Result<String> {
         let wifi = self.wifi_driver()?;
         if let Some(ssid) = wifi.ap_ssid().await {

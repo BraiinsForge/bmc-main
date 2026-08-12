@@ -65,7 +65,12 @@ where
     }
 
     async fn check_precondition(&self, state: BmcState) -> Result<(), Status> {
-        let current_state = self.manager.device_state().await;
+        let current_state = self
+            .manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await;
         if current_state != state {
             return Err(Status::failed_precondition(format!(
                 "Function is only available when the device is in '{state}' state. Current state is '{current_state}'.",
@@ -75,7 +80,12 @@ where
     }
 
     async fn check_wifi_setup_precondition(&self) -> Result<BmcState, Status> {
-        let current_state = self.manager.device_state().await;
+        let current_state = self
+            .manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await;
         if current_state != BmcState::FactoryDefault
             && current_state != BmcState::WifiReconfiguration
         {

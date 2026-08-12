@@ -136,7 +136,13 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         config: WifiNetworkConfig,
         state_service: &StateService,
     ) {
-        match manager.wifi_initial_setup(config).await {
+        let network = manager.network_manager();
+        let Some(wifi) = network.wifi() else {
+            warn!("WiFi initial setup not supported");
+            state_service.notify(InitSetupState::UnexpectedError);
+            return;
+        };
+        match wifi.wifi_initial_setup(config).await {
             Ok(()) => {
                 state_service.notify(InitSetupState::WifiConnectionSuccess);
                 info!("WiFi initial setup completed successfully");
@@ -157,7 +163,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
                 state_service.notify(InitSetupState::WifiConnectionFailed);
 
                 // Revert wifi settings
-                if let Err(err) = manager.revert_to_initial_setup().await {
+                if let Err(err) = wifi.revert_to_initial_setup().await {
                     warn!(error = %err, "Failed to revert to initial setup");
                     Self::notify_failure_and_reboot(manager, state_service).await;
                 }
@@ -172,14 +178,20 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
     ) {
         // For reconfiguration, we connect and then exit reconfig mode (return to Operational)
         let ssid = config.ssid.clone();
-        match manager
+        let network = manager.network_manager();
+        let Some(wifi) = network.wifi() else {
+            warn!("WiFi reconfiguration not supported");
+            state_service.notify(InitSetupState::UnexpectedError);
+            return;
+        };
+        match wifi
             .wifi_save_and_connect(config.ssid, config.password, config.encryption)
             .await
         {
             Ok(()) => {
                 info!(ssid = %ssid, "WiFi reconfiguration connection successful");
                 // Exit reconfiguration mode (disables captive portal, removes flag)
-                if let Err(err) = manager.exit_wifi_reconfiguration().await {
+                if let Err(err) = wifi.exit_wifi_reconfiguration().await {
                     warn!(error = %err, "Failed to exit wifi reconfiguration mode");
                     state_service.notify(InitSetupState::UnexpectedError);
                     return;
@@ -192,7 +204,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
                 state_service.notify(InitSetupState::WifiConnectionFailed);
 
                 // Re-enable AP so user can try again
-                if let Err(err) = manager.enter_wifi_reconfig().await {
+                if let Err(err) = wifi.enter_wifi_reconfiguration().await {
                     warn!(error = %err, "Failed to re-enable WiFi AP after failed connection");
                 }
             }
@@ -272,7 +284,9 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         );
 
         self.manager
-            .update_device_state()
+            .network_manager()
+            .provisioning()
+            .advance()
             .await
             .map_err(DeviceSetupError::UpdateDeviceState)?;
 

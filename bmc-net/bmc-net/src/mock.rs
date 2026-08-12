@@ -45,7 +45,15 @@ pub struct MockNetworkManager {
     wifi_enabled: Mutex<bool>,
     wifi_event_sender: broadcast::Sender<WifiEvent>,
     provisioning: MockProvisioningState,
+    /// Host the mock captive portal redirects to. `None` leaves the HTTP
+    /// handler falling back to the request's own `Host` header, which does not
+    /// exercise the redirect; bmc-mock sets its own `localhost:<port>`.
+    captive_portal_host: Mutex<Option<String>>,
 }
+
+/// Capacity of the mock WiFi event channel: enough for a scan's
+/// start/end pair to be buffered for a listener that is momentarily behind.
+const WIFI_EVENTS_CAPACITY: usize = 4;
 
 impl Default for MockNetworkManager {
     fn default() -> Self {
@@ -54,8 +62,9 @@ impl Default for MockNetworkManager {
             network_config: Mutex::new(NetworkProtocolConfig::Dhcp),
             connected_wifi: Mutex::new(None),
             wifi_enabled: Mutex::new(true),
-            wifi_event_sender: broadcast::channel(1).0,
+            wifi_event_sender: broadcast::channel(WIFI_EVENTS_CAPACITY).0,
             provisioning: MockProvisioningState::default(),
+            captive_portal_host: Mutex::new(None),
         }
     }
 }
@@ -69,6 +78,14 @@ impl MockNetworkManager {
             provisioning: MockProvisioningState::new(factory_default, setup_pending),
             ..Self::default()
         }
+    }
+
+    /// Sets the host [`WifiControl::captive_portal_redirect_host`] reports, so
+    /// the captive-portal redirect is exercisable against the mock.
+    #[must_use]
+    pub fn with_captive_portal_host(self, host: impl Into<String>) -> Self {
+        *lock(&self.captive_portal_host) = Some(host.into());
+        self
     }
 }
 
@@ -121,11 +138,16 @@ impl NetworkConfig for MockNetworkManager {
 #[async_trait]
 impl WifiControl for MockNetworkManager {
     async fn scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
-        Ok(vec![WifiScanItem::new(
+        // Bracket the scan with the same events the real managers emit, so the
+        // LED and widget scan listeners fire in mock runs too.
+        let _ = self.wifi_event_sender.send(WifiEvent::ScanStarted);
+        let items = vec![WifiScanItem::new(
             "MockAP".to_owned(),
             -50,
             EncryptionType::Wpa2,
-        )])
+        )];
+        let _ = self.wifi_event_sender.send(WifiEvent::ScanEnded);
+        Ok(items)
     }
 
     async fn status(&self) -> anyhow::Result<WifiData> {
@@ -141,6 +163,10 @@ impl WifiControl for MockNetworkManager {
 
     async fn saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
         Ok(Vec::new())
+    }
+
+    async fn ap_ssid(&self) -> Option<String> {
+        Some("MockAP".to_owned())
     }
 
     async fn ssid(&self) -> anyhow::Result<String> {
@@ -192,7 +218,12 @@ impl WifiControl for MockNetworkManager {
         self.provisioning
             .mark_wifi_reconfig()
             .await
-            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
+            .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))?;
+        // The mock has no radio to wait for, so the AP is up as soon as the
+        // flag moves; announce it here for the same reason the UCI backend
+        // announces it after activation.
+        self.provisioning.publish_setup_ap_active(true);
+        Ok(())
     }
 
     async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
@@ -203,7 +234,7 @@ impl WifiControl for MockNetworkManager {
     }
 
     async fn captive_portal_redirect_host(&self) -> Option<String> {
-        None
+        lock(&self.captive_portal_host).clone()
     }
 
     fn subscribe_wifi_events(&self) -> broadcast::Receiver<WifiEvent> {

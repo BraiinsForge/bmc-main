@@ -126,6 +126,16 @@ pub trait WifiControl: Send + Sync + std::fmt::Debug {
     async fn status(&self) -> anyhow::Result<WifiData>;
     /// Status of every saved WiFi network.
     async fn saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>>;
+    /// SSID of the access point the device is currently advertising, or `None`
+    /// when no AP is up.
+    ///
+    /// Unlike [`ssid`], this never falls back to the joined station network, so
+    /// callers that must show the *setup AP* name (the display's settings tray)
+    /// cannot accidentally advertise the station SSID while the AP is still
+    /// coming up.
+    ///
+    /// [`ssid`]: WifiControl::ssid
+    async fn ap_ssid(&self) -> Option<String>;
     /// SSID the device currently advertises (AP) or is joined to (station).
     async fn ssid(&self) -> anyhow::Result<String>;
     /// Saves the given credentials and connects to the network in station mode.

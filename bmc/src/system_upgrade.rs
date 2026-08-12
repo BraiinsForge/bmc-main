@@ -2469,14 +2469,10 @@ mod tests {
     mod enable_disable {
         use super::*;
         use crate::bootloader_config::BootloaderConfig;
-        use crate::manager::{
-            BmcState, InitialSetupError, NetworkProtocolConfig, UpgradeError, UpgradeMarker,
-            WifiData, WifiEvent, WifiNetworkConfig,
-        };
+        use crate::manager::{UpgradeError, UpgradeMarker};
         use crate::session;
         use axum_extra::extract::cookie::Cookie;
         use bmc_platform::{BosPlatform, BosVersion};
-        use bmc_shared_ii_net::wifi::{EncryptionType, WifiScanItem, WifiStatus};
         use bmc_shared_time::time::Timezone;
         use bmc_support::SupportArchiveFormat;
         use bmc_upgrade::firmware::{FirmwareDownloadError, UpgradeMetadata};
@@ -2484,7 +2480,6 @@ mod tests {
             ApplyError, EstimateMode, InstallableWidget, PackageGcRequest, PackageProbe,
             PackageProbeError,
         };
-        use std::net::IpAddr;
         use std::path::Path;
         use tokio::sync::watch;
 
@@ -2643,90 +2638,10 @@ mod tests {
             fn watch_timezone_updates(&self) -> watch::Receiver<Timezone> {
                 unimplemented!("{UNREACHABLE}")
             }
-            fn watch_wifi_reconfig(&self) -> watch::Receiver<bool> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn is_factory_default(&self) -> bool {
-                unimplemented!("{UNREACHABLE}")
-            }
             async fn factory_reset(&self, _hard: bool) -> Result<(), Self::Error> {
                 unimplemented!("{UNREACHABLE}")
             }
-            async fn is_setup_pending(&self) -> bool {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn is_wifi_reconfig(&self) -> bool {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn enter_wifi_reconfig(&self) -> Result<(), InitialSetupError> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn exit_wifi_reconfiguration(&self) -> Result<(), InitialSetupError> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn hostname(&self) -> Option<String> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            fn mac_address(&self) -> Option<String> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn ip_address(&self) -> Option<IpAddr> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn network_config(&self) -> Option<NetworkProtocolConfig> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn set_network_config(
-                &self,
-                _config: NetworkProtocolConfig,
-            ) -> anyhow::Result<()> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn captive_portal_redirect_host(&self) -> Option<String> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn wifi_initial_setup(
-                &self,
-                _config: WifiNetworkConfig,
-            ) -> Result<(), InitialSetupError> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn revert_to_initial_setup(&self) -> Result<(), InitialSetupError> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn wifi_scan(&self) -> anyhow::Result<Vec<WifiScanItem>> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            fn subscribe_wifi_events(&self) -> tokio::sync::broadcast::Receiver<WifiEvent> {
-                unimplemented!("{UNREACHABLE}")
-            }
             async fn reboot(&self) -> anyhow::Result<()> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn device_state(&self) -> BmcState {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn update_device_state(&self) -> anyhow::Result<()> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn wifi_ssid(&self) -> anyhow::Result<String> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn init_wifi_ap(&self) -> Result<(), Self::Error> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn wifi_save_and_connect(
-                &self,
-                _ssid: String,
-                _password: Option<String>,
-                _encryption: EncryptionType,
-            ) -> Result<(), Self::Error> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn wifi_status(&self) -> anyhow::Result<WifiData> {
-                unimplemented!("{UNREACHABLE}")
-            }
-            async fn wifi_saved_networks(&self) -> anyhow::Result<Vec<WifiStatus>> {
                 unimplemented!("{UNREACHABLE}")
             }
             async fn handle_graceful_shutdown(&self) {
@@ -2742,6 +2657,9 @@ mod tests {
                 &self,
                 _config: &BootloaderConfig,
             ) -> Result<(), Self::Error> {
+                unimplemented!("{UNREACHABLE}")
+            }
+            fn network_manager(&self) -> &dyn bmc_net::NetworkManager {
                 unimplemented!("{UNREACHABLE}")
             }
         }

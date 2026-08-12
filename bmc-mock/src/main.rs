@@ -60,11 +60,7 @@ async fn run() -> Result<()> {
     let system_password = config.system_password.clone();
 
     let mockfs = mockfs::MockFs::new(&config.mockfs_template, &config.mockfs_path);
-    mockfs.init(
-        config.mockfs_reset,
-        config.factory_default,
-        config.setup_pending,
-    )?;
+    mockfs.init(config.mockfs_reset)?;
 
     let pacing = config.upgrade_pacing();
 
@@ -128,13 +124,12 @@ async fn run() -> Result<()> {
         mockfs,
         MockSessionManager::new(password.clone()),
         password,
-        config.hostname.clone(),
-        config.mac_address.clone(),
-        config.ip_address,
-        config.address.port(),
         platform,
         pacing,
         stop,
+        config.factory_default,
+        config.setup_pending,
+        config.address.port(),
     );
 
     let mut config: bmc::Configuration = config.into();

@@ -27,6 +27,7 @@ use bmc_widget_protocol::{
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock as StdRwLock};
+use std::time::Duration;
 use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{debug, info, warn};
 
@@ -39,6 +40,7 @@ use crate::config::LocalizationConfig;
 use crate::credential;
 use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 use crate::secret_store::SecretStoreHandle;
+use bmc_net::NetworkManager;
 
 use super::manager::ChildObservation;
 use super::{WidgetIdentity, WidgetManager, WidgetRegistry};
@@ -440,6 +442,42 @@ pub fn start_night_mode_listener<U>(
     });
 }
 
+/// Number of times [`resolve_setup_ap_ssid`] asks for the setup AP SSID.
+const SETUP_AP_SSID_ATTEMPTS: u8 = 5;
+
+/// Delay between [`resolve_setup_ap_ssid`] attempts.
+const SETUP_AP_SSID_RETRY_DELAY: Duration = Duration::from_secs(1);
+
+/// Resolves the setup AP SSID, retrying briefly while it is still unset.
+///
+/// The listener only wakes on a setup-mode transition, so a single `None`
+/// would leave the tray showing its previous value indefinitely. The manager
+/// publishes setup mode only once the AP is up, making `None` unlikely; this
+/// retry covers the remaining window where the UCI section is not yet
+/// readable, so a slow AP degrades into a short delay rather than a stale tray.
+async fn resolve_setup_ap_ssid(network_manager: &dyn NetworkManager) -> Option<String> {
+    for attempt in 1..=SETUP_AP_SSID_ATTEMPTS {
+        match network_manager.require_wifi() {
+            Ok(wifi) => {
+                if let Some(ssid) = wifi.ap_ssid().await {
+                    return Some(ssid);
+                }
+            }
+            Err(e) => {
+                warn!("WiFi unsupported while in setup mode: {e}");
+                return None;
+            }
+        }
+
+        if attempt < SETUP_AP_SSID_ATTEMPTS {
+            debug!("setup AP SSID not readable yet; attempt {attempt}/{SETUP_AP_SSID_ATTEMPTS}");
+            tokio::time::sleep(SETUP_AP_SSID_RETRY_DELAY).await;
+        }
+    }
+
+    None
+}
+
 /// Broadcast the WiFi setup-AP SSID to the settings-tray overlay on every
 /// setup-mode transition. Resolves the SSID via the manager while in setup mode;
 /// `None` clears the overlay back to idle.
@@ -452,16 +490,20 @@ pub fn start_wifi_reconfig_listener<M: BmcManager>(
         loop {
             let in_setup = *reconfig_rx.borrow_and_update();
             if in_setup {
-                match manager.wifi_ssid().await {
-                    Ok(ssid) => {
-                        if let Err(e) = compositor.broadcast_wifi_ap(Some(ssid)) {
-                            warn!("broadcast_wifi_ap failed: {e}");
-                        }
+                // Deliberately `ap_ssid`, not `ssid`: the latter falls back to
+                // the joined station network, and during the window in which
+                // the setup AP is still coming up that would tell the user to
+                // join the network the device was already on.
+                let ssid = resolve_setup_ap_ssid(manager.network_manager()).await;
+                if let Some(ssid) = ssid {
+                    if let Err(e) = compositor.broadcast_wifi_ap(Some(ssid)) {
+                        warn!("broadcast_wifi_ap failed: {e}");
                     }
-                    // A lookup failure must not masquerade as "setup inactive"
-                    // (which an empty SSID signals): keep the overlay's
-                    // last-known value until the next real transition.
-                    Err(e) => warn!("wifi_ssid lookup failed during setup; keeping last SSID: {e}"),
+                } else {
+                    // No AP SSID must not masquerade as "setup inactive" (which
+                    // an empty SSID signals): keep the overlay's last-known
+                    // value until the next real transition.
+                    warn!("no setup AP SSID available; keeping last SSID");
                 }
             } else if let Err(e) = compositor.broadcast_wifi_ap(None) {
                 warn!("broadcast_wifi_ap failed: {e}");

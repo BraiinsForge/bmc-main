@@ -168,14 +168,20 @@ where
 
         Box::pin(async move {
             // If device is in factory default or device setup state and host ends with a given suffix, then return 302 redirect
-            let state = manager.device_state().await;
+            let state = manager
+                .network_manager()
+                .provisioning()
+                .device_state()
+                .await;
 
             if Self::should_redirect(&req, &state) {
                 let redirect_path = Self::redirect_path(&state);
 
-                let host = manager
-                    .captive_portal_redirect_host()
-                    .await
+                let redirect_host = match manager.network_manager().wifi() {
+                    Some(wifi) => wifi.captive_portal_redirect_host().await,
+                    None => None,
+                };
+                let host = redirect_host
                     .unwrap_or_else(|| req.uri().host().unwrap_or_default().to_owned());
 
                 let redirect_uri = format!("http://{host}{redirect_path}");

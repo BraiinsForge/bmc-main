@@ -21,7 +21,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use bmc_shared_ii_net::wifi::SignalStrength;
+use bmc_net_types::wifi::SignalStrength;
 use tokio::{
     sync::{self, mpsc::Sender, watch},
     time::{Instant, interval},
@@ -127,6 +127,11 @@ where
     }
 
     fn run_wifi_task(&self, led_event_tx: Sender<LedEvent>) {
+        // Without WiFi there is no status to poll; a missing surface is not an
+        // error state, so skip the task entirely rather than flashing WifiError.
+        if self.manager.network_manager().wifi().is_none() {
+            return;
+        }
         let manager = self.manager.clone();
         task::spawn(async move {
             let mut interval = interval(Duration::from_secs(2));
@@ -137,7 +142,11 @@ where
             loop {
                 let mut new_event = last_event;
 
-                let wifi_status = manager.wifi_status().await;
+                let network = manager.network_manager();
+                let wifi_status = match network.require_wifi() {
+                    Ok(wifi) => wifi.status().await,
+                    Err(e) => Err(e),
+                };
                 if let Err(_e) = wifi_status {
                     new_event = LedEvent::WifiError;
                 } else if let Ok(wifi_status) = wifi_status {
@@ -276,7 +285,11 @@ where
     }
 
     fn run_wifi_scan_listener(&self, led_event_tx: Sender<LedEvent>) {
-        let mut rx_events = self.manager.subscribe_wifi_events();
+        // Without WiFi there are no scan events to listen for; skip the task entirely.
+        let Some(wifi) = self.manager.network_manager().wifi() else {
+            return;
+        };
+        let mut rx_events = wifi.subscribe_wifi_events();
         tokio::spawn({
             async move {
                 loop {

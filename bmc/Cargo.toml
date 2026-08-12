@@ -39,10 +39,11 @@ bmc-grpc = { workspace = true, features = ["server"] }
 bmc-ipc.workspace = true
 bmc-led = { workspace = true, features = ["driver"] }
 bmc-log.workspace = true
+bmc-net.workspace = true
+bmc-net-types.workspace = true
 bmc-nix.workspace = true
 bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-scheduler.workspace = true
-bmc-shared-ii-net.workspace = true
 bmc-shared-time.workspace = true
 bmc-shared-utils.workspace = true
 bmc-support.workspace = true

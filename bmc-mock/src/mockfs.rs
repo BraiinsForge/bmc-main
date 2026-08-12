@@ -34,9 +34,6 @@ pub struct MockFs {
 impl MockFs {
     const UPGRADE_RESULT_FILE: &str = "etc/upgrade_result";
     const UPGRADE_SCENARIO_FILE: &str = "etc/upgrade-scenario.json";
-    const FACTORY_DEFAULT_FILE: &str = "etc/factory-default";
-    const DEVICE_SETUP_PENDING_FILE: &str = "etc/setup-pending";
-    const WIFI_RECONFIG_FILE: &str = "etc/wifi-reconfig";
     const WIFI_STATUS_FILE: &str = "etc/is_wifi_enabled";
     const PENDING_INSTALL_FILE: &str = "dev/shm/bmc-nix-pending-install.json";
 
@@ -47,7 +44,7 @@ impl MockFs {
         }
     }
 
-    pub fn init(&self, reset: bool, factory_default: bool, setup_pending: bool) -> io::Result<()> {
+    pub fn init(&self, reset: bool) -> io::Result<()> {
         let src: &Path = self.mockfs_root.as_ref();
 
         let dirs = vec!["etc", "tmp", "dev/shm"];
@@ -56,9 +53,6 @@ impl MockFs {
         }
 
         copy_recursive(&self.template_dir, &self.mockfs_root, reset)?;
-
-        self.add_or_remove_flag(factory_default, &self.factory_default())?;
-        self.add_or_remove_flag(setup_pending, &self.setup_pending())?;
 
         Ok(())
     }
@@ -81,21 +75,6 @@ impl MockFs {
     #[must_use]
     pub fn service_upgrade_marker(&self) -> Option<PathBuf> {
         service_upgrade_marker_path().map(|path| self.build_mockfs_path(path))
-    }
-
-    #[must_use]
-    pub fn factory_default(&self) -> PathBuf {
-        self.build_mockfs_path(Self::FACTORY_DEFAULT_FILE)
-    }
-
-    #[must_use]
-    pub fn setup_pending(&self) -> PathBuf {
-        self.build_mockfs_path(Self::DEVICE_SETUP_PENDING_FILE)
-    }
-
-    #[must_use]
-    pub fn wifi_reconfig(&self) -> PathBuf {
-        self.build_mockfs_path(Self::WIFI_RECONFIG_FILE)
     }
 
     fn build_mockfs_path<P: AsRef<Path>>(&self, path: P) -> PathBuf {

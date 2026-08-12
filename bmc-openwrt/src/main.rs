@@ -30,6 +30,7 @@ use bmc::compositor::Compositor;
 use bmc_led::apa102_spi::platform_led_driver::PlatformLedDriver;
 use bmc_led::disabled::DisabledLedDriver;
 use bmc_led::led_driver::LedDriverFactory;
+use bmc_net_drv::wifi::WifiChip;
 use bmc_openwrt::cli::Parser;
 use bmc_openwrt::compositor::EglCompositor;
 use bmc_openwrt::{button_driver::UEventButtons, manager::Manager, session::OpenwrtSessionManager};
@@ -38,7 +39,6 @@ use bmc_platform::backlight::{BacklightVisibility, DisplayBacklightDriver};
 use bmc_platform::generic_backlight_driver::GenericBacklightDriver;
 use bmc_platform::serial_number::BoardSerial;
 use bmc_platform::{BmcInfo, BosPlatform, HardwareProfile, HardwareProfileSelection};
-use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use tokio::sync::Mutex;
@@ -112,9 +112,9 @@ async fn main() -> Result<()> {
     };
 
     // BMC_WIFI_SYSPATH overrides the platform path (x86 QEMU with mac80211_hwsim).
-    let wifi_path: String = if let Ok(path) = std::env::var("BMC_WIFI_SYSPATH") {
+    let wifi_chip = if let Ok(path) = std::env::var("BMC_WIFI_SYSPATH") {
         info!("Using WiFi device path from BMC_WIFI_SYSPATH: {path}");
-        path
+        WifiChip::Nl80211 { syspath: path }
     } else {
         let platform = match platform_override {
             Some(platform) => platform,
@@ -131,18 +131,19 @@ async fn main() -> Result<()> {
             HardwareProfile::for_product(platform.product()).locate_wifi_chip(board_serial.as_ref())
         {
             info!(?chip, "located WiFi chip");
-            chip.syspath().to_string_lossy().into_owned()
+            WifiChip::Nl80211 {
+                syspath: chip.syspath().to_string_lossy().into_owned(),
+            }
         } else {
             info!(?platform, "board carries no WiFi radio");
-            String::new()
+            WifiChip::None
         }
     };
 
-    info!("Using WiFi device path: {wifi_path}");
-    let wifi_manager = Arc::new(
-        OpenwrtWifiManager::new(&wifi_path)
-            .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?,
-    );
+    // `None` on a board without a radio; the manager runs WiFi-less there.
+    let wifi_manager = bmc_net_drv::wifi::wifi_driver(wifi_chip)
+        .await
+        .inspect_err(|err| error!(?err, "Failed to initialize WiFi Manager"))?;
 
     let manager = Manager::new(
         OpenwrtSessionManager,
@@ -154,7 +155,9 @@ async fn main() -> Result<()> {
     .await;
 
     // Has check on factory default already
-    if let Err(err) = manager.init_wifi_ap().await {
+    if let Some(wifi) = manager.network_manager().wifi()
+        && let Err(err) = wifi.init_wifi_ap().await
+    {
         error!(?err, "Failed to setup init WiFi AP");
     }
 

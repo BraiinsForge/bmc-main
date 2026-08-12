@@ -26,7 +26,8 @@ use bmc_grpc::web::{
     WifiStatus as GrpcWifiStatus, WifiStatusResponse,
     network_service_server::NetworkService as GrpcNetworkService,
 };
-use bmc_shared_ii_net::wifi::{EncryptionType, SignalStrength};
+use bmc_net::{NetworkManager, WifiControl};
+use bmc_net_types::wifi::{EncryptionType, SignalStrength};
 use std::net::Ipv4Addr;
 use std::sync::Arc;
 use tonic::{Code, Request, Response, Status};
@@ -57,7 +58,12 @@ where
     }
 
     async fn check_precondition(&self, state: BmcState) -> Result<(), Status> {
-        let current_state = self.manager.device_state().await;
+        let current_state = self
+            .manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await;
         if current_state != state {
             return Err(Status::failed_precondition(format!(
                 "Function is only available when the device is in '{state}' state. Current state is '{current_state}'.",
@@ -76,21 +82,19 @@ where
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<NetworkInfoResponse>, tonic::Status> {
-        let hostname = self
-            .manager
+        let nm = self.manager.network_manager();
+        let hostname = nm
             .hostname()
             .await
             .ok_or(tonic::Status::internal("Failed to get hostname"))?;
 
-        let ip_address = self
-            .manager
+        let ip_address = nm
             .ip_address()
             .await
             .ok_or(Status::internal("Failed to get ip address"))?
             .to_string();
 
-        let mac_address = self
-            .manager
+        let mac_address = nm
             .mac_address()
             .ok_or(Status::internal("Failed to get mac address"))?;
 
@@ -105,10 +109,15 @@ where
         &self,
         _request: Request<()>,
     ) -> Result<Response<NetworkConfig>, Status> {
-        let network_config = self.manager.network_config().await.ok_or_else(|| {
-            warn!("Failed to get network config");
-            Status::internal("Failed to get network config")
-        })?;
+        let network_config = self
+            .manager
+            .network_manager()
+            .network_config()
+            .await
+            .ok_or_else(|| {
+                warn!("Failed to get network config");
+                Status::internal("Failed to get network config")
+            })?;
 
         Ok(Response::new(into_network_config(&network_config)))
     }
@@ -121,10 +130,14 @@ where
 
         let config = try_from_network_config(&request)?;
 
-        self.manager.set_network_config(config).await.map_err(|e| {
-            warn!("Failed to set network config: {e}");
-            Status::internal("Failed to set network config")
-        })?;
+        self.manager
+            .network_manager()
+            .set_network_config(config)
+            .await
+            .map_err(|e| {
+                warn!("Failed to set network config: {e}");
+                Status::internal("Failed to set network config")
+            })?;
 
         Ok(Response::new(()))
     }
@@ -134,7 +147,8 @@ where
     ) -> Result<Response<WifiStatusResponse>, Status> {
         self.check_precondition(BmcState::Operational).await?;
 
-        let wifi_data = self.manager.wifi_status().await.map_err(|e| {
+        let nm = self.manager.network_manager();
+        let wifi_data = require_wifi(nm)?.status().await.map_err(|e| {
             warn!("Failed to get WiFi status: {}", e);
             Status::internal("Failed to get WiFi status")
         })?;
@@ -152,9 +166,9 @@ where
     ) -> Result<Response<WifiSavedNetworksResponse>, Status> {
         self.check_precondition(BmcState::Operational).await?;
 
-        let wifi_data = self
-            .manager
-            .wifi_saved_networks()
+        let nm = self.manager.network_manager();
+        let wifi_data = require_wifi(nm)?
+            .saved_networks()
             .await
             .map_err(|e| {
                 warn!("Failed to get WiFi status: {}", e);
@@ -176,8 +190,8 @@ where
 
         let config = try_into_wifi_network_config(request)?;
 
-        match self
-            .manager
+        let nm = self.manager.network_manager();
+        match require_wifi(nm)?
             .wifi_save_and_connect(config.ssid, config.password, config.encryption)
             .await
         {
@@ -193,6 +207,13 @@ where
             scan_wifi_response(self.manager.clone()).await?,
         ))
     }
+}
+
+/// Resolve the WiFi surface, mapping its absence to `unimplemented`: no WiFi
+/// means the operation does not apply to this hardware, not a server fault.
+fn require_wifi(nm: &dyn NetworkManager) -> Result<&dyn WifiControl, Status> {
+    nm.require_wifi()
+        .map_err(|e| Status::unimplemented(e.to_string()))
 }
 
 fn into_network_config(config: &NetworkProtocolConfig) -> NetworkConfig {
@@ -288,10 +309,13 @@ fn try_from_network_config(config: &NetworkConfig) -> Result<NetworkProtocolConf
 pub(crate) async fn scan_wifi_response(
     manager: Arc<impl BmcManager>,
 ) -> Result<ScanWifiResponse, Status> {
-    let available_wifi = manager.wifi_scan().await.map_err(|e| {
-        warn!("Failed to scan WiFi networks: {}", e);
-        Status::internal("Failed to scan WiFi networks")
-    })?;
+    let available_wifi = require_wifi(manager.network_manager())?
+        .scan()
+        .await
+        .map_err(|e| {
+            warn!("Failed to scan WiFi networks: {}", e);
+            Status::internal("Failed to scan WiFi networks")
+        })?;
 
     Ok(ScanWifiResponse {
         networks: available_wifi
@@ -363,7 +387,7 @@ pub(crate) fn into_grpc_signal_strength(value: SignalStrength) -> GrpcSignalStre
     }
 }
 
-pub(crate) fn into_grpc_wifi_status(value: bmc_shared_ii_net::wifi::WifiStatus) -> GrpcWifiStatus {
+pub(crate) fn into_grpc_wifi_status(value: bmc_net_types::wifi::WifiStatus) -> GrpcWifiStatus {
     let network = value.configuration.unwrap_or_default();
     GrpcWifiStatus {
         enabled: value.enabled,
