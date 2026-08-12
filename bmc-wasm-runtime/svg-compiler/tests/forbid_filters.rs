@@ -49,6 +49,16 @@ fn collect_svgs(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
     };
     for entry in entries {
         let entry = entry.expect("BUG: read entry");
+        // A symlink here is a nix `result` out-link into the store, not a
+        // shipping asset; following one drags rustdoc favicons (whose DTDs
+        // roxmltree refuses) into the scan.
+        if entry
+            .file_type()
+            .expect("BUG: entry file type")
+            .is_symlink()
+        {
+            continue;
+        }
         let path = entry.path();
         if path.is_dir() {
             if !is_cache_dir(&path) {
