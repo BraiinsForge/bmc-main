@@ -824,7 +824,6 @@ mod tests {
             .expect("ordinary capture may select no widgets");
     }
 
-
     #[test]
     fn stack_profile_skips_widgets_without_a_capture_config() {
         let temp = tempfile::tempdir().expect("temporary workspace must be created");

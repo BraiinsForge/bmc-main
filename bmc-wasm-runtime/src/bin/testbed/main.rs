@@ -75,10 +75,7 @@ use paint::{
     GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
     paint_timing_legend, proc_loader, write_perf_report,
 };
-use recording::{
-    GestureTracker, RecordingAction, RecordingState, classify_and_record_gesture,
-    record_size_to_idx,
-};
+use recording::{GestureTracker, RecordingAction, RecordingState, classify_and_record_gesture};
 
 // ── Layout constants ────────────────────────────────────────────────
 
@@ -358,27 +355,43 @@ impl SwitchState {
     }
 }
 
-fn validate_recording_target(
-    record_size: Option<&str>,
-    platform: &Platform,
-    layout: &TileLayout,
-) -> Result<(), String> {
-    let Some(size_name) = record_size else {
-        return Ok(());
+/// What `--record` asks for: the viewport to pin and the dataset to write.
+#[derive(Debug, Clone)]
+struct RecordRequest {
+    target: platform_catalog::Target,
+    dataset: String,
+}
+
+/// Resolve `--record`, if given.
+///
+/// A recording pins one viewport, so the target decides which platform
+/// the testbed opens; an explicit `--platform` naming a different one
+/// is a contradiction rather than a silent override.
+fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
+    let Some(spec) = cli.record_target.as_deref() else {
+        return Ok(None);
     };
-    let Some(active_tile) = record_size_to_idx(size_name) else {
-        return Err(format!(
-            "unknown record size '{size_name}'; valid sizes are full, large, medium, small"
-        ));
-    };
-    if active_tile >= layout.tiles.len() {
-        return Err(format!(
-            "record size '{size_name}' is not available on platform '{}' with {} tile(s)",
-            platform.id,
-            layout.tiles.len()
-        ));
+    let target: platform_catalog::Target = spec.parse()?;
+    if let Some(requested) = cli.platform_id.as_deref()
+        && !requested.eq_ignore_ascii_case(target.platform.id)
+    {
+        anyhow::bail!(
+            "--record={spec} records on platform '{}', but --platform={requested} was given",
+            target.platform.id,
+        );
     }
-    Ok(())
+
+    let dataset = cli
+        .record_name
+        .clone()
+        .unwrap_or_else(|| format!("{}-{}", target.platform.id, target.viewport.id));
+    if !bmc_wasm_runtime::capture_config::is_valid_dataset_name(&dataset) {
+        anyhow::bail!(
+            "--record-name={dataset} must be non-empty and use only letters, digits, '-', '_' or '.'"
+        );
+    }
+
+    Ok(Some(RecordRequest { target, dataset }))
 }
 
 /// Width of the right-side sidebar housing both the per-widget Params
@@ -409,9 +422,12 @@ struct CliArgs {
     /// Frames to run before the perf report is written.
     #[arg(long, default_value_t = 600)]
     perf_frames: u32,
-    /// Record a capture fixture for this viewport size (e.g. `small`).
+    /// Record a capture fixture for this target (e.g. `bmc100:small`).
     #[arg(long = "record")]
-    record_size: Option<String>,
+    record_target: Option<String>,
+    /// Dataset name for the recording; defaults to `<platform>-<viewport>`.
+    #[arg(long = "record-name", requires = "record_target")]
+    record_name: Option<String>,
     /// Platform id to select from the catalog.
     #[arg(long = "platform")]
     platform_id: Option<String>,
@@ -668,14 +684,14 @@ mod platforms_startup_tests {
             "--perf-frames",
             "42",
             "--record",
-            "small",
+            "bmc100:small",
         ])
         .expect("BUG: legacy split args must parse");
 
         assert_eq!(cli.manifest_path, Some(PathBuf::from("manifest.json")));
         assert_eq!(cli.perf_report_path, Some(PathBuf::from("perf.json")));
         assert_eq!(cli.perf_frames, 42);
-        assert_eq!(cli.record_size.as_deref(), Some("small"));
+        assert_eq!(cli.record_target.as_deref(), Some("bmc100:small"));
     }
 
     #[test]
@@ -863,7 +879,11 @@ fn main() -> Result<()> {
         cli.resolved_widget_root(),
     )?;
     let params = bmc_wasm_runtime::manifest_default_params(&manifest);
-    let selected_platform = platform_catalog::select(cli.platform_id.as_deref())?;
+    let record_request = resolve_record_request(&cli)?;
+    let selected_platform = match &record_request {
+        Some(request) => request.target.platform,
+        None => platform_catalog::select(cli.platform_id.as_deref())?,
+    };
     let startup_layout = TileLayout::for_platform(selected_platform);
     let startup_size = requested_window_size(&startup_layout);
 
@@ -891,8 +911,11 @@ fn main() -> Result<()> {
             cli.perf_frames
         );
     }
-    if let Some(ref size) = cli.record_size {
-        println!("Recording mode: size={size}");
+    if let Some(ref request) = record_request {
+        println!(
+            "Recording mode: target={} dataset={}",
+            request.target, request.dataset
+        );
     }
 
     let rss_before_gl = current_rss_kb();
@@ -915,7 +938,8 @@ fn main() -> Result<()> {
         "WASM Widget Testbed",
         options,
         Box::new(move |cc| {
-            let app = TestbedApp::new(cc, cli, manifest, params, selected_platform)?;
+            let app =
+                TestbedApp::new(cc, cli, manifest, params, selected_platform, record_request)?;
             log_startup_memory(rss_before_gl);
             Ok(Box::new(app))
         }),
@@ -1277,6 +1301,7 @@ impl TestbedApp {
             bmc_widget_manifest::ParamValue,
         >,
         active_platform: &'static Platform,
+        record_request: Option<RecordRequest>,
     ) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
         let gl = cc
             .gl
@@ -1296,8 +1321,6 @@ impl TestbedApp {
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
         let layout = TileLayout::for_platform(active_platform);
-        validate_recording_target(cli.record_size.as_deref(), active_platform, &layout)
-            .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { e.into() })?;
         let requested_size = requested_window_size(&layout);
 
         // Starting system snapshot for the testbed.
@@ -1315,15 +1338,12 @@ impl TestbedApp {
             night_mode: false,
         };
 
-        let recording_state = cli.record_size.as_ref().map(|size_name| {
-            let active_tile = record_size_to_idx(size_name)
-                .expect("BUG: record size already validated by validate_recording_target");
-            let viewport = active_platform.viewports[active_tile];
-            let target = platform_catalog::Target {
-                platform: active_platform,
-                viewport: &active_platform.viewports[active_tile],
-            };
-            let dataset = format!("{}-{}", active_platform.id, viewport.id);
+        let recording_state = record_request.map(|RecordRequest { target, dataset }| {
+            let active_tile = active_platform
+                .viewports
+                .iter()
+                .position(|v| v.id == target.viewport.id)
+                .expect("BUG: a target's viewport must exist on its own platform");
             let widget_root = cli.resolved_widget_root();
             // Capture's fixture-header parser requires a timezone suffix on the time
             // field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime is rejected.
@@ -2354,6 +2374,18 @@ mod layout_tests {
             .unwrap_or_else(|| panic!("BUG: '{id}' must be in the catalog"))
     }
 
+    fn record_args(target: &str, name: Option<&str>) -> CliArgs {
+        let mut args = vec![
+            "testbed".to_owned(),
+            "widget.wasm".to_owned(),
+            format!("--record={target}"),
+        ];
+        if let Some(name) = name {
+            args.push(format!("--record-name={name}"));
+        }
+        CliArgs::try_parse_from(args).expect("BUG: record args must parse")
+    }
+
     /// Golden BMC100 geometry, copied from the pre-change compile-time layout.
     /// (label, x, y, w, h) in logical pixels.
     const BMC100_GOLDEN_TILES: [(&str, u32, u32, u32, u32); 4] = [
@@ -2410,16 +2442,60 @@ mod layout_tests {
     }
 
     #[test]
-    fn validate_recording_target_rejects_unknown_size_and_accepts_known() {
+    fn every_bmc100_viewport_is_recordable() {
         let p = platform("bmc100");
-        let layout = TileLayout::for_platform(p);
-        for s in ["full", "large", "medium", "small"] {
-            validate_recording_target(Some(s), p, &layout)
-                .unwrap_or_else(|e| panic!("BUG: known size '{s}' must validate: {e}"));
+        for v in p.viewports {
+            let spec = format!("bmc100:{}", v.id);
+            let cli = record_args(&spec, None);
+            let request = resolve_record_request(&cli)
+                .unwrap_or_else(|e| panic!("BUG: '{spec}' must resolve: {e:#}"))
+                .expect("BUG: a --record target must be Some");
+            assert_eq!(request.target.viewport.id, v.id);
+            assert_eq!(request.dataset, format!("bmc100-{}", v.id));
         }
-        let err = validate_recording_target(Some("SIZE=small"), p, &layout)
-            .expect_err("BUG: unknown size must be rejected, not defaulted to full");
-        assert!(err.contains("unknown record size 'SIZE=small'"), "{err}");
+    }
+
+    #[test]
+    fn an_unknown_record_target_is_rejected_not_defaulted() {
+        let err = resolve_record_request(&record_args("bmc100:SIZE=small", None))
+            .expect_err("BUG: an unknown viewport must be rejected, not defaulted to full");
+        assert!(format!("{err:#}").contains("SIZE=small"), "{err:#}");
+
+        let err = resolve_record_request(&record_args("bmm100:small", None))
+            .expect_err("BUG: BMM100 has no Small viewport");
+        assert!(format!("{err:#}").contains("small"), "{err:#}");
+    }
+
+    #[test]
+    fn a_record_target_contradicting_platform_is_rejected() {
+        let mut cli = record_args("bfm100:full", None);
+        cli.platform_id = Some("bmc100".to_owned());
+
+        let err = resolve_record_request(&cli)
+            .expect_err("BUG: a --platform naming another device must be rejected");
+        let message = format!("{err:#}");
+        assert!(
+            message.contains("bfm100") && message.contains("bmc100"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn an_explicit_dataset_name_overrides_the_default() {
+        let request = resolve_record_request(&record_args("bfm100:full", Some("night-shift")))
+            .expect("BUG: a named recording must resolve")
+            .expect("BUG: a --record target must be Some");
+
+        assert_eq!(request.dataset, "night-shift");
+    }
+
+    #[test]
+    fn a_path_like_dataset_name_is_rejected() {
+        for bad in ["../escape", "a/b", "with space", ""] {
+            let err = resolve_record_request(&record_args("bfm100:full", Some(bad)))
+                .expect_err("BUG: a dataset name must not be path-like");
+            assert!(format!("{err:#}").contains("record-name"), "{err:#}");
+        }
     }
 
     #[test]
@@ -2548,14 +2624,16 @@ mod layout_tests {
     }
 
     #[test]
-    fn invalid_recording_target_reports_platform_and_size() {
-        let p = platform("bmm100");
-        let layout = TileLayout::for_platform(p);
-        let err = validate_recording_target(Some("small"), p, &layout)
-            .expect_err("BUG: one-tile platform cannot record BMC100 small tile");
+    fn a_record_target_names_the_platform_it_opens() {
+        let request = resolve_record_request(&record_args("bfm100:full", None))
+            .expect("BUG: a round target must resolve")
+            .expect("BUG: a --record target must be Some");
 
-        assert!(err.contains("small"), "{err}");
-        assert!(err.contains("bmm100"), "{err}");
+        assert_eq!(
+            request.target.platform.id, "bfm100",
+            "the target decides which platform the testbed opens",
+        );
+        assert_eq!(request.target.viewport.shape, DisplayShape::Round);
     }
 
     #[test]

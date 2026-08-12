@@ -125,8 +125,8 @@ docs:
 
 # === Recording ===
 
-# Record an interactive session. SIZE = full | small | etc.; extra args reach the testbed (e.g. --secrets).
-record WIDGET SIZE="full" *ARGS:
+# Record a session. TARGET = <platform>:<viewport>; NAME defaults to <platform>-<viewport>; extra args reach the testbed.
+record WIDGET TARGET="bmc100:full" NAME="" *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -138,7 +138,7 @@ record WIDGET SIZE="full" *ARGS:
     cargo build --manifest-path "$root/$name/Cargo.toml" --release --target {{ wasm_target }}
 
     # No --cache-dir: recording stays hermetic so the fixture is reproducible.
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --record={{ SIZE }} {{ ARGS }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --record={{ TARGET }} {{ if NAME != "" { "--record-name=" + NAME } else { "" } }} {{ ARGS }}
 
 # === Visual regression ===
 

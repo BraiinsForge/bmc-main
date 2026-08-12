@@ -61,8 +61,8 @@ run-testbed SCENARIO BUILD="debug":
         *) echo "unknown build '{{ BUILD }}' (debug | profiling)" >&2; exit 1 ;;
     esac
 
-# Record SIZE's capture fixture against SCENARIO; needs `run-netsim` already serving.
-record SCENARIO SIZE="full":
+# Record TARGET's capture fixture against SCENARIO; needs `run-netsim` already serving.
+record SCENARIO TARGET="bmc100:full":
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -72,4 +72,7 @@ record SCENARIO SIZE="full":
 
     # Style, chart frame and the worker toggle have no flag — set them in the
     # testbed's params panel, which the fixture snapshots when recording stops.
-    exec just --justfile {{ root_justfile }} wasm::record braiins-pool {{ SIZE }} $args
+    #
+    # The dataset name carries the scenario: without it, `idle` and `denied`
+    # would each overwrite the healthy fixture recorded at the same target.
+    exec just --justfile {{ root_justfile }} wasm::record braiins-pool {{ TARGET }} {{ replace(TARGET, ":", "-") + "-" + SCENARIO }} $args

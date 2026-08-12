@@ -112,25 +112,36 @@ the sandbox and fail the capture.
 
 ## Record A Fixture
 
-Recording uses the testbed. `just wasm::record <widget> <size>` builds the widget, launches the testbed at that size,
-and arms the recorder.
+Recording uses the testbed. `just wasm::record <widget> <target> [name]` builds the widget, launches the testbed on the
+target's platform, and arms the recorder.
 
 ```bash
-just wasm::record blockheight full
+just wasm::record blockheight bmc100:full
+just wasm::record mining-info bmm101:full info-overload   # explicit dataset name
 ```
+
+The target decides which platform the testbed opens, so `--platform` naming a different one is rejected rather than
+silently overridden. The dataset name defaults to `<platform>-<viewport>`; pass a third argument when one target holds
+several datasets and the names need to say them apart.
+
+A widget whose recordings differ by something the target cannot express should supply that name from its own recipe
+instead of leaving it to the operator. The pool widget records against a sim scenario, so its wrapper appends one —
+`bmc100-full-healthy`, leaving room for `-idle` and `-denied` beside it. Without that, every scenario writes the same
+fixture per target and overwrites the last, which only a baseline diff would reveal.
 
 Workflow:
 
-1. Pick the size first — the recipe argument selects which tile the testbed previews.
+1. Pick the target first — it selects both the platform and the tile the testbed previews.
 2. Adjust the Params panel and the System panel to the state you want frozen into the fixture header.
 3. Hit the Record button. From this point every fetch / websocket / param-update / system-update / user gesture is
    appended to the timeline. A `Capture` event marks where the visual snapshot is taken.
-4. Stop recording. The testbed writes `capture/fixtures/<platform>-<viewport>.jsonl.gz` next to the widget and adds the
-   matching `[fixtures.<dataset>]` entry to `config.toml`, binding it to the target it was recorded at.
+4. Stop recording. The testbed writes `capture/fixtures/<dataset>.jsonl.gz` next to the widget and adds the matching
+   `[fixtures.<dataset>]` entry to `config.toml`, binding it to the target it was recorded at. Re-recording an existing
+   dataset refreshes its data and leaves any other targets it already drives in place.
 
 For a widget with a credential slot, bind an account in the sidebar's Credentials section and pass the real secret via
-`just wasm::record <widget> <size> --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`, kept
-gitignored at the repo root; the path is relative to `bmc-wasm-runtime/`, where `just` module recipes run) — the
+`just wasm::record <widget> <target> '' --secrets ../secrets.local.json` (JSON shaped `{"<slot>": {"<field>": "…"}}`,
+kept gitignored at the repo root; the path is relative to `bmc-wasm-runtime/`, where `just` module recipes run) — the
 recording session needs one real authenticated egress pass. The fixture stays secret-free by construction: recording
 sees only the placeholder form, and substitution happens at the wire hop. Replay never needs the secret — recorded
 fetches are served by method + URL before substitution would run.
@@ -158,7 +169,7 @@ origin, matched whole, so a lookalike host cannot pick the rewrite up — and a 
 loopback `allow_hosts` pin — the egress check judges the rewritten destination, so the account's own pin is what admits
 it, and the token itself can be bogus. A widget that ships a sim owns both ends of this: the pool widget serves its
 accounts with `just widgets::braiins-pool::run-netsim` and records against one of them with
-`just widgets::braiins-pool::record <scenario> <size>`. The fixture keys stay canonical API URLs — the rewrite happens
+`just widgets::braiins-pool::record <scenario> <target>`. The fixture keys stay canonical API URLs — the rewrite happens
 after they are recorded — so sim-recorded fixtures replay exactly like live-recorded ones, without baking a real
 account's numbers into the baseline.
 

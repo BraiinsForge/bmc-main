@@ -192,12 +192,50 @@ pub fn update_config_toml_fixtures(
     let mut doc = content
         .parse::<toml_edit::DocumentMut>()
         .with_context(|| format!("failed to parse {}", config_path.display()))?;
-    doc["fixtures"][dataset]["path"] = toml_edit::value(fixture_rel_path);
+
+    // Sub-tables, not the inline tables plain indexing would auto-vivify:
+    // `[fixtures.<dataset>]` is what every config in the repo already holds,
+    // and emitting the other form leaves one file carrying both.
+    let fixtures = doc
+        .entry("fixtures")
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()))
+        .as_table_mut()
+        .with_context(|| format!("`fixtures` is not a table in {}", config_path.display()))?;
+
+    // Implicit, so the header is `[fixtures.<dataset>]` rather than a bare
+    // `[fixtures]` standing above them.
+    fixtures.set_implicit(true);
+    // An entry an earlier writer left inline is still the dataset's, so it is
+    // converted rather than refused: re-recording it must update the fixture,
+    // not fail on the shape it was written in.
+    let slot = fixtures
+        .entry(dataset)
+        .or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    let converted = match slot.as_inline_table_mut() {
+        Some(inline) => {
+            *slot = toml_edit::Item::Table(std::mem::take(inline).into_table());
+            true
+        }
+        None => false,
+    };
+    // The key's trailing whitespace was the space before `=`. A header renders
+    // it inside the brackets, as `[fixtures.<dataset> ]`. Only on conversion:
+    // a key that is already a header carries the comments above it here.
+    if converted && let Some(mut key) = fixtures.key_mut(dataset) {
+        key.leaf_decor_mut().set_suffix("");
+    }
+
+    let entry = fixtures
+        .get_mut(dataset)
+        .and_then(toml_edit::Item::as_table_mut)
+        .with_context(|| format!("fixture `{dataset}` is not a table"))?;
+    entry["path"] = toml_edit::value(fixture_rel_path);
 
     // Leave any targets the dataset already drives in place; a re-recording
     // refreshes the data, it does not narrow the bindings.
-    let targets =
-        doc["fixtures"][dataset]["targets"].or_insert(toml_edit::value(toml_edit::Array::new()));
+    let targets = entry
+        .entry("targets")
+        .or_insert(toml_edit::value(toml_edit::Array::new()));
     if let Some(array) = targets.as_array_mut() {
         let wanted = target.to_string();
         if !array.iter().any(|t| t.as_str() == Some(wanted.as_str())) {
@@ -430,7 +468,8 @@ mod tests {
     use bmc_wasm_assets::{Records, contains_package_asset_section, encode_record};
     use bmc_wasm_protocol::{PACKAGE_ASSET_SECTION_NAME, PackageAssetKind, PackageAssetRef};
 
-    use super::PreparedWidget;
+    use super::*;
+    use crate::platform_catalog::Target;
 
     #[test]
     fn prepared_widget_extracts_assets_before_runtime_load() {
@@ -506,5 +545,145 @@ mod tests {
                 break;
             }
         }
+    }
+
+    fn target(spec: &str) -> Target {
+        spec.parse().expect("BUG: test target must parse")
+    }
+
+    /// Write a config, then read it back through the real parser:
+    /// the writer's output is only correct if the loader accepts it.
+    fn round_trip(
+        initial: &str,
+        dataset: &str,
+        spec: &str,
+    ) -> crate::capture_config::CaptureConfig {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let config_path = dir.path().join("config.toml");
+        if !initial.is_empty() {
+            std::fs::write(&config_path, initial).expect("BUG: seed config");
+        }
+        update_config_toml_fixtures(
+            &config_path,
+            dataset,
+            &format!("fixtures/{dataset}.jsonl.gz"),
+            target(spec),
+        )
+        .expect("BUG: writing the config entry must succeed");
+
+        let written = std::fs::read_to_string(&config_path).expect("BUG: read back");
+        crate::capture_config::parse_capture_config(&written).unwrap_or_else(|e| {
+            panic!("BUG: the writer must emit a parseable config: {e:#}\n{written}")
+        })
+    }
+
+    #[test]
+    fn a_recording_writes_an_entry_the_loader_accepts() {
+        let config = round_trip("", "bfm100-full", "bfm100:full");
+
+        let entry = &config.fixtures["bfm100-full"];
+        assert_eq!(entry.path, PathBuf::from("fixtures/bfm100-full.jsonl.gz"));
+        assert_eq!(entry.targets.len(), 1);
+        assert_eq!(entry.targets[0].to_string(), "bfm100:full");
+    }
+
+    #[test]
+    fn re_recording_keeps_the_other_targets_the_dataset_drives() {
+        let initial = r#"
+            [fixtures.common]
+            path = "fixtures/common.jsonl.gz"
+            targets = ["bmc100:full", "bmc100:large"]
+        "#;
+        let config = round_trip(initial, "common", "bmc100:full");
+
+        let bound: Vec<String> = config.fixtures["common"]
+            .targets
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(
+            bound,
+            ["bmc100:full", "bmc100:large"],
+            "a re-recording refreshes data without narrowing the bindings",
+        );
+    }
+
+    #[test]
+    fn recording_a_new_target_extends_the_dataset() {
+        let initial = r#"
+            [fixtures.common]
+            path = "fixtures/common.jsonl.gz"
+            targets = ["bmc100:full"]
+        "#;
+        let config = round_trip(initial, "common", "bmc100:small");
+
+        let bound: Vec<String> = config.fixtures["common"]
+            .targets
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(bound, ["bmc100:full", "bmc100:small"]);
+    }
+
+    #[test]
+    fn writing_preserves_comments_and_sibling_keys() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(
+            &config_path,
+            "# keep me\nsettle_delay = 40\n\n[fixtures.bmc100-full]\npath = \"fixtures/bmc100-full.jsonl.gz\"\ntargets = [\"bmc100:full\"]\n",
+        )
+        .expect("BUG: seed config");
+
+        update_config_toml_fixtures(
+            &config_path,
+            "bfm100-full",
+            "fixtures/bfm100-full.jsonl.gz",
+            target("bfm100:full"),
+        )
+        .expect("BUG: write");
+
+        let written = std::fs::read_to_string(&config_path).expect("BUG: read back");
+        assert!(written.contains("# keep me"), "{written}");
+        assert!(written.contains("settle_delay = 40"), "{written}");
+        assert!(written.contains("[fixtures.bmc100-full]"), "{written}");
+
+        assert!(
+            written.contains("[fixtures.bfm100-full]"),
+            "a new dataset must land as a sub-table, not an inline one: {written}"
+        );
+    }
+
+    /// An earlier writer wrote the entries inline. Re-recording one has to
+    /// update it, so the shape it was written in cannot fail the take.
+    #[test]
+    fn re_recording_converts_an_inline_entry() {
+        let initial = indoc::indoc! {r#"
+            [fixtures]
+            practice = { path = "fixtures/practice.jsonl.gz", targets = ["bmc100:full"] }
+        "#};
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let config_path = dir.path().join("config.toml");
+        std::fs::write(&config_path, initial).expect("BUG: seed config");
+
+        update_config_toml_fixtures(
+            &config_path,
+            "practice",
+            "fixtures/practice.jsonl.gz",
+            target("bmc100:small"),
+        )
+        .expect("BUG: an inline entry must be updatable");
+
+        let written = std::fs::read_to_string(&config_path).expect("BUG: read back");
+        assert!(written.contains("[fixtures.practice]"), "{written}");
+
+        let config = crate::capture_config::parse_capture_config(&written)
+            .expect("BUG: a converted entry must still parse");
+        let bound: Vec<String> = config.fixtures["practice"]
+            .targets
+            .iter()
+            .map(ToString::to_string)
+            .collect();
+        assert_eq!(bound, ["bmc100:full", "bmc100:small"]);
     }
 }
