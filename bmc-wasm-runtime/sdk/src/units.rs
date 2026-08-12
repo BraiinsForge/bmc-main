@@ -64,7 +64,6 @@ impl Length {
     }
 
     /// Render as km (miles when imperial) with the operator's number format.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn format(self, decimals: u32) -> String {
         crate::format::_host_format_distance(self.as_kilometers(), decimals)
@@ -102,7 +101,6 @@ impl Speed {
     }
 
     /// Render as km/h (mph when imperial) with the operator's number format.
-    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn format(self, decimals: u32) -> String {
         crate::format::_host_format_speed(self.as_kilometers_per_hour(), decimals, 0)
