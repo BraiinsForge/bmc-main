@@ -34,7 +34,8 @@ const BUCKETS: [(SizeBucket, &str); 4] = [
     (SizeBucket::Small, "Small"),
 ];
 
-/// Each design size on its own stage, at the size the design gives it.
+/// Each design size on its own stage, under whichever settings the knobs
+/// hold — the distances, clocks and separators all read from them.
 ///
 /// The callback hands back a closure that *builds* the tree rather than the
 /// tree itself: these screens draw SVG icons, and the registrars are only
@@ -44,6 +45,7 @@ fn size_stages<Build: FnOnce() -> Node>(
     ui: &mut Ui,
     mut view: impl FnMut(SizeBucket) -> Build,
 ) {
+    deck_settings(ctx);
     for (bucket, label) in BUCKETS {
         let build = view(bucket);
         ui.heading(label);
@@ -82,33 +84,33 @@ fn standings_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
-#[story]
-fn next_race(ctx: &mut StoryCtx) {
-    size_frames(ctx, |bucket| {
-        next_race::next_race_view(&fixtures::next_race(bucket))
+#[scene]
+fn next_race(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || next_race::next_race_view(&fixtures::next_race(bucket))
     });
 }
 
 /// Between seasons, or before the first reply has landed.
-#[story]
-fn next_race_unavailable(ctx: &mut StoryCtx) {
-    size_frames(ctx, |bucket| {
-        next_race::next_race_view(&fixtures::next_race_unavailable(bucket))
+#[scene]
+fn next_race_unavailable(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || next_race::next_race_view(&fixtures::next_race_unavailable(bucket))
     });
 }
 
 /// A weekend announced before any of its detail was.
-#[story]
-fn next_race_sparse(ctx: &mut StoryCtx) {
-    size_frames(ctx, |bucket| {
-        next_race::next_race_view(&fixtures::next_race_sparse(bucket))
+#[scene]
+fn next_race_sparse(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || next_race::next_race_view(&fixtures::next_race_sparse(bucket))
     });
 }
 
 /// The longest names the rows have to seat, on a sprint weekend.
-#[story]
-fn next_race_widest(ctx: &mut StoryCtx) {
-    size_frames(ctx, |bucket| {
-        next_race::next_race_view(&fixtures::next_race_widest(bucket))
+#[scene]
+fn next_race_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || next_race::next_race_view(&fixtures::next_race_widest(bucket))
     });
 }

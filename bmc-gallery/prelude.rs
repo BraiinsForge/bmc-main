@@ -31,7 +31,7 @@ pub use crate::kit::DeckSize::{Auto, Full, Large, Medium, Page, Round, Small};
 pub use crate::kit::DivHeight::Auto as AutoH;
 pub use crate::kit::{
     AUTO_HEIGHT_MAX, ActionEvent, CustomRenderFn, DEVICE_HEIGHT, DEVICE_WIDTH, DeckSceneCtx,
-    DeckSize, DivHeight, Fired, RodioSink,
+    DeckSize, DivHeight, Fired, RodioSink, deck_settings,
 };
 
 pub use bmc_wasm_sdk::tree::*;
