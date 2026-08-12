@@ -85,18 +85,31 @@ fn interface_ipv4(iface: &Interface) -> Option<Ipv4Addr> {
 /// order so the result is deterministic and does not depend on raw
 /// `getifaddrs(3)` enumeration order.
 #[must_use]
-fn pick_ipv4(interfaces: &[Interface], modes: &HashMap<String, WifiMode>) -> Option<Ipv4Addr> {
-    let mut candidates: Vec<(&str, WifiMode, Ipv4Addr)> = interfaces
+fn pick_interface<'a>(
+    interfaces: &'a [Interface],
+    modes: &HashMap<String, WifiMode>,
+) -> Option<&'a str> {
+    let mut candidates: Vec<(&str, WifiMode)> = interfaces
         .iter()
         .filter_map(|iface| {
-            let ip = interface_ipv4(iface)?;
+            interface_ipv4(iface)?;
             let mode = modes.get(&iface.name).copied().unwrap_or_default();
-            Some((iface.name.as_str(), mode, ip))
+            Some((iface.name.as_str(), mode))
         })
         .collect();
     // Station, then unknown, then AP; wlan* before others, then lexicographic.
-    candidates.sort_by_key(|(name, mode, _)| (mode.rank(), !name.starts_with("wlan"), *name));
-    candidates.first().map(|(_, _, ip)| *ip)
+    candidates.sort_by_key(|(name, mode)| (mode.rank(), !name.starts_with("wlan"), *name));
+    candidates.first().map(|(name, _)| *name)
+}
+
+/// Address of the interface [`pick_interface`] selects. Pure, for testing.
+#[must_use]
+fn pick_ipv4(interfaces: &[Interface], modes: &HashMap<String, WifiMode>) -> Option<Ipv4Addr> {
+    let name = pick_interface(interfaces, modes)?;
+    interfaces
+        .iter()
+        .find(|iface| iface.name == name)
+        .and_then(interface_ipv4)
 }
 
 /// One `wifi-iface` section parsed from `uci show wireless` output.
@@ -271,6 +284,15 @@ pub fn hostname() -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_owned())
 }
 
+/// Name of the interface carrying the uplink, by the same ranking as
+/// [`primary_ipv4`]. `None` when no interface has a routable address.
+#[must_use]
+pub fn primary_interface() -> Option<String> {
+    let interfaces = get_if_addrs::get_if_addrs().ok()?;
+    let modes = modes_map_from_sections(&uci_show_wireless_sections());
+    pick_interface(&interfaces, &modes).map(ToOwned::to_owned)
+}
+
 /// Primary routable IPv4 (WiFi-station-preferred), or `None` when offline.
 #[must_use]
 pub fn primary_ipv4() -> Option<Ipv4Addr> {
@@ -322,6 +344,20 @@ mod tests {
 
     fn ifaces_from(entries: &[(Interface, String, WifiMode)]) -> Vec<Interface> {
         entries.iter().map(|(iface, _, _)| iface.clone()).collect()
+    }
+
+    /// The WiFi-only board shape: `eth0` is present as a link but holds no
+    /// address, so the uplink must be resolved to `wlan0` rather than reported
+    /// as absent.
+    #[test]
+    fn picks_the_wifi_interface_when_ethernet_has_no_address() {
+        let interfaces = vec![v4("wlan0", Ipv4Addr::new(192, 168, 1, 106))];
+        let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
+        assert_eq!(pick_interface(&interfaces, &modes), Some("wlan0"));
+        assert_eq!(
+            pick_ipv4(&interfaces, &modes),
+            Some(Ipv4Addr::new(192, 168, 1, 106))
+        );
     }
 
     #[test]

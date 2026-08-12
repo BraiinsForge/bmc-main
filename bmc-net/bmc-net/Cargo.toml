@@ -1,0 +1,18 @@
+[package]
+name = "bmc-net"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+async-trait.workspace = true
+bmc-net-drv.workspace = true
+bmc-net-observe.workspace = true
+bmc-net-types.workspace = true
+get_if_addrs.workspace = true
+tokio = { workspace = true, features = ["fs", "io-util", "process", "rt", "sync", "time"] }
+tracing.workspace = true

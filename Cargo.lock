@@ -918,6 +918,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-net"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bmc-net-drv",
+ "bmc-net-observe",
+ "bmc-net-types",
+ "get_if_addrs",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-net-dns"
 version = "0.1.0"
 dependencies = [
