@@ -86,9 +86,9 @@ format:
 license-fix:
     scripts/check_license_headers.sh --fix
 
-# Cargo clippy with the workspace's pedantic lints (mem-box caps memory).
+# Cargo clippy with the workspace's pedantic lints.
 clippy:
-    scripts/mem-box.sh cargo clippy \
+    cargo clippy \
       --profile fast \
       --workspace \
       --all-features \
@@ -107,9 +107,9 @@ python:
     {{ NIX_DEV }} ty check --error deprecated bmc-tui bmc-virt/harness
     {{ NIX_DEV }} uv run pytest
 
-# Run nextest for a single crate with mem-box caps (auto-enters nix shell).
+# Run nextest for a single crate (auto-enters nix shell).
 test crate *FEATURES="--all-features":
-    {{ NIX_DEV }} scripts/mem-box.sh cargo nextest run -p {{ crate }} {{ FEATURES }}
+    {{ NIX_DEV }} cargo nextest run -p {{ crate }} {{ FEATURES }}
 
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:
@@ -119,7 +119,7 @@ fmt-images *PATHS:
 
 # Full nix-driven checks (matches CI's main stage) - Very heavy
 validate-full:
-    scripts/mem-box.sh nix flake check -L --option max-jobs 4
+    nix flake check -L --option max-jobs 4
 
 # === Tooling ===
 
@@ -143,4 +143,4 @@ _cargo-tool tool:
       [ "$reply" = "y" ] || [ "$reply" = "Y" ] || exit 1; \
       cargo install cargo-{{ tool }}; \
     }
-    scripts/mem-box.sh cargo {{ tool }}
+    cargo {{ tool }}
