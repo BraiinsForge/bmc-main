@@ -105,6 +105,12 @@ impl Snapshot {
         Self { bytes }
     }
 
+    /// A snapshot carrying nothing, in a `const` context.
+    #[must_use]
+    pub const fn empty() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
     /// IANA timezone identifier (e.g. `Europe/Bratislava`).
     #[must_use]
     pub fn timezone(&self) -> Option<&str> {
@@ -295,11 +301,33 @@ pub fn previous() -> Snapshot {
 // ── Native-target stubs ─────────────────────────────────────────────
 
 #[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn current() -> Snapshot {
-    Snapshot::default()
+std::thread_local! {
+    static NATIVE_SNAPSHOT: core::cell::RefCell<Snapshot> =
+        const { core::cell::RefCell::new(Snapshot::empty()) };
 }
 
+/// Off-device there is no host to deliver a snapshot, so one is held per
+/// thread. It starts empty: every accessor `None`, every caller left on
+/// its own default.
+///
+/// [`set_current`] installs one, which is how the storybook and the tests
+/// render a view the way an operator on imperial units, or a twelve-hour
+/// clock, would see it.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn current() -> Snapshot {
+    NATIVE_SNAPSHOT.with(|it| it.borrow().clone())
+}
+
+/// Install the snapshot [`current`] returns on this thread.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_current(snapshot: Snapshot) {
+    NATIVE_SNAPSHOT.with(|it| *it.borrow_mut() = snapshot);
+}
+
+/// Always empty off-device: nothing delivers a second snapshot, so there
+/// is no rotation to remember. Diffing it against [`current`] reports
+/// every field as changed rather than nothing.
 #[cfg(not(target_arch = "wasm32"))]
 #[must_use]
 pub fn previous() -> Snapshot {
@@ -350,107 +378,128 @@ std::thread_local! {
         core::cell::RefCell::new(crate::snapshot_cache::Cache::new());
 }
 
+/// Build a snapshot in the wire format the host emits, for the callers
+/// that have no host: the storybook and the tests.
+///
+/// Mirrors the host-side encoder in `bmc-wasm-runtime/src/system.rs`.
+#[derive(Debug, Default)]
+pub struct SnapshotBuilder {
+    out: Vec<u8>,
+    count: u32,
+}
+
+impl SnapshotBuilder {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            out: vec![0; 4],
+            count: 0,
+        }
+    }
+
+    #[must_use]
+    pub fn timezone(mut self, tz: &str) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::Timezone as u8);
+        let len = u16::try_from(tz.len()).expect("BUG: timezone fits in u16");
+        self.out.extend_from_slice(&len.to_le_bytes());
+        self.out.extend_from_slice(tz.as_bytes());
+        self
+    }
+
+    #[must_use]
+    pub fn time_format(mut self, t: TimeFormat) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::TimeFormat as u8);
+        self.out.push(t as u8);
+        self
+    }
+
+    #[must_use]
+    pub fn date_format(mut self, d: DateFormat) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::DateFormat as u8);
+        self.out.push(d as u8);
+        self
+    }
+
+    #[must_use]
+    pub fn number_format(mut self, n: NumberFormat) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::NumberFormat as u8);
+        self.out.push(n as u8);
+        self
+    }
+
+    #[must_use]
+    pub fn first_day_of_week(mut self, w: Weekday) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::FirstDayOfWeek as u8);
+        self.out.push(w as u8);
+        self
+    }
+
+    #[must_use]
+    pub fn temperature_unit(mut self, u: TemperatureUnit) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::TemperatureUnit as u8);
+        self.out.push(u as u8);
+        self
+    }
+
+    #[must_use]
+    pub fn unit_system(mut self, u: UnitSystem) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::UnitSystem as u8);
+        self.out.push(u as u8);
+        self
+    }
+
+    #[must_use]
+    pub fn next_alarm_some(mut self, fire_at_utc_ms: i64, name: &str) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::NextAlarm as u8);
+        self.out.push(1); // present
+        self.out.extend_from_slice(&fire_at_utc_ms.to_le_bytes());
+        let len = u16::try_from(name.len()).expect("BUG: alarm name fits in u16");
+        self.out.extend_from_slice(&len.to_le_bytes());
+        self.out.extend_from_slice(name.as_bytes());
+        self
+    }
+
+    #[must_use]
+    pub fn next_alarm_none(mut self) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::NextAlarm as u8);
+        self.out.push(0);
+        self
+    }
+
+    #[must_use]
+    pub fn night_mode(mut self, active: bool) -> Self {
+        self.count += 1;
+        self.out.push(SystemFieldKind::NightMode as u8);
+        self.out.push(u8::from(active));
+        self
+    }
+
+    #[must_use]
+    pub fn build(self) -> Snapshot {
+        Snapshot::from_bytes(self.build_bytes())
+    }
+
+    /// The packed buffer itself, for tests that corrupt or truncate it.
+    #[must_use]
+    pub fn build_bytes(mut self) -> Vec<u8> {
+        let head = self.count.to_le_bytes();
+        self.out[0..4].copy_from_slice(&head);
+        self.out
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Build a packed buffer in the same wire format the host emits.
-    /// Mirrors the host-side encoder in `bmc-wasm-runtime/src/system.rs`.
-    struct PackedBuilder {
-        out: Vec<u8>,
-        count: u32,
-    }
-
-    impl PackedBuilder {
-        fn new() -> Self {
-            Self {
-                out: vec![0; 4],
-                count: 0,
-            }
-        }
-
-        fn timezone(mut self, tz: &str) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::Timezone as u8);
-            let len = u16::try_from(tz.len()).expect("BUG: timezone fits in u16");
-            self.out.extend_from_slice(&len.to_le_bytes());
-            self.out.extend_from_slice(tz.as_bytes());
-            self
-        }
-
-        fn time_format(mut self, t: TimeFormat) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::TimeFormat as u8);
-            self.out.push(t as u8);
-            self
-        }
-
-        fn date_format(mut self, d: DateFormat) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::DateFormat as u8);
-            self.out.push(d as u8);
-            self
-        }
-
-        fn number_format(mut self, n: NumberFormat) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::NumberFormat as u8);
-            self.out.push(n as u8);
-            self
-        }
-
-        fn first_day_of_week(mut self, w: Weekday) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::FirstDayOfWeek as u8);
-            self.out.push(w as u8);
-            self
-        }
-
-        fn temperature_unit(mut self, u: TemperatureUnit) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::TemperatureUnit as u8);
-            self.out.push(u as u8);
-            self
-        }
-
-        fn unit_system(mut self, u: UnitSystem) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::UnitSystem as u8);
-            self.out.push(u as u8);
-            self
-        }
-
-        fn next_alarm_some(mut self, fire_at_utc_ms: i64, name: &str) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::NextAlarm as u8);
-            self.out.push(1); // present
-            self.out.extend_from_slice(&fire_at_utc_ms.to_le_bytes());
-            let len = u16::try_from(name.len()).expect("BUG: alarm name fits in u16");
-            self.out.extend_from_slice(&len.to_le_bytes());
-            self.out.extend_from_slice(name.as_bytes());
-            self
-        }
-
-        fn next_alarm_none(mut self) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::NextAlarm as u8);
-            self.out.push(0);
-            self
-        }
-
-        fn night_mode(mut self, active: bool) -> Self {
-            self.count += 1;
-            self.out.push(SystemFieldKind::NightMode as u8);
-            self.out.push(u8::from(active));
-            self
-        }
-
-        fn build(mut self) -> Vec<u8> {
-            let head = self.count.to_le_bytes();
-            self.out[0..4].copy_from_slice(&head);
-            self.out
-        }
-    }
 
     #[test]
     fn default_snapshot_yields_none_on_every_field() {
@@ -468,7 +517,7 @@ mod tests {
 
     #[test]
     fn each_field_decodes_round_trip() {
-        let bytes = PackedBuilder::new()
+        let s = SnapshotBuilder::new()
             .timezone("Europe/Bratislava")
             .time_format(TimeFormat::Hour12)
             .date_format(DateFormat::YyyyMmDdDot)
@@ -479,7 +528,6 @@ mod tests {
             .next_alarm_some(1_700_000_000_000, "Wake up")
             .night_mode(true)
             .build();
-        let s = Snapshot::from_bytes(bytes);
         assert_eq!(s.timezone(), Some("Europe/Bratislava"));
         assert_eq!(s.time_format(), Some(TimeFormat::Hour12));
         assert_eq!(s.date_format(), Some(DateFormat::YyyyMmDdDot));
@@ -497,26 +545,23 @@ mod tests {
 
     #[test]
     fn night_mode_inactive_decodes_false() {
-        let bytes = PackedBuilder::new().night_mode(false).build();
-        let s = Snapshot::from_bytes(bytes);
+        let s = SnapshotBuilder::new().night_mode(false).build();
         assert_eq!(s.night_mode(), Some(false));
     }
 
     #[test]
     fn night_mode_missing_entry_returns_none() {
         // No NightMode entry — accessor must yield None.
-        let bytes = PackedBuilder::new()
+        let s = SnapshotBuilder::new()
             .timezone("UTC")
             .next_alarm_none()
             .build();
-        let s = Snapshot::from_bytes(bytes);
         assert_eq!(s.night_mode(), None);
     }
 
     #[test]
     fn next_alarm_none_returns_none() {
-        let bytes = PackedBuilder::new().next_alarm_none().build();
-        let s = Snapshot::from_bytes(bytes);
+        let s = SnapshotBuilder::new().next_alarm_none().build();
         assert_eq!(s.next_alarm(), None);
     }
 
@@ -527,9 +572,9 @@ mod tests {
         // Guards against a one-bit flip in the byte stream materialising
         // a phantom alarm.
         for present in [2_u8, 7, 42, 255] {
-            let mut bytes = PackedBuilder::new()
+            let mut bytes = SnapshotBuilder::new()
                 .next_alarm_some(1_700_000_000_000, "garbage")
-                .build();
+                .build_bytes();
             // Locate and overwrite the present byte (the byte after
             // SystemFieldKind::NextAlarm in the stream).
             let tag = SystemFieldKind::NextAlarm as u8;
@@ -549,10 +594,10 @@ mod tests {
 
     #[test]
     fn truncated_buffer_yields_none_past_the_cut() {
-        let mut bytes = PackedBuilder::new()
+        let mut bytes = SnapshotBuilder::new()
             .timezone("Europe/Bratislava")
             .time_format(TimeFormat::Hour12)
-            .build();
+            .build_bytes();
         bytes.truncate(bytes.len() - 1);
         let s = Snapshot::from_bytes(bytes);
         // Timezone fits before the truncation.
