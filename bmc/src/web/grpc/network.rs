@@ -82,19 +82,19 @@ where
         &self,
         _request: tonic::Request<()>,
     ) -> Result<tonic::Response<NetworkInfoResponse>, tonic::Status> {
-        let nm = self.manager.network_manager();
-        let hostname = nm
+        let net_man = self.manager.network_manager();
+        let hostname = net_man
             .hostname()
             .await
             .ok_or(tonic::Status::internal("Failed to get hostname"))?;
 
-        let ip_address = nm
+        let ip_address = net_man
             .ip_address()
             .await
             .ok_or(Status::internal("Failed to get ip address"))?
             .to_string();
 
-        let mac_address = nm
+        let mac_address = net_man
             .mac_address()
             .ok_or(Status::internal("Failed to get mac address"))?;
 
@@ -147,8 +147,8 @@ where
     ) -> Result<Response<WifiStatusResponse>, Status> {
         self.check_precondition(BmcState::Operational).await?;
 
-        let nm = self.manager.network_manager();
-        let wifi_data = require_wifi(nm)?.status().await.map_err(|e| {
+        let net_man = self.manager.network_manager();
+        let wifi_data = require_wifi(net_man)?.status().await.map_err(|e| {
             warn!("Failed to get WiFi status: {}", e);
             Status::internal("Failed to get WiFi status")
         })?;
@@ -166,8 +166,8 @@ where
     ) -> Result<Response<WifiSavedNetworksResponse>, Status> {
         self.check_precondition(BmcState::Operational).await?;
 
-        let nm = self.manager.network_manager();
-        let wifi_data = require_wifi(nm)?
+        let net_man = self.manager.network_manager();
+        let wifi_data = require_wifi(net_man)?
             .saved_networks()
             .await
             .map_err(|e| {
@@ -190,8 +190,8 @@ where
 
         let config = try_into_wifi_network_config(request)?;
 
-        let nm = self.manager.network_manager();
-        match require_wifi(nm)?
+        let net_man = self.manager.network_manager();
+        match require_wifi(net_man)?
             .wifi_save_and_connect(config.ssid, config.password, config.encryption)
             .await
         {
@@ -211,8 +211,9 @@ where
 
 /// Resolve the WiFi surface, mapping its absence to `unimplemented`: no WiFi
 /// means the operation does not apply to this hardware, not a server fault.
-fn require_wifi(nm: &dyn NetworkManager) -> Result<&dyn WifiControl, Status> {
-    nm.require_wifi()
+fn require_wifi(net_man: &dyn NetworkManager) -> Result<&dyn WifiControl, Status> {
+    net_man
+        .require_wifi()
         .map_err(|e| Status::unimplemented(e.to_string()))
 }
 

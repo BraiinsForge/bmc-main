@@ -65,9 +65,9 @@ those lines to the date-based split.
 
 Do not add Braiins headers to:
 
-- Files carrying an upstream BOSI header: all of `bmc-shared/ii-net/` (which must stay byte-identical to upstream for
-  `scripts/verify_crates.sh`) and the BOSI-headed files in `bmc-shared/{ii-net-drv,ii-dns,esp32,stopwatch}`. The BOSI
-  notice is GPLv3 boilerplate too and stays verbatim.
+- Files carrying an upstream BOSI header: all of `bmc-net/bmc-net-types/` and the BOSI-headed files in
+  `bmc-net/{bmc-net-drv,bmc-net-dns}` and `bmc-shared/stopwatch`. The BOSI notice is GPLv3 boilerplate too and stays
+  verbatim.
 - Generated code: `frontend/src/proto/gen/` (protobuf) and `src/manifest_params.rs` in widget crates (written by
   `bmc-widget-codegen` via `just wasm::gen`) — regeneration would drop any hand-added header.
 - Anything covered by a colocated `LICENSE-*` or license file, which keeps its upstream terms — e.g. the

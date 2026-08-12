@@ -34,7 +34,15 @@ The backend is organized as a Cargo workspace with the following main components
 - **`bmc-audio`**, **`bmc-led`**, **`bmc-button`**, **`bmc-gpio`**, **`bmc-kobject`**: Hardware abstraction layers.
 - **`bmc-platform`**: Platform-specific abstractions.
 - **`bmc-upgrade`**: Firmware upgrade management.
-- **`bmc-shared/`**: Shared libraries (`esp32`, `ii-net`, `ii-net-drv`, `time`, `utils`).
+- **`bmc-shared/`**: Shared libraries (`stopwatch`, `time`, `utils`).
+- **`bmc-net/`**: Networking crates, shared with bos-main:
+  - **`bmc-net`**: the `NetworkManager` facade — network config, provisioning state machine, setup AP and captive portal
+    — with the `openwrt` (UCI), `buildroot` and `mock` backends.
+  - **`bmc-net-types`**: dependency-light value types (`MacAddr`, network protocol config, WiFi status/scan).
+  - **`bmc-net-drv`**: interface enumeration plus the `WifiDriver` backends (`nl80211`, `esp32`).
+  - **`bmc-net-dns`**: the `IiResolver` DNS/NTP resolver.
+  - **`bmc-net-observe`**: synchronous, read-only connectivity probes for OS-driven overlays.
+  - **`bmc-net-diag`**: network diagnostics for the support archive (ifconfig, public IP, ping, pcap).
 
 ### Frontend Structure (TypeScript/React)
 
@@ -202,7 +210,10 @@ bmc-led: Update LED effect for preview scene
 
 ## Shared Crate Verification
 
-Some shared crates (`bmc-shared/ii-net` and `bmc-shared/ii-net-drv`) are vendored/forked. Verify they match upstream:
+`./scripts/verify_crates.sh` verifies vendored crates against their upstream repositories, driven by
+`crate-verification.config.json`. Upstream tracking of `ii-net`/`ii-net-drv` ended when networking was rewritten into
+the in-repo `bmc-net` crates (BOS-3938); no vendored subtrees are currently tracked. If a crate is vendored again, add
+it to the config and verify with:
 
 ```bash
 nix-shell -p jq getopt --run "./scripts/verify_crates.sh --summary"

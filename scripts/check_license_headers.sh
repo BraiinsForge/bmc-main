@@ -35,7 +35,6 @@ fix=0
 
 # Patterns matched against repository-relative paths with bash's ==.
 excludes=(
-    "bmc-shared/ii-net/*"
     "frontend/src/proto/gen/*"
     "frontend/src/lib/react/props.tsx"
     "frontend/src/styles/fonts/*"

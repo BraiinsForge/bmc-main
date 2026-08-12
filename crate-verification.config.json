@@ -1,9 +1,4 @@
 {
-  "vendored_subtrees": {
-    "bmc-shared/ii-net": {
-      "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
-      "commit": "f58300e1f9bf89e507ad59ce08f42690ad9a61ef",
-      "upstream_path": "open/utils-rs/ii-net"
-    }
-  }
+  "_note": "Upstream tracking of ii-net/ii-net-drv (bos-main open/utils-rs) ended when networking was rewritten into the in-repo bmc-net crates (BOS-3938). No vendored subtrees are currently tracked.",
+  "vendored_subtrees": {}
 }

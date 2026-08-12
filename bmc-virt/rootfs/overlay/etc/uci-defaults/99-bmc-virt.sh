@@ -67,7 +67,7 @@ uci set network.wifinet.ipaddr='10.99.0.1'
 uci set network.wifinet.netmask='255.255.255.0'
 
 # Network interface for when radio0 switches to STA mode (DHCP client).
-# The app sets network='wifi_sta' when configuring STA mode (ii-net/src/wifi.rs:45).
+# The app sets network='wifi_sta' when configuring STA mode (bmc-net/bmc-net-types/src/wifi.rs).
 uci set network.wifi_sta=interface
 uci set network.wifi_sta.proto='dhcp'
 

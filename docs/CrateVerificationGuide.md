@@ -34,10 +34,10 @@ The system uses a JSON configuration file (`crate-verification.config.json`) in 
       "commit": "0bf48952586c5e475368fad41d05b4ddb2b6a079",
       "auto_discover": true
     },
-    "bmc-shared/ii-net": {
-      "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
+    "vendor/example-crate": {
+      "repo": "ssh://git@gitlab.ii.zone/org/example-crate.git",
       "commit": "b64216cc00d2ae4a733d4555337bab06839464fb",
-      "upstream_path": "open/utils-rs/ii-net"
+      "upstream_path": "upstream/path/to/example-crate"
     }
   }
 }
@@ -194,10 +194,10 @@ Use `upstream_path` when the local crate path differs from the upstream path:
 ```json
 {
   "vendored_subtrees": {
-    "bmc-shared/ii-net": {
-      "repo": "ssh://git@gitlab.ii.zone/bos/bos-main.git",
+    "vendor/example-crate": {
+      "repo": "ssh://git@gitlab.ii.zone/org/example-crate.git",
       "commit": "b64216cc00d2ae4a733d4555337bab06839464fb",
-      "upstream_path": "open/utils-rs/ii-net"
+      "upstream_path": "upstream/path/to/example-crate"
     }
   }
 }

@@ -11,8 +11,8 @@ widgets on a 1280x480 touchscreen. The hardware is an STM32MP157C (dual Cortex-A
 | **bos-main** | BraiinsOS mining firmware (bosminer, boser) | gitlab / bos/bos-main        |
 | **openwrt**  | Braiins OpenWrt fork with board support     | gitlab / bos/openwrt         |
 
-bmc-main and bos-main share some libraries (`ii-net`, `ii-net-drv`, `time`, etc.) via the `bmc-shared/` workspace member
-which mirrors `open/utils-rs/` from bos-main.
+bmc-main and bos-main share some libraries (`bmc-net-types`, `bmc-net-drv`, `time`, etc.) via the `bmc-net/` and
+`bmc-shared/` workspace members, the latter mirroring `open/utils-rs/` from bos-main.
 
 ## Key Crates
 
@@ -35,7 +35,14 @@ which mirrors `open/utils-rs/` from bos-main.
 
 ### Shared
 
-- **bmc-shared/ii-net-drv** — WiFi management via OpenWrt UCI/ubus
+- **bmc-net/bmc-net** — the `NetworkManager` facade: network config, provisioning state machine, setup AP and captive
+  portal, with `openwrt` (UCI), `buildroot` and `mock` backends
+- **bmc-net/bmc-net-types** — dependency-light value types (`MacAddr`, network protocol config, WiFi status/scan)
+- **bmc-net/bmc-net-drv** — interface enumeration plus the `WifiDriver` backends: `nl80211` (OpenWrt UCI/ubus) and
+  `esp32` (ESP32-over-SDIO setup AP)
+- **bmc-net/bmc-net-dns** — the `IiResolver` DNS/NTP resolver
+- **bmc-net/bmc-net-observe** — synchronous, read-only connectivity probes for OS-driven overlays
+- **bmc-net/bmc-net-diag** — network diagnostics for the support archive (ifconfig, public IP, ping, pcap)
 - **bmc-shared/time** — timezone handling
 - **bmc-shared/utils** — number formatting, helpers
 

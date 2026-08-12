@@ -24,7 +24,7 @@ graph TD
         LED["bmc-led\nSPI APA102"]
         DRM["LinuxDrmPlatform\nevent loop + DRM"]
         BTN["bmc-button\nuevent"]
-        WIFI["bmc-shared\nii-net-drv\nWiFi/uci"]
+        WIFI["bmc-net\nbmc-net-drv\nWiFi/uci"]
     end
 
     subgraph platform["bmc-openwrt — main binary, platform glue"]
