@@ -22,18 +22,35 @@
 """Render dark-themed equirectangular earth textures from Natural Earth data.
 
 Usage:
-    uv run texture_render.py [--output DIR]
+    uv run texture_render.py [--output DIR] [--keep-lossless]
 
 Generates equirectangular JPEG textures using Natural Earth vector data
-(coastlines, borders, country labels) in multiple dark themes.
+(coastlines, borders, country labels) in multiple dark themes. Rasterizes at
+RENDER and downsamples to TARGET, so the shipped texture is supersampled.
 Resolution configured in _textures.py. See _textures.__doc__ for the UV contract.
+
+Output is not reproducible across machines.
+Cartopy fetches Natural Earth 50m/110m shapefiles from unversioned URLs,
+so a rerun can pick up vector data that differs from the committed texture.
+Only the encode step is pinned, by uv.lock.
 """
 
 import argparse
+import io
 from pathlib import Path
 from typing import TypedDict
 
-from _textures import RENDER_H, RENDER_W, TEXTURE_DIR, print_texture_contract
+from _textures import (
+    BASE_TARGET_W,
+    RENDER_H,
+    RENDER_W,
+    TARGET_H,
+    TARGET_W,
+    TEXTURE_DIR,
+    downsample,
+    print_texture_contract,
+    write_texture,
+)
 
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
@@ -41,6 +58,7 @@ import matplotlib
 import matplotlib.patheffects as pe
 import matplotlib.pyplot as plt
 from cartopy.io import shapereader
+from PIL import Image
 
 matplotlib.use('Agg')
 
@@ -100,8 +118,16 @@ LABEL_OVERRIDES: dict[str, tuple[float, float]] = {
 }
 
 
-def render_texture(theme: Theme, width: int, height: int, output: Path) -> None:
-    """Render a single equirectangular earth texture."""
+def render_texture(
+    theme: Theme,
+    width: int,
+    height: int,
+    target: tuple[int, int],
+    output: Path,
+    *,
+    keep_lossless: bool,
+) -> None:
+    """Render one equirectangular earth texture, downsampled to `target`."""
     dpi = 100
     fig_w = width / dpi
     fig_h = height / dpi
@@ -142,24 +168,30 @@ def render_texture(theme: Theme, width: int, height: int, output: Path) -> None:
 
     _add_country_labels(ax, width, theme, halo)
 
-    fig.savefig(
-        str(output),
-        dpi=dpi,
-        facecolor=fig.get_facecolor(),
-        pad_inches=0,
-        pil_kwargs={'quality': 95},
-    )
+    supersampled = io.BytesIO()
+    fig.savefig(supersampled, format='png', dpi=dpi, facecolor=fig.get_facecolor())
     plt.close(fig)
 
+    supersampled.seek(0)
+    with Image.open(supersampled) as raster:
+        texture = downsample(raster, target)
+
+    if keep_lossless:
+        texture.save(output.with_suffix('.png'))
+    write_texture(texture, output)
+
     size_kb = output.stat().st_size / 1024
-    print(f'  {output.name}: {width}x{height}, {size_kb:.0f} KB')
+    print(
+        f'  {output.name}: rendered {width}x{height}'
+        f' → {target[0]}x{target[1]}, {size_kb:.0f} KB'
+    )
 
 
 def _add_country_labels(
     ax: plt.Axes, img_width: int, theme: Theme, halo: list[pe.withStroke]
 ) -> None:
     """Add country name labels centered on each country."""
-    scale = img_width / 1024
+    scale = img_width / BASE_TARGET_W
     font_size = FONT_SIZE * scale
 
     shpfile = shapereader.natural_earth('110m', 'cultural', 'admin_0_countries')
@@ -206,15 +238,27 @@ def main() -> None:
         default=TEXTURE_DIR,
         help='Output directory (default: ../textures/)',
     )
+    parser.add_argument(
+        '--keep-lossless',
+        action='store_true',
+        help='also write the downsampled texture as PNG, for `just sweep`',
+    )
     args = parser.parse_args()
     args.output.mkdir(exist_ok=True)
 
-    print_texture_contract((RENDER_W, RENDER_H))
-    print('Rendering Natural Earth dark textures...')
+    print_texture_contract((TARGET_W, TARGET_H))
+    print(f'Rendering Natural Earth dark textures at {RENDER_W}x{RENDER_H}...')
     print('  Fetching Natural Earth data (cached after first run)...')
 
     for theme in THEMES:
-        render_texture(theme, RENDER_W, RENDER_H, args.output / f'{theme["id"]}.jpg')
+        render_texture(
+            theme,
+            RENDER_W,
+            RENDER_H,
+            (TARGET_W, TARGET_H),
+            args.output / f'{theme["id"]}.jpg',
+            keep_lossless=args.keep_lossless,
+        )
 
     print('\nDone. Preview with: uv run texture_preview.py')
 

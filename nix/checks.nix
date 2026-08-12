@@ -117,6 +117,33 @@ in
     touch $out
   '';
 
+  # Deliberately not a pipeline job — see tools/test_textures.py for why.
+  # Kept as a check so the suite has one reproducible run without a local venv.
+  iss-texture-tools = pkgs.runCommand "iss-texture-tools"
+    {
+      nativeBuildInputs = [
+        (pkgs.python3.withPackages (ps: [ ps.pytest ps.pillow ps.numpy ]))
+      ];
+      src = lib.fileset.toSource {
+        root = ../.;
+        fileset = lib.fileset.difference
+          (lib.fileset.unions [
+            (lib.fileset.fileFilter (f: f.hasExt "py") ../widgets-wasm/iss-position/tools)
+            ../widgets-wasm/iss-position/tools/pyproject.toml
+            ../widgets-wasm/iss-position/src/render/texture.jpg
+          ])
+          # kept out so nothing here can import cartopy,
+          # which this check's python deliberately lacks
+          ../widgets-wasm/iss-position/tools/texture_render.py;
+      };
+    } ''
+    cp -r $src/widgets-wasm/iss-position widget
+    chmod -R +w widget
+    cd widget/tools
+    pytest -q
+    touch $out
+  '';
+
   python-lint = pkgs.runCommand "python-lint"
     {
       nativeBuildInputs = [ pkgs.ruff ty-bin pkgs.python3 ];

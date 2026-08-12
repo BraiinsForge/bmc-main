@@ -7,9 +7,21 @@ mod root "../.."
 dir := justfile_directory()
 tools_dir := dir + "/tools"
 
-# Render the Natural Earth dark texture (1024x512).
+# Render the Natural Earth dark textures (supersampled, then downsampled).
 render:
     uv run --project {{ tools_dir }} {{ tools_dir }}/texture_render.py
+
+# Render and keep the lossless PNG that `sweep` measures against.
+render-lossless:
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_render.py --keep-lossless
+
+# Downsample a catalog texture to the shipped size and encoding (--force to overwrite).
+downsample source output *flags:
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_compress.py downsample {{ quote(source) }} {{ quote(output) }} {{ flags }}
+
+# Sweep JPEG quality against size and PSNR (needs `just render-lossless`).
+sweep reference=(dir + "/textures/natural-earth-gmaps.png"):
+    uv run --project {{ tools_dir }} {{ tools_dir }}/texture_compress.py sweep {{ quote(reference) }}
 
 # Download all reference textures from the catalog.
 download:
@@ -23,6 +35,10 @@ redownload:
 preview:
     uv run --project {{ tools_dir }} {{ tools_dir }}/texture_preview.py
     @just root::format
+
+# Test the texture pipeline invariants.
+test:
+    uv run --project {{ tools_dir }} pytest {{ tools_dir }}
 
 # Type-check tool scripts with their local venv.
 lint:

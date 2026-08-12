@@ -197,7 +197,13 @@
                '.' "''${paths[@]}" \
                --exec-batch oxipng --zopfli --fast --alpha --strip=safe --opt=max --preserve {}
 
+            # The ISS globe texture is excluded. Its encoding is chosen
+            # by a size/PSNR sweep in widgets-wasm/iss-position/tools;
+            # another pass here would requantize that choice.
+            # Matched by bare name — fd anchors a glob containing '/' to the search root,
+            # so a path pattern stops excluding once this runs on a deeper path.
             fd --extension jpg --extension jpeg --type f \
+               --exclude 'texture.jpg' \
                '.' "''${paths[@]}" \
                --exec-batch jpegoptim --max=70 --strip-all --threshold=5 {}
           '';

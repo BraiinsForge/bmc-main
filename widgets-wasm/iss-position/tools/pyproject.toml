@@ -5,7 +5,19 @@ requires-python = ">=3.12"
 dependencies = [
     "cartopy>=0.23",
     "matplotlib>=3.9",
+    "numpy>=1.26",
+    "pillow>=10.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[tool.pytest.ini_options]
+# The section itself stops the rootdir search here, so pytest never picks up
+# the repo-root coverage options, which target bmc-tui and are absent here.
+testpaths = ["."]
 
 [tool.uv]
 # Scripts run via: uv run texture_render.py
