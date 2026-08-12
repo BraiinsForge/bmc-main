@@ -51,7 +51,6 @@ pub(crate) enum ChildObservation {
 
 pub(crate) struct SpawnedWidget {
     pub pid: u32,
-    pub exit_rx: tokio::sync::oneshot::Receiver<u32>,
     pub identity: WidgetIdentity,
 }
 
@@ -71,6 +70,14 @@ const COMMAND_CHANNEL_CAPACITY: usize = 16;
 pub struct WidgetManager {
     registry: Arc<WidgetRegistry>,
     cmd_tx: mpsc::Sender<Command>,
+}
+
+/// Widget lifecycle notification from the child actor.
+#[derive(Debug)]
+pub enum WidgetEvent {
+    /// The process exited on its own; externally stopped widgets are not
+    /// reported. The pid lets the consumer drop stale pid associations.
+    Exited { instance_id: String, pid: u32 },
 }
 
 enum Command {
@@ -95,7 +102,14 @@ enum Command {
 type SpawnReply = Result<SpawnedWidget, SpawnError>;
 
 impl WidgetManager {
-    pub async fn init(widgets_paths: Vec<PathBuf>, capture_widget_output: bool) -> Self {
+    /// Returns the handle together with its lifecycle event stream.
+    /// Handing the stream out here, rather than fetching it later,
+    /// makes it impossible for a caller to forget: the events must be consumed
+    /// for the compositor's pid bookkeeping to stay in step with the processes.
+    pub async fn init(
+        widgets_paths: Vec<PathBuf>,
+        capture_widget_output: bool,
+    ) -> (Self, mpsc::UnboundedReceiver<WidgetEvent>) {
         info!("initializing widget manager");
         for path in &widgets_paths {
             info!(path = %path.display(), "scanning widget directory");
@@ -116,14 +130,16 @@ impl WidgetManager {
         let spawner = WaylandSpawner::new(capture_widget_output);
 
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
         let actor = Actor {
             registry: registry.clone(),
             spawner,
             children: HashMap::new(),
+            events_tx,
         };
         tokio::spawn(actor.run(cmd_rx));
 
-        Self { registry, cmd_tx }
+        (Self { registry, cmd_tx }, events_rx)
     }
 
     /// Get a shared reference to the widget registry.
@@ -142,11 +158,8 @@ impl WidgetManager {
     /// the pid to correlate the eventual Wayland connection back to the
     /// widget's registered instance id.
     ///
-    /// Also returns a oneshot receiver that fires with the pid when the
-    /// child process exits on its own,
-    /// so the caller can clear the pid from the compositor
-    /// and prevent stale pid recycling.
-    /// An externally stopped widget drops the receiver without firing it.
+    /// A self-exit of the process is reported as [`WidgetEvent::Exited`]
+    /// on the stream returned by [`Self::init`].
     pub(crate) async fn spawn_widget(&self, widget_uid: Uuid, env: WidgetEnv) -> SpawnReply {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
@@ -215,9 +228,6 @@ struct RunningWidget {
     /// Requests a graceful stop;
     /// carries the reply sender acknowledged once the process is gone.
     stop_tx: oneshot::Sender<oneshot::Sender<()>>,
-    /// Fired with the pid when the child exits on its own;
-    /// dropped unfired on an external stop.
-    exit_notify: oneshot::Sender<u32>,
 }
 
 /// Notification from a [`run_child`] task that its process exited on its own
@@ -232,6 +242,7 @@ struct Actor {
     registry: Arc<WidgetRegistry>,
     spawner: WaylandSpawner,
     children: HashMap<String, RunningWidget>,
+    events_tx: mpsc::UnboundedSender<WidgetEvent>,
 }
 
 impl Actor {
@@ -245,7 +256,7 @@ impl Actor {
                     // kill_on_drop reap any survivors.
                     None => break,
                 },
-                Some(exit) = exit_rx.recv() => self.handle_exit(&exit),
+                Some(exit) = exit_rx.recv() => self.handle_exit(exit),
             }
         }
     }
@@ -324,18 +335,11 @@ impl Actor {
         }
 
         let (stop_tx, stop_rx) = oneshot::channel();
-        let (exit_notify_tx, exit_notify_rx) = oneshot::channel();
         // A re-spawn of a live instance replaces its entry;
         // the replaced entry's run_child task drops its Child,
         // which kill_on_drop reaps.
-        self.children.insert(
-            env.instance_id.clone(),
-            RunningWidget {
-                pid,
-                stop_tx,
-                exit_notify: exit_notify_tx,
-            },
-        );
+        self.children
+            .insert(env.instance_id.clone(), RunningWidget { pid, stop_tx });
         tokio::spawn(run_child(
             env.instance_id.clone(),
             pid,
@@ -348,7 +352,6 @@ impl Actor {
 
         Ok(SpawnedWidget {
             pid,
-            exit_rx: exit_notify_rx,
             identity: widget.identity,
         })
     }
@@ -385,7 +388,7 @@ impl Actor {
         });
     }
 
-    fn handle_exit(&mut self, exit: &ChildExit) {
+    fn handle_exit(&mut self, exit: ChildExit) {
         let Some(widget) = self.children.get(&exit.instance_id) else {
             return;
         };
@@ -394,11 +397,11 @@ impl Actor {
             // already replaced by a newer one.
             return;
         }
-        let widget = self
-            .children
-            .remove(&exit.instance_id)
-            .expect("BUG: entry checked present above");
-        let _ = widget.exit_notify.send(exit.pid);
+        self.children.remove(&exit.instance_id);
+        let _ = self.events_tx.send(WidgetEvent::Exited {
+            instance_id: exit.instance_id,
+            pid: exit.pid,
+        });
     }
 }
 
@@ -535,7 +538,7 @@ mod tests {
         let temp = tempfile::TempDir::new().expect("BUG: tempdir");
         let running_dir = temp.path().join("running");
         write_widget(&running_dir, "#!/bin/sh\nwhile :; do sleep 1; done\n");
-        let running_manager = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
+        let (running_manager, _events) = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
         let spawned = spawn(&running_manager, "running").await;
         assert_eq!(spawned.identity.canonical_dir, running_dir);
         assert_eq!(
@@ -552,14 +555,15 @@ mod tests {
         std::fs::remove_dir_all(&running_dir).expect("BUG: remove running widget");
         let exited_dir = temp.path().join("exited");
         write_widget(&exited_dir, "#!/bin/sh\nexit 0\n");
-        let exited_manager = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
+        let (exited_manager, _exited_events) =
+            WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
         let _ = spawn(&exited_manager, "exited").await;
         wait_until_untracked(&exited_manager, "exited").await;
     }
 
     #[tokio::test]
     async fn spawn_unknown_widget_fails() {
-        let manager = WidgetManager::init(Vec::new(), false).await;
+        let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
         let env = WidgetEnv {
             instance_id: "test-instance".to_owned(),
             wayland_display: "wayland-test".to_owned(),
@@ -570,13 +574,13 @@ mod tests {
 
     #[tokio::test]
     async fn stop_unknown_widget_returns() {
-        let manager = WidgetManager::init(Vec::new(), false).await;
+        let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
         manager.stop_widget("no-such-instance").await;
     }
 
     #[tokio::test]
     async fn stop_all_without_widgets_returns_no_ids() {
-        let manager = WidgetManager::init(Vec::new(), false).await;
+        let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
         assert!(manager.stop_all().await.is_empty());
     }
 }

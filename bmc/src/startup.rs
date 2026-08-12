@@ -295,7 +295,7 @@ where
         )
         .await;
 
-        let widget_manager =
+        let (widget_manager, widget_events) =
             WidgetManager::init(config.widgets_paths.clone(), config.capture_widget_output).await;
         let widget_registry = widget_manager.registry();
         let widget_coordinator = Arc::new(Coordinator::new(
@@ -498,6 +498,11 @@ where
                 accounts_rx,
             );
         }
+
+        crate::widget::coordinator::start_widget_event_listener(
+            widget_coordinator.clone(),
+            widget_events,
+        );
 
         {
             let config_guard = config_handle.read().await;

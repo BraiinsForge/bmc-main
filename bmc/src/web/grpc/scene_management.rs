@@ -2317,7 +2317,9 @@ mod tests {
         let compositor: Arc<dyn crate::compositor::Compositor> =
             Arc::new(RecordingCompositor::default());
         Coordinator::new(
-            crate::widget::WidgetManager::init(Vec::new(), false).await,
+            crate::widget::WidgetManager::init(Vec::new(), false)
+                .await
+                .0,
             compositor,
             registry,
             bmc100_caps(None),
@@ -2455,7 +2457,9 @@ mod tests {
         }
         let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
         let coordinator = Arc::new(Coordinator::new(
-            crate::widget::WidgetManager::init(Vec::new(), false).await,
+            crate::widget::WidgetManager::init(Vec::new(), false)
+                .await
+                .0,
             compositor_for_coordinator,
             registry,
             bmc100_caps(None),
@@ -3381,7 +3385,8 @@ mod tests {
                 .await
                 .0,
         ));
-        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let (widget_manager, _widget_events) =
+            crate::widget::WidgetManager::init(Vec::new(), false).await;
         let widget_registry = widget_manager.registry();
         let compositor = Arc::new(RecordingCompositor::default());
         let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
@@ -3448,7 +3453,8 @@ mod tests {
                 .await
                 .0,
         ));
-        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let (widget_manager, _widget_events) =
+            crate::widget::WidgetManager::init(Vec::new(), false).await;
         let widget_registry = widget_manager.registry();
         let compositor = Arc::new(RecordingCompositor::default());
         let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
@@ -3505,7 +3511,8 @@ mod tests {
             config.scenes_mut().insert(scene.id, scene);
         }
 
-        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let (widget_manager, _widget_events) =
+            crate::widget::WidgetManager::init(Vec::new(), false).await;
         let widget_registry = widget_manager.registry();
         let compositor = Arc::new(RecordingCompositor::default());
         let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
@@ -3597,7 +3604,8 @@ mod tests {
             config.scenes_mut().insert(scene_b.id, scene_b);
         }
 
-        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
+        let (widget_manager, _widget_events) =
+            crate::widget::WidgetManager::init(Vec::new(), false).await;
         let compositor = Arc::new(RecordingCompositor::default());
         let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
         let capabilities = bmc100_caps(None);

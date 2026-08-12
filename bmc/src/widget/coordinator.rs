@@ -28,7 +28,7 @@ use indexmap::IndexMap;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Duration;
-use tokio::sync::{RwLock, broadcast, watch};
+use tokio::sync::{RwLock, broadcast, mpsc, watch};
 use tracing::{debug, info, warn};
 
 use crate::BmcManager;
@@ -43,7 +43,7 @@ use crate::secret_store::SecretStoreHandle;
 use bmc_net::NetworkManager;
 
 use super::manager::ChildObservation;
-use super::{WidgetIdentity, WidgetManager, WidgetRegistry};
+use super::{WidgetEvent, WidgetIdentity, WidgetManager, WidgetRegistry};
 
 #[must_use]
 pub(crate) fn fullscreen_descriptor_for_widget(
@@ -324,6 +324,24 @@ pub fn start_credential_listener(
             {
                 if let Err(err) = coordinator.update_widget_credentials(widget).await {
                     warn!(widget_id = %widget.id, error = %err, "failed to push credentials to widget");
+                }
+            }
+        }
+    });
+}
+
+/// Apply widget lifecycle events from the manager to the compositor:
+/// a self-exited process gets its pid association cleared,
+/// so a recycled pid cannot be mistaken for the dead widget.
+pub fn start_widget_event_listener(
+    coordinator: Arc<Coordinator>,
+    mut events: mpsc::UnboundedReceiver<WidgetEvent>,
+) {
+    tokio::spawn(async move {
+        while let Some(event) = events.recv().await {
+            match event {
+                WidgetEvent::Exited { instance_id, pid } => {
+                    let _ = coordinator.compositor.clear_pid(&instance_id, pid);
                 }
             }
         }
@@ -725,19 +743,6 @@ impl Coordinator {
             .clear();
     }
 
-    fn observe_widget_exit(
-        &self,
-        instance_id: String,
-        exit_rx: tokio::sync::oneshot::Receiver<u32>,
-    ) {
-        let compositor = Arc::clone(&self.compositor);
-        tokio::spawn(async move {
-            if let Ok(exited_pid) = exit_rx.await {
-                let _ = compositor.clear_pid(&instance_id, exited_pid);
-            }
-        });
-    }
-
     pub async fn spawn_initial_widgets(
         &self,
         scenes: &IndexMap<SceneId, Scene>,
@@ -912,7 +917,7 @@ impl Coordinator {
             .spawn_widget(widget.widget_type_id, widget_env)
             .await
         {
-            Ok(result) => result,
+            Ok(spawned) => spawned,
             Err(e) => {
                 warn!(
                     scene_id = %scene_id,
@@ -936,10 +941,6 @@ impl Coordinator {
                 "failed to associate pid with widget; widget may not receive initial state"
             );
         }
-
-        // Clear the pid from the compositor when the child exits
-        // so a recycled pid cannot be mistaken for this widget.
-        self.observe_widget_exit(instance_id.clone(), spawned.exit_rx);
 
         self.record_spawn(
             instance_id,
