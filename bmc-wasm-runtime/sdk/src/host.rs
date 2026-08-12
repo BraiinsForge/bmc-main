@@ -28,6 +28,8 @@
 #[cfg(target_arch = "wasm32")]
 use crate::net::FetchBodyRef;
 #[cfg(target_arch = "wasm32")]
+use bmc_wasm_protocol::time::LocalDateTime;
+#[cfg(target_arch = "wasm32")]
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
@@ -78,9 +80,6 @@ mod ffi {
         pub(super) fn host_display_size() -> u64;
         // Display shape (wire u32) and dpi, packed `(shape << 32) | dpi`.
         pub(super) fn host_display_shape_dpi() -> u64;
-
-        // Date parsing
-        fn host_parse_date(str_ptr: *const u8, str_len: u32) -> i64;
 
         // New tree-based API
         fn host_submit_tree(ptr: *const u8, len: u32, width: u32, height: u32);
@@ -296,15 +295,6 @@ mod ffi {
                 package_ref.as_bytes().as_ptr(),
             )
         })
-    }
-
-    /// Parse an ISO 8601 date string (e.g. "2026-02-13T10:15:56Z") into a unix timestamp.
-    ///
-    /// Returns `None` if the string is not a valid date.
-    #[must_use]
-    pub fn parse_date(s: &str) -> Option<i64> {
-        let val = unsafe { host_parse_date(s.as_ptr(), s.len() as u32) };
-        if val == i64::MIN { None } else { Some(val) }
     }
 
     /// Register mesh data (optimized binary format) with the host under `tag`.
@@ -902,26 +892,6 @@ pub fn display_info() -> DisplayInfo {
 #[derive(Debug, Clone, Copy)]
 pub struct SystemTime {
     pub unix_secs: i64,
-}
-
-/// Decomposed wall-clock view of a `SystemTime` in a specific zone.
-#[derive(Debug, Clone, Copy)]
-pub struct LocalDateTime {
-    pub year: u16,
-    pub month: u8,
-    pub day: u8,
-    pub hour: u8,
-    pub minute: u8,
-    pub second: u8,
-    /// 0 = Monday, 6 = Sunday.
-    pub weekday: u8,
-}
-
-impl LocalDateTime {
-    #[must_use]
-    pub fn seconds_since_midnight(&self) -> u32 {
-        u32::from(self.hour) * 3_600 + u32::from(self.minute) * 60 + u32::from(self.second)
-    }
 }
 
 impl SystemTime {

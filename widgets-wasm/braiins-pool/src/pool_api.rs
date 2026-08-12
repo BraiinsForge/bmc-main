@@ -135,7 +135,7 @@ impl JsonLookup for bmc_wasm_sdk::json::JsonDoc {
 }
 
 /// Timestamp-string → unix-seconds parser, injected so pure code never calls
-/// the host directly (`host::parse_date` on wasm, a fixture map in tests).
+/// the host directly (`host::parse_datetime` on wasm, a fixture map in tests).
 pub type ParseDate<'a> = &'a dyn Fn(&str) -> Option<i64>;
 
 /// The strftime pattern producing the API's RFC 3339 UTC timestamp form

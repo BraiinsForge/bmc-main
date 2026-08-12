@@ -57,7 +57,7 @@ impl LaunchData {
         let Some(net) = doc.str("/data/net") else {
             return Ok(None);
         };
-        let launch_unix = parse_date(&net).ok_or(LaunchParseError::InvalidDate)?;
+        let launch_unix = parse_datetime(&net).ok_or(LaunchParseError::InvalidDate)?;
 
         let mission_name = doc
             .str("/data/mission/name")

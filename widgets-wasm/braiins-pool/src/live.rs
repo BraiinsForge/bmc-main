@@ -201,7 +201,7 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
     // it trips it.
     let _reply = profile::span(source.name());
     let json = response.json();
-    let to_unix = |s: &str| parse_date(s);
+    let to_unix = |s: &str| parse_datetime(s);
     DATA.with(|data| {
         let mut data = data.borrow_mut();
         data.access_denied = false;
@@ -517,7 +517,7 @@ fn continue_chain(source: Source, response: &FetchResponse) {
         return;
     }
     let json = response.json();
-    absorb_page(source, &json, &|s| parse_date(s), from);
+    absorb_page(source, &json, &|s| parse_datetime(s), from);
 }
 
 /// Enable exactly the polls the current (style × size × toggle) needs.

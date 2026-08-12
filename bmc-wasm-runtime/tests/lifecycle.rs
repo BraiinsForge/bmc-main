@@ -922,9 +922,47 @@ fn sdk_version_constant_matches_fixture_assumption() {
     let (major, minor, patch) = WasmWidgetRuntime::host_sdk_version();
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
-        packed, 327_680,
+        packed, 393_216,
         "host SDK version drifted to ({major}, {minor}, {patch}); \
          bumping `SDK_VERSION` means updating this pinned literal."
+    );
+}
+
+/// A widget declaring the major after the host's.
+///
+/// Every other fixture reports `SDK_VERSION` — a tree builds its widgets
+/// against the SDK sitting in it. This one has to disagree, and does so
+/// by construction rather than through a literal that goes stale.
+fn next_major_wat() -> String {
+    let (major, minor, patch) = bmc_wasm_protocol::SDK_VERSION;
+    format!(
+        r#"
+    (module
+      (memory (export "memory") 1)
+      (func (export "__bmc_sdk_init") (result i64) i64.const {})
+      (func (export "render") (param i32)))
+    "#,
+        bmc_wasm_protocol::version_pack((major + 1, minor, patch))
+    )
+}
+
+#[test]
+fn a_widget_a_major_ahead_of_the_host_is_refused() {
+    let wasm = wat::parse_str(next_major_wat()).expect("BUG: probe WAT must parse");
+    let Err(error) = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig::default(),
+    ) else {
+        panic!("BUG: a foreign major must not instantiate");
+    };
+    assert!(
+        error.to_string().contains("SDK major version mismatch"),
+        "refused, but not over the version: {error}"
     );
 }
 

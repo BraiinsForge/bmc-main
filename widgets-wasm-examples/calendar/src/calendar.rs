@@ -361,7 +361,7 @@ fn expand_raw_event(
 /// Supports formats: `YYYYMMDD`, `YYYYMMDDTHHmmss`, `YYYYMMDDTHHmmssZ`
 fn parse_ical_datetime(s: &str) -> Option<i64> {
     let iso = ical_to_iso(s);
-    parse_date(&iso)
+    parse_datetime(&iso)
 }
 
 /// Convert iCal datetime format to ISO 8601 for host parsing.

@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Calendar host function wrappers — RRULE expansion and timezone conversion.
+//! Calendar host function wrappers — date parsing, RRULE expansion, and
+//! timezone conversion.
 //!
 //! These functions delegate heavy computation to the host to avoid pulling
 //! `rrule` + `chrono-tz` (~1.8 MB) into the WASM binary.
@@ -44,8 +45,7 @@
 //! }
 //! ```
 
-use crate::host::LocalDateTime;
-
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_expand_rrule(
@@ -55,7 +55,45 @@ unsafe extern "C" {
         out_cap: u32,
     ) -> i32;
 
-    fn host_tz_convert(unix_secs: i64, tz_ptr: *const u8, tz_len: u32, out_ptr: *mut u8) -> i32;
+    // Not `host_tz_convert`: that name is frozen on the 20-byte layout
+    // SDK 0.5 binaries decode.
+    fn host_tz_wall_clock(unix_secs: i64, tz_ptr: *const u8, tz_len: u32, out_ptr: *mut u8) -> i32;
+
+    fn host_parse_datetime(str_ptr: *const u8, str_len: u32) -> i64;
+
+    fn host_parse_calendar_date(str_ptr: *const u8, str_len: u32, out_ptr: *mut u8) -> i32;
+}
+
+pub use bmc_wasm_protocol::time::{CalendarDate, LocalDateTime, month_short, weekday_short};
+
+/// Parse a date-time into a unix timestamp, in the relaxed RFC 3339 the
+/// host's parser accepts: `2026-02-13T10:15:56Z`, the same with a space
+/// separator, or with a `+02:00`-style offset.
+///
+/// Returns `None` unless the text names an instant. A UTC offset is
+/// required, so a bare `2026-02-13 10:15:56` is refused rather than
+/// guessed at; for a day without a time use [`parse_calendar_date`].
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn parse_datetime(s: &str) -> Option<i64> {
+    #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
+    let val = unsafe { host_parse_datetime(s.as_ptr(), s.len() as u32) };
+    if val == i64::MIN { None } else { Some(val) }
+}
+
+/// Parse a `YYYY-MM-DD` date, which names a day rather than an instant.
+///
+/// Returns `None` if the text is not such a date.
+#[cfg(target_arch = "wasm32")]
+#[must_use]
+pub fn parse_calendar_date(s: &str) -> Option<CalendarDate> {
+    let mut buf = [0_u8; CalendarDate::WIRE_LEN];
+    #[expect(clippy::cast_possible_truncation, reason = "wasm pointers are 32-bit")]
+    let rc = unsafe { host_parse_calendar_date(s.as_ptr(), s.len() as u32, buf.as_mut_ptr()) };
+    if rc < 0 {
+        return None;
+    }
+    CalendarDate::from_wire(buf)
 }
 
 /// Expand an RRULE into concrete occurrence timestamps (UTC).
@@ -81,6 +119,7 @@ unsafe extern "C" {
 /// ```
 ///
 /// Output: packed `i64[]` LE (UTC timestamps), unchanged from before.
+#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn expand_rrule(
     rrule: &str,
@@ -130,6 +169,7 @@ pub fn expand_rrule(
 }
 
 /// Push a length-prefixed string into a binary buffer (u16 LE length + bytes).
+#[cfg(target_arch = "wasm32")]
 fn push_str(buf: &mut Vec<u8>, s: &str) {
     let len = s.len().min(u16::MAX as usize) as u16;
     buf.extend_from_slice(&len.to_le_bytes());
@@ -139,11 +179,12 @@ fn push_str(buf: &mut Vec<u8>, s: &str) {
 /// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
 ///
 /// Returns `None` if the timezone name is unknown.
+#[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
-    let mut buf = [0u8; 20];
+    let mut buf = [0_u8; LocalDateTime::WIRE_LEN];
     let rc = unsafe {
-        host_tz_convert(
+        host_tz_wall_clock(
             unix_secs,
             timezone.as_ptr(),
             timezone.len() as u32,
@@ -153,17 +194,5 @@ pub fn tz_convert(unix_secs: i64, timezone: &str) -> Option<LocalDateTime> {
     if rc < 0 {
         return None;
     }
-    // Host's tz_convert still emits the legacy 20-byte layout.
-    // Pick out year/month/day/hour/minute/second/weekday;
-    // drop the redundant unix_secs (the caller passed it in)
-    // and utc_offset_secs.
-    Some(LocalDateTime {
-        year: u16::from_le_bytes([buf[12], buf[13]]),
-        month: buf[14],
-        day: buf[15],
-        hour: buf[16],
-        minute: buf[17],
-        second: buf[18],
-        weekday: buf[19],
-    })
+    LocalDateTime::from_wire(buf)
 }

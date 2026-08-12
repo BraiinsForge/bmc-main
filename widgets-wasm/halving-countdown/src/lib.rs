@@ -261,7 +261,7 @@ mod wasm_glue {
         // to `next.delta` (seconds-from-now, recomputed server-side per read).
         let predicted_unix = json
             .str("/data/next/timestamp")
-            .and_then(|ts| parse_date(&ts))
+            .and_then(|ts| parse_datetime(&ts))
             .or_else(|| {
                 json.i64("/data/next/delta")
                     .and_then(|delta| SystemTime::now().unix_secs.checked_add(delta))

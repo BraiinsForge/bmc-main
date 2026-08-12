@@ -82,7 +82,7 @@ pub fn select_tz(_mode: crate::manifest_params::TimeZone, _location_tz: &str) ->
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn hour_label(rfc3339: &str, tz: Option<Tz>) -> String {
-    let Some(unix_secs) = parse_date(rfc3339) else {
+    let Some(unix_secs) = parse_datetime(rfc3339) else {
         return NOT_AVAILABLE.to_string();
     };
     format_time(
@@ -108,7 +108,7 @@ pub fn hour_label(rfc3339: &str, _tz: Option<Tz>) -> String {
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn forecast_hour_label(rfc3339: &str, tz: Option<&Tz>) -> String {
-    let Some(unix_secs) = parse_date(rfc3339) else {
+    let Some(unix_secs) = parse_datetime(rfc3339) else {
         return NOT_AVAILABLE.to_string();
     };
     format::format_hour(SystemTime { unix_secs }, tz)
@@ -128,7 +128,7 @@ pub fn forecast_hour_label(rfc3339: &str, _tz: Option<&Tz>) -> String {
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn clock_meridiem(rfc3339: &str, tz: Option<&Tz>) -> Option<String> {
-    let unix_secs = parse_date(rfc3339)?;
+    let unix_secs = parse_datetime(rfc3339)?;
     format::meridiem(SystemTime { unix_secs }, tz)
 }
 

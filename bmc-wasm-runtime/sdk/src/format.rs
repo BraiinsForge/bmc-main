@@ -260,7 +260,7 @@ pub fn _host_format_temperature(value: f64, decimals: u32, show_unit: u32) -> St
 ///
 /// # Example
 /// ```ignore
-/// let ts = parse_date("2026-03-04T04:19:23+00:00").unwrap();
+/// let ts = parse_datetime("2026-03-04T04:19:23+00:00").unwrap();
 /// let s = strftime(ts, "%m/%d %H:%M"); // "03/04 04:19"
 /// let s = strftime(ts, "%d.%m.%Y %H:%M:%S"); // "04.03.2026 04:19:23"
 /// ```

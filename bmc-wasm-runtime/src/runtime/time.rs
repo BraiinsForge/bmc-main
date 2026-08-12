@@ -20,10 +20,9 @@
 
 //! Formatting and calendar/time helpers for the WASM runtime.
 
-#![expect(clippy::cast_possible_truncation)]
-
 use bmc_wasm_protocol::system::NumberFormat;
-use chrono::{DateTime, Datelike, Local, Timelike};
+use bmc_wasm_protocol::time::{CalendarDate, LocalDateTime};
+use chrono::{DateTime, Datelike, Local, NaiveDate, Timelike};
 
 pub(super) fn format_number_with_prefs(nf: NumberFormat, value: f64, decimals: u32) -> String {
     bmc_shared_utils::number_format::NumberFormat::from(nf).format_number(value, decimals as usize)
@@ -117,15 +116,14 @@ pub(super) fn expand_rrule_impl(input: &[u8]) -> Vec<i64> {
     result.dates.into_iter().map(|dt| dt.timestamp()).collect()
 }
 
-/// Convert a UTC unix timestamp to wall-clock time in a named IANA timezone.
-/// Returns the 20-byte SystemTime wire format, or `None` on error.
-pub(super) fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
-    use chrono::Offset;
+/// Convert a UTC unix timestamp to wall-clock time in a named IANA
+/// timezone, or `None` where the zone is unknown.
+pub(super) fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<LocalDateTime> {
     use chrono::TimeZone;
 
     let dt_utc = DateTime::from_timestamp(unix_secs, 0)?;
 
-    let (year, month, day, hour, minute, second, weekday, utc_offset) = if tz_name == "Local" {
+    let (year, month, day, hour, minute, second, weekday) = if tz_name == "Local" {
         let local = dt_utc.with_timezone(&Local);
         (
             local.year(),
@@ -135,7 +133,6 @@ pub(super) fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]>
             local.minute(),
             local.second(),
             local.weekday().num_days_from_monday(),
-            local.offset().fix().local_minus_utc(),
         )
     } else {
         let tz: chrono_tz::Tz = tz_name.parse().ok()?;
@@ -148,31 +145,108 @@ pub(super) fn tz_convert_impl(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]>
             local.minute(),
             local.second(),
             local.weekday().num_days_from_monday(),
-            local.offset().fix().local_minus_utc(),
         )
     };
 
+    Some(LocalDateTime {
+        year: u16::try_from(year).ok()?,
+        month: u8::try_from(month).ok()?,
+        day: u8::try_from(day).ok()?,
+        hour: u8::try_from(hour).ok()?,
+        minute: u8::try_from(minute).ok()?,
+        second: u8::try_from(second).ok()?,
+        weekday: u8::try_from(weekday).ok()?,
+    })
+}
+
+/// The 20-byte answer widgets built against SDK 0.5 decode.
+///
+/// Frozen: those binaries read the fields at `[12..19]` without validating
+/// anything, so the layout has to outlive them.
+pub(super) fn tz_convert_legacy_wire(unix_secs: i64, tz_name: &str) -> Option<[u8; 20]> {
+    let local = tz_convert_impl(unix_secs, tz_name)?;
+    let utc_offset = utc_offset_secs(unix_secs, tz_name)?;
     let mut buf = [0_u8; 20];
     buf[0..8].copy_from_slice(&unix_secs.to_le_bytes());
     buf[8..12].copy_from_slice(&utc_offset.to_le_bytes());
-    #[expect(clippy::cast_sign_loss)]
-    let y = year as u16;
-    buf[12..14].copy_from_slice(&y.to_le_bytes());
-    buf[14] = month as u8;
-    buf[15] = day as u8;
-    buf[16] = hour as u8;
-    buf[17] = minute as u8;
-    buf[18] = second as u8;
-    buf[19] = weekday as u8;
-
+    buf[12..14].copy_from_slice(&local.year.to_le_bytes());
+    buf[14] = local.month;
+    buf[15] = local.day;
+    buf[16] = local.hour;
+    buf[17] = local.minute;
+    buf[18] = local.second;
+    buf[19] = local.weekday;
     Some(buf)
+}
+
+/// The zone's UTC offset at the given instant, in seconds.
+fn utc_offset_secs(unix_secs: i64, tz_name: &str) -> Option<i32> {
+    use chrono::Offset;
+    use chrono::TimeZone;
+
+    let dt_utc = DateTime::from_timestamp(unix_secs, 0)?;
+    Some(if tz_name == "Local" {
+        dt_utc
+            .with_timezone(&Local)
+            .offset()
+            .fix()
+            .local_minus_utc()
+    } else {
+        let tz: chrono_tz::Tz = tz_name.parse().ok()?;
+        tz.from_utc_datetime(&dt_utc.naive_utc())
+            .offset()
+            .fix()
+            .local_minus_utc()
+    })
+}
+
+/// Read a `YYYY-MM-DD` date, which names a day rather than an instant.
+///
+/// Kept apart from the timestamp parser rather than folded into it as a
+/// fallback: turning a date into an instant would mean inventing a time,
+/// and converting that into a zone behind UTC lands on the day before.
+pub(super) fn parse_calendar_date_impl(s: &str) -> Option<CalendarDate> {
+    let date = s.parse::<NaiveDate>().ok()?;
+    Some(CalendarDate {
+        year: u16::try_from(date.year()).ok()?,
+        month: u8::try_from(date.month()).ok()?,
+        day: u8::try_from(date.day()).ok()?,
+        weekday: u8::try_from(date.weekday().num_days_from_monday()).ok()?,
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use bmc_wasm_protocol::system::NumberFormat;
 
-    use super::{format_number_with_prefs, tz_convert_impl};
+    use super::{format_number_with_prefs, parse_calendar_date_impl, tz_convert_impl};
+
+    /// Friday the 21st of August 2026, weekday 4 counting Monday as 0.
+    #[test]
+    fn a_calendar_date_carries_the_weekday_it_was_resolved_with() {
+        let date = parse_calendar_date_impl("2026-08-21").expect("BUG: a well-formed date");
+        assert_eq!(
+            (date.year, date.month, date.day, date.weekday),
+            (2026, 8, 21, 4)
+        );
+    }
+
+    /// The two parsers divide the shapes between them: whatever names an
+    /// instant belongs to the other one, and neither guesses.
+    #[test]
+    fn a_calendar_date_refuses_anything_carrying_a_time() {
+        for text in [
+            "2026-08-21T10:30:00Z",
+            "2026-08-21 10:30:00",
+            "",
+            "not a date at all",
+        ] {
+            assert!(
+                parse_calendar_date_impl(text).is_none(),
+                "`{text}` read as a date",
+            );
+        }
+    }
 
     #[test]
     fn format_number_with_prefs_uses_requested_separators() {

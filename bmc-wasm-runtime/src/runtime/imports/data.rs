@@ -30,7 +30,10 @@ use crate::host_api::HostState;
 use crate::xml::XmlDocumentIndex;
 
 use super::super::memory::{read_bytes, read_string, write_to_wasm};
-use super::super::time::{expand_rrule_impl, format_number_with_prefs, tz_convert_impl};
+use super::super::time::{
+    expand_rrule_impl, format_number_with_prefs, parse_calendar_date_impl, tz_convert_impl,
+    tz_convert_legacy_wire,
+};
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_kv_write_imports(linker)?;
@@ -545,15 +548,38 @@ fn register_json_bool_import(linker: &mut Linker<HostState>) -> Result<()> {
 }
 
 fn register_date_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    // Widgets from SDK 0.5 and earlier import this parser as `host_parse_date`.
+    // Both names resolve here, since the published SDK leaves binaries
+    // nobody can rebuild importing the old one.
+    // `host_bitmap_sample` keeps its retired name for the same reason.
+    for import in ["host_parse_datetime", "host_parse_date"] {
+        linker.func_wrap(
+            "env",
+            import,
+            |caller: Caller<'_, HostState>, str_ptr: u32, str_len: u32| -> i64 {
+                let Some(s) = read_string(&caller, str_ptr, str_len) else {
+                    return i64::MIN;
+                };
+                s.parse::<DateTime<Utc>>()
+                    .map_or(i64::MIN, |dt| dt.timestamp())
+            },
+        )?;
+    }
+
+    // Separate from the timestamp parser above rather than a fallback in it:
+    // a date names a day, so turning one into an instant would mean inventing
+    // a time, and converting that into a zone behind UTC lands on the day before.
     linker.func_wrap(
         "env",
-        "host_parse_date",
-        |caller: Caller<'_, HostState>, str_ptr: u32, str_len: u32| -> i64 {
+        "host_parse_calendar_date",
+        |mut caller: Caller<'_, HostState>, str_ptr: u32, str_len: u32, out_ptr: u32| -> i32 {
             let Some(s) = read_string(&caller, str_ptr, str_len) else {
-                return i64::MIN;
+                return -1;
             };
-            s.parse::<DateTime<Utc>>()
-                .map_or(i64::MIN, |dt| dt.timestamp())
+            let Some(date) = parse_calendar_date_impl(&s) else {
+                return -1;
+            };
+            write_bytes(&mut caller, out_ptr, &date.to_wire())
         },
     )?;
 
@@ -1032,6 +1058,9 @@ fn register_profile_section_import(linker: &mut Linker<HostState>) -> Result<()>
 }
 
 fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
+    // The layout changed, not just the name, so the aliasing above will not do.
+    // 0.5 binaries decode 20 bytes here — `tz_convert_legacy_wire` produces them,
+    // and the 8-byte wire answers to its own name below.
     linker.func_wrap(
         "env",
         "host_tz_convert",
@@ -1045,23 +1074,51 @@ fn register_timezone_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return -1;
             };
 
-            let Some(buf) = tz_convert_impl(unix_secs, &tz_name) else {
+            let Some(buf) = tz_convert_legacy_wire(unix_secs, &tz_name) else {
+                return -1;
+            };
+            write_bytes(&mut caller, out_ptr, &buf)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_tz_wall_clock",
+        |mut caller: Caller<'_, HostState>,
+         unix_secs: i64,
+         tz_ptr: u32,
+         tz_len: u32,
+         out_ptr: u32|
+         -> i32 {
+            let Some(tz_name) = read_string(&caller, tz_ptr, tz_len) else {
                 return -1;
             };
 
-            let memory = caller.get_export("memory").and_then(Extern::into_memory);
-            if let Some(memory) = memory {
-                let data = memory.data_mut(&mut caller);
-                let start = out_ptr as usize;
-                if start + 20 <= data.len() {
-                    data[start..start + 20].copy_from_slice(&buf);
-                }
-            }
-            0
+            let Some(local) = tz_convert_impl(unix_secs, &tz_name) else {
+                return -1;
+            };
+            write_bytes(&mut caller, out_ptr, &local.to_wire())
         },
     )?;
 
     Ok(())
+}
+
+/// Copy a wire form into guest memory, answering `0` or `-1` for it.
+fn write_bytes(caller: &mut Caller<'_, HostState>, out_ptr: u32, bytes: &[u8]) -> i32 {
+    let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else {
+        return -1;
+    };
+    let data = memory.data_mut(caller);
+    let start = out_ptr as usize;
+    let Some(end) = start
+        .checked_add(bytes.len())
+        .filter(|it| *it <= data.len())
+    else {
+        return -1;
+    };
+    data[start..end].copy_from_slice(bytes);
+    0
 }
 
 fn xml_lookup_text(
