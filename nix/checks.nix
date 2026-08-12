@@ -18,10 +18,21 @@
 # under any terms, and such a grant shall be considered distinct from
 # the grant above.
 
-{ pkgs, ty-bin, profiles, deckPackages }:
+{ pkgs, ty-bin, profiles, deckPackages, wasmExamples, wasmWidgetsBundle, wasmStackSize }:
 
 let
   lib = pkgs.lib;
+  # Cargo config spells the stack size out again because the target-specific
+  # environment variable replaces its rustflags array rather than merging it.
+  wasmStackConfig = ../.cargo/config.toml;
+  examplesCargoConfig = ../bmc-wasm-runtime/examples + "/.cargo/config.toml";
+  configuredStackSize = config:
+    let
+      sizes = lib.filter (match: match != null)
+        (map (line: builtins.match ".*-zstack-size=([0-9]+).*" line)
+          (lib.splitString "\n" (builtins.readFile config)));
+    in
+    if sizes == [ ] then null else lib.toInt (lib.head (lib.head sizes));
   publicAsset = import ./public-asset.nix { inherit lib; };
   publicAssetManifest = ./test-data/public-assets/manifest.json;
   publicJpg = publicAsset.mkPublicIcon publicAssetManifest "icon.jpg";
@@ -84,6 +95,27 @@ in
     ast-grep scan --error
     touch $out
   '';
+
+  # `-zstack-size` leaves no trace outside the linked module, so the only
+  # honest confirmation is to read the reservation back off every shipped
+  # widget. Guards the cargo-side copies of the size in the same pass.
+  wasm-stack-size =
+    assert lib.assertMsg
+      (configuredStackSize wasmStackConfig == wasmStackSize)
+      "cargo config disagrees with workspace.nix on the wasm stack size (${toString wasmStackSize})";
+    assert lib.assertMsg
+      (!(builtins.pathExists (../widgets-wasm + "/.cargo/config.toml")))
+      "widgets-wasm/.cargo/config.toml would override the repository wasm rustflags";
+    assert lib.assertMsg
+      (!(builtins.pathExists examplesCargoConfig)
+        || configuredStackSize examplesCargoConfig == null)
+      "the examples cargo config must not override the repository wasm rustflags";
+    pkgs.runCommand "wasm-stack-size" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+      python3 ${../bmc-wasm-runtime/tools/wasm_stack.py} \
+        --expect ${toString wasmStackSize} \
+        ${wasmWidgetsBundle}/*.wasm ${wasmExamples}/*.wasm
+      touch $out
+    '';
 
   docs-wasm = profiles.fast.mkCargoDoc {
     package = "bmc-wasm-sdk";

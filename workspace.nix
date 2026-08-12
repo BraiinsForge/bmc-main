@@ -249,17 +249,20 @@ let
     "--remap-path-prefix=${storePath}=${remapped}";
 
   # Hide the fenix-generated toolchain's volatile hash from produced
-  # .wasm blobs. Apply to every wasm workspace — currently only
-  # workspaceWasmExamples consumes it, but any new wasm target should
-  # reuse this so the remap isn't silently lost.
+  # .wasm blobs. Every wasm workspace must reuse these flags, so that
+  # neither the remap nor the stack reservation is silently lost.
+  # The repository cargo config carries the same stack size for builds that
+  # run outside nix; `wasm-stack-size` checks they agree.
   wasmRemapFlags = mkStorePathRemapFlag "${pkgs.ii.rust.toolchain}";
+  wasmStackSize = 64 * 1024;
+  wasmRustFlags = "${wasmRemapFlags} -C link-arg=-zstack-size=${toString wasmStackSize}";
 
   mkWasmWorkspace = workspacePath: pkgs.ii.rust.mkWorkspaceConfig {
     src = ./.;
     inherit workspacePath;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs);
     env = {
-      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS = wasmRemapFlags;
+      CARGO_TARGET_WASM32_UNKNOWN_UNKNOWN_RUSTFLAGS = wasmRustFlags;
     };
   };
 
@@ -609,7 +612,7 @@ let
 
 in
 {
-  inherit commonDeps bmc deps makeRustflagsEnv wasmWidgetCatalog;
+  inherit commonDeps bmc deps makeRustflagsEnv wasmWidgetCatalog wasmStackSize;
   inherit (initArtifacts) mkInitArtifacts;
   inherit (wasmWidgetsModule) wasmExamples wasmWidgetsBundle wasmWidgets;
   checks = frontend.checks;

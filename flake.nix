@@ -83,6 +83,7 @@
           inherit pkgs ty-bin;
           deckPackages = workspace.legacyPackages.deck-packages;
           inherit (workspace.bmc) profiles;
+          inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
         };
         wasmRegression = import ./nix/wasm-regression.nix {
           inherit pkgs capture;
