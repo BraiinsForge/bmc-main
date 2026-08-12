@@ -21,75 +21,34 @@
 // contact us at opensource@braiins.com.
 
 use anyhow::{Result, anyhow, bail};
-pub use ii_net::wifi::WifiScanItem;
-pub use ii_net::wifi::{EncryptionType, SignalStrength, WifiMode, WifiStatus};
-use log::debug;
+use async_trait::async_trait;
+use bmc_net_types::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
+use log::{debug, warn};
 use scanner::WifiScanner;
+use serde::Deserialize;
+use serde_json::json;
 use sta::WifiSta;
 use std::fmt::Debug;
-use std::future::Future;
-use std::pin::Pin;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
-use tokio::time::Duration;
-use tokio::time::{self, Instant, MissedTickBehavior};
-use uci::UciHelper;
-use utils::{WifiCommand, WifiUtils};
+use tokio::time::{self, Duration, MissedTickBehavior};
 use wl_nl80211::Nl80211Handle;
 
-use crate::wifi::uci::map_uci_iface_to_wifi_status;
-use crate::{NetworkInterface, WIRELESS_CONFIG_FILE_PATH};
+use super::uci::{HtMode, UciHelper, map_uci_iface_to_wifi_status};
+use super::utils::{
+    ATTEMPTS_TO_GET_IP, CommandUtils, WifiCommand, WifiUtils, filter_empty_ssid,
+    filter_unsupported_enc, mark_connected, wait_for_network_ip_address, wait_for_wireless_config,
+};
+use super::{SharedCache, WifiDriver};
+use crate::WIRELESS_CONFIG_FILE_PATH;
 
 mod scanner;
 mod sta;
-mod uci;
-pub mod utils;
 
-const ATTEMPTS_TO_GET_IP: u8 = 30;
-const IP_CHECK_INTERVAL: Duration = Duration::from_secs(1);
-
-const WIRELESS_CONFIG_WAIT_INTERVAL: Duration = Duration::from_secs(1);
-const WIRELESS_CONFIG_GET_ATTEMPTS: u8 = 20;
-const WIRELESS_CONFIG_MIN_SIZE: u64 = 300;
 const WIFI_AP_CHANNEL: u32 = 1;
 // Default beaconing interval in hostapd is 100, but that's too short which leads
 // to clients being disconnected during wifi scanning in APSTA mode.
 const WIFI_AP_BEACON_INTERVAL: u32 = 500;
-
-pub type AsyncUpdate<T> = Pin<Box<dyn Future<Output = T> + Send + 'static>>;
-
-#[derive(Default)]
-struct SharedCache<T> {
-    timeout: Duration,
-    value_with_timestamp: Option<(T, Instant)>,
-}
-
-impl<T> SharedCache<T>
-where
-    T: Debug + Clone,
-{
-    fn new(timeout: Duration) -> Self {
-        Self {
-            timeout,
-            value_with_timestamp: None,
-        }
-    }
-
-    pub async fn cached_or_else<E>(&mut self, update: AsyncUpdate<Result<T, E>>) -> Result<T, E> {
-        if let Some(value) = self
-            .value_with_timestamp
-            .as_ref()
-            .filter(|(_, timestamp)| timestamp.elapsed() < self.timeout)
-            .map(|(value, _)| value.clone())
-        {
-            return Ok(value);
-        }
-
-        let value = update.await?;
-        self.value_with_timestamp = Some((value.clone(), Instant::now()));
-        Ok(value)
-    }
-}
 
 pub struct OpenwrtWifiManager {
     scan_result_list: Mutex<SharedCache<Vec<WifiScanItem>>>,
@@ -124,33 +83,16 @@ impl OpenwrtWifiManager {
         })
     }
 
-    pub async fn get_ap_ssid(&self) -> Option<String> {
-        let uci = UciHelper::new(&self.wlan_dev_syspath);
-        let config = uci.wifi_iface_find_enabled().await?;
-
-        if config.mode == WifiMode::Ap {
-            Some(config.ssid)
-        } else {
-            None
-        }
-    }
-
-    pub async fn get_sta_ssid(&self) -> Option<String> {
-        let uci = UciHelper::new(&self.wlan_dev_syspath);
-        let config = uci.wifi_iface_find_enabled().await?;
-
-        if config.mode == WifiMode::Station {
-            Some(config.ssid)
-        } else {
-            None
-        }
-    }
-
     pub async fn get_phy_macaddress(&self) -> anyhow::Result<String> {
         let phy = WifiUtils::get_phy_path_by_syspath(&self.wlan_dev_syspath).await?;
         let mac = tokio::fs::read_to_string(phy.join("macaddress"))
             .await
-            .map_err(|e| anyhow!("Could not obtain phy's macaddress at {}/macaddress: {e}", phy.display()))?
+            .map_err(|e| {
+                anyhow!(
+                    "Could not obtain phy's macaddress at {}/macaddress: {e}",
+                    phy.display()
+                )
+            })?
             .trim()
             .to_owned();
 
@@ -161,8 +103,8 @@ impl OpenwrtWifiManager {
         Ok(WifiScanner::wifi_scan(device)
             .await?
             .into_iter()
-            .filter(Self::filter_unsupported_enc) // TODO: Remove this filter when we support WPA3 - BOS-2753
-            .filter(Self::filter_empty_ssid)
+            .filter(filter_unsupported_enc)
+            .filter(filter_empty_ssid)
             .collect())
     }
 
@@ -186,75 +128,8 @@ impl OpenwrtWifiManager {
         uci.wifi_radio_configure_ap_channel(WIFI_AP_CHANNEL).await?;
         uci.wifi_radio_configure_beacon_int(WIFI_AP_BEACON_INTERVAL)
             .await?;
-        uci.wifi_radio_configure_ht_mode(uci::HtMode::NoHt).await?;
+        uci.wifi_radio_configure_ht_mode(HtMode::NoHt).await?;
         uci.save_changes().await
-    }
-
-    async fn wait_for_network_ip_address(&self, device: &str, attempts: u8) -> Result<()> {
-        debug!("Wifi connected, waiting for IP address...");
-        let mut interval = time::interval(IP_CHECK_INTERVAL);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-        for i in 0..attempts {
-            debug!("{i}/{attempts} attempt to get IP address from {device}");
-            interval.tick().await;
-            if let Some(ip) =
-                NetworkInterface::get_by_substr(device).and_then(|network| network.ipv4_address())
-            {
-                debug!("IP is assigned: {ip}, connection is complete");
-                return Ok(());
-            }
-        }
-        Err(anyhow!("IP cannot be assigned. Failed to setup wifi"))
-    }
-
-    pub async fn get_wifi_device_name(&self) -> Result<String, anyhow::Error> {
-        WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await
-    }
-
-    pub async fn enable_radio(&self, enable: bool) -> Result<()> {
-        let uci = UciHelper::new(&self.wlan_dev_syspath);
-        uci.wifi_radio_enable(enable).await?;
-        uci.save_changes().await
-    }
-
-    async fn wifi_config_exists(&self) -> Result<()> {
-        let mut interval = time::interval(WIRELESS_CONFIG_WAIT_INTERVAL);
-        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
-
-        for i in 0..WIRELESS_CONFIG_GET_ATTEMPTS {
-            interval.tick().await;
-            debug!(
-                "Checking if wireless config exists. Attempt {i}/{WIRELESS_CONFIG_GET_ATTEMPTS}"
-            );
-            // Hack: We check the size of /etc/config/wireless, which should be always "at least" 300 bytes
-            // since it uses default OpenWRT configuration
-            // This is necessary workaround so we don't open/load the file via UCI library before it's fully created
-            if let Ok(metadata) = tokio::fs::metadata(WIRELESS_CONFIG_FILE_PATH).await
-                && metadata.len() >= WIRELESS_CONFIG_MIN_SIZE {
-                    return Ok(());
-                }
-        }
-
-        bail!("Wi-Fi config is not present")
-    }
-
-    #[allow(dead_code)]
-    async fn get_status(
-        nl80211_handle: Nl80211Handle,
-        wlan_dev_syspath: String,
-    ) -> Result<WifiStatus> {
-        let device = WifiUtils::get_device_by_syspath(&wlan_dev_syspath).await?;
-        let uci = UciHelper::new(&wlan_dev_syspath);
-
-        Ok(WifiStatus {
-            enabled: uci.wifi_enabled().await?,
-            configuration: uci.wifi_iface_find_enabled().await,
-            sta_link_state: WifiSta::link_details(nl80211_handle, &device)
-                .await
-                .inspect_err(|e| debug!("Unable to get WiFi STA link details: {e}"))
-                .ok(),
-        })
     }
 
     async fn get_status_all(
@@ -275,8 +150,49 @@ impl OpenwrtWifiManager {
 
         Ok(wifi_statuses)
     }
+}
 
-    pub async fn configure_ap_mode(
+#[async_trait]
+impl WifiDriver for OpenwrtWifiManager {
+    async fn ap_ssid(&self) -> Option<String> {
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        let config = uci.wifi_iface_find_enabled().await?;
+
+        if config.mode == WifiMode::Ap {
+            Some(config.ssid)
+        } else {
+            None
+        }
+    }
+
+    async fn sta_ssid(&self) -> Option<String> {
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        let config = uci.wifi_iface_find_enabled().await?;
+
+        if config.mode == WifiMode::Station {
+            Some(config.ssid)
+        } else {
+            None
+        }
+    }
+
+    async fn wifi_device_name(&self) -> Result<String, anyhow::Error> {
+        WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await
+    }
+
+    async fn enable_radio(&self, enable: bool) -> Result<()> {
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        uci.wifi_radio_enable(enable).await?;
+        uci.save_changes().await?;
+        WifiCommand::reload().await
+    }
+
+    async fn wait_for_ap_active(&self) -> Result<()> {
+        let device = self.wifi_device_name().await?;
+        wait_for_ap_active(&device, ATTEMPTS_TO_ACTIVATE_AP).await
+    }
+
+    async fn configure_ap_mode(
         &self,
         ssid: String,
         password: Option<String>,
@@ -287,7 +203,17 @@ impl OpenwrtWifiManager {
             .await
     }
 
-    pub async fn save_and_connect(
+    async fn stop_ap(&self) -> Result<()> {
+        // Disable only AP-mode sections: a station enabled by `save_and_connect`
+        // must survive tearing down the setup AP, otherwise stopping the AP
+        // right after a successful reconfiguration drops connectivity.
+        let uci = UciHelper::new(&self.wlan_dev_syspath);
+        uci.wifi_iface_disable_by_mode(WifiMode::Ap).await?;
+        uci.save_changes().await?;
+        WifiCommand::reload().await
+    }
+
+    async fn save_and_connect(
         &self,
         ssid: String,
         password: Option<String>,
@@ -297,33 +223,25 @@ impl OpenwrtWifiManager {
         self.configure_wifi_iface(WifiMode::Station, ssid, password, encryption)
             .await?;
         self.enable_radio(true).await?;
-        WifiCommand::reload().await?;
 
-        self.wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP)
-            .await
+        wait_for_network_ip_address(&device, ATTEMPTS_TO_GET_IP).await
     }
 
-    pub async fn enable(&self, enable: bool) -> Result<()> {
-        self.enable_radio(enable).await?;
-        WifiCommand::reload().await
-    }
-
-    pub async fn reload(&self) -> Result<()> {
-        WifiCommand::reload().await
-    }
-
-    pub async fn scan(&self) -> Result<Vec<WifiScanItem>> {
+    async fn scan(&self) -> Result<Vec<WifiScanItem>> {
         let device = WifiUtils::get_device_by_syspath(&self.wlan_dev_syspath).await?;
-        self.scan_result_list
+        let mut items = self
+            .scan_result_list
             .lock()
             .await
             .cached_or_else(Box::pin(async move {
                 Self::get_wifi_filtered_scan_list(&device).await
             }))
-            .await
+            .await?;
+        mark_connected(&mut items, self.sta_ssid().await);
+        Ok(items)
     }
 
-    pub async fn status(&self) -> Result<WifiStatus> {
+    async fn status(&self) -> Result<WifiStatus> {
         self.status_all()
             .await?
             .into_iter()
@@ -333,7 +251,7 @@ impl OpenwrtWifiManager {
             })
     }
 
-    pub async fn status_all(&self) -> Result<Vec<WifiStatus>> {
+    async fn status_all(&self) -> Result<Vec<WifiStatus>> {
         let wlan_dev_syspath = self.wlan_dev_syspath.clone();
         let nl80211_handle = self.nl80211_handle.clone();
         self.wifi_status_cache
@@ -345,7 +263,7 @@ impl OpenwrtWifiManager {
             .await
     }
 
-    pub async fn reset_config(&self) -> Result<()> {
+    async fn reset_config(&self) -> Result<()> {
         debug!("Removing wireless config");
         if let Err(e) = tokio::fs::remove_file(WIRELESS_CONFIG_FILE_PATH).await {
             match e.kind() {
@@ -358,18 +276,62 @@ impl OpenwrtWifiManager {
             }
         }
         WifiCommand::config().await?;
-        self.wifi_config_exists().await
+        wait_for_wireless_config().await
+    }
+}
+
+/// Mode string `iwinfo` reports for an interface beaconing as an access point;
+/// the same spelling the scan filter matches on.
+const IWINFO_AP_MODE: &str = "Master";
+
+const AP_ACTIVE_WAIT_INTERVAL: Duration = Duration::from_secs(1);
+
+const ATTEMPTS_TO_ACTIVATE_AP: u8 = 20;
+
+#[derive(Deserialize)]
+struct IwinfoInfo {
+    mode: String,
+}
+
+/// Polls `iwinfo` until `device` reports it is beaconing as an access point.
+///
+/// Individual query failures are retried rather than propagated: right after a
+/// reload the interface is legitimately absent or mid-reconfiguration, so one
+/// failed call says nothing about the eventual outcome.
+///
+/// Exhausting every attempt only fails when `iwinfo` actually answered at some
+/// point and simply never reported AP mode. If it never answered at all the
+/// probe itself is unavailable, which is a gap in our diagnostics rather than
+/// evidence the AP is down, and bringing setup mode up must not hinge on it.
+async fn wait_for_ap_active(device: &str, attempts: u8) -> Result<()> {
+    let mut interval = time::interval(AP_ACTIVE_WAIT_INTERVAL);
+    interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+    let ubus_param = json!({ "device": device }).to_string();
+    let mut mode_observed = false;
+
+    for i in 0..attempts {
+        interval.tick().await;
+        debug!("Waiting for AP on {device} to broadcast. Attempt {i}/{attempts}");
+
+        match CommandUtils::call_ubus_cmd(&["call", "iwinfo", "info", &ubus_param]).await {
+            Ok(output) => match serde_json::from_str::<IwinfoInfo>(&output) {
+                Ok(info) if info.mode == IWINFO_AP_MODE => return Ok(()),
+                Ok(info) => {
+                    mode_observed = true;
+                    debug!("{device} is in mode {}, waiting for AP", info.mode);
+                }
+                Err(e) => debug!("Unable to parse iwinfo info for {device}: {e}"),
+            },
+            Err(e) => debug!("Unable to query iwinfo info for {device}: {e}"),
+        }
     }
 
-    pub(crate) fn filter_unsupported_enc(scan_result: &WifiScanItem) -> bool {
-        // TODO: Remove this filter when we support WPA3 - BOS-2753
-        let unsupported_enc = [EncryptionType::Wpa3];
-        !unsupported_enc.contains(&scan_result.encryption_type)
+    if mode_observed {
+        bail!("Access point on {device} did not start broadcasting")
     }
 
-    pub(crate) fn filter_empty_ssid(scan_result: &WifiScanItem) -> bool {
-        !scan_result.ssid.is_empty()
-    }
+    warn!("Unable to confirm the access point on {device} is broadcasting");
+    Ok(())
 }
 
 impl Drop for OpenwrtWifiManager {

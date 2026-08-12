@@ -20,10 +20,10 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::{Ok, Result, bail};
+use anyhow::{Result, bail};
+use bmc_net_types::wifi::WifiLinkState;
 use futures::stream::TryStreamExt;
-use ii_net::wifi::WifiLinkState;
-use tracing::debug;
+use log::debug;
 use wl_nl80211::{Nl80211Attr, Nl80211Handle, Nl80211StationInfo};
 
 struct WifiInterfaceDetails {

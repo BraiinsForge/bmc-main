@@ -1,22 +1,23 @@
 [package]
-name = "ii-net-drv"
+name = "bmc-net-drv"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
 anyhow.workspace = true
+async-trait.workspace = true
+bmc-net-observe = { path = "../bmc-net-observe" }
+bmc-net-types = { path = "../bmc-net-types" }
 bstr.workspace = true
 futures.workspace = true
-ii-net = { path = "../ii-net" }
+get_if_addrs.workspace = true
 log.workspace = true
 pnet.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }
-tokio = { workspace = true, features = ["full"] }
-tracing.workspace = true
+tokio = { workspace = true, features = ["fs", "net", "process", "rt", "sync", "time"] }
 wl-nl80211.workspace = true
 
 [[example]]

@@ -20,24 +20,134 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
+//! Network-interface helpers and Wi-Fi drivers for the `bmc-net` crate set.
+//!
+//! [`NetworkInterface`] wraps interface enumeration (IP/MAC/gateway/network
+//! lookups) on top of `pnet`/`get_if_addrs`. The [`wifi`] module defines the
+//! [`WifiDriver`](wifi::WifiDriver) trait and its two backends — `nl80211`
+//! (OpenWrt/`ubus`/`iwinfo`) and `esp32` (ESP32-over-SDIO via `esp32-sdio-cli`)
+//! — selected per platform by the network manager.
+
 use anyhow::{Context, Result, anyhow};
-use ii_net::MacAddr;
+use bmc_net_types::MacAddr;
+use get_if_addrs::IfAddr;
 use log::{info, warn};
 use pnet::datalink;
 use pnet::datalink::{MacAddr as PNetMacAddr, NetworkInterface as PNetNetworkInterface};
 use pnet::ipnetwork::IpNetwork;
 use std::net::{IpAddr, Ipv4Addr, SocketAddrV4};
 use std::time::Duration;
-use std::{fs, io};
 use tokio::net::UdpSocket;
 
 pub mod wifi;
 
+/// System hostname from procfs. Re-exported from `bmc-net-observe`, the sync
+/// read-only observation crate, so all callers share one implementation.
+pub use bmc_net_observe::hostname;
+
 pub const WIRELESS_CONFIG_FILE_PATH: &str = "/etc/config/wireless";
 
-fn get_hostname() -> io::Result<String> {
-    const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
-    fs::read_to_string(HOSTNAME_PATH).map(|x| x.trim().to_owned())
+/// Conventional name of the wired interface on every supported board. Shared so
+/// the managers and their consumers agree on one spelling.
+pub const DEFAULT_ETH_INTERFACE: &str = "eth0";
+
+const RESOLV_CONF_PATH: &str = "/etc/resolv.conf";
+/// Where dnsmasq publishes the real upstream resolvers when it fronts DNS on
+/// localhost (so `/etc/resolv.conf` only lists 127.0.0.1).
+const RESOLV_CONF_DNSMASQ_PATH: &str = "/tmp/resolv.conf.auto";
+const PROC_NET_ROUTE_PATH: &str = "/proc/net/route";
+
+/// First routable interface address (IPv4 or IPv6), via `getifaddrs`. Used as a
+/// coarse fallback when a specific interface's IPv4 is unavailable.
+///
+/// Loopback, link-local (IPv6 `fe80::/10`, IPv4 APIPA `169.254.0.0/16`) and
+/// unspecified addresses are skipped: they enumerate before a real address on
+/// an interface that has not obtained a lease yet, and reporting one as "the
+/// device IP" yields an unusable captive-portal redirect. This mirrors
+/// `bmc_net_observe`'s `is_routable` predicate.
+#[must_use]
+pub fn first_non_loopback_ip() -> Option<IpAddr> {
+    pick_routable_ip(get_if_addrs::get_if_addrs().ok()?)
+}
+
+/// First routable address from an interface list. Pure, for testing.
+fn pick_routable_ip(interfaces: Vec<get_if_addrs::Interface>) -> Option<IpAddr> {
+    interfaces.into_iter().find_map(|iface| {
+        let ip: IpAddr = match iface.addr {
+            IfAddr::V4(addr) => addr.ip.into(),
+            IfAddr::V6(addr) => addr.ip.into(),
+        };
+        is_routable(ip).then_some(ip)
+    })
+}
+
+/// True if `ip` is usable for connectivity (not loopback, link-local, or
+/// unspecified).
+fn is_routable(ip: IpAddr) -> bool {
+    if ip.is_loopback() || ip.is_unspecified() {
+        return false;
+    }
+    match ip {
+        IpAddr::V4(v4) => !v4.is_link_local(),
+        // `Ipv6Addr::is_unicast_link_local` is still unstable; match `fe80::/10`
+        // directly, as `bmc-net-observe` does for IPv4.
+        IpAddr::V6(v6) => (v6.segments()[0] & 0xffc0) != 0xfe80,
+    }
+}
+
+/// IPv4 `nameserver` entries parsed from a resolv.conf-format file at `path`.
+/// Returns an empty vec if the file is missing or unreadable.
+pub async fn nameservers(path: &str) -> Vec<Ipv4Addr> {
+    let Ok(contents) = tokio::fs::read_to_string(path).await else {
+        return Vec::new();
+    };
+    contents
+        .lines()
+        .filter_map(|line| line.strip_prefix("nameserver"))
+        .filter_map(|rest| rest.trim().parse().ok())
+        .collect()
+}
+
+/// Default resolv.conf path (`/etc/resolv.conf`).
+#[must_use]
+pub fn default_resolv_conf_path() -> &'static str {
+    RESOLV_CONF_PATH
+}
+
+/// Effective upstream IPv4 nameservers.
+///
+/// Reads `/etc/resolv.conf`; if that lists only the local resolver
+/// (`127.0.0.1`) — i.e. dnsmasq is fronting DNS — it falls back to the
+/// dnsmasq-published upstream list at `/tmp/resolv.conf.auto`. This keeps the
+/// "where do the real resolvers live behind dnsmasq" knowledge inside the
+/// library rather than in every consumer.
+pub async fn resolved_nameservers() -> Vec<Ipv4Addr> {
+    let servers = nameservers(RESOLV_CONF_PATH).await;
+    if servers == [Ipv4Addr::LOCALHOST] {
+        let upstream = nameservers(RESOLV_CONF_DNSMASQ_PATH).await;
+        if !upstream.is_empty() {
+            return upstream;
+        }
+    }
+    servers
+}
+
+/// IPv4 default gateway for `interface_name` (destination `0.0.0.0` in the main
+/// table), read from `/proc/net/route`. `None` if there is no default route.
+pub async fn default_gateway(interface_name: &str) -> Option<Ipv4Addr> {
+    let contents = tokio::fs::read_to_string(PROC_NET_ROUTE_PATH).await.ok()?;
+    contents.lines().skip(1).find_map(|line| {
+        let mut fields = line.split_whitespace();
+        let iface = fields.next()?;
+        let destination = fields.next()?;
+        let gateway = fields.next()?;
+        if iface != interface_name || destination != "00000000" {
+            return None;
+        }
+        let raw = u32::from_str_radix(gateway, 16).ok()?;
+        // Gateway is little-endian hex; a zero gateway is not a real default route.
+        (raw != 0).then(|| Ipv4Addr::from(raw.to_le_bytes()))
+    })
 }
 
 fn get_primary_interface_details() -> Option<(IpAddr, PNetMacAddr)> {
@@ -78,7 +188,7 @@ pub async fn ip_report(format: impl AsRef<str>) -> Result<()> {
         get_primary_interface_details().context("primary interface couldn't be determined")?;
     let ip = ip.to_string();
     let mac = mac.to_string();
-    let hostname = get_hostname()?;
+    let hostname = hostname().context("hostname unavailable")?;
     let format = format.as_ref();
 
     info!("broadcasting IP address: {ip}, MAC address: {mac}, hostname: {hostname}");
@@ -155,10 +265,6 @@ impl NetworkInterface {
             .map(|network| Self { inner: network })
     }
 
-    pub fn get_inner(&self) -> PNetNetworkInterface {
-        self.inner.clone()
-    }
-
     #[must_use]
     pub fn mac_address(&self) -> Option<MacAddr> {
         self.inner
@@ -173,6 +279,17 @@ impl NetworkInterface {
             .iter()
             .find(|ip| ip.is_ipv4())
             .map(IpNetwork::ip)
+    }
+
+    /// This interface's IPv4 address and MAC packaged as an [`IfaceData`].
+    ///
+    /// [`IfaceData`]: bmc_net_types::network::IfaceData
+    #[must_use]
+    pub fn iface_data(&self) -> bmc_net_types::network::IfaceData {
+        bmc_net_types::network::IfaceData {
+            ip: self.ipv4_address(),
+            mac: self.mac_address(),
+        }
     }
 
     #[must_use]
@@ -190,6 +307,23 @@ impl NetworkInterface {
         self.inner.ips.clone()
     }
 
+    /// This interface's IPv4 addresses as [`bmc_net_types::network::IpNetwork`]
+    /// (address + netmask); IPv6 addresses are skipped.
+    #[must_use]
+    pub fn ipv4_networks(&self) -> Vec<bmc_net_types::network::IpNetwork> {
+        self.inner
+            .ips
+            .iter()
+            .filter_map(|network| match network {
+                IpNetwork::V4(network) => Some(bmc_net_types::network::IpNetwork {
+                    address: network.ip(),
+                    netmask: network.mask(),
+                }),
+                IpNetwork::V6(_) => None,
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn get_by_substr(substring: &str) -> Option<Self> {
         pnet::datalink::interfaces()
@@ -199,8 +333,10 @@ impl NetworkInterface {
     }
 }
 
+/// Internal adapter for converting `pnet`'s MAC type into [`MacAddr`] without
+/// leaking the `pnet` type across the crate boundary.
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub struct PNetMacAddrWrapper {
+struct PNetMacAddrWrapper {
     inner: PNetMacAddr,
 }
 
@@ -212,13 +348,68 @@ impl From<PNetMacAddr> for PNetMacAddrWrapper {
 
 impl From<PNetMacAddrWrapper> for MacAddr {
     fn from(value: PNetMacAddrWrapper) -> Self {
-        Self::new(
+        Self::from([
             value.inner.0,
             value.inner.1,
             value.inner.2,
             value.inner.3,
             value.inner.4,
             value.inner.5,
-        )
+        ])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn skips_link_local_and_loopback_addresses() {
+        use get_if_addrs::{Ifv4Addr, Ifv6Addr, Interface};
+
+        let link_local_v6 = Interface {
+            name: "wlan0".to_owned(),
+            addr: IfAddr::V6(Ifv6Addr {
+                ip: "fe80::1".parse().expect("BUG: bad test address"),
+                netmask: "ffff:ffff:ffff:ffff::".parse().expect("BUG: bad test mask"),
+                broadcast: None,
+            }),
+        };
+        let apipa_v4 = Interface {
+            name: "eth0".to_owned(),
+            addr: IfAddr::V4(Ifv4Addr {
+                ip: Ipv4Addr::new(169, 254, 1, 2),
+                netmask: Ipv4Addr::new(255, 255, 0, 0),
+                broadcast: None,
+            }),
+        };
+        let routable = Interface {
+            name: "eth1".to_owned(),
+            addr: IfAddr::V4(Ifv4Addr {
+                ip: Ipv4Addr::new(192, 168, 1, 10),
+                netmask: Ipv4Addr::new(255, 255, 255, 0),
+                broadcast: None,
+            }),
+        };
+
+        assert_eq!(
+            pick_routable_ip(vec![link_local_v6, apipa_v4, routable]),
+            Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 10)))
+        );
+    }
+
+    #[test]
+    fn none_when_every_address_is_unusable() {
+        use get_if_addrs::{Ifv4Addr, Interface};
+
+        let loopback = Interface {
+            name: "lo".to_owned(),
+            addr: IfAddr::V4(Ifv4Addr {
+                ip: Ipv4Addr::LOCALHOST,
+                netmask: Ipv4Addr::new(255, 0, 0, 0),
+                broadcast: None,
+            }),
+        };
+        assert_eq!(pick_routable_ip(vec![loopback]), None);
     }
 }

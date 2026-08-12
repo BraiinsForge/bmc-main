@@ -20,14 +20,15 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-use anyhow::Result;
+use anyhow::{Context, Result, bail};
 use std::io::BufRead;
 use tokio::process::Command;
 
 #[derive(Debug)]
 pub struct Esp32Sdio;
 
-const CLI_COMMAND: &str = "esp32-sdio-cli";
+pub(super) const CLI_COMMAND: &str = "esp32-sdio-cli";
+pub(super) const GET_SOFTAP_CONFIG: &str = "get_softap_config";
 const GET_AP_SCAN_LIST: &str = "get_ap_scan_list";
 
 #[derive(Debug, PartialEq)]
@@ -42,7 +43,15 @@ impl Esp32Sdio {
         let output = Command::new(CLI_COMMAND)
             .arg(GET_AP_SCAN_LIST)
             .output()
-            .await?;
+            .await
+            .with_context(|| format!("spawning `{CLI_COMMAND}`"))?;
+
+        if !output.status.success() {
+            bail!(
+                "`{CLI_COMMAND} {GET_AP_SCAN_LIST}` failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
 
         let networks = output
             .stdout

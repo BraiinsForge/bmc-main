@@ -21,12 +21,12 @@
 // contact us at opensource@braiins.com.
 
 use anyhow::bail;
-use ii_net::wifi::{EncryptionType, WifiScanItem};
+use bmc_net_types::wifi::{EncryptionType, WifiScanItem};
 use log::warn;
 use serde::{self, Deserialize};
 use serde_json::json;
 
-use super::utils::CommandUtils;
+use crate::wifi::utils::{CommandUtils, filter_sort_by_strongest_signal};
 
 #[derive(Deserialize, Debug, Clone, Default)]
 struct WifiScanEncryptionJson {
@@ -57,29 +57,6 @@ struct WifiScanResultJsonContainer {
 pub struct WifiScanner;
 
 impl WifiScanner {
-    fn filter_sort_by_strongest_signal(mut entries: Vec<WifiScanItem>) -> Vec<WifiScanItem> {
-        // First sort by SSID + Auth (Encryption Type) and then get rid of duplicates
-        // preserving the network with highest rssi (Signal Level)
-        // Reason is that in case there would be matching SSIDs with different encryption types
-        // we might accidentally filter it out completely, since we later filter out WPA3-only encryptions
-        // This logic might be altered in the future once we will support WPA3
-        entries.sort_by(|a, b| {
-            b.ssid
-                .cmp(&a.ssid)
-                .then_with(|| b.encryption_type.cmp(&a.encryption_type))
-                .then_with(|| b.signal_level.cmp(&a.signal_level))
-        });
-        entries.dedup_by_key(|k| (k.ssid.clone(), k.encryption_type));
-        // Finally, sort by signal strength and then alphabetically by SSID
-        // We want to present the list with strongest signal network on top
-        entries.sort_by(|a, b| {
-            b.signal_level
-                .cmp(&a.signal_level)
-                .then_with(|| a.ssid.cmp(&b.ssid))
-        });
-        entries
-    }
-
     pub(crate) async fn wifi_scan(device: &str) -> Result<Vec<WifiScanItem>, anyhow::Error> {
         let device_ubus_param = json!({"device": device}).to_string();
         // Ensure that interface is up (Later we should ensure that uci wireless config has SSIDs disabled but radio enabled and use wifi up instead)
@@ -90,10 +67,11 @@ impl WifiScanner {
         let scan_result =
             CommandUtils::call_ubus_cmd(&["call", "iwinfo", "scan", &device_ubus_param]).await?;
 
-        let output: anyhow::Result<Vec<WifiScanItem>> =
-            parse_scan_result(&scan_result).map(process_json_entry)?;
+        let container = parse_scan_result(&scan_result)?;
 
-        Ok(Self::filter_sort_by_strongest_signal(output?))
+        Ok(filter_sort_by_strongest_signal(process_json_entry(
+            container,
+        )))
     }
 }
 
@@ -102,12 +80,21 @@ fn parse_scan_result(scan_result: &str) -> anyhow::Result<WifiScanResultJsonCont
         .map_err(|e| anyhow::anyhow!("{e}"))
 }
 
-fn process_json_entry(container: WifiScanResultJsonContainer) -> anyhow::Result<Vec<WifiScanItem>> {
+/// Converts the scanned access points, skipping (with a warning) any single
+/// entry that fails to convert rather than failing the whole scan. This keeps
+/// one exotic neighbouring AP (e.g. an unrecognized encryption combination)
+/// from blanking the entire network list, matching the esp32 backend.
+fn process_json_entry(container: WifiScanResultJsonContainer) -> Vec<WifiScanItem> {
     container
         .results
         .into_iter()
         .filter(|item| item.mode == "Master")
-        .map(TryInto::try_into)
+        .filter_map(|item| {
+            let ssid = item.ssid.clone();
+            WifiScanItem::try_from(item)
+                .inspect_err(|e| warn!("skipping access point {ssid:?} in scan: {e}"))
+                .ok()
+        })
         .collect()
 }
 
@@ -166,9 +153,9 @@ impl TryFrom<WifiScanEncryptionJson> for EncryptionType {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::wifi::OpenwrtWifiManager;
+    use crate::wifi::utils::{filter_empty_ssid, filter_unsupported_enc};
     use anyhow::Result;
-    use ii_net::wifi::SignalStrength;
+    use bmc_net_types::wifi::SignalStrength;
 
     #[test]
     fn test_filter_with_empty_ssid() {
@@ -201,7 +188,7 @@ mod tests {
         let entries: Vec<WifiScanItem> = entries
             .expect("BUG: Error in struct conversion")
             .into_iter()
-            .filter(OpenwrtWifiManager::filter_empty_ssid)
+            .filter(filter_empty_ssid)
             .collect();
 
         assert_eq!(1, entries.len());
@@ -248,7 +235,7 @@ mod tests {
         let entries: Vec<WifiScanItem> = entries
             .expect("BUG: Error in struct conversion")
             .into_iter()
-            .filter(OpenwrtWifiManager::filter_unsupported_enc)
+            .filter(filter_unsupported_enc)
             .collect();
 
         assert_eq!(1, entries.len());
@@ -286,7 +273,7 @@ mod tests {
 
         assert_eq!(
             -50,
-            WifiScanner::filter_sort_by_strongest_signal(entries)[0].signal_level
+            filter_sort_by_strongest_signal(entries)[0].signal_level
         );
     }
 
@@ -478,7 +465,7 @@ mod tests {
         assert_eq!(cell.encryption_type, EncryptionType::Wep);
         assert_eq!(cell.signal_strength(), SignalStrength::Offline);
 
-        let res = WifiScanner::filter_sort_by_strongest_signal(
+        let res = filter_sort_by_strongest_signal(
             scan_parsed
                 .clone()
                 .results
