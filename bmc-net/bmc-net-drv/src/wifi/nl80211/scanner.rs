@@ -178,7 +178,7 @@ mod tests {
                     wep: Vec::new(),
                     wpa: vec![2],
                 },
-                ssid: "".to_owned(),
+                ssid: String::new(),
             },
         ]
         .into_iter()
@@ -278,6 +278,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the body is one captured ubus JSON payload, not branching logic"
+    )]
     fn test_parse_scanner_output() {
         let output = r#"{
                     "results": [

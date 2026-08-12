@@ -47,6 +47,10 @@ impl WifiSta {
             let attrs = ifhandle.payload.attributes;
             if attrs.iter().any(|attr| attr == &ifname_attr) {
                 for attr in attrs {
+                    #[expect(
+                        clippy::wildcard_enum_match_arm,
+                        reason = "Nl80211Attr carries ~90 upstream variants; only two are of interest here"
+                    )]
                     match attr {
                         Nl80211Attr::IfIndex(i) => index = Some(i.to_owned()),
                         Nl80211Attr::Ssid(s) => ssid = Some(s),

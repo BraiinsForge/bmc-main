@@ -27,12 +27,9 @@ include:
       rev: *ci-tools-rev
       ci_tools_flake: "git+ssh://git@gitlab.ii.zone/nix/ci-tools.git?rev=04e3dc45e9c46dbac75ce71079d9d2c3febb8433"
       # Paths excluded from the host workspace's clippy/fmt sweep:
-      # vendored upstream forks (linted upstream) and separate cargo
-      # workspaces (wasm widgets — different target, own lint configs).
+      # separate cargo workspaces (wasm widgets — different target, own
+      # lint configs).
       workspace_lints_ignore: >-
-        ./bmc-shared/ii-net
-        ./bmc-shared/ii-net-drv
-        ./bmc-shared/ii-dns
         ./tooling
         ./widgets-wasm
         ./widgets-wasm-examples

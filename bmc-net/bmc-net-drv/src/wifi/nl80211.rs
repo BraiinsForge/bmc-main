@@ -265,15 +265,12 @@ impl WifiDriver for OpenwrtWifiManager {
 
     async fn reset_config(&self) -> Result<()> {
         debug!("Removing wireless config");
-        if let Err(e) = tokio::fs::remove_file(WIRELESS_CONFIG_FILE_PATH).await {
-            match e.kind() {
-                std::io::ErrorKind::NotFound => {
-                    debug!("File {WIRELESS_CONFIG_FILE_PATH} not found");
-                }
-                _ => {
-                    bail!("Unable to remove wireless config: {e}");
-                }
+        match tokio::fs::remove_file(WIRELESS_CONFIG_FILE_PATH).await {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                debug!("File {WIRELESS_CONFIG_FILE_PATH} not found");
             }
+            Err(e) => bail!("Unable to remove wireless config: {e}"),
         }
         WifiCommand::config().await?;
         wait_for_wireless_config().await

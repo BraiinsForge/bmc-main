@@ -20,7 +20,6 @@
 // of such proprietary license or if you have any other questions, please
 // contact us at opensource@braiins.com.
 
-extern crate bmc_net_drv;
 use bmc_net_drv::NetworkInterface;
 
 fn main() {

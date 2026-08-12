@@ -1,0 +1,18 @@
+[package]
+name = "bmc-net-diag"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bmc-net-dns.workspace = true
+pcap-file.workspace = true
+ping.workspace = true
+pnet.workspace = true
+reqwest = { workspace = true, features = ["blocking"] }
+thiserror.workspace = true
+tracing.workspace = true

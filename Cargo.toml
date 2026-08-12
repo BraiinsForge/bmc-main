@@ -188,6 +188,7 @@ bmc-kobject = { path = "bmc-kobject" }
 bmc-led = { path = "bmc-led", default-features = false }
 bmc-log = { path = "bmc-log" }
 bmc-net = { path = "bmc-net/bmc-net" }
+bmc-net-diag = { path = "bmc-net/bmc-net-diag" }
 bmc-net-dns = { path = "bmc-net/bmc-net-dns" }
 bmc-net-drv = { path = "bmc-net/bmc-net-drv" }
 bmc-net-observe = { path = "bmc-net/bmc-net-observe" }

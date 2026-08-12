@@ -4,11 +4,14 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
+[lints]
+workspace = true
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-bmc-net-observe = { path = "../bmc-net-observe" }
-bmc-net-types = { path = "../bmc-net-types" }
+bmc-net-observe.workspace = true
+bmc-net-types.workspace = true
 bstr.workspace = true
 futures.workspace = true
 get_if_addrs.workspace = true

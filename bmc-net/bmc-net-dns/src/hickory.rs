@@ -72,7 +72,7 @@ impl HickoryResolverBuilder {
         match Resolver::builder_tokio() {
             Ok(resolver) => Some(resolver.with_options(Self::get_resolver_options()).build()),
             Err(e) => {
-                error!("Cannot initialize system DNS resolver: {}", e);
+                error!("Cannot initialize system DNS resolver: {e}");
                 None
             }
         }

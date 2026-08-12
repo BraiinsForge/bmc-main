@@ -157,6 +157,7 @@ fn get_primary_interface_details() -> Option<(IpAddr, PNetMacAddr)> {
     Some((network.ip(), mac))
 }
 
+#[must_use]
 pub fn get_primary_interface() -> Option<NetworkInterface> {
     datalink::interfaces().into_iter().find_map(|interface| {
         let interface_clone = interface.clone();

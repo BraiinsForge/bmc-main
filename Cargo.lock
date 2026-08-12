@@ -932,6 +932,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-net-diag"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-net-dns",
+ "pcap-file",
+ "ping",
+ "pnet",
+ "reqwest",
+ "thiserror 1.0.69",
+ "tracing",
+]
+
+[[package]]
 name = "bmc-net-dns"
 version = "0.1.0"
 dependencies = [

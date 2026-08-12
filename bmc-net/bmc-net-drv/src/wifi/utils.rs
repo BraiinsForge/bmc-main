@@ -147,7 +147,7 @@ impl WifiUtils {
             .ok_or(anyhow!("No wifi device in specified syspath: {syspath}"))?
             .file_name()
             .into_string()
-            .map_err(|e| Error::msg(format!("{e:?}")))
+            .map_err(|e| Error::msg(format!("non-UTF-8 wifi device name: {}", e.display())))
     }
 
     pub async fn get_phy_path_by_syspath(syspath: &str) -> Result<PathBuf> {
@@ -166,6 +166,10 @@ impl WifiUtils {
 /// passwords never reach the logs. Handles both compact serde_json output
 /// (`"key":"pass"`) and pretty-printed ubus output (`"key": "pass"`),
 /// including escaped quotes inside the value.
+#[expect(
+    clippy::string_slice,
+    reason = "every offset here comes from find(), char_indices() or a suffix of the               same &str, so all of them are char boundaries"
+)]
 pub(crate) fn redact_wifi_key(input: &str) -> String {
     const FIELD: &str = "\"key\"";
 

@@ -59,6 +59,7 @@ impl<T: ToString> ToHostAndPortTuple for (T, u16) {
     }
 }
 
+#[derive(Debug)]
 pub struct IiResolver;
 
 impl IiResolver {
@@ -76,7 +77,7 @@ impl IiResolver {
             interval.tick().await;
             match tokio::net::lookup_host(host.clone().to_host_and_port_tuple()).await {
                 Ok(iterator) => {
-                    info!("Host {:?} resolved by tokio resolver successfully", host);
+                    info!("Host {host:?} resolved by tokio resolver successfully");
                     return Ok(iterator.collect::<Vec<SocketAddr>>().into_iter());
                 }
                 Err(e) => warn!(
@@ -95,16 +96,10 @@ impl IiResolver {
             .await
         {
             Ok(iterator) => {
-                info!(
-                    "Host {:?} resolved by hickory system resolver successfully",
-                    host
-                );
+                info!("Host {host:?} resolved by hickory system resolver successfully");
                 return Ok(iterator.collect::<Vec<SocketAddr>>().into_iter());
             }
-            Err(e) => warn!(
-                "Unable to resolve {:?} using hickory system resolver: {}",
-                host, e
-            ),
+            Err(e) => warn!("Unable to resolve {host:?} using hickory system resolver: {e}"),
         }
 
         if Path::new(Self::GOOGLE_DNS_FLAG_FILE_PATH).exists() {
@@ -113,21 +108,17 @@ impl IiResolver {
                 .await
             {
                 Ok(iterator) => {
-                    info!(
-                        "Host {:?} resolved by hickory google resolver successfully",
-                        host
-                    );
+                    info!("Host {host:?} resolved by hickory google resolver successfully");
                     return Ok(iterator.collect::<Vec<SocketAddr>>().into_iter());
                 }
-                Err(e) => warn!(
-                    "Unable to resolve {:?} using hickory google resolver: {}",
-                    host, e
-                ),
+                Err(e) => {
+                    warn!("Unable to resolve {host:?} using hickory google resolver: {e}");
+                }
             }
         }
 
-        let err_msg = format!("Failed to resolve {:?}", host);
-        error!("{}", err_msg);
+        let err_msg = format!("Failed to resolve {host:?}");
+        error!("{err_msg}");
         Err(Error::other(err_msg))
     }
 
@@ -161,7 +152,7 @@ impl IiTcpStream {
         for addr in addrs {
             match TcpStream::connect(addr).await {
                 Ok(tcpstream) => {
-                    info!("TcpStream connected to {}", addr);
+                    info!("TcpStream connected to {addr}");
                     return Ok(tcpstream);
                 }
                 Err(e) => last_err = Some(e),
