@@ -25,7 +25,7 @@
 //! every rule that plain values can decide lives in `model.rs`,
 //! where it is natively testable.
 
-use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, calendar};
+use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, Mass, calendar};
 
 use crate::api::wire;
 use crate::model::{
@@ -69,6 +69,13 @@ fn session_start(json: &JsonDoc, path: &str, zone: &str) -> Option<LocalDateTime
 
 fn weekend_date(json: &JsonDoc, path: &str) -> Option<CalendarDate> {
     calendar::parse_calendar_date(&json.str(path)?)
+}
+
+/// Whether a string field carries nothing. The upstream sends the four
+/// rookies' race engineer as the text `null` rather than a JSON null,
+/// which would otherwise read as an engineer of that name.
+fn is_absent(value: &str) -> bool {
+    value.is_empty() || value == "null"
 }
 
 fn kilometers(json: &JsonDoc, path: &str) -> Option<Length> {
@@ -141,13 +148,9 @@ fn driver_stats_at(json: &JsonDoc, at: &impl Fn(&str) -> String) -> DriverStats 
             .i64(&at("world_titles"))
             .and_then(|v| u8::try_from(v).ok()),
         age: json.i64(&at("age")).and_then(|v| u8::try_from(v).ok()),
-        weight_kg: json
-            .i64(&at("weight_kg"))
-            .and_then(|v| u8::try_from(v).ok()),
-        height_cm: json
-            .i64(&at("height_cm"))
-            .and_then(|v| u16::try_from(v).ok()),
-        race_engineer: json.str(&at("race_engineer")),
+        weight: json.f64(&at("weight_kg")).map(Mass::from_kilograms),
+        height: json.f64(&at("height_cm")).map(Length::from_centimeters),
+        race_engineer: json.str(&at("race_engineer")).filter(|it| !is_absent(it)),
         debut_year: json
             .i64(&at("debut_year"))
             .and_then(|v| u16::try_from(v).ok()),

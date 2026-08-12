@@ -23,7 +23,7 @@
 
 use bmc_gallery::prelude::*;
 use formula_1::model::SizeBucket;
-use formula_1::screens::{fixtures, next_race, standings};
+use formula_1::screens::{driver, fixtures, next_race, standings};
 
 scene_meta! { title: "Widgets / Formula 1" }
 
@@ -113,4 +113,45 @@ fn next_race_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
     size_stages(ctx, ui, |bucket| {
         move || next_race::next_race_view(&fixtures::next_race_widest(bucket))
     });
+}
+
+#[scene]
+fn driver(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || driver::driver_view(&fixtures::driver(bucket))
+    });
+}
+
+/// A rookie the upstream knows least about: no engineer, no debut year.
+#[scene]
+fn driver_sparse(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || driver::driver_view(&fixtures::driver_sparse(bucket))
+    });
+}
+
+/// Between seasons, or before the first reply has landed.
+#[scene]
+fn driver_unavailable(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || driver::driver_view(&fixtures::driver_unavailable(bucket))
+    });
+}
+
+/// Every driver the season knows, each drawn by the view the widget
+/// ships — so one scene covers the field, not the one a param picks.
+#[scene]
+fn driver_grid(ctx: &mut SceneCtx, ui: &mut Ui) {
+    deck_settings(ctx);
+    for stats in fixtures::drivers() {
+        let (name, team) = (stats.name.clone(), stats.team.clone());
+        let view = driver::DriverViewData {
+            bucket: SizeBucket::Full,
+            driver: Some(stats),
+        };
+        ui.heading(format!("{name} — {team}"));
+        ctx.node_stage(ui, SizeBucket::Full.design_size(), move || {
+            driver::driver_view(&view)
+        });
+    }
 }

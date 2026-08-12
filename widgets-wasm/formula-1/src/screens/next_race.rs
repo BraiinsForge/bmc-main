@@ -30,7 +30,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::model::{NextRace, SizeBucket};
-use crate::screens::parts::{self, color, font, space};
+use crate::screens::parts::{self, LabelWeight, color, font, space};
 
 /// Everything the screen draws.
 #[derive(Clone, Debug)]
@@ -39,7 +39,7 @@ pub struct NextRaceViewData {
     pub race: Option<NextRace>,
 }
 
-/// What the server had nothing for, in the legacy widget's own wording.
+/// What the server had nothing for.
 const UNKNOWN: &str = "N/A";
 
 /// The design's gap between columns.
@@ -61,16 +61,7 @@ enum Schedule {
     DatedSessions,
 }
 
-/// How a stat's label is set against its value.
-#[derive(Clone, Copy, Debug)]
-enum LabelWeight {
-    /// The design's quieter label beside a bold value.
-    Muted,
-    /// The smallest frame sets both alike, so the pair reads as one line.
-    Strong,
-}
-
-/// Which pieces a frame keeps, from the legacy widget's four layouts.
+/// Which pieces a frame keeps, across the four ported layouts.
 #[derive(Clone, Copy, Debug)]
 struct Layout {
     stripe: bool,
@@ -143,43 +134,7 @@ fn session_time(at: Option<LocalDateTime>) -> String {
 }
 
 fn info_row(label: &str, value: String, layout: Layout) -> Node {
-    let label = match layout.labels {
-        LabelWeight::Strong => text(
-            label,
-            style!(size: layout.info_font, weight: FontWeight::SEMIBOLD, color: color::TEXT),
-        ),
-        LabelWeight::Muted => text(
-            label,
-            style!(size: layout.info_font, color: color::TEXT_MUTED),
-        ),
-    };
-    row(
-        props!(
-            flex: 1.0,
-            gap: space::GAP * 2.0,
-            cross_align: CrossAlign::Center,
-            justify_content: Justify::SpaceBetween
-        ),
-        [
-            label,
-            text(
-                value,
-                style!(size: layout.info_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right),
-            ),
-        ],
-    )
-}
-
-/// Rows sharing the column's height, ruled off from one another.
-fn info_col(rows: Vec<Node>) -> Node {
-    let mut children = Vec::new();
-    for (index, row) in rows.into_iter().enumerate() {
-        if index > 0 {
-            children.push(parts::divider());
-        }
-        children.push(row);
-    }
-    col(props!(flex: 1.0), children)
+    parts::stat_row(label, value, layout.info_font, layout.labels)
 }
 
 fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
@@ -286,13 +241,13 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
 
 /// The columns of stats, and the schedule where the frame keeps one.
 fn columns(race: &NextRace, layout: Layout) -> Node {
-    let circuit = info_col(circuit_rows(race, layout));
+    let circuit = parts::stat_col(circuit_rows(race, layout));
     if layout.schedule == Schedule::Absent {
         return circuit;
     }
     row(
         props!(flex: 1.0, gap: COLUMN_GAP),
-        [circuit, info_col(schedule_rows(race, layout))],
+        [circuit, parts::stat_col(schedule_rows(race, layout))],
     )
 }
 
@@ -335,9 +290,9 @@ mod tests {
     use super::{Schedule, layout};
     use crate::model::SizeBucket;
 
-    /// The legacy widget's per-frame rules, which this screen replicates.
+    /// The per-frame rules the port keeps.
     #[test]
-    fn every_frame_matches_the_legacy_widgets_layout() {
+    fn every_frame_matches_the_ported_layout() {
         let expected = [
             (SizeBucket::Full, true, true, Schedule::Sessions, true),
             (

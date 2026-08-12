@@ -20,6 +20,10 @@
 
 //! Formula 1 widget — championship standings, driver stats,
 //! race info, and live timing.
+//!
+//! These layouts port the `deckfeeder` widget of the same name,
+//! which rendered the screens server-side as images.
+//! Its CSS is the source for any rule given here as one the port keeps.
 
 pub mod api;
 pub mod model;

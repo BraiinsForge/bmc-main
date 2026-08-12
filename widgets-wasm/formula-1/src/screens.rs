@@ -24,6 +24,7 @@
 //! storybook and the tests can render it without a host, a network, or
 //! a running session.
 
+pub mod driver;
 pub mod fixtures;
 pub mod icons;
 pub mod next_race;

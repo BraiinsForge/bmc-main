@@ -60,7 +60,7 @@ const MARKS: &[(&str, &Bitmap)] = &[
 ];
 
 /// The mark for a team, or `None` where this build carries no artwork;
-/// screens then fall back to the livery colour, as the legacy widget did.
+/// screens then fall back to the livery colour.
 #[must_use]
 pub fn team_mark(team_name: &str) -> Option<&'static Bitmap> {
     let name = team_name.to_lowercase();

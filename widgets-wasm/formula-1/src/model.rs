@@ -24,7 +24,7 @@
 //! Everything here is free of host calls so it can be exercised
 //! natively — by tests and by the storybook's fixtures.
 
-use bmc_wasm_sdk::{CalendarDate, Color, Length, LocalDateTime};
+use bmc_wasm_sdk::{CalendarDate, Color, Length, LocalDateTime, Mass};
 
 /// The design's four frames. The widget renders the same screens in each,
 /// dropping columns and rows as the box shrinks.
@@ -289,8 +289,8 @@ pub struct DriverStats {
     pub gp_wins: Option<u8>,
     pub world_titles: Option<u8>,
     pub age: Option<u8>,
-    pub weight_kg: Option<u8>,
-    pub height_cm: Option<u16>,
+    pub weight: Option<Mass>,
+    pub height: Option<Length>,
     pub race_engineer: Option<String>,
     pub debut_year: Option<u16>,
 }
@@ -375,10 +375,9 @@ pub enum LiveBoard {
 }
 
 impl LiveBoard {
-    /// A board with no rows is not a session in progress.
-    /// The server empties the entry list around a session's edges,
-    /// and the legacy widget likewise took "has entries"
-    /// as its test for a session being live.
+    /// A board with no rows is not a session in progress:
+    /// the server empties the entry list around a session's edges,
+    /// so having entries is the test for one being live.
     #[must_use]
     pub fn from_board(board: TimingBoard) -> Self {
         if board.rows.is_empty() {
@@ -418,8 +417,8 @@ pub struct Data {
 }
 
 impl Data {
-    /// The running session, preferring the race, then qualifying, then
-    /// practice — the order the legacy widget probed them in.
+    /// The running session, preferring the race, then qualifying,
+    /// then practice.
     #[must_use]
     pub fn running_board(&self) -> Option<&TimingBoard> {
         self.live_race

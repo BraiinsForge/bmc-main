@@ -35,8 +35,8 @@ use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
 use crate::model::SizeBucket;
 use crate::screens::icons;
 
-// The legacy widget's palette, which the Figma variables agree with:
-// white, Gray/40 muted, Gray/90 rules.
+// The Figma variables these screens draw from:
+// white text, Gray/40 muted, Gray/90 rules.
 pub mod color {
     use bmc_wasm_sdk::{Color, GRAY_40, GRAY_90, WHITE};
 
@@ -134,6 +134,55 @@ pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
 #[must_use]
 pub fn divider() -> Node {
     col(props!(height: 1.0, background: color::DIVIDER), [])
+}
+
+/// How a stat's label is set against its value.
+#[derive(Clone, Copy, Debug)]
+pub enum LabelWeight {
+    /// The design's quieter label beside a bold value.
+    Muted,
+    /// The smallest frames set both alike, so the pair reads as one line.
+    Strong,
+}
+
+/// A label and its value, pushed to opposite edges of the row.
+#[must_use]
+pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> Node {
+    let label = match weight {
+        LabelWeight::Strong => text(
+            label,
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+        ),
+        LabelWeight::Muted => text(label, style!(size: size, color: color::TEXT_MUTED)),
+    };
+    row(
+        props!(
+            flex: 1.0,
+            gap: space::GAP * 2.0,
+            cross_align: CrossAlign::Center,
+            justify_content: Justify::SpaceBetween
+        ),
+        [
+            label,
+            text(
+                value,
+                style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right),
+            ),
+        ],
+    )
+}
+
+/// Rows sharing the column's height, ruled off from one another.
+#[must_use]
+pub fn stat_col(rows: Vec<Node>) -> Node {
+    let mut children = Vec::new();
+    for (index, stat) in rows.into_iter().enumerate() {
+        if index > 0 {
+            children.push(divider());
+        }
+        children.push(stat);
+    }
+    col(props!(flex: 1.0), children)
 }
 
 /// A wall clock in the operator's 12- or 24-hour preference.

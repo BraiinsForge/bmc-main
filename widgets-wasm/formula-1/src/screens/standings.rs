@@ -39,14 +39,14 @@ pub struct StandingsViewData {
     pub rows: Vec<StandingsRow>,
 }
 
-/// Team logo box, the legacy widget's 32 px at every frame.
+/// Team logo box, which keeps its size at every frame.
 const LOGO: f32 = 32.0;
 /// Position column, its 28 px plus the 8 px it holds off the name.
 const POSITION: f32 = 36.0;
 
 /// The table's geometry for one frame.
 ///
-/// The legacy widget used flex ratios — name 4, country 2, team 4 —
+/// The ported layout used flex ratios — name 4, country 2, team 4 —
 /// with cells shrinking and ellipsizing. This tree has no
 /// `min-width: 0`, so text never shrinks below its content; these are
 /// those ratios resolved per frame, with names cut to what they seat.
@@ -61,8 +61,8 @@ struct Columns {
     team: Option<f32>,
     team_chars: usize,
     points: f32,
-    /// The legacy widget quietens the score as the frame narrows: bold,
-    /// then semibold, then the same weight as everything else.
+    /// The score quietens as the frame narrows: bold, then semibold,
+    /// then the same weight as everything else.
     points_weight: FontWeight,
 }
 
@@ -134,7 +134,7 @@ fn name(content: impl Into<String>) -> Node {
     )
 }
 
-/// Everything else, which the legacy widget sets in the same white.
+/// Every other cell, in the one white the table sets.
 fn plain(content: impl Into<String>) -> Node {
     text(
         content,
@@ -268,9 +268,9 @@ mod tests {
         }
     }
 
-    /// The legacy widget's per-frame rules, which this screen replicates.
+    /// The per-frame rules the port keeps.
     #[test]
-    fn every_frame_matches_the_legacy_widgets_layout() {
+    fn every_frame_matches_the_ported_layout() {
         let expected = [
             (SizeBucket::Full, 10, true, true, true, FontWeight::BOLD),
             (SizeBucket::Large, 10, false, true, false, FontWeight::BOLD),
