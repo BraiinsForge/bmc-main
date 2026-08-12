@@ -304,8 +304,6 @@ struct MediaState {
     art_aspect: f32,
     /// URL of the currently loaded album art (to avoid re-fetching).
     art_url: String,
-    /// Accent background color extracted from album art (darkened average).
-    accent_bg: Color,
     /// Whether the current media is video, music, etc.
     is_video: bool,
     /// Consecutive fetch failures for disconnect detection.
@@ -328,7 +326,6 @@ impl Default for MediaState {
             art_bitmap_id: None,
             art_aspect: 1.0,
             art_url: String::new(),
-            accent_bg: GRAY_100,
             is_video: false,
             consecutive_failures: 0,
             was_ever_connected: false,
@@ -1177,14 +1174,12 @@ fn fetch_album_art(url: &str) {
     with_controller(|ctrl| ctrl.fetch_art(&url, on_album_art));
 }
 
-/// Clear album art and accent background on the current media state.
-/// Releases the host-side bitmap so a stop/disconnect doesn't leave the
-/// decoded RGBA + GL texture parked indefinitely.
+/// Release the host-side bitmap so a stop or disconnect doesn't leave the GL
+/// texture parked indefinitely.
 fn clear_album_art(media: &mut MediaState) {
     if media.art_bitmap_id.is_some() {
         media.art_bitmap_id = None;
         media.art_url.clear();
-        media.accent_bg = GRAY_100;
         ALBUM_ART.evict();
     }
 }
@@ -1819,18 +1814,11 @@ fn on_album_art(response: &FetchResponse) {
         let aspect = host::image_dimensions(response.body())
             .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
 
-        // Sample full image average and darken for background tint
-        let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
-            .map_or(GRAY_100, |c| {
-                Color::from_raw(c).lightness(0.22).chroma(0.06)
-            });
-
         STATE.with(|s| {
             let mut state = s.borrow_mut();
             if let WidgetState::Connected(media) = &mut *state {
                 media.art_bitmap_id = Some(bitmap_id);
                 media.art_aspect = aspect;
-                media.accent_bg = accent_bg;
             }
         });
         request_frame();
@@ -2076,17 +2064,11 @@ fn on_mpd_art(data: &[u8]) {
     };
     let aspect = host::image_dimensions(data)
         .map_or(1.0, |(w, h)| if h > 0 { w as f32 / h as f32 } else { 1.0 });
-    let accent_bg = host::bitmap_sample(bitmap_id, 0, 0, u32::MAX, u32::MAX)
-        .map_or(GRAY_100, |c| {
-            Color::from_raw(c).lightness(0.22).chroma(0.06)
-        });
-
     STATE.with(|s| {
         let mut state = s.borrow_mut();
         if let WidgetState::Connected(media) = &mut *state {
             media.art_bitmap_id = Some(bitmap_id);
             media.art_aspect = aspect;
-            media.accent_bg = accent_bg;
         }
     });
     request_frame();
@@ -2623,7 +2605,7 @@ fn render_full(size: WidgetSize, media: &MediaState) -> Node {
     let art_size = size.height as f32 - 2.0 * pad;
 
     row(
-        skin_bg_props(props!(background: media.accent_bg, padding: pad, gap: gap)),
+        skin_bg_props(props!(background: GRAY_100, padding: pad, gap: gap)),
         [
             render_album_art(media, art_size),
             col(
@@ -2659,7 +2641,7 @@ fn render_compact(size: WidgetSize, media: &MediaState) -> Node {
     let art_size = art_max_h.min(avail_w * 0.4);
 
     col(
-        skin_bg_props(props!(background: media.accent_bg, padding: pad, gap: gap)),
+        skin_bg_props(props!(background: GRAY_100, padding: pad, gap: gap)),
         [
             // Top: art + track meta side by side (flex to push controls to bottom)
             row(
@@ -2887,7 +2869,7 @@ fn progress_bar_node(media: &MediaState) -> Node {
 
     progress_bar!(mode,
         touch_key: "progress", track_h: BAR_TRACK_H, active: is_playing,
-        track_color: GRAY_70, bg_color: media.accent_bg,
+        track_color: GRAY_70, bg_color: GRAY_100,
         skin: active_slider_skin(),
     )
 }

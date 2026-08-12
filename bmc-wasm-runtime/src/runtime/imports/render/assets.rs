@@ -27,7 +27,6 @@ use bmc_render::{
     MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_cover,
     decode_scaled_to_fit,
 };
-use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{BitmapId, ImageJobId, MeshId, SvgId};
 use wasmi::{Caller, Extern, Linker};
 
@@ -330,26 +329,15 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+/// Register an inert `host_bitmap_sample` so widgets built against SDK 0.2.x
+/// that sampled still instantiate.
+///
+/// `0` is the sentinel those widgets already read as "no sampled colour".
 fn register_bitmap_sample_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
         "host_bitmap_sample",
-        |mut caller: Caller<'_, HostState>,
-         bitmap_id: u32,
-         x: u32,
-         y: u32,
-         w: u32,
-         h: u32|
-         -> Result<u32, wasmi::Error> {
-            let Some(bitmap_id) = BitmapId::from_ffi(bitmap_id) else {
-                return Ok(0);
-            };
-            super::super::with_renderer(&mut caller, |renderer| {
-                renderer
-                    .bitmap_sample(bitmap_id, x, y, w, h)
-                    .map_or(0, Color::to_u32)
-            })
-        },
+        |_bitmap_id: u32, _x: u32, _y: u32, _w: u32, _h: u32| -> u32 { 0 },
     )?;
     Ok(())
 }

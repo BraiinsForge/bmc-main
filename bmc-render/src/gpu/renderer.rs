@@ -936,12 +936,6 @@ impl Renderer for FemtoVgRenderer {
         }
     }
 
-    fn bitmap_sample(&self, bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<Color> {
-        self.bitmap_registry
-            .sample(bitmap_id, x, y, w, h)
-            .map(Color::from_raw)
-    }
-
     fn draw_nine_patch(
         &mut self,
         x: f32,

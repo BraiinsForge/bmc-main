@@ -189,17 +189,6 @@ impl Renderer for TestRenderer {
     ) {
     }
 
-    fn bitmap_sample(
-        &self,
-        _bitmap_id: BitmapId,
-        _x: u32,
-        _y: u32,
-        _w: u32,
-        _h: u32,
-    ) -> Option<Color> {
-        None
-    }
-
     fn register_mesh(&mut self, _tag: &str, _data: &[u8]) -> Option<MeshId> {
         None
     }

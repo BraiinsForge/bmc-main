@@ -23,6 +23,9 @@
 //! Bitmaps are registered once (on first use from WASM) and persist for the
 //! runtime lifetime. Each registered bitmap gets an opaque `u16` ID that maps
 //! to a FemtoVG `ImageId` (GPU texture handle).
+//!
+//! No registration path retains the decoded pixels, so a registered bitmap
+//! costs GPU memory only.
 
 use std::collections::HashMap;
 use std::fmt;
@@ -47,8 +50,6 @@ struct StoredBitmap {
 /// cached ID without re-decoding or re-uploading.
 pub struct BitmapRegistry {
     bitmaps: HashMap<BitmapId, StoredBitmap>,
-    /// CPU RGBA kept only for `sample`; set by `register`, not `register_rgba`.
-    sample_pixels: HashMap<BitmapId, Vec<u8>>,
     by_tag: HashMap<String, BitmapId>,
     next_id: u16,
 }
@@ -67,7 +68,6 @@ impl BitmapRegistry {
     pub fn new() -> Self {
         Self {
             bitmaps: HashMap::new(),
-            sample_pixels: HashMap::new(),
             by_tag: HashMap::new(),
             next_id: 1,
         }
@@ -91,7 +91,7 @@ impl BitmapRegistry {
         if let Some(&id) = self.by_tag.get(tag) {
             return Some(id);
         }
-        let (image_id, pixels, width, height) = match decode_and_upload(data, canvas, flags) {
+        let (image_id, width, height) = match decode_and_upload(data, canvas, flags) {
             Ok(t) => t,
             Err(e) => {
                 tracing::error!("failed to decode/upload bitmap ({tag}): {e}");
@@ -108,12 +108,11 @@ impl BitmapRegistry {
                 height,
             },
         );
-        self.sample_pixels.insert(id, pixels);
         self.by_tag.insert(tag.to_owned(), id);
         Some(id)
     }
 
-    /// Upload a pre-decoded RGBA buffer to GPU; no CPU copy.
+    /// Upload a pre-decoded RGBA buffer to GPU.
     /// Replaces any existing bitmap registered under `tag`.
     pub fn register_rgba(
         &mut self,
@@ -156,8 +155,6 @@ impl BitmapRegistry {
             ) {
                 canvas.delete_image(old.image_id);
             }
-            // register_rgba keeps no CPU copy; drop any stale sample pixels.
-            self.sample_pixels.remove(&id);
             return Some(id);
         }
         let id = BitmapId::alloc(&mut self.next_id);
@@ -201,7 +198,6 @@ impl BitmapRegistry {
         for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
             canvas.delete_image(bitmap.image_id);
         }
-        self.sample_pixels.clear();
         self.by_tag.clear();
     }
 
@@ -221,7 +217,6 @@ impl BitmapRegistry {
         let Some(stored) = self.bitmaps.remove(&id) else {
             return false;
         };
-        self.sample_pixels.remove(&id);
         canvas.delete_image(stored.image_id);
         true
     }
@@ -248,66 +243,22 @@ impl BitmapRegistry {
         }
         n
     }
-
-    /// Sample the average RGBA color of a rectangular region within a registered bitmap.
-    ///
-    /// Coordinates are clamped to the bitmap dimensions. Returns `None` if the bitmap ID
-    /// is not registered or the region is empty after clamping.
-    #[must_use]
-    #[expect(clippy::many_single_char_names)]
-    pub fn sample(&self, id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<u32> {
-        let bmp = self.bitmaps.get(&id)?;
-        let pixels = self.sample_pixels.get(&id)?;
-
-        let x0 = x.min(bmp.width);
-        let y0 = y.min(bmp.height);
-        let x1 = x.saturating_add(w).min(bmp.width);
-        let y1 = y.saturating_add(h).min(bmp.height);
-
-        let region_w = x1 - x0;
-        let region_h = y1 - y0;
-        if region_w == 0 || region_h == 0 {
-            return None;
-        }
-
-        let (mut r_sum, mut g_sum, mut b_sum, mut a_sum) = (0_u64, 0_u64, 0_u64, 0_u64);
-        for row in y0..y1 {
-            let row_start = (row * bmp.width + x0) as usize * 4;
-            for col in 0..region_w {
-                let idx = row_start + col as usize * 4;
-                r_sum += u64::from(pixels[idx]);
-                g_sum += u64::from(pixels[idx + 1]);
-                b_sum += u64::from(pixels[idx + 2]);
-                a_sum += u64::from(pixels[idx + 3]);
-            }
-        }
-
-        let count = u64::from(region_w) * u64::from(region_h);
-        #[expect(clippy::cast_possible_truncation, clippy::integer_division)]
-        let (r, g, b, a) = (
-            (r_sum / count) as u32,
-            (g_sum / count) as u32,
-            (b_sum / count) as u32,
-            (a_sum / count) as u32,
-        );
-        Some((r << 24) | (g << 16) | (b << 8) | a)
-    }
 }
 
-/// Decode image bytes to RGBA, upload to the GPU, and return the pixel data.
+/// Decode image bytes to RGBA and upload them to the GPU.
 fn decode_and_upload(
     data: &[u8],
     canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
     flags: ImageFlags,
-) -> anyhow::Result<(ImageId, Vec<u8>, u32, u32)> {
-    let rgba = decode_full_to_dynamic(data)?.to_rgba8();
+) -> anyhow::Result<(ImageId, u32, u32)> {
+    let rgba = decode_full_to_dynamic(data)?.into_rgba8();
 
     let (w, h) = (rgba.width(), rgba.height());
     let pixels_rgba: &[RGBA8] = rgba.as_raw().as_rgba();
 
     let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, w as usize, h as usize));
     let image_id = canvas.create_image(src, flags)?;
-    Ok((image_id, rgba.into_raw(), w, h))
+    Ok((image_id, w, h))
 }
 
 /// Decode to RGBA scaled to fit within `max_w`×`max_h` (no upscale), letterboxed

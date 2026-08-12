@@ -195,12 +195,6 @@ pub trait Renderer {
         bottom: u16,
     );
 
-    /// Sample the average color of a rectangular region within a registered bitmap.
-    ///
-    /// Returns the average RGBA as a [`Color`], or `None` if the
-    /// bitmap ID is invalid or the region is empty.
-    fn bitmap_sample(&self, bitmap_id: BitmapId, x: u32, y: u32, w: u32, h: u32) -> Option<Color>;
-
     // -- Meshes --
 
     /// Register mesh binary data, upload VBO/IBO/texture to GPU. Idempotent
