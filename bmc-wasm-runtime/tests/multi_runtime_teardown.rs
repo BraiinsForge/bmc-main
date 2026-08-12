@@ -141,7 +141,8 @@ fn stop_channel_workers_join_within_200ms_on_drop() {
 
     let progress_deadline = Instant::now() + Duration::from_millis(200);
     while Instant::now() < progress_deadline && b.test_progress_counter() == baseline {
-        b.poll_deliveries();
+        b.poll_deliveries()
+            .expect("BUG: fixture delivery must not trap");
         thread::sleep(Duration::from_millis(2));
     }
     assert!(

@@ -92,8 +92,10 @@ fn two_runtimes_one_process_see_each_others_mdns_announcements() {
     let mut saw_b_on_a = false;
     let mut saw_a_on_b = false;
     while Instant::now() < deadline && (!saw_b_on_a || !saw_a_on_b) {
-        a.poll_deliveries();
-        b.poll_deliveries();
+        a.poll_deliveries()
+            .expect("BUG: fixture delivery must not trap");
+        b.poll_deliveries()
+            .expect("BUG: fixture delivery must not trap");
 
         for event in a.test_take_mdns_events() {
             if event.fullname.contains("instance-b") {

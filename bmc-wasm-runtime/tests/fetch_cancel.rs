@@ -151,7 +151,9 @@ fn cancel_removes_a_queued_delayed_fetch_entirely() {
     );
 
     runtime.set_time(Local::now().fixed_offset(), 10);
-    runtime.poll_deliveries();
+    runtime
+        .poll_deliveries()
+        .expect("BUG: fixture delivery must not trap");
     assert_eq!(
         runtime.call_export_i32("response_count"),
         Some(0),
@@ -197,7 +199,9 @@ fn cancel_rewrites_the_settlement_of_a_fetch_already_away() {
         "a fetch the host cannot stop reports no removal",
     );
 
-    runtime.poll_deliveries();
+    runtime
+        .poll_deliveries()
+        .expect("BUG: fixture delivery must not trap");
     assert_eq!(
         runtime.call_export_i32("response_count"),
         Some(1),

@@ -22,6 +22,7 @@
 
 #![expect(clippy::too_many_lines)]
 
+use anyhow::Result;
 use bmc_wasm_protocol::{
     BitmapId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, SocketId,
     SsdpSearchId, UdpBroadcastId, WebsocketId,
@@ -253,7 +254,8 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (resp.request_id.to_wire(), resp.status, body_ptr, body_len),
             ) {
-                tracing::error!("__on_fetch_response failed: {e}");
+                self.record_guest_trap("__on_fetch_response", &e);
+                break;
             }
         }
     }
@@ -328,12 +330,14 @@ impl WasmWidgetRuntime {
                 if let Some(on_dropped) = on_dropped
                     && let Err(e) = on_dropped.call(&mut self.store, done.job_id.to_wire())
                 {
-                    tracing::error!("__on_image_dropped failed: {e}");
+                    self.record_guest_trap("__on_image_dropped", &e);
+                    break;
                 }
                 continue;
             }
             if let Err(e) = on_ready.call(&mut self.store, (done.job_id.to_wire(), bitmap_id)) {
-                tracing::error!("__on_image_ready failed: {e}");
+                self.record_guest_trap("__on_image_ready", &e);
+                break;
             }
         }
     }
@@ -444,7 +448,8 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (ws_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                tracing::error!("__on_ws_event failed: {e}");
+                self.record_guest_trap("__on_ws_event", &e);
+                break;
             }
         }
         true
@@ -539,7 +544,8 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (socket_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                tracing::error!("__on_socket_event failed: {e}");
+                self.record_guest_trap("__on_socket_event", &e);
+                break;
             }
         }
         true
@@ -636,7 +642,8 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (browse_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                tracing::error!("__on_mdns_event failed: {e}");
+                self.record_guest_trap("__on_mdns_event", &e);
+                break;
             }
         }
         true
@@ -717,7 +724,8 @@ impl WasmWidgetRuntime {
                 &mut self.store,
                 (search_id.to_wire(), event_type, data_ptr, data_len),
             ) {
-                tracing::error!("__on_ssdp_event failed: {e}");
+                self.record_guest_trap("__on_ssdp_event", &e);
+                break;
             }
         }
         true
@@ -808,7 +816,8 @@ impl WasmWidgetRuntime {
                     source_len,
                 ),
             ) {
-                tracing::error!("__on_udp_broadcast_event failed: {e}");
+                self.record_guest_trap("__on_udp_broadcast_event", &e);
+                break;
             }
         }
         true
@@ -892,7 +901,8 @@ impl WasmWidgetRuntime {
                     body_len,
                 ),
             ) {
-                tracing::error!("__on_http_request failed: {e}");
+                self.record_guest_trap("__on_http_request", &e);
+                break;
             }
         }
         true
@@ -904,22 +914,59 @@ impl WasmWidgetRuntime {
         !self.store.data().http_listeners.is_empty()
     }
 
-    /// Fan out to every `deliver_*` entry point in a fixed order.
+    /// Record a trap taken by a guest delivery callback.
     ///
-    /// The multi-slot host's main loop calls this per slot per iteration. The
-    /// ordering below is the canonical sequence guests observe; the
-    /// `deliver_*` calls must stay in this order so payload ordering remains
-    /// stable across host revisions.
-    pub fn poll_deliveries(&mut self) {
+    /// Keeps the first one: later callbacks in the same pass run on an instance
+    /// that is already damaged, so their traps say nothing new.
+    pub(super) fn record_guest_trap(&mut self, export: &str, error: &wasmi::Error) {
+        tracing::error!(
+            instance_id = %self.store.data().instance_id,
+            export,
+            trap = %error,
+            "widget delivery callback trapped; tearing down"
+        );
+        if self.guest_trap.is_none() {
+            self.guest_trap = Some(anyhow::anyhow!("{export} trapped: {error}"));
+        }
+    }
+
+    fn take_guest_trap(&mut self) -> Result<()> {
+        match self.guest_trap.take() {
+            Some(trap) => Err(trap),
+            None => Ok(()),
+        }
+    }
+
+    /// Drive every pending lifecycle hook and delivery in a fixed order.
+    ///
+    /// The multi-slot host calls this once per slot in every main-loop iteration.
+    /// The ordering below is the canonical sequence guests observe; these calls
+    /// must stay in this order so payload ordering remains stable across host
+    /// revisions. Processing stops at the first guest trap.
+    ///
+    /// # Errors
+    ///
+    /// Returns the trap a delivery callback took. The instance cannot be
+    /// recovered afterwards and the caller must tear it down.
+    pub fn poll_deliveries(&mut self) -> Result<()> {
         self.flush_pending_lifecycle();
+        self.take_guest_trap()?;
         self.deliver_fetch_responses();
+        self.take_guest_trap()?;
         self.deliver_image_decode_results();
+        self.take_guest_trap()?;
         self.deliver_ws_messages();
+        self.take_guest_trap()?;
         self.deliver_socket_events();
+        self.take_guest_trap()?;
         self.deliver_mdns_events();
+        self.take_guest_trap()?;
         self.deliver_ssdp_events();
+        self.take_guest_trap()?;
         self.deliver_udp_broadcast_events();
+        self.take_guest_trap()?;
         self.deliver_http_requests();
+        self.take_guest_trap()
     }
 
     /// Fan out to every `deliver_*` entry point while renderer-backed imports
@@ -930,8 +977,12 @@ impl WasmWidgetRuntime {
     /// callback and registers it as a bitmap before requesting the next frame.
     /// The caller-owned renderer therefore has to be parked while delivery
     /// callbacks run, not just while `render()` runs.
-    pub fn poll_deliveries_with_renderer(&mut self, renderer: NonNull<dyn Renderer>) {
-        self.with_renderer(renderer, Self::poll_deliveries);
+    ///
+    /// # Errors
+    ///
+    /// Propagates a delivery callback's trap; see [`Self::poll_deliveries`].
+    pub fn poll_deliveries_with_renderer(&mut self, renderer: NonNull<dyn Renderer>) -> Result<()> {
+        self.with_renderer(renderer, Self::poll_deliveries)
     }
 
     /// True while an async image decode is still in flight (real-thread work).

@@ -18,22 +18,22 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Delayed fetch delivery depends on host-provided monotonic time.
+//! A trap inside a delivery callback has to reach the host.
 //!
-//! The multi-widget host must call `set_time` before polling deliveries, even
-//! for dormant/non-rendering slots. Otherwise delayed fetches stay queued
-//! forever while `has_pending_io()` keeps waking the host.
+//! The trap unwinds the guest's frames without running their epilogues,
+//! so `__stack_pointer` keeps whatever value it had when the trap fired.
+//! A swallowed trap therefore leaves an instance that still answers calls
+//! while permanently short of stack, and a few of them exhaust the 64 KiB
+//! reservation outright. `poll_deliveries` reports the trap so the host
+//! tears the slot down rather than driving it again.
 
 #![cfg(all(target_os = "linux", feature = "testing"))]
 
 use chrono::Local;
 
-use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
-mod common;
-use common::headless_egl;
-
-fn delayed_fetch_wat() -> String {
+fn trapping_callback_wat() -> String {
     format!(
         r#"
     (module
@@ -43,9 +43,7 @@ fn delayed_fetch_wat() -> String {
           (result i32)))
 
       (memory (export "memory") 1)
-      (data (i32.const 0) "GEThttps://example.test/delayed")
-
-      (global $response_count (mut i32) (i32.const 0))
+      (data (i32.const 0) "GEThttps://example.test/trap")
 
       (func (export "__bmc_sdk_init") (result i64)
         i64.const {})
@@ -56,51 +54,45 @@ fn delayed_fetch_wat() -> String {
       (func (export "init")
         (drop
           (call $host_fetch_after
-            (i32.const 10)    ;; delay_ms
+            (i32.const 0)     ;; delay_ms
             (i32.const 10000) ;; timeout_ms
             (i32.const 0)     ;; method_ptr
             (i32.const 3)     ;; method_len
             (i32.const 3)     ;; url_ptr
-            (i32.const 28)    ;; url_len
+            (i32.const 25)    ;; url_len
             (i32.const 0)     ;; headers_ptr
             (i32.const 0)     ;; headers_len
             (i32.const 0)     ;; body_ptr
-            (i32.const 0))))  ;; body_len
+            (i32.const 0)))) ;; body_len
 
       (func (export "__on_fetch_response")
         (param $request_id i32)
         (param $status i32)
         (param $body_ptr i32)
         (param $body_len i32)
-        global.get $response_count
-        i32.const 1
-        i32.add
-        global.set $response_count)
+        unreachable)
 
-      (func (export "render") (param i32))
-
-      (func (export "response_count") (result i32)
-        global.get $response_count))
+      (func (export "render") (param i32)))
     "#,
         bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
     )
 }
 
 #[test]
-fn delayed_fetch_fires_only_after_host_advances_monotonic_time() {
-    let Some(gl) = headless_egl::try_init(64, 64) else {
-        return;
-    };
-    let _force_use = (&gl.display, gl.fbo_id, gl.proc_address());
-
-    let wasm = wat::parse_str(delayed_fetch_wat()).expect("BUG: delayed-fetch WAT must parse");
+fn delivery_callback_trap_is_reported_not_swallowed() {
+    let wasm = wat::parse_str(trapping_callback_wat()).expect("BUG: trapping WAT must parse");
     let mut runtime = WasmWidgetRuntime::new(
         &wasm,
         64,
         64,
         bmc_wasm_protocol::ViewportShape::Rectangular,
-        common::test_display(64, 64),
-        chrono::Local::now().fixed_offset(),
+        RuntimeDisplayInfo {
+            width: 64,
+            height: 64,
+            shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+            dpi: 1,
+        },
+        Local::now().fixed_offset(),
         RuntimeConfig {
             fetch_interceptor: Some(Box::new(|_method, _url| Some((200, b"ok".to_vec())))),
             ..RuntimeConfig::default()
@@ -108,24 +100,12 @@ fn delayed_fetch_fires_only_after_host_advances_monotonic_time() {
     )
     .expect("BUG: runtime construct");
 
-    assert_eq!(runtime.call_export_i32("response_count"), Some(0));
-
-    runtime
+    runtime.set_time(Local::now().fixed_offset(), 1);
+    let error = runtime
         .poll_deliveries()
-        .expect("BUG: fixture delivery must not trap");
-    assert_eq!(
-        runtime.call_export_i32("response_count"),
-        Some(0),
-        "delayed fetch fired before the host advanced monotonic time",
-    );
-
-    runtime.set_time(Local::now().fixed_offset(), 10);
-    runtime
-        .poll_deliveries()
-        .expect("BUG: fixture delivery must not trap");
-    assert_eq!(
-        runtime.call_export_i32("response_count"),
-        Some(1),
-        "delayed fetch did not fire after monotonic time reached its deadline",
+        .expect_err("a trapping __on_fetch_response must be reported to the host");
+    assert!(
+        error.to_string().contains("__on_fetch_response"),
+        "the reported trap should name the callback that took it, got: {error}"
     );
 }

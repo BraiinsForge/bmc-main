@@ -148,7 +148,9 @@ fn fetch_response_callback_can_register_renderer_asset() {
 
     let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(renderer);
     let ptr = NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
-    runtime.poll_deliveries_with_renderer(ptr);
+    runtime
+        .poll_deliveries_with_renderer(ptr)
+        .expect("BUG: fixture delivery must not trap");
 
     assert!(
         renderer.evict_prefix(&namespace) > 0,

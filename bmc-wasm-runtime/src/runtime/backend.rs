@@ -353,6 +353,12 @@ pub struct WasmWidgetRuntime {
     pub(super) fuel_per_frame: u64,
     /// Consecutive frames that exceeded the fuel budget.
     fuel_strikes: u32,
+    /// Trap taken by a delivery callback, drained by `poll_deliveries`.
+    ///
+    /// A trap unwinds the guest's wasm frames without running their epilogues,
+    /// so `__stack_pointer` keeps whatever value it had when the trap fired.
+    /// Later calls start from there; the instance must not be driven again.
+    pub(super) guest_trap: Option<anyhow::Error>,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
     /// Off-screen (`on_sleep` fired); suppresses async-decode GPU uploads.
@@ -549,6 +555,7 @@ impl WasmWidgetRuntime {
             sdk_version,
             fuel_per_frame,
             fuel_strikes: 0,
+            guest_trap: None,
             fuel_dead: false,
             dormant: false,
             max_fuel_strikes: 5,

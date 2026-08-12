@@ -508,7 +508,14 @@ fn run_loop(
             let now = Instant::now();
             slot.apply_lifecycle(now, &shared.egl);
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
-            slot.runtime.poll_deliveries_with_renderer(renderer_ptr);
+            if let Err(e) = slot.runtime.poll_deliveries_with_renderer(renderer_ptr) {
+                tracing::error!(
+                    peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
+                    "widget delivery trapped; tearing down slot"
+                );
+                to_teardown.push(*id);
+                continue;
+            }
             slot.refresh_next_runtime_frame_after_delivery(now);
             if slot.flush_led_requests().is_err() {
                 to_teardown.push(*id);

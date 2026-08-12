@@ -1182,7 +1182,7 @@ pub(crate) struct PreviewTile {
     pub(crate) y: u32,
     pub(crate) shape: platforms::DisplayShape,
     label: String,
-    logged_dead: bool,
+    dead: bool,
     ever_rendered: bool,
     /// Monotonic-ms deadline for this tile's next WASM render,
     /// armed from `next_frame_delay()` at each render.
@@ -1199,6 +1199,23 @@ pub(crate) struct PreviewTile {
     pub(crate) led_scene: Option<bmc_led::data::LedScene>,
     /// Whether LEDs are enabled.
     pub(crate) led_enabled: bool,
+}
+
+enum DeliveryPollOutcome {
+    Ready { immediate: bool },
+    Trapped(anyhow::Error),
+}
+
+fn delivery_poll_outcome(
+    result: Result<()>,
+    next_frame_is_immediate: impl FnOnce() -> bool,
+) -> DeliveryPollOutcome {
+    match result {
+        Ok(()) => DeliveryPollOutcome::Ready {
+            immediate: next_frame_is_immediate(),
+        },
+        Err(error) => DeliveryPollOutcome::Trapped(error),
+    }
 }
 
 impl PreviewTile {
@@ -1575,7 +1592,7 @@ impl TestbedApp {
                     tile.led_rx = led_rx;
                     tile.led_scene = None;
                     tile.led_enabled = false;
-                    tile.logged_dead = false;
+                    tile.dead = false;
                     tile.ever_rendered = false;
                 }
                 Err(e) => {
@@ -1749,7 +1766,7 @@ impl TestbedApp {
                 y,
                 shape: placed.shape,
                 label,
-                logged_dead: false,
+                dead: false,
                 ever_rendered: false,
                 next_render_at_ms: None,
                 pending_interaction: false,
@@ -1857,8 +1874,8 @@ impl TestbedApp {
             if active_record_idx.is_some_and(|active| active != tile_idx) {
                 continue;
             }
-            if tile.runtime.is_none() {
-                continue; // placeholder tile — no live widget to render
+            if tile.runtime.is_none() || tile.dead {
+                continue;
             }
             tile.drain_led_commands();
 
@@ -1873,15 +1890,23 @@ impl TestbedApp {
             //
             // No `begin_frame` — it clears the FBO,
             // so it must bracket a real render, not a drain.
-            let immediate = {
+            let delivery_outcome = {
                 let rt = tile
                     .runtime
                     .as_mut()
                     .expect("BUG: placeholder skipped above");
                 rt.set_hermetic(offline);
                 rt.set_time(system_time, monotonic_ms);
-                rt.poll_deliveries_with_renderer(renderer_ptr);
-                rt.next_frame_delay() == Some(0)
+                let result = rt.poll_deliveries_with_renderer(renderer_ptr);
+                delivery_poll_outcome(result, || rt.next_frame_delay() == Some(0))
+            };
+            let immediate = match delivery_outcome {
+                DeliveryPollOutcome::Ready { immediate } => immediate,
+                DeliveryPollOutcome::Trapped(error) => {
+                    tile.dead = true;
+                    tracing::error!("{}: delivery trapped: {error}", tile.label);
+                    continue;
+                }
             };
 
             // Render only when the tile's scheduler asks: first frame,
@@ -1936,9 +1961,9 @@ impl TestbedApp {
                     tracing::warn!("{}: fuel exhausted", tile.label);
                 }
                 Ok(RenderStatus::Dead) => {
-                    if !tile.logged_dead {
+                    if !tile.dead {
                         tracing::error!("{}: widget killed (repeated fuel overages)", tile.label);
-                        tile.logged_dead = true;
+                        tile.dead = true;
                     }
                 }
                 Err(e) => {
@@ -2350,6 +2375,9 @@ impl eframe::App for TestbedApp {
                     }
 
                     paint_tile_texture(ui, tile, rect);
+                    if tile.dead {
+                        continue;
+                    }
 
                     if active_record_idx == Some(tile_idx) {
                         // `Inside` so the bottom edge stays inside the tile rect
@@ -2755,5 +2783,19 @@ mod layout_tests {
             (1280, 480)
         );
         assert_eq!((medium.w, medium.h), (638, 238));
+    }
+}
+
+#[cfg(test)]
+mod delivery_tests {
+    use super::*;
+
+    #[test]
+    fn a_delivery_trap_does_not_query_the_runtime_again() {
+        let outcome = delivery_poll_outcome(Err(anyhow::anyhow!("guest trapped")), || {
+            panic!("a trapped runtime must not be driven again")
+        });
+
+        assert!(matches!(outcome, DeliveryPollOutcome::Trapped(_)));
     }
 }

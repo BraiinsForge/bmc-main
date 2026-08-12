@@ -65,7 +65,9 @@ impl TestbedApp {
         }
         let view = bmc_wasm_runtime::parse_credentials_json(&new_credentials);
         for tile in &mut self.tiles {
-            if let Some(runtime) = tile.runtime.as_mut() {
+            if !tile.dead
+                && let Some(runtime) = tile.runtime.as_mut()
+            {
                 runtime.deliver_credentials_update(view.clone(), self.secrets.clone());
             }
         }

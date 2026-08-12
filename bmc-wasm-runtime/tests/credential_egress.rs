@@ -232,7 +232,9 @@ fn a_pinned_credential_is_refused_before_it_can_leave_for_another_host() {
     // a dispatch would still be in its worker thread, leaving the count
     // at zero. That asymmetry is what makes this specific to a refusal,
     // with no timeout to wait on.
-    runtime.poll_deliveries();
+    runtime
+        .poll_deliveries()
+        .expect("BUG: fixture delivery must not trap");
     assert_eq!(
         runtime.call_export_i32("response_count"),
         Some(1),
