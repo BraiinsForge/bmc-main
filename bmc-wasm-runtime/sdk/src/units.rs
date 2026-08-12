@@ -27,12 +27,19 @@
     reason = "delegates to the crate's own host-boundary `_host_format_*`"
 )]
 
+use crate::fmt;
+use crate::system::UnitSystem;
+
 // ── Unit-conversion factors ──────────────────────────────────────────
 
 /// Metres per kilometre (also m/s per km/s).
 const METERS_PER_KILOMETER: f64 = 1_000.0;
 /// km/h per m/s.
 const KMH_PER_MPS: f64 = 3.6;
+const CENTIMETERS_PER_METER: f64 = 100.0;
+const CENTIMETERS_PER_INCH: f64 = 2.54;
+const INCHES_PER_FOOT: f64 = 12.0;
+const POUNDS_PER_KILOGRAM: f64 = 2.204_622_6;
 /// `°F = °C ·` this `+ `[`FREEZING_POINT_FAHRENHEIT`].
 const CELSIUS_TO_FAHRENHEIT_SCALE: f64 = 9.0 / 5.0;
 /// °F at 0 °C.
@@ -63,10 +70,101 @@ impl Length {
         self.0 / METERS_PER_KILOMETER
     }
 
+    #[must_use]
+    pub fn from_centimeters(centimeters: f64) -> Self {
+        Self(centimeters / CENTIMETERS_PER_METER)
+    }
+
+    #[must_use]
+    pub fn as_centimeters(self) -> f64 {
+        self.0 * CENTIMETERS_PER_METER
+    }
+
     /// Render as km (miles when imperial) with the operator's number format.
     #[must_use]
     pub fn format(self, decimals: u32) -> String {
         crate::format::_host_format_distance(self.as_kilometers(), decimals)
+    }
+
+    /// Render at the scale a person or an object is measured at, not the
+    /// scale of a journey: centimetres, or feet and inches when imperial.
+    ///
+    /// Imperial ignores `decimals`, since nobody quotes a height to a
+    /// fraction of an inch, and keeps a zero inch so a table column holds
+    /// still.
+    #[must_use]
+    pub fn format_short(self, decimals: u32) -> String {
+        let centimeters = self.as_centimeters();
+        if crate::system::current().unit_system().unwrap_or_default() == UnitSystem::Metric {
+            return fmt!(
+                "{} cm",
+                crate::format::_host_format_number(centimeters, decimals)
+            );
+        }
+        let (feet, inches) = feet_and_inches(centimeters);
+        fmt!(
+            "{}\u{2032}{}\u{2033}",
+            crate::format::_host_format_number(feet, 0),
+            crate::format::_host_format_number(inches, 0)
+        )
+    }
+}
+
+/// Whole feet and inches, the inches rounded.
+///
+/// Rounding can reach twelve inches, which is a foot, and `5′12″` is as
+/// malformed as `10:60` — so it carries. The deckfeeder widget this came
+/// from rounds without carrying, rendering a 182 cm driver as `5′12″`.
+fn feet_and_inches(centimeters: f64) -> (f64, f64) {
+    let total_inches = centimeters / CENTIMETERS_PER_INCH;
+    let feet = (total_inches / INCHES_PER_FOOT).floor();
+    let inches = (total_inches - feet * INCHES_PER_FOOT).round();
+    if inches >= INCHES_PER_FOOT {
+        (feet + 1.0, 0.0)
+    } else {
+        (feet, inches)
+    }
+}
+
+/// A mass, stored canonically in kilograms.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Mass(f64);
+
+impl Mass {
+    #[must_use]
+    pub const fn from_kilograms(kilograms: f64) -> Self {
+        Self(kilograms)
+    }
+
+    #[must_use]
+    pub fn from_pounds(pounds: f64) -> Self {
+        Self(pounds / POUNDS_PER_KILOGRAM)
+    }
+
+    #[must_use]
+    pub const fn as_kilograms(self) -> f64 {
+        self.0
+    }
+
+    #[must_use]
+    pub fn as_pounds(self) -> f64 {
+        self.0 * POUNDS_PER_KILOGRAM
+    }
+
+    /// Render as kg (pounds when imperial) with the operator's number format.
+    #[must_use]
+    pub fn format(self, decimals: u32) -> String {
+        let (value, unit) =
+            if crate::system::current().unit_system().unwrap_or_default() == UnitSystem::Metric {
+                (self.as_kilograms(), "kg")
+            } else {
+                (self.as_pounds(), "lbs")
+            };
+        fmt!(
+            "{} {}",
+            crate::format::_host_format_number(value, decimals),
+            unit
+        )
     }
 }
 
@@ -298,6 +396,60 @@ mod tests {
         let l = Length::from_kilometers(420.0);
         assert!(approx(l.as_meters(), 420_000.0));
         assert!(approx(l.as_kilometers(), 420.0));
+    }
+
+    #[test]
+    fn length_round_trips_through_the_scale_a_person_is_measured_at() {
+        let l = Length::from_centimeters(180.0);
+        assert!(approx(l.as_centimeters(), 180.0));
+        assert!(approx(l.as_meters(), 1.8));
+    }
+
+    #[test]
+    fn mass_converts_between_kilograms_and_pounds() {
+        let m = Mass::from_kilograms(70.0);
+        assert!(approx(m.as_kilograms(), 70.0));
+        assert!(approx(m.as_pounds(), 154.323_582));
+        assert!(approx(
+            Mass::from_pounds(m.as_pounds()).as_kilograms(),
+            70.0
+        ));
+    }
+
+    /// With no snapshot installed the operator's units read as metric.
+    #[test]
+    fn a_short_length_renders_at_its_own_scale() {
+        assert_eq!(Length::from_centimeters(180.0).format_short(0), "180 cm");
+        assert_eq!(Mass::from_kilograms(70.0).format(0), "70 kg");
+    }
+
+    /// Off-device the operator's units are whatever the thread was given,
+    /// so a story can render both systems without a host.
+    #[test]
+    fn imperial_units_render_off_device_once_a_snapshot_says_so() {
+        crate::system::set_current(
+            crate::system::SnapshotBuilder::new()
+                .unit_system(UnitSystem::Imperial)
+                .build(),
+        );
+        assert_eq!(
+            Length::from_centimeters(182.0).format_short(0),
+            "6\u{2032}0\u{2033}"
+        );
+        assert_eq!(Mass::from_kilograms(70.0).format(0), "154 lbs");
+
+        crate::system::set_current(crate::system::Snapshot::empty());
+        assert_eq!(Length::from_centimeters(182.0).format_short(0), "182 cm");
+    }
+
+    /// Heights off the 2026 grid, 182 cm being the one that rounds up
+    /// into a whole foot.
+    #[test]
+    fn inches_rounding_into_a_foot_carries_rather_than_reading_twelve() {
+        assert_eq!(feet_and_inches(180.0), (5.0, 11.0));
+        assert_eq!(feet_and_inches(181.0), (5.0, 11.0));
+        assert_eq!(feet_and_inches(182.0), (6.0, 0.0));
+        assert_eq!(feet_and_inches(186.0), (6.0, 1.0));
     }
 
     #[test]

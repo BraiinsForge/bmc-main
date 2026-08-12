@@ -436,7 +436,7 @@ pub use slot::*;
 pub use tree::*;
 pub use tz::Tz;
 pub use ufmt;
-pub use units::{ElectricPower, Hashrate, Length, MiningEfficiency, Speed, Temperature};
+pub use units::{ElectricPower, Hashrate, Length, Mass, MiningEfficiency, Speed, Temperature};
 #[cfg(target_arch = "wasm32")]
 pub use ws::{Ws, WsEvent, ws_connect};
 #[cfg(target_arch = "wasm32")]
