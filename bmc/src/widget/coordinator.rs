@@ -331,8 +331,12 @@ pub fn start_credential_listener(
 }
 
 /// Apply widget lifecycle events from the manager to the compositor:
-/// a self-exited process gets its pid association cleared,
-/// so a recycled pid cannot be mistaken for the dead widget.
+/// a self-exited process gets its pid association cleared
+/// (a recycled pid cannot be mistaken for the dead widget),
+/// and a respawned process gets its new pid bound,
+/// so the compositor recognizes it when it reconnects.
+/// The instance's registration and stored config survive the crash,
+/// so the reconnect replays the same configure batch as the first attach.
 pub fn start_widget_event_listener(
     coordinator: Arc<Coordinator>,
     mut events: mpsc::UnboundedReceiver<WidgetEvent>,
@@ -342,6 +346,16 @@ pub fn start_widget_event_listener(
             match event {
                 WidgetEvent::Exited { instance_id, pid } => {
                     let _ = coordinator.compositor.clear_pid(&instance_id, pid);
+                }
+                WidgetEvent::Respawned { instance_id, pid } => {
+                    if let Err(e) = coordinator.compositor.set_widget_pid(&instance_id, pid) {
+                        warn!(
+                            widget_id = %instance_id,
+                            pid,
+                            error = %e,
+                            "failed to bind the new pid after a widget respawn"
+                        );
+                    }
                 }
             }
         }
@@ -676,9 +690,12 @@ impl Coordinator {
             {
                 continue;
             }
+            // A pending respawn is skipped on purpose: supervision re-reads the
+            // registry when its timer fires, so it brings the widget back on the
+            // new binary without this reload replacing anything.
             match self.widget_manager.observe_child(&instance_id).await {
                 ChildObservation::Running => {}
-                ChildObservation::Missing => continue,
+                ChildObservation::Exited | ChildObservation::Missing => continue,
             }
 
             let current = {
