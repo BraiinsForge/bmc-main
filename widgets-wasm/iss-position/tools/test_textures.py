@@ -29,6 +29,7 @@ so a job on every push buys little.
 `nix build .#checks.<system>.iss-texture-tools` runs it when a gate is wanted.
 """
 
+import io
 from pathlib import Path
 
 import numpy as np
@@ -36,6 +37,7 @@ import pytest
 from _textures import (
     JPEG_QUALITY,
     JPEG_SUBSAMPLING,
+    SHIPPED_TEXTURE,
     TARGET_H,
     TARGET_W,
     downsample,
@@ -53,6 +55,28 @@ def flat_image(width: int, height: int) -> Image.Image:
 def checkerboard(width: int, height: int) -> Image.Image:
     alternating = np.indices((height, width)).sum(axis=0) % 2
     return Image.fromarray((alternating * 255).astype(np.uint8), 'L').convert('RGB')
+
+
+def test_shipped_texture_matches_the_target_resolution() -> None:
+    """Raising QUALITY_SCALE without regenerating keeps the old decoded cost."""
+    with Image.open(SHIPPED_TEXTURE) as shipped:
+        assert shipped.size == (TARGET_W, TARGET_H)
+
+
+def test_shipped_texture_carries_the_configured_encoding() -> None:
+    """Retuning the encoder without regenerating leaves the asset on the old curve.
+
+    Pins the quality curve, chroma planes, and baseline scan, not the Huffman tables:
+    `optimize=True` derives those per image, so they never match a probe this small.
+    """
+    with Image.open(io.BytesIO(encode_texture(flat_image(64, 32)))) as fresh:
+        expected_tables, expected_planes = fresh.quantization, fresh.layer
+        expected_progressive = 'progression' in fresh.info
+
+    with Image.open(SHIPPED_TEXTURE) as shipped:
+        assert shipped.quantization == expected_tables
+        assert shipped.layer == expected_planes
+        assert ('progression' in shipped.info) == expected_progressive
 
 
 @pytest.mark.parametrize('suffix', ['.png', '.webp', ''])
