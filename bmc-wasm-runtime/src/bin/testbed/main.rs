@@ -47,6 +47,7 @@ mod paint;
 mod params_ui;
 mod recording;
 mod system_ui;
+mod toolbar;
 mod ui_helpers;
 mod view;
 mod window;
@@ -319,7 +320,7 @@ impl TileLayout {
 fn requested_window_size(layout: &TileLayout) -> egui::Vec2 {
     egui::vec2(
         (layout.preview_w + PARAM_PANEL_W) as f32,
-        layout.preview_h as f32,
+        layout.preview_h as f32 + toolbar::TOOLBAR_H,
     )
 }
 
@@ -1167,8 +1168,8 @@ struct HotReload {
     _watcher: RecommendedWatcher,
     /// Channel fed by `setup_watcher` whenever the wasm file on disk changes.
     watcher_rx: std::sync::mpsc::Receiver<()>,
-    /// Set by the "Reload WASM" button in the stats panel; consumed as a synthetic watcher
-    /// event on the next `poll_hot_reload` tick.
+    /// Set by the toolbar's "Reload WASM" button; consumed as a synthetic
+    /// watcher event on the next `poll_hot_reload` tick.
     manual_reload: bool,
 }
 
@@ -1696,18 +1697,7 @@ impl TestbedApp {
         let pad = 8.0;
         let inner = rect.shrink(pad);
 
-        // ── Top row: Reload + Debug-layout buttons ──
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        child.horizontal(|row| {
-            if row.button("Reload WASM").clicked() {
-                self.hot_reload.manual_reload = true;
-            }
-            let mut debug_on = bmc_render::tree::debug_layout_enabled();
-            if row.checkbox(&mut debug_on, "Debug layout").changed() {
-                bmc_render::tree::toggle_debug_layout();
-            }
-        });
-        child.add_space(8.0);
 
         // ── FPS + last-frame breakdown ──
         let avg_us = if self.perf.recent_frame_us.is_empty() {
@@ -2200,11 +2190,11 @@ impl TestbedApp {
         }
         let time_s = now.duration_since(self.clock.start_instant).as_secs_f32();
 
-        // Right-side sidebar housing Params (top) and System (bottom) —
-        // must be added BEFORE the CentralPanel so it claims its 320 px
-        // slice from the right edge first. Changes propagate to all tile
-        // runtimes and (when recording) append `ParamDelivery` /
-        // `SystemDelivery` events to the timeline.
+        // Chrome claims its edges before the CentralPanel takes the rest:
+        // toolbar first, then the sidebar's 320 px slice off the right.
+        // Sidebar changes propagate to all tile runtimes and (when recording)
+        // append `ParamDelivery` / `SystemDelivery` events to the timeline.
+        self.paint_toolbar(root_ui);
         self.paint_right_panel(root_ui);
 
         egui::CentralPanel::default()

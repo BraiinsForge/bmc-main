@@ -35,7 +35,6 @@
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
-use bmc_wasm_runtime::platform_catalog::PLATFORMS;
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 use bmc_wasm_runtime::{NextAlarm, SystemSnapshot};
 
@@ -45,38 +44,6 @@ use super::ui_helpers::{combo_cell, key_label};
 use super::view::{Delivery, ViewCommand};
 
 impl TestbedApp {
-    /// Render the platform selector dropdown. Returns the newly chosen
-    /// platform id when the operator picks a different one.
-    pub(super) fn paint_platform_selector(&self, ui: &mut egui::Ui) -> Option<String> {
-        let mut chosen: Option<String> = None;
-        egui::Grid::new("platform_grid")
-            .num_columns(2)
-            .spacing([12.0, 4.0])
-            .min_col_width(0.0)
-            .show(ui, |grid| {
-                grid.add(key_label("platform", 180));
-                let cell_w = grid.available_width();
-                let current_label = format!(
-                    "{} ({})",
-                    self.active_platform.id, self.active_platform.label
-                );
-                combo_cell(grid, "platform", cell_w, current_label, |menu| {
-                    let mut changed = false;
-                    for p in PLATFORMS {
-                        let selected = p.id == self.active_platform.id;
-                        let text = format!("{} ({})", p.id, p.label);
-                        if menu.selectable_label(selected, text).clicked() && !selected {
-                            chosen = Some(p.id.to_owned());
-                            changed = true;
-                        }
-                    }
-                    changed
-                });
-                grid.end_row();
-            });
-        chosen
-    }
-
     /// Push a new system snapshot to every tile's runtime
     /// via `deliver_system_update`, update the local cache,
     /// and (when recording is active) append a `SystemDelivery` event

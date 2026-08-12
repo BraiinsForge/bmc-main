@@ -95,12 +95,8 @@ impl TestbedApp {
         let mut working_credentials = self.credentials.clone();
         let credential_slots = self.credential_slots();
         let mut credentials_changed = false;
-        let mut working_offline = self.offline;
-        let mut working_offset_ms = self.clock.offset_ms;
-        let mut working_monotonic_offset_ms = self.clock.monotonic_offset_ms;
         let mut params_changed = false;
         let mut system_changed = false;
-        let mut chosen_platform: Option<String> = None;
 
         egui::SidePanel::right("right_panel")
             .resizable(false)
@@ -110,14 +106,6 @@ impl TestbedApp {
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(ui, |scroll| {
-                        section_header_bar(scroll, "Platform", PARAMS_ACCENT);
-                        egui::Frame::NONE
-                            .inner_margin(egui::Margin::same(8))
-                            .show(scroll, |inner| {
-                                chosen_platform = self.paint_platform_selector(inner);
-                            });
-                        scroll.add_space(12.0);
-
                         if has_params {
                             section_header_bar(scroll, "Params", PARAMS_ACCENT);
                             egui::Frame::NONE
@@ -157,17 +145,6 @@ impl TestbedApp {
                             &credential_slots,
                             &mut working_credentials,
                         );
-                        section_header_bar(scroll, "Simulation", SYSTEM_ACCENT);
-                        egui::Frame::NONE
-                            .inner_margin(egui::Margin::same(8))
-                            .show(scroll, |inner| {
-                                Self::paint_sim_section(
-                                    inner,
-                                    &mut working_offline,
-                                    &mut working_offset_ms,
-                                    &mut working_monotonic_offset_ms,
-                                );
-                            });
                     });
             });
 
@@ -180,41 +157,6 @@ impl TestbedApp {
         if credentials_changed {
             self.apply_credentials_update(working_credentials);
         }
-        self.offline = working_offline;
-        self.clock.offset_ms = working_offset_ms;
-        self.clock.monotonic_offset_ms = working_monotonic_offset_ms;
-        if let Some(target) = chosen_platform {
-            let ctx = root_ui.ctx().clone();
-            self.switch_platform(&target, &ctx);
-        }
-    }
-
-    /// Offline seal + clock fast-forward, to reach time-gated states like staleness.
-    /// An advance bumps both the display and monotonic offsets; "reset" zeroes only
-    /// the display one so the monotonic clock never rewinds past pending deadlines.
-    fn paint_sim_section(
-        ui: &mut egui::Ui,
-        offline: &mut bool,
-        offset_ms: &mut u64,
-        monotonic_offset_ms: &mut u64,
-    ) {
-        ui.checkbox(offline, "Offline (seal live I/O)");
-        ui.add_space(4.0);
-        let secs = *offset_ms / 1_000;
-        ui.horizontal(|row| {
-            row.label(format!("Clock +{}:{:02}", secs / 60, secs % 60));
-            if row.button("+1m").clicked() {
-                *offset_ms += 60_000;
-                *monotonic_offset_ms += 60_000;
-            }
-            if row.button("+5m").clicked() {
-                *offset_ms += 300_000;
-                *monotonic_offset_ms += 300_000;
-            }
-            if row.button("reset").clicked() {
-                *offset_ms = 0;
-            }
-        });
     }
 }
 
