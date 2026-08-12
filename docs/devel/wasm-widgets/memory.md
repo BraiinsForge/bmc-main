@@ -63,6 +63,20 @@ Fixtures do not cover arbitrary malformed or maximum-sized responses, every life
 dependency changes. The regression suite proves that the configured paths do not overflow the selected stack; source
 review and the margin protect the paths that were not measured.
 
+## What overflow looks like
+
+The stack occupies the bottom of linear memory and grows downwards, so overflowing it runs off address zero and traps as
+an ordinary out-of-bounds access. It does not quietly corrupt the static data sitting above it.
+
+A trap is terminal for the instance wherever it surfaces, in `render` or in a delivery callback (a fetch response, a
+socket or mesh message). The host logs it and tears the slot down. It has to: a trap is a non-local exit, so the guest's
+frames never run their epilogues and `__stack_pointer` keeps the value it held when the trap fired. Re-driving a trapped
+instance would hand it a permanently smaller stack.
+
+Fuel exhaustion is the exception. `render` treats it as recoverable and retries, so a widget that overruns its
+instruction budget keeps its instance — along with whatever stack the trap consumed. The strike counter resets on any
+successful render, so repeated overruns ratchet the usable stack down across an instance's life without a bound.
+
 ## What uses stack
 
 Stack growth comes from live call frames and their inline locals. The main risks are:
