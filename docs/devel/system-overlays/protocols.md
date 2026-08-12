@@ -1,15 +1,16 @@
 # Overlay Protocols
 
-System overlays use three small Wayland protocols beyond `wlr-layer-shell`, all vendored as their own crates at the
-workspace root (`deck-screen-edge-v1/`, `deck-settings-v1/`, `deck-alarm-v1/`) beside `bmc-widget-protocol`. They are
-shared between the compositor and the overlay framework, so they do not live under `system-overlays/`. Each crate
+System overlays use four small Wayland protocols beyond `wlr-layer-shell`, each its own crate at the workspace root
+(`deck-screen-edge-v1/`, `deck-settings-v1/`, `deck-alarm-v1/`, `deck-upgrade-v1/`) beside `bmc-widget-protocol`. They
+are shared between the compositor and the overlay framework, so they do not live under `system-overlays/`. Each crate
 carries the `.xml` and generates both server and client bindings with `wayland_scanner` (`generate_server_code!` /
 `generate_client_code!`), matching the `bmc-widget-protocol` convention.
 
-Both are forks with deliberately renamed interfaces. The `deck_` prefix follows the `deck_widget_v1` precedent of not
-impersonating someone else's protocol: the contracts differ from their upstreams, so keeping the upstream interface
-names would mislead the next reader into assuming upstream semantics. The compositor-side dispatch for both is in
-[`compositor-integration.md`](compositor-integration.md); the client-side binding is in [`framework.md`](framework.md).
+The first two are forks with deliberately renamed interfaces; the alarm and upgrade protocols are Deck-owned. The
+`deck_` prefix follows the `deck_widget_v1` precedent of not impersonating someone else's protocol: the contracts differ
+from their upstreams, so keeping the upstream interface names would mislead the next reader into assuming upstream
+semantics. The compositor-side dispatch for all four is in [`compositor-integration.md`](compositor-integration.md); the
+client-side binding is in [`framework.md`](framework.md).
 
 ## `deck_screen_edge_v1`
 
@@ -114,3 +115,38 @@ controller acts. bmc's `AlarmEvent`s are translated the other way into `alarm_ri
 the configured limit — and the limit is *also* enforced in the controller, so the overlay's hidden button is UI, not the
 sole guard. The compositor tracks a `ringing` flag and the set of bound overlay resources to drive its no-overlay/crash
 fallback ([`compositor-integration.md`](compositor-integration.md)).
+
+## `deck_upgrade_v1`
+
+New for the upgrade-progress overlays (`bmc-overlay-upgrade`). It relays a display projection of bmc's `UpgradeRunState`
+to whichever overlays are bound. It is one-way — the overlays never drive an upgrade, so the interface carries no
+request beyond the destructor.
+
+Unlike the alarm, this is a *broadcast* protocol rather than a relay for one owning overlay: the two upgrade surfaces
+and the startup screen all bind it, and each decides for itself what a snapshot means.
+
+### `deck_upgrade_v1` (version 1)
+
+| Member                            | Kind    | Args                                                | Notes                                                                                        |
+| --------------------------------- | ------- | --------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `destroy`                         | request | —                                                   | Destructor.                                                                                  |
+| `started(kind)`                   | event   | `kind: kind` (enum)                                 | Opens a snapshot and fixes its presentation kind (`packages` or `firmware`).                 |
+| `phase(phase)`                    | event   | `phase: phase` (enum)                               | The current stage. A new phase starts a new progress interval and clears any prior progress. |
+| `download_progress(hi, lo)`       | event   | `downloaded_bytes_hi/lo: uint`                      | Bytes downloaded with no known total — an indeterminate bar.                                 |
+| `download_progress_with_total(…)` | event   | `downloaded_bytes_hi/lo`, `total_bytes_hi/lo: uint` | Bytes downloaded and the total — a determinate bar.                                          |
+| `succeeded(remaining_ms)`         | event   | `remaining_ms: uint`                                | Terminal success, with how long it still has on screen.                                      |
+| `failed(remaining_ms)`            | event   | `remaining_ms: uint`                                | Terminal failure, with how long it still has on screen.                                      |
+| `snapshot_done`                   | event   | —                                                   | Closes the snapshot; the client commits it.                                                  |
+
+**Snapshot framing.** Wayland dispatch batches events, so a client that acted on each event as it arrived could paint a
+phase from one snapshot with a byte count from the next. Every snapshot is therefore bracketed by `started` and
+`snapshot_done`, and a client ignores anything outside that bracket and commits only on `snapshot_done`. A sequence with
+an invalid enum value or bad ordering is discarded whole and the client keeps its last coherent view.
+
+**Byte counts.** Wayland has no 64-bit integer argument, so each byte count is split into two `uint` words (`_hi` /
+`_lo`) rather than truncated to 32 bits.
+
+**Responsibility split.** bmc owns every upgrade decision; the protocol carries presentation only. `remaining_ms` is one
+consequence: how long a finished upgrade stays on screen is decided by bmc's display projection, and the compositor
+recomputes the remainder against the cached deadline on each replay so a client binding late gets the time actually
+left, not a fresh full interval.

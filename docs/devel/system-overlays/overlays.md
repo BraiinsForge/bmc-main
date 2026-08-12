@@ -1,6 +1,6 @@
 # The Concrete Overlays
 
-Four overlays ship today, each a small crate under `system-overlays/` implementing `SystemOverlay` (see
+Five overlays ship today, each a small crate under `system-overlays/` implementing `SystemOverlay` (see
 [`framework.md`](framework.md)). This document covers what each shows, when it maps and dismisses, where its data comes
 from, and its platform gating.
 
@@ -26,6 +26,21 @@ published the overlay treats the state as "no IP yet", so the `WAIT_FOR_IP` dead
 
 In `Success` the last-known IP is held even through a transient DHCP loss, so the screen does not flicker. A touch
 anywhere dismisses immediately (jumps to `Done`).
+
+### Yielding to an upgrade
+
+The overlay also binds `deck_upgrade_v1` (`uses_upgrade()` is `true`) because a boot that follows an upgrade is not an
+ordinary boot. It reacts only to a terminal *success* snapshot arriving while still `Connecting`, which is what marks
+this startup as post-upgrade; a snapshot in any later phase is ignored, so an upgrade finishing minutes later cannot
+resurrect the screen.
+
+- **After a package activation restart** the overlay goes straight to `Done`. Only the compositor restarted — the
+  network never dropped — so a connection screen would be stale noise.
+- **After a firmware upgrade** it enters `Postponed` for the success overlay's remaining dwell, then starts
+  `Connecting`. The firmware success screen owns the display until it hides, and the connect window should run in full
+  once it does rather than burn its 20 s behind another surface.
+
+`Postponed` is not visible and holds no buffer, so waiting costs nothing; it wakes at the stored deadline.
 
 ## Offline (`bmc-overlay-offline`)
 
@@ -127,3 +142,68 @@ event-driven with no timed wake:
 The compositor keeps a **no-overlay / crash fallback**: if an alarm rings with no live overlay bound (or the overlay
 dies mid-ring), it auto-dismisses after a short grace, and any touch dismisses it immediately. That watchdog lives in
 [`compositor-integration.md`](compositor-integration.md).
+
+## Upgrade progress (`bmc-overlay-upgrade`)
+
+On-device feedback for a running upgrade: the current stage, a progress bar while one is meaningful, and a terminal
+"Update Finished" / "Update Failed" screen. Like the alarm it is a pure relay — bmc owns every upgrade decision and the
+overlay renders the display projection it receives over `deck_upgrade_v1` (see [`protocols.md`](protocols.md)).
+
+The crate exports **two** `SystemOverlay` implementations, `UpgradeOverlay::firmware()` and
+`UpgradeOverlay::packages()`, because `LayerConfig` is static and the two presentations differ in every field that
+matters:
+
+|           | Firmware                                  | Packages                                       |
+| --------- | ----------------------------------------- | ---------------------------------------------- |
+| Placement | full-screen (`LayerConfig::fullscreen`)   | bottom-right, `PACKAGE_SURFACE_SIZE` (384×192) |
+| Layer     | `Top`                                     | `Bottom`                                       |
+| Input     | full                                      | none                                           |
+| Effect    | modal: blocks the scene for the whole run | passive: widgets stay visible and interactive  |
+
+Both clients bind the protocol and receive every snapshot; each maps only for its own kind and clears its view when a
+snapshot of the *other* kind arrives. The inactive client stays unmapped and holds no DMA-BUFs, so the split costs
+nothing while idle. A firmware-containing run uses the firmware surface even when it also carries packages — anything
+that reboots the device blocks the screen.
+
+Making one surface reconfigure its size, anchors, layer, and input policy at runtime was the alternative. It was
+rejected: it would add runtime surface reconfiguration to the overlay framework for a single caller.
+
+Because the firmware surface is a full-screen `Top` surface, the compositor treats it as a modal blocker on the same
+generic policy as the alarm — suppressed scene navigation and a preempted settings tray, with no per-overlay wiring (see
+[`compositor-integration.md`](compositor-integration.md)).
+
+### Map, progress, and dismiss
+
+Visibility is a single `Option<UpgradeView>`, filled from `on_upgrade_state` and cleared when the run ends:
+
+- **Running** shows the phase label ("Verifying firmware", "Verifying packages", "Preparing update" before the first
+  phase) and a bar whose mode follows the snapshot: determinate when a download reports a total, indeterminate when it
+  reports only bytes downloaded. An animating bar wakes at `ANIMATION_FRAME` (100 ms) — package realization can run for
+  minutes under CPU and flash load, so 10 fps is enough and deliberately cheap.
+- **Terminal** (`Succeeded` / `Failed`) carries a `remaining` interval from bmc; the overlay stores it as a deadline and
+  unmaps when `tick` passes it. Repeated terminal snapshots keep the original deadline, so a coalesced re-send does not
+  extend the screen.
+- A **touch** on the firmware surface dismisses a *finished* screen early. It does nothing mid-run: the screen is a
+  blocker precisely so the device is not driven while it is flashing. The package surface has no input region at all.
+
+A new snapshot replaces the view immediately, so a failure overwrites stale progress rather than leaving it on screen.
+
+### Stacking against the other overlays
+
+Layer rank settles this everywhere except one pairing:
+
+- The firmware surface is on `Top` and registers *before* the alarm (same rank, later registration paints on top), so a
+  firing alarm is drawn above the upgrade blocker.
+- The package card is on `Bottom`, above the `Background` offline chip — the card temporarily covers the chip instead of
+  z-fighting with it in the same corner. This is why it is built by hand rather than with `LayerConfig::bottom_right`,
+  which selects `Background`.
+- The startup screen is *also* on `Bottom` and registers later, so it would paint over the package card.
+
+That last overlap is accepted rather than fixed, because the two cannot realistically be up together. The startup screen
+lives at most ~30 s (up to 20 s waiting for an IP, then a 10 s success or 5 s failure dwell), and nothing puts a package
+upgrade inside that window. The recurring check draws its first run 30 minutes to an hour after startup (see
+[`../upgrades.md`](../upgrades.md)), so it cannot land during boot. Every other trigger — the one-shot check after
+initial device setup, or an upgrade the user starts by hand — comes *from the web UI*, which shows its own progress and
+requires the device to already be on the network, which for most of those first 30 s it is not. Ordering the
+registrations to give the card priority would trade a case that does not happen for a boot screen the user can no longer
+read.

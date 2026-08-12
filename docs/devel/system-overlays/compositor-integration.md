@@ -3,8 +3,8 @@
 This document describes the compositor-side support for system overlays: advertising `wlr-layer-shell`, compositing
 layer surfaces above the active scene, tracking and reclaiming their buffers, hit-testing touch, suppressing scene
 navigation while an overlay is up, preempting the settings tray for a modal overlay, recognizing the edge-reveal
-gesture, and relaying the alarm. The three vendored protocols are covered in [`protocols.md`](protocols.md); the client
-side is in [`framework.md`](framework.md).
+gesture, and relaying the alarm and upgrade progress. The four protocols are covered in [`protocols.md`](protocols.md);
+the client side is in [`framework.md`](framework.md).
 
 All of this lives under `bmc-openwrt/src/compositor/`.
 
@@ -26,8 +26,14 @@ ones.
 
 `layer_rank` (`layer_surface.rs`) maps the ranks `Background → 0`, `Bottom → 1`, `Top → 2`, `Overlay → 3`, and
 `paint_order` is a stable sort by rank so later-registered surfaces of the same rank paint on top. The concrete overlays
-use this: the offline indicator on `Background`, the startup overlay on `Bottom` (opaque, occludes the scene), the alarm
-on `Top`, and the swipe panel on `Overlay`. Stacking is purely by rank, independent of the order overlays start in.
+use this: the offline indicator on `Background`, the startup overlay and the package-upgrade card on `Bottom`, the alarm
+and the firmware-upgrade blocker on `Top`, and the swipe panel on `Overlay`. Stacking across ranks is purely by rank,
+independent of the order overlays start in.
+
+Within a rank it is not, so `overlay_specs()` in `bmc-wasm-host/src/overlays.rs` is an ordered list and its order is
+load-bearing in one place: the firmware blocker registers before the alarm so a firing alarm paints above it. The
+startup screen and the package card share `Bottom` too, and the startup screen (registered later) would cover the card —
+accepted, because the two cannot realistically be up at once; the reasoning is in [`overlays.md`](overlays.md).
 
 `is_fullscreen_blocker(layer, geo, output)` returns true when a layer surface is above `Background` *and* its geometry
 covers the whole output. It is the predicate behind three policies (below): suppressing scene-drag, demoting scene
@@ -84,8 +90,11 @@ The compositor owns this because it is the single source of truth for the layer 
 
 `modal_overlay_active()` is the predicate: a mapped `is_fullscreen_blocker` on a layer *below* `Overlay` (so the tray
 never counts itself). This is purely geometric — any full-screen overlay below the tray qualifies, so a new modal
-overlay needs no wiring here and the tray needs no per-feature knowledge. Today only the alarm and the startup screen
-match; the startup screen only ever maps at boot, before the tray can be pulled down.
+overlay needs no wiring here and the tray needs no per-feature knowledge. Today the alarm, the startup screen, and the
+firmware-upgrade blocker match; the startup screen only ever maps at boot, before the tray can be pulled down. The
+firmware blocker is the payoff for keeping this geometric: it preempts the tray without a line of upgrade-specific code
+here or in the tray. The package card does not qualify and must not — it is a corner surface that deliberately leaves
+the scene usable.
 
 Like the neighbor-suppression check, a modal map/unmap happens during dispatch, not on a scene command, so the main loop
 compares `modal_overlay_active()` against its last value each iteration and, on the edge, emits `deck_settings_v1`'s
@@ -176,3 +185,32 @@ touch dismisses it immediately (and is consumed, not routed into gestures). `sto
 This is why only the alarm overlay binds `deck_alarm_v1`: `has_live_overlay()` counts bound resources, so a passive
 listener binding the protocol would mask a real crash — the settings tray instead learns about a firing alarm through
 the generic `deck_settings_v1` preemption above, not by binding `deck_alarm_v1`.
+
+## `deck_upgrade_v1` dispatch
+
+The compositor creates the `deck_upgrade_v1` global and fans bmc's upgrade display projection out to every bound client.
+It carries no incoming requests: bmc owns upgrade decisions, and the overlays only render.
+
+bmc pushes state through the `Compositor::set_upgrade_state(UpgradeDisplaySnapshot)` trait method, which arrives as a
+`CompositorCommand::SetUpgradeState` and lands in `UpgradeState::set`. Each snapshot wholly replaces the previous one —
+there is no incremental update path, which is what lets a client discard a malformed sequence and keep its last coherent
+view.
+
+`UpgradeState` splits into a pure `UpgradeCache` (snapshot plus deadline, unit-testable without Wayland resources) and
+the resource list. Two behaviors live in the cache:
+
+- **Bind replay.** The current snapshot is cached and replayed to each newly bound resource. This is the opposite of
+  `deck_settings_v1`'s `preempted`, which is deliberately edge-only: the tray is guaranteed to be bound before any modal
+  maps, whereas upgrade overlays and the startup screen bind at their own times and must be able to learn about a run
+  already in progress.
+- **Deadline ownership.** A terminal snapshot gets a deadline of `now + TERMINAL_LIFETIME` on first arrival, and a later
+  snapshot of the *same* `generation` reuses it rather than restarting it, so a coalesced re-send cannot extend the
+  screen. Each replay recomputes `remaining_ms` against that deadline; once it has passed, `events()` yields nothing and
+  the terminal state is simply not replayed.
+
+`generation` is what distinguishes a re-send of the current run from a genuinely new one: a new generation replaces an
+expired terminal snapshot, and a new *running* generation replaces a terminal snapshot without emitting terminal events
+for it.
+
+Snapshots are serialized into a `WireEvent` list bracketed by `started` / `snapshot_done` (see
+[`protocols.md`](protocols.md)) and emitted to each live resource, pruning dead ones first, as the alarm dispatch does.

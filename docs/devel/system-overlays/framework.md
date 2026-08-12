@@ -29,6 +29,8 @@ required; the rest have defaults so a passive overlay stays small.
 | `uses_alarm() -> bool`                                                                                     | no       | Whether to bind `deck_alarm_v1`; gates the alarm hooks below.                                                                                        |
 | `on_alarm_ring(time, label, snooze_allowed)` / `on_alarm_stop`                                             | no       | Firing-alarm events from the compositor, delivered before `tick`.                                                                                    |
 | `drain_alarm_requests`                                                                                     | no       | Alarm control requests (dismiss/snooze) to send this pass, drained after `render`.                                                                   |
+| `uses_upgrade() -> bool`                                                                                   | no       | Whether to bind `deck_upgrade_v1`; gates the upgrade hook below.                                                                                     |
+| `on_upgrade_state(snapshot)`                                                                               | no       | A complete upgrade snapshot, delivered before `tick` once the framework has seen `snapshot_done`. There is no return path.                           |
 | `wants_cached_blit(now)` / `take_content_dirty` / `mark_content_dirty`                                     | no       | Hooks for the blit-only reveal animation (see below).                                                                                                |
 
 `TickOutcome` carries three fields: `visible` (want to be on-screen — when `false` the framework unmaps the surface and
@@ -38,8 +40,9 @@ tick again; `None` means "only on external events").
 `LayerConfig` has two constructors that cover the common shapes: `LayerConfig::fullscreen(namespace)` (all four anchors,
 `Layer::Top`, full input) and `LayerConfig::bottom_right(namespace, size)` (`Layer::Bottom`, bottom-right anchor, **no**
 input region so passive corner content does not eat touches). The settings tray builds a `LayerConfig` by hand because
-it wants `Layer::Overlay`. `InputRegion` is just `Full` or `None`; the layer-shell default (whole surface accepts input)
-is the wrong default for a passive indicator, so it is always set explicitly.
+it wants `Layer::Overlay`, and the package-upgrade card because it wants a bottom-right surface on `Bottom` rather than
+`Background`. `InputRegion` is just `Full` or `None`; the layer-shell default (whole surface accepts input) is the wrong
+default for a passive indicator, so it is always set explicitly.
 
 The trait re-exports the layer-shell `Layer` and `Anchor` enums from the crate root, so an overlay never depends on the
 `wayland-protocols-wlr` crate directly.
