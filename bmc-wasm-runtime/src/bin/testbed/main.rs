@@ -446,6 +446,42 @@ struct CliArgs {
     rewrite_url: Vec<String>,
 }
 
+/// The manifest's credential slots, each with the field names its type
+/// defines — what a hand-written secrets file is judged against.
+fn declared_slots(
+    manifest: &bmc_widget_manifest::Manifest,
+) -> Vec<bmc_widget_protocol::DeclaredSlot> {
+    manifest
+        .credentials
+        .iter()
+        .map(|(key, slot)| {
+            let builtin = bmc_widget_manifest::credential::BuiltinType::from_id(&slot.type_id);
+            if builtin.is_none() {
+                // Its secrets are then refused for naming fields nothing
+                // defines, so say which slot is unbindable and why.
+                tracing::warn!(
+                    slot = key.as_str(),
+                    type_id = slot.type_id,
+                    "credential type unknown to this firmware; the slot defines no fields"
+                );
+            }
+            bmc_widget_protocol::DeclaredSlot {
+                name: key.as_str().to_owned(),
+                fields: builtin
+                    .map(|builtin| {
+                        builtin
+                            .schema()
+                            .fields
+                            .keys()
+                            .map(|field| field.as_str().to_owned())
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }
+        })
+        .collect()
+}
+
 /// One side of a `--rewrite-url` pair as its origin.
 ///
 /// The rewrite matches whole origins, so anything it could not honour
@@ -494,7 +530,7 @@ impl CliArgs {
     /// against the manifest's slots.
     fn credential_secrets(
         &self,
-        declared: &[String],
+        declared: &[bmc_widget_protocol::DeclaredSlot],
     ) -> Result<bmc_widget_protocol::CredentialSecrets> {
         let Some(path) = &self.secrets else {
             return Ok(bmc_widget_protocol::CredentialSecrets::default());
@@ -1405,11 +1441,7 @@ impl TestbedApp {
         });
 
         let now = std::time::Instant::now();
-        let declared: Vec<String> = manifest
-            .credentials
-            .keys()
-            .map(|key| key.as_str().to_owned())
-            .collect();
+        let declared = declared_slots(&manifest);
         let secrets = cli.credential_secrets(&declared)?;
         let url_rewrites = cli.url_rewrites()?;
         Ok(Self {

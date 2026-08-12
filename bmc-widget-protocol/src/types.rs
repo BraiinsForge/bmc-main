@@ -73,6 +73,17 @@ impl DisplayInfo {
 #[derive(Clone, Default, PartialEq)]
 pub struct CredentialSecrets(serde_json::Map<String, serde_json::Value>);
 
+/// A slot a widget declares, with the field names its credential type
+/// defines — the two things a hand-written secrets map is judged against.
+///
+/// The caller resolves the field names, so this crate needs no view
+/// of the credential catalog: it knows a slot's shape only by being told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeclaredSlot {
+    pub name: String,
+    pub fields: Vec<String>,
+}
+
 /// Why a hand-written secrets map could not become [`CredentialSecrets`].
 /// Each names the mistake rather than degrading to a value whose lookups
 /// all miss — that would surface only as a refused fetch,
@@ -85,6 +96,14 @@ pub enum SecretsShapeError {
     NotAnObject { slot: String },
     #[error("slot {slot:?} carries no fields")]
     NoFields { slot: String },
+    #[error(
+        "slot {slot:?} names field {field:?}, which its type does not define (defines: {known:?})"
+    )]
+    UnknownField {
+        slot: String,
+        field: String,
+        known: Vec<String>,
+    },
 }
 
 impl CredentialSecrets {
@@ -97,16 +116,16 @@ impl CredentialSecrets {
     /// stays beside the fields in either shape, never inside them.
     pub fn from_editable(
         map: serde_json::Map<String, serde_json::Value>,
-        declared: &[String],
+        declared: &[DeclaredSlot],
     ) -> Result<Self, SecretsShapeError> {
         let mut out = serde_json::Map::new();
         for (slot, mut entry) in map {
-            if !declared.contains(&slot) {
+            let Some(spec) = declared.iter().find(|spec| spec.name == slot) else {
                 return Err(SecretsShapeError::UndeclaredSlot {
                     slot,
-                    declared: declared.to_vec(),
+                    declared: declared.iter().map(|spec| spec.name.clone()).collect(),
                 });
-            }
+            };
             // In the delivery shape the pin sits beside "fields", so it must
             // come off the entry before the descent into the field map.
             let outer_hosts = entry
@@ -119,6 +138,15 @@ impl CredentialSecrets {
             let allow_hosts = outer_hosts.or_else(|| fields.remove("allow_hosts"));
             if fields.is_empty() {
                 return Err(SecretsShapeError::NoFields { slot });
+            }
+            // A field the type does not define misses every lookup,
+            // just as an undeclared slot would.
+            if let Some(unknown) = fields.keys().find(|field| !spec.fields.contains(field)) {
+                return Err(SecretsShapeError::UnknownField {
+                    field: unknown.clone(),
+                    known: spec.fields.clone(),
+                    slot,
+                });
             }
             let mut wire = serde_json::Map::new();
             wire.insert(
@@ -460,9 +488,16 @@ pub enum ActionPayload {
 mod editable_shape_tests {
     use super::*;
 
+    /// Every fixture slot takes the braiins-pool type's field set.
     fn parse(json: &str, declared: &[&str]) -> Result<CredentialSecrets, SecretsShapeError> {
         let map = serde_json::from_str(json).expect("BUG: fixture is valid JSON");
-        let declared: Vec<String> = declared.iter().map(|s| (*s).to_owned()).collect();
+        let declared: Vec<DeclaredSlot> = declared
+            .iter()
+            .map(|name| DeclaredSlot {
+                name: (*name).to_owned(),
+                fields: vec!["token".to_owned()],
+            })
+            .collect();
         CredentialSecrets::from_editable(map, &declared)
     }
 
@@ -505,6 +540,20 @@ mod editable_shape_tests {
             SecretsShapeError::UndeclaredSlot {
                 slot: "poool".to_owned(),
                 declared: vec!["pool".to_owned()],
+            }
+        );
+    }
+
+    /// A field typo misses every lookup exactly as a slot typo does,
+    /// reading as an outage rather than as the mistake it is.
+    #[test]
+    fn a_field_the_type_does_not_define_names_the_ones_it_does() {
+        assert_eq!(
+            parse(r#"{"pool":{"tokn":"abc"}}"#, &["pool"]).expect_err("typo is rejected"),
+            SecretsShapeError::UnknownField {
+                slot: "pool".to_owned(),
+                field: "tokn".to_owned(),
+                known: vec!["token".to_owned()],
             }
         );
     }
