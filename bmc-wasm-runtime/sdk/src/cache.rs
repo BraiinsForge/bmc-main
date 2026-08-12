@@ -18,14 +18,18 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Per-instance flash asset cache for WASM widgets.
+//! Per-instance asset cache for WASM widgets.
 //!
-//! The host curries a per-widget-instance bucket;
+//! On the device the host curries a per-widget-instance flash bucket;
 //! the widget stores entries under its own opaque tags,
 //! and they survive dormancy and restart.
-//!
 //! The host owns file I/O and the `saved_at` freshness stamp;
 //! widgets call `put` / `read_bytes` / `evict`.
+//!
+//! On native builds the store is in-memory and per-thread,
+//! so the storybook and tests can seed and read entries without a host.
+//! Nothing persists — callers reseed, which the storybook's
+//! every-frame story reruns already do.
 //!
 //! # Example
 //!
@@ -39,6 +43,7 @@
 //! ```
 
 // Host function imports
+#[cfg(target_arch = "wasm32")]
 #[link(wasm_import_module = "env")]
 unsafe extern "C" {
     fn host_cache_put(
@@ -54,6 +59,24 @@ unsafe extern "C" {
     fn host_cache_evict(tag_ptr: *const u8, tag_len: u32);
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+mod native_store {
+    use std::cell::RefCell;
+    use std::collections::HashMap;
+
+    thread_local! {
+        pub(super) static STORE: RefCell<HashMap<String, super::CachedEntry>> =
+            RefCell::new(HashMap::new());
+    }
+
+    /// The wall clock, standing in for the host's injected one.
+    pub(super) fn now_millis() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |it| u64::try_from(it.as_millis()).unwrap_or(u64::MAX))
+    }
+}
+
 /// A cached entry: opaque caller metadata, the payload bytes, and the host's
 /// `saved_at` stamp (UTC epoch milliseconds, from the injected clock).
 #[derive(Debug, Clone)]
@@ -65,6 +88,7 @@ pub struct CachedEntry {
 
 /// Store `bytes` under `tag` with opaque `metadata`, overwriting any prior entry.
 pub fn put(tag: &str, metadata: &[u8], bytes: &[u8]) {
+    #[cfg(target_arch = "wasm32")]
     unsafe {
         host_cache_put(
             tag.as_ptr(),
@@ -75,30 +99,52 @@ pub fn put(tag: &str, metadata: &[u8], bytes: &[u8]) {
             bytes.len() as u32,
         );
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    native_store::STORE.with(|store| {
+        store.borrow_mut().insert(
+            tag.to_owned(),
+            CachedEntry {
+                saved_at: native_store::now_millis(),
+                metadata: metadata.to_vec(),
+                bytes: bytes.to_vec(),
+            },
+        );
+    });
 }
 
 /// Read the whole entry for `tag` into wasm, or `None` on a miss. Copies the
 /// blob across the FFI — for small guest state only; assets use the registrars.
 #[must_use]
 pub fn read_bytes(tag: &str) -> Option<CachedEntry> {
-    let len = unsafe { host_cache_get(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
-    if len <= 0 {
-        return None;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let len =
+            unsafe { host_cache_get(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
+        if len <= 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let written =
+            unsafe { host_cache_get(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32) };
+        if written < 0 {
+            return None;
+        }
+        decode_record(&buf)
     }
-    let mut buf = vec![0u8; len as usize];
-    let written =
-        unsafe { host_cache_get(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32) };
-    if written < 0 {
-        return None;
-    }
-    decode_record(&buf)
+    #[cfg(not(target_arch = "wasm32"))]
+    native_store::STORE.with(|store| store.borrow().get(tag).cloned())
 }
 
 /// Evict the entry for `tag`.
 pub fn evict(tag: &str) {
+    #[cfg(target_arch = "wasm32")]
     unsafe {
         host_cache_evict(tag.as_ptr(), tag.len() as u32);
     }
+    #[cfg(not(target_arch = "wasm32"))]
+    native_store::STORE.with(|store| {
+        store.borrow_mut().remove(tag);
+    });
 }
 
 /// An entry's freshness header: the host `saved_at` stamp plus the opaque
@@ -112,20 +158,32 @@ pub struct Stat {
 /// Peek the entry for `tag` — `saved_at` + metadata only, no payload. `None` on a miss.
 #[must_use]
 pub fn stat(tag: &str) -> Option<Stat> {
-    let len = unsafe { host_cache_stat(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
-    if len <= 0 {
-        return None;
+    #[cfg(target_arch = "wasm32")]
+    {
+        let len =
+            unsafe { host_cache_stat(tag.as_ptr(), tag.len() as u32, core::ptr::null_mut(), 0) };
+        if len <= 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; len as usize];
+        let written = unsafe {
+            host_cache_stat(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32)
+        };
+        if written < 0 {
+            return None;
+        }
+        let saved_at = u64::from_le_bytes(buf.get(0..8)?.try_into().ok()?);
+        Some(Stat {
+            saved_at,
+            metadata: buf.get(8..)?.to_vec(),
+        })
     }
-    let mut buf = vec![0u8; len as usize];
-    let written =
-        unsafe { host_cache_stat(tag.as_ptr(), tag.len() as u32, buf.as_mut_ptr(), len as u32) };
-    if written < 0 {
-        return None;
-    }
-    let saved_at = u64::from_le_bytes(buf.get(0..8)?.try_into().ok()?);
-    Some(Stat {
-        saved_at,
-        metadata: buf.get(8..)?.to_vec(),
+    #[cfg(not(target_arch = "wasm32"))]
+    native_store::STORE.with(|store| {
+        store.borrow().get(tag).map(|entry| Stat {
+            saved_at: entry.saved_at,
+            metadata: entry.metadata.clone(),
+        })
     })
 }
 
@@ -151,6 +209,7 @@ pub fn lazy_get(tag: &str) -> CacheSource<'_> {
 }
 
 // Split the host record `[saved_at u64 | meta_len u32 | metadata | bytes]`.
+#[cfg(target_arch = "wasm32")]
 fn decode_record(buf: &[u8]) -> Option<CachedEntry> {
     let saved_at = u64::from_le_bytes(buf.get(0..8)?.try_into().ok()?);
     let meta_len = u32::from_le_bytes(buf.get(8..12)?.try_into().ok()?) as usize;
@@ -160,4 +219,40 @@ fn decode_record(buf: &[u8]) -> Option<CachedEntry> {
         metadata: buf.get(12..meta_end)?.to_vec(),
         bytes: buf.get(meta_end..)?.to_vec(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{evict, put, read_bytes, stat};
+
+    #[test]
+    fn an_entry_round_trips() {
+        put("trip", b"meta", b"payload");
+        let entry = read_bytes("trip").expect("BUG: just stored");
+        assert_eq!(entry.metadata, b"meta");
+        assert_eq!(entry.bytes, b"payload");
+        assert!(entry.saved_at > 0, "saved_at carries the wall clock");
+    }
+
+    #[test]
+    fn stat_skips_the_payload() {
+        put("peek", b"header", b"heavy payload");
+        let stat = stat("peek").expect("BUG: just stored");
+        assert_eq!(stat.metadata, b"header");
+    }
+
+    #[test]
+    fn put_overwrites() {
+        put("twice", b"old", b"old");
+        put("twice", b"new", b"new");
+        assert_eq!(read_bytes("twice").expect("BUG: just stored").bytes, b"new");
+    }
+
+    #[test]
+    fn evict_removes_and_misses_read_as_none() {
+        put("gone", b"", b"x");
+        evict("gone");
+        assert!(read_bytes("gone").is_none());
+        assert!(stat("never-stored").is_none());
+    }
 }

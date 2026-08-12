@@ -340,7 +340,6 @@ fn install_panic_hook() {
 #[cfg(target_arch = "wasm32")]
 pub mod alloc;
 pub mod assets;
-#[cfg(target_arch = "wasm32")]
 pub mod cache;
 pub mod calendar;
 pub mod credentials;
