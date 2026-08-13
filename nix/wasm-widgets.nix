@@ -48,6 +48,7 @@
 , autopatchelfBinaries   # bmc.lib.autopatchelfBinaries
 , widgetRuntimeDeps      # deps.widgetRuntimeDeps (expects .native fn)
 , widgetCatalog          # workspace.nix:wasmWidgetCatalog (name → entry)
+, wasmAssets             # native bmc-wasm-assets extractor
 , hostFeatures ? [ ]     # cargo features for the bmc-wasm-host build
 }:
 let
@@ -57,19 +58,45 @@ let
   sdkMajor = parseSdkMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
   launcherName = "bmc-wasm-thin-v${toString sdkMajor}";
 
-  # Reference-cleaning installPhase shared by the examples-bundle and per-widget
-  # wasm builds. rustc bakes panic-location strings that point into
-  # $cargoVendorDir (e.g. bytes/chrono source files). The compile-time
-  # toolchain remap scrubs the toolchain path, but not the vendor one —
-  # blank its hash post-install so $out carries zero nix references, and
-  # enforce that with allowedReferences.
+  # Package-asset extraction and reference cleaning shared by the examples
+  # bundle and per-widget wasm builds.
   wasmInstallOverrides = old: {
     nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [ pkgs.removeReferencesTo ];
     installPhase = ''
-      mkdir -p $out
+      mkdir -p $out/assets
       find target -name '*.wasm' | while IFS= read -r wasm; do
-        remove-references-to -t "$cargoVendorDir" "$wasm"
-        cp "$wasm" $out/
+        stage=$(mktemp -d)
+        stripped="$stage/$(basename "$wasm")"
+        assetRoot="$stage/assets"
+        wasmDir=$(dirname "$wasm")
+        if [ "$(basename "$wasmDir")" = deps ]; then
+          artifactRoot="$wasmDir"
+        else
+          artifactRoot="$wasmDir/deps"
+        fi
+
+        ${wasmAssets}/bin/bmc-wasm-assets extract \
+          --input "$wasm" \
+          --wasm-output "$stripped" \
+          --asset-root "$assetRoot" \
+          --artifact-root "$artifactRoot"
+        remove-references-to -t "$cargoVendorDir" "$stripped"
+        ${wasmAssets}/bin/bmc-wasm-assets verify-stripped --input "$stripped"
+        cp "$stripped" $out/
+
+        while IFS= read -r asset; do
+          relativePath=''${asset#"$assetRoot"/}
+          destination="$out/assets/$relativePath"
+          mkdir -p "$(dirname "$destination")"
+          if [ -e "$destination" ]; then
+            if ! cmp --silent "$asset" "$destination"; then
+              echo "conflicting package asset: $relativePath" >&2
+              exit 1
+            fi
+          else
+            cp "$asset" "$destination"
+          fi
+        done < <(find "$assetRoot" -type f)
       done
     '';
     allowedReferences = [ ];
@@ -140,6 +167,7 @@ let
   # Per-widget packaging. Produces:
   #   $out/lib/bmc-widgets/<name>/bin/<name>          (shell wrapper)
   #   $out/lib/bmc-widgets/<name>/lib/wasm/<name>.wasm
+  #   $out/lib/bmc-widgets/<name>/lib/assets/v1/<kind>/<id>.asset
   #   $out/lib/bmc-widgets/<name>/manifest.json
   #
   # Device-profile wrappers select the active per-major launcher. Other
@@ -154,20 +182,18 @@ let
     , wrapperMode
     }:
     let
-      # The .wasm embeds its runtime assets; only the manifest icon needs
-      # installing so the BMC /widgets/{uid}/icon endpoint can serve it.
-      # mkPublicIcon owns resolution and validation, so the installed copy
-      # can't accept an icon the published index copy rejects.
       icon = (builtins.fromJSON (builtins.readFile manifest)).icon or null;
       iconSrc = if icon == null then null else mkPublicIcon manifest icon;
       wrapperExec =
         if wrapperMode == "profile" then ''
           exec /run/current-profile/bin/${launcherName} \\
             --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
+            --asset-root $out/lib/bmc-widgets/${name}/lib/assets \\
             "\$@"
         '' else ''
           exec ${thin}/bin/bmc-wasm-thin \\
             --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
+            --asset-root $out/lib/bmc-widgets/${name}/lib/assets \\
             --host-bin ${host}/bin/bmc-wasm-host \\
             "\$@"
         '';
@@ -176,9 +202,10 @@ let
       "wrapperMode must be either profile or baked";
     (pkgs.runCommand "bmc-widget-${name}" { } ''
       base=$out/lib/bmc-widgets/${name}
-      mkdir -p "$base/bin" "$base/lib/wasm"
+      mkdir -p "$base/bin" "$base/lib/wasm" "$base/lib/assets"
 
       cp ${wasmDir}/${wasmFile} "$base/lib/wasm/${name}.wasm"
+      cp -r ${wasmDir}/assets/. "$base/lib/assets/"
       cp ${manifest}            "$base/manifest.json"
       ${lib.optionalString (icon != null) ''
         mkdir -p "$(dirname "$base/${icon}")"

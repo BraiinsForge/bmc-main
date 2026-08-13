@@ -53,7 +53,8 @@ use bmc_wasm_runtime::unified_fixture::{
     validate_fixture,
 };
 use bmc_wasm_runtime::{
-    FixtureEvent, FixtureEventKind, RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+    FixtureEvent, FixtureEventKind, PackageAssetStore, RenderStatus, RuntimeConfig, SystemSnapshot,
+    WasmWidgetRuntime,
 };
 
 /// Fixed timestep per frame (ms).
@@ -94,6 +95,7 @@ impl From<Option<i32>> for StackProfiling {
 /// Arguments passed from the CLI `run` subcommand.
 pub struct RunArgs {
     pub wasm_path: PathBuf,
+    pub asset_root: Option<PathBuf>,
     pub size: Option<String>,
     pub output_dir: Option<PathBuf>,
     pub fixture: Option<PathBuf>,
@@ -114,6 +116,8 @@ pub struct RunArgs {
 /// Parsed capture parameters (size string → width/height/name).
 struct CaptureCtx {
     wasm_path: PathBuf,
+    runtime_wasm_path: PathBuf,
+    asset_root: PathBuf,
     width: u32,
     height: u32,
     size_name: String,
@@ -142,8 +146,13 @@ pub fn execute(args: RunArgs) -> Result<()> {
         return Ok(());
     }
 
+    let prepared = bmc_wasm_runtime::fixtures::PreparedWidget::new(
+        &args.wasm_path,
+        args.asset_root.as_deref(),
+    )?;
+
     if args.all_sizes {
-        return run_all_supported_sizes(&args, &config);
+        return run_all_supported_sizes(&args, &config, &prepared);
     }
 
     // Parse size string (required for actual capture)
@@ -166,6 +175,8 @@ pub fn execute(args: RunArgs) -> Result<()> {
 
     let ctx = CaptureCtx {
         wasm_path: args.wasm_path,
+        runtime_wasm_path: prepared.wasm_path().to_owned(),
+        asset_root: prepared.asset_root().to_owned(),
         width,
         height,
         size_name,
@@ -270,7 +281,11 @@ fn online_default_params(
 /// Render every `CAPTURE_SIZES` viewport the widget's manifest supports, each
 /// into `<output>/<size>/`. The size list lives in one place (`CAPTURE_SIZES`);
 /// this only renders the subset the manifest declares.
-fn run_all_supported_sizes(args: &RunArgs, config: &CaptureConfig) -> Result<()> {
+fn run_all_supported_sizes(
+    args: &RunArgs,
+    config: &CaptureConfig,
+    prepared: &bmc_wasm_runtime::fixtures::PreparedWidget,
+) -> Result<()> {
     let output_base = args
         .output_dir
         .clone()
@@ -285,6 +300,8 @@ fn run_all_supported_sizes(args: &RunArgs, config: &CaptureConfig) -> Result<()>
         }
         let ctx = CaptureCtx {
             wasm_path: args.wasm_path.clone(),
+            runtime_wasm_path: prepared.wasm_path().to_owned(),
+            asset_root: prepared.asset_root().to_owned(),
             width,
             height,
             size_name: name.to_owned(),
@@ -384,6 +401,7 @@ fn run_unified_capture(
     // Build runtime config
     let mut rt_config = RuntimeConfig {
         kv_store_path: Some(kv_dir),
+        package_assets: Some(PackageAssetStore::new(&ctx.asset_root)),
         mesh_msaa_samples: 4,
         rng_seed: Some(42),
         // Captures are hermetic (unmatched live I/O fails the run) except in
@@ -1492,7 +1510,8 @@ fn setup_gl_and_runtime(
     let (fbo, texture) = create_fbo(&gl, ctx.width, ctx.height)?;
     let fbo_id = fbo.0.get();
 
-    let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
+    let wasm_bytes =
+        std::fs::read(&ctx.runtime_wasm_path).context("failed to read prepared WASM file")?;
     let wasm_bytes = match ctx.stack_profiling.expected_origin() {
         Some(expected_origin) => {
             bmc_wasm_runtime::stack_profile::instrument(&wasm_bytes, expected_origin)?
@@ -1655,7 +1674,8 @@ fn setup_gl_and_runtime(
     let (fbo, texture) = create_fbo(&gl, ctx.width, ctx.height)?;
     let fbo_id = fbo.0.get();
 
-    let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
+    let wasm_bytes =
+        std::fs::read(&ctx.runtime_wasm_path).context("failed to read prepared WASM file")?;
     // SAFETY: ANGLE EGL context is current on this thread
     // for the lifetime of the returned `keep_alive` bundle.
     let renderer = unsafe {

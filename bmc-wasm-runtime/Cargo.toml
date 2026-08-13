@@ -20,6 +20,7 @@ bmc-led.workspace = true
 bmc-render = { path = "../bmc-render" }
 bmc-shared-time = { path = "../bmc-shared/time" }
 bmc-shared-utils = { workspace = true }
+bmc-wasm-assets = { path = "../bmc-wasm-assets", optional = true }
 bmc-wasm-protocol = { path = "protocol", features = ["domain", "serde", "widget-protocol"] }
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
@@ -99,7 +100,7 @@ perf-overlay = []
 profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
-fixtures = ["host", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
+fixtures = ["host", "base64", "bmc-wasm-assets", "flate2", "owo-colors", "tempfile", "toml", "toml_edit"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete", "clap"]
 capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder"]
 

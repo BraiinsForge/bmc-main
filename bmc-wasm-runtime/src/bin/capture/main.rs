@@ -68,6 +68,9 @@ enum Command {
     Run {
         /// Path to the compiled .wasm widget file.
         wasm: PathBuf,
+        /// Package asset root paired with an already stripped widget.
+        #[arg(long)]
+        asset_root: Option<PathBuf>,
         /// Capture size as WxH (e.g. 1280x480). Required unless --list-variants.
         #[arg(long)]
         size: Option<String>,
@@ -254,6 +257,7 @@ fn dispatch() -> Result<()> {
     match cli.command {
         Command::Run {
             wasm,
+            asset_root,
             size,
             output,
             fixture,
@@ -278,6 +282,7 @@ fn dispatch() -> Result<()> {
                 .init();
             run::execute(run::RunArgs {
                 wasm_path: wasm,
+                asset_root,
                 size,
                 output_dir: output,
                 fixture,

@@ -57,7 +57,7 @@ pub struct RunAllArgs {
     pub workspaces: Vec<PathBuf>,
     /// Pre-built `.wasm` directories paired positionally with `workspaces`.
     /// Length must be 0 (build everything from source) or equal to `workspaces.len()`
-    /// (skip cargo build for that workspace and read `<wasm_dir>/<widget>.wasm` instead).
+    /// (skip cargo build and read `<wasm_dir>/<widget>.wasm` plus `<wasm_dir>/assets`).
     pub wasm_dirs: Vec<PathBuf>,
     /// Root output directory for captures. Layout: `<output_dir>/<widget>/current/<size>/`.
     /// Widget names are globally unique across workspaces (enforced at discovery time),
@@ -247,6 +247,13 @@ fn build_phase(
 
         let ws_label = workspace_label(ws);
         if let Some(dir) = wasm_dirs.get(i) {
+            let asset_root = dir.join("assets");
+            if !asset_root.is_dir() {
+                bail!(
+                    "--wasm-dir: expected package asset root at {}",
+                    asset_root.display()
+                );
+            }
             for name in &widget_names {
                 let wasm = wasm_in_dir(dir, name);
                 if !wasm.exists() {
@@ -346,6 +353,10 @@ fn wasm_dir_for(entry: &WidgetEntry) -> Result<PathBuf> {
     }
 }
 
+fn asset_root_for(entry: &WidgetEntry) -> Option<PathBuf> {
+    entry.wasm_dir.as_ref().map(|dir| dir.join("assets"))
+}
+
 /// Widget capture directory (where `config.toml` and fixtures live).
 pub fn capture_dir(workspace: &Path, widget: &str) -> PathBuf {
     workspace.join(widget).join("capture")
@@ -404,6 +415,10 @@ fn renderer_from_stderr(stderr: &[u8]) -> Option<&str> {
     })
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "capture setup and the subprocess loop form one operation"
+)]
 fn capture_widget(
     binary: &Path,
     output_dir: &Path,
@@ -413,6 +428,7 @@ fn capture_widget(
 ) -> Result<(f64, Option<u32>)> {
     let example = entry.name.as_str();
     let wasm = wasm_in_dir(&wasm_dir_for(entry)?, example);
+    let asset_root = asset_root_for(entry);
     let cap_dir = capture_dir(&entry.workspace, example);
     let output_root = output_dir.join(example).join("current");
 
@@ -426,7 +442,13 @@ fn capture_widget(
         return Ok((0.0, None));
     }
 
-    let variants = list_variants(binary, &wasm, &cap_dir, stack_profiling)?;
+    let variants = list_variants(
+        binary,
+        &wasm,
+        asset_root.as_deref(),
+        &cap_dir,
+        stack_profiling,
+    )?;
     let t0 = Instant::now();
     let mut stack_high_water = None;
 
@@ -459,6 +481,9 @@ fn capture_widget(
                 .arg(format!("--size={dimensions}"))
                 .arg(format!("--output={}", output.display()))
                 .arg(format!("--capture-dir={}", cap_dir.display()));
+            if let Some(asset_root) = &asset_root {
+                cmd.arg(format!("--asset-root={}", asset_root.display()));
+            }
             if variant != "_default" {
                 cmd.arg(format!("--variant={variant}"));
             }
@@ -729,15 +754,20 @@ fn configured_sizes(capture_dir: &Path, stack_profiling: StackProfiling) -> Resu
 fn list_variants(
     binary: &Path,
     wasm: &Path,
+    asset_root: Option<&Path>,
     capture_dir: &Path,
     stack_profiling: StackProfiling,
 ) -> Result<Vec<String>> {
-    let output = Command::new(binary)
+    let mut command = Command::new(binary);
+    command
         .args(["run"])
         .arg(wasm)
         .arg("--list-variants")
-        .arg(format!("--capture-dir={}", capture_dir.display()))
-        .output();
+        .arg(format!("--capture-dir={}", capture_dir.display()));
+    if let Some(asset_root) = asset_root {
+        command.arg(format!("--asset-root={}", asset_root.display()));
+    }
+    let output = command.output();
 
     let variants = match output {
         Ok(out) if out.status.success() => {
@@ -889,10 +919,16 @@ mod tests {
     fn stack_profile_rejects_failed_variant_discovery() {
         let missing = Path::new("/capture-binary-that-does-not-exist");
         let placeholder = Path::new("/unused");
-        assert!(list_variants(missing, placeholder, placeholder, STACK_PROFILING).is_err());
+        assert!(list_variants(missing, placeholder, None, placeholder, STACK_PROFILING).is_err());
         assert_eq!(
-            list_variants(missing, placeholder, placeholder, StackProfiling::Disabled)
-                .expect("variant discovery remains optional for ordinary capture"),
+            list_variants(
+                missing,
+                placeholder,
+                None,
+                placeholder,
+                StackProfiling::Disabled,
+            )
+            .expect("variant discovery remains optional for ordinary capture"),
             vec!["_default"]
         );
     }

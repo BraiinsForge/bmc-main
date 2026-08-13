@@ -76,6 +76,10 @@ wasmWidgetCrates // {
     path = "bmc-wasm-thin";
     packageName = "bmc-wasm-thin";
   };
+  wasm-assets = defineCrate {
+    path = "bmc-wasm-assets";
+    packageName = "bmc-wasm-assets";
+  };
   wasm-host = defineCrate {
     path = "bmc-wasm-host";
     packageName = "bmc-wasm-host";

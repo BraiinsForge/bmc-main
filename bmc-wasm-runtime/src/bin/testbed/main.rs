@@ -62,12 +62,12 @@ use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::fixtures::{
-    self, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
+    self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{
-    DiskCache, LedEffect, LedRequest, RenderStatus, RuntimeConfig, SystemSnapshot,
-    WasmWidgetRuntime,
+    DiskCache, LedEffect, LedRequest, PackageAssetStore, RenderStatus, RuntimeConfig,
+    SystemSnapshot, WasmWidgetRuntime,
 };
 use clap::Parser;
 
@@ -404,6 +404,9 @@ pub(crate) const PARAM_PANEL_W: u32 = 320;
 struct CliArgs {
     /// The widget `.wasm` to load.
     wasm_path: PathBuf,
+    /// Package asset root paired with an already stripped widget.
+    #[arg(long)]
+    asset_root: Option<PathBuf>,
     /// Widget manifest, when it isn't found next to the wasm.
     #[arg(long = "manifest")]
     manifest_path: Option<PathBuf>,
@@ -1286,6 +1289,7 @@ impl PreviewTile {
 
 pub(crate) struct TestbedApp {
     cli: CliArgs,
+    prepared_widget: PreparedWidget,
     /// Requested window size. Sent as `ViewportCommand::InnerSize` repeatedly until the
     /// compositor actually applies it — `with_inner_size` at startup gets silently clamped
     /// on some GNOME/Wayland setups regardless of `persist_window: false`.
@@ -1416,6 +1420,7 @@ impl TestbedApp {
 
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
+        let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
         let platform = catalog
             .platform(&active_platform_id)
             .ok_or("BUG: selected platform id must exist in catalog")?;
@@ -1481,6 +1486,7 @@ impl TestbedApp {
         let url_rewrites = cli.url_rewrites()?;
         Ok(Self {
             cli,
+            prepared_widget,
             secrets,
             url_rewrites,
             requested_size,
@@ -1524,6 +1530,17 @@ impl TestbedApp {
         })
     }
 
+    fn prepare_updated_widget(&self) -> Result<(PreparedWidget, Vec<u8>)> {
+        let prepared = PreparedWidget::new(&self.cli.wasm_path, self.cli.asset_root.as_deref())?;
+        let wasm = std::fs::read(prepared.wasm_path()).with_context(|| {
+            format!(
+                "failed to read prepared module {}",
+                prepared.wasm_path().display()
+            )
+        })?;
+        Ok((prepared, wasm))
+    }
+
     /// Drain pending watcher events; if any fired, rebuild every tile's `WasmWidgetRuntime`
     /// (and the host-owned `TileGpu`; see [`Self::reload_one_tile`] for why) from the
     /// (now-updated) wasm bytes on disk.
@@ -1543,13 +1560,10 @@ impl TestbedApp {
             watcher_events,
             "hot reload: trigger drained, beginning rebuild"
         );
-        let wasm_bytes = match std::fs::read(&self.cli.wasm_path) {
-            Ok(b) => b,
-            Err(e) => {
-                tracing::warn!(
-                    "hot reload: failed to read {}: {e}",
-                    self.cli.wasm_path.display()
-                );
+        let (prepared_widget, wasm_bytes) = match self.prepare_updated_widget() {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                tracing::warn!("hot reload: package preparation failed: {error:#}");
                 return;
             }
         };
@@ -1572,11 +1586,12 @@ impl TestbedApp {
         // a credential-fed widget back to its unbound state.
         let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
         let secrets = self.secrets.clone();
+        let mut replacements = Vec::new();
         for idx in 0..self.tiles.len() {
             let placed_shape = self.layout.tiles[idx].shape;
-            let tile = &mut self.tiles[idx];
+            let tile = &self.tiles[idx];
             if tile.runtime.is_none() {
-                continue; // placeholder tile — nothing to hot-reload
+                continue;
             }
             let (led_tx, led_rx) = if tile.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
@@ -1589,10 +1604,10 @@ impl TestbedApp {
                 system: system.clone(),
                 led_request_sender: led_tx,
                 asset_cache: self.cli.asset_cache(),
+                package_assets: Some(PackageAssetStore::new(prepared_widget.asset_root())),
                 url_rewrites: self.url_rewrites.clone(),
                 ..RuntimeConfig::default()
             };
-            tile.renderer.drop_all();
             let geometry = RuntimeTileGeometry::for_viewport_shape(platform, placed_shape);
             match WasmWidgetRuntime::new(
                 &wasm_bytes,
@@ -1606,18 +1621,25 @@ impl TestbedApp {
                 Ok(mut rt) => {
                     rt.set_network_info(stub_network());
                     rt.deliver_credentials_update(credentials.clone(), secrets.clone());
-                    tile.runtime = Some(rt);
-                    tile.led_rx = led_rx;
-                    tile.led_scene = None;
-                    tile.led_enabled = false;
-                    tile.dead = false;
-                    tile.ever_rendered = false;
+                    replacements.push((idx, rt, led_rx));
                 }
                 Err(e) => {
                     tracing::warn!("hot reload: {}: {e}", tile.label);
+                    return;
                 }
             }
         }
+        for (idx, runtime, led_rx) in replacements {
+            let tile = &mut self.tiles[idx];
+            tile.renderer.drop_all();
+            tile.runtime = Some(runtime);
+            tile.led_rx = led_rx;
+            tile.led_scene = None;
+            tile.led_enabled = false;
+            tile.dead = false;
+            tile.ever_rendered = false;
+        }
+        self.prepared_widget = prepared_widget;
     }
 
     /// Switch the previewed platform, leaving params and system state intact.
@@ -1677,8 +1699,12 @@ impl TestbedApp {
     fn init_tiles(&mut self, frame: &mut eframe::Frame) -> Result<()> {
         let get_proc = Self::gl_proc_address()
             .ok_or_else(|| anyhow::anyhow!("BUG: get_proc_address vanished after construction"))?;
-        let wasm_bytes = std::fs::read(&self.cli.wasm_path)
-            .with_context(|| format!("failed to read {}", self.cli.wasm_path.display()))?;
+        let wasm_bytes = std::fs::read(self.prepared_widget.wasm_path()).with_context(|| {
+            format!(
+                "failed to read {}",
+                self.prepared_widget.wasm_path().display()
+            )
+        })?;
         let platform = self
             .catalog
             .platform(&self.active_platform_id)
@@ -1742,6 +1768,8 @@ impl TestbedApp {
                 }
             };
             rt_config.mesh_msaa_samples = 4;
+            rt_config.package_assets =
+                Some(PackageAssetStore::new(self.prepared_widget.asset_root()));
             rt_config.params = self.params.clone();
             rt_config.system = self.system.clone();
             rt_config.led_request_sender = led_tx;

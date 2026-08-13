@@ -530,6 +530,7 @@ let
   # Native hooks package (hooks run on build host during init tarball build).
   # Build bmc-nix once and symlink each hook binary out of it.
   nativeBmcNix = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix { };
+  nativeWasmAssets = bmc.profiles.fast.buildCrate bmc.crates.wasm-assets { };
   selectNativeBmcNixBin = bmc.lib.selectBmcNixBin { inherit pkgs; bmcNix = nativeBmcNix; };
   nativeHooksPackage = bmc.lib.mkPackage {
     name = "native-hooks";
@@ -545,6 +546,7 @@ let
   # arch (armv7 deck + x86_64/aarch64 VM).
   wasmWidgetsFor = profile: hostFeatures: import ./nix/wasm-widgets.nix {
     inherit pkgs profile hostFeatures;
+    wasmAssets = nativeWasmAssets;
     widgetCatalog = wasmWidgetCatalog;
     wasmReleaseProfiles = {
       wasmExamples = bmc.profiles.wasm-examples-release;
