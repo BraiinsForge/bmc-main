@@ -47,6 +47,9 @@ mod wasm_glue {
 
     use crate::live;
     use crate::manifest_params::Params;
+    use crate::screens::driver::DriverViewData;
+    use crate::screens::next_race::NextRaceViewData;
+    use crate::screens::standings::StandingsViewData;
 
     #[unsafe(no_mangle)]
     pub extern "C" fn init() {
@@ -57,23 +60,26 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn render(_delta_ms: u32) {
         let ws = widget_size();
-        let standings = live::with_data(|data| data.standings.len());
-        let root = col(
-            props!(background: BLACK),
-            [center(
-                props!(flex: 1.0),
-                [col(
-                    props!(gap: 12.0, cross_align: CrossAlign::Center),
-                    [
-                        text("Formula 1", style!(size: 28, color: WHITE)),
-                        text(
-                            fmt!("{} drivers", standings),
-                            style!(size: 16, color: GRAY_60),
-                        ),
-                    ],
-                )],
-            )],
-        );
+        let bucket = crate::model::size_bucket(ws.width, ws.height);
+        let view = Params::current().view;
+        let root = live::with_data(|data| match crate::api::select_screen(view, data) {
+            crate::api::Screen::NextRace => {
+                crate::screens::next_race::next_race_view(&NextRaceViewData {
+                    bucket,
+                    race: data.next_race.clone(),
+                })
+            }
+            crate::api::Screen::Standings => {
+                crate::screens::standings::standings_view(&StandingsViewData {
+                    bucket,
+                    rows: data.standings.clone(),
+                })
+            }
+            crate::api::Screen::Driver => crate::screens::driver::driver_view(&DriverViewData {
+                bucket,
+                driver: data.selected_driver_stats().cloned(),
+            }),
+        });
         let _ = render_ui(ws.width, ws.height, root);
     }
 
@@ -91,6 +97,14 @@ mod wasm_glue {
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_system_update() {
+        request_frame();
+    }
+
+    /// Dormancy invalidates bitmap ids, leaving the image memo dead;
+    /// the next render restores from the cache instead.
+    #[unsafe(no_mangle)]
+    pub extern "C" fn on_wake() {
+        crate::images::invalidate_all();
         request_frame();
     }
 }

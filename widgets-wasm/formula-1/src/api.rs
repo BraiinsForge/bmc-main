@@ -127,6 +127,30 @@ pub fn resource_needed(resource: Resource, view: View) -> bool {
     }
 }
 
+/// Which screen the widget draws. This build has no live screens,
+/// so a running session shows as the race it is part of.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    NextRace,
+    Standings,
+    Driver,
+}
+
+/// The screen for `view` over the data at hand.
+///
+/// An explicit view always wins, shown empty until its data arrives.
+/// `Auto` walks the fallback chain:
+/// the next race while one is announced, else the standings.
+#[must_use]
+pub fn select_screen(view: View, data: &crate::model::Data) -> Screen {
+    match view {
+        View::NextRace => Screen::NextRace,
+        View::Driver => Screen::Driver,
+        View::Auto if data.next_race.is_some() => Screen::NextRace,
+        View::Standings | View::Auto => Screen::Standings,
+    }
+}
+
 /// JSON pointers into a Nexus reply.
 pub mod wire {
     /// Present and `false` when a live resource has no session running.
@@ -177,7 +201,34 @@ pub mod wire {
 
 #[cfg(test)]
 mod tests {
-    use super::{BASE_URL, Resource, View, resource_needed};
+    use super::{BASE_URL, Resource, Screen, View, resource_needed, select_screen};
+    use crate::model::Data;
+    use crate::screens::fixtures;
+
+    #[test]
+    fn an_explicit_view_wins_over_whatever_data_holds() {
+        let empty = Data::default();
+        assert_eq!(select_screen(View::Driver, &empty), Screen::Driver);
+        assert_eq!(select_screen(View::NextRace, &empty), Screen::NextRace);
+        assert_eq!(select_screen(View::Standings, &empty), Screen::Standings);
+    }
+
+    #[test]
+    fn the_automatic_view_shows_the_race_while_one_is_announced() {
+        let data = Data {
+            next_race: Some(fixtures::next_race_weekend()),
+            ..Data::default()
+        };
+        assert_eq!(select_screen(View::Auto, &data), Screen::NextRace);
+    }
+
+    #[test]
+    fn the_automatic_view_falls_to_the_standings_between_seasons() {
+        assert_eq!(
+            select_screen(View::Auto, &Data::default()),
+            Screen::Standings
+        );
+    }
 
     #[test]
     fn every_resource_is_addressable_and_named_once() {
