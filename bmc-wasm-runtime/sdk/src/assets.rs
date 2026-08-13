@@ -22,8 +22,8 @@
 //!
 //! On WASM targets, registration goes through host FFI calls.
 //! On native targets (the gallery), callers must initialize pluggable registrars
-//! via [`init_icon_registrar`], [`init_bitmap_registrar`], [`init_mesh_registrar`]
-//! before any registration occurs.
+//! via [`init_icon_registrar`], [`init_bitmap_registrar`], [`init_mesh_registrar`],
+//! and [`init_image_registrar`] before any registration occurs.
 //!
 //! The host's registry is idempotent by `name` — the SDK keeps no consumer-side
 //! cache; every call routes through the host, which returns the same ID for the
@@ -43,6 +43,9 @@ type IconRegistrar = fn(&str, &[u8]) -> Option<SvgId>;
 type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
 #[cfg(not(target_arch = "wasm32"))]
 type MeshRegistrar = fn(&str, &[u8]) -> Option<MeshId>;
+/// `(tag, rgba, width, height)` — pre-decoded pixels, upload only.
+#[cfg(not(target_arch = "wasm32"))]
+type ImageRegistrar = fn(&str, &[u8], u32, u32) -> Option<BitmapId>;
 
 // ── Svg ─────────────────────────────────────────────────────────────
 
@@ -138,12 +141,40 @@ pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
     }
 }
 
-/// Restore a bitmap from a host-side cache source (e.g. `cache::lazy_get(tag)`):
-/// the RGBA goes mmap → texture entirely host-side. `None` on a cache miss.
-#[cfg(target_arch = "wasm32")]
+#[cfg(not(target_arch = "wasm32"))]
+mod image_native {
+    use super::ImageRegistrar;
+    use std::cell::RefCell;
+
+    thread_local! {
+        pub(super) static IMAGE_REGISTRAR: RefCell<ImageRegistrar> = RefCell::new(|_, _, _, _| panic!("BUG: image registrar not initialized — call init_image_registrar()"));
+    }
+}
+
+/// Initialize the image registrar for native targets.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn init_image_registrar(f: ImageRegistrar) {
+    image_native::IMAGE_REGISTRAR.with(|r| *r.borrow_mut() = f);
+}
+
+/// Restore a bitmap from a cache source (e.g. `cache::lazy_get(tag)`).
+///
+/// On the device the RGBA goes mmap → texture entirely host-side;
+/// natively the calling side's own store is read and the registrar
+/// uploads. `None` on a cache miss or unreadable metadata.
 #[must_use]
 pub fn register_image(source: crate::cache::CacheSource<'_>) -> Option<BitmapId> {
-    host::register_bitmap_from_cache(source.tag())
+    #[cfg(target_arch = "wasm32")]
+    {
+        host::register_bitmap_from_cache(source.tag())
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let entry = crate::cache::read_bytes(source.tag())?;
+        let (width, height, _identity) = bmc_wasm_protocol::decode_image_meta(&entry.metadata)?;
+        image_native::IMAGE_REGISTRAR
+            .with(|r| r.borrow()(source.tag(), &entry.bytes, width, height))
+    }
 }
 
 // ── Audio ────────────────────────────────────────────────────────────
@@ -194,12 +225,13 @@ pub fn init_mesh_registrar(f: MeshRegistrar) {
 /// which assemble asset-bearing nodes without rendering them.
 ///
 /// Per-thread, so call it at the top of each test.
-/// Anything actually rendering (the storybook shell) must install real registrars instead.
+/// Anything actually rendering (the gallery) must install real registrars instead.
 #[cfg(not(target_arch = "wasm32"))]
 pub fn init_test_registrars() {
     init_icon_registrar(|_, _| SvgId::from_wire(1));
     init_bitmap_registrar(|_, _| BitmapId::from_wire(1));
     init_mesh_registrar(|_, _| MeshId::from_wire(1));
+    init_image_registrar(|_, _, _, _| BitmapId::from_wire(1));
 }
 
 /// Register a mesh (host-side dedup by `mesh.name`) and return its ID.
@@ -212,5 +244,32 @@ pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         mesh_native::MESH_REGISTRAR.with(|r| r.borrow()(mesh.name, mesh.source.data()))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{init_test_registrars, register_image};
+    use crate::cache;
+    use bmc_wasm_protocol::encode_image_meta;
+
+    #[test]
+    fn a_cached_image_restores_through_the_registrar() {
+        init_test_registrars();
+        cache::put("img", &encode_image_meta(2, 2, b"url"), &[0_u8; 16]);
+        assert!(register_image(cache::lazy_get("img")).is_some());
+    }
+
+    #[test]
+    fn a_cache_miss_restores_nothing() {
+        init_test_registrars();
+        assert!(register_image(cache::lazy_get("absent")).is_none());
+    }
+
+    #[test]
+    fn metadata_without_dims_restores_nothing() {
+        init_test_registrars();
+        cache::put("undersized", b"meta", b"payload");
+        assert!(register_image(cache::lazy_get("undersized")).is_none());
     }
 }
