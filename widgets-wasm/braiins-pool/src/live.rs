@@ -80,12 +80,30 @@ struct PageChain {
     /// `None` for the Overview payout page, which asks for no window
     /// and so has none to repeat on a follow-up.
     window: Option<Window>,
-    /// The follow-up page this chain waits on.
-    /// Abandoning the chain cancels it, so its reply settles as `Aborted`
-    /// rather than merging into whatever chain is open by then.
+    /// The follow-up page this chain waits on, cancelled when the chain
+    /// goes [`Drop`].
     outstanding: Option<FetchRequestId>,
     series: Series,
     payouts: Vec<crate::model::Payout>,
+}
+
+/// Losing the chain cancels the page it waits on, so a reply that outlives
+/// its chain settles as `Aborted` and [`continue_chain`] drops it, rather
+/// than merging into whatever chain holds the cell by then.
+///
+/// On the drop, not at each site that replaces a chain: page one refreshes
+/// on the poll's own cadence, so a slow listing is still running when the
+/// next one starts, and every such site would have to remember.
+///
+/// The cell is borrowed while this runs — replacing a chain drops the old
+/// one in place — so nothing here may touch it. `net::cancel` reaches the
+/// host, not the cell.
+impl Drop for PageChain {
+    fn drop(&mut self) {
+        if let Some(id) = self.outstanding {
+            let _ = net::cancel(id);
+        }
+    }
 }
 
 fn source_of(handle: PollHandle) -> Source {
@@ -242,8 +260,10 @@ fn start_chain(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
         series: Series::default(),
         payouts: Vec::new(),
     };
+    // Replacing the chain drops the one it displaces, cancelling the page
+    // that chain waited on [`PageChain::drop`].
     chain_cell(source).with(|cell| *cell.borrow_mut() = Some(chain));
-    absorb_page(source, json, date);
+    absorb_page(source, json, date, None);
 }
 
 fn chain_cell(source: Source) -> &'static std::thread::LocalKey<RefCell<Option<PageChain>>> {
@@ -279,6 +299,10 @@ enum PageOutcome {
     /// The listing cannot be completed, so it is dropped
     /// and whatever [`DATA`] already holds stands.
     Abandoned,
+    /// A page the chain holding the cell is not waiting for. Whichever chain
+    /// asked for it is gone, so the page is dropped — and the source is not
+    /// failing, since the chain that replaced it is still working.
+    Ignored,
 }
 
 /// Merge a history page, reporting whether it could be read at all.
@@ -300,14 +324,27 @@ fn merge_history(
 /// Merge one page into the source's chain; follow the cursor
 /// when the reply names a next page, otherwise commit
 /// the merged result into [`DATA`].
-fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'_>) {
+///
+/// `from` names the request this page answers — `None` for a listing's first
+/// page, which its poll owns rather than the chain.
+fn absorb_page(
+    source: Source,
+    json: &json::JsonDoc,
+    date: pool_api::ParseDate<'_>,
+    from: Option<FetchRequestId>,
+) {
     let next = pool_api::next_page(json);
     let outcome = chain_cell(source).with(|cell| {
         let mut cell = cell.borrow_mut();
         let Some(chain) = cell.as_mut() else {
-            return PageOutcome::Abandoned;
+            return PageOutcome::Ignored;
         };
-        // This page is the one it was waiting on, if any.
+        // The page a chain absorbs is the one it asked for and no other:
+        // a first page into a chain awaiting nothing, a follow-up into the
+        // chain that named it.
+        if chain.outstanding != from {
+            return PageOutcome::Ignored;
+        }
         chain.outstanding = None;
         let parsed = match source {
             Source::HashrateHistory => merge_history(chain, json, "hashrate_th_per_sec", date),
@@ -384,7 +421,7 @@ fn absorb_page(source: Source, json: &json::JsonDoc, date: pool_api::ParseDate<'
                 request_frame();
             }
         }
-        PageOutcome::Following => {}
+        PageOutcome::Following | PageOutcome::Ignored => {}
     }
 }
 
@@ -433,19 +470,24 @@ fn continue_payouts(response: &FetchResponse) {
     continue_chain(Source::PayoutsRecent, response);
 }
 
-/// Drop each source's chain, cancelling the page it waits on.
+/// Drop each source's chain, which cancels the page it waits on.
 ///
 /// Invalidating a poll does not reach these hand-rolled follow-ups.
 /// Without this, a page fetched under the old account or window merges into
 /// the chain started under the new one.
-/// Cancelling settles that page as `Aborted`, which [`continue_chain`] ignores.
 fn abandon_chains(sources: &[Source]) {
     for &source in sources {
-        let abandoned = chain_cell(source).with(|cell| cell.borrow_mut().take());
-        if let Some(id) = abandoned.and_then(|chain| chain.outstanding) {
-            let _ = net::cancel(id);
-        }
+        chain_cell(source).with(|cell| cell.borrow_mut().take());
     }
+}
+
+/// Whether the source's open chain is waiting for exactly this page.
+fn chain_awaits(source: Source, request: Option<FetchRequestId>) -> bool {
+    chain_cell(source).with(|cell| {
+        cell.borrow()
+            .as_ref()
+            .is_some_and(|chain| chain.outstanding == request)
+    })
 }
 
 fn continue_chain(source: Source, response: &FetchResponse) {
@@ -454,17 +496,28 @@ fn continue_chain(source: Source, response: &FetchResponse) {
         // Anything in the cell now was started afterwards, so leave it be.
         return;
     }
+    let from = Some(response.request_id);
+    if !chain_awaits(source, from) {
+        // Neither this page nor its failure is the open chain's business:
+        // the chain that asked for it is gone.
+        return;
+    }
     if !response.ok() {
         // A broken chain keeps last cycle's committed data;
         // the next poll tick starts a fresh chain.
-        chain_cell(source).with(|cell| *cell.borrow_mut() = None);
+        chain_cell(source).with(|cell| {
+            if let Some(mut chain) = cell.borrow_mut().take() {
+                // This failure is the awaited settlement; the drop has nothing to cancel.
+                chain.outstanding = None;
+            }
+        });
         if DATA.with(|data| data.borrow_mut().mark_failed(source)) {
             request_frame();
         }
         return;
     }
     let json = response.json();
-    absorb_page(source, &json, &|s| parse_date(s));
+    absorb_page(source, &json, &|s| parse_date(s), from);
 }
 
 /// Enable exactly the polls the current (style × size × toggle) needs.
