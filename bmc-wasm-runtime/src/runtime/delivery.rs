@@ -1365,8 +1365,7 @@ impl WasmWidgetRuntime {
             // Resolved here rather than when the fetch was queued,
             // so a rotated secret is the one that goes out
             // and the queue never holds a secret at all.
-            let Some(spent) = super::imports::credentials::spend(state, &url, &headers, body)
-            else {
+            let Ok(spent) = super::imports::credentials::spend(state, &url, &headers, body) else {
                 let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Refused.to_wire(),

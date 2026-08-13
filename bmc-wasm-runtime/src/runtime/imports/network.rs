@@ -170,7 +170,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             // Last hop before the wire. Everything above sees the placeholder
             // form — the fetch key, the interceptor, the hermetic-breach
             // record — so no diagnostic, fixture or log can hold a secret.
-            let Some(spent) = super::credentials::spend(state, &url, &headers, body) else {
+            let Ok(spent) = super::credentials::spend(state, &url, &headers, body) else {
                 let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Refused.to_wire(),
