@@ -132,13 +132,7 @@ pub enum SubstitutionError {
 const MAX_REFUSAL_TEXT_BYTES: usize = bmc_widget_manifest::MAX_PARAM_KEY_LENGTH;
 
 fn bounded_refusal_text(text: &str) -> String {
-    let mut end = text.len().min(MAX_REFUSAL_TEXT_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text.get(..end)
-        .expect("BUG: bounded refusal text ends on a UTF-8 boundary")
-        .to_owned()
+    crate::host_api::bounded_guest_text(text, MAX_REFUSAL_TEXT_BYTES).to_owned()
 }
 
 impl SubstitutionError {
@@ -293,55 +287,47 @@ pub(in crate::runtime) fn spend(
     let url = rewrite_origin(url, &state.url_rewrites).unwrap_or_else(|| url.to_owned());
     let url = url.as_str();
 
-    let result = (|| {
-        let secrets = &state.credential_secrets;
-        let spent = slots_referenced(url, headers, body.as_deref());
-        if spent.is_empty() {
-            return Ok(SpentRequest {
-                url: url.to_owned(),
-                headers: headers.to_vec(),
-                body,
-                carries_secret: false,
-            });
-        }
-
-        let resolve = |text: &str| substitute(text, secrets).map_err(CredentialRefusal::from);
-
-        // Substitute first: the pin must judge the URL that will be dialled.
-        // A secret is inserted verbatim, so one containing `/` ends the authority
-        // early and slides the approved host into the path.
-        let url = resolve(url)?;
-        // Never logged with the URL: it now carries the secret.
-        let destination =
-            url::Url::parse(&url).map_err(|_| CredentialRefusal::DestinationNotUrl)?;
-        egress_permitted(state, &destination, &spent)?;
-        client_reads_the_same_host(&destination, &url)?;
-        let headers = headers
-            .iter()
-            .map(|(name, value)| Ok((resolve(name)?, resolve(value)?)))
-            .collect::<Result<Vec<_>, CredentialRefusal>>()?;
-        let body = match body {
-            // A non-UTF-8 body cannot carry a textual placeholder,
-            // so it passes through rather than failing the request.
-            Some(bytes) => Some(match String::from_utf8(bytes) {
-                Ok(text) => resolve(&text)?.into_bytes(),
-                Err(raw) => raw.into_bytes(),
-            }),
-            None => None,
-        };
-
-        Ok(SpentRequest {
-            url,
-            headers,
+    let secrets = &state.credential_secrets;
+    let spent = slots_referenced(url, headers, body.as_deref());
+    if spent.is_empty() {
+        return Ok(SpentRequest {
+            url: url.to_owned(),
+            headers: headers.to_vec(),
             body,
-            carries_secret: true,
-        })
-    })();
-
-    if let Err(refusal) = &result {
-        tracing::warn!("refusing fetch: {refusal}");
+            carries_secret: false,
+        });
     }
-    result
+
+    let resolve = |text: &str| substitute(text, secrets).map_err(CredentialRefusal::from);
+
+    // Substitute first: the pin must judge the URL that will be dialled.
+    // A secret is inserted verbatim, so one containing `/` ends the authority
+    // early and slides the approved host into the path.
+    let url = resolve(url)?;
+    // Never logged with the URL: it now carries the secret.
+    let destination = url::Url::parse(&url).map_err(|_| CredentialRefusal::DestinationNotUrl)?;
+    egress_permitted(state, &destination, &spent)?;
+    client_reads_the_same_host(&destination, &url)?;
+    let headers = headers
+        .iter()
+        .map(|(name, value)| Ok((resolve(name)?, resolve(value)?)))
+        .collect::<Result<Vec<_>, CredentialRefusal>>()?;
+    let body = match body {
+        // A non-UTF-8 body cannot carry a textual placeholder,
+        // so it passes through rather than failing the request.
+        Some(bytes) => Some(match String::from_utf8(bytes) {
+            Ok(text) => resolve(&text)?.into_bytes(),
+            Err(raw) => raw.into_bytes(),
+        }),
+        None => None,
+    };
+
+    Ok(SpentRequest {
+        url,
+        headers,
+        body,
+        carries_secret: true,
+    })
 }
 
 /// `url` with the origin a rewrite names swapped for its replacement,

@@ -28,6 +28,7 @@
 
 use chrono::{DateTime, FixedOffset};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::path::PathBuf;
 use std::ptr::NonNull;
 use std::sync::Arc;
@@ -51,7 +52,7 @@ use bmc_wasm_protocol::{
 use crate::audio_registry::AudioRegistry;
 use crate::image_decode_lock::ImageDecodePermit;
 use crate::network::NetworkInfo;
-use crate::runtime::{CredentialView, ParamsSnapshot};
+use crate::runtime::{CredentialRefusal, CredentialView, FetchLogLimiter, ParamsSnapshot};
 use crate::runtime_limits::RuntimeResourceLimits;
 use crate::system::SystemSnapshot;
 use crate::xml::XmlDocumentIndex;
@@ -76,11 +77,102 @@ impl HermeticRun {
     }
 }
 
+/// Every method in the IANA registry fits; the longest is `UPDATEREDIRECTREF`
+/// (RFC 4437).
+const MAX_FETCH_METHOD_BYTES: usize = 17;
+/// Enough to read a configured endpoint back from a log line whole; a guest
+/// can synthesise a longer one, and only its tail is lost.
+const MAX_FETCH_URL_BYTES: usize = bmc_widget_manifest::MAX_PARAM_STRING_LENGTH;
+
+/// Clip guest-supplied text to `max_bytes`, ending on a UTF-8 boundary.
+pub(crate) fn bounded_guest_text(text: &str, max_bytes: usize) -> &str {
+    let mut end = text.len().min(max_bytes);
+    while !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    text.get(..end)
+        .expect("BUG: bounded guest text ends on a UTF-8 boundary")
+}
+
+/// Which request a fetch belongs to, over the untruncated method and URL.
+///
+/// A digest rather than the text because this is what outlives the fetch:
+/// held per failing request for the length of an outage,
+/// where the guest URL it stands in for — whatever length the guest chose —
+/// would be retained and never read.
+/// Two requests colliding here share an episode,
+/// costing the second one a suppressed log line —
+/// bounded enough to prefer over the bytes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct FetchRequestDigest(u64);
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FetchRequestKey {
+    method: String,
+    guest_url: String,
+    digest: FetchRequestDigest,
+}
+
+impl FetchRequestKey {
+    /// A recorded fixture replays on the [`Self::joined`] form,
+    /// and the interceptor it is matched to sees the URL the guest asked for,
+    /// so a clip taken here would be a clip on identity.
+    /// Clipping belongs to the rendered line instead:
+    /// [`Self::shown_method`], [`Self::shown_url`].
+    pub(crate) fn new(method: &str, guest_url: &str) -> Self {
+        let mut hasher = DefaultHasher::new();
+        method.hash(&mut hasher);
+        guest_url.hash(&mut hasher);
+        Self {
+            method: method.to_owned(),
+            guest_url: guest_url.to_owned(),
+            digest: FetchRequestDigest(hasher.finish()),
+        }
+    }
+
+    pub(crate) const fn digest(&self) -> FetchRequestDigest {
+        self.digest
+    }
+
+    pub(crate) fn shown_method(&self) -> &str {
+        bounded_guest_text(&self.method, MAX_FETCH_METHOD_BYTES)
+    }
+
+    pub(crate) fn shown_url(&self) -> &str {
+        bounded_guest_text(&self.guest_url, MAX_FETCH_URL_BYTES)
+    }
+
+    pub(crate) fn joined(&self) -> String {
+        format!("{} {}", self.method, self.guest_url)
+    }
+}
+
+/// What a test reads back about the fetch logs the runtime admitted.
+#[cfg(feature = "testing")]
+#[derive(Default)]
+pub(crate) struct FetchLogProbe {
+    pub(crate) failure_log_count: usize,
+    /// The refusal on the most recently *settled* fetch, in the form the log
+    /// and the on-device egress check read it.
+    ///
+    /// Settled rather than logged, so that a test pinning suppression reads
+    /// what the second attempt was and not what the first one left behind.
+    pub(crate) last_refusal: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FetchCompletionContext {
+    Normal,
+    CredentialRefusal(CredentialRefusal),
+    HermeticRefusal,
+}
+
 /// A completed HTTP fetch response ready for delivery to WASM.
 pub struct CompletedFetch {
     pub request_id: FetchRequestId,
     pub status: u32,
     pub body: Vec<u8>,
+    pub context: FetchCompletionContext,
 }
 
 /// The fetches a widget has outstanding, and the accounting that bounds them.
@@ -258,6 +350,7 @@ impl CompletedFetch {
                 .expect("BUG: 1 is non-zero so from_wire returns Some"),
             status: bmc_wasm_protocol::FetchOutcome::Network.to_wire(),
             body: Vec::new(),
+            context: FetchCompletionContext::Normal,
         }
     }
 }
@@ -927,8 +1020,13 @@ pub(crate) struct HostState {
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
-    /// Maps `request_id` → fixture key (e.g. "GET https://...") for the observer.
-    pub fetch_keys: HashMap<FetchRequestId, String>,
+    /// Maps each request to the guest-visible method and URL used for logging.
+    pub fetch_keys: HashMap<FetchRequestId, FetchRequestKey>,
+
+    pub(crate) fetch_log_limiter: FetchLogLimiter,
+
+    #[cfg(feature = "testing")]
+    pub(crate) fetch_log_probe: FetchLogProbe,
 
     /// Shared `ureq::Agent` cloned into every background fetch thread for
     /// connection-pool reuse. The timeout is set per request by `do_fetch`.
@@ -1241,6 +1339,9 @@ impl HostState {
             hermetic: None,
             fetch_observer: None,
             fetch_keys: HashMap::new(),
+            fetch_log_limiter: FetchLogLimiter::default(),
+            #[cfg(feature = "testing")]
+            fetch_log_probe: FetchLogProbe::default(),
             fetch_agent: crate::runtime::build_fetch_agent(),
             record_events: false,
             event_fixtures: None,
@@ -1377,8 +1478,8 @@ mod tests {
     use std::fs::OpenOptions;
 
     use super::{
-        CancelDisposition, DecodedImage, DelayedFetch, FetchState, FrameScheduleState, HermeticRun,
-        HostState, RendererAssetGate,
+        CancelDisposition, DecodedImage, DelayedFetch, FetchRequestKey, FetchState,
+        FrameScheduleState, HermeticRun, HostState, MAX_FETCH_URL_BYTES, RendererAssetGate,
     };
     use bmc_wasm_protocol::FetchRequestId;
 
@@ -1419,6 +1520,83 @@ mod tests {
             rustix::fs::FlockOperation::NonBlockingLockExclusive,
         )
         .expect("image decode permit should release after RGBA consumption");
+    }
+
+    /// A guest chooses what it asks for,
+    /// and the outcome line is a `warn!` that survives into production,
+    /// so what it shows has to be bounded.
+    ///
+    /// The bounds asserted are the log's own, not the constants the clip is
+    /// taken against: read from those, this stays green with the clip widened
+    /// to `usize::MAX`.
+    #[test]
+    fn a_log_line_bounds_the_guest_text_it_shows() {
+        /// Far past the longest registered method, and past any endpoint
+        /// worth reading back — a line rather than a page is all this claims.
+        const READABLE_METHOD_BYTES: usize = 32;
+        const READABLE_URL_BYTES: usize = 4_096;
+
+        let key = FetchRequestKey::new(&"M".repeat(1_000), &"https://long.test/".repeat(1_000));
+
+        assert!(
+            key.shown_method().len() <= READABLE_METHOD_BYTES,
+            "a method field {} bytes wide is not a method",
+            key.shown_method().len(),
+        );
+        assert!(
+            key.shown_url().len() <= READABLE_URL_BYTES,
+            "a url field {} bytes wide is a flood, not a log line",
+            key.shown_url().len(),
+        );
+    }
+
+    /// Clipped here, a URL past the cap would record short,
+    /// miss the fixture on replay, and leave the hermetic runtime
+    /// refusing a fetch the recording had captured.
+    #[test]
+    fn the_joined_form_carries_the_request_whole() {
+        let url = format!("https://long.test/{}", "p".repeat(MAX_FETCH_URL_BYTES));
+
+        let key = FetchRequestKey::new("GET", &url);
+
+        assert_eq!(key.joined(), format!("GET {url}"));
+    }
+
+    /// Clipping decides what is *shown*, never who is who: were identity
+    /// clipped too, the second endpoint's first failure would be read as a
+    /// repeat of the first's and never logged.
+    #[test]
+    fn two_urls_alike_past_the_cap_are_still_separate_requests() {
+        let shared = format!("https://example.test/{}", "p".repeat(MAX_FETCH_URL_BYTES));
+
+        let one = FetchRequestKey::new("GET", &format!("{shared}one"));
+        let other = FetchRequestKey::new("GET", &format!("{shared}other"));
+
+        assert_eq!(
+            one.shown_url(),
+            other.shown_url(),
+            "the shown text is clipped to the same prefix",
+        );
+        assert_ne!(
+            one.digest(),
+            other.digest(),
+            "the digest is the whole of a request's identity, so sharing one \
+             would merge two endpoints and swallow the second's first failure",
+        );
+    }
+
+    #[test]
+    fn a_key_clips_a_multibyte_url_below_the_cap_rather_than_splitting_a_char() {
+        let straddling = format!("h{}", "é".repeat(MAX_FETCH_URL_BYTES));
+
+        let key = FetchRequestKey::new("GET", &straddling);
+
+        assert_eq!(
+            key.shown_url().len(),
+            MAX_FETCH_URL_BYTES - 1,
+            "a two-byte char straddling the cap must be dropped whole",
+        );
+        assert!(straddling.starts_with(key.shown_url()));
     }
 
     /// A cancel names one request, and an id naming none can never settle.

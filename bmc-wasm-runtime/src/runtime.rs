@@ -23,11 +23,13 @@
 mod backend;
 mod background;
 mod delivery;
+mod fetch_logging;
 mod imports;
 mod memory;
 mod time;
 
 pub(crate) use background::build_fetch_agent;
+pub(crate) use fetch_logging::{FetchLogDecision, FetchLogLimiter};
 
 // Re-export the `ParamsSnapshot` newtype so `HostState` (in `host_api`)
 // can compose it with `VersionedSnapshotCache` without `imports` itself becoming public.
@@ -35,6 +37,7 @@ pub(crate) use background::build_fetch_agent;
 // The underlying `encode_params` stays module-private — it's reached
 // through `<ParamsSnapshot as WireEncode>::encode` from production code,
 // and through `super::encode_params` from this module's tests.
+pub(crate) use imports::credentials::CredentialRefusal;
 pub use imports::credentials::{BoundCredential, CredentialView};
 pub(crate) use imports::params::ParamsSnapshot;
 

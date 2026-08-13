@@ -172,7 +172,7 @@ fn build(handle: PollHandle) -> Option<FetchSpec> {
 fn on_reply(handle: PollHandle, response: &FetchResponse) {
     let source = source_of(handle);
     if !response.ok() {
-        log_warn!(
+        log_debug!(
             "{} fetch failed with status {}",
             source.name(),
             response.status

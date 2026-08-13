@@ -2148,6 +2148,18 @@ impl WasmWidgetRuntime {
         self.store.data().delivered_events
     }
 
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn test_fetch_failure_log_count(&self) -> usize {
+        self.store.data().fetch_log_probe.failure_log_count
+    }
+
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn test_last_fetch_refusal(&self) -> Option<&str> {
+        self.store.data().fetch_log_probe.last_refusal.as_deref()
+    }
+
     #[cfg(test)]
     #[must_use]
     pub fn test_geometry(

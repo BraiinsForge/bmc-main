@@ -35,10 +35,11 @@ use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
 #[cfg(feature = "testing")]
 use crate::host_api::CapturedMdnsEvent;
 use crate::host_api::{
-    CompletedFetch, FixtureEvent, FixtureEventKind, HttpInboundRequest, MdnsEvent, SocketEvent,
-    SsdpEvent, UdpBroadcastEvent, WsEvent,
+    CompletedFetch, FetchCompletionContext, FetchRequestKey, FixtureEvent, FixtureEventKind,
+    HttpInboundRequest, MdnsEvent, SocketEvent, SsdpEvent, UdpBroadcastEvent, WsEvent,
 };
 
+use super::FetchLogDecision;
 use super::backend::WasmWidgetRuntime;
 use super::background::{Redirects, do_fetch};
 use super::memory::alloc_and_copy_to_guest;
@@ -229,10 +230,80 @@ impl WasmWidgetRuntime {
         {
             let state = self.store.data_mut();
             for resp in &responses {
-                if let Some(key) = state.fetch_keys.remove(&resp.request_id)
-                    && let Some(ref observer) = state.fetch_observer
+                let Some(key) = state.fetch_keys.remove(&resp.request_id) else {
+                    continue;
+                };
+                if let Some(ref observer) = state.fetch_observer {
+                    observer(&key.joined(), resp.status, &resp.body);
+                }
+                #[cfg(feature = "testing")]
                 {
-                    observer(&key, resp.status, &resp.body);
+                    state.fetch_log_probe.last_refusal = match &resp.context {
+                        FetchCompletionContext::CredentialRefusal(refusal) => {
+                            Some(refusal.to_string())
+                        }
+                        FetchCompletionContext::Normal
+                        | FetchCompletionContext::HermeticRefusal => None,
+                    };
+                }
+
+                match state.fetch_log_limiter.record(
+                    &key,
+                    resp.status,
+                    &resp.context,
+                    state.monotonic_ms,
+                ) {
+                    FetchLogDecision::LogSuccess => {
+                        tracing::debug!(
+                            request_id = resp.request_id.to_wire(),
+                            method = %key.shown_method(),
+                            url = %key.shown_url(),
+                            status = resp.status,
+                            outcome = ?FetchOutcome::from_wire(resp.status),
+                            body_len = resp.body.len(),
+                            "fetch succeeded"
+                        );
+                    }
+                    FetchLogDecision::LogFailure {
+                        admission,
+                        previous_status,
+                    } => {
+                        #[cfg(feature = "testing")]
+                        {
+                            state.fetch_log_probe.failure_log_count += 1;
+                        }
+                        match &resp.context {
+                            FetchCompletionContext::CredentialRefusal(refusal) => {
+                                tracing::warn!(
+                                    request_id = resp.request_id.to_wire(),
+                                    method = %key.shown_method(),
+                                    url = %key.shown_url(),
+                                    status = resp.status,
+                                    outcome = ?FetchOutcome::from_wire(resp.status),
+                                    body_len = resp.body.len(),
+                                    admission = admission.as_str(),
+                                    refusal = %refusal,
+                                    previous_status = ?previous_status,
+                                    "refusing fetch: {refusal}"
+                                );
+                            }
+                            FetchCompletionContext::Normal
+                            | FetchCompletionContext::HermeticRefusal => {
+                                tracing::warn!(
+                                    request_id = resp.request_id.to_wire(),
+                                    method = %key.shown_method(),
+                                    url = %key.shown_url(),
+                                    status = resp.status,
+                                    outcome = ?FetchOutcome::from_wire(resp.status),
+                                    body_len = resp.body.len(),
+                                    admission = admission.as_str(),
+                                    previous_status = ?previous_status,
+                                    "fetch failed"
+                                );
+                            }
+                        }
+                    }
+                    FetchLogDecision::NoLog => {}
                 }
             }
         }
@@ -252,13 +323,6 @@ impl WasmWidgetRuntime {
         };
 
         for resp in responses {
-            tracing::debug!(
-                id = resp.request_id.to_wire(),
-                status = resp.status,
-                body_len = resp.body.len(),
-                "delivering fetch response"
-            );
-
             let Some((body_ptr, body_len)) =
                 self.alloc_guest_bytes(alloc_func, &resp.body, "fetch response body")
             else {
@@ -1334,10 +1398,9 @@ impl WasmWidgetRuntime {
         });
 
         for (method, url, headers, body, timeout, request_id) in ready {
-            tracing::info!(request_id = request_id.to_wire(), %method, %url, "firing HTTP fetch");
-            state
-                .fetch_keys
-                .insert(request_id, format!("{method} {url}"));
+            tracing::debug!(request_id = request_id.to_wire(), %method, %url, "firing HTTP fetch");
+            let key = FetchRequestKey::new(&method, &url);
+            state.fetch_keys.insert(request_id, key.clone());
             let settle = state.fetches.accept(request_id);
 
             let intercepted = state
@@ -1349,15 +1412,17 @@ impl WasmWidgetRuntime {
                     request_id,
                     status,
                     body,
+                    context: FetchCompletionContext::Normal,
                 });
                 continue;
             }
 
-            if state.refuse_live_io("fetch", &format!("{method} {url}")) {
+            if state.refuse_live_io("fetch", &key.joined()) {
                 let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Network.to_wire(),
                     body: Vec::new(),
+                    context: FetchCompletionContext::HermeticRefusal,
                 });
                 continue;
             }
@@ -1365,13 +1430,17 @@ impl WasmWidgetRuntime {
             // Resolved here rather than when the fetch was queued,
             // so a rotated secret is the one that goes out
             // and the queue never holds a secret at all.
-            let Ok(spent) = super::imports::credentials::spend(state, &url, &headers, body) else {
-                let _ = settle.send(CompletedFetch {
-                    request_id,
-                    status: FetchOutcome::Refused.to_wire(),
-                    body: Vec::new(),
-                });
-                continue;
+            let spent = match super::imports::credentials::spend(state, &url, &headers, body) {
+                Ok(spent) => spent,
+                Err(refusal) => {
+                    let _ = settle.send(CompletedFetch {
+                        request_id,
+                        status: FetchOutcome::Refused.to_wire(),
+                        body: Vec::new(),
+                        context: FetchCompletionContext::CredentialRefusal(refusal),
+                    });
+                    continue;
+                }
             };
             let super::imports::credentials::SpentRequest {
                 url: resolved,
@@ -1393,18 +1462,11 @@ impl WasmWidgetRuntime {
                     timeout,
                     redirects,
                 );
-                tracing::info!(
-                    request_id = request_id.to_wire(),
-                    status,
-                    body_len = resp_body.len(),
-                    // The guest's form, not `resolved`, which carries the secret.
-                    %url,
-                    "fetch completed"
-                );
                 let _ = tx.send(CompletedFetch {
                     request_id,
                     status,
                     body: resp_body,
+                    context: FetchCompletionContext::Normal,
                 });
             });
         }

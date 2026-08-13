@@ -219,7 +219,7 @@ mod wasm_glue {
                 }
             }
         } else {
-            log_warn!("blockheight: fetch failed (status {})", response.status);
+            log_debug!("blockheight: fetch failed (status {})", response.status);
             None
         };
 

@@ -797,7 +797,7 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
                         (i64::from(w) << 32) | i64::from(h)
                     }
                     Err(e) => {
-                        tracing::error!("host_decode_image probe: {e}");
+                        tracing::error!("host_decode_image probe: {e}  data_len={data_len}");
                         -1
                     }
                 };
@@ -808,7 +808,7 @@ fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
             let rgba = match decode_image_rgba_limited(&image_data) {
                 Ok(rgba) => rgba,
                 Err(e) => {
-                    tracing::error!("host_decode_image: {e}");
+                    tracing::error!("host_decode_image: {e}  data_len={data_len}");
                     return -1;
                 }
             };

@@ -139,6 +139,23 @@ def test_every_refusal_judged_case_owns_a_distinct_slot() -> None:
     assert len(slots) == len(set(slots))
 
 
+def test_every_case_gets_one_runtime_and_the_carrier_fetches_once() -> None:
+    defaults = ce._default_params()
+    scenes = [ce._scene(case, BASE, defaults, f"account-{case.name}") for case in ce.CASES]
+
+    assert len(scenes) == len(ce.CASES)
+    assert len({scene["id"] for scene in scenes}) == len(ce.CASES)
+    scene_widgets = [cast("list[dict[str, object]]", scene["widgets"]) for scene in scenes]
+    widgets = [items[0] for items in scene_widgets]
+    assert all(len(items) == 1 for items in scene_widgets)
+    assert len({widget["id"] for widget in widgets}) == len(ce.CASES)
+    params = [cast("dict[str, object]", widget["params"]) for widget in widgets]
+    assert {values["string_uri"] for values in params} == {case.url(BASE) for case in ce.CASES}
+
+    carrier = (ce.MANIFEST.parent / "src/lib.rs").read_text(encoding="utf-8")
+    assert carrier.count("net::fetch(") == 1, "each runtime must issue one request during init"
+
+
 def test_only_the_unbound_case_leaves_its_shared_slot_secretless() -> None:
     """`unbound`'s refusal names `media`, so nothing else on `media` may lack a
     binding, or the two would be indistinguishable in the log."""
@@ -174,6 +191,14 @@ def test_collect_separates_two_no_secret_refusals_by_slot() -> None:
     outcomes = {o.case.name: o for o in ce._collect(host, "", [])}
     assert '"media"' in outcomes["unbound"].refusal
     assert '"api"' in outcomes["undeclared"].refusal
+
+
+def test_collect_accepts_a_refusal_from_the_delivery_tracing_target() -> None:
+    host = _no_secret("media").replace("bmc_wasm_runtime:", "bmc_wasm_runtime::runtime::delivery:")
+
+    outcomes = {o.case.name: o for o in ce._collect(host, "", [])}
+
+    assert '"media"' in outcomes["unbound"].refusal
 
 
 def test_collect_reads_the_withholding_decision_from_the_compositor_log() -> None:

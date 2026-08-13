@@ -286,7 +286,7 @@ mod wasm_glue {
             }
             p
         } else {
-            log_warn!("halving: fetch failed (status {})", response.status);
+            log_debug!("halving: fetch failed (status {})", response.status);
             None
         };
 

@@ -35,8 +35,8 @@ use wasmi::{Caller, Extern, Linker};
 use crate::host_api::{
     ActiveHttpListener, ActiveMdnsBrowse, ActiveMdnsRegistration, ActiveSocket, ActiveSsdpSearch,
     ActiveUdpBroadcast, ActiveWebSocket, CancelDisposition, CompletedFetch, DelayedFetch,
-    HostState, HttpInboundRequest, HttpListenerResponse, MdnsEvent, SocketEvent, SocketOutbound,
-    SsdpEvent, UdpBroadcastEvent, WsEvent, WsOutbound,
+    FetchCompletionContext, FetchRequestKey, HostState, HttpInboundRequest, HttpListenerResponse,
+    MdnsEvent, SocketEvent, SocketOutbound, SsdpEvent, UdpBroadcastEvent, WsEvent, WsOutbound,
 };
 
 use super::super::background::{
@@ -141,9 +141,9 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             }
             let request_id = FetchRequestId::alloc(&mut state.next_request_id);
             let settle = state.fetches.accept(request_id);
-            state
-                .fetch_keys
-                .insert(request_id, format!("{method} {url}"));
+            let key = FetchRequestKey::new(&method, &url);
+            tracing::debug!(request_id = request_id.to_wire(), %method, %url, "starting HTTP fetch");
+            state.fetch_keys.insert(request_id, key.clone());
 
             let intercepted = state
                 .fetch_interceptor
@@ -154,15 +154,17 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                     request_id,
                     status,
                     body,
+                    context: FetchCompletionContext::Normal,
                 });
                 return request_id.to_wire();
             }
 
-            if state.refuse_live_io("fetch", &format!("{method} {url}")) {
+            if state.refuse_live_io("fetch", &key.joined()) {
                 let _ = settle.send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Network.to_wire(),
                     body: Vec::new(),
+                    context: FetchCompletionContext::HermeticRefusal,
                 });
                 return request_id.to_wire();
             }
@@ -170,13 +172,17 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             // Last hop before the wire. Everything above sees the placeholder
             // form — the fetch key, the interceptor, the hermetic-breach
             // record — so no diagnostic, fixture or log can hold a secret.
-            let Ok(spent) = super::credentials::spend(state, &url, &headers, body) else {
-                let _ = settle.send(CompletedFetch {
-                    request_id,
-                    status: FetchOutcome::Refused.to_wire(),
-                    body: Vec::new(),
-                });
-                return request_id.to_wire();
+            let spent = match super::credentials::spend(state, &url, &headers, body) {
+                Ok(spent) => spent,
+                Err(refusal) => {
+                    let _ = settle.send(CompletedFetch {
+                        request_id,
+                        status: FetchOutcome::Refused.to_wire(),
+                        body: Vec::new(),
+                        context: FetchCompletionContext::CredentialRefusal(refusal),
+                    });
+                    return request_id.to_wire();
+                }
             };
             let super::credentials::SpentRequest {
                 url,
@@ -202,6 +208,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                     request_id,
                     status,
                     body: resp_body,
+                    context: FetchCompletionContext::Normal,
                 });
             });
 

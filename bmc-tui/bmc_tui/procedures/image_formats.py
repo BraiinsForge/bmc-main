@@ -29,8 +29,8 @@ A size rejection is therefore a probe without a decode.
 
 Decoding is asynchronous, so a decode can land after the next scene
 has already fetched.
-Both lines carry the body length, which identifies the case exactly;
-only errors, which carry none, fall back to recency.
+Every probe, decode and error carries the body length, which identifies
+the case exactly.
 """
 
 import binascii
@@ -52,7 +52,7 @@ from typing import Literal
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device, RemotePath
 from bmc_tui.nix import Attr, StorePath
-from bmc_tui.server import ServerHandle, server
+from bmc_tui.server import Request, ServerHandle, ViewConfig, server
 from bmc_tui.stage import Abort, entrypoint, require
 
 LOG = RemotePath("/var/log/bmc/run-bmc-wasm-host-sdk-v0.log")
@@ -221,8 +221,11 @@ CASES: tuple[Case, ...] = (
     ),
 )
 
-_FETCH = re.compile(r"fetch completed .*?status=(\d+) body_len=(\d+) url=(\S+)")
-_ERROR = re.compile(r"(host_decode_image(?: probe)?): (.+?)(?:\s{2,}|$)")
+_FAILED_FETCH = re.compile(r"\bfetch failed\b")
+_FETCH_STATUS = re.compile(r"\bstatus=(\d+)")
+_FETCH_BODY_LEN = re.compile(r"\bbody_len=(\d+)")
+_FETCH_URL = re.compile(r"\burl=(\S+)")
+_ERROR = re.compile(r"(host_decode_image(?: probe)?): (.+?)\s{2}data_len=(\d+)")
 _PROBE = re.compile(r"host_image_probe (\d+)x(\d+) px=\d+ data_len=(\d+)")
 _DECODE = re.compile(
     r"host_decode_image (\d+)x(\d+) data_len=(\d+) decode_us=(\d+) vmrss_delta_kb=([+-]?\d+)"
@@ -285,11 +288,12 @@ class ImageFormats:
         build = catalog.running_binary(dev, PROCESS)
         _check_host_build(dev, widget_path, build)
 
-        views = {"/": FIXTURES} | {f"/{c.file}": c.body() for c in cases if c.make is not None}
-        with server(views, reachable_from=dev.host) as assets:
+        requests: list[Request] = []
+        with server(_views(cases, requests), reachable_from=dev.host) as assets:
             base_url = _device_facing(assets)
             console.kv("serving", f"{FIXTURES} at {base_url}")
             _preflight(cases, base_url)
+            requests.clear()
             _backup(dev)
             _push(dev, cases, base_url, self.dwell_seconds)
 
@@ -298,7 +302,7 @@ class ImageFormats:
                 _settle(len(cases), self.dwell_seconds)
             _report_drops(assets)
 
-        outcomes = _collect(window.text, cases, base_url)
+        outcomes = _collect(window.text, cases, base_url, requests)
         require(
             build is not None and catalog.running_binary(dev, PROCESS) == build,
             "the host binary changed mid-run — the window would mix two builds",
@@ -320,6 +324,17 @@ def _device_facing(assets: ServerHandle) -> str:
     lan = [bind for bind in assets.binds if "127.0.0.1" not in bind]
     require(bool(lan), "no routable address to serve fixtures from — the device cannot reach us")
     return lan[0]
+
+
+def _views(cases: list[Case], requests: list[Request]) -> dict[str, ViewConfig]:
+    def recording_view(case: Case) -> Callable[[Request], bytes | Path]:
+        def serve(request: Request) -> bytes | Path:
+            requests.append(request)
+            return case.body() if case.make is not None else FIXTURES / case.file
+
+        return serve
+
+    return {f"/{case.file}": recording_view(case) for case in cases}
 
 
 def _expected_host(widget_path: StorePath) -> tuple[StorePath | None, str]:
@@ -500,27 +515,41 @@ def _report_drops(assets: ServerHandle) -> None:
     )
 
 
-def _collect(window: str, cases: list[Case], base_url: str) -> list[Outcome]:
+def _collect(
+    window: str,
+    cases: list[Case],
+    base_url: str,
+    requests: list[Request],
+) -> list[Outcome]:
     console.header("Collect results")
-    wanted = re.compile("fetch completed|host_decode_image|host_image_probe")
+    wanted = re.compile("fetch failed|host_decode_image|host_image_probe")
     lines = [line for line in window.splitlines() if wanted.search(line)]
 
     by_url = {c.url(base_url): Outcome(case=c) for c in cases}
+    by_path = {f"/{c.file}": by_url[c.url(base_url)] for c in cases}
     by_len: dict[int, Outcome | None] = {}
-    current: Outcome | None = None
+
+    def claim_length(outcome: Outcome, length: int) -> None:
+        claimed = by_len.get(length, outcome)
+        by_len[length] = outcome if claimed is outcome else None
+
+    for request in requests:
+        outcome = by_path.get(request.path)
+        if outcome is None or "Range" in request.headers:
+            continue
+        length = len(outcome.case.body())
+        outcome.status = HTTPStatus.OK
+        outcome.fetched = length
+        claim_length(outcome, length)
 
     for line in lines:
-        if fetch := _FETCH.search(line):
-            status, body_len, url = fetch.groups()
-            current = by_url.get(url)
-            if current is not None:
-                current.status = int(status)
-                current.fetched = int(body_len)
-                length = int(body_len)
-                # Two cases of one length cannot be told apart; drop the entry
-                # rather than credit whichever fetched last.
-                claimed = by_len.get(length, current)
-                by_len[length] = current if claimed is current else None
+        if _FAILED_FETCH.search(line):
+            status = _FETCH_STATUS.search(line)
+            body_len = _FETCH_BODY_LEN.search(line)
+            url = _FETCH_URL.search(line)
+            if status and body_len and url and (outcome := by_url.get(url.group(1))) is not None:
+                outcome.status = int(status.group(1))
+                outcome.fetched = int(body_len.group(1))
         elif probe := _PROBE.search(line):
             if (out := by_len.get(int(probe.group(3)))) is not None:
                 out.probed = f"{probe.group(1)}x{probe.group(2)}"
@@ -529,9 +558,9 @@ def _collect(window: str, cases: list[Case], base_url: str) -> list[Outcome]:
                 out.decoded = f"{dec.group(1)}x{dec.group(2)}"
                 out.decode_us = int(dec.group(4))
                 out.vmrss_delta_kb = int(dec.group(5))
-        elif (err := _ERROR.search(line)) and current is not None:
-            # Errors carry no body length, so these alone fall back to recency.
-            current.error = f"{err.group(1)}: {err.group(2)}".strip()
+        elif err := _ERROR.search(line):
+            if (out := by_len.get(int(err.group(3)))) is not None:
+                out.error = f"{err.group(1)}: {err.group(2)}".strip()
     return [by_url[c.url(base_url)] for c in cases]
 
 

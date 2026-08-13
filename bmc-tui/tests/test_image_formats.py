@@ -20,29 +20,49 @@
 
 """Unit tests for the image-format harness log parsing and verdicts."""
 
+from pathlib import Path
 from types import SimpleNamespace
+from typing import TYPE_CHECKING, cast
 
 import pytest
 
 from bmc_tui.nix import StorePath
 from bmc_tui.procedures import image_formats as fmt
+from bmc_tui.server import Request, ResponseValue
 from bmc_tui.stage import Abort
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 BASE = "http://host:8000"
 
 
-def _case(name: str, *, expect: fmt.Expect = "decode") -> fmt.Case:
+def _case(
+    name: str,
+    *,
+    expect: fmt.Expect = "decode",
+    body: bytes = b"fixture",
+) -> fmt.Case:
     return fmt.Case(
         name=name,
         fmt="PNG",
         file=f"{name}.png",
         magic="89504e47",
         expect=expect,
+        make=lambda: body,
     )
 
 
-def _fetch(case: fmt.Case, *, status: int, body_len: int) -> str:
-    return f"fetch completed status={status} body_len={body_len} url={case.url(BASE)}"
+def _request(case: fmt.Case, *, range_header: bool = False) -> Request:
+    headers = {"Range": "bytes=0-15"} if range_header else {}
+    return Request(method="GET", path=f"/{case.file}", query={}, headers=headers, body=b"")
+
+
+def _failure(case: fmt.Case, *, status: int, body_len: int) -> str:
+    return (
+        f"fetch failed request_id=1 method=GET url={case.url(BASE)} "
+        f"status={status} outcome=Some(Network) body_len={body_len} admission=first"
+    )
 
 
 def _probe(w: int, h: int, data_len: int) -> str:
@@ -53,10 +73,10 @@ def _decode(w: int, h: int, data_len: int) -> str:
     return f"host_decode_image {w}x{h} data_len={data_len} decode_us=1500 vmrss_delta_kb=+64"
 
 
-def test_collect_pairs_probe_and_decode_with_their_fetch() -> None:
-    case = _case("png")
-    window = "\n".join([_fetch(case, status=200, body_len=42), _probe(8, 4, 42), _decode(8, 4, 42)])
-    (out,) = fmt._collect(window, [case], BASE)
+def test_collect_pairs_probe_and_decode_with_the_recorded_request() -> None:
+    case = _case("png", body=b"x" * 42)
+    window = "\n".join([_probe(8, 4, 42), _decode(8, 4, 42)])
+    (out,) = fmt._collect(window, [case], BASE, [_request(case)])
     assert (out.status, out.fetched) == (200, 42)
     assert (out.probed, out.decoded) == ("8x4", "8x4")
     assert out.decode_us == 1500
@@ -64,17 +84,75 @@ def test_collect_pairs_probe_and_decode_with_their_fetch() -> None:
 
 def test_collect_does_not_attribute_a_decode_to_the_wrong_case() -> None:
     """Body length is not an identity: two sources can share one."""
-    first, second = _case("first"), _case("second")
-    window = "\n".join(
-        [
-            _fetch(first, status=200, body_len=99),
-            _fetch(second, status=200, body_len=99),
+    first = _case("first", body=b"x" * 99)
+    second = _case("second", body=b"y" * 99)
+    outcomes = {
+        o.case.name: o
+        for o in fmt._collect(
             _decode(1000, 1000, 99),
-        ]
-    )
-    outcomes = {o.case.name: o for o in fmt._collect(window, [first, second], BASE)}
+            [first, second],
+            BASE,
+            [_request(first), _request(second)],
+        )
+    }
     decoded = [name for name, o in outcomes.items() if o.decoded]
     assert decoded != ["second"], "a shared length must not silently credit the last fetch"
+
+
+def test_collect_does_not_treat_the_preflight_range_as_a_device_fetch() -> None:
+    case = _case("png", body=b"x" * 42)
+
+    (out,) = fmt._collect("", [case], BASE, [_request(case, range_header=True)])
+
+    assert (out.status, out.fetched) == (None, None)
+
+
+def test_collect_overrides_a_recorded_request_with_an_admitted_failure() -> None:
+    case = _case("large", expect="reject-body", body=b"x" * 42)
+
+    (out,) = fmt._collect(
+        _failure(case, status=fmt.FETCH_BODY_TOO_LARGE, body_len=17),
+        [case],
+        BASE,
+        [_request(case)],
+    )
+
+    assert (out.status, out.fetched) == (fmt.FETCH_BODY_TOO_LARGE, 17)
+
+
+def test_collect_attributes_an_error_by_length_without_a_completion_log() -> None:
+    case = _case("broken", body=b"x" * 42)
+    error = "host_decode_image: decoder rejected input  data_len=42"
+
+    (out,) = fmt._collect(error, [case], BASE, [_request(case)])
+
+    assert out.error == "host_decode_image: decoder rejected input"
+
+
+def test_collect_does_not_attribute_an_error_with_an_ambiguous_length() -> None:
+    first = _case("first", body=b"x" * 42)
+    second = _case("second", body=b"y" * 42)
+    error = "host_decode_image probe: unknown format  data_len=42"
+
+    outcomes = fmt._collect(error, [first, second], BASE, [_request(first), _request(second)])
+
+    assert not any(out.error for out in outcomes)
+
+
+def test_views_record_every_selected_case_and_preserve_file_streaming() -> None:
+    generated = _case("generated", body=b"generated")
+    shipped = next(case for case in fmt.CASES if case.make is None)
+    requests: list[Request] = []
+    views = fmt._views([generated, shipped], requests)
+
+    generated_view = cast("Callable[[Request], ResponseValue]", views[f"/{generated.file}"])
+    shipped_view = cast("Callable[[Request], ResponseValue]", views[f"/{shipped.file}"])
+    generated_response = generated_view(_request(generated))
+    shipped_response = shipped_view(_request(shipped))
+
+    assert generated_response == b"generated"
+    assert shipped_response == Path(fmt.FIXTURES / shipped.file)
+    assert [request.path for request in requests] == [f"/{generated.file}", f"/{shipped.file}"]
 
 
 def test_verdict_separates_a_refused_body_from_a_dead_network() -> None:
