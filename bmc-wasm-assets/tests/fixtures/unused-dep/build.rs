@@ -18,45 +18,12 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Shared protocol definitions for WASM widgets.
-//! This crate contains constants and types shared between the SDK (WASM) and host.
+include!("../fixture_build.rs");
 
-pub mod animation;
-pub mod arc;
-pub mod assets;
-pub mod colors;
-pub mod display;
-pub mod fetch;
-pub mod fill;
-pub mod ids;
-pub mod mesh;
-pub mod nodes;
-pub mod params;
-pub mod progress;
-pub mod relative_time;
-pub mod skeleton;
-pub mod svg;
-pub mod system;
-pub mod tags;
-pub mod text;
-pub mod version;
-pub mod versioned_snapshot;
-pub(crate) mod wire;
-
-pub use animation::*;
-pub use arc::*;
-pub use assets::*;
-pub use colors::*;
-pub use display::{DisplayShape, ViewportShape};
-pub use fetch::FetchOutcome;
-pub use fill::*;
-pub use ids::*;
-pub use mesh::*;
-pub use nodes::*;
-pub use progress::*;
-pub use relative_time::*;
-pub use skeleton::*;
-pub use svg::*;
-pub use tags::*;
-pub use text::*;
-pub use version::*;
+fn main() {
+    emit_record(
+        PackageAssetKind::Bitmap,
+        "unused-dep::falcon-heavy.png",
+        "../../../../widgets-wasm/spacex-launch/assets/falcon-heavy.png",
+    );
+}

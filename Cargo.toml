@@ -37,6 +37,10 @@ members = [
     "bmc-virt/ipc",
     "bmc-virt/leds",
     "bmc-virt/relay",
+    "bmc-wasm-assets",
+    "bmc-wasm-assets/tests/fixtures/asset-dep",
+    "bmc-wasm-assets/tests/fixtures/linker-widget",
+    "bmc-wasm-assets/tests/fixtures/unused-dep",
     "bmc-wasm-host",
     "bmc-wasm-runtime",
     "bmc-wasm-runtime/protocol",
@@ -198,6 +202,7 @@ bmc-system-overlay = { path = "system-overlays/bmc-system-overlay" }
 bmc-upgrade = { path = "bmc-upgrade" }
 bmc-virt-ipc = { path = "bmc-virt/ipc" }
 bmc-virt-leds = { path = "bmc-virt/leds" }
+bmc-wasm-assets = { path = "bmc-wasm-assets" }
 bmc-wasm-protocol = { path = "bmc-wasm-runtime/protocol" }
 bmc-wasm-runtime = { path = "bmc-wasm-runtime" }
 bmc-widget = { path = "bmc-widget" }

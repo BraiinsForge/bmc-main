@@ -1,0 +1,32 @@
+[package]
+name = "bmc-wasm-assets"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+# Cross-crate payloads compiled by the linker and macro fixtures; the Nix
+# source filter otherwise keeps only Rust, TOML, and lock files.
+[package.metadata.nix]
+include = [
+    "../bmc-render/assets/panel.9.png",
+    "../bmc-render/assets/skins/storybook_slider/**",
+    "../bmc-wasm-runtime/examples/mesh-demo/assets/suzanne.glb",
+    "../bmc-wasm-runtime/examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav",
+    "../widgets-wasm/image/assets/renew.svg",
+    "../widgets-wasm/iss-position/src/render/texture.jpg",
+    "../widgets-wasm/spacex-launch/assets/*.png",
+]
+[dependencies]
+anyhow.workspace = true
+bmc-wasm-protocol.workspace = true
+clap.workspace = true
+sha2.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+wasmparser.workspace = true
+
+[dev-dependencies]
+assert_matches.workspace = true
+
+[lints]
+workspace = true

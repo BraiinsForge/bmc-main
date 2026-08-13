@@ -18,45 +18,17 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Shared protocol definitions for WASM widgets.
-//! This crate contains constants and types shared between the SDK (WASM) and host.
+use bmc_wasm_protocol::{PackageAssetId, PackageAssetKind};
+use sha2::{Digest, Sha256};
 
-pub mod animation;
-pub mod arc;
-pub mod assets;
-pub mod colors;
-pub mod display;
-pub mod fetch;
-pub mod fill;
-pub mod ids;
-pub mod mesh;
-pub mod nodes;
-pub mod params;
-pub mod progress;
-pub mod relative_time;
-pub mod skeleton;
-pub mod svg;
-pub mod system;
-pub mod tags;
-pub mod text;
-pub mod version;
-pub mod versioned_snapshot;
-pub(crate) mod wire;
+const PACKAGE_ASSET_DIGEST_DOMAIN: &[u8] = b"bmc-package-asset-v1\0";
 
-pub use animation::*;
-pub use arc::*;
-pub use assets::*;
-pub use colors::*;
-pub use display::{DisplayShape, ViewportShape};
-pub use fetch::FetchOutcome;
-pub use fill::*;
-pub use ids::*;
-pub use mesh::*;
-pub use nodes::*;
-pub use progress::*;
-pub use relative_time::*;
-pub use skeleton::*;
-pub use svg::*;
-pub use tags::*;
-pub use text::*;
-pub use version::*;
+#[must_use]
+pub fn package_asset_id(kind: PackageAssetKind, payload: &[u8]) -> PackageAssetId {
+    let digest = Sha256::new()
+        .chain_update(PACKAGE_ASSET_DIGEST_DOMAIN)
+        .chain_update([kind.to_wire()])
+        .chain_update(payload)
+        .finalize();
+    PackageAssetId::from_bytes(digest.into())
+}

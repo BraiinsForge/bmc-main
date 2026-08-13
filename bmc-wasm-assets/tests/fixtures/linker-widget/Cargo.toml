@@ -1,0 +1,19 @@
+[package]
+name = "bmc-wasm-assets-linker-widget"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+bmc-wasm-assets-fixture-dep = { path = "../asset-dep" }
+bmc-wasm-assets-fixture-unused-dep = { path = "../unused-dep" }
+
+[build-dependencies]
+bmc-wasm-assets.workspace = true
+bmc-wasm-protocol.workspace = true
+
+[lints]
+workspace = true

@@ -337,6 +337,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert_matches"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9b34d609dfbaf33d6889b2b7106d3ca345eacad44200913df5ba02bfd31d2ba9"
+
+[[package]]
 name = "async-compression"
 version = "0.4.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1294,6 +1300,46 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-wasm-assets"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assert_matches",
+ "bmc-wasm-protocol",
+ "clap",
+ "sha2",
+ "tempfile",
+ "thiserror 1.0.69",
+ "wasmparser 0.244.0",
+]
+
+[[package]]
+name = "bmc-wasm-assets-fixture-dep"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-assets",
+ "bmc-wasm-protocol",
+]
+
+[[package]]
+name = "bmc-wasm-assets-fixture-unused-dep"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-assets",
+ "bmc-wasm-protocol",
+]
+
+[[package]]
+name = "bmc-wasm-assets-linker-widget"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-assets",
+ "bmc-wasm-assets-fixture-dep",
+ "bmc-wasm-assets-fixture-unused-dep",
+ "bmc-wasm-protocol",
+]
+
+[[package]]
 name = "bmc-wasm-host"
 version = "0.1.0"
 dependencies = [
@@ -1336,6 +1382,7 @@ version = "0.1.0"
 dependencies = [
  "bmc-shared-utils",
  "bmc-widget-protocol",
+ "hex",
  "palette",
  "serde",
 ]
