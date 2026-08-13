@@ -715,7 +715,6 @@ dependencies = [
  "bmc-scheduler",
  "bmc-shared-time",
  "bmc-shared-utils",
- "bmc-support",
  "bmc-upgrade",
  "bmc-widget",
  "bmc-widget-manifest",
@@ -907,7 +906,6 @@ dependencies = [
  "tracing",
  "uuid",
  "walkdir",
- "zip",
 ]
 
 [[package]]

@@ -25,7 +25,6 @@ pub use bmc_nix::service_orchestrator::SERVICE_NAME_ENV;
 use bmc_nix::service_orchestrator::upgraded_service_marker;
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_time::time::Timezone;
-use bmc_support::SupportArchiveFormat;
 use std::{
     fmt::Debug,
     path::{Path, PathBuf},
@@ -144,7 +143,7 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     // Executes the function once bmc is shutting down
     async fn handle_graceful_shutdown(&self);
 
-    async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Self::Error>;
+    async fn support_archive(&self) -> Result<Vec<u8>, Self::Error>;
 
     /// Sync bootloader configuration to persistent storage (e.g., U-Boot environment).
     ///

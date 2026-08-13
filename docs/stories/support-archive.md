@@ -12,7 +12,7 @@ Braiins support will need.
 > by hand.
 
 - The Settings page of the web UI offers a support archive download.
-- The archive downloads as `support_archive__<timestamp>.zip.enc`, so multiple archives from the same device stay
+- The archive downloads as `support_archive__<timestamp>.zip`, so multiple archives from the same device stay
   distinguishable.
 - Collection is best-effort: a diagnostic that cannot be gathered (missing file, failing command) is skipped and the
   rest of the archive is still produced. Requesting an archive never fails outright because one source is unavailable.
@@ -23,9 +23,9 @@ Braiins support will need.
 
 - Known credentials (Braiins Pool API keys, Wi-Fi passwords) are censored before files enter the archive — see
   [Support Archive Credential Censoring](support-archive-credential-censoring.md).
-- The archive is wrapped in an obfuscating encryption layer so its contents are not casually readable in transit or in a
-  ticket attachment. This is obfuscation for support workflows, not user-controlled secrecy — the censoring step is what
-  protects credentials.
+- The archive is a standard zip whose entries are password-protected (password `braiins`) so its contents are not
+  casually readable in transit or in a ticket attachment. This is obfuscation for support workflows, not user-controlled
+  secrecy — the censoring step is what protects credentials.
 
 ### System state snapshot
 
@@ -65,8 +65,8 @@ Braiins support will need.
 
 ## Constraints
 
-- The archive is assembled on demand; collection takes a few seconds because packet captures record live traffic.
-- The download is an encrypted container aimed at support tooling; it is not intended to be browsed by the user
+- The archive is assembled on demand.
+- The download is a password-protected zip aimed at support tooling; it is not intended to be browsed by the user
   directly.
 - Credential censoring covers known credential locations only — see the censoring story for the exact list.
 - Nix store *contents* (binaries, libraries) are out of scope by design; the archive captures package *state* so it

@@ -28,22 +28,20 @@ use bmc_net::mock::MockNetworkManager;
 use bmc_nix::progress::{ActiveDownload, ProgressEvent};
 use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_time::time::Timezone;
-use bmc_support::SupportArchiveFormat;
-use std::io::{Cursor, Write};
+use bmc_support::{PlainZip, SupportArchive};
 use std::{
     path::Path,
     sync::{Arc, Mutex},
 };
 use tokio::signal;
 use tracing::info;
-use zip::write::SimpleFileOptions;
 
 #[derive(thiserror::Error, Debug)]
 pub enum Error {
     #[error(transparent)]
     Io(#[from] std::io::Error),
     #[error(transparent)]
-    Zip(#[from] zip::result::ZipError),
+    Support(#[from] anyhow::Error),
 }
 
 #[derive(Debug)]
@@ -280,17 +278,16 @@ impl bmc::BmcManager for Manager {
         }
     }
 
-    async fn support_archive(&self, _format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
+    async fn support_archive(&self) -> Result<Vec<u8>, Error> {
         info!("Support archive");
-        let mut buf = [0; 256];
-        let mut zip = zip::ZipWriter::new(Cursor::new(&mut buf[..]));
-        zip.start_file(
+        let mut buf = Vec::new();
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false);
+        archive.add_builtin(
             Self::DUMMY_SUPPORT_FILE_NAME,
-            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored),
+            Self::DUMMY_SUPPORT_FILE_CONTENT,
         )?;
-        zip.write_all(Self::DUMMY_SUPPORT_FILE_CONTENT.as_bytes())?;
-        zip.finish()?;
-        Ok(buf.to_vec())
+        archive.finish()?;
+        Ok(buf)
     }
 
     async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {

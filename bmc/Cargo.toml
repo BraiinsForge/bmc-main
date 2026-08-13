@@ -46,7 +46,6 @@ bmc-platform = { workspace = true, features = ["backlight"] }
 bmc-scheduler.workspace = true
 bmc-shared-time.workspace = true
 bmc-shared-utils.workspace = true
-bmc-support.workspace = true
 bmc-upgrade = { workspace = true, features = ["disk-check"] }
 bmc-widget.workspace = true
 bmc-widget-manifest.workspace = true

@@ -35,7 +35,6 @@ use axum::{
     response::{IntoResponse, Response},
     routing::get,
 };
-use bmc_support::SupportArchiveFormat;
 use http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use hyper::{
     HeaderMap, StatusCode,
@@ -54,8 +53,9 @@ use super::{ServerConfig, captive_portal::CaptivePortalLayer};
 
 const ZERO: &str = "0";
 const SUPPORT_ARCHIVE_FILENAME_PREFIX: &str = "support_archive_";
-const SUPPORT_ARCHIVE_FILENAME_SUFFIX: &str = ".zip.enc";
-const SUPPORT_ARCHIVE_FORMAT: SupportArchiveFormat = SupportArchiveFormat::ZipEncrypted;
+// NOTE: the suffix reflects the format the manager implementation produces —
+// a standard zip whose entries are password-protected.
+const SUPPORT_ARCHIVE_FILENAME_SUFFIX: &str = ".zip";
 
 /// On-disk icon path for `/widgets/{uid}/icon`, or `None` (→ 404) for a bad uid,
 /// unknown widget, or no icon. A missing file 404s later when the handler opens it.
@@ -288,7 +288,7 @@ impl<T: BmcManager> HttpServer<T> {
             SUPPORT_ARCHIVE_FILENAME_SUFFIX
         );
 
-        match manager.support_archive(SUPPORT_ARCHIVE_FORMAT).await {
+        match manager.support_archive().await {
             Ok(data) => {
                 let content_disposition = format!("attachment; filename=\"{filename}\"");
                 let headers = [

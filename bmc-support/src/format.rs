@@ -34,7 +34,7 @@ pub trait FinishWrite: Write {
 /// adjust the per-file zip entry options (per-entry encryption). Consumer
 /// binaries implement this to add encodings the crate does not ship — a
 /// pass-through `wrap` can delegate to [`PlainZip::wrap`].
-pub trait ArchiveFormat {
+pub trait ArchiveFormat: Sync {
     /// Wrap the raw output stream the zip data is written to.
     fn wrap<'w>(&self, writer: Box<dyn Write + 'w>) -> Box<dyn FinishWrite + 'w>;
 

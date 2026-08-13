@@ -38,7 +38,7 @@ use bmc_net_drv::wifi::WifiDriver;
 use bmc_platform::serial_number::BoardSerial;
 use bmc_platform::{BmcInfo, BosPlatform, BosVersion};
 use bmc_shared_time::time::Timezone;
-use bmc_support::SupportArchiveFormat;
+use bmc_support::PasswordProtectedZip;
 use std::io;
 use std::path::Path;
 use std::process::Stdio;
@@ -312,8 +312,10 @@ impl BmcManager for Manager {
         unix::handle_graceful_shutdown(&self.upgrade_in_progress).await;
     }
 
-    async fn support_archive(&self, format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
-        unix::get_support_archive(format).await.map_err(Into::into)
+    async fn support_archive(&self) -> Result<Vec<u8>, Error> {
+        unix::get_support_archive(&PasswordProtectedZip)
+            .await
+            .map_err(Into::into)
     }
 
     async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {

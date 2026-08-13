@@ -22,7 +22,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use bmc::shutdown::UPGRADE_HOLD;
-use bmc_support::SupportArchiveFormat;
+use bmc_support::ArchiveFormat;
 use tokio::task;
 use tracing::info;
 
@@ -75,7 +75,7 @@ pub async fn handle_graceful_shutdown(upgrade_in_progress: &AtomicBool) {
     info!("Timeout reached. Forcefully shutting down...");
 }
 
-pub async fn get_support_archive(format: SupportArchiveFormat) -> Result<Vec<u8>, Error> {
+pub async fn get_support_archive(format: &'static dyn ArchiveFormat) -> Result<Vec<u8>, Error> {
     let result = task::spawn_blocking(move || {
         let mut buf = Vec::new();
         bmc_support::collect(&mut buf, format, false)?;

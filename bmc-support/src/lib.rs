@@ -117,21 +117,7 @@ pub const PING_HOSTS: &[&str] = &[
     "public-api.braiins.com",
 ];
 
-#[derive(Debug, Clone, Copy)]
-pub enum SupportArchiveFormat {
-    Zip,
-    ZipEncrypted,
-}
-
-pub fn collect(
-    writer: &mut impl Write,
-    format: SupportArchiveFormat,
-    compress: bool,
-) -> Result<()> {
-    let format: &dyn ArchiveFormat = match format {
-        SupportArchiveFormat::Zip => &PlainZip,
-        SupportArchiveFormat::ZipEncrypted => &PasswordProtectedZip,
-    };
+pub fn collect(writer: impl Write, format: &dyn ArchiveFormat, compress: bool) -> Result<()> {
     let mut archive = SupportArchive::new(writer, format, compress);
 
     // include outputs of commands

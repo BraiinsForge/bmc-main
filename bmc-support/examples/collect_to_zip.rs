@@ -19,7 +19,7 @@
 // the grant above.
 
 use anyhow::Result;
-use bmc_support::SupportArchiveFormat;
+use bmc_support::PasswordProtectedZip;
 use std::env;
 use std::fs::File;
 
@@ -34,7 +34,7 @@ fn main() -> Result<()> {
     tracing_subscriber::fmt::init();
 
     let mut file = File::create("support_archive.zip")?;
-    bmc_support::collect(&mut file, SupportArchiveFormat::ZipEncrypted, false)?;
+    bmc_support::collect(&mut file, &PasswordProtectedZip, false)?;
 
     println!("{file:?}");
 
