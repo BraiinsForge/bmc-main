@@ -165,6 +165,42 @@
       "type": "number",
       "exclusiveMinimum": -273.15
     },
+    "Formula1Params": {
+      "description": "Tunables for a simulated Nexus Formula 1 deployment.",
+      "type": "object",
+      "properties": {
+        "careers_status": {
+          "description": "Status of the careers-derived resources (the statistics table,\nthe driver index, the per-driver cards) —\nthe trio the real deployment 503s while a fresh instance warms up.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "rfc3339_sessions": {
+          "description": "Session times as RFC 3339 with offset,\npreviewing the format the real deployment has agreed to move to.\n`false` replays today's naive wall-clock strings,\nwhich the widget refuses to place.",
+          "type": "boolean",
+          "default": false
+        },
+        "season_underway": {
+          "description": "`false` scripts the off-season: no next race, empty standings.",
+          "type": "boolean",
+          "default": true
+        },
+        "session": {
+          "description": "The running session; `idle` scripts a quiet week.",
+          "$ref": "#/$defs/Session"
+        },
+        "stale_secs": {
+          "description": "Added to every envelope's `cache_age_secs`;\nlarger than the resource's `ttl_secs` scripts stale-while-revalidate.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "status": {
+          "description": "HTTP status every endpoint returns.",
+          "$ref": "#/$defs/HttpStatus"
+        }
+      },
+      "additionalProperties": false
+    },
     "HttpStatus": {
       "description": "HTTP status this endpoint returns, e.g. 200, 401 or 503",
       "type": "integer",
@@ -395,6 +431,47 @@
           "required": [
             "device"
           ]
+        },
+        {
+          "description": "A Nexus Formula 1 deployment — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "formula-1"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/Formula1Params"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
         }
       ]
     },
@@ -402,6 +479,24 @@
       "description": "A non-negative figure, such as a hashrate or a power draw",
       "type": "number",
       "minimum": 0.0
+    },
+    "Session": {
+      "description": "Which session the live boards report as running.",
+      "oneOf": [
+        {
+          "type": "string",
+          "enum": [
+            "race",
+            "quali",
+            "practice"
+          ]
+        },
+        {
+          "description": "No session: every live resource answers `{\"live\": false}`.",
+          "type": "string",
+          "const": "idle"
+        }
+      ]
     },
     "UbosParams": {
       "description": "Tunables for a simulated Braiins Forge Miner x4 (Braiins OS Libre).",

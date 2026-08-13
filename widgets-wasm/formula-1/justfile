@@ -1,0 +1,67 @@
+# Formula 1 dev tasks: `just widgets::formula-1::dev`, or bare `just dev`
+# from this directory. Generic mechanics (builds, watch, testbed) delegate to
+# the wasm module; this file owns only the sim scenarios and their wiring.
+
+dir := source_directory()
+repo := parent_directory(parent_directory(dir))
+root_justfile := repo / "justfile"
+
+[private]
+default:
+    @just --justfile {{ source_file() }} --list
+
+# Widget + Nexus sim + rebuild watch in one mprocs. SCENARIO: see sim-args.
+dev SCENARIO="race":
+    @just --justfile {{ root_justfile }} wasm::prebuild formula-1
+    mprocs \
+        --names "netsim,watch,testbed:{{ SCENARIO }}" \
+        "just --justfile {{ source_file() }} run-netsim" \
+        "just --justfile {{ root_justfile }} wasm::watch formula-1" \
+        "just --justfile {{ source_file() }} run-testbed {{ SCENARIO }}"
+
+# Serve the sim deployments — every scenario at once, one port each.
+run-netsim:
+    @just --justfile {{ root_justfile }} netsim::run {{ dir }}/sim-blueprint.json5
+
+# The testbed flag aiming a run at SCENARIO's simulated deployment.
+[private]
+sim-args SCENARIO:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    case "{{ SCENARIO }}" in
+        race)       port=20100 ;;
+        quali)      port=20101 ;;
+        practice)   port=20102 ;;
+        idle)       port=20103 ;;
+        off-season) port=20104 ;;
+        cold-start) port=20105 ;;
+        stale)      port=20106 ;;
+        rfc3339)    port=20107 ;;
+        *)
+            echo "unknown scenario '{{ SCENARIO }}' (race | quali | practice | idle |" \
+                 "off-season | cold-start | stale | rfc3339)" >&2
+            exit 1
+            ;;
+    esac
+
+    echo "--rewrite-url https://nexus.braiinsforge.com=http://127.0.0.1:$port"
+
+# Testbed against SCENARIO's simulated deployment; needs `run-netsim` serving.
+[private]
+run-testbed SCENARIO:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
+    exec just --justfile {{ root_justfile }} wasm::testbed formula-1 "$args"
+
+# Record SIZE's capture fixture against SCENARIO; needs `run-netsim` serving.
+record SCENARIO SIZE="full":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Bound to a variable, not inlined: a failed substitution inside the exec's
+    # arguments would leave `set -e` satisfied and record against the live API.
+    args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
+    exec just --justfile {{ root_justfile }} wasm::record formula-1 {{ SIZE }} $args

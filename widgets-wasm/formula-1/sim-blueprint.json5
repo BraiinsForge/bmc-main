@@ -1,0 +1,56 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  // Nexus Formula 1 deployments for the formula-1 widget.
+  // Cloud APIs: nothing is announced — the testbed reaches a pinned port
+  // through `--rewrite-url` (the justfile's scenario map names these same ports).
+  instances: [
+    {
+        device: "formula-1",
+        label: "Race live — deterministic overtakes, pits, one DNF",
+        port: 20100,
+        params: { session: "race" },
+    },
+    {
+        device: "formula-1",
+        label: "Qualifying live",
+        port: 20101,
+        params: { session: "quali" },
+    },
+    {
+        device: "formula-1",
+        label: "Practice live",
+        port: 20102,
+        params: { session: "practice" },
+    },
+    {
+        device: "formula-1",
+        label: "Quiet mid-season week — next race announced, boards idle",
+        port: 20103,
+    },
+    {
+        device: "formula-1",
+        label: "Off-season — no next race, empty standings",
+        port: 20104,
+        params: { season_underway: false },
+    },
+    {
+        device: "formula-1",
+        label: "Cold start — careers-derived resources 503 while warming",
+        port: 20105,
+        params: { careers_status: 503 },
+    },
+    {
+        device: "formula-1",
+        label: "Stale — cache_age_secs past every ttl_secs",
+        port: 20106,
+        params: { stale_secs: 600 },
+    },
+    {
+        device: "formula-1",
+        label: "RFC 3339 preview — session times with offsets, as agreed",
+        port: 20107,
+        params: { session: "race", rfc3339_sessions: true },
+    },
+  ],
+}
