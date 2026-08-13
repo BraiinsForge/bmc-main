@@ -28,6 +28,7 @@
 
 use std::fmt::Write as _;
 use std::ptr::NonNull;
+use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
@@ -54,7 +55,7 @@ fn wat_string_literal(bytes: &[u8]) -> String {
     out
 }
 
-fn fetch_callback_registers_bitmap_wat() -> String {
+fn fetch_callback_wat(register_bitmap: bool, initial_bitmap: Option<&[u8]>) -> String {
     let method = b"GET";
     let url = b"https://example.test/art.png";
     let tag = b"album_art";
@@ -67,7 +68,34 @@ fn fetch_callback_registers_bitmap_wat() -> String {
     data.extend_from_slice(method);
     data.extend_from_slice(url);
     data.extend_from_slice(tag);
+    let initial_bitmap_ptr = data.len();
+    if let Some(initial_bitmap) = initial_bitmap {
+        data.extend_from_slice(initial_bitmap);
+    }
     let data = wat_string_literal(&data);
+    let register_bitmap = register_bitmap.then_some(format!(
+        r"
+            (drop
+              (call $host_register_bitmap
+                (i32.const {tag_ptr})
+                (i32.const {tag_len})
+                (local.get $body_ptr)
+                (local.get $body_len)))",
+        tag_len = tag.len(),
+    ));
+    let register_initial = initial_bitmap.map(|bytes| {
+        format!(
+            r#"
+          (func (export "register_initial") (result i32)
+            (call $host_register_bitmap
+              (i32.const {tag_ptr})
+              (i32.const {tag_len})
+              (i32.const {initial_bitmap_ptr})
+              (i32.const {initial_bitmap_len})))"#,
+            tag_len = tag.len(),
+            initial_bitmap_len = bytes.len(),
+        )
+    });
 
     format!(
         r#"
@@ -82,6 +110,7 @@ fn fetch_callback_registers_bitmap_wat() -> String {
               (result i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
+          (global $callback_count (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64)
             i64.const {sdk})
           (func (export "__alloc") (param $len i32) (result i32)
@@ -103,20 +132,43 @@ fn fetch_callback_registers_bitmap_wat() -> String {
             (param $status i32)
             (param $body_ptr i32)
             (param $body_len i32)
-            (drop
-              (call $host_register_bitmap
-                (i32.const {tag_ptr})
-                (i32.const {tag_len})
-                (local.get $body_ptr)
-                (local.get $body_len))))
+            (global.set $callback_count
+              (i32.add (global.get $callback_count) (i32.const 1)))
+            {register_bitmap})
+          (func (export "callback_count") (result i32)
+            (global.get $callback_count))
+          {register_initial}
           (func (export "render") (param i32))
         )
         "#,
         method_len = method.len(),
         url_len = url.len(),
-        tag_len = tag.len(),
+        register_bitmap = register_bitmap.unwrap_or_default(),
+        register_initial = register_initial.unwrap_or_default(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
     )
+}
+
+fn poll_fetch_delivery(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer) -> bool {
+    let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
+    let ptr = NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut renderer_accessed = false;
+    while runtime.has_pending_fetches() && Instant::now() < deadline {
+        renderer_accessed |= runtime
+            .poll_deliveries_with_renderer(ptr)
+            .expect("BUG: fixture delivery must not trap");
+        std::thread::yield_now();
+    }
+    renderer_accessed |= runtime
+        .poll_deliveries_with_renderer(ptr)
+        .expect("BUG: fixture delivery must not trap");
+    assert_eq!(
+        runtime.call_export_i32("callback_count"),
+        Some(1),
+        "the intercepted fetch must reach its guest callback"
+    );
+    renderer_accessed
 }
 
 #[test]
@@ -125,8 +177,8 @@ fn fetch_response_callback_can_register_renderer_asset() {
         return;
     };
     let png = one_px_png([0, 255, 0, 255]);
-    let wasm = wat::parse_str(fetch_callback_registers_bitmap_wat())
-        .expect("BUG: callback WAT must parse");
+    let wasm =
+        wat::parse_str(fetch_callback_wat(true, None)).expect("BUG: callback WAT must parse");
     let mut proc = gl.proc_address();
     // SAFETY: HeadlessGl keeps the GL context current.
     let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
@@ -146,14 +198,85 @@ fn fetch_response_callback_can_register_renderer_asset() {
     .expect("BUG: runtime construct");
     let namespace = runtime.asset_namespace();
 
-    let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(renderer);
-    let ptr = NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
-    runtime
-        .poll_deliveries_with_renderer(ptr)
-        .expect("BUG: fixture delivery must not trap");
+    assert!(
+        poll_fetch_delivery(&mut runtime, &mut renderer),
+        "delivery must report the renderer import so the host fences its GPU work"
+    );
 
     assert!(
         renderer.evict_prefix(&namespace) > 0,
         "fetch delivery callback failed to register a renderer-side asset",
+    );
+}
+
+#[test]
+fn fetch_response_callback_without_renderer_import_needs_no_gpu_fence() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let wasm =
+        wat::parse_str(fetch_callback_wat(false, None)).expect("BUG: callback WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, Vec::new())))),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime construct");
+
+    assert!(
+        !poll_fetch_delivery(&mut runtime, &mut renderer),
+        "a pure guest callback must not request a GPU completion fence"
+    );
+}
+
+#[test]
+fn fetch_response_callback_querying_a_resident_asset_needs_no_gpu_fence() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let png = one_px_png([0, 255, 0, 255]);
+    let wasm =
+        wat::parse_str(fetch_callback_wat(true, Some(&png))).expect("BUG: callback WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            fetch_interceptor: Some(Box::new(move |_method, _url| Some((200, png.clone())))),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime construct");
+    let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(renderer);
+    let ptr = NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
+    let initial_id = runtime
+        .with_renderer(ptr, |runtime| runtime.call_export_i32("register_initial"))
+        .expect("BUG: fixture exports register_initial");
+    assert_ne!(
+        initial_id, 0,
+        "the fixture must make the callback registration a resident lookup"
+    );
+
+    assert!(
+        !poll_fetch_delivery(&mut runtime, &mut renderer),
+        "a resident asset lookup must not request a GPU completion fence"
     );
 }

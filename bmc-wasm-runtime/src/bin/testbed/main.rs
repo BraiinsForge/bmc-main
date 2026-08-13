@@ -1228,11 +1228,11 @@ enum DeliveryPollOutcome {
 }
 
 fn delivery_poll_outcome(
-    result: Result<()>,
+    result: Result<bool>,
     next_frame_is_immediate: impl FnOnce() -> bool,
 ) -> DeliveryPollOutcome {
     match result {
-        Ok(()) => DeliveryPollOutcome::Ready {
+        Ok(_) => DeliveryPollOutcome::Ready {
             immediate: next_frame_is_immediate(),
         },
         Err(error) => DeliveryPollOutcome::Trapped(error),

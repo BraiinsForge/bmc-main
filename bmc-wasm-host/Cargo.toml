@@ -21,7 +21,7 @@ overlay-offline = ["dep:bmc-overlay-offline"]
 overlay-device-info = ["dep:bmc-overlay-device-info"]
 overlay-settings-tray = ["dep:bmc-overlay-settings-tray"]
 overlay-upgrade = ["dep:bmc-overlay-upgrade"]
-profiling = []
+profiling = ["bmc-render/profiling", "bmc-wasm-runtime/profiling"]
 
 [dependencies]
 anyhow = { workspace = true }

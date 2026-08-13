@@ -76,8 +76,7 @@ fn read_package_ref(
 /// borrowed for the duration of this call. The upstream caller of
 /// `WasmWidgetRuntime::with_renderer` is on the hook for that via the
 /// documented `addr_of_mut!` contract; the parked `NonNull` is only ever
-/// dereferenced from here (and from the companion helper below), so this is
-/// the single host-side reborrow point. Single-threaded wasmi dispatch plus
+/// dereferenced only by the helpers in this module. Single-threaded wasmi dispatch plus
 /// the no-async-yield-inside-host-fn rule ensure only one host import runs
 /// at a time on the parking thread, so no other `&mut Renderer` exists
 /// during this reborrow.
@@ -85,16 +84,36 @@ pub(crate) fn with_renderer<R>(
     caller: &mut Caller<'_, HostState>,
     f: impl FnOnce(&mut dyn Renderer) -> R,
 ) -> Result<R, wasmi::Error> {
-    let Some(mut ptr) = caller.data_mut().renderer_ptr else {
+    let state = caller.data_mut();
+    let Some(mut ptr) = state.renderer_ptr else {
         return Err(wasmi::Error::new(
             "renderer accessed outside render scope (host import called from \
              init or on_params_update?)",
         ));
     };
+    state.mark_renderer_accessed();
     // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
     // same thread; the wasmi dispatch guarantees no other host fn runs
     // concurrently, so no other `&mut Renderer` exists during this reborrow.
     let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+    Ok(f(renderer))
+}
+
+/// Reborrow the parked renderer for a query that cannot issue GPU work.
+pub(crate) fn with_renderer_readonly<R>(
+    caller: &mut Caller<'_, HostState>,
+    f: impl FnOnce(&dyn Renderer) -> R,
+) -> Result<R, wasmi::Error> {
+    let state = caller.data_mut();
+    let Some(ptr) = state.renderer_ptr else {
+        return Err(wasmi::Error::new(
+            "renderer accessed outside render scope (host import called from \
+             init or on_params_update?)",
+        ));
+    };
+    // SAFETY: the same invariants as `with_renderer` apply. The shared
+    // reborrow prevents this helper's closure from mutating the renderer.
+    let renderer: &dyn Renderer = unsafe { ptr.as_ref() };
     Ok(f(renderer))
 }
 
@@ -120,6 +139,7 @@ pub(crate) fn with_renderer_and_state<R>(
              init or on_params_update?)",
         ));
     };
+    state.mark_renderer_accessed();
     // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer`; the
     // materialized `&mut dyn Renderer` originates from the caller-owned
     // renderer, not from `state`, so the two `&mut` references do not alias.

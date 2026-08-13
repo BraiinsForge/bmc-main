@@ -40,6 +40,6 @@ pub(crate) use imports::params::ParamsSnapshot;
 
 pub use backend::DisplayInfo as RuntimeDisplayInfo;
 pub use backend::{
-    FetchInterceptor, FetchObserver, RenderStatus, RuntimeConfig, RuntimeResourceLimits,
-    WasmWidgetRuntime,
+    FetchInterceptor, FetchObserver, RenderStatus, RendererAssetRestorationObservation,
+    RendererAssetSuspensionObservation, RuntimeConfig, RuntimeResourceLimits, WasmWidgetRuntime,
 };

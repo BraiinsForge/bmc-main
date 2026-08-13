@@ -25,6 +25,8 @@ use std::ptr::NonNull;
 use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
+#[cfg(feature = "profiling")]
+use bmc_render::profile::{MemProbe, TARGET as RENDER_PROFILE_TARGET};
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::HostedOverlay;
 
@@ -388,6 +390,24 @@ fn drain_accept_burst(
     Ok(())
 }
 
+fn run_renderer_delivery_scope_if_ready<Guard>(
+    ready: bool,
+    acquire: impl FnOnce() -> anyhow::Result<Guard>,
+    deliver: impl FnOnce() -> anyhow::Result<bool>,
+    fence: impl FnOnce(),
+) -> anyhow::Result<bool> {
+    if !ready {
+        return Ok(false);
+    }
+    let guard = acquire()?;
+    let renderer_accessed = deliver()?;
+    if renderer_accessed {
+        fence();
+    }
+    drop(guard);
+    Ok(renderer_accessed)
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the main loop body is a single coherent dispatch cycle; splitting would obscure the control flow"
@@ -508,35 +528,61 @@ fn run_loop(
             let now = Instant::now();
             slot.apply_lifecycle(now, &shared.egl);
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
-            if slot.runtime.has_pending_lifecycle() {
-                let delivery_result = (|| -> anyhow::Result<()> {
-                    let gpu_render_lock =
-                        shared.acquire_gpu_render_lock("host_widget_lifecycle")?;
+            slot.runtime.stage_deliveries();
+            let renderer_delivery_ready = slot.runtime.has_staged_renderer_delivery();
+            #[cfg(feature = "profiling")]
+            let mut delivery_memory = None;
+            let delivery_result = run_renderer_delivery_scope_if_ready(
+                renderer_delivery_ready,
+                || shared.acquire_gpu_render_lock("host_widget_delivery"),
+                || {
+                    #[cfg(feature = "profiling")]
+                    {
+                        delivery_memory = Some(MemProbe::start());
+                    }
                     slot.runtime
-                        .flush_pending_lifecycle_with_renderer(renderer_ptr);
-                    shared.flush_and_wait_gl();
-                    drop(gpu_render_lock);
-                    Ok(())
-                })();
-                if let Err(e) = delivery_result {
+                        .poll_staged_deliveries_with_renderer(renderer_ptr)
+                },
+                || shared.flush_and_wait_gl(),
+            );
+            let renderer_accessed = match delivery_result {
+                Ok(renderer_accessed) => renderer_accessed,
+                Err(e) => {
                     if shared.is_context_lost() {
                         return Err(FatalError::EglContextLost);
                     }
                     tracing::error!(
                         peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
-                        "widget lifecycle delivery failed; tearing down slot"
+                        "widget delivery failed; tearing down slot"
                     );
                     to_teardown.push(*id);
                     continue;
                 }
-            }
-            if let Err(e) = slot.runtime.poll_deliveries_with_renderer(renderer_ptr) {
-                tracing::error!(
-                    peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
-                    "widget delivery trapped; tearing down slot"
+            };
+            #[cfg(not(feature = "profiling"))]
+            let _ = renderer_accessed;
+            #[cfg(feature = "profiling")]
+            if renderer_accessed {
+                let memory = delivery_memory
+                    .expect("BUG: renderer access requires a ready delivery")
+                    .snapshot();
+                tracing::info!(
+                    target: RENDER_PROFILE_TARGET,
+                    instance_id = %slot.runtime.asset_namespace(),
+                    wasm = %slot.wasm_basename,
+                    vmrss_delta_kb = memory.vmrss_delta_kb,
+                    rss_anon_delta_kb = memory.rss_anon_delta_kb,
+                    rss_file_delta_kb = memory.rss_file_delta_kb,
+                    rss_shmem_delta_kb = memory.rss_shmem_delta_kb,
+                    mem_free_delta_kb = memory.mem_free_delta_kb,
+                    mem_available_delta_kb = memory.mem_available_delta_kb,
+                    cma_free_delta_kb = memory.cma_free_delta_kb,
+                    cma_free_kb = memory.cma_free_kb,
+                    mem_free_kb = memory.mem_free_kb,
+                    mem_available_kb = memory.mem_available_kb,
+                    delivery_us = memory.elapsed_us,
+                    "widget renderer delivery memory delta"
                 );
-                to_teardown.push(*id);
-                continue;
             }
             slot.refresh_next_runtime_frame_after_delivery(now);
             if slot.flush_led_requests().is_err() {
@@ -723,7 +769,74 @@ pub fn run(
 
 #[cfg(test)]
 mod tests {
-    use super::{compact_error_message, overlay_dispatch_error_kind};
+    use super::{
+        compact_error_message, overlay_dispatch_error_kind, run_renderer_delivery_scope_if_ready,
+    };
+
+    #[test]
+    fn idle_delivery_skips_the_gpu_scope() {
+        let lock_count = std::cell::Cell::new(0);
+        let delivery_count = std::cell::Cell::new(0);
+        let fence_count = std::cell::Cell::new(0);
+
+        run_renderer_delivery_scope_if_ready(
+            false,
+            || {
+                lock_count.set(lock_count.get() + 1);
+                Ok(())
+            },
+            || {
+                delivery_count.set(delivery_count.get() + 1);
+                Ok(true)
+            },
+            || fence_count.set(fence_count.get() + 1),
+        )
+        .expect("BUG: skipping an idle delivery scope cannot fail");
+
+        assert_eq!(
+            (lock_count.get(), delivery_count.get(), fence_count.get()),
+            (0, 0, 0),
+            "an idle slot must acquire no GPU lock and issue no completion fence"
+        );
+
+        run_renderer_delivery_scope_if_ready(
+            true,
+            || {
+                lock_count.set(lock_count.get() + 1);
+                Ok(())
+            },
+            || {
+                delivery_count.set(delivery_count.get() + 1);
+                Ok(true)
+            },
+            || fence_count.set(fence_count.get() + 1),
+        )
+        .expect("BUG: ready delivery scope must run successfully");
+        assert_eq!(
+            (lock_count.get(), delivery_count.get(), fence_count.get()),
+            (1, 1, 1),
+            "ready guest work must run under one lock and one completion fence"
+        );
+
+        run_renderer_delivery_scope_if_ready(
+            true,
+            || {
+                lock_count.set(lock_count.get() + 1);
+                Ok(())
+            },
+            || {
+                delivery_count.set(delivery_count.get() + 1);
+                Ok(false)
+            },
+            || fence_count.set(fence_count.get() + 1),
+        )
+        .expect("BUG: a staged event without a guest callback cannot fail");
+        assert_eq!(
+            (lock_count.get(), delivery_count.get(), fence_count.get()),
+            (2, 2, 1),
+            "a staged event without runnable guest work must not issue a fence"
+        );
+    }
 
     #[test]
     fn compact_error_message_caps_long_protocol_text() {

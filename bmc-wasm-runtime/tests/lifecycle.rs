@@ -52,13 +52,13 @@ use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::{AssetTagState, Renderer};
-use bmc_wasm_protocol::SvgId;
 use bmc_wasm_protocol::system::{
     DateFormat, NumberFormat, TemperatureUnit, TimeFormat, UnitSystem, Weekday,
 };
+use bmc_wasm_protocol::{PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId};
 use bmc_wasm_runtime::{
-    CredentialView, DiskCache, NextAlarm, RenderStatus, RuntimeConfig, SystemSettings,
-    SystemSnapshot, WasmWidgetRuntime,
+    CredentialView, DiskCache, NextAlarm, PackageAssetStore, RenderStatus, RuntimeConfig,
+    SystemSettings, SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_widget_manifest::{ParamKey, ParamValue};
 use bmc_widget_protocol::CredentialSecrets;
@@ -68,6 +68,29 @@ mod asset_fixtures;
 mod common;
 use asset_fixtures::{compiled_empty_svg, one_px_png, renderer_ptr, wat_string_literal};
 use common::headless_egl;
+
+fn poll_renderer_deliveries(
+    runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
+) -> bool {
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(renderer))
+        .expect("BUG: lifecycle delivery must not trap")
+}
+
+fn poll_renderer_deliveries_expect_trap(
+    runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
+    expected_hook: &str,
+) {
+    let error = runtime
+        .poll_deliveries_with_renderer(renderer_ptr(renderer))
+        .expect_err("the fixture lifecycle hook must trap after recording its observations");
+    assert!(
+        error.to_string().contains(expected_hook),
+        "the propagated trap must name {expected_hook}, got: {error}"
+    );
+}
 
 // ── Probe widget fixtures (hand-rolled WAT) ─────────────────────────
 
@@ -432,8 +455,7 @@ fn deferred_sleep_then_wake_probe_wat() -> String {
             i32.const {svg_ptr}
             i32.const {svg_len}
             call $register_svg
-            global.set $sleep_registration_id
-            unreachable)
+            global.set $sleep_registration_id)
           (func (export "on_wake")
             global.get $event_order
             i32.const 10
@@ -452,8 +474,7 @@ fn deferred_sleep_then_wake_probe_wat() -> String {
             i32.const {svg_ptr}
             i32.const {svg_len}
             call $register_svg
-            global.set $wake_restore_id
-            unreachable)
+            global.set $wake_restore_id)
           (func (export "asset_id") (result i32) global.get $asset_id)
           (func (export "event_order") (result i32) global.get $event_order)
           (func (export "reset_event_order") (result i32)
@@ -476,27 +497,17 @@ fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
     let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
     let package_ref = PackageAssetRef::new(PackageAssetKind::Svg, PackageAssetId::from_bytes(*id));
     data.extend_from_slice(package_ref.as_bytes());
-    let tree = active_asset_tree_bytes();
-    let tree_ptr = data.len();
-    data.extend_from_slice(&tree);
     let data = wat_string_literal(&data);
     format!(
         r#"
         (module
           (import "env" "host_register_svg_package"
             (func $register_svg (param i32 i32 i32) (result i32)))
-          (import "env" "host_submit_tree"
-            (func $submit_tree (param i32 i32 i32 i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $sleep_registration_id (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
-          (func (export "render") (param i32)
-            i32.const {tree_ptr}
-            i32.const {tree_len}
-            i32.const 320
-            i32.const 240
-            call $submit_tree)
+          (func (export "render") (param i32))
           (func (export "on_sleep")
             i32.const 0
             i32.const {tag_len}
@@ -508,7 +519,6 @@ fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
             global.get $sleep_registration_id))
         "#,
         tag_len = LIFECYCLE_ASSET_TAG.len(),
-        tree_len = tree.len(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
     )
 }
@@ -1405,7 +1415,7 @@ fn dormant_widget_without_sleep_hook_retains_guest_memory_assets() {
     );
 
     assert!(!runtime.notify_dormant());
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
 
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
@@ -1440,7 +1450,7 @@ fn trapping_sleep_hook_still_retains_assets() {
     .expect("BUG: initial SVG registration must return an ID");
 
     assert!(runtime.notify_dormant());
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries_expect_trap(&mut runtime, &mut renderer, "on_sleep");
 
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
@@ -1480,7 +1490,9 @@ fn rendererless_delivery_retains_pending_sleep_edge() {
 
     assert!(runtime.notify_dormant());
     assert!(runtime.has_pending_lifecycle());
-    runtime.poll_deliveries();
+    runtime
+        .poll_deliveries()
+        .expect("BUG: rendererless lifecycle delivery must not trap");
     assert_eq!(runtime.call_export_i32("sleep_count"), Some(0));
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
@@ -1488,7 +1500,7 @@ fn rendererless_delivery_retains_pending_sleep_edge() {
         "rendererless delivery must not consume the sleep edge"
     );
 
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
     assert!(!runtime.has_pending_lifecycle());
     assert_eq!(runtime.call_export_i32("sleep_count"), Some(1));
     assert_eq!(
@@ -1517,7 +1529,9 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
     };
 
     assert!(runtime.notify_dormant());
-    runtime.poll_deliveries();
+    runtime
+        .poll_deliveries()
+        .expect("BUG: rendererless lifecycle delivery must not trap");
     assert_eq!(runtime.call_export_i32("event_order"), Some(0));
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
@@ -1526,7 +1540,7 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
     );
 
     assert!(runtime.notify_wake());
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
 
     assert_eq!(
         runtime.call_export_i32("event_order"),
@@ -1554,7 +1568,7 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
 }
 
 #[test]
-fn first_render_restores_asset_registered_by_coalesced_sleep_hook() {
+fn coalesced_sleep_then_wake_restores_asset_registered_by_sleep_hook() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1586,18 +1600,8 @@ fn first_render_restores_asset_registered_by_coalesced_sleep_hook() {
         .expect("BUG: sleep hook must reserve a valid SVG ID");
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
-        AssetTagState::Suspended(registered),
-        "wake must leave an unused package asset suspended"
-    );
-
-    assert_eq!(
-        render_frame(&mut runtime, &mut renderer, 16),
-        RenderStatus::Ok
-    );
-    assert_eq!(
-        lifecycle_svg_state(&runtime, &renderer),
         AssetTagState::Resident(registered),
-        "the first tree referencing the package ID must restore its reservation"
+        "wake must restore a package asset first registered while the sleep gate was active"
     );
 }
 
@@ -1620,13 +1624,15 @@ fn sleep_after_deferred_wake_delivers_both_hooks_in_final_dormant_state() {
         panic!("BUG: initial SVG must be resident");
     };
     runtime.notify_dormant();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
     assert_eq!(runtime.call_export_i32("reset_event_order"), Some(0));
 
     runtime.notify_wake();
-    runtime.poll_deliveries();
+    runtime
+        .poll_deliveries()
+        .expect("BUG: rendererless lifecycle delivery must not trap");
     runtime.notify_dormant();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
 
     assert_eq!(
         runtime.call_export_i32("event_order"),
@@ -1668,7 +1674,9 @@ fn rendererless_dormant_poll_defers_uncached_image_decode_without_upload() {
     runtime.notify_dormant();
     let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
     while !runtime.has_completed_image_decodes_for_test() && Instant::now() < deadline {
-        runtime.poll_deliveries();
+        runtime
+            .poll_deliveries()
+            .expect("BUG: rendererless image delivery must not trap");
         std::thread::yield_now();
     }
     assert!(
@@ -1677,7 +1685,7 @@ fn rendererless_dormant_poll_defers_uncached_image_decode_without_upload() {
     );
     let mut renderer_accessed = false;
     while runtime.has_pending_image_decodes() && Instant::now() < deadline {
-        renderer_accessed |= runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+        renderer_accessed |= poll_renderer_deliveries(&mut runtime, &mut renderer);
         std::thread::yield_now();
     }
     assert!(!runtime.has_pending_image_decodes());
@@ -1744,14 +1752,14 @@ fn sleep_eviction_and_wake_cache_restore_allocate_a_fresh_bitmap_id() {
     );
 
     assert!(runtime.notify_dormant());
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
     assert_eq!(
         renderer.bitmap_tag_state(&renderer_tag),
         AssetTagState::Unknown
     );
 
     assert!(runtime.notify_wake());
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
     let wake_raw = u32::try_from(
         runtime
             .call_export_i32("wake_bitmap_id")
@@ -1797,14 +1805,14 @@ fn first_wake_frame_runs_guest_with_resident_asset() {
     );
 
     runtime.notify_dormant();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
         AssetTagState::Resident(asset_id)
     );
 
     runtime.notify_wake();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
     assert_eq!(
         render_frame(&mut runtime, &mut renderer, 16),
         RenderStatus::Ok
@@ -1838,7 +1846,7 @@ fn dormant_callback_can_destructively_evict_and_recreate_a_volatile_asset() {
         panic!("BUG: initial SVG must be resident");
     };
     runtime.notify_dormant();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
 
     let callback_ran = runtime.with_renderer(renderer_ptr(&mut renderer), |runtime| {
         runtime.deliver_network_update()
@@ -1867,7 +1875,7 @@ fn dormant_callback_can_destructively_evict_and_recreate_a_volatile_asset() {
 }
 
 #[test]
-fn fuel_dead_frames_skip_cached_assets_and_reset_forces_guest_execution() {
+fn fuel_dead_frames_replay_cached_assets_without_scheduling_and_reset_forces_guest_execution() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1897,21 +1905,33 @@ fn fuel_dead_frames_skip_cached_assets_and_reset_forces_guest_execution() {
             "strike {strike} must remain transient"
         );
     }
+    let frame_counter_before_death = runtime.frame_counter_for_test();
     assert_eq!(
         render_frame(&mut runtime, &mut renderer, 16),
         RenderStatus::Dead
     );
+    assert_eq!(
+        runtime.frame_counter_for_test(),
+        frame_counter_before_death + 1,
+        "the first permanent-death frame must replay the cached tree behind its overlay"
+    );
     assert!(
         !runtime.wants_next_frame(),
-        "first permanent-death frame must not replay the animated cached tree"
+        "first permanent-death frame must not schedule the animated cached tree"
     );
+    let frame_counter_before_dead_replay = runtime.frame_counter_for_test();
     assert_eq!(
         render_frame(&mut runtime, &mut renderer, 16),
         RenderStatus::Dead
     );
+    assert_eq!(
+        runtime.frame_counter_for_test(),
+        frame_counter_before_dead_replay + 1,
+        "an already-dead frame must replay the cached tree behind its overlay"
+    );
     assert!(
         !runtime.wants_next_frame(),
-        "already-dead frames must draw only the self-contained overlay"
+        "already-dead frames must not schedule the animated cached tree"
     );
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),

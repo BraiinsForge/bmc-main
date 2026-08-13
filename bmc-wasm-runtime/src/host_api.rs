@@ -672,6 +672,39 @@ enum RendererAssetGate {
     Dormant,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+enum RendererDeliveryActivity {
+    #[default]
+    Idle,
+    RendererAccessed,
+}
+
+#[derive(Default)]
+pub(crate) struct StagedGuestDeliveries {
+    pub fetch_responses: Vec<CompletedFetch>,
+    pub image_decodes: Vec<CompletedImageDecode>,
+    pub websocket_events: Vec<(WebsocketId, WsEvent)>,
+    pub socket_events: Vec<(SocketId, SocketEvent)>,
+    pub mdns_events: Vec<(MdnsBrowseId, MdnsEvent)>,
+    pub ssdp_events: Vec<(SsdpSearchId, SsdpEvent)>,
+    pub udp_events: Vec<(UdpBroadcastId, UdpBroadcastEvent)>,
+    pub http_requests: Vec<(HttpListenerId, HttpInboundRequest)>,
+    renderer_activity: RendererDeliveryActivity,
+}
+
+impl StagedGuestDeliveries {
+    pub fn is_empty(&self) -> bool {
+        self.fetch_responses.is_empty()
+            && self.image_decodes.is_empty()
+            && self.websocket_events.is_empty()
+            && self.socket_events.is_empty()
+            && self.mdns_events.is_empty()
+            && self.ssdp_events.is_empty()
+            && self.udp_events.is_empty()
+            && self.http_requests.is_empty()
+    }
+}
+
 /// Host-side state accessible to WASM via host functions.
 pub(crate) struct HostState {
     /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
@@ -754,8 +787,7 @@ pub(crate) struct HostState {
     /// Sender cloned into each background image-decode thread.
     pub image_decode_tx: mpsc::Sender<CompletedImageDecode>,
 
-    /// Worker results awaiting a renderer-backed delivery scope.
-    pub completed_image_decodes: Vec<CompletedImageDecode>,
+    pub staged_guest_deliveries: StagedGuestDeliveries,
 
     /// Next image-decode job id counter (for `ImageJobId::alloc`).
     pub next_image_job_id: u32,
@@ -1023,6 +1055,18 @@ impl HostState {
         self.renderer_asset_gate != RendererAssetGate::Active
     }
 
+    pub(crate) fn begin_renderer_delivery(&mut self) {
+        self.staged_guest_deliveries.renderer_activity = RendererDeliveryActivity::Idle;
+    }
+
+    pub(crate) fn mark_renderer_accessed(&mut self) {
+        self.staged_guest_deliveries.renderer_activity = RendererDeliveryActivity::RendererAccessed;
+    }
+
+    pub(crate) fn renderer_was_accessed_during_delivery(&self) -> bool {
+        self.staged_guest_deliveries.renderer_activity == RendererDeliveryActivity::RendererAccessed
+    }
+
     /// In a hermetic run, record a breach and return `true`; else `false`.
     /// Call sites: `if state.refuse_live_io(kind, target) { return reject; }`.
     pub(crate) fn refuse_live_io(&mut self, kind: &str, target: &str) -> bool {
@@ -1072,7 +1116,7 @@ impl HostState {
             fetches: FetchState::new(),
             image_decode_rx,
             image_decode_tx,
-            completed_image_decodes: Vec::new(),
+            staged_guest_deliveries: StagedGuestDeliveries::default(),
             next_image_job_id: 1,
             in_flight_image_decodes: 0,
             json_docs: HashMap::new(),

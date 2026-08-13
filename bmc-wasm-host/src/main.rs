@@ -26,6 +26,11 @@ use bmc_wasm_host::startup::{StartupDecision, prepare_listener};
 use bmc_wasm_thin_protocol::{default_socket_path, derive_log_path};
 use clap::Parser;
 
+#[cfg(feature = "profiling")]
+#[global_allocator]
+static GLOBAL_ALLOCATOR: bmc_render::profile::DeallocationTrackingAllocator =
+    bmc_render::profile::DeallocationTrackingAllocator;
+
 // Fixed Deck-maximum staging FBO size. This intentionally stays a process-startup
 // constant for now; BMM/BFM viewports fit inside it and render into a sub-region.
 const STAGING_MAX_WIDTH: u32 = 1280;

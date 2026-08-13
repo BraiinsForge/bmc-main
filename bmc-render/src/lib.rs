@@ -48,9 +48,9 @@ pub mod animation;
 pub mod components;
 pub mod gpu;
 pub mod interaction;
-#[cfg(feature = "profiling")]
+#[cfg(any(feature = "profiling", test))]
 pub mod proc_mem;
-#[cfg(feature = "profiling")]
+#[cfg(any(feature = "profiling", test))]
 pub mod profile;
 pub mod renderer;
 pub mod tree;

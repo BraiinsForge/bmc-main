@@ -64,11 +64,33 @@ pub(crate) enum RendererAssetKind {
     Mesh,
 }
 
+impl RendererAssetKind {
+    #[cfg(feature = "profiling")]
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Self::Svg => "svg",
+            Self::Bitmap(BitmapSampling::Linear) => "bitmap-linear",
+            Self::Bitmap(BitmapSampling::Nearest) => "bitmap-nearest",
+            Self::Mesh => "mesh",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum RendererAssetId {
     Svg(SvgId),
     Bitmap(BitmapId),
     Mesh(MeshId),
+}
+
+impl RendererAssetId {
+    pub(crate) fn to_ffi(self) -> u32 {
+        match self {
+            Self::Svg(id) => id.to_ffi(),
+            Self::Bitmap(id) => id.to_ffi(),
+            Self::Mesh(id) => id.to_ffi(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -189,11 +189,7 @@ impl WasmWidgetRuntime {
         ef.cursor >= ef.events.len() || ef.events[ef.cursor].at_ms > state.monotonic_ms
     }
 
-    /// Check for completed fetch responses and delayed fetches, then deliver
-    /// them to WASM by calling `__on_fetch_response`.
-    ///
-    /// Call this before `render()` each frame.
-    pub fn deliver_fetch_responses(&mut self) {
+    fn stage_fetch_responses(&mut self) {
         self.fire_ready_delayed_fetches();
 
         let state = self.store.data_mut();
@@ -203,8 +199,31 @@ impl WasmWidgetRuntime {
             state.delivered_events += responses.len() as u64;
         }
 
+        state
+            .staged_guest_deliveries
+            .fetch_responses
+            .extend(responses);
+    }
+
+    /// Check for completed fetch responses and delayed fetches, then deliver
+    /// them to WASM by calling `__on_fetch_response`.
+    ///
+    /// Call this before `render()` each frame.
+    pub fn deliver_fetch_responses(&mut self) {
+        self.stage_fetch_responses();
+        self.deliver_staged_fetch_responses();
+    }
+
+    fn deliver_staged_fetch_responses(&mut self) -> bool {
+        let responses = std::mem::take(
+            &mut self
+                .store
+                .data_mut()
+                .staged_guest_deliveries
+                .fetch_responses,
+        );
         if responses.is_empty() {
-            return;
+            return false;
         }
 
         {
@@ -229,7 +248,7 @@ impl WasmWidgetRuntime {
 
         let (Ok(on_response), Ok(alloc_func)) = (on_response, alloc_func) else {
             tracing::warn!("widget missing __on_fetch_response or __alloc export");
-            return;
+            return false;
         };
 
         for resp in responses {
@@ -258,28 +277,38 @@ impl WasmWidgetRuntime {
                 break;
             }
         }
+        true
+    }
+
+    fn stage_image_decode_results(&mut self) {
+        let state = self.store.data_mut();
+        while let Ok(done) = state.image_decode_rx.try_recv() {
+            state.in_flight_image_decodes = state.in_flight_image_decodes.saturating_sub(1);
+            state.staged_guest_deliveries.image_decodes.push(done);
+        }
     }
 
     /// Register completed off-thread image decodes and notify the guest via
     /// `__on_image_ready`. Cache-backed pixels upload when a tree references them.
     /// A renderer-less poll stages completed work until a renderer is available.
     pub fn deliver_image_decode_results(&mut self) {
+        self.stage_image_decode_results();
+        self.deliver_staged_image_decode_results();
+    }
+
+    fn deliver_staged_image_decode_results(&mut self) -> bool {
         let state = self.store.data_mut();
-        while let Ok(done) = state.image_decode_rx.try_recv() {
-            state.in_flight_image_decodes = state.in_flight_image_decodes.saturating_sub(1);
-            state.completed_image_decodes.push(done);
+        if state.renderer_ptr.is_none() || state.staged_guest_deliveries.image_decodes.is_empty() {
+            return false;
         }
-        if state.renderer_ptr.is_none() || state.completed_image_decodes.is_empty() {
-            return;
-        }
-        let completed = std::mem::take(&mut state.completed_image_decodes);
+        let completed = std::mem::take(&mut state.staged_guest_deliveries.image_decodes);
 
         let Ok(on_ready) = self
             .instance
             .get_typed_func::<(u32, u32), ()>(&self.store, "__on_image_ready")
         else {
             // Widget did not opt into async image decode; drop the results.
-            return;
+            return false;
         };
         // Fired while dormant to reclaim the guest's pending entry (optional export).
         let on_dropped = self
@@ -348,6 +377,7 @@ impl WasmWidgetRuntime {
                 break;
             }
         }
+        true
     }
 
     /// Reborrow the parked renderer to upload a pre-decoded RGBA buffer.
@@ -398,17 +428,15 @@ impl WasmWidgetRuntime {
             renderer.register_bitmap_rgba(tag, rgba, width, height)
         }?;
         self.store.data_mut().mark_renderer_accessed();
-        let asset_id = crate::renderer_assets::RendererAssetId::Bitmap(id);
-        let recorded = self.store.data_mut().record_renderer_asset(
-            raw_tag.to_owned(),
-            kind,
-            asset_id,
-            backing,
-        );
-        if recorded && cache_backed {
-            self.store.data_mut().renderer_assets.mark_pending(raw_tag);
-        }
-        recorded.then_some(id)
+        self.store
+            .data_mut()
+            .record_renderer_asset(
+                raw_tag.to_owned(),
+                kind,
+                crate::renderer_assets::RendererAssetId::Bitmap(id),
+                backing,
+            )
+            .then_some(id)
     }
 
     /// Whether there are pending or in-flight fetches that need polling.
@@ -418,12 +446,7 @@ impl WasmWidgetRuntime {
         state.fetches.has_pending()
     }
 
-    /// Drain WebSocket events from all active connections and deliver them
-    /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
-    ///
-    /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
-    /// the close code as two little-endian bytes).
-    pub fn deliver_ws_messages(&mut self) -> bool {
+    fn stage_ws_messages(&mut self) {
         let mut events: Vec<(WebsocketId, WsEvent)> = Vec::new();
         let mut closed_ids: Vec<WebsocketId> = Vec::new();
 
@@ -462,6 +485,31 @@ impl WasmWidgetRuntime {
                 state.recorded_events.push(FixtureEvent { at_ms, kind });
             }
         }
+
+        state
+            .staged_guest_deliveries
+            .websocket_events
+            .extend(events);
+    }
+
+    /// Drain WebSocket events from all active connections and deliver them
+    /// to WASM by calling `__on_ws_event(ws_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Open, 1 = Message, 2 = Close (data_ptr/data_len carry
+    /// the close code as two little-endian bytes).
+    pub fn deliver_ws_messages(&mut self) -> bool {
+        self.stage_ws_messages();
+        self.deliver_staged_ws_messages()
+    }
+
+    fn deliver_staged_ws_messages(&mut self) -> bool {
+        let events = std::mem::take(
+            &mut self
+                .store
+                .data_mut()
+                .staged_guest_deliveries
+                .websocket_events,
+        );
 
         if events.is_empty() {
             return false;
@@ -515,11 +563,7 @@ impl WasmWidgetRuntime {
         !self.store.data().websockets.is_empty()
     }
 
-    /// Drain socket events from all active connections and deliver them
-    /// to WASM by calling `__on_socket_event(socket_id, event_type, data_ptr, data_len)`.
-    ///
-    /// Event types: 0 = Connected, 1 = Data, 2 = Closed.
-    pub fn deliver_socket_events(&mut self) -> bool {
+    fn stage_socket_events(&mut self) {
         let mut events: Vec<(SocketId, SocketEvent)> = Vec::new();
         let mut closed_ids: Vec<SocketId> = Vec::new();
 
@@ -560,6 +604,22 @@ impl WasmWidgetRuntime {
                 state.recorded_events.push(FixtureEvent { at_ms, kind });
             }
         }
+
+        state.staged_guest_deliveries.socket_events.extend(events);
+    }
+
+    /// Drain socket events from all active connections and deliver them
+    /// to WASM by calling `__on_socket_event(socket_id, event_type, data_ptr, data_len)`.
+    ///
+    /// Event types: 0 = Connected, 1 = Data, 2 = Closed.
+    pub fn deliver_socket_events(&mut self) -> bool {
+        self.stage_socket_events();
+        self.deliver_staged_socket_events()
+    }
+
+    fn deliver_staged_socket_events(&mut self) -> bool {
+        let events =
+            std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.socket_events);
 
         if events.is_empty() {
             return false;
@@ -611,9 +671,7 @@ impl WasmWidgetRuntime {
         !self.store.data().sockets.is_empty()
     }
 
-    /// Drain mDNS events from all active browse sessions and deliver them
-    /// to WASM by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
-    pub fn deliver_mdns_events(&mut self) -> bool {
+    fn stage_mdns_events(&mut self) {
         let mut events: Vec<(MdnsBrowseId, MdnsEvent)> = Vec::new();
 
         let state = self.store.data_mut();
@@ -643,6 +701,19 @@ impl WasmWidgetRuntime {
                 state.recorded_events.push(FixtureEvent { at_ms, kind });
             }
         }
+
+        state.staged_guest_deliveries.mdns_events.extend(events);
+    }
+
+    /// Drain mDNS events from all active browse sessions and deliver them
+    /// to WASM by calling `__on_mdns_event(browse_id, event_type, data_ptr, data_len)`.
+    pub fn deliver_mdns_events(&mut self) -> bool {
+        self.stage_mdns_events();
+        self.deliver_staged_mdns_events()
+    }
+
+    fn deliver_staged_mdns_events(&mut self) -> bool {
+        let events = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.mdns_events);
 
         if events.is_empty() {
             return false;
@@ -709,9 +780,7 @@ impl WasmWidgetRuntime {
         !self.store.data().mdns_browses.is_empty()
     }
 
-    /// Drain SSDP events from all active search sessions and deliver them
-    /// to WASM by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
-    pub fn deliver_ssdp_events(&mut self) -> bool {
+    fn stage_ssdp_events(&mut self) {
         let mut events: Vec<(SsdpSearchId, SsdpEvent)> = Vec::new();
 
         let state = self.store.data_mut();
@@ -741,6 +810,19 @@ impl WasmWidgetRuntime {
                 state.recorded_events.push(FixtureEvent { at_ms, kind });
             }
         }
+
+        state.staged_guest_deliveries.ssdp_events.extend(events);
+    }
+
+    /// Drain SSDP events from all active search sessions and deliver them
+    /// to WASM by calling `__on_ssdp_event(search_id, event_type, data_ptr, data_len)`.
+    pub fn deliver_ssdp_events(&mut self) -> bool {
+        self.stage_ssdp_events();
+        self.deliver_staged_ssdp_events()
+    }
+
+    fn deliver_staged_ssdp_events(&mut self) -> bool {
+        let events = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.ssdp_events);
 
         if events.is_empty() {
             return false;
@@ -791,9 +873,7 @@ impl WasmWidgetRuntime {
         !self.store.data().ssdp_searches.is_empty()
     }
 
-    /// Drain UDP broadcast events from all active sessions and deliver them
-    /// to WASM by calling `__on_udp_broadcast_event`.
-    pub fn deliver_udp_broadcast_events(&mut self) -> bool {
+    fn stage_udp_broadcast_events(&mut self) {
         let mut events: Vec<(UdpBroadcastId, UdpBroadcastEvent)> = Vec::new();
 
         let state = self.store.data_mut();
@@ -821,6 +901,19 @@ impl WasmWidgetRuntime {
                 });
             }
         }
+
+        state.staged_guest_deliveries.udp_events.extend(events);
+    }
+
+    /// Drain UDP broadcast events from all active sessions and deliver them
+    /// to WASM by calling `__on_udp_broadcast_event`.
+    pub fn deliver_udp_broadcast_events(&mut self) -> bool {
+        self.stage_udp_broadcast_events();
+        self.deliver_staged_udp_broadcast_events()
+    }
+
+    fn deliver_staged_udp_broadcast_events(&mut self) -> bool {
+        let events = std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.udp_events);
 
         if events.is_empty() {
             return false;
@@ -883,9 +976,7 @@ impl WasmWidgetRuntime {
         !self.store.data().udp_broadcasts.is_empty()
     }
 
-    /// Drain inbound HTTP requests from all active listeners and deliver them
-    /// to WASM by calling `__on_http_request(...)`.
-    pub fn deliver_http_requests(&mut self) -> bool {
+    fn stage_http_requests(&mut self) {
         let mut requests: Vec<(HttpListenerId, HttpInboundRequest)> = Vec::new();
 
         let state = self.store.data_mut();
@@ -898,6 +989,20 @@ impl WasmWidgetRuntime {
                 }
             }
         }
+
+        state.staged_guest_deliveries.http_requests.extend(requests);
+    }
+
+    /// Drain inbound HTTP requests from all active listeners and deliver them
+    /// to WASM by calling `__on_http_request(...)`.
+    pub fn deliver_http_requests(&mut self) -> bool {
+        self.stage_http_requests();
+        self.deliver_staged_http_requests()
+    }
+
+    fn deliver_staged_http_requests(&mut self) -> bool {
+        let requests =
+            std::mem::take(&mut self.store.data_mut().staged_guest_deliveries.http_requests);
 
         if requests.is_empty() {
             return false;
@@ -991,7 +1096,25 @@ impl WasmWidgetRuntime {
         }
     }
 
-    /// Drive every pending lifecycle hook and delivery in a fixed order.
+    /// Drain host channels without invoking the guest or touching the renderer.
+    pub fn stage_deliveries(&mut self) {
+        self.stage_fetch_responses();
+        self.stage_image_decode_results();
+        self.stage_ws_messages();
+        self.stage_socket_events();
+        self.stage_mdns_events();
+        self.stage_ssdp_events();
+        self.stage_udp_broadcast_events();
+        self.stage_http_requests();
+    }
+
+    /// Whether a renderer-backed delivery scope has concrete work to run.
+    #[must_use]
+    pub fn has_staged_renderer_delivery(&self) -> bool {
+        self.has_pending_lifecycle() || !self.store.data().staged_guest_deliveries.is_empty()
+    }
+
+    /// Drive every pending lifecycle hook and staged delivery in a fixed order.
     ///
     /// The multi-slot host calls this once per slot in every main-loop iteration.
     /// The ordering below is the canonical sequence guests observe; these calls
@@ -1002,25 +1125,35 @@ impl WasmWidgetRuntime {
     ///
     /// Returns the trap a delivery callback took. The instance cannot be
     /// recovered afterwards and the caller must tear it down.
-    pub fn poll_deliveries(&mut self) -> Result<()> {
+    fn deliver_staged(&mut self) -> Result<()> {
         self.flush_pending_lifecycle();
         self.take_guest_trap()?;
-        self.deliver_fetch_responses();
+        self.deliver_staged_fetch_responses();
         self.take_guest_trap()?;
-        self.deliver_image_decode_results();
+        self.deliver_staged_image_decode_results();
         self.take_guest_trap()?;
-        self.deliver_ws_messages();
+        self.deliver_staged_ws_messages();
         self.take_guest_trap()?;
-        self.deliver_socket_events();
+        self.deliver_staged_socket_events();
         self.take_guest_trap()?;
-        self.deliver_mdns_events();
+        self.deliver_staged_mdns_events();
         self.take_guest_trap()?;
-        self.deliver_ssdp_events();
+        self.deliver_staged_ssdp_events();
         self.take_guest_trap()?;
-        self.deliver_udp_broadcast_events();
+        self.deliver_staged_udp_broadcast_events();
         self.take_guest_trap()?;
-        self.deliver_http_requests();
+        self.deliver_staged_http_requests();
         self.take_guest_trap()
+    }
+
+    /// Stage and deliver all pending work.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first trap taken by a delivery callback.
+    pub fn poll_deliveries(&mut self) -> Result<()> {
+        self.stage_deliveries();
+        self.deliver_staged()
     }
 
     /// Fan out to every `deliver_*` entry point while renderer-backed imports
@@ -1031,25 +1164,49 @@ impl WasmWidgetRuntime {
     /// callback and registers it as a bitmap before requesting the next frame.
     /// The caller-owned renderer therefore has to be parked while delivery
     /// callbacks run, not just while `render()` runs.
+    /// Returns whether delivery accessed the renderer and requires a GPU fence.
     ///
     /// # Errors
     ///
     /// Propagates a delivery callback's trap; see [`Self::poll_deliveries`].
-    pub fn poll_deliveries_with_renderer(&mut self, renderer: NonNull<dyn Renderer>) -> Result<()> {
-        self.with_renderer(renderer, Self::poll_deliveries)
+    pub fn poll_deliveries_with_renderer(
+        &mut self,
+        renderer: NonNull<dyn Renderer>,
+    ) -> Result<bool> {
+        self.stage_deliveries();
+        self.poll_staged_deliveries_with_renderer(renderer)
+    }
+
+    /// Deliver staged work and return whether it accessed the renderer.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a staged delivery callback's trap.
+    pub fn poll_staged_deliveries_with_renderer(
+        &mut self,
+        renderer: NonNull<dyn Renderer>,
+    ) -> Result<bool> {
+        self.store.data_mut().begin_renderer_delivery();
+        self.with_renderer(renderer, Self::deliver_staged)?;
+        Ok(self.store.data().renderer_was_accessed_during_delivery())
     }
 
     /// True while an async image decode is in flight or awaiting renderer delivery.
     #[must_use]
     pub fn has_pending_image_decodes(&self) -> bool {
         let state = self.store.data();
-        state.in_flight_image_decodes > 0 || !state.completed_image_decodes.is_empty()
+        state.in_flight_image_decodes > 0 || !state.staged_guest_deliveries.image_decodes.is_empty()
     }
 
     #[doc(hidden)]
     #[must_use]
     pub fn has_completed_image_decodes_for_test(&self) -> bool {
-        !self.store.data().completed_image_decodes.is_empty()
+        !self
+            .store
+            .data()
+            .staged_guest_deliveries
+            .image_decodes
+            .is_empty()
     }
 
     /// Predicate consumed by the multi-slot host's `compute_poll_timeout` to clamp the

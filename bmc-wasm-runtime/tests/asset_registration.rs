@@ -67,9 +67,9 @@ impl AssetKind {
 
     fn fixture(self) -> Vec<u8> {
         match self {
-            Self::Svg => compiled_empty_svg(),
+            Self::Svg => compiled_line_svg(),
             Self::Bitmap | Self::BitmapNearest => one_px_png([0, 255, 0, 255]),
-            Self::Mesh => minimal_empty_mesh(),
+            Self::Mesh => minimal_triangle_mesh(),
         }
     }
 
@@ -433,6 +433,46 @@ fn minimal_empty_mesh() -> Vec<u8> {
     data
 }
 
+fn compiled_line_svg() -> Vec<u8> {
+    let mut data = Vec::new();
+    data.extend_from_slice(&1.0_f32.to_le_bytes());
+    data.extend_from_slice(&1.0_f32.to_le_bytes());
+    data.extend_from_slice(&1_u16.to_le_bytes());
+    data.push(0);
+    data.extend_from_slice(&2_u16.to_le_bytes());
+    data.push(bmc_wasm_protocol::svg::SVG_OP_MOVE_TO);
+    data.extend_from_slice(&0.0_f32.to_le_bytes());
+    data.extend_from_slice(&0.0_f32.to_le_bytes());
+    data.push(bmc_wasm_protocol::svg::SVG_OP_LINE_TO);
+    data.extend_from_slice(&1.0_f32.to_le_bytes());
+    data.extend_from_slice(&1.0_f32.to_le_bytes());
+    data
+}
+
+fn minimal_triangle_mesh() -> Vec<u8> {
+    let vertex_offset = bmc_wasm_protocol::mesh::HEADER_SIZE + std::mem::size_of::<[f32; 6]>();
+    let index_offset = vertex_offset + 3 * bmc_wasm_protocol::mesh::VERTEX_SIZE_NO_UV;
+    let mut data = vec![0_u8; index_offset + 3 * std::mem::size_of::<u16>()];
+    data[0..4].copy_from_slice(&bmc_wasm_protocol::mesh::MESH_MAGIC.to_le_bytes());
+    data[4..8].copy_from_slice(&3_u32.to_le_bytes());
+    data[8..12].copy_from_slice(&3_u32.to_le_bytes());
+    data[12..16].copy_from_slice(
+        &u32::try_from(vertex_offset)
+            .expect("BUG: triangle vertex offset must fit u32")
+            .to_le_bytes(),
+    );
+    data[16..20].copy_from_slice(
+        &u32::try_from(index_offset)
+            .expect("BUG: triangle index offset must fit u32")
+            .to_le_bytes(),
+    );
+    for (position, index) in [0_u16, 1, 2].into_iter().enumerate() {
+        let start = index_offset + position * std::mem::size_of::<u16>();
+        data[start..start + std::mem::size_of::<u16>()].copy_from_slice(&index.to_le_bytes());
+    }
+    data
+}
+
 fn asset_registration_wat(kind: AssetKind, fixture: &[u8]) -> String {
     asset_registration_wat_for_sdk(kind, fixture, bmc_wasm_protocol::SDK_VERSION)
 }
@@ -672,19 +712,44 @@ fn package_runtime(kind: AssetKind, id: &[u8; 32], config: RuntimeConfig) -> Was
     .expect("BUG: package runtime must construct")
 }
 
-fn package_svg_demand_runtime(id: &[u8; 32], config: RuntimeConfig) -> WasmWidgetRuntime {
-    let wasm =
-        wat::parse_str(package_svg_demand_wat(id)).expect("BUG: package demand WAT must parse");
-    WasmWidgetRuntime::new(
-        &wasm,
-        64,
-        64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
-        common::test_display(64, 64),
-        chrono::Local::now().fixed_offset(),
-        config,
-    )
-    .expect("BUG: package demand runtime must construct")
+fn assert_initial_suspension(kind: AssetKind, observation: RendererAssetSuspensionObservation) {
+    assert_eq!(
+        (
+            observation.svg_suspended,
+            observation.bitmap_suspended,
+            observation.mesh_suspended,
+        ),
+        match kind {
+            AssetKind::Svg => (1, 0, 0),
+            AssetKind::Bitmap | AssetKind::BitmapNearest => (0, 1, 0),
+            AssetKind::Mesh => (0, 0, 1),
+        },
+        "{kind:?} sleep must report the newly suspended registry"
+    );
+    #[cfg(feature = "profiling")]
+    {
+        let released = (
+            observation.svg_path_bytes_released,
+            observation.bitmap_released,
+            observation.mesh_bytes_released,
+        );
+        match kind {
+            AssetKind::Svg => assert!(
+                released.0 > 0 && released.1 == 0 && released.2 == 0,
+                "SVG suspension must release only non-empty path payloads: {released:?}"
+            ),
+            AssetKind::Bitmap | AssetKind::BitmapNearest => {
+                assert!(
+                    released.0 == 0 && released.1 > 0 && released.2 == 0,
+                    "bitmap suspension must release only non-empty texture payloads: {released:?}"
+                );
+            }
+            AssetKind::Mesh => assert!(
+                released.0 == 0 && released.1 == 0 && released.2 > 0,
+                "mesh suspension must release only non-empty buffer payloads: {released:?}"
+            ),
+        }
+    }
 }
 
 fn assert_package_demand_fails(runtime: &mut WasmWidgetRuntime, gl: &headless_egl::HeadlessGl) {
@@ -698,11 +763,24 @@ fn assert_package_demand_fails(runtime: &mut WasmWidgetRuntime, gl: &headless_eg
         "registration must reserve an ID without loading the package payload"
     );
     assert_eq!(
-        runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
-            .expect("BUG: demand failure must produce a render status"),
-        RenderStatus::Dead,
-        "the first referencing tree must surface an unavailable package payload"
+        (
+            observation.svg_suspended,
+            observation.bitmap_suspended,
+            observation.mesh_suspended,
+        ),
+        (0, 0, 0),
+        "an already suspended reservation must not be counted twice"
+    );
+    #[cfg(feature = "profiling")]
+    assert_eq!(
+        (
+            observation.svg_heap_bytes_released,
+            observation.svg_path_bytes_released,
+            observation.bitmap_released,
+            observation.mesh_bytes_released,
+        ),
+        (0, 0, 0, 0),
+        "an already suspended reservation must not release payload bytes"
     );
 }
 
@@ -833,7 +911,11 @@ fn legacy_0_2_widget_keeps_the_pointer_asset_abi() {
 }
 
 #[test]
-fn dormant_package_reservations_survive_coalesced_edges_without_loading() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "the contract repeats the full suspend and restore cycle for every asset kind"
+)]
+fn dormant_package_assets_survive_coalesced_edges_and_restore_the_same_ids() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
     };
@@ -878,12 +960,24 @@ fn dormant_package_reservations_survive_coalesced_edges_without_loading() {
         runtime.notify_dormant();
         runtime.notify_wake();
         assert!(
-            !runtime
+            runtime
                 .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
                 .expect("BUG: lifecycle delivery must not trap"),
-            "{kind:?} coalesced edges must not load an unreferenced reservation"
+            "{kind:?} restoration must request a GPU completion fence"
         );
-        kind.assert_suspended(&renderer, &renderer_tag, reserved_id);
+        kind.assert_resident(&renderer, &renderer_tag, reserved_id);
+
+        runtime.notify_dormant();
+        assert!(
+            runtime
+                .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+                .expect("BUG: lifecycle delivery must not trap"),
+            "{kind:?} suspension must request a GPU completion fence"
+        );
+        let observation = runtime
+            .last_asset_suspension_for_test()
+            .expect("BUG: a completed sleep must record suspension accounting");
+        assert_initial_suspension(kind, observation);
         assert_eq!(
             call_export(&mut runtime, &mut renderer, "register_valid"),
             reserved_id,
@@ -897,6 +991,10 @@ fn dormant_package_reservations_survive_coalesced_edges_without_loading() {
                 .expect("BUG: repeated lifecycle delivery must not trap"),
             "repeated {kind:?} suspension must not fence an already-suspended payload"
         );
+        let repeated = runtime
+            .last_asset_suspension_for_test()
+            .expect("BUG: repeated sleep must record suspension accounting");
+        assert_repeated_suspension(repeated);
         runtime.stage_deliveries();
         assert!(
             !runtime.has_staged_renderer_delivery(),
@@ -1104,7 +1202,9 @@ fn failed_demand_restore_marks_the_widget_dead_after_on_wake() {
         .expect("BUG: package SVG must register");
 
     runtime.notify_dormant();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: dormant delivery must not trap");
     assert_eq!(
         renderer.svg_tag_state(&renderer_tag),
         AssetTagState::Suspended(asset_id)
@@ -1117,7 +1217,9 @@ fn failed_demand_restore_marks_the_widget_dead_after_on_wake() {
     .expect("BUG: wake-failure fixture must be removable");
 
     runtime.notify_wake();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: wake delivery must not trap");
     assert_eq!(
         runtime.call_export_i32("wake_count"),
         Some(1),
@@ -1246,7 +1348,9 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
         .expect("BUG: initial cache registration must return an ID");
 
     runtime.notify_dormant();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: dormant delivery must not trap");
     let svg_tag = format!("{namespace}:{DORMANT_SVG_TAG}");
     let bitmap_tag = format!("{namespace}:{DORMANT_BITMAP_TAG}");
     let nearest_tag = format!("{namespace}:{DORMANT_NEAREST_TAG}");
@@ -1302,13 +1406,20 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
         "dormant bitmap-fit must start the cache-producing decode job"
     );
     let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
+    let mut renderer_accessed = false;
     while runtime.has_pending_image_decodes() && Instant::now() < deadline {
-        runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+        renderer_accessed |= runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: image decode delivery must not trap");
         std::thread::yield_now();
     }
     assert!(
         !runtime.has_pending_image_decodes(),
         "dormant bitmap-fit did not complete within {IMAGE_DECODE_COMPLETION_TIMEOUT:?}"
+    );
+    assert!(
+        renderer_accessed,
+        "a cache-backed dormant decode reservation must request a GPU fence"
     );
     let cached_fit = cache
         .get(DORMANT_FIT_TAG)
@@ -1369,7 +1480,9 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
     );
     let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
     while runtime.has_pending_image_decodes() && Instant::now() < deadline {
-        runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: image decode delivery must not trap");
         std::thread::yield_now();
     }
     assert!(
@@ -1383,7 +1496,9 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
     );
 
     runtime.notify_wake();
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: wake delivery must not trap");
     assert_eq!(
         renderer.bitmap_tag_state(&cache_tag),
         AssetTagState::Suspended(cache_id),
@@ -1602,5 +1717,72 @@ fn missing_cache_payload_is_reported_as_skipped_when_rendered() {
         renderer.bitmap_tag_state(&cache_tag),
         AssetTagState::Resident(cache_id),
         "re-registration must re-enable demand restoration"
+    );
+}
+
+#[test]
+fn missing_cache_payload_is_reported_as_skipped_on_wake() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
+    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
+    let mut metadata = Vec::from(1_u32.to_le_bytes());
+    metadata.extend_from_slice(&1_u32.to_le_bytes());
+    cache
+        .put(DORMANT_CACHE_TAG, 1, &metadata, &[0x11, 0x22, 0x33, 0xFF])
+        .expect("BUG: cache fixture must be writable");
+    let wasm = wat::parse_str(dormant_registration_probe_wat())
+        .expect("BUG: dormant registration WAT must parse");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            asset_cache: Some(cache.clone()),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime must construct");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let cache_tag = format!("{}:{DORMANT_CACHE_TAG}", runtime.asset_namespace());
+
+    assert_eq!(
+        call_export(&mut runtime, &mut renderer, "register_reservations"),
+        1
+    );
+    let cache_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "cache_id"))
+        .expect("BUG: cache registration must return an ID");
+    runtime.notify_dormant();
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: dormant delivery must not trap");
+    cache.evict(DORMANT_CACHE_TAG);
+
+    runtime.notify_wake();
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: wake delivery must not trap");
+
+    assert_eq!(
+        runtime
+            .last_asset_restoration_for_test()
+            .expect("BUG: wake must record restoration accounting"),
+        bmc_wasm_runtime::RendererAssetRestorationObservation {
+            skipped: 1,
+            ..bmc_wasm_runtime::RendererAssetRestorationObservation::default()
+        },
+        "a missing cache payload must not be counted as restored"
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&cache_tag),
+        AssetTagState::Suspended(cache_id),
+        "the missing cache payload must retain its suspended reservation"
     );
 }

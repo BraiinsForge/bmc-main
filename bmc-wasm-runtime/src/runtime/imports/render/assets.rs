@@ -96,7 +96,7 @@ fn existing_package_renderer_asset(
         )));
     }
     let tag = caller.data().namespaced_tag(raw_tag);
-    let state = super::super::with_renderer(caller, |renderer| match kind {
+    let state = super::super::with_renderer_readonly(caller, |renderer| match kind {
         RendererAssetKind::Svg => match renderer.svg_tag_state(&tag) {
             AssetTagState::Resident(id) => AssetTagState::Resident(RendererAssetId::Svg(id)),
             AssetTagState::Suspended(id) => AssetTagState::Suspended(RendererAssetId::Svg(id)),
@@ -244,28 +244,11 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                 tracing::info!(target: bmc_render::profile::TARGET, tag = %raw_tag, "cache restore miss");
                 return Ok(0);
             };
-            if cached_bitmap_dimensions(&blob).is_none() {
+            let Some((w, h)) = cached_bitmap_dimensions(&blob) else {
                 cache.evict(&raw_tag);
                 return Ok(0);
-            }
+            };
             super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                let backing = AssetBacking::Cache(raw_tag.clone());
-                let kind = RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Linear);
-                if !state.renderer_asset_registration_matches(&raw_tag, kind, &backing) {
-                    return 0;
-                }
-                let Some(cache) = state.asset_cache.as_ref() else {
-                    return 0;
-                };
-                let Some(blob) = cache.get(&raw_tag) else {
-                    #[cfg(feature = "profiling")]
-                    tracing::info!(target: bmc_render::profile::TARGET, tag = %raw_tag, "cache restore miss");
-                    return 0;
-                };
-                let Some((w, h)) = cached_bitmap_dimensions(&blob) else {
-                    cache.evict(&raw_tag);
-                    return 0;
-                };
                 let tag = state.namespaced_tag(&raw_tag);
                 let id = renderer.reserve_bitmap(&tag);
                 let Some(id) = id else {
@@ -338,21 +321,17 @@ fn register_svg_import(linker: &mut Linker<HostState>) -> Result<()> {
             ) {
                 return Ok(0);
             }
-            let resident =
-                super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                    let AssetTagState::Resident(id) = renderer.svg_tag_state(&tag) else {
-                        return None;
-                    };
-                    state
-                        .record_renderer_asset(
-                            raw_tag.clone(),
-                            kind,
-                            RendererAssetId::Svg(id),
-                            AssetBacking::Volatile,
-                        )
-                        .then_some(id)
-                })?;
-            if let Some(id) = resident {
+            let resident = super::super::with_renderer_readonly(&mut caller, |renderer| {
+                renderer.svg_tag_state(&tag)
+            })?;
+            if let AssetTagState::Resident(id) = resident
+                && caller.data_mut().record_renderer_asset(
+                    raw_tag.clone(),
+                    kind,
+                    RendererAssetId::Svg(id),
+                    AssetBacking::Volatile,
+                )
+            {
                 return Ok(id.to_ffi());
             }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
@@ -401,21 +380,17 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
             ) {
                 return Ok(0);
             }
-            let resident =
-                super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                    let AssetTagState::Resident(id) = renderer.bitmap_tag_state(&tag) else {
-                        return None;
-                    };
-                    state
-                        .record_renderer_asset(
-                            raw_tag.clone(),
-                            kind,
-                            RendererAssetId::Bitmap(id),
-                            AssetBacking::Volatile,
-                        )
-                        .then_some(id)
-                })?;
-            if let Some(id) = resident {
+            let resident = super::super::with_renderer_readonly(&mut caller, |renderer| {
+                renderer.bitmap_tag_state(&tag)
+            })?;
+            if let AssetTagState::Resident(id) = resident
+                && caller.data_mut().record_renderer_asset(
+                    raw_tag.clone(),
+                    kind,
+                    RendererAssetId::Bitmap(id),
+                    AssetBacking::Volatile,
+                )
+            {
                 return Ok(id.to_ffi());
             }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
@@ -464,21 +439,17 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
             ) {
                 return Ok(0);
             }
-            let resident =
-                super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                    let AssetTagState::Resident(id) = renderer.bitmap_tag_state(&tag) else {
-                        return None;
-                    };
-                    state
-                        .record_renderer_asset(
-                            raw_tag.clone(),
-                            kind,
-                            RendererAssetId::Bitmap(id),
-                            AssetBacking::Volatile,
-                        )
-                        .then_some(id)
-                })?;
-            if let Some(id) = resident {
+            let resident = super::super::with_renderer_readonly(&mut caller, |renderer| {
+                renderer.bitmap_tag_state(&tag)
+            })?;
+            if let AssetTagState::Resident(id) = resident
+                && caller.data_mut().record_renderer_asset(
+                    raw_tag.clone(),
+                    kind,
+                    RendererAssetId::Bitmap(id),
+                    AssetBacking::Volatile,
+                )
+            {
                 return Ok(id.to_ffi());
             }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
@@ -644,21 +615,17 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
             ) {
                 return Ok(0);
             }
-            let resident =
-                super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                    let AssetTagState::Resident(id) = renderer.mesh_tag_state(&tag) else {
-                        return None;
-                    };
-                    state
-                        .record_renderer_asset(
-                            raw_tag.clone(),
-                            kind,
-                            RendererAssetId::Mesh(id),
-                            AssetBacking::Volatile,
-                        )
-                        .then_some(id)
-                })?;
-            if let Some(id) = resident {
+            let resident = super::super::with_renderer_readonly(&mut caller, |renderer| {
+                renderer.mesh_tag_state(&tag)
+            })?;
+            if let AssetTagState::Resident(id) = resident
+                && caller.data_mut().record_renderer_asset(
+                    raw_tag.clone(),
+                    kind,
+                    RendererAssetId::Mesh(id),
+                    AssetBacking::Volatile,
+                )
+            {
                 return Ok(id.to_ffi());
             }
 
