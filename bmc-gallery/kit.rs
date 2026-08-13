@@ -23,6 +23,7 @@
 
 mod audio;
 mod bridge;
+mod images;
 mod round;
 mod settings;
 mod size;
@@ -30,5 +31,6 @@ mod size;
 pub use audio::RodioSink;
 pub use bmc_render::interaction::ActionEvent;
 pub use bridge::{CustomRenderFn, DeckSceneCtx, Fired};
+pub use images::seed_image;
 pub use settings::deck_settings;
 pub use size::{AUTO_HEIGHT_MAX, DEVICE_HEIGHT, DEVICE_WIDTH, DeckSize, DivHeight};

@@ -134,6 +134,24 @@ fn registrar_bitmap_nearest(
     unsafe { &mut *ptr }.register_bitmap_nearest(tag, source.data())
 }
 
+/// Uploads already-decoded pixels, so it takes their size
+/// where the others take encoded bytes — outside what [`registrar`] shapes.
+fn registrar_image_rgba(
+    tag: &str,
+    rgba: &[u8],
+    width: u32,
+    height: u32,
+) -> Option<bmc_wasm_sdk::BitmapId> {
+    let ptr = RENDERER_PTR.with(Cell::get);
+    assert!(
+        !ptr.is_null(),
+        "asset registered before the first Deck stage, or from a spawned thread; \
+         scenes must register assets on the render thread"
+    );
+    // SAFETY: as above — this thread's boxed renderer, on this thread only.
+    unsafe { &mut *ptr }.register_bitmap_rgba(tag, rgba, width, height)
+}
+
 /// The layout and interaction state one staged frame keeps between frames,
 /// keyed by stage identity so a scene's stages don't share scroll or animation
 /// positions.
@@ -214,6 +232,7 @@ fn init_renderer_with(loader: &gallery::GlLoader, [width, height]: [u32; 2], fbo
     bmc_wasm_sdk::assets::init_icon_registrar(registrar_icon);
     bmc_wasm_sdk::assets::init_bitmap_registrar(registrar_bitmap);
     bmc_wasm_sdk::assets::init_mesh_registrar(registrar_mesh);
+    bmc_wasm_sdk::assets::init_image_registrar(registrar_image_rgba);
     bmc_render_skin::init(registrar_bitmap_nearest);
 }
 
