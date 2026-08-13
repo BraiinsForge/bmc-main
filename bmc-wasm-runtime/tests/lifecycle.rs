@@ -859,7 +859,7 @@ fn sdk_version_constant_matches_fixture_assumption() {
     let (major, minor, patch) = WasmWidgetRuntime::host_sdk_version();
     let packed = u64::from(major) | (u64::from(minor) << 16) | (u64::from(patch) << 32);
     assert_eq!(
-        packed, 196_608,
+        packed, 262_144,
         "host SDK version drifted to ({major}, {minor}, {patch}); \
          bumping `SDK_VERSION` means updating this pinned literal."
     );
@@ -1493,8 +1493,8 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
     );
     assert_eq!(
         runtime.call_export_i32("sleep_registration_id"),
-        Some(0),
-        "the deferred sleep hook must remain dormant and reject registration"
+        Some(i32::try_from(asset_id.to_ffi()).expect("BUG: SVG ID must fit i32")),
+        "a volatile pointer asset must remain usable during the dormant hook"
     );
     assert_eq!(
         runtime.call_export_i32("wake_probe_id"),
@@ -1512,7 +1512,7 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
 }
 
 #[test]
-fn sleep_after_deferred_wake_coalesces_to_final_dormant_state() {
+fn sleep_after_deferred_wake_delivers_both_hooks_in_final_dormant_state() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1540,17 +1540,17 @@ fn sleep_after_deferred_wake_coalesces_to_final_dormant_state() {
 
     assert_eq!(
         runtime.call_export_i32("event_order"),
-        Some(1),
-        "the unobserved wake must collapse into the final sleep edge"
+        Some(21),
+        "the queued wake must run before sleep without restoring or suspending assets"
     );
     assert_eq!(
         runtime.call_export_i32("wake_restore_id"),
-        Some(0),
-        "the superseded wake must not restore the asset"
+        Some(i32::try_from(asset_id.to_ffi()).expect("BUG: SVG ID must fit i32")),
+        "the resident volatile asset must remain usable during both hooks"
     );
     assert!(
-        runtime.dormant_asset_registration_is_blocked(),
-        "the final sleep must remain active"
+        runtime.renderer_assets_are_dormant_for_test(),
+        "the final committed state must remain dormant"
     );
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
@@ -1559,7 +1559,7 @@ fn sleep_after_deferred_wake_coalesces_to_final_dormant_state() {
 }
 
 #[test]
-fn rendererless_dormant_poll_drops_completed_image_decode() {
+fn rendererless_dormant_poll_defers_uncached_image_decode_without_upload() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1577,14 +1577,23 @@ fn rendererless_dormant_poll_drops_completed_image_decode() {
 
     runtime.notify_dormant();
     let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
-    while runtime.has_pending_image_decodes() && Instant::now() < deadline {
+    while !runtime.has_completed_image_decodes_for_test() && Instant::now() < deadline {
         runtime.poll_deliveries();
         std::thread::yield_now();
     }
-
     assert!(
-        !runtime.has_pending_image_decodes(),
-        "one-pixel image decode did not complete within {IMAGE_DECODE_COMPLETION_TIMEOUT:?}"
+        runtime.has_completed_image_decodes_for_test(),
+        "rendererless dormant delivery must retain a completion that cannot be cached"
+    );
+    let mut renderer_accessed = false;
+    while runtime.has_pending_image_decodes() && Instant::now() < deadline {
+        renderer_accessed |= runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+        std::thread::yield_now();
+    }
+    assert!(!runtime.has_pending_image_decodes());
+    assert!(
+        !renderer_accessed,
+        "discarding an uncached dormant decode must not request a GPU fence"
     );
     assert_eq!(
         runtime.call_export_i32("dropped_count"),
@@ -1596,14 +1605,13 @@ fn rendererless_dormant_poll_drops_completed_image_decode() {
         Some(0),
         "the dormant completion must not drive the active callback"
     );
-    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
     assert_eq!(
         renderer.bitmap_tag_state(&format!(
             "{}:{DORMANT_IMAGE_DECODE_TAG}",
             runtime.asset_namespace()
         )),
         AssetTagState::Unknown,
-        "the renderer-less dormant completion must not create a reservation"
+        "a dormant decode without cache backing must not upload an unreachable texture"
     );
 }
 
@@ -1725,7 +1733,7 @@ fn first_wake_frame_runs_guest_with_resident_asset() {
 }
 
 #[test]
-fn renderer_scoped_callback_cannot_mutate_assets_while_dormant() {
+fn dormant_callback_can_destructively_evict_and_recreate_a_volatile_asset() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1749,13 +1757,22 @@ fn renderer_scoped_callback_cannot_mutate_assets_while_dormant() {
     assert!(callback_ran, "network callback must reach the guest");
     assert_eq!(
         runtime.call_export_i32("callback_evicted"),
-        Some(0),
-        "a dormant callback must not destroy the resident reservation"
+        Some(1),
+        "explicit eviction must remain destructive while dormant"
     );
-    assert_eq!(runtime.call_export_i32("callback_id"), Some(0));
+    let callback_id = SvgId::from_ffi(
+        u32::try_from(
+            runtime
+                .call_export_i32("callback_id")
+                .expect("BUG: callback probe must export callback_id"),
+        )
+        .expect("BUG: callback SVG ID must fit u32"),
+    )
+    .expect("BUG: dormant pointer registration must return an ID");
+    assert_ne!(callback_id, asset_id);
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
-        AssetTagState::Resident(asset_id)
+        AssetTagState::Resident(callback_id)
     );
 }
 

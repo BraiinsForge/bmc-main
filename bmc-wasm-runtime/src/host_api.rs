@@ -195,11 +195,20 @@ impl FetchState {
 }
 
 /// A completed off-thread image decode, ready for GPU upload and delivery.
+#[derive(Debug)]
+pub enum CacheWriteOutcome {
+    Stored,
+    Failed(String),
+    Disabled,
+}
+
 pub struct CompletedImageDecode {
     pub job_id: ImageJobId,
+    pub raw_tag: String,
     /// Registry tag (slot-namespaced) for the GPU texture upload.
     pub tag: String,
     pub result: Result<(Vec<u8>, u32, u32), String>,
+    pub cache_write: CacheWriteOutcome,
     pub decode_us: u64,
 }
 
@@ -661,7 +670,6 @@ impl FrameScheduleState {
 enum RendererAssetGate {
     Active,
     Dormant,
-    DormantWarned,
 }
 
 /// Host-side state accessible to WASM via host functions.
@@ -743,6 +751,9 @@ pub(crate) struct HostState {
 
     /// Sender cloned into each background image-decode thread.
     pub image_decode_tx: mpsc::Sender<CompletedImageDecode>,
+
+    /// Worker results awaiting a renderer-backed delivery scope.
+    pub completed_image_decodes: Vec<CompletedImageDecode>,
 
     /// Next image-decode job id counter (for `ImageJobId::alloc`).
     pub next_image_job_id: u32,
@@ -923,6 +934,8 @@ pub(crate) struct HostState {
     /// Per-widget immutable source for package-backed assets.
     pub package_assets: Option<crate::PackageAssetStore>,
 
+    pub(crate) renderer_assets: crate::renderer_assets::RendererAssetLedger,
+
     /// Audio output stream — must stay alive for the entire session.
     /// `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
@@ -944,6 +957,55 @@ pub(crate) struct HostState {
 }
 
 impl HostState {
+    pub(crate) fn renderer_asset_registration_matches(
+        &self,
+        raw_tag: &str,
+        kind: crate::renderer_assets::RendererAssetKind,
+        backing: &crate::renderer_assets::AssetBacking,
+    ) -> bool {
+        let Some(existing) = self.renderer_assets.get(raw_tag) else {
+            return true;
+        };
+        if existing.kind == kind && existing.backing.can_transition_to(backing) {
+            return true;
+        }
+        tracing::warn!(
+            instance_id = %self.instance_id,
+            tag = %raw_tag,
+            requested_kind = ?kind,
+            requested_backing = ?backing,
+            recorded_kind = ?existing.kind,
+            recorded_backing = ?existing.backing,
+            "renderer asset registration rejected: tag already has an incompatible registration"
+        );
+        false
+    }
+
+    pub(crate) fn renderer_asset_decode_matches(
+        &self,
+        raw_tag: &str,
+        kind: crate::renderer_assets::RendererAssetKind,
+    ) -> bool {
+        self.renderer_assets
+            .get(raw_tag)
+            .is_none_or(|existing| existing.kind == kind)
+    }
+
+    pub(crate) fn record_renderer_asset(
+        &mut self,
+        raw_tag: String,
+        kind: crate::renderer_assets::RendererAssetKind,
+        id: crate::renderer_assets::RendererAssetId,
+        backing: crate::renderer_assets::AssetBacking,
+    ) -> bool {
+        self.renderer_assets
+            .record(
+                raw_tag,
+                crate::renderer_assets::RendererAssetRecord { kind, id, backing },
+            )
+            .is_ok()
+    }
+
     pub(crate) fn mark_renderer_assets_dormant(&mut self) {
         self.renderer_asset_gate = RendererAssetGate::Dormant;
     }
@@ -954,25 +1016,6 @@ impl HostState {
 
     pub(crate) fn renderer_assets_are_dormant(&self) -> bool {
         self.renderer_asset_gate != RendererAssetGate::Active
-    }
-
-    pub(crate) fn renderer_asset_mutation_is_enabled(&mut self) -> bool {
-        match self.renderer_asset_gate {
-            RendererAssetGate::Active => true,
-            RendererAssetGate::Dormant => {
-                self.renderer_asset_gate = RendererAssetGate::DormantWarned;
-                tracing::warn!(
-                    instance_id = %self.instance_id,
-                    "renderer asset mutation ignored while widget is dormant"
-                );
-                false
-            }
-            RendererAssetGate::DormantWarned => false,
-        }
-    }
-
-    pub(crate) fn renderer_asset_eviction_is_enabled(&self) -> bool {
-        self.current_lifecycle == Lifecycle::Sleep || !self.renderer_assets_are_dormant()
     }
 
     /// In a hermetic run, record a breach and return `true`; else `false`.
@@ -997,6 +1040,7 @@ impl HostState {
         Self {
             renderer_ptr: None,
             renderer_asset_gate: RendererAssetGate::Active,
+            renderer_assets: crate::renderer_assets::RendererAssetLedger::default(),
             interaction: InteractionState::new(),
             frame_schedule: FrameScheduleState::new(),
             tree_clicks: HashMap::new(),
@@ -1016,6 +1060,7 @@ impl HostState {
             fetches: FetchState::new(),
             image_decode_rx,
             image_decode_tx,
+            completed_image_decodes: Vec::new(),
             next_image_job_id: 1,
             in_flight_image_decodes: 0,
             json_docs: HashMap::new(),
@@ -1180,7 +1225,7 @@ impl HostState {
 mod tests {
     use super::{
         CancelDisposition, DelayedFetch, FetchState, FrameScheduleState, HermeticRun, HostState,
-        Lifecycle, RendererAssetGate,
+        RendererAssetGate,
     };
     use crate::runtime_limits::RuntimeResourceLimits;
     use bmc_wasm_protocol::FetchRequestId;
@@ -1251,26 +1296,19 @@ mod tests {
     }
 
     #[test]
-    fn dormant_eviction_does_not_consume_the_registration_warning() {
+    fn renderer_asset_gate_tracks_committed_renderability() {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             chrono::Local::now().fixed_offset(),
         );
 
         state.mark_renderer_assets_dormant();
-        assert!(!state.renderer_asset_eviction_is_enabled());
-        assert_eq!(state.renderer_asset_gate, RendererAssetGate::Dormant);
-
-        assert!(!state.renderer_asset_mutation_is_enabled());
-        assert_eq!(state.renderer_asset_gate, RendererAssetGate::DormantWarned);
-
-        state.mark_renderer_assets_dormant();
-        state.current_lifecycle = Lifecycle::Sleep;
-        assert!(state.renderer_asset_eviction_is_enabled());
+        assert!(state.renderer_assets_are_dormant());
         assert_eq!(state.renderer_asset_gate, RendererAssetGate::Dormant);
 
         state.mark_renderer_assets_active();
-        assert!(state.renderer_asset_mutation_is_enabled());
+        assert!(!state.renderer_assets_are_dormant());
+        assert_eq!(state.renderer_asset_gate, RendererAssetGate::Active);
     }
 
     #[test]

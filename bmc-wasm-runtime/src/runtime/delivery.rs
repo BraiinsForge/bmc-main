@@ -262,25 +262,17 @@ impl WasmWidgetRuntime {
 
     /// Upload completed off-thread image decodes and notify
     /// the guest via `__on_image_ready`.
-    /// An active renderer-less poll defers them until a renderer is available.
-    /// A dormant renderer-less poll drops them through `__on_image_dropped`
-    /// without uploading renderer assets.
+    /// A renderer-less poll stages completed work until a renderer is available.
     pub fn deliver_image_decode_results(&mut self) {
-        if self.store.data().renderer_ptr.is_none()
-            && !self.store.data().renderer_assets_are_dormant()
-        {
-            return;
-        }
-
-        let mut completed = Vec::new();
         let state = self.store.data_mut();
         while let Ok(done) = state.image_decode_rx.try_recv() {
             state.in_flight_image_decodes = state.in_flight_image_decodes.saturating_sub(1);
-            completed.push(done);
+            state.completed_image_decodes.push(done);
         }
-        if completed.is_empty() {
+        if state.renderer_ptr.is_none() || state.completed_image_decodes.is_empty() {
             return;
         }
+        let completed = std::mem::take(&mut state.completed_image_decodes);
 
         let Ok(on_ready) = self
             .instance
@@ -302,23 +294,33 @@ impl WasmWidgetRuntime {
                 .add_profile_us("image_decode_us", done.decode_us);
             // A `0` bitmap id is the absent sentinel — the guest reads it as a
             // decode failure.
+            let backing = match done.cache_write {
+                crate::host_api::CacheWriteOutcome::Stored => {
+                    crate::renderer_assets::AssetBacking::Cache(done.raw_tag.clone())
+                }
+                crate::host_api::CacheWriteOutcome::Failed(error) => {
+                    tracing::warn!(tag = %done.raw_tag, %error, "image cache write failed");
+                    crate::renderer_assets::AssetBacking::Volatile
+                }
+                crate::host_api::CacheWriteOutcome::Disabled => {
+                    crate::renderer_assets::AssetBacking::Volatile
+                }
+            };
+            let skip_dormant_upload =
+                dormant && !matches!(&backing, crate::renderer_assets::AssetBacking::Cache(_));
             let bitmap_id = match done.result {
+                Ok(_) if skip_dormant_upload => 0,
                 Ok((rgba, w, h)) => {
-                    // Skip the GPU upload while dormant; the cache write persists it.
-                    if dormant {
-                        0
-                    } else {
-                        let started = std::time::Instant::now();
-                        let id = self
-                            .register_decoded_bitmap(&done.tag, &rgba, w, h)
-                            .map_or(0, BitmapId::to_ffi);
-                        let upload_us =
-                            u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                        self.store
-                            .data_mut()
-                            .add_profile_us("image_upload_us", upload_us);
-                        id
-                    }
+                    let started = std::time::Instant::now();
+                    let id = self
+                        .register_decoded_bitmap(&done.raw_tag, &done.tag, &rgba, w, h, backing)
+                        .map_or(0, BitmapId::to_ffi);
+                    let upload_us =
+                        u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+                    self.store
+                        .data_mut()
+                        .add_profile_us("image_upload_us", upload_us);
+                    id
                 }
                 Err(e) => {
                     tracing::error!(job = done.job_id.to_wire(), "image decode failed: {e}");
@@ -349,16 +351,43 @@ impl WasmWidgetRuntime {
     /// Reborrow the parked renderer to upload a pre-decoded RGBA buffer.
     fn register_decoded_bitmap(
         &mut self,
+        raw_tag: &str,
         tag: &str,
         rgba: &[u8],
         width: u32,
         height: u32,
+        backing: crate::renderer_assets::AssetBacking,
     ) -> Option<BitmapId> {
+        let kind = crate::renderer_assets::RendererAssetKind::Bitmap(
+            bmc_wasm_protocol::BitmapSampling::Linear,
+        );
+        if !self
+            .store
+            .data()
+            .renderer_asset_decode_matches(raw_tag, kind)
+        {
+            return None;
+        }
         let mut ptr = self.store.data().renderer_ptr?;
         // SAFETY: parked by `WasmWidgetRuntime::with_renderer` on this thread;
         // single-threaded wasmi dispatch means no other `&mut Renderer` is live.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-        renderer.register_bitmap_rgba(tag, rgba, width, height)
+        let id = if self.store.data().renderer_assets_are_dormant()
+            && matches!(backing, crate::renderer_assets::AssetBacking::Cache(_))
+        {
+            renderer.reserve_bitmap(tag)
+        } else {
+            renderer.register_bitmap_rgba(tag, rgba, width, height)
+        }?;
+        self.store
+            .data_mut()
+            .record_renderer_asset(
+                raw_tag.to_owned(),
+                kind,
+                crate::renderer_assets::RendererAssetId::Bitmap(id),
+                backing,
+            )
+            .then_some(id)
     }
 
     /// Whether there are pending or in-flight fetches that need polling.
@@ -989,10 +1018,17 @@ impl WasmWidgetRuntime {
         self.with_renderer(renderer, Self::poll_deliveries)
     }
 
-    /// True while an async image decode is still in flight (real-thread work).
+    /// True while an async image decode is in flight or awaiting renderer delivery.
     #[must_use]
     pub fn has_pending_image_decodes(&self) -> bool {
-        self.store.data().in_flight_image_decodes > 0
+        let state = self.store.data();
+        state.in_flight_image_decodes > 0 || !state.completed_image_decodes.is_empty()
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn has_completed_image_decodes_for_test(&self) -> bool {
+        !self.store.data().completed_image_decodes.is_empty()
     }
 
     /// Predicate consumed by the multi-slot host's `compute_poll_timeout` to clamp the
@@ -1001,7 +1037,7 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn has_pending_io(&self) -> bool {
         self.has_pending_fetches()
-            || self.store.data().in_flight_image_decodes > 0
+            || self.has_pending_image_decodes()
             || self.has_active_websockets()
             || self.has_active_sockets()
             || self.has_active_mdns_browses()

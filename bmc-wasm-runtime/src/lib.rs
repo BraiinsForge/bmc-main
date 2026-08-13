@@ -120,6 +120,7 @@ pub mod network;
 mod package_assets;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;
+mod renderer_assets;
 mod runtime;
 pub mod system;
 

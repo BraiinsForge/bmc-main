@@ -786,8 +786,8 @@ fn render_target_is_retained_until_the_slot_reaches_dormant() {
     let mut slot = test_slot_with_factory(&hookless_widget_wat(), factory.clone());
 
     assert!(
-        slot.runtime.dormant_asset_registration_is_blocked(),
-        "a newly constructed slot must block renderer assets before its first wake"
+        slot.runtime.renderer_assets_are_dormant_for_test(),
+        "a newly constructed slot must start with dormant renderer assets"
     );
 
     for state in [
@@ -812,7 +812,7 @@ fn render_target_is_retained_until_the_slot_reaches_dormant() {
             "{state:?} must not release the render target"
         );
         assert!(
-            !slot.runtime.dormant_asset_registration_is_blocked(),
+            !slot.runtime.renderer_assets_are_dormant_for_test(),
             "{state:?} must keep the runtime active"
         );
     }
@@ -832,7 +832,7 @@ fn render_target_is_retained_until_the_slot_reaches_dormant() {
         "receiving Dormant must not release the render target"
     );
     assert!(
-        !slot.runtime.dormant_asset_registration_is_blocked(),
+        !slot.runtime.renderer_assets_are_dormant_for_test(),
         "receiving Dormant must not mark the runtime before lifecycle application"
     );
 
@@ -853,7 +853,7 @@ fn render_target_is_retained_until_the_slot_reaches_dormant() {
         "reaching Dormant must release the original target exactly once"
     );
     assert!(
-        slot.runtime.dormant_asset_registration_is_blocked(),
+        slot.runtime.renderer_assets_are_dormant_for_test(),
         "the runtime must become dormant only after the slot applies Dormant"
     );
 }

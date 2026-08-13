@@ -244,13 +244,18 @@
 //!
 //! Optional, paired with the dormancy edge. `on_sleep` fires when the widget
 //! scrolls off-scene; `on_wake` fires before the first frame when it returns.
-//! Renderer assets remain resident across sleep. Their IDs stay drawable after wake.
-//! Renderer asset registration remains blocked until wake, and eviction from later
-//! dormant callbacks is ignored. Explicit `Slot::evict()` or
-//! `evict_all()` in `on_sleep` is destructive, so use it only when those
-//! reservations should be lost.
-//! If sleep and wake coalesce before delivery, both hooks still run.
-//! `on_sleep` remains the place to persist guest state needed after wake.
+//! After `on_sleep`, the host releases package- and cache-backed renderer payloads
+//! while preserving their IDs. It restores available payloads before `on_wake`;
+//! a missing cache entry remains recoverable through the widget's normal refetch path.
+//! Assets registered from guest memory have no external restore source, so they stay
+//! resident and usable while dormant for compatibility with SDK 0.2 widgets.
+//! Explicit `Slot::evict()` or `evict_all()` always destroys the reservation,
+//! regardless of lifecycle phase.
+//! Sleep and wake can coalesce before renderer delivery.
+//! In that case, both hooks run without suspending already-resident assets.
+//! Package/cache reservations created by `on_sleep` remain suspended until
+//! a draw uses them. `on_sleep` remains the place to persist guest state needed
+//! after wake.
 //!
 //! ## Lifecycle guard matrix
 //!

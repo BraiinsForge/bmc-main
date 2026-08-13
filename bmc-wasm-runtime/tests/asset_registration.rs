@@ -200,6 +200,8 @@ fn dormant_registration_probe_wat() -> String {
           (global $cache_id (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
           (func (export "render") (param i32))
+          (func (export "__on_image_ready") (param i32 i32))
+          (func (export "__on_image_dropped") (param i32))
           (func (export "register_reservations") (result i32)
             i32.const {svg_tag_ptr}
             i32.const {svg_tag_len}
@@ -363,7 +365,7 @@ fn mesh_registration_skips_resident_payload_copy() {
 }
 
 #[test]
-fn initially_dormant_runtime_rejects_renderer_asset_registration() {
+fn initially_dormant_runtime_keeps_pointer_asset_registration_usable() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
     };
@@ -388,16 +390,12 @@ fn initially_dormant_runtime_rejects_renderer_asset_registration() {
 
     runtime.initialize_dormant();
 
-    assert_eq!(
-        call_export(&mut runtime, &mut renderer, "register_valid"),
-        0,
-        "an initially dormant widget must not create renderer assets"
+    let id = call_export(&mut runtime, &mut renderer, "register_valid");
+    assert_ne!(
+        id, 0,
+        "a 0.2 pointer asset has no restore source outside WASM"
     );
-    assert_eq!(
-        renderer.svg_tag_state(&renderer_tag),
-        AssetTagState::Unknown,
-        "rejected registration must not leave an asset reservation"
-    );
+    AssetKind::Svg.assert_resident(&renderer, &renderer_tag, id);
 }
 
 #[test]
@@ -405,7 +403,7 @@ fn initially_dormant_runtime_rejects_renderer_asset_registration() {
     clippy::too_many_lines,
     reason = "the contract checks six return values and every affected registry state"
 )]
-fn dormant_widget_rejects_renderer_mutation_but_allows_cache_decode() {
+fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
     };
@@ -480,18 +478,25 @@ fn dormant_widget_rejects_renderer_mutation_but_allows_cache_decode() {
     );
     assert_eq!(
         renderer.bitmap_tag_state(&cache_tag),
-        AssetTagState::Resident(cache_id)
+        AssetTagState::Suspended(cache_id),
+        "cache-backed payload must be released while its ID remains reserved"
     );
 
     assert_eq!(
         call_export(&mut runtime, &mut renderer, "attempt_while_dormant"),
         1
     );
-    for export in ["svg_id", "bitmap_id", "nearest_id", "mesh_id", "cache_id"] {
+    for (export, expected) in [
+        ("svg_id", svg_id.to_ffi()),
+        ("bitmap_id", bitmap_id.to_ffi()),
+        ("nearest_id", nearest_id.to_ffi()),
+        ("mesh_id", mesh_id.to_ffi()),
+        ("cache_id", cache_id.to_ffi()),
+    ] {
         assert_eq!(
             call_export(&mut runtime, &mut renderer, export),
-            0,
-            "{export} must be rejected while dormant"
+            expected,
+            "dormant re-registration must preserve the existing reservation"
         );
     }
     assert_ne!(
@@ -541,9 +546,30 @@ fn dormant_widget_rejects_renderer_mutation_but_allows_cache_decode() {
         renderer.mesh_tag_state(&mesh_tag),
         AssetTagState::Resident(mesh_id)
     );
-    assert_eq!(renderer.bitmap_tag_state(&fit_tag), AssetTagState::Unknown);
+    assert!(
+        matches!(
+            renderer.bitmap_tag_state(&fit_tag),
+            AssetTagState::Suspended(_)
+        ),
+        "a cached dormant decode must reserve an ID without uploading pixels"
+    );
     assert_eq!(
         renderer.bitmap_tag_state(&cache_tag),
-        AssetTagState::Resident(cache_id)
+        AssetTagState::Suspended(cache_id)
+    );
+
+    runtime.notify_wake();
+    runtime.poll_deliveries_with_renderer(renderer_ptr(&mut renderer));
+    assert_eq!(
+        renderer.bitmap_tag_state(&cache_tag),
+        AssetTagState::Resident(cache_id),
+        "wake must restore cached pixels into the preserved bitmap ID"
+    );
+    assert!(
+        matches!(
+            renderer.bitmap_tag_state(&fit_tag),
+            AssetTagState::Resident(_)
+        ),
+        "wake must restore a bitmap-fit result produced while dormant"
     );
 }
