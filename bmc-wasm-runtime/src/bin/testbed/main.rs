@@ -42,6 +42,7 @@
               placed next to where they're used — all intentional in this testbed binary"
 )]
 
+mod canvas;
 mod credentials_ui;
 mod device_window;
 mod icon;
@@ -788,11 +789,14 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Re
 /// When `recording` is `Some`, also tracks the gesture (start/current pos + start element)
 /// so the recording-side gesture classifier can turn it into a Click / Scroll / Drag
 /// `UnifiedEvent` on release.
+/// `scale` is what the canvas zoom did to `rect`; the guest only ever hears
+/// about its own pixels, so every pointer position divides back out of it.
 fn dispatch_touch_events(
     response: &egui::Response,
     rect: egui::Rect,
     view: &mut DeviceView,
     recording: Option<&mut RecordingState>,
+    scale: f32,
 ) {
     // Mirror the device host: a widget that doesn't export `on_touch` is
     // non-interactive, so it never receives touch events.
@@ -806,7 +810,7 @@ fn dispatch_touch_events(
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
+        let (x, y) = ((pos.x - rect.min.x) / scale, (pos.y - rect.min.y) / scale);
         view.send(ViewCommand::Touch(TouchEvent::Down { x, y }));
         view.send(ViewCommand::Touch(TouchEvent::Up));
         touched = true;
@@ -825,7 +829,7 @@ fn dispatch_touch_events(
     if response.drag_started()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
+        let (x, y) = ((pos.x - rect.min.x) / scale, (pos.y - rect.min.y) / scale);
         view.send(ViewCommand::Touch(TouchEvent::Down { x, y }));
         touched = true;
         if let Some(r) = rec.as_mut() {
@@ -839,7 +843,7 @@ fn dispatch_touch_events(
     } else if response.dragged()
         && let Some(pos) = response.interact_pointer_pos()
     {
-        let (x, y) = (pos.x - rect.min.x, pos.y - rect.min.y);
+        let (x, y) = ((pos.x - rect.min.x) / scale, (pos.y - rect.min.y) / scale);
         view.send(ViewCommand::Touch(TouchEvent::Move { x, y }));
         touched = true;
         if let Some(r) = rec.as_mut()
@@ -869,14 +873,8 @@ fn dispatch_touch_events(
 pub(crate) struct TestbedApp {
     cli: CliArgs,
     prepared_widget: PreparedWidget,
-    /// Canvas translation from dragging its background.
-    /// Applied to every device window's layer, never persisted.
-    pan: egui::Vec2,
-    /// The canvas rect, taken from the central panel.
-    ///
-    /// Chrome panels are shown inside the root `Ui`, so they shrink it and
-    /// not the context — which would hand back the whole window.
-    canvas: egui::Rect,
+    /// The plane the device windows float over. Never persisted.
+    canvas: canvas::Canvas,
     /// Chrome theme; Auto follows the system.
     theme: theme::ThemeChoice,
     /// Toolbar icons, tessellated once at startup.
@@ -885,7 +883,6 @@ pub(crate) struct TestbedApp {
     arrange: Option<device_window::ArrangeMode>,
     /// Where that arrangement put the stats window, handed across because
     /// the stats window paints in a later pass than the device windows.
-    arranged_stats_pos: Option<egui::Pos2>,
     /// Set once the perf report is sealed, so the host can close the window.
     exit_requested: bool,
     /// Builds the per-view `FemtoVgRenderer` GL contexts.
@@ -1064,12 +1061,10 @@ impl TestbedApp {
             prepared_widget,
             secrets,
             url_rewrites,
-            pan: egui::Vec2::ZERO,
-            canvas: egui::Rect::ZERO,
+            canvas: canvas::Canvas::default(),
             theme: theme::ThemeChoice::Auto,
             icons: icon::Icons::new(),
             arrange: None,
-            arranged_stats_pos: None,
             exit_requested: false,
             get_proc,
             manifest,
@@ -1988,7 +1983,7 @@ impl TestbedApp {
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(root_ui, |ui| {
-                self.canvas = ui.max_rect();
+                self.canvas.rect = ui.max_rect();
                 draw_checkerboard(ui.painter(), ui.max_rect(), palette);
                 let background = ui.interact(
                     ui.max_rect(),
@@ -1996,7 +1991,7 @@ impl TestbedApp {
                     egui::Sense::click_and_drag(),
                 );
                 if background.dragged() {
-                    self.pan += background.drag_delta();
+                    self.canvas.pan_by(background.drag_delta());
                     background.ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
                 } else if background.hovered() {
                     // Announce that dragging here pans, before it happens.

@@ -75,6 +75,8 @@ pub(crate) struct Icons {
     pub(crate) debug: Icon,
     pub(crate) offline: Icon,
     pub(crate) reload: Icon,
+    pub(crate) scale_in: Icon,
+    pub(crate) scale_out: Icon,
 }
 
 impl Icons {
@@ -88,6 +90,8 @@ impl Icons {
             debug: Icon::new(include_bytes!("assets/icons/debug.svg")),
             offline: Icon::new(include_bytes!("assets/icons/offline.svg")),
             reload: Icon::new(include_bytes!("assets/icons/reset.svg")),
+            scale_in: Icon::new(include_bytes!("assets/icons/scale-in.svg")),
+            scale_out: Icon::new(include_bytes!("assets/icons/scale-out.svg")),
         }
     }
 }
@@ -133,7 +137,7 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 8] = [
+        let named: [(&str, &Icon); 10] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
@@ -142,6 +146,8 @@ mod tests {
             ("debug", &icons.debug),
             ("offline", &icons.offline),
             ("reset", &icons.reload),
+            ("scale-in", &icons.scale_in),
+            ("scale-out", &icons.scale_out),
         ];
         for (name, icon) in named {
             let image = mask(icon.svg, 32);

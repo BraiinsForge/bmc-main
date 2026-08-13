@@ -84,19 +84,7 @@ impl TestbedApp {
                     });
                     group_divider(row, palette.divider);
 
-                    // One-shot arrangements; the windows stay free-form after.
-                    if icon_button(row, &mut self.icons.arrange_cascade, Some("Stack"), false)
-                        .on_hover_text("cascade the device windows from the top left")
-                        .clicked()
-                    {
-                        self.arrange = Some(super::device_window::ArrangeMode::Stack);
-                    }
-                    if icon_button(row, &mut self.icons.arrange_grid, Some("Pack"), false)
-                        .on_hover_text("pack the device windows to use the canvas tightly")
-                        .clicked()
-                    {
-                        self.arrange = Some(super::device_window::ArrangeMode::Pack);
-                    }
+                    self.paint_view_controls(row);
                     group_divider(row, palette.divider);
 
                     // The widget's own build and its rendering.
@@ -135,6 +123,44 @@ impl TestbedApp {
         if let Some(target) = chosen {
             let ctx = root_ui.ctx().clone();
             self.toggle_platform(target, &ctx);
+        }
+    }
+
+    /// Where the devices sit and how large they read.
+    ///
+    /// Arrangements are one-shot and leave the windows free-form after; the
+    /// zoom is the canvas's, not each window's, so the devices stay
+    /// comparable at a glance.
+    fn paint_view_controls(&mut self, row: &mut egui::Ui) {
+        if icon_button(row, &mut self.icons.arrange_cascade, Some("Stack"), false)
+            .on_hover_text("cascade the device windows from the top left")
+            .clicked()
+        {
+            self.arrange = Some(super::device_window::ArrangeMode::Stack);
+        }
+        if icon_button(row, &mut self.icons.arrange_grid, Some("Pack"), false)
+            .on_hover_text("pack the device windows to use the canvas tightly")
+            .clicked()
+        {
+            self.arrange = Some(super::device_window::ArrangeMode::Pack);
+        }
+        if icon_button(row, &mut self.icons.scale_out, Some("Fit"), false)
+            .on_hover_text("scale the canvas until every device window is in view")
+            .clicked()
+        {
+            self.canvas.request_fit();
+        }
+        let at_full_size = (self.canvas.zoom() - 1.0).abs() < f32::EPSILON;
+        if row
+            .add_enabled_ui(!at_full_size, |ui| {
+                icon_button(ui, &mut self.icons.scale_in, Some("100%"), false)
+                    .on_hover_text("show the devices at their own pixel size")
+            })
+            .inner
+            .clicked()
+        {
+            let centre = self.canvas.rect.center();
+            self.canvas.zoom_about(1.0, centre);
         }
     }
 

@@ -142,6 +142,9 @@ const STATS_WINDOW_SIZE: egui::Vec2 = egui::vec2(400.0, 280.0);
 /// Height of the hand-painted title strip. Ours rather than egui's,
 /// because egui hard-centres its window titles.
 const TITLE_H: f32 = 24.0;
+/// Title text size, and its inset from the strip's leading edge.
+const TITLE_FONT: f32 = 12.0;
+const TITLE_PAD: f32 = 8.0;
 
 /// How long the title strip takes to reach its hovered tone.
 const HOVER_FADE_SECS: f32 = 0.12;
@@ -182,10 +185,10 @@ fn title_strip(ui: &mut egui::Ui, title: &str, width: f32, palette: &super::them
             .lerp_to_gamma(palette.title_hover_fill, hover * HOVER_STRENGTH),
     );
     ui.painter().text(
-        rect.left_center() + egui::vec2(8.0, 0.0),
+        rect.left_center() + egui::vec2(TITLE_PAD, 0.0),
         egui::Align2::LEFT_CENTER,
         title,
-        egui::FontId::proportional(12.0),
+        egui::FontId::proportional(TITLE_FONT),
         ui.visuals().strong_text_color(),
     );
     // The body meets the strip as a window edge, not as the next widget down.
@@ -197,14 +200,64 @@ fn title_strip(ui: &mut egui::Ui, title: &str, width: f32, palette: &super::them
 /// Air between windows in a packed arrangement.
 const PACK_GAP: f32 = 12.0;
 
-/// The window's outer size, near enough for arranging.
-fn window_size(platform: &Platform, frame: &DeviceFrame) -> egui::Vec2 {
+/// Halvings taken to find the zoom a `Pack` tiles the canvas at. Packing is
+/// pure geometry, so a candidate costs arithmetic rather than a frame.
+const PACK_SEARCH_STEPS: u8 = 20;
+
+/// The largest zoom whose packing still fits the canvas, and that packing.
+///
+/// Zoom and layout are not independent: a smaller zoom fits more windows
+/// per row, which is a different arrangement and not a scaled one.
+/// Scaling one layout to fit therefore wastes canvas, so every candidate
+/// zoom is packed afresh and judged on what it produced.
+fn pack_to_fit(
+    entries: &[(&'static Platform, DeviceFrame)],
+    canvas: egui::Rect,
+) -> (f32, Vec<egui::Pos2>) {
+    let pack_at = |zoom: f32| {
+        let sizes: Vec<egui::Vec2> = entries
+            .iter()
+            .map(|(platform, frame)| window_size(platform, frame, zoom))
+            .collect();
+        let positions = arrange_positions(ArrangeMode::Pack, &sizes, canvas);
+        let bounds = positions
+            .iter()
+            .zip(&sizes)
+            .map(|(pos, size)| egui::Rect::from_min_size(*pos, *size))
+            .reduce(egui::Rect::union);
+        (positions, bounds)
+    };
+
+    let (mut low, mut high) = (super::canvas::MIN_ZOOM, super::canvas::MAX_ZOOM);
+    let mut best = None;
+    for _ in 0..PACK_SEARCH_STEPS {
+        let zoom = 0.5 * (low + high);
+        let (positions, bounds) = pack_at(zoom);
+        // With nothing to place there is nothing to overflow.
+        if bounds.is_none_or(|bounds| canvas.contains_rect(bounds)) {
+            best = Some((zoom, positions));
+            low = zoom;
+        } else {
+            high = zoom;
+        }
+    }
+    best.unwrap_or_else(|| {
+        let (positions, _) = pack_at(super::canvas::MIN_ZOOM);
+        (super::canvas::MIN_ZOOM, positions)
+    })
+}
+
+/// The window's on-screen size, near enough for arranging.
+///
+/// The device scales with the canvas and the chrome around it does not,
+/// so there is no one canvas-space size and arranging works on screen.
+fn window_size(platform: &Platform, frame: &DeviceFrame, zoom: f32) -> egui::Vec2 {
     let strip = if platform.led_count().is_some() {
         super::LED_STRIP_H as f32 + STRIP_SEAM
     } else {
         0.0
     };
-    frame.screen + egui::vec2(0.0, strip + TITLE_H)
+    (frame.screen + egui::vec2(0.0, strip)) * zoom + egui::vec2(0.0, TITLE_H)
 }
 
 /// A one-shot rearrangement of every device window.
@@ -290,26 +343,31 @@ impl TestbedApp {
             })
             .collect();
 
-        // A requested arrangement re-homes every window — the stats window
-        // included, as the last entry — and brings the canvas back to its
-        // origin, so the result is on screen.
-        let arranged = self.arrange.take().map(|mode| {
-            self.pan = egui::Vec2::ZERO;
-            let mut sizes: Vec<egui::Vec2> = entries
-                .iter()
-                .map(|(platform, frame)| window_size(platform, frame))
-                .collect();
-            sizes.push(STATS_WINDOW_SIZE + egui::vec2(0.0, TITLE_H));
-            arrange_positions(mode, &sizes, self.canvas)
+        // The stats window is chrome, not canvas, so it keeps out of this.
+        let arranged = self.arrange.take().map(|mode| match mode {
+            ArrangeMode::Stack => {
+                let zoom = self.canvas.zoom();
+                let sizes: Vec<egui::Vec2> = entries
+                    .iter()
+                    .map(|(platform, frame)| window_size(platform, frame, zoom))
+                    .collect();
+                arrange_positions(mode, &sizes, self.canvas.rect)
+            }
+            // Packing chooses its own zoom, since the tightest layout and the
+            // scale it happens at are the same question.
+            ArrangeMode::Pack => {
+                let (zoom, positions) = pack_to_fit(&entries, self.canvas.rect);
+                self.canvas.set_zoom(zoom);
+                positions
+            }
         });
-        if let Some(placed) = &arranged {
-            self.arranged_stats_pos = placed.last().copied();
-        }
 
+        self.canvas.forget_bounds();
         for (order, (platform, frame)) in entries.iter().enumerate() {
             let target = arranged.as_ref().and_then(|placed| placed.get(order));
             self.paint_frame_window(ctx, platform, frame, order, target.copied(), time_s);
         }
+        self.canvas.apply_pending_fit();
     }
 
     fn paint_frame_window(
@@ -338,41 +396,38 @@ impl TestbedApp {
             .map(|(idx, _)| idx)
             .collect();
 
-        let title = format!(
-            "{} {} — {}",
-            platform.id.to_uppercase(),
-            platform.label,
-            frame.label
-        );
+        // The platform's label only repeats its id ("BMM100 BMM Narrow").
+        let title = format!("{} — {}", platform.id.to_uppercase(), frame.label);
         let palette = self.theme.palette(ctx);
-        let title_width = frame.screen.x;
-        // The window lays out in canvas space while its clip defaults
-        // to the screen, so panning cuts it off; undoing the pan restores it.
-        // `constrain_to` also re-enables clamping, so `constrain` follows it.
-        let mut window = egui::Window::new("")
-            .id(egui::Id::new(("device", platform.id, frame.label.clone())))
+        let zoom = self.canvas.zoom();
+        let title_width = frame.screen.x * zoom;
+
+        let id = egui::Id::new(("device", platform.id, frame.label.clone()));
+        if let Some(target) = arranged {
+            let placed = self.canvas.to_canvas(target);
+            self.canvas.place(id, placed);
+        }
+        // The canvas transform is applied here rather than to the layer, so
+        // the position is already on screen and needs no clip of its own.
+        let default = self
+            .canvas
+            .to_canvas(stack_position(self.canvas.rect, order));
+        let pos = self.canvas.screen_pos(id, default);
+        let window = egui::Window::new("")
+            .id(id)
             .title_bar(false)
-            .constrain_to(ctx.screen_rect().translate(-self.pan))
             .constrain(false)
             .resizable(false)
             .frame(egui::Frame::window(&ctx.style()).inner_margin(WINDOW_INSET))
-            .default_pos(stack_position(self.canvas, order));
-        if let Some(target) = arranged {
-            window = window.current_pos(target);
-        }
+            .current_pos(pos);
         let response = window.show(ctx, |ui| {
             title_strip(ui, &title, title_width, palette);
             self.paint_frame(ui, platform, frame, &flat, active_record_idx, time_s);
         });
 
-        // Translating the window's layer is what makes the canvas pannable:
-        // the window keeps its canvas-space position, the transform moves it
-        // on screen, and egui routes input back through the same transform.
+        // Where it ended up, which is where it was put unless it was dragged.
         if let Some(response) = response {
-            ctx.set_transform_layer(
-                response.response.layer_id,
-                egui::emath::TSTransform::from_translation(self.pan),
-            );
+            self.canvas.record(id, response.response.rect);
         }
     }
 
@@ -393,20 +448,25 @@ impl TestbedApp {
             .is_none_or(|active| frame.views.iter().any(|(idx, _)| *idx == active));
 
         let palette = self.theme.palette(ui.ctx());
+        let zoom = self.canvas.zoom();
         let strip_h = if platform.led_count().is_some() {
-            super::LED_STRIP_H as f32 + STRIP_SEAM
+            (super::LED_STRIP_H as f32 + STRIP_SEAM) * zoom
         } else {
             0.0
         };
         let (outer, _) = ui.allocate_exact_size(
-            frame.screen + egui::vec2(0.0, strip_h),
+            frame.screen * zoom + egui::vec2(0.0, strip_h),
             egui::Sense::hover(),
         );
         ui.painter().rect_filled(outer, 0.0, palette.bezel);
         let screen_origin = outer.min;
 
         for (view_idx, local) in &frame.views {
-            let rect = local.translate(screen_origin.to_vec2());
+            // The device's own pixels, scaled onto the canvas.
+            let rect = egui::Rect::from_min_size(
+                screen_origin + local.min.to_vec2() * zoom,
+                local.size() * zoom,
+            );
             let Some(view) = flat.get(*view_idx).and_then(|i| self.tiles.get_mut(*i)) else {
                 continue;
             };
@@ -436,7 +496,7 @@ impl TestbedApp {
             } else {
                 None
             };
-            dispatch_touch_events(&response, rect, view, rec);
+            dispatch_touch_events(&response, rect, view, rec, zoom);
         }
 
         if strip_h > 0.0 {
@@ -444,8 +504,8 @@ impl TestbedApp {
             // lighter than any widget body under the glow: without both, the
             // strip reads as extra black space inside the view above it.
             let strip_rect = egui::Rect::from_min_size(
-                screen_origin + egui::vec2(0.0, frame.screen.y + STRIP_SEAM),
-                egui::vec2(frame.screen.x, super::LED_STRIP_H as f32),
+                screen_origin + egui::vec2(0.0, (frame.screen.y + STRIP_SEAM) * zoom),
+                egui::vec2(frame.screen.x, super::LED_STRIP_H as f32) * zoom,
             );
             ui.painter()
                 .rect_filled(strip_rect, 3.0, palette.strip_plate);
@@ -476,16 +536,13 @@ impl TestbedApp {
             "Stats"
         };
         let palette = self.theme.palette(ctx);
-        let mut window = egui::Window::new("")
+        let window = egui::Window::new("")
             .id(egui::Id::new("stats"))
             .title_bar(false)
             .resizable(false)
             // Flush like the device windows; the readouts pad themselves.
             .frame(egui::Frame::window(&ctx.style()).inner_margin(WINDOW_INSET))
             .default_pos(egui::pos2(40.0, 620.0));
-        if let Some(target) = self.arranged_stats_pos.take() {
-            window = window.current_pos(target);
-        }
         let response = window.show(ctx, |ui| {
             title_strip(ui, title, STATS_WINDOW_SIZE.x, palette);
             if self.recording_mode.state.is_some() {
@@ -511,9 +568,61 @@ impl TestbedApp {
 
 #[cfg(test)]
 mod tests {
-    use bmc_wasm_runtime::platform_catalog;
+    use bmc_wasm_runtime::platform_catalog::{self, Platform};
 
-    use super::device_frames;
+    use super::{ArrangeMode, arrange_positions, device_frames, pack_to_fit, window_size};
+
+    /// Every frame of every platform, the way the canvas opens them.
+    fn all_frames() -> Vec<(&'static Platform, super::DeviceFrame)> {
+        platform_catalog::PLATFORMS
+            .iter()
+            .flat_map(|platform| {
+                device_frames(platform)
+                    .into_iter()
+                    .map(move |frame| (platform, frame))
+            })
+            .collect()
+    }
+
+    /// What a `Pack` at `zoom` would cover.
+    fn packed_bounds(
+        entries: &[(&'static Platform, super::DeviceFrame)],
+        canvas: egui::Rect,
+        zoom: f32,
+    ) -> egui::Rect {
+        let sizes: Vec<egui::Vec2> = entries
+            .iter()
+            .map(|(platform, frame)| window_size(platform, frame, zoom))
+            .collect();
+        arrange_positions(ArrangeMode::Pack, &sizes, canvas)
+            .iter()
+            .zip(&sizes)
+            .map(|(pos, size)| egui::Rect::from_min_size(*pos, *size))
+            .reduce(egui::Rect::union)
+            .expect("BUG: the catalog offers frames to pack")
+    }
+
+    #[test]
+    fn packing_takes_the_largest_zoom_the_canvas_holds() {
+        let entries = all_frames();
+        let canvas = egui::Rect::from_min_size(egui::pos2(0.0, 36.0), egui::vec2(1240.0, 960.0));
+
+        let (zoom, positions) = pack_to_fit(&entries, canvas);
+
+        assert_eq!(positions.len(), entries.len(), "every frame is placed");
+        let bounds = packed_bounds(&entries, canvas, zoom);
+        assert!(
+            canvas.contains_rect(bounds),
+            "{bounds:?} escapes the canvas {canvas:?} at zoom {zoom}"
+        );
+        // Being inside is easy at any small enough scale; the point of packing
+        // is that nothing larger would have fitted.
+        let bigger = packed_bounds(&entries, canvas, zoom * 1.1);
+        assert!(
+            !canvas.contains_rect(bigger),
+            "zoom {zoom} left room — {bigger:?} still fits {canvas:?}"
+        );
+    }
 
     fn frames_for(id: &str) -> Vec<super::DeviceFrame> {
         let platform = platform_catalog::platform(id)
