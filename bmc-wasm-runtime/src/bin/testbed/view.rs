@@ -102,8 +102,8 @@ pub(crate) struct DeviceView {
     /// `runtime.with_renderer(ptr, ...)`, which parks a pointer to it.
     renderer: FemtoVgRenderer,
     pub(crate) gpu: TileGpu,
-    pub(crate) x: u32,
-    pub(crate) y: u32,
+    /// The device this view previews; several platforms can be open at once.
+    pub(crate) platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
     pub(crate) shape: DisplayShape,
     label: String,
     sched: ViewSched,
@@ -122,6 +122,7 @@ impl DeviceView {
     /// sits and what hardware it stands for; the rest is what drives it.
     pub(crate) fn new(
         placed: &PlacedTile,
+        platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
         runtime: Option<WasmWidgetRuntime>,
         renderer: FemtoVgRenderer,
         gpu: TileGpu,
@@ -131,8 +132,7 @@ impl DeviceView {
             runtime,
             renderer,
             gpu,
-            x: placed.x,
-            y: placed.y,
+            platform,
             shape: placed.shape,
             label: placed.label.clone(),
             sched: ViewSched::default(),

@@ -41,7 +41,6 @@ use egui_glow::glow::HasContext as _;
 
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
 
-use super::LED_STRIP_H;
 use super::view::DeviceView;
 
 // ── GL helpers ──────────────────────────────────────────────────────
@@ -221,10 +220,14 @@ pub(super) type GlProcAddress =
 
 /// Paint a two-tone checkerboard over `rect` — same pattern as `bmc-virt-console`'s
 /// device backdrop so the tile boundaries read clearly against an otherwise blank window.
-pub(super) fn draw_checkerboard(painter: &egui::Painter, rect: egui::Rect) {
+pub(super) fn draw_checkerboard(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    palette: &super::theme::Palette,
+) {
     let size = 16.0;
-    let color_a = egui::Color32::from_gray(24);
-    let color_b = egui::Color32::from_gray(32);
+    let color_a = palette.canvas_a;
+    let color_b = palette.canvas_b;
     let cols = (rect.width() / size).ceil() as usize;
     let rows = (rect.height() / size).ceil() as usize;
     for row in 0..rows {
@@ -396,51 +399,33 @@ fn light_to_paint(light: [f32; 3]) -> (egui::Color32, f32) {
     )
 }
 
-/// Paint an LED diffuser strip below a tile.
+/// Fraction of the device width the LED region spans, centred.
+/// BMC100's ten LEDs sit under the middle of the enclosure, not edge to edge.
+const LED_REGION_FRACTION: f32 = 0.5;
+
+/// Paint a device frame's LED glow into `strip_rect`; the caller draws the
+/// diffuser plate underneath, since the plate is enclosure and this is light.
 ///
-/// Black background always; light only when the tile's `led_scene` is active.
-///
-/// The strip reads through a strong diffuser, mostly as bounce off the surface
-/// below, so it paints as one blended wash rather than ten distinct sources.
+/// The strip reads through a strong diffuser, mostly bounced off the surface
+/// below, so it paints as one blended wash, not ten distinct sources.
 pub(super) fn paint_led_strip(
     painter: &egui::Painter,
-    tile: &DeviceView,
-    tile_origin: egui::Pos2,
+    scene_view: Option<&DeviceView>,
+    strip_rect: egui::Rect,
     time_s: f32,
 ) {
-    let Some(led_count) = tile.led_count() else {
-        return;
-    };
-    if led_count == 0 {
-        return;
-    }
+    let strip_w = strip_rect.width();
+    let strip_h = strip_rect.height();
 
-    let strip_w = tile.gpu.width as f32;
-    let strip_h = LED_STRIP_H as f32;
-    let strip_rect = egui::Rect::from_min_size(
-        tile_origin + egui::vec2(tile.x as f32, tile.y as f32 + tile.gpu.height as f32),
-        egui::vec2(strip_w, strip_h),
-    );
-    // Semi-transparent so the testbed checkerboard reads through the
-    // diffuser gap — full black flattened the gap into a hard bar.
-    painter.rect_filled(strip_rect, 0.0, egui::Color32::from_black_alpha(75));
-
-    let Some(scene) = tile.led_scene() else {
+    let Some(scene) = scene_view.and_then(DeviceView::led_scene) else {
         return;
     };
     if matches!(scene.effect, bmc_led::data::LedEffect::None) {
         return;
     }
     let levels = diffuse_levels(&device_pixels(scene, scene_phase(scene, time_s)));
-    debug_assert_eq!(
-        levels.len(),
-        led_count,
-        "the catalog and the LED driver disagree on how long this platform's strip is"
-    );
 
-    // FULL tile: LEDs span centre half. Smaller tiles: full width.
-    let is_full = tile.gpu.width >= 1280;
-    let led_region_w = if is_full { strip_w * 0.5 } else { strip_w };
+    let led_region_w = strip_w * LED_REGION_FRACTION;
     let led_x_offset = (strip_w - led_region_w) / 2.0;
 
     // Light washes past its own LEDs, so the mesh spans the whole strip.
@@ -482,6 +467,7 @@ pub(super) fn paint_timing_chart(
     painter: &egui::Painter,
     rect: egui::Rect,
     samples: &[bmc_render::FrameTimings],
+    text: egui::Color32,
 ) {
     // Fixed column width — bars stay the same size and newest samples append at the right edge,
     // older samples scroll off the left. Avoids the "bars resize as the window fills" effect.
@@ -581,7 +567,7 @@ pub(super) fn paint_timing_chart(
             egui::Align2::RIGHT_TOP,
             label,
             egui::FontId::monospace(9.0),
-            egui::Color32::from_gray(200),
+            text,
         );
     }
 }
@@ -589,7 +575,7 @@ pub(super) fn paint_timing_chart(
 /// Paint the chart's component legend in its own strip — the colour swatches and labels
 /// for wasm / deser / layout / render / flush, in stack order.
 /// Lives above the chart so it doesn't overlap the bars.
-pub(super) fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect) {
+pub(super) fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect, text: egui::Color32) {
     let colours = [
         (egui::Color32::from_rgb(0x6A, 0x9F, 0xD8), "wasm"),
         (egui::Color32::from_rgb(0xE0, 0x9A, 0x50), "deser"),
@@ -607,7 +593,7 @@ pub(super) fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect) {
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::monospace(9.0),
-            egui::Color32::from_gray(180),
+            text,
         );
         x_cursor += 56.0;
     }

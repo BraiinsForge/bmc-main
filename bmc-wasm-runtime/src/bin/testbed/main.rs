@@ -43,10 +43,13 @@
 )]
 
 mod credentials_ui;
+mod device_window;
+mod icon;
 mod paint;
 mod params_ui;
 mod recording;
 mod system_ui;
+mod theme;
 mod toolbar;
 mod ui_helpers;
 mod view;
@@ -65,7 +68,7 @@ use bmc_render::interaction::TouchEvent;
 use bmc_wasm_runtime::fixtures::{
     self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
-use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Product, Viewport};
+use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Viewport};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{
     DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
@@ -73,78 +76,41 @@ use bmc_wasm_runtime::{
 use clap::Parser;
 
 use paint::{
-    GlProcAddress, TileGpu, draw_checkerboard, paint_led_strip, paint_timing_chart,
-    paint_timing_legend, proc_loader, write_perf_report,
+    GlProcAddress, TileGpu, draw_checkerboard, paint_timing_chart, paint_timing_legend,
+    proc_loader, write_perf_report,
 };
 use recording::{GestureTracker, RecordingAction, RecordingState, classify_and_record_gesture};
 use view::{DeviceView, ViewCommand};
 
-// ── Layout constants ────────────────────────────────────────────────
-
-const PREVIEW_GAP: u32 = 16;
-const PREVIEW_MARGIN: u32 = 16;
-/// Height of the LED diffuser strip rendered below each tile.
+/// Height of the LED diffuser strip rendered below a device frame.
 pub(crate) const LED_STRIP_H: u32 = 24;
-/// Number of simulated LEDs across the strip.
-pub(crate) const LED_COUNT: usize = 10;
-// Widget size presets (logical pixels)
-const TILE_FULL_W: u32 = 1280;
-const TILE_FULL_H: u32 = 480;
-const TILE_LARGE_W: u32 = 638;
-const TILE_LARGE_H: u32 = 480;
-const TILE_MEDIUM_W: u32 = 638;
-const TILE_MEDIUM_H: u32 = 238;
-const TILE_SMALL_W: u32 = 317;
-const TILE_SMALL_H: u32 = 238;
 
-const INNER_W: u32 = if TILE_FULL_W > TILE_LARGE_W + PREVIEW_GAP + TILE_MEDIUM_W {
-    TILE_FULL_W
-} else {
-    TILE_LARGE_W + PREVIEW_GAP + TILE_MEDIUM_W
-};
-const PREVIEW_WIDTH: u32 = PREVIEW_MARGIN + INNER_W + PREVIEW_MARGIN;
-const RIGHT_COL_H: u32 = TILE_MEDIUM_H + LED_STRIP_H + PREVIEW_GAP + TILE_SMALL_H + LED_STRIP_H;
-const LEFT_COL_H: u32 = TILE_LARGE_H + LED_STRIP_H;
-const ROW1_H: u32 = if LEFT_COL_H > RIGHT_COL_H {
-    LEFT_COL_H
-} else {
-    RIGHT_COL_H
-};
-const PREVIEW_HEIGHT: u32 =
-    PREVIEW_MARGIN + (TILE_FULL_H + LED_STRIP_H + PREVIEW_GAP) + ROW1_H + PREVIEW_MARGIN;
+/// Startup window size. The canvas pans, so nothing has to fit;
+/// this just opens with the BMC100 frame and the sidebar in view.
+const DEFAULT_WINDOW_SIZE: egui::Vec2 = egui::vec2(1680.0, 1000.0);
 
-const M: u32 = PREVIEW_MARGIN;
-const G: u32 = PREVIEW_GAP;
-const fn row_stride(h: u32) -> u32 {
-    h + LED_STRIP_H + G
-}
-const ROW0_Y: u32 = M;
-const ROW1_Y: u32 = ROW0_Y + row_stride(TILE_FULL_H);
-const RIGHT_COL_X: u32 = M + TILE_LARGE_W + G;
-
-// Stats panel position: empty area right of SMALL tile, below MEDIUM
-const STATS_X: u32 = RIGHT_COL_X + TILE_SMALL_W + G;
-const STATS_Y: u32 = ROW1_Y + row_stride(TILE_MEDIUM_H);
-const STATS_W: u32 = PREVIEW_WIDTH - M - STATS_X;
-const STATS_H: u32 = PREVIEW_HEIGHT - M - STATS_Y;
-
-/// Minimum width of the stats panel anchored below the preview area, so the
-/// FPS table and timing chart stay legible on narrow single-viewport platforms.
-const STATS_MIN_W: u32 = 360;
-/// Fixed height reserved for the stats panel below single-viewport and generic
-/// flow tiles. BMC100 keeps its own preserved stats rectangle.
-const SINGLE_STATS_H: u32 = 220;
-
-/// One placed preview in the testbed window, in logical pixels.
+/// One previewed viewport, in logical pixels.
+/// Where it paints is the device frame's business.
 pub(crate) struct PlacedTile {
     pub(crate) label: String,
     pub(crate) kv_key: String,
     pub(crate) shape: DisplayShape,
     pub(crate) led_count: Option<usize>,
-    pub(crate) x: u32,
-    pub(crate) y: u32,
     pub(crate) w: u32,
     pub(crate) h: u32,
+}
+
+impl PlacedTile {
+    fn for_viewport(platform: &Platform, viewport: &Viewport) -> Self {
+        Self {
+            label: viewport.label.to_owned(),
+            kv_key: viewport.id.to_owned(),
+            shape: viewport.shape,
+            led_count: platform.led_count(),
+            w: viewport.width,
+            h: viewport.height,
+        }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -159,201 +125,6 @@ impl RuntimeTileGeometry {
             viewport_shape: platform_catalog::runtime_viewport_shape(viewport_shape),
             display: platform.runtime_display_info(),
         }
-    }
-}
-
-/// Runtime tile layout derived from the active platform.
-pub(crate) struct TileLayout {
-    pub(crate) tiles: Vec<PlacedTile>,
-    pub(crate) preview_w: u32,
-    pub(crate) preview_h: u32,
-    pub(crate) stats_x: u32,
-    pub(crate) stats_y: u32,
-    pub(crate) stats_w: u32,
-    pub(crate) stats_h: u32,
-}
-
-impl TileLayout {
-    pub(crate) fn for_platform(platform: &Platform) -> Self {
-        if platform.product == Product::Bmc100 {
-            return Self::bmc100(platform);
-        }
-        match platform.viewports {
-            [single] => Self::single_viewport(platform, single),
-            _ => Self::generic_flow(platform),
-        }
-    }
-
-    fn bmc100(platform: &Platform) -> Self {
-        let slots: [(u32, u32, u32, u32); 4] = [
-            (M, ROW0_Y, TILE_FULL_W, TILE_FULL_H),
-            (M, ROW1_Y, TILE_LARGE_W, TILE_LARGE_H),
-            (RIGHT_COL_X, ROW1_Y, TILE_MEDIUM_W, TILE_MEDIUM_H),
-            (
-                RIGHT_COL_X,
-                ROW1_Y + row_stride(TILE_MEDIUM_H),
-                TILE_SMALL_W,
-                TILE_SMALL_H,
-            ),
-        ];
-        let led_count = platform.led_count();
-        debug_assert_eq!(led_count, Some(LED_COUNT));
-        let tiles = platform
-            .viewports
-            .iter()
-            .zip(slots.iter())
-            .map(|(v, &(x, y, w, h))| PlacedTile {
-                label: v.label.to_owned(),
-                kv_key: v.id.to_owned(),
-                shape: v.shape,
-                led_count,
-                x,
-                y,
-                w,
-                h,
-            })
-            .collect();
-        Self {
-            tiles,
-            preview_w: PREVIEW_WIDTH,
-            preview_h: PREVIEW_HEIGHT,
-            stats_x: STATS_X,
-            stats_y: STATS_Y,
-            stats_w: STATS_W,
-            stats_h: STATS_H,
-        }
-    }
-
-    fn single_viewport(platform: &Platform, v: &Viewport) -> Self {
-        let led_count = platform.led_count();
-        let led_strip_h = if led_count.is_some() { LED_STRIP_H } else { 0 };
-        let tiles = vec![PlacedTile {
-            label: v.label.to_owned(),
-            kv_key: v.id.to_owned(),
-            shape: v.shape,
-            led_count,
-            x: PREVIEW_MARGIN,
-            y: PREVIEW_MARGIN,
-            w: v.width,
-            h: v.height,
-        }];
-        let tiles_bottom = PREVIEW_MARGIN + v.height + led_strip_h + PREVIEW_GAP;
-        let stats_x = PREVIEW_MARGIN;
-        let stats_y = tiles_bottom;
-        let content_w = v.width;
-        let stats_w = content_w.max(STATS_MIN_W);
-        let stats_h = SINGLE_STATS_H;
-        let preview_w = PREVIEW_MARGIN + content_w.max(stats_w) + PREVIEW_MARGIN;
-        let preview_h = stats_y + stats_h + PREVIEW_MARGIN;
-        Self {
-            tiles,
-            preview_w,
-            preview_h,
-            stats_x,
-            stats_y,
-            stats_w,
-            stats_h,
-        }
-    }
-
-    fn generic_flow(platform: &Platform) -> Self {
-        let row_cap = platform
-            .viewports
-            .iter()
-            .map(|v| v.width)
-            .max()
-            .unwrap_or(1);
-
-        let mut tiles = Vec::with_capacity(platform.viewports.len());
-        let mut cursor_x = PREVIEW_MARGIN;
-        let mut row_y = PREVIEW_MARGIN;
-        let mut row_h = 0_u32;
-        let mut content_w = 0_u32;
-        let led_count = platform.led_count();
-        let led_strip_h = if led_count.is_some() { LED_STRIP_H } else { 0 };
-
-        for v in platform.viewports {
-            let needs_wrap =
-                cursor_x > PREVIEW_MARGIN && cursor_x + v.width > PREVIEW_MARGIN + row_cap;
-            if needs_wrap {
-                row_y += row_h + led_strip_h + PREVIEW_GAP;
-                cursor_x = PREVIEW_MARGIN;
-                row_h = 0;
-            }
-            tiles.push(PlacedTile {
-                label: v.label.to_owned(),
-                kv_key: v.id.to_owned(),
-                shape: v.shape,
-                led_count,
-                x: cursor_x,
-                y: row_y,
-                w: v.width,
-                h: v.height,
-            });
-            cursor_x += v.width + PREVIEW_GAP;
-            row_h = row_h.max(v.height);
-            content_w = content_w.max(cursor_x - PREVIEW_GAP);
-        }
-
-        let preview_w = content_w + PREVIEW_MARGIN;
-        let preview_tiles_h = row_y + row_h + led_strip_h + PREVIEW_MARGIN;
-        let stats_x = PREVIEW_MARGIN;
-        let stats_y = preview_tiles_h;
-        let stats_w = preview_w
-            .saturating_sub(2 * PREVIEW_MARGIN)
-            .max(STATS_MIN_W);
-        let stats_h = SINGLE_STATS_H;
-        let preview_w = preview_w.max(stats_x + stats_w + PREVIEW_MARGIN);
-        let preview_h = stats_y + stats_h + PREVIEW_MARGIN;
-        Self {
-            tiles,
-            preview_w,
-            preview_h,
-            stats_x,
-            stats_y,
-            stats_w,
-            stats_h,
-        }
-    }
-}
-
-fn requested_window_size(layout: &TileLayout) -> egui::Vec2 {
-    egui::vec2(
-        (layout.preview_w + PARAM_PANEL_W) as f32,
-        layout.preview_h as f32 + toolbar::TOOLBAR_H,
-    )
-}
-
-struct SwitchState {
-    platform: &'static Platform,
-    layout: TileLayout,
-    requested_size: egui::Vec2,
-    needs_tile_rebuild: bool,
-}
-
-impl SwitchState {
-    fn new(platform: &'static Platform) -> Self {
-        let layout = TileLayout::for_platform(platform);
-        let requested_size = requested_window_size(&layout);
-        Self {
-            platform,
-            layout,
-            requested_size,
-            needs_tile_rebuild: false,
-        }
-    }
-
-    fn switch_to(&mut self, target_id: &str) -> Result<bool, String> {
-        if target_id == self.platform.id {
-            return Ok(false);
-        }
-        let platform = platform_catalog::platform(target_id)
-            .ok_or_else(|| format!("platform '{target_id}' not found"))?;
-        self.platform = platform;
-        self.layout = TileLayout::for_platform(platform);
-        self.requested_size = requested_window_size(&self.layout);
-        self.needs_tile_rebuild = true;
-        Ok(true)
     }
 }
 
@@ -886,8 +657,7 @@ fn main() -> Result<()> {
         Some(request) => request.target.platform,
         None => platform_catalog::select(cli.platform_id.as_deref())?,
     };
-    let startup_layout = TileLayout::for_platform(selected_platform);
-    let startup_size = requested_window_size(&startup_layout);
+    let startup_size = DEFAULT_WINDOW_SIZE;
 
     println!("Loading widget from: {}", cli.wasm_path.display());
     println!("Manifest:            {}", manifest_path.display());
@@ -1099,11 +869,23 @@ fn dispatch_touch_events(
 pub(crate) struct TestbedApp {
     cli: CliArgs,
     prepared_widget: PreparedWidget,
-    /// Window size the active layout wants, kept so a platform switch can ask
-    /// the window to follow it.
-    requested_size: egui::Vec2,
-    /// Set when the layout changed; the host applies it and clears it.
-    pending_resize: Option<egui::Vec2>,
+    /// Canvas translation from dragging its background.
+    /// Applied to every device window's layer, never persisted.
+    pan: egui::Vec2,
+    /// The canvas rect, taken from the central panel.
+    ///
+    /// Chrome panels are shown inside the root `Ui`, so they shrink it and
+    /// not the context — which would hand back the whole window.
+    canvas: egui::Rect,
+    /// Chrome theme; Auto follows the system.
+    theme: theme::ThemeChoice,
+    /// Toolbar icons, tessellated once at startup.
+    icons: icon::Icons,
+    /// A one-shot window rearrangement, consumed at the next paint.
+    arrange: Option<device_window::ArrangeMode>,
+    /// Where that arrangement put the stats window, handed across because
+    /// the stats window paints in a later pass than the device windows.
+    arranged_stats_pos: Option<egui::Pos2>,
     /// Set once the perf report is sealed, so the host can close the window.
     exit_requested: bool,
     /// Builds the per-view `FemtoVgRenderer` GL contexts.
@@ -1140,10 +922,9 @@ pub(crate) struct TestbedApp {
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
-    /// The currently previewed platform.
-    pub(crate) active_platform: &'static Platform,
-    /// Layout derived from the active platform's widget viewports.
-    pub(crate) layout: TileLayout,
+    /// The devices currently open on the canvas, one window each.
+    /// Recording pins this to the target's platform alone.
+    pub(crate) open_platforms: Vec<&'static Platform>,
 }
 
 /// Wall-clock instants used to drive per-frame timing.
@@ -1218,8 +999,6 @@ impl TestbedApp {
         let (watcher, watcher_rx) =
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
-        let layout = TileLayout::for_platform(active_platform);
-        let requested_size = requested_window_size(&layout);
 
         // Starting system snapshot for the testbed.
         // The real-device path populates this from the wayland `SettingUpdate` stream;
@@ -1285,8 +1064,12 @@ impl TestbedApp {
             prepared_widget,
             secrets,
             url_rewrites,
-            requested_size,
-            pending_resize: None,
+            pan: egui::Vec2::ZERO,
+            canvas: egui::Rect::ZERO,
+            theme: theme::ThemeChoice::Auto,
+            icons: icon::Icons::new(),
+            arrange: None,
+            arranged_stats_pos: None,
             exit_requested: false,
             get_proc,
             manifest,
@@ -1319,8 +1102,7 @@ impl TestbedApp {
                 state: recording_state,
                 fetch_events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             },
-            active_platform,
-            layout,
+            open_platforms: vec![active_platform],
         })
     }
 
@@ -1366,7 +1148,6 @@ impl TestbedApp {
             tiles = self.tiles.len(),
             "hot reload: rebuilding tile runtime(s)"
         );
-        let platform = self.active_platform;
         let params = self.params.clone();
         let system = self.system.clone();
         // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
@@ -1375,8 +1156,8 @@ impl TestbedApp {
         let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
         let secrets = self.secrets.clone();
         for idx in 0..self.tiles.len() {
-            let placed_shape = self.layout.tiles[idx].shape;
             let view = &mut self.tiles[idx];
+            let (platform, placed_shape) = (view.platform, view.shape);
             if !view.is_live() {
                 continue; // placeholder — no runtime to rebuild
             }
@@ -1416,48 +1197,53 @@ impl TestbedApp {
         self.prepared_widget = prepared_widget;
     }
 
-    /// Switch the previewed platform, leaving params and system state intact.
-    /// Recording state is preserved by rejecting switches while recording is
-    /// active. Tiles are dropped so the lazy init path rebuilds runtime,
-    /// renderer, and GPU resources at the new viewport sizes.
-    pub(crate) fn switch_platform(&mut self, target_id: &str, ctx: &egui::Context) {
-        if target_id == self.active_platform.id {
-            return;
-        }
+    /// Open or close a device on the canvas, leaving params and system state
+    /// intact. Recording keeps its platform pinned by refusing toggles.
+    pub(crate) fn toggle_platform(&mut self, target_id: &str, ctx: &egui::Context) {
         if let Err(reason) = can_switch_platform(self.recording_mode.state.is_some()) {
-            tracing::warn!("switch: refusing platform switch to '{target_id}': {reason}");
+            tracing::warn!("toggle: refusing platform toggle of '{target_id}': {reason}");
             return;
         }
-        let mut switch = SwitchState::new(self.active_platform);
-        switch.requested_size = self.requested_size;
-
-        match switch.switch_to(target_id) {
-            Ok(false) => return,
-            Ok(true) => {}
-            Err(e) => {
-                tracing::error!("switch: {e}");
-                return;
-            }
+        let Some(platform) = platform_catalog::platform(target_id) else {
+            tracing::error!("toggle: platform '{target_id}' not found");
+            return;
+        };
+        if toggle_open(&mut self.open_platforms, platform) {
+            // Views are built at the next redraw, where the painter is in hand.
+        } else {
+            // Releasing them needs the painter too, so they only retire here.
+            let (closed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tiles)
+                .into_iter()
+                .partition(|view| view.platform.id == platform.id);
+            self.retired.extend(closed);
+            self.tiles = kept;
         }
-
-        self.active_platform = switch.platform;
-        self.layout = switch.layout;
-        self.requested_size = switch.requested_size;
-        if switch.needs_tile_rebuild {
-            // Releasing them needs the painter, which the egui pass is holding.
-            self.retired.append(&mut self.tiles);
-        }
-        // The window follows the new layout once.
-        // The operator is free to resize away from it afterwards.
-        self.pending_resize = Some(switch.requested_size);
         ctx.request_repaint();
     }
 
-    /// Build one view per viewport of the active platform.
+    /// Make sure every open platform has its views, building the missing ones.
     ///
     /// Runs outside the egui pass, because registering a texture and painting
     /// with it both want the painter.
-    fn init_tiles(&mut self, painter: &mut egui_glow::Painter) -> Result<()> {
+    fn ensure_views(&mut self, painter: &mut egui_glow::Painter) -> Result<()> {
+        let missing: Vec<&'static Platform> = self
+            .open_platforms
+            .iter()
+            .copied()
+            .filter(|p| !self.tiles.iter().any(|view| view.platform.id == p.id))
+            .collect();
+        for platform in missing {
+            self.build_views(platform, painter)?;
+        }
+        Ok(())
+    }
+
+    /// Build and append one view per viewport of `platform`.
+    fn build_views(
+        &mut self,
+        platform: &'static Platform,
+        painter: &mut egui_glow::Painter,
+    ) -> Result<()> {
         let get_proc = self.get_proc.clone();
         let wasm_bytes = std::fs::read(self.prepared_widget.wasm_path()).with_context(|| {
             format!(
@@ -1465,23 +1251,27 @@ impl TestbedApp {
                 self.prepared_widget.wasm_path().display()
             )
         })?;
-        let platform = self.active_platform;
+        let first_build = self.tiles.is_empty();
         let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
         let widget_name = self
             .cli
             .wasm_path
             .file_stem()
             .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+        // Platform-qualified so two open devices sharing a viewport id
+        // (every platform names one "full") don't write into one store.
         let kv_base = self
             .cli
             .wasm_path
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .join("widget_data")
-            .join(&widget_name);
+            .join(&widget_name)
+            .join(platform.id);
 
-        let mut tiles = Vec::with_capacity(self.layout.tiles.len());
-        for (tile_idx, placed) in self.layout.tiles.iter().enumerate() {
+        let mut tiles = Vec::with_capacity(platform.viewports.len());
+        for (tile_idx, viewport) in platform.viewports.iter().enumerate() {
+            let placed = &PlacedTile::for_viewport(platform, viewport);
             let (w, h) = (placed.w, placed.h);
             let label = placed.label.clone();
             let gpu = TileGpu::new(&self.gl, painter, w, h)?;
@@ -1491,9 +1281,8 @@ impl TestbedApp {
             } else {
                 (None, None)
             };
-            // Per-tile KV storage matches the prior testbed layout
-            // (`./widget_data/<widget>/<size>/`). Active recording tile wipes its KV first
-            // so the fixture starts from a known baseline.
+            // Active recording tile wipes its KV first so the fixture
+            // starts from a known baseline.
             let kv_path = kv_base.join(&placed.kv_key);
             if active_record_idx == Some(tile_idx) {
                 let _ = std::fs::remove_dir_all(&kv_path);
@@ -1503,29 +1292,10 @@ impl TestbedApp {
                 seed_kv_from_widget_root(&widget_root, &kv_path);
             }
 
-            // Active recording tile gets the fixture-recording config with the unified
-            // fetch observer; non-recording tiles use the simpler default config.
-            let mut rt_config = if active_record_idx == Some(tile_idx) {
-                fixtures::build_unified_recording_config(
-                    kv_path.clone(),
-                    self.recording_mode.fetch_events.clone(),
-                    std::time::Instant::now(),
-                )
-            } else {
-                RuntimeConfig {
-                    kv_store_path: Some(kv_path.clone()),
-                    asset_cache: self.cli.asset_cache(),
-                    ..RuntimeConfig::default()
-                }
-            };
-            rt_config.mesh_msaa_samples = 4;
-            rt_config.package_assets =
-                Some(PackageAssetStore::new(self.prepared_widget.asset_root()));
-            rt_config.params = self.params.clone();
-            rt_config.system = self.system.clone();
+            let mut rt_config =
+                self.view_runtime_config(kv_path, active_record_idx == Some(tile_idx));
             rt_config.led_request_sender = led_tx;
-            rt_config.url_rewrites.clone_from(&self.url_rewrites);
-            // SAFETY: eframe keeps the GL context current for the app's lifetime.
+            // SAFETY: the context is current on this thread for the window's lifetime.
             let renderer = unsafe {
                 FemtoVgRenderer::new(
                     proc_loader(get_proc.clone()),
@@ -1555,21 +1325,52 @@ impl TestbedApp {
             } else {
                 None
             };
-            tiles.push(DeviceView::new(placed, runtime, renderer, gpu, led_rx));
+            tiles.push(DeviceView::new(
+                placed, platform, runtime, renderer, gpu, led_rx,
+            ));
         }
-        if let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::sdk_version) {
+        if first_build
+            && let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::sdk_version)
+        {
             println!("Widget SDK version: {major}.{minor}.{patch}");
         }
         // Snapshot the active recording tile's KV directory at start
         // so the fixture's `header.kv` reproduces the initial state on replay.
         if let Some(ref mut rec) = self.recording_mode.state
-            && let Some(placed) = self.layout.tiles.get(rec.active_tile)
+            && rec.target.platform.id == platform.id
+            && let Some(viewport) = platform.viewports.get(rec.active_tile)
         {
-            let kv_path = kv_base.join(&placed.kv_key);
+            let kv_path = kv_base.join(viewport.id);
             rec.kv_snapshot = snapshot_kv_dir(&kv_path);
         }
-        self.tiles = tiles;
+        self.tiles.extend(tiles);
         Ok(())
+    }
+
+    /// Runtime config for one view, carrying the sidebar state it starts from.
+    ///
+    /// The recording view gets the unified fetch observer, so its traffic
+    /// reaches the timeline; every other view takes the plain default.
+    fn view_runtime_config(&self, kv_path: PathBuf, recording: bool) -> RuntimeConfig {
+        let mut config = if recording {
+            fixtures::build_unified_recording_config(
+                kv_path,
+                self.recording_mode.fetch_events.clone(),
+                std::time::Instant::now(),
+            )
+        } else {
+            RuntimeConfig {
+                kv_store_path: Some(kv_path),
+                asset_cache: self.cli.asset_cache(),
+                ..RuntimeConfig::default()
+            }
+        };
+        config.mesh_msaa_samples = 4;
+        config.package_assets = Some(PackageAssetStore::new(self.prepared_widget.asset_root()));
+        config.params = self.params.clone();
+        config.system = self.system.clone();
+        config.url_rewrites.clone_from(&self.url_rewrites);
+        config
     }
 
     /// Write the perf report once, from whatever samples were collected so far.
@@ -1682,23 +1483,7 @@ impl TestbedApp {
     /// Paint the stats panel inside an explicit rect (the empty slot right of SMALL tile).
     /// Includes the FPS readout, FULL-tile timing breakdown, reload + debug-toggle buttons,
     /// and a stacked-bar chart of recent per-frame timings.
-    fn paint_stats_panel(&mut self, ui: &mut egui::Ui, rect: egui::Rect) {
-        // Backing rectangle so the chart + labels read against a flat colour, not the
-        // checkerboard underneath.
-        ui.painter()
-            .rect_filled(rect, 4.0, egui::Color32::from_gray(18));
-        ui.painter().rect_stroke(
-            rect,
-            4.0,
-            egui::Stroke::new(1.0_f32, egui::Color32::from_gray(50)),
-            egui::StrokeKind::Inside,
-        );
-
-        let pad = 8.0;
-        let inner = rect.shrink(pad);
-
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-
+    fn paint_stats_panel(&mut self, ui: &mut egui::Ui) {
         // ── FPS + last-frame breakdown ──
         let avg_us = if self.perf.recent_frame_us.is_empty() {
             0
@@ -1718,8 +1503,8 @@ impl TestbedApp {
         // 5 digits covers up to 99 999 µs (~100 ms / frame), well past
         // the realistic budget for any sub-stage.
         let mono = egui::FontId::monospace(11.0);
-        let val_color = egui::Color32::from_gray(220);
-        let lbl = |txt: &str| ui_helpers::key_label(txt, 160);
+        let val_color = ui.visuals().strong_text_color();
+        let lbl = |txt: &str| ui_helpers::key_label(txt);
         let cell_us = |n: u32| {
             egui::RichText::new(format!("{n:>5} µs"))
                 .font(mono.clone())
@@ -1736,61 +1521,69 @@ impl TestbedApp {
                 .font(mono.clone())
                 .color(val_color)
         };
-        egui::Grid::new("testbed_stats_table")
-            .num_columns(4)
-            .spacing([12.0, 2.0])
-            .min_col_width(0.0)
-            .show(&mut child, |g| {
-                g.add(lbl("host frame:"));
-                g.label(cell_us(avg_us));
-                g.add(lbl(""));
-                g.label(cell_fps(fps));
-                g.end_row();
-                if let Some(t) = self.tiles.first().and_then(DeviceView::last_timings) {
-                    g.add(lbl("FULL wasm:"));
-                    g.label(cell_us(t.wasm_us));
-                    g.add(lbl("deser:"));
-                    g.label(cell_us(t.deserialize_us));
-                    g.end_row();
-                    g.add(lbl("layout:"));
-                    g.label(cell_us(t.layout_us));
-                    g.add(lbl("render:"));
-                    g.label(cell_us(t.render_us));
-                    g.end_row();
-                    g.add(lbl("flush:"));
-                    g.label(cell_us(t.flush_us));
-                    // How late the render ran against the cadence the widget asked for;
-                    // climbing numbers mean animations running slower than intended.
-                    g.add(lbl("slip:"));
-                    g.label(cell_ms(
-                        self.tiles.first().and_then(DeviceView::last_slip_ms),
-                    ));
-                    g.end_row();
+        egui::Frame::NONE
+            .inner_margin(egui::Margin::same(8))
+            .show(ui, |body| {
+                egui::Grid::new("testbed_stats_table")
+                    .num_columns(4)
+                    .spacing([12.0, 2.0])
+                    .min_col_width(0.0)
+                    .show(body, |g| {
+                        g.add(lbl("host frame:"));
+                        g.label(cell_us(avg_us));
+                        g.add(lbl(""));
+                        g.label(cell_fps(fps));
+                        g.end_row();
+                        if let Some(t) = self.tiles.first().and_then(DeviceView::last_timings) {
+                            g.add(lbl("FULL wasm:"));
+                            g.label(cell_us(t.wasm_us));
+                            g.add(lbl("deser:"));
+                            g.label(cell_us(t.deserialize_us));
+                            g.end_row();
+                            g.add(lbl("layout:"));
+                            g.label(cell_us(t.layout_us));
+                            g.add(lbl("render:"));
+                            g.label(cell_us(t.render_us));
+                            g.end_row();
+                            g.add(lbl("flush:"));
+                            g.label(cell_us(t.flush_us));
+                            // How late the render ran against the cadence the widget asked for;
+                            // climbing numbers mean animations running slower than intended.
+                            g.add(lbl("slip:"));
+                            g.label(cell_ms(
+                                self.tiles.first().and_then(DeviceView::last_slip_ms),
+                            ));
+                            g.end_row();
+                        }
+                    });
+
+                // ── Stacked bar chart, legend below it as its key ──
+                const CHART_W: f32 = 384.0;
+                const CHART_H: f32 = 100.0;
+                const LEGEND_H: f32 = 14.0;
+                body.add_space(4.0);
+                // Allocated before any samples arrive, so the window settles
+                // at one size instead of growing on the first sampled frame.
+                let (block, _) = body.allocate_exact_size(
+                    egui::vec2(CHART_W, CHART_H + LEGEND_H),
+                    egui::Sense::hover(),
+                );
+                if !self.perf.samples.is_empty() {
+                    let chart_rect = egui::Rect::from_min_max(
+                        block.min,
+                        egui::pos2(block.max.x, block.max.y - LEGEND_H),
+                    );
+                    let legend_rect = egui::Rect::from_min_max(
+                        egui::pos2(block.min.x, block.max.y - LEGEND_H),
+                        block.max,
+                    );
+                    // `painter_at` clips chart draws so spikes don't bleed past the rect.
+                    let chart_painter = body.painter_at(chart_rect);
+                    let text = body.visuals().text_color();
+                    paint_timing_chart(&chart_painter, chart_rect, &self.perf.samples, text);
+                    paint_timing_legend(body.painter(), legend_rect, text);
                 }
             });
-
-        // ── Stacked bar chart + legend pinned to the bottom (fixed heights) ──
-        const CHART_H: f32 = 100.0;
-        const LEGEND_H: f32 = 14.0;
-        let block_h = CHART_H + LEGEND_H;
-        let block_h = block_h.min(inner.height() - (child.cursor().min.y - inner.min.y) - 6.0);
-        if block_h > LEGEND_H + 12.0 && !self.perf.samples.is_empty() {
-            let block_top = inner.max.y - block_h;
-            // Chart on top, legend strip below — keeps the chart visually grouped
-            // with the numeric stats above and the legend functions as a key reading downward.
-            let chart_rect = egui::Rect::from_min_max(
-                egui::pos2(inner.min.x, block_top),
-                egui::pos2(inner.max.x, inner.max.y - LEGEND_H),
-            );
-            let legend_rect = egui::Rect::from_min_max(
-                egui::pos2(inner.min.x, inner.max.y - LEGEND_H),
-                egui::pos2(inner.max.x, inner.max.y),
-            );
-            // `painter_at` clips chart draws so spikes don't bleed past the rect.
-            let chart_painter = ui.painter_at(chart_rect);
-            paint_timing_chart(&chart_painter, chart_rect, &self.perf.samples);
-            paint_timing_legend(child.painter(), legend_rect);
-        }
     }
 
     /// Trim `recent_frame_us` to a 60-sample sliding window so the FPS readout averages
@@ -1801,13 +1594,6 @@ impl TestbedApp {
         }
         self.perf.recent_frame_us.push_back(us);
     }
-
-    fn stats_rect(&self, origin: egui::Pos2) -> egui::Rect {
-        egui::Rect::from_min_size(
-            origin + egui::vec2(self.layout.stats_x as f32, self.layout.stats_y as f32),
-            egui::vec2(self.layout.stats_w as f32, self.layout.stats_h as f32),
-        )
-    }
 }
 
 fn can_switch_platform(recording_active: bool) -> Result<(), &'static str> {
@@ -1815,6 +1601,17 @@ fn can_switch_platform(recording_active: bool) -> Result<(), &'static str> {
         Err("recording is active")
     } else {
         Ok(())
+    }
+}
+
+/// Flip `platform` in the open set; returns whether it is open afterwards.
+fn toggle_open(open: &mut Vec<&'static Platform>, platform: &'static Platform) -> bool {
+    if let Some(pos) = open.iter().position(|p| p.id == platform.id) {
+        open.remove(pos);
+        false
+    } else {
+        open.push(platform);
+        true
     }
 }
 
@@ -1843,17 +1640,22 @@ fn viewport_supported(
 }
 
 /// Paint a dim "size not supported" slab where a widget declines a tile.
-fn paint_placeholder(painter: &egui::Painter, rect: egui::Rect, label: &str) {
-    painter.rect_filled(rect, 0.0, egui::Color32::from_gray(14));
+fn paint_placeholder(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    label: &str,
+    palette: &theme::Palette,
+) {
+    painter.rect_filled(rect, 0.0, palette.placeholder_fill);
     painter.rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0_f32, egui::Color32::from_gray(38)),
+        egui::Stroke::new(1.0_f32, palette.placeholder_outline),
         egui::StrokeKind::Inside,
     );
     let icon = rect.center() - egui::vec2(0.0, 16.0);
     let radius = 13.0;
-    let stroke = egui::Stroke::new(2.0_f32, egui::Color32::from_gray(80));
+    let stroke = egui::Stroke::new(2.0_f32, palette.placeholder_glyph);
     painter.circle_stroke(icon, radius, stroke);
     let slash = radius * 0.72;
     painter.line_segment(
@@ -2001,32 +1803,13 @@ impl TestbedHandler {
         for view in std::mem::take(&mut app.retired) {
             view.release(&app.gl, &mut egui_glow.painter);
         }
-        if app.tiles.is_empty()
-            && let Err(e) = app.init_tiles(&mut egui_glow.painter)
-        {
+        if let Err(e) = app.ensure_views(&mut egui_glow.painter) {
             self.fatal_error = Some(e.context("failed to build views"));
             event_loop.exit();
             return;
         }
 
         egui_glow.run(window.window(), |ui| app.ui(ui));
-
-        if let Some(size) = app.pending_resize.take() {
-            // `Some` means the platform applied the size on the spot and will
-            // send no `Resized` event, so the surface must be resized here or
-            // it keeps the old buffer and the frame paints into its corner.
-            // `None` defers to the display server; `Resized` follows.
-            if let Some(physical) =
-                window
-                    .window()
-                    .request_inner_size(winit::dpi::LogicalSize::new(
-                        f64::from(size.x),
-                        f64::from(size.y),
-                    ))
-            {
-                window.resize(physical);
-            }
-        }
 
         // SAFETY: the context is current on this thread for the window's lifetime.
         unsafe {
@@ -2167,6 +1950,9 @@ impl winit::application::ApplicationHandler<UserEvent> for TestbedHandler {
 
 impl TestbedApp {
     fn ui(&mut self, root_ui: &mut egui::Ui) {
+        let palette = self.theme.palette(root_ui.ctx());
+        theme::apply(root_ui.ctx(), palette);
+
         // Hot reload check — rebuild runtimes if the wasm changed on disk.
         self.poll_hot_reload();
 
@@ -2197,87 +1983,29 @@ impl TestbedApp {
         self.paint_toolbar(root_ui);
         self.paint_right_panel(root_ui);
 
+        // The canvas: a pannable backdrop the device windows float over.
+        // Dragging any empty spot moves every canvas window in step.
         egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show_inside(root_ui, |ui| {
-                let origin = ui.min_rect().left_top();
-                // Window-wide checkerboard backdrop so tile boundaries read clearly against
-                // widget body colours like params-demo's `#14_16_1B`.
-                draw_checkerboard(ui.painter(), ui.max_rect());
-                let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
-                for (tile_idx, tile) in self.tiles.iter_mut().enumerate() {
-                    let rect = egui::Rect::from_min_size(
-                        origin + egui::vec2(tile.x as f32, tile.y as f32),
-                        egui::vec2(tile.gpu.width as f32, tile.gpu.height as f32),
-                    );
-                    // A declined size gets the "not supported" slab, not a texture.
-                    if !tile.is_live() {
-                        paint_placeholder(ui.painter(), rect, tile.label());
-                        continue;
-                    }
-                    // Recording mode focuses on a single size — non-active tiles get
-                    // a flat dark slab instead of the WASM texture (whose FBO contents
-                    // are stale since `render_tiles` skipped them), and don't receive
-                    // touch events or an LED strip.
-                    //
-                    // The active tile gets a thin orange border so
-                    // the operator can see which one's live.
-                    let is_inactive_record =
-                        active_record_idx.is_some_and(|active| active != tile_idx);
-                    if is_inactive_record {
-                        ui.painter()
-                            .rect_filled(rect, 0.0, egui::Color32::from_gray(12));
-                        continue;
-                    }
-
-                    paint_tile_texture(ui, tile, rect);
-
-                    if active_record_idx == Some(tile_idx) {
-                        // `Inside` so the bottom edge stays inside the tile rect
-                        // — `Outside` would paint one row below, which `paint_led_strip`
-                        // then overwrites with the LED strip background.
-                        ui.painter().rect_stroke(
-                            rect,
-                            0.0,
-                            egui::Stroke::new(2.0_f32, egui::Color32::from_rgb(255, 170, 80)),
-                            egui::StrokeKind::Inside,
-                        );
-                    }
-
-                    // Touch / mouse routing: allocate the same rect for click+drag
-                    // so we can forward pointer events to the runtime in tile-local
-                    // coordinates.
-                    //
-                    // Recording state is threaded in only for the active recording tile
-                    // so gestures on other tiles don't pollute the fixture timeline.
-                    let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
-                    let rec_for_tile = if active_record_idx == Some(tile_idx) {
-                        self.recording_mode.state.as_mut()
-                    } else {
-                        None
-                    };
-                    dispatch_touch_events(&response, rect, tile, rec_for_tile);
-
-                    if tile.led_count().is_some() {
-                        paint_led_strip(ui.painter(), tile, origin, time_s);
-                    }
-                }
-                // Stats panel / recording panel — both anchor in the empty slot right of SMALL.
-                // Recording mode displaces the stats view; the chart isn't useful while
-                // authoring a fixture and the operator needs the event log there.
-                let stats_rect = self.stats_rect(origin);
-                if self.recording_mode.state.is_some() {
-                    if let Some(action) = self.paint_recording_panel(ui, stats_rect) {
-                        match action {
-                            RecordingAction::Save => self.finish_recording(),
-                            RecordingAction::Cancel => self.recording_mode.state = None,
-                            RecordingAction::Capture => self.push_manual_capture(),
-                        }
-                    }
-                } else {
-                    self.paint_stats_panel(ui, stats_rect);
+                self.canvas = ui.max_rect();
+                draw_checkerboard(ui.painter(), ui.max_rect(), palette);
+                let background = ui.interact(
+                    ui.max_rect(),
+                    ui.id().with("canvas"),
+                    egui::Sense::click_and_drag(),
+                );
+                if background.dragged() {
+                    self.pan += background.drag_delta();
+                    background.ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+                } else if background.hovered() {
+                    // Announce that dragging here pans, before it happens.
+                    background.ctx.set_cursor_icon(egui::CursorIcon::Grab);
                 }
             });
+
+        self.paint_device_windows(&ctx, time_s);
+        self.paint_stats_window(&ctx);
 
         // Earliest tile deadline, capped at the drain tick for deliveries + chrome.
         let repaint_ms = next_wake.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));
@@ -2286,7 +2014,7 @@ impl TestbedApp {
 }
 
 #[cfg(test)]
-mod layout_tests {
+mod app_tests {
     use super::*;
 
     fn platform(id: &str) -> &'static Platform {
@@ -2304,61 +2032,6 @@ mod layout_tests {
             args.push(format!("--record-name={name}"));
         }
         CliArgs::try_parse_from(args).expect("BUG: record args must parse")
-    }
-
-    /// Golden BMC100 geometry, copied from the pre-change compile-time layout.
-    /// (label, x, y, w, h) in logical pixels.
-    const BMC100_GOLDEN_TILES: [(&str, u32, u32, u32, u32); 4] = [
-        ("Fullscreen", 16, 16, 1280, 480),
-        ("Large", 16, 536, 638, 480),
-        ("Medium", 670, 536, 638, 238),
-        ("Small", 670, 814, 317, 238),
-    ];
-    const BMC100_GOLDEN_PREVIEW: (u32, u32) = (1324, 1092);
-    const BMC100_GOLDEN_STATS: (u32, u32, u32, u32) = (1003, 814, 305, 262);
-
-    #[test]
-    fn bmc100_layout_is_pixel_identical_to_pre_change() {
-        let p = platform("bmc100");
-        let layout = TileLayout::for_platform(p);
-
-        assert_eq!(layout.tiles.len(), 4, "BMC100 must keep four preview tiles");
-        for (tile, &(label, x, y, w, h)) in layout.tiles.iter().zip(BMC100_GOLDEN_TILES.iter()) {
-            assert_eq!(tile.label, label, "BMC100 tile label drift");
-            assert_eq!(
-                (tile.x, tile.y, tile.w, tile.h),
-                (x, y, w, h),
-                "BMC100 tile '{label}' position/size drift",
-            );
-        }
-
-        assert_eq!(
-            (layout.preview_w, layout.preview_h),
-            BMC100_GOLDEN_PREVIEW,
-            "BMC100 preview/window size drift",
-        );
-        assert_eq!(
-            (
-                layout.stats_x,
-                layout.stats_y,
-                layout.stats_w,
-                layout.stats_h,
-            ),
-            BMC100_GOLDEN_STATS,
-            "BMC100 stats-panel rectangle drift",
-        );
-    }
-
-    #[test]
-    fn bmc100_catalog_viewport_sizes_match_golden_arrangement() {
-        let p = platform("bmc100");
-        for (v, &(_label, _x, _y, w, h)) in p.viewports.iter().zip(BMC100_GOLDEN_TILES.iter()) {
-            assert_eq!(
-                (v.width, v.height),
-                (w, h),
-                "BMC100 catalog viewport size must match the preserved arrangement",
-            );
-        }
     }
 
     #[test]
@@ -2419,88 +2092,41 @@ mod layout_tests {
     }
 
     #[test]
-    fn bmm100_layout_has_single_tile() {
-        let p = platform("bmm100");
-        let layout = TileLayout::for_platform(p);
-        assert_eq!(layout.tiles.len(), 1);
-        assert_eq!(
-            (layout.tiles[0].x, layout.tiles[0].y),
-            (PREVIEW_MARGIN, PREVIEW_MARGIN)
-        );
-        assert_eq!((layout.tiles[0].w, layout.tiles[0].h), (320, 240));
-    }
-
-    #[test]
-    fn bmm100_stats_width_uses_stats_minimum() {
-        let p = platform("bmm100");
-        let layout = TileLayout::for_platform(p);
-
-        assert_eq!(layout.stats_w, STATS_MIN_W);
-        assert_eq!(
-            layout.preview_w,
-            PREVIEW_MARGIN + STATS_MIN_W + PREVIEW_MARGIN
-        );
-    }
-
-    #[test]
-    fn bmm101_layout_has_single_tile() {
-        let p = platform("bmm101");
-        let layout = TileLayout::for_platform(p);
-        assert_eq!(layout.tiles.len(), 1);
-        assert_eq!((layout.tiles[0].w, layout.tiles[0].h), (480, 320));
-    }
-
-    #[test]
     fn bfm100_tile_carries_round_shape() {
         let p = platform("bfm100");
-        let layout = TileLayout::for_platform(p);
-        assert_eq!(layout.tiles.len(), 1);
-        assert_eq!((layout.tiles[0].w, layout.tiles[0].h), (480, 480));
-        assert!(matches!(layout.tiles[0].shape, DisplayShape::Round));
-    }
-
-    #[test]
-    fn bfm100_stats_width_uses_viewport_width() {
-        let p = platform("bfm100");
-        let layout = TileLayout::for_platform(p);
-
-        assert_eq!(layout.stats_w, 480);
-        assert_eq!(layout.preview_w, 512);
+        let tile = PlacedTile::for_viewport(p, &p.viewports[0]);
+        assert_eq!((tile.w, tile.h), (480, 480));
+        assert!(matches!(tile.shape, DisplayShape::Round));
     }
 
     #[test]
     fn bmc100_fullscreen_tile_preserves_legacy_kv_key() {
         let p = platform("bmc100");
-        let layout = TileLayout::for_platform(p);
-
-        assert_eq!(layout.tiles[0].label, "Fullscreen");
-        assert_eq!(layout.tiles[0].kv_key, "full");
-        assert_eq!(layout.tiles[1].kv_key, "large");
-        assert_eq!(layout.tiles[2].kv_key, "medium");
-        assert_eq!(layout.tiles[3].kv_key, "small");
+        let keys: Vec<String> = p
+            .viewports
+            .iter()
+            .map(|v| PlacedTile::for_viewport(p, v).kv_key)
+            .collect();
+        assert_eq!(keys, ["full", "large", "medium", "small"]);
     }
 
     #[test]
-    fn switching_changes_layout_and_viewport_list() {
-        let mut state = SwitchState::new(platform("bmc100"));
-        assert_eq!(state.layout.tiles.len(), 4);
-        let from_size = state.requested_size;
+    fn stripless_platforms_get_stripless_tiles() {
+        let p = platform("bmm100");
+        let tile = PlacedTile::for_viewport(p, &p.viewports[0]);
+        assert_eq!(tile.led_count, None);
+    }
 
-        let changed = state.switch_to("bmm101").expect("BUG: BMM101 must exist");
+    #[test]
+    fn toggling_opens_a_platform_and_toggling_again_closes_it() {
+        let mut open = vec![platform("bmc100")];
 
-        assert!(changed);
-        assert_eq!(state.platform.id, "bmm101");
-        assert!(state.needs_tile_rebuild);
-        assert_eq!(state.layout.tiles.len(), 1);
-        assert_eq!(
-            (state.layout.tiles[0].w, state.layout.tiles[0].h),
-            (480, 320)
-        );
-        assert!(
-            state.requested_size.x < from_size.x,
-            "narrow platform must request a smaller window",
-        );
-        assert_eq!(state.requested_size, requested_window_size(&state.layout));
+        assert!(toggle_open(&mut open, platform("bmm101")), "opens");
+        assert_eq!(open.len(), 2, "both devices stay open together");
+
+        assert!(!toggle_open(&mut open, platform("bmm101")), "closes");
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].id, "bmc100", "the other device is untouched");
     }
 
     #[test]
@@ -2531,47 +2157,10 @@ mod layout_tests {
     }
 
     #[test]
-    fn preview_area_encloses_every_tile() {
-        for p in platform_catalog::PLATFORMS {
-            let id = p.id;
-            let layout = TileLayout::for_platform(p);
-            let led_h = if p.led_count().is_some() {
-                LED_STRIP_H
-            } else {
-                0
-            };
-            for t in &layout.tiles {
-                assert!(
-                    t.x + t.w + PREVIEW_MARGIN <= layout.preview_w,
-                    "{id} x overflow"
-                );
-                assert!(
-                    t.y + t.h + led_h + PREVIEW_MARGIN <= layout.preview_h,
-                    "{id} y overflow"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn stripless_platforms_do_not_reserve_led_strip_height() {
-        let p = platform("bmm100");
-        let layout = TileLayout::for_platform(p);
-        assert_eq!(layout.tiles[0].led_count, None);
-        assert_eq!(
-            layout.stats_y,
-            PREVIEW_MARGIN + 240 + PREVIEW_GAP,
-            "BMM100 stats should start immediately below the tile without LED_STRIP_H",
-        );
-    }
-
-    #[test]
     fn bfm100_runtime_geometry_is_round_for_viewport_and_display() {
         let p = platform("bfm100");
-        let layout = TileLayout::for_platform(p);
-        let tile = &layout.tiles[0];
 
-        let geometry = RuntimeTileGeometry::for_viewport_shape(p, tile.shape);
+        let geometry = RuntimeTileGeometry::for_viewport_shape(p, p.viewports[0].shape);
         assert_eq!(
             geometry.viewport_shape,
             bmc_wasm_protocol::ViewportShape::Round
@@ -2590,10 +2179,8 @@ mod layout_tests {
     #[test]
     fn bmm101_runtime_geometry_reports_selected_display_resolution() {
         let p = platform("bmm101");
-        let layout = TileLayout::for_platform(p);
-        let tile = &layout.tiles[0];
 
-        let geometry = RuntimeTileGeometry::for_viewport_shape(p, tile.shape);
+        let geometry = RuntimeTileGeometry::for_viewport_shape(p, p.viewports[0].shape);
         assert_eq!(
             geometry.viewport_shape,
             bmc_wasm_protocol::ViewportShape::Rectangular
@@ -2611,12 +2198,11 @@ mod layout_tests {
     #[test]
     fn bmc100_tile_geometry_keeps_tile_viewport_and_platform_display_separate() {
         let p = platform("bmc100");
-        let layout = TileLayout::for_platform(p);
-        let medium = layout
-            .tiles
+        let medium = p
+            .viewports
             .iter()
-            .find(|tile| tile.label == "Medium")
-            .expect("BUG: BMC100 medium tile must exist");
+            .find(|v| v.label == "Medium")
+            .expect("BUG: BMC100 medium viewport must exist");
 
         let geometry = RuntimeTileGeometry::for_viewport_shape(p, medium.shape);
 
@@ -2632,6 +2218,6 @@ mod layout_tests {
             (geometry.display.width, geometry.display.height),
             (1280, 480)
         );
-        assert_eq!((medium.w, medium.h), (638, 238));
+        assert_eq!((medium.width, medium.height), (638, 238));
     }
 }

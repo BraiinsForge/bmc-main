@@ -579,6 +579,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "binpack2d"
+version = "1.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4c3793db1a9ea79234eac9513713a00ca32751417046d92db5320f0b2574394f"
+
+[[package]]
 name = "bisync"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1391,6 +1397,7 @@ version = "0.1.0"
 dependencies = [
  "bmc-shared-utils",
  "bmc-widget-protocol",
+ "egui",
  "hex",
  "palette",
  "serde",
@@ -1403,6 +1410,7 @@ dependencies = [
  "anyhow",
  "askama",
  "base64 0.22.1",
+ "binpack2d",
  "bmc-led",
  "bmc-platform",
  "bmc-render",
@@ -1436,6 +1444,7 @@ dependencies = [
  "owo-colors",
  "raw-window-handle",
  "rayon",
+ "resvg",
  "rodio",
  "roxmltree 0.20.0",
  "rrule",

@@ -83,7 +83,8 @@ impl TestbedApp {
     /// so long param/system lists scroll together rather than stealing
     /// each other's height.
     pub(super) fn paint_right_panel(&mut self, root_ui: &mut egui::Ui) {
-        let style = root_ui.ctx().style();
+        let palette = self.theme.palette(root_ui.ctx());
+        let section_fill = palette.section_fill;
         let has_params = !self.manifest.params.is_empty();
         // Take the current snapshots out so we can mutate while
         // the egui closure borrows `self`, then put them back
@@ -98,22 +99,33 @@ impl TestbedApp {
         let mut params_changed = false;
         let mut system_changed = false;
 
-        egui::SidePanel::right("right_panel")
+        // egui stacks windows above panels, so the fill and the widgets both
+        // go in a foreground area; the panel itself only reserves space.
+        let panel = egui::SidePanel::right("right_panel")
             .resizable(false)
             .exact_width(PARAM_PANEL_W as f32)
-            .frame(egui::Frame::side_top_panel(&style).inner_margin(egui::Margin::ZERO))
-            .show_inside(root_ui, |ui| {
+            .frame(egui::Frame::NONE)
+            .show_separator_line(false)
+            .show_inside(root_ui, |_| {});
+        let rect = panel.response.rect;
+        egui::Area::new(egui::Id::new("sidebar_chrome"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(rect.min)
+            .show(root_ui.ctx(), |area| {
+                area.set_clip_rect(rect);
+                area.painter().rect_filled(rect, 0.0, palette.panel_fill);
+                let mut ui = area.new_child(egui::UiBuilder::new().max_rect(rect));
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
-                    .show(ui, |scroll| {
+                    .show(&mut ui, |scroll| {
                         if has_params {
-                            section_header_bar(scroll, "Params", PARAMS_ACCENT);
+                            section_header_bar(scroll, "Params", PARAMS_ACCENT, section_fill);
                             egui::Frame::NONE
                                 .inner_margin(egui::Margin::same(8))
                                 .show(scroll, |inner| {
                                     egui::Grid::new("params_grid")
                                         .num_columns(2)
-                                        .spacing([12.0, 4.0])
+                                        .spacing([12.0, super::system_ui::ROW_GAP])
                                         .min_col_width(0.0)
                                         .show(inner, |grid| {
                                             for (key, def) in &manifest_params {
@@ -132,7 +144,7 @@ impl TestbedApp {
                                 });
                             scroll.add_space(12.0);
                         }
-                        section_header_bar(scroll, "System", SYSTEM_ACCENT);
+                        section_header_bar(scroll, "System", SYSTEM_ACCENT, section_fill);
                         egui::Frame::NONE
                             .inner_margin(egui::Margin::same(8))
                             .show(scroll, |inner| {
@@ -144,6 +156,7 @@ impl TestbedApp {
                             scroll,
                             &credential_slots,
                             &mut working_credentials,
+                            section_fill,
                         );
                     });
             });
@@ -160,12 +173,8 @@ impl TestbedApp {
     }
 }
 
-// TODO(BDK-476): replace with named palette references (`ORANGE_40` / `TEAL_40`)
-// once `Color` is extracted to a shared crate that the testbed (egui consumer)
-// can depend on without dragging the host into the wasmi-wire protocol's dep tree.
-// The hex values below mirror those two palette swatches verbatim.
-const PARAMS_ACCENT: egui::Color32 = egui::Color32::from_rgb(0xFE, 0x84, 0x31);
-pub(super) const SYSTEM_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x00, 0xBA, 0xC5);
+const PARAMS_ACCENT: egui::Color32 = bmc_wasm_protocol::colors::ORANGE_40.to_egui();
+pub(super) const SYSTEM_ACCENT: egui::Color32 = bmc_wasm_protocol::colors::TEAL_40.to_egui();
 
 /// Render a section header as a full-width horizontal accent banner with
 /// black text — no left stripe.
@@ -174,12 +183,17 @@ pub(super) const SYSTEM_ACCENT: egui::Color32 = egui::Color32::from_rgb(0x00, 0x
 /// rather than via a nested `Frame` + `Layout`: the latter let the inner
 /// ui's min-size expand into the surrounding ScrollArea's full vertical,
 /// turning the banner into a panel-tall solid block.
-pub(super) fn section_header_bar(ui: &mut egui::Ui, text: &str, accent: egui::Color32) {
+pub(super) fn section_header_bar(
+    ui: &mut egui::Ui,
+    text: &str,
+    accent: egui::Color32,
+    fill: egui::Color32,
+) {
     let width = ui.available_width();
     let bar_height: f32 = 26.0;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, bar_height), egui::Sense::hover());
     let painter = ui.painter();
-    painter.rect_filled(rect, 0.0, egui::Color32::BLACK);
+    painter.rect_filled(rect, 0.0, fill);
     painter.text(
         rect.min + egui::vec2(10.0, bar_height / 2.0),
         egui::Align2::LEFT_CENTER,
@@ -219,7 +233,7 @@ fn paint_param_row(
                     top: 3,
                     ..Default::default()
                 })
-                .show(row, |inner| inner.add(key_label(key, 180)))
+                .show(row, |inner| inner.add(key_label(key)))
                 .inner
         })
         .inner;

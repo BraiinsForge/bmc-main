@@ -26,14 +26,12 @@
 /// timezone        [ Europe/Prague        ]
 /// ^^^^^^^^
 /// ```
-pub(super) fn key_label(text: &str, gray: u8) -> egui::Label {
-    egui::Label::new(
-        egui::RichText::new(text)
-            .font(egui::FontId::monospace(11.0))
-            .color(egui::Color32::from_gray(gray)),
-    )
-    .selectable(false)
-    .sense(egui::Sense::click())
+pub(super) fn key_label(text: &str) -> egui::Label {
+    // No explicit colour: the label inherits the theme's text tone.
+    // Weak proved too faint on the light panel, plain reads on both.
+    egui::Label::new(egui::RichText::new(text).font(egui::FontId::monospace(11.0)))
+        .selectable(false)
+        .sense(egui::Sense::click())
 }
 
 /// Enum params with at most this many variants render as an always-visible

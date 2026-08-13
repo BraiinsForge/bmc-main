@@ -7,6 +7,7 @@ license = "GPL-3.0-or-later"
 [dependencies]
 bmc-shared-utils = { workspace = true, optional = true }
 bmc-widget-protocol = { workspace = true, optional = true }
+egui = { workspace = true, optional = true }
 hex.workspace = true
 palette.workspace = true
 serde = { workspace = true, optional = true }
@@ -15,6 +16,8 @@ serde = { workspace = true, optional = true }
 default = []
 # Off by default so the SDK build path doesn't pick up serde
 serde = ["dep:serde"]
+# Colour conversions for egui consumers; off so the wasm SDK never sees egui.
+egui = ["dep:egui"]
 # Off by default so the wasm SDK build path stays free of Wayland-protocol types.
 widget-protocol = ["dep:bmc-widget-protocol"]
 # Off by default so the wasm SDK build path stays free of the formatting core (formato).

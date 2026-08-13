@@ -86,7 +86,7 @@ impl TestbedApp {
         let mut changed = false;
         egui::Grid::new("system_grid")
             .num_columns(2)
-            .spacing([12.0, 4.0])
+            .spacing([12.0, ROW_GAP])
             .min_col_width(0.0)
             .show(scroll, |grid| {
                 changed |= paint_timezone_row(grid, &mut working.settings.timezone);
@@ -139,6 +139,9 @@ impl TestbedApp {
     }
 }
 
+/// Air between sidebar rows, enough that a checkbox row still reads as one.
+pub(super) const ROW_GAP: f32 = 8.0;
+
 /// One grid row.
 ///
 /// ```text
@@ -148,24 +151,46 @@ impl TestbedApp {
 ///
 /// `control` receives the cell `Ui`, its width, and the label's `Response` —
 /// so it can wire label-click to focus / toggle the adjacent widget.
-/// One label + control row with the sidebar's shared geometry.
-/// The control takes the full remaining width at one interact-height,
-/// so every section's rows line up whatever control they hold.
+///
+/// Every row stands at [`row_height`] with key and control centred in it,
+/// so fields, selects and checkboxes read as one column of equal blocks.
 pub(super) fn row<R>(
     grid: &mut egui::Ui,
     key: &str,
     control: impl FnOnce(&mut egui::Ui, f32, &egui::Response) -> R,
 ) -> R {
-    let label_resp = grid.add(key_label(key, 180));
-    let cell_w = grid.available_width();
-    let row_h = grid.spacing().interact_size.y;
-    let r = grid
-        .allocate_ui(egui::vec2(cell_w, row_h), |slot| {
-            control(slot, cell_w, &label_resp)
+    let row_h = row_height(grid);
+    let label_resp = grid
+        .with_layout(egui::Layout::left_to_right(egui::Align::Center), |cell| {
+            cell.set_min_height(row_h);
+            cell.add(key_label(key))
         })
+        .inner;
+    let cell_w = grid.available_width();
+    let r = grid
+        .allocate_ui_with_layout(
+            egui::vec2(cell_w, row_h),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |slot| control(slot, cell_w, &label_resp),
+        )
         .inner;
     grid.end_row();
     r
+}
+
+/// The height every sidebar control occupies — a select's, the tallest.
+pub(super) fn row_height(ui: &egui::Ui) -> f32 {
+    ui.text_style_height(&egui::TextStyle::Body) + 2.0 * ui.spacing().button_padding.y
+}
+
+/// Text margin that lands a field on [`row_height`]: `TextEdit` sizes from
+/// its own margin and ignores `interact_size`.
+pub(super) fn field_margin(ui: &egui::Ui) -> egui::Margin {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "button padding is a few pixels"
+    )]
+    egui::Margin::symmetric(4, ui.spacing().button_padding.y as i8)
 }
 
 fn supported_tz_names() -> impl Iterator<Item = &'static str> {
@@ -177,11 +202,13 @@ fn supported_tz_names() -> impl Iterator<Item = &'static str> {
 /// Searchable IANA timezone picker over [`supported_tz_names`].
 fn paint_timezone_row(grid: &mut egui::Ui, value: &mut String) -> bool {
     row(grid, "timezone", |slot, _w, label| {
+        let margin = field_margin(slot);
         let resp = slot.add(
             egui_autocomplete::AutoCompleteTextEdit::new(value, supported_tz_names())
                 .max_suggestions(20)
                 .highlight_matches(true)
-                .popup_on_focus(true),
+                .popup_on_focus(true)
+                .set_text_edit_properties(move |text_edit| text_edit.margin(margin)),
         );
         if label.clicked() {
             resp.request_focus();
@@ -242,8 +269,12 @@ fn paint_next_alarm_rows(grid: &mut egui::Ui, next_alarm: &mut Option<NextAlarm>
 
     if let Some(alarm) = next_alarm.as_mut() {
         changed |= row(grid, "name", |slot, _w, label| {
-            let resp =
-                slot.add(egui::TextEdit::singleline(&mut alarm.name).desired_width(f32::INFINITY));
+            let margin = field_margin(slot);
+            let resp = slot.add(
+                egui::TextEdit::singleline(&mut alarm.name)
+                    .desired_width(f32::INFINITY)
+                    .margin(margin),
+            );
             if label.clicked() {
                 resp.request_focus();
             }

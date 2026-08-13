@@ -4,12 +4,14 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 
-# The capture report askama template and the WAT guest fixtures the test
-# suites embed; the nix source filter keeps only rust/toml/lock otherwise.
+# The capture report askama template, the WAT guest fixtures the test suites
+# embed, and the toolbar icons the testbed `include_bytes!`s; the nix source
+# filter keeps only rust/toml/lock otherwise.
 [package.metadata.nix]
 include = [
     "templates/**",
     "tests/fixtures/*.wat",
+    "src/bin/testbed/assets/icons/*.svg",
 ]
 
 [dependencies]
@@ -68,10 +70,12 @@ tracing-subscriber = { workspace = true, optional = true }
 winit = { workspace = true, optional = true }
 
 # Testbed only
+binpack2d = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }
 egui_autocomplete = { workspace = true, optional = true }
 egui_glow = { workspace = true, optional = true }
 notify = { workspace = true, optional = true }
+resvg = { workspace = true, optional = true }
 
 # Fixtures (shared between capture and testbed)
 flate2 = { workspace = true, optional = true }
@@ -99,7 +103,7 @@ profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "bmc-wasm-assets", "flate2", "owo-colors", "tempfile", "toml", "toml_edit"]
-testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "egui", "egui_autocomplete", "egui_glow", "clap", "bmc-led/apa102_spi"]
+testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "binpack2d", "egui", "egui_autocomplete", "egui_glow", "resvg", "clap", "bmc-led/apa102_spi", "bmc-wasm-protocol/egui"]
 capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder"]
 
 [[bin]]

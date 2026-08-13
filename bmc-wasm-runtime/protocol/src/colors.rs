@@ -156,6 +156,20 @@ impl Color {
         self.0
     }
 
+    /// The colour as egui paints it, alpha preserved.
+    /// `const`, unlike the `From` impl, so palette tables can be built at
+    /// compile time; `From` delegates here.
+    #[cfg(feature = "egui")]
+    #[must_use]
+    pub const fn to_egui(self) -> egui::Color32 {
+        egui::Color32::from_rgba_unmultiplied_const(
+            self.red(),
+            self.green(),
+            self.blue(),
+            self.alpha(),
+        )
+    }
+
     /// Return `self` if set (non-zero), otherwise `fallback`.
     #[must_use]
     pub const fn or(self, fallback: Self) -> Self {
@@ -280,6 +294,13 @@ impl Color {
         let out = out.into_format::<u8>();
         let out_a = clamp_u8(f32::from(self.alpha()) * (1.0 - t) + f32::from(other.alpha()) * t);
         Self::from_rgba(out.red, out.green, out.blue, out_a)
+    }
+}
+
+#[cfg(feature = "egui")]
+impl From<Color> for egui::Color32 {
+    fn from(color: Color) -> Self {
+        color.to_egui()
     }
 }
 
