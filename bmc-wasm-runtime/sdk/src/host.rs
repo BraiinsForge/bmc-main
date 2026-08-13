@@ -26,7 +26,7 @@
 
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
-use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, SvgId};
+use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
 // ============================================================================
@@ -92,6 +92,11 @@ mod ffi {
             data_ptr: *const u8,
             data_len: u32,
         ) -> u32;
+        pub(super) fn host_register_svg_package(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            id_ptr: *const u8,
+        ) -> u32;
         // Bitmap registration. The host dedups by tag.
         pub(super) fn host_register_bitmap(
             tag_ptr: *const u8,
@@ -104,6 +109,16 @@ mod ffi {
             tag_len: u32,
             data_ptr: *const u8,
             data_len: u32,
+        ) -> u32;
+        pub(super) fn host_register_bitmap_package(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            id_ptr: *const u8,
+        ) -> u32;
+        pub(super) fn host_register_bitmap_nearest_package(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            id_ptr: *const u8,
         ) -> u32;
         pub(super) fn host_register_bitmap_fit(
             tag_ptr: *const u8,
@@ -125,12 +140,18 @@ mod ffi {
             data_ptr: *const u8,
             data_len: u32,
         ) -> u32;
+        fn host_register_mesh_package(tag_ptr: *const u8, tag_len: u32, id_ptr: *const u8) -> u32;
         // Audio registration and playback
         fn host_register_audio(
             data_ptr: *const u8,
             data_len: u32,
             name_ptr: *const u8,
             name_len: u32,
+        ) -> u32;
+        fn host_register_audio_package(
+            name_ptr: *const u8,
+            name_len: u32,
+            id_ptr: *const u8,
         ) -> u32;
         fn host_audio_play(sound_id: u32, volume: u32);
         fn host_audio_stop(sound_id: u32);
@@ -253,6 +274,17 @@ mod ffi {
         })
     }
 
+    #[must_use]
+    pub fn register_svg_package(tag: &str, package_ref: &PackageAssetRef) -> Option<SvgId> {
+        SvgId::from_ffi(unsafe {
+            host_register_svg_package(
+                tag.as_ptr(),
+                tag.len() as u32,
+                package_ref.as_bytes().as_ptr(),
+            )
+        })
+    }
+
     /// Parse an ISO 8601 date string (e.g. "2026-02-13T10:15:56Z") into a unix timestamp.
     ///
     /// Returns `None` if the string is not a valid date.
@@ -277,6 +309,17 @@ mod ffi {
         })
     }
 
+    #[must_use]
+    pub fn register_mesh_package(tag: &str, package_ref: &PackageAssetRef) -> Option<MeshId> {
+        MeshId::from_ffi(unsafe {
+            host_register_mesh_package(
+                tag.as_ptr(),
+                tag.len() as u32,
+                package_ref.as_bytes().as_ptr(),
+            )
+        })
+    }
+
     /// Register audio data (WAV/OGG/MP3 bytes) with the host.
     #[expect(clippy::cast_possible_truncation)]
     #[must_use]
@@ -287,6 +330,17 @@ mod ffi {
                 data.len() as u32,
                 name.as_ptr(),
                 name.len() as u32,
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn register_audio_package(name: &str, package_ref: &PackageAssetRef) -> Option<AudioId> {
+        AudioId::from_ffi(unsafe {
+            host_register_audio_package(
+                name.as_ptr(),
+                name.len() as u32,
+                package_ref.as_bytes().as_ptr(),
             )
         })
     }
@@ -322,6 +376,17 @@ mod ffi {
         })
     }
 
+    #[must_use]
+    pub fn register_bitmap_package(tag: &str, package_ref: &PackageAssetRef) -> Option<BitmapId> {
+        BitmapId::from_ffi(unsafe {
+            host_register_bitmap_package(
+                tag.as_ptr(),
+                tag.len() as u32,
+                package_ref.as_bytes().as_ptr(),
+            )
+        })
+    }
+
     /// Register bitmap data with nearest-neighbor filtering (no bilinear
     /// interpolation) under `tag`. Idempotent host-side.
     #[expect(clippy::cast_possible_truncation)]
@@ -333,6 +398,20 @@ mod ffi {
                 tag.len() as u32,
                 data.as_ptr(),
                 data.len() as u32,
+            )
+        })
+    }
+
+    #[must_use]
+    pub fn register_bitmap_nearest_package(
+        tag: &str,
+        package_ref: &PackageAssetRef,
+    ) -> Option<BitmapId> {
+        BitmapId::from_ffi(unsafe {
+            host_register_bitmap_nearest_package(
+                tag.as_ptr(),
+                tag.len() as u32,
+                package_ref.as_bytes().as_ptr(),
             )
         })
     }

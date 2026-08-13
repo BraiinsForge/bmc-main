@@ -135,7 +135,7 @@ pub fn encode_record(
     Ok(record)
 }
 
-fn parse_record(input: &[u8]) -> Result<(RecordRef<'_>, usize), RecordError> {
+pub(crate) fn parse_record(input: &[u8]) -> Result<(RecordRef<'_>, usize), RecordError> {
     let header = input
         .get(..RECORD_HEADER_LEN)
         .ok_or(RecordError::Truncated("header"))?;

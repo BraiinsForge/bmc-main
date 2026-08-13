@@ -10,6 +10,7 @@ proc-macro = true
 [dependencies]
 bmc-render-skin = { path = "../skin" }
 bmc-svg-compiler = { path = "../../bmc-wasm-runtime/svg-compiler" }
+bmc-wasm-assets = { path = "../../bmc-wasm-assets", default-features = false }
 bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
 gltf = { workspace = true, features = ["extras"] }
 image = { workspace = true, default-features = false, features = ["png"] }

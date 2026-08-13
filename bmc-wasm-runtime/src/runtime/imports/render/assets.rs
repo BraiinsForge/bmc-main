@@ -25,9 +25,10 @@
 use anyhow::{Result, bail};
 use bmc_render::{
     MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_cover,
-    decode_scaled_to_fit, renderer::AssetTagState,
+    decode_scaled_to_fit,
+    renderer::{AssetSuspendResult, AssetTagState},
 };
-use bmc_wasm_protocol::ImageJobId;
+use bmc_wasm_protocol::{BitmapSampling, ImageJobId, PackageAssetId, PackageAssetKind};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::{CacheWriteOutcome, CompletedImageDecode, HostState};
@@ -46,10 +47,26 @@ fn read_tag(caller: &Caller<'_, HostState>, ptr: u32, len: u32) -> Option<String
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_svg_import(linker)?;
+    register_package_renderer_import(linker, "host_register_svg_package", RendererAssetKind::Svg)?;
     register_bitmap_import(linker)?;
+    register_package_renderer_import(
+        linker,
+        "host_register_bitmap_package",
+        RendererAssetKind::Bitmap(BitmapSampling::Linear),
+    )?;
     register_bitmap_nearest_import(linker)?;
+    register_package_renderer_import(
+        linker,
+        "host_register_bitmap_nearest_package",
+        RendererAssetKind::Bitmap(BitmapSampling::Nearest),
+    )?;
     register_bitmap_fit_import(linker)?;
     register_mesh_import(linker)?;
+    register_package_renderer_import(
+        linker,
+        "host_register_mesh_package",
+        RendererAssetKind::Mesh,
+    )?;
     register_bitmap_sample_import(linker)?;
     register_image_decode_import(linker)?;
     register_max_image_pixels_import(linker)?;
@@ -57,9 +74,146 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
-// Restore a bitmap from the per-instance cache:
-// mmap RGBA → texture, no fetch, no decode,
-// and the bytes never enter wasm.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ExistingPackageRendererAsset {
+    Resident(u32),
+    Dormant(u32),
+    Suspended(u32),
+}
+
+fn existing_package_renderer_asset(
+    caller: &mut Caller<'_, HostState>,
+    raw_tag: &str,
+    kind: RendererAssetKind,
+    package_id: PackageAssetId,
+) -> Result<Option<ExistingPackageRendererAsset>, wasmi::Error> {
+    let Some(existing) = caller.data().renderer_assets.get(raw_tag).cloned() else {
+        return Ok(None);
+    };
+    if caller.data().renderer_assets_are_dormant() {
+        return Ok(Some(ExistingPackageRendererAsset::Dormant(
+            existing.id.to_ffi(),
+        )));
+    }
+    let tag = caller.data().namespaced_tag(raw_tag);
+    let state = super::super::with_renderer(caller, |renderer| match kind {
+        RendererAssetKind::Svg => match renderer.svg_tag_state(&tag) {
+            AssetTagState::Resident(id) => AssetTagState::Resident(RendererAssetId::Svg(id)),
+            AssetTagState::Suspended(id) => AssetTagState::Suspended(RendererAssetId::Svg(id)),
+            AssetTagState::Unknown => AssetTagState::Unknown,
+        },
+        RendererAssetKind::Bitmap(_) => match renderer.bitmap_tag_state(&tag) {
+            AssetTagState::Resident(id) => AssetTagState::Resident(RendererAssetId::Bitmap(id)),
+            AssetTagState::Suspended(id) => AssetTagState::Suspended(RendererAssetId::Bitmap(id)),
+            AssetTagState::Unknown => AssetTagState::Unknown,
+        },
+        RendererAssetKind::Mesh => match renderer.mesh_tag_state(&tag) {
+            AssetTagState::Resident(id) => AssetTagState::Resident(RendererAssetId::Mesh(id)),
+            AssetTagState::Suspended(id) => AssetTagState::Suspended(RendererAssetId::Mesh(id)),
+            AssetTagState::Unknown => AssetTagState::Unknown,
+        },
+    })?;
+    match state {
+        AssetTagState::Resident(id) if id == existing.id => Ok(Some(
+            ExistingPackageRendererAsset::Resident(existing.id.to_ffi()),
+        )),
+        AssetTagState::Suspended(id) if id == existing.id => Ok(Some(
+            ExistingPackageRendererAsset::Suspended(existing.id.to_ffi()),
+        )),
+        AssetTagState::Resident(_) | AssetTagState::Suspended(_) | AssetTagState::Unknown => {
+            Err(wasmi::Error::new(format!(
+                "widget {} package asset `{raw_tag}` ({kind:?}, {package_id}) has an inconsistent renderer reservation",
+                caller.data().instance_id,
+            )))
+        }
+    }
+}
+
+fn register_package_renderer_import(
+    linker: &mut Linker<HostState>,
+    import: &'static str,
+    kind: RendererAssetKind,
+) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        import,
+        move |mut caller: Caller<'_, HostState>, tag_ptr: u32, tag_len: u32, reference_ptr: u32|
+              -> Result<u32, wasmi::Error> {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return Ok(0);
+            };
+            let package_kind = match kind {
+                RendererAssetKind::Svg => PackageAssetKind::Svg,
+                RendererAssetKind::Bitmap(_) => PackageAssetKind::Bitmap,
+                RendererAssetKind::Mesh => PackageAssetKind::Mesh,
+            };
+            let Some(package_id) =
+                super::super::read_package_ref(&caller, reference_ptr, package_kind)
+            else {
+                return Ok(0);
+            };
+            let backing = AssetBacking::Package(package_id);
+            if !caller
+                .data()
+                .renderer_asset_registration_matches(&raw_tag, kind, &backing)
+            {
+                return Ok(0);
+            }
+            let existing =
+                existing_package_renderer_asset(&mut caller, &raw_tag, kind, package_id)?;
+            match existing {
+                Some(
+                    ExistingPackageRendererAsset::Resident(id)
+                    | ExistingPackageRendererAsset::Dormant(id)
+                    | ExistingPackageRendererAsset::Suspended(id),
+                ) => return Ok(id),
+                None => {}
+            }
+            let tag = caller.data().namespaced_tag(&raw_tag);
+            super::super::with_renderer_and_state(&mut caller, |renderer, state| {
+                let id = match kind {
+                    RendererAssetKind::Svg => renderer.reserve_svg(&tag).map(RendererAssetId::Svg),
+                    RendererAssetKind::Bitmap(BitmapSampling::Linear) => renderer
+                        .reserve_bitmap(&tag)
+                        .map(RendererAssetId::Bitmap),
+                    RendererAssetKind::Bitmap(BitmapSampling::Nearest) => renderer
+                        .reserve_bitmap_nearest(&tag)
+                        .map(RendererAssetId::Bitmap),
+                    RendererAssetKind::Mesh => {
+                        renderer.reserve_mesh(&tag).map(RendererAssetId::Mesh)
+                    }
+                };
+                let Some(id) = id else {
+                    return Err(wasmi::Error::new(format!(
+                        "widget {} package asset `{raw_tag}` ({package_kind:?}, {package_id}) is invalid for the renderer",
+                        state.instance_id,
+                    )));
+                };
+                if !state.record_renderer_asset(raw_tag, kind, id, backing) {
+                    return Err(wasmi::Error::new(format!(
+                        "widget {} package asset registration changed an existing tag",
+                        state.instance_id,
+                    )));
+                }
+                #[cfg(feature = "profiling")]
+                tracing::info!(
+                    target: bmc_render::profile::TARGET,
+                    instance_id = %state.instance_id,
+                    tag = %tag,
+                    asset_kind = kind.name(),
+                    asset_id = id.to_ffi(),
+                    "widget package renderer asset registered"
+                );
+                Ok(id.to_ffi())
+            })
+            .and_then(std::convert::identity)
+        },
+    )?;
+    Ok(())
+}
+
+// Reserve a bitmap backed by the per-instance cache. The render preflight
+// performs the texture upload, and the bytes never enter wasm.
 //
 // Metadata is the image layer's `[w u32 | h u32 | identity]`;
 // only the dims are needed to re-upload.
@@ -74,6 +228,26 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return Ok(0);
             };
+            let backing = AssetBacking::Cache(raw_tag.clone());
+            let kind = RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Linear);
+            if !caller
+                .data()
+                .renderer_asset_registration_matches(&raw_tag, kind, &backing)
+            {
+                return Ok(0);
+            }
+            let Some(cache) = caller.data().asset_cache.as_ref() else {
+                return Ok(0);
+            };
+            let Some(blob) = cache.get(&raw_tag) else {
+                #[cfg(feature = "profiling")]
+                tracing::info!(target: bmc_render::profile::TARGET, tag = %raw_tag, "cache restore miss");
+                return Ok(0);
+            };
+            if cached_bitmap_dimensions(&blob).is_none() {
+                cache.evict(&raw_tag);
+                return Ok(0);
+            }
             super::super::with_renderer_and_state(&mut caller, |renderer, state| {
                 let backing = AssetBacking::Cache(raw_tag.clone());
                 let kind = RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Linear);
@@ -93,14 +267,26 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                     return 0;
                 };
                 let tag = state.namespaced_tag(&raw_tag);
-                let id = if state.renderer_assets_are_dormant() {
-                    renderer.reserve_bitmap(&tag)
-                } else {
-                    renderer.register_bitmap_rgba(&tag, blob.bytes(), w, h)
-                };
+                let id = renderer.reserve_bitmap(&tag);
                 let Some(id) = id else {
                     return 0;
                 };
+                if state.renderer_assets_are_dormant() {
+                    match renderer.bitmap_tag_state(&tag) {
+                        AssetTagState::Resident(resident) if resident == id => {
+                            if !matches!(
+                                renderer.suspend_bitmap(&tag),
+                                AssetSuspendResult::Suspended(suspended) if suspended == id
+                            ) {
+                                return 0;
+                            }
+                        }
+                        AssetTagState::Suspended(suspended) if suspended == id => {}
+                        AssetTagState::Resident(_)
+                        | AssetTagState::Suspended(_)
+                        | AssetTagState::Unknown => return 0,
+                    }
+                }
                 if !state.record_renderer_asset(
                     raw_tag.clone(),
                     kind,
@@ -120,7 +306,7 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                         tag = %raw_tag,
                         age_ms,
                         resident,
-                        "cache restore hit"
+                        "cache registration hit"
                     );
                 }
                 id.to_ffi()
@@ -348,6 +534,14 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
                 return 0;
             };
+            let kind = RendererAssetKind::Bitmap(BitmapSampling::Linear);
+            if !caller.data().renderer_asset_registration_matches(
+                &raw_tag,
+                kind,
+                &AssetBacking::Volatile,
+            ) {
+                return 0;
+            }
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return 0;
             };
@@ -400,7 +594,7 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 if let Ok((_, w, h)) = &result {
                     log_host_decode_image(*w, *h, data_len, &probe);
                 }
-                // Write-at-decode, off the render thread; wake restores from it.
+                // Write-at-decode, off the render thread; render preflight restores from it.
                 let cache_write = if let (Ok((rgba, w, h)), Some(cache)) = (&result, &cache) {
                     let mut meta = Vec::with_capacity(8 + identity.len());
                     meta.extend_from_slice(&w.to_le_bytes());

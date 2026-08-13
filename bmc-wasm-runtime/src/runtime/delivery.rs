@@ -30,7 +30,7 @@ use bmc_wasm_protocol::{
 use std::ptr::NonNull;
 use std::time::Duration;
 
-use bmc_render::renderer::Renderer;
+use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
 
 #[cfg(feature = "testing")]
 use crate::host_api::CapturedMdnsEvent;
@@ -260,8 +260,8 @@ impl WasmWidgetRuntime {
         }
     }
 
-    /// Upload completed off-thread image decodes and notify
-    /// the guest via `__on_image_ready`.
+    /// Register completed off-thread image decodes and notify the guest via
+    /// `__on_image_ready`. Cache-backed pixels upload when a tree references them.
     /// A renderer-less poll stages completed work until a renderer is available.
     pub fn deliver_image_decode_results(&mut self) {
         let state = self.store.data_mut();
@@ -306,8 +306,8 @@ impl WasmWidgetRuntime {
                     crate::renderer_assets::AssetBacking::Volatile
                 }
             };
-            let skip_dormant_upload =
-                dormant && !matches!(&backing, crate::renderer_assets::AssetBacking::Cache(_));
+            let cache_backed = matches!(&backing, crate::renderer_assets::AssetBacking::Cache(_));
+            let skip_dormant_upload = dormant && !cache_backed;
             let bitmap_id = match done.result {
                 Ok(_) if skip_dormant_upload => 0,
                 Ok((rgba, w, h)) => {
@@ -317,9 +317,11 @@ impl WasmWidgetRuntime {
                         .map_or(0, BitmapId::to_ffi);
                     let upload_us =
                         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                    self.store
-                        .data_mut()
-                        .add_profile_us("image_upload_us", upload_us);
+                    if !cache_backed {
+                        self.store
+                            .data_mut()
+                            .add_profile_us("image_upload_us", upload_us);
+                    }
                     id
                 }
                 Err(e) => {
@@ -364,7 +366,7 @@ impl WasmWidgetRuntime {
         if !self
             .store
             .data()
-            .renderer_asset_decode_matches(raw_tag, kind)
+            .renderer_asset_registration_matches(raw_tag, kind, &backing)
         {
             return None;
         }
@@ -372,22 +374,41 @@ impl WasmWidgetRuntime {
         // SAFETY: parked by `WasmWidgetRuntime::with_renderer` on this thread;
         // single-threaded wasmi dispatch means no other `&mut Renderer` is live.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-        let id = if self.store.data().renderer_assets_are_dormant()
-            && matches!(backing, crate::renderer_assets::AssetBacking::Cache(_))
-        {
-            renderer.reserve_bitmap(tag)
+        let cache_backed = matches!(backing, crate::renderer_assets::AssetBacking::Cache(_));
+        let id = if cache_backed {
+            let id = renderer.reserve_bitmap(tag)?;
+            match renderer.bitmap_tag_state(tag) {
+                AssetTagState::Resident(resident) if resident == id => {
+                    if !matches!(
+                        renderer.suspend_bitmap(tag),
+                        AssetSuspendResult::Suspended(suspended) if suspended == id
+                    ) {
+                        return None;
+                    }
+                }
+                AssetTagState::Suspended(suspended) if suspended == id => {}
+                AssetTagState::Resident(_)
+                | AssetTagState::Suspended(_)
+                | AssetTagState::Unknown => {
+                    return None;
+                }
+            }
+            Some(id)
         } else {
             renderer.register_bitmap_rgba(tag, rgba, width, height)
         }?;
-        self.store
-            .data_mut()
-            .record_renderer_asset(
-                raw_tag.to_owned(),
-                kind,
-                crate::renderer_assets::RendererAssetId::Bitmap(id),
-                backing,
-            )
-            .then_some(id)
+        self.store.data_mut().mark_renderer_accessed();
+        let asset_id = crate::renderer_assets::RendererAssetId::Bitmap(id);
+        let recorded = self.store.data_mut().record_renderer_asset(
+            raw_tag.to_owned(),
+            kind,
+            asset_id,
+            backing,
+        );
+        if recorded && cache_backed {
+            self.store.data_mut().renderer_assets.mark_pending(raw_tag);
+        }
+        recorded.then_some(id)
     }
 
     /// Whether there are pending or in-flight fetches that need polling.

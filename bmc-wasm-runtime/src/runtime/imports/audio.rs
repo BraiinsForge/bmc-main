@@ -21,7 +21,7 @@
 //! Audio sample registration and playback guest imports.
 
 use anyhow::Result;
-use bmc_wasm_protocol::AudioId;
+use bmc_wasm_protocol::{AudioId, PackageAssetKind};
 use wasmi::{Caller, Linker};
 
 use crate::host_api::{FixtureEvent, FixtureEventKind, HostState};
@@ -30,6 +30,7 @@ use super::super::memory::{read_bytes, read_string};
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_register_audio_import(linker)?;
+    register_package_audio_import(linker)?;
     register_audio_play_import(linker)?;
     register_audio_stop_import(linker)?;
     Ok(())
@@ -51,31 +52,75 @@ fn register_register_audio_import(linker: &mut Linker<HostState>) -> Result<()> 
             let name =
                 read_string(&caller, name_ptr, name_len).unwrap_or_else(|| "unknown".to_owned());
             let name = caller.data().namespaced_tag(&name);
-
-            if let Some(id) = caller.data().audio.get_by_tag(&name) {
-                return id.to_wire().into();
-            }
-
-            #[cfg(feature = "audio")]
-            let duration_ms = {
-                use rodio::Source as _;
-                let cursor = std::io::Cursor::new(data.clone());
-                rodio::Decoder::new(cursor)
-                    .ok()
-                    .and_then(|d| d.total_duration())
-                    .map_or(0, |d| u32::try_from(d.as_millis()).unwrap_or(u32::MAX))
-            };
-            #[cfg(not(feature = "audio"))]
-            let duration_ms = 0_u32;
-
-            let id = caller
-                .data_mut()
-                .audio
-                .register(name, data.into(), duration_ms);
-            id.to_wire().into()
+            register_audio_data(caller.data_mut(), name, data)
         },
     )?;
     Ok(())
+}
+
+fn register_package_audio_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_register_audio_package",
+        |mut caller: Caller<'_, HostState>, name_ptr: u32, name_len: u32, reference_ptr: u32|
+         -> Result<u32, wasmi::Error> {
+            let Some(name) = read_string(&caller, name_ptr, name_len) else {
+                return Ok(0);
+            };
+            let Some(package_id) =
+                super::read_package_ref(&caller, reference_ptr, PackageAssetKind::Audio)
+            else {
+                return Ok(0);
+            };
+            let name = caller.data().namespaced_tag(&name);
+            if let Some(id) = caller.data().audio.get_by_tag(&name) {
+                return Ok(id.to_wire().into());
+            }
+            let Some(store) = caller.data().package_assets.as_ref() else {
+                return Err(wasmi::Error::new(format!(
+                    "widget {} package audio `{name}` ({package_id}) cannot load: package asset store is unavailable",
+                    caller.data().instance_id,
+                )));
+            };
+            let data = match store.load(PackageAssetKind::Audio, package_id) {
+                Ok(data) => data,
+                Err(error) => {
+                    return Err(wasmi::Error::new(format!(
+                        "widget {} package audio `{name}` ({package_id}) cannot load: {error}",
+                        caller.data().instance_id,
+                    )));
+                }
+            };
+            Ok(register_audio_data(caller.data_mut(), name, data))
+        },
+    )?;
+    Ok(())
+}
+
+fn register_audio_data(state: &mut HostState, name: String, data: Vec<u8>) -> u32 {
+    if let Some(id) = state.audio.get_by_tag(&name) {
+        return id.to_wire().into();
+    }
+
+    #[cfg(feature = "audio")]
+    let duration_ms = {
+        use rodio::Source as _;
+        let cursor = std::io::Cursor::new(data.clone());
+        rodio::Decoder::new(cursor)
+            .ok()
+            .and_then(|decoder| decoder.total_duration())
+            .map_or(0, |duration| {
+                u32::try_from(duration.as_millis()).unwrap_or(u32::MAX)
+            })
+    };
+    #[cfg(not(feature = "audio"))]
+    let duration_ms = 0_u32;
+
+    state
+        .audio
+        .register(name, data.into(), duration_ms)
+        .to_wire()
+        .into()
 }
 
 fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {

@@ -18,17 +18,29 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail, ensure};
+use bmc_wasm_protocol::{
+    PACKAGE_ASSET_RECORD_MAGIC, PACKAGE_ASSET_REF_LEN, PACKAGE_ASSET_REF_MAGIC, PackageAssetId,
+    PackageAssetKind, PackageAssetRef,
+};
 use tempfile::{Builder, NamedTempFile};
+use walkdir::WalkDir;
+use wasmparser::{Parser, Payload};
 
+use crate::record::parse_record;
 use crate::{RecordRef, contains_package_asset_section, rewrite_package_asset_sections};
 
-pub fn extract_package_assets(input: &Path, wasm_output: &Path, asset_root: &Path) -> Result<()> {
+pub fn extract_package_assets(
+    input: &Path,
+    artifact_root: Option<&Path>,
+    wasm_output: &Path,
+    asset_root: &Path,
+) -> Result<()> {
     ensure!(
         input != wasm_output,
         "input and stripped WebAssembly output must differ"
@@ -50,7 +62,14 @@ pub fn extract_package_assets(input: &Path, wasm_output: &Path, asset_root: &Pat
         !contains_package_asset_section(&rewritten.wasm)?,
         "stripped WebAssembly validation failed"
     );
-    let unique = deduplicate_records(&rewritten.records)?;
+    let references = package_asset_references(&rewritten.wasm)?;
+    let mut candidates = BTreeMap::new();
+    add_records(&mut candidates, rewritten.records.iter())?;
+    if let Some(artifact_root) = artifact_root {
+        add_artifact_records(&mut candidates, artifact_root)?;
+    }
+    let selected = select_referenced_records(&references, &candidates)?;
+    ensure_payloads_absent_from_linear_memory(&rewritten.wasm, selected.values())?;
 
     let asset_parent = asset_root
         .parent()
@@ -67,7 +86,7 @@ pub fn extract_package_assets(input: &Path, wasm_output: &Path, asset_root: &Pat
         .prefix(".bmc-assets-")
         .tempdir_in(asset_parent)
         .context("create temporary asset directory")?;
-    write_assets(asset_stage.path(), unique.values().copied())?;
+    write_assets(asset_stage.path(), selected.values())?;
 
     let mut wasm_stage =
         NamedTempFile::new_in(wasm_parent).context("create temporary stripped WebAssembly file")?;
@@ -89,26 +108,164 @@ pub fn extract_package_assets(input: &Path, wasm_output: &Path, asset_root: &Pat
     Ok(())
 }
 
-fn deduplicate_records<'a>(
-    records: &'a [RecordRef<'a>],
-) -> Result<BTreeMap<(u8, bmc_wasm_protocol::PackageAssetId), &'a RecordRef<'a>>> {
-    let mut unique = BTreeMap::new();
+#[derive(Clone, Debug)]
+struct OwnedRecord {
+    kind: PackageAssetKind,
+    id: PackageAssetId,
+    payload: Vec<u8>,
+}
+
+fn add_records<'a>(
+    candidates: &mut BTreeMap<(u8, PackageAssetId), OwnedRecord>,
+    records: impl Iterator<Item = &'a RecordRef<'a>>,
+) -> Result<()> {
     for record in records {
         let key = (record.kind.to_wire(), record.id);
-        if let Some(previous) = unique.insert(key, record)
-            && previous.payload != record.payload
+        if let Some(previous) = candidates.get(&key) {
+            ensure!(
+                previous.payload == record.payload,
+                "conflicting package asset payloads for {}/{}",
+                record.kind.as_str(),
+                record.id
+            );
+        } else {
+            candidates.insert(
+                key,
+                OwnedRecord {
+                    kind: record.kind,
+                    id: record.id,
+                    payload: record.payload.to_vec(),
+                },
+            );
+        }
+    }
+    Ok(())
+}
+
+fn add_artifact_records(
+    candidates: &mut BTreeMap<(u8, PackageAssetId), OwnedRecord>,
+    artifact_root: &Path,
+) -> Result<()> {
+    ensure!(
+        artifact_root.is_dir(),
+        "package asset artifact root is not a directory: {}",
+        artifact_root.display()
+    );
+    for entry in WalkDir::new(artifact_root).follow_links(false) {
+        let entry = entry.with_context(|| {
+            format!(
+                "walk package asset artifact root {}",
+                artifact_root.display()
+            )
+        })?;
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("rlib")
+        {
+            continue;
+        }
+        let bytes = fs::read(entry.path())
+            .with_context(|| format!("read package asset artifact {}", entry.path().display()))?;
+        let mut offset = 0;
+        while let Some(relative) = bytes[offset..]
+            .windows(PACKAGE_ASSET_RECORD_MAGIC.len())
+            .position(|window| window == PACKAGE_ASSET_RECORD_MAGIC)
+        {
+            let record_offset = offset + relative;
+            match parse_record(&bytes[record_offset..]) {
+                Ok((record, consumed)) => {
+                    add_records(candidates, std::iter::once(&record))?;
+                    offset = record_offset + consumed;
+                }
+                Err(_) => offset = record_offset + 1,
+            }
+        }
+    }
+    Ok(())
+}
+
+fn package_asset_references(wasm: &[u8]) -> Result<BTreeSet<(u8, PackageAssetId)>> {
+    let mut references = BTreeSet::new();
+    for payload in Parser::new(0).parse_all(wasm) {
+        if let Payload::DataSection(reader) = payload.context("parse WebAssembly module")? {
+            for data in reader {
+                let data = data.context("parse WebAssembly data segment")?;
+                for offset in data
+                    .data
+                    .windows(PACKAGE_ASSET_REF_MAGIC.len())
+                    .enumerate()
+                    .filter_map(|(offset, window)| {
+                        (window == PACKAGE_ASSET_REF_MAGIC).then_some(offset)
+                    })
+                {
+                    let Some(bytes) = data.data.get(offset..offset + PACKAGE_ASSET_REF_LEN) else {
+                        continue;
+                    };
+                    let Ok(package_ref) = PackageAssetRef::try_from(bytes) else {
+                        continue;
+                    };
+                    references.insert((package_ref.kind().to_wire(), package_ref.id()));
+                }
+            }
+        }
+    }
+    Ok(references)
+}
+
+fn select_referenced_records(
+    references: &BTreeSet<(u8, PackageAssetId)>,
+    candidates: &BTreeMap<(u8, PackageAssetId), OwnedRecord>,
+) -> Result<BTreeMap<(u8, PackageAssetId), OwnedRecord>> {
+    let mut selected = BTreeMap::new();
+    for key @ (kind, id) in references {
+        let Some(record) = candidates.get(key) else {
+            let kind = PackageAssetKind::from_wire(*kind)
+                .expect("BUG: package reference parser accepts only known kinds");
+            bail!(
+                "linked WebAssembly references missing package asset {}/{}",
+                kind.as_str(),
+                id
+            );
+        };
+        selected.insert(*key, record.clone());
+    }
+    Ok(selected)
+}
+
+fn ensure_payloads_absent_from_linear_memory<'a>(
+    wasm: &[u8],
+    records: impl Iterator<Item = &'a OwnedRecord>,
+) -> Result<()> {
+    let mut segments = Vec::new();
+    for payload in Parser::new(0).parse_all(wasm) {
+        if let Payload::DataSection(reader) = payload.context("parse WebAssembly module")? {
+            for data in reader {
+                segments.push(
+                    data.context("parse WebAssembly data segment")?
+                        .data
+                        .to_vec(),
+                );
+            }
+        }
+    }
+    for record in records {
+        if !record.payload.is_empty()
+            && segments.iter().any(|segment| {
+                segment
+                    .windows(record.payload.len())
+                    .any(|window| window == record.payload)
+            })
         {
             bail!(
-                "conflicting package asset payloads for {}/{}",
+                "package asset payload {}/{} remains in WebAssembly linear memory",
                 record.kind.as_str(),
                 record.id
             );
         }
     }
-    Ok(unique)
+    Ok(())
 }
 
-fn write_assets<'a>(root: &Path, records: impl Iterator<Item = &'a RecordRef<'a>>) -> Result<()> {
+fn write_assets<'a>(root: &Path, records: impl Iterator<Item = &'a OwnedRecord>) -> Result<()> {
     for record in records {
         let directory = root.join("v1").join(record.kind.as_str());
         fs::create_dir_all(&directory)
@@ -119,7 +276,7 @@ fn write_assets<'a>(root: &Path, records: impl Iterator<Item = &'a RecordRef<'a>
             .create_new(true)
             .open(&path)
             .with_context(|| format!("create package asset {}", path.display()))?;
-        file.write_all(record.payload)
+        file.write_all(&record.payload)
             .with_context(|| format!("write package asset {}", path.display()))?;
     }
     Ok(())

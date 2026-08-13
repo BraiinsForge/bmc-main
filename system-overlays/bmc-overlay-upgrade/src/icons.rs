@@ -37,8 +37,11 @@ pub struct UpgradeIcons {
 
 #[must_use]
 pub fn register_icons(renderer: &mut dyn Renderer) -> UpgradeIcons {
-    let mut register =
-        |icon: &Svg| register_icon(icon.name, || renderer.register_svg(icon.name, icon.data));
+    let mut register = |icon: &Svg| {
+        register_icon(icon.name, || {
+            renderer.register_svg(icon.name, icon.source.data())
+        })
+    };
     UpgradeIcons {
         tools: register(&TOOLS),
         checkmark: register(&CHECKMARK),

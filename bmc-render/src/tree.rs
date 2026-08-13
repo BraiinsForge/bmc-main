@@ -27,6 +27,7 @@
 )]
 #![allow(clippy::wildcard_imports)]
 
+use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use anyhow::{Result, bail};
@@ -401,6 +402,396 @@ pub enum TreeNode {
         bg_color: Color,
         skin: Option<SliderSkinData>,
     },
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct RendererAssetReferences {
+    svgs: HashSet<SvgId>,
+    bitmaps: HashSet<BitmapId>,
+    meshes: HashSet<MeshId>,
+}
+
+impl RendererAssetReferences {
+    #[must_use]
+    pub fn contains_svg(&self, id: SvgId) -> bool {
+        self.svgs.contains(&id)
+    }
+
+    #[must_use]
+    pub fn contains_bitmap(&self, id: BitmapId) -> bool {
+        self.bitmaps.contains(&id)
+    }
+
+    #[must_use]
+    pub fn contains_mesh(&self, id: MeshId) -> bool {
+        self.meshes.contains(&id)
+    }
+
+    #[expect(
+        clippy::unneeded_field_pattern,
+        reason = "explicit fields make new asset-bearing fields fail compilation"
+    )]
+    fn collect_props(&mut self, props: &PropsData) {
+        let PropsData {
+            padding: _,
+            margin: _,
+            gap: _,
+            background: _,
+            width: _,
+            height: _,
+            flex: _,
+            max_width: _,
+            max_height: _,
+            cross_align: _,
+            justify_content: _,
+            wrap: _,
+            bg_np_id,
+            bg_np_left: _,
+            bg_np_top: _,
+            bg_np_right: _,
+            bg_np_bottom: _,
+            inset_top: _,
+            inset_right: _,
+            inset_bottom: _,
+            inset_left: _,
+            border_radius: _,
+            border_width: _,
+            border_color: _,
+        } = props;
+        self.bitmaps.extend(*bg_np_id);
+    }
+
+    #[expect(
+        clippy::unneeded_field_pattern,
+        reason = "explicit fields make new asset-bearing fields fail compilation"
+    )]
+    fn collect_nine_patch(&mut self, nine_patch: &NinePatchData) {
+        let NinePatchData {
+            bitmap_id,
+            left: _,
+            top: _,
+            right: _,
+            bottom: _,
+        } = nine_patch;
+        self.bitmaps.extend(*bitmap_id);
+    }
+
+    #[expect(
+        clippy::unneeded_field_pattern,
+        reason = "explicit fields make new asset-bearing fields fail compilation"
+    )]
+    fn collect_button_skin(&mut self, skin: &ButtonSkinData) {
+        let ButtonSkinData {
+            normal,
+            pressed,
+            text_color: _,
+            pressed_text_color: _,
+            opaque: _,
+        } = skin;
+        self.collect_nine_patch(normal);
+        if let Some(pressed) = pressed {
+            self.collect_nine_patch(pressed);
+        }
+    }
+
+    #[expect(
+        clippy::unneeded_field_pattern,
+        reason = "explicit fields make new asset-bearing fields fail compilation"
+    )]
+    fn collect_slider_skin(&mut self, skin: &SliderSkinData) {
+        let SliderSkinData {
+            track,
+            track_h: _,
+            thumb_id,
+            thumb_w: _,
+            thumb_h: _,
+            thumb_pressed_id,
+        } = skin;
+        self.collect_nine_patch(track);
+        self.bitmaps.extend(*thumb_id);
+        self.bitmaps.extend(*thumb_pressed_id);
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        clippy::unneeded_field_pattern,
+        reason = "explicit fields make new asset-bearing fields fail compilation"
+    )]
+    fn collect_draw(&mut self, draw: &DrawCommand) {
+        match draw {
+            DrawCommand::Centered { inner }
+            | DrawCommand::Orbit {
+                radius: _,
+                angle: _,
+                inner,
+            }
+            | DrawCommand::Rotated { angle: _, inner }
+            | DrawCommand::Shadow {
+                dx: _,
+                dy: _,
+                blur: _,
+                color: _,
+                inner,
+            }
+            | DrawCommand::Modified {
+                animations: _,
+                transition: _,
+                color_space: _,
+                inner,
+            } => self.collect_draw(inner),
+            DrawCommand::Svg {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                color: _,
+                icon_id,
+                anti_alias: _,
+                fills: _,
+            } => self.svgs.extend(*icon_id),
+            DrawCommand::Bitmap {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                bitmap_id,
+            }
+            | DrawCommand::Sphere {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                bitmap_id,
+                atmosphere: _,
+                center_lat: _,
+                center_lon: _,
+                zoom: _,
+                light_lat: _,
+                light_lon: _,
+            }
+            | DrawCommand::NinePatch {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                bitmap_id,
+                left: _,
+                top: _,
+                right: _,
+                bottom: _,
+            } => self.bitmaps.extend(*bitmap_id),
+            DrawCommand::Mesh {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                mesh_id,
+                args: _,
+            } => {
+                self.meshes.extend(*mesh_id);
+            }
+            DrawCommand::Rect {
+                x: _,
+                y: _,
+                w: _,
+                h: _,
+                fill: _,
+            }
+            | DrawCommand::Circle {
+                cx: _,
+                cy: _,
+                r: _,
+                fill: _,
+            }
+            | DrawCommand::Arc {
+                cx: _,
+                cy: _,
+                radius: _,
+                start_angle: _,
+                end_angle: _,
+                width: _,
+                fill: _,
+                segments: _,
+                cap: _,
+            }
+            | DrawCommand::Qr {
+                x: _,
+                y: _,
+                size: _,
+                dark: _,
+                light: _,
+                quiet_zone: _,
+                text: _,
+            }
+            | DrawCommand::Path {
+                points: _,
+                paint: _,
+                closed: _,
+                smooth: _,
+            }
+            | DrawCommand::Text {
+                x: _,
+                y: _,
+                text: _,
+                style: _,
+            }
+            | DrawCommand::CurvedText {
+                cx: _,
+                cy: _,
+                radius: _,
+                angle: _,
+                anchor: _,
+                facing: _,
+                text: _,
+                style: _,
+            }
+            | DrawCommand::AutofitText {
+                x: _,
+                y: _,
+                box_width: _,
+                box_height: _,
+                mode: _,
+                min_size: _,
+                max_size: _,
+                text: _,
+                style: _,
+            } => {}
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        clippy::unneeded_field_pattern,
+        reason = "explicit fields make new asset-bearing fields fail compilation"
+    )]
+    fn collect_node(&mut self, node: &TreeNode) {
+        match node {
+            TreeNode::Column(props, children)
+            | TreeNode::Row(props, children)
+            | TreeNode::Center(props, children)
+            | TreeNode::Scroll {
+                scroll_key: _,
+                props,
+                children,
+            } => {
+                self.collect_props(props);
+                for child in children {
+                    self.collect_node(child);
+                }
+            }
+            TreeNode::Paragraph {
+                props,
+                base_style: _,
+                spans: _,
+            } => self.collect_props(props),
+            TreeNode::Button {
+                id: _,
+                label: _,
+                style: _,
+                size: _,
+                icon_id,
+                disabled: _,
+                stretch: _,
+                skin,
+            } => {
+                self.svgs.extend(*icon_id);
+                if let Some(skin) = skin {
+                    self.collect_button_skin(skin);
+                }
+            }
+            TreeNode::Spacer { flex: _ }
+            | TreeNode::Notification {
+                kind: _,
+                title: _,
+                subtitle: _,
+            }
+            | TreeNode::RelTime {
+                anchor: _,
+                format: _,
+                clamp: _,
+                style: _,
+            }
+            | TreeNode::Skeleton(SkeletonData {
+                kind: _,
+                chars: _,
+                font_size: _,
+                width: _,
+                height: _,
+                color: _,
+            }) => {}
+            TreeNode::Canvas {
+                props,
+                touch_key: _,
+                draws,
+            } => {
+                self.collect_props(props);
+                for draw in draws {
+                    self.collect_draw(draw);
+                }
+            }
+            TreeNode::Tag {
+                kind: _,
+                icon,
+                content,
+            } => {
+                self.svgs.extend(*icon);
+                self.collect_node(content);
+            }
+            TreeNode::Switcher {
+                active: _,
+                disabled: _,
+                tabs,
+            } => {
+                self.svgs.extend(tabs.iter().filter_map(|tab| tab.icon));
+            }
+            TreeNode::Modal {
+                modal_id: _,
+                is_open: _,
+                padding: _,
+                backdrop_alpha: _,
+                title: _,
+                content_height: _,
+                bg_color: _,
+                header_color: _,
+                title_color: _,
+                max_width: _,
+                body,
+                footer_primary_key: _,
+                footer_primary_label: _,
+                footer_secondary_key: _,
+                footer_secondary_label: _,
+                footer_danger: _,
+            } => {
+                for child in body {
+                    self.collect_node(child);
+                }
+            }
+            TreeNode::ProgressBar {
+                touch_key: _,
+                track_h: _,
+                mode: _,
+                fraction: _,
+                active: _,
+                fill_color: _,
+                track_color: _,
+                bg_color: _,
+                skin,
+            } => {
+                if let Some(skin) = skin {
+                    self.collect_slider_skin(skin);
+                }
+            }
+        }
+    }
+}
+
+impl TreeNode {
+    #[must_use]
+    pub fn renderer_asset_references(&self) -> RendererAssetReferences {
+        let mut references = RendererAssetReferences::default();
+        references.collect_node(self);
+        references
+    }
 }
 
 /// Column layout.
@@ -1630,7 +2021,6 @@ pub struct SliderSkinData {
     pub(crate) thumb_id: Option<BitmapId>,
     pub(crate) thumb_w: u16,
     pub(crate) thumb_h: u16,
-    #[expect(dead_code)] // used when touch-pressed state rendering is added
     pub(crate) thumb_pressed_id: Option<BitmapId>,
 }
 
@@ -2878,6 +3268,229 @@ fn inset_from_props(props: &PropsData) -> taffy::Rect<LengthPercentageAuto> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn mesh_draw_args() -> MeshDrawArgs {
+        MeshDrawArgs {
+            transform: MeshTransform {
+                fov: 0.0,
+                distance: 0.0,
+                quat: [0.0; 4],
+                position: [0.0; 3],
+                scale: 0.0,
+            },
+            lighting: MeshLighting {
+                pitch: f32::NAN,
+                yaw: 0.0,
+                ambient: 0.0,
+                specular: 0.0,
+            },
+            highlight: MeshHighlight {
+                u_min: f32::NAN,
+                v_min: 0.0,
+                u_max: 0.0,
+                v_max: 0.0,
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one tree must cover nested nodes, chrome, and wrapped draw commands"
+    )]
+    fn renderer_asset_references_cover_nested_draws_chrome_and_children() {
+        let svg_a = SvgId::from_wire(1).expect("BUG: fixture SVG ID must be non-zero");
+        let svg_b = SvgId::from_wire(2).expect("BUG: fixture SVG ID must be non-zero");
+        let svg_c = SvgId::from_wire(3).expect("BUG: fixture SVG ID must be non-zero");
+        let bitmap_a = BitmapId::from_wire(1).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_b = BitmapId::from_wire(2).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_c = BitmapId::from_wire(3).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_d = BitmapId::from_wire(4).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_e = BitmapId::from_wire(5).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_f = BitmapId::from_wire(6).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_g = BitmapId::from_wire(7).expect("BUG: fixture bitmap ID must be non-zero");
+        let bitmap_h = BitmapId::from_wire(8).expect("BUG: fixture bitmap ID must be non-zero");
+        let mesh = MeshId::from_wire(1).expect("BUG: fixture mesh ID must be non-zero");
+        let tree = TreeNode::Column(
+            PropsData {
+                bg_np_id: Some(bitmap_a),
+                ..PropsData::default()
+            },
+            vec![
+                TreeNode::Button {
+                    id: "button".to_owned(),
+                    label: "Button".to_owned(),
+                    style: 0,
+                    size: 0,
+                    icon_id: Some(svg_a),
+                    disabled: false,
+                    stretch: false,
+                    skin: Some(ButtonSkinData {
+                        normal: NinePatchData {
+                            bitmap_id: Some(bitmap_b),
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        },
+                        pressed: Some(NinePatchData {
+                            bitmap_id: Some(bitmap_d),
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        }),
+                        text_color: WHITE,
+                        pressed_text_color: WHITE,
+                        opaque: false,
+                    }),
+                },
+                TreeNode::Canvas {
+                    props: PropsData::default(),
+                    touch_key: None,
+                    draws: vec![
+                        DrawCommand::Shadow {
+                            dx: 0.0,
+                            dy: 0.0,
+                            blur: 0.0,
+                            color: WHITE,
+                            inner: Box::new(DrawCommand::Svg {
+                                x: 0.0,
+                                y: 0.0,
+                                w: 1.0,
+                                h: 1.0,
+                                color: WHITE,
+                                icon_id: Some(svg_b),
+                                anti_alias: false,
+                                fills: Vec::new(),
+                            }),
+                        },
+                        DrawCommand::Bitmap {
+                            x: 0.0,
+                            y: 0.0,
+                            w: 1.0,
+                            h: 1.0,
+                            bitmap_id: Some(bitmap_c),
+                        },
+                        DrawCommand::Sphere {
+                            x: 0.0,
+                            y: 0.0,
+                            w: 1.0,
+                            h: 1.0,
+                            bitmap_id: Some(bitmap_e),
+                            atmosphere: false,
+                            center_lat: 0.0,
+                            center_lon: 0.0,
+                            zoom: 1.0,
+                            light_lat: 0.0,
+                            light_lon: 0.0,
+                        },
+                        DrawCommand::NinePatch {
+                            x: 0.0,
+                            y: 0.0,
+                            w: 1.0,
+                            h: 1.0,
+                            bitmap_id: Some(bitmap_f),
+                            left: 0,
+                            top: 0,
+                            right: 0,
+                            bottom: 0,
+                        },
+                        DrawCommand::Mesh {
+                            x: 0.0,
+                            y: 0.0,
+                            w: 1.0,
+                            h: 1.0,
+                            mesh_id: Some(mesh),
+                            args: mesh_draw_args(),
+                        },
+                    ],
+                },
+                TreeNode::Tag {
+                    kind: TagKind::Info,
+                    icon: Some(svg_a),
+                    content: Box::new(TreeNode::ProgressBar {
+                        touch_key: None,
+                        track_h: 0.0,
+                        mode: ProgressKind::Meter,
+                        fraction: 0.0,
+                        active: false,
+                        fill_color: WHITE,
+                        track_color: WHITE,
+                        bg_color: WHITE,
+                        skin: Some(SliderSkinData {
+                            track: NinePatchData {
+                                bitmap_id: Some(bitmap_a),
+                                left: 0,
+                                top: 0,
+                                right: 0,
+                                bottom: 0,
+                            },
+                            track_h: 0,
+                            thumb_id: Some(bitmap_b),
+                            thumb_w: 0,
+                            thumb_h: 0,
+                            thumb_pressed_id: Some(bitmap_c),
+                        }),
+                    }),
+                },
+                TreeNode::Switcher {
+                    active: 0,
+                    disabled: false,
+                    tabs: vec![SwitcherTabData {
+                        icon: Some(svg_c),
+                        click_id: "tab".to_owned(),
+                    }],
+                },
+                TreeNode::Modal {
+                    modal_id: "modal".to_owned(),
+                    is_open: true,
+                    padding: 0,
+                    backdrop_alpha: 0,
+                    title: String::new(),
+                    content_height: 0.0,
+                    bg_color: WHITE,
+                    header_color: WHITE,
+                    title_color: WHITE,
+                    max_width: 0,
+                    body: vec![TreeNode::Scroll {
+                        scroll_key: "scroll".to_owned(),
+                        props: PropsData {
+                            bg_np_id: Some(bitmap_g),
+                            ..PropsData::default()
+                        },
+                        children: vec![TreeNode::Paragraph {
+                            props: PropsData {
+                                bg_np_id: Some(bitmap_h),
+                                ..PropsData::default()
+                            },
+                            base_style: TextStyle::default(),
+                            spans: Vec::new(),
+                        }],
+                    }],
+                    footer_primary_key: String::new(),
+                    footer_primary_label: String::new(),
+                    footer_secondary_key: String::new(),
+                    footer_secondary_label: String::new(),
+                    footer_danger: false,
+                },
+            ],
+        );
+
+        let references = tree.renderer_asset_references();
+
+        assert_eq!(references.svgs, HashSet::from([svg_a, svg_b, svg_c]));
+        assert_eq!(
+            references.bitmaps,
+            HashSet::from([
+                bitmap_a, bitmap_b, bitmap_c, bitmap_d, bitmap_e, bitmap_f, bitmap_g, bitmap_h,
+            ])
+        );
+        assert_eq!(references.meshes, HashSet::from([mesh]));
+    }
 
     fn span(text: &str) -> SpanData {
         SpanData {

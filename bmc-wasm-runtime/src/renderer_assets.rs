@@ -20,7 +20,9 @@
 
 use std::collections::BTreeMap;
 
-use bmc_wasm_protocol::{BitmapId, BitmapSampling, MeshId, SvgId};
+use bmc_wasm_protocol::{BitmapId, BitmapSampling, MeshId, PackageAssetId, SvgId};
+
+use bmc_render::tree::RendererAssetReferences;
 
 pub(crate) fn cached_bitmap_dimensions(blob: &crate::disk_cache::CachedBlob) -> Option<(u32, u32)> {
     let metadata = blob.metadata();
@@ -35,6 +37,7 @@ pub(crate) fn cached_bitmap_dimensions(blob: &crate::disk_cache::CachedBlob) -> 
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum AssetBacking {
+    Package(PackageAssetId),
     Cache(String),
     Volatile,
 }
@@ -42,6 +45,15 @@ pub(crate) enum AssetBacking {
 impl AssetBacking {
     pub(crate) fn is_restorable(&self) -> bool {
         !matches!(self, Self::Volatile)
+    }
+
+    pub(crate) fn can_transition_to(&self, next: &Self) -> bool {
+        self == next
+            || matches!(
+                (self, next),
+                (Self::Volatile, Self::Cache(_))
+                    | (Self::Cache(_), Self::Volatile | Self::Cache(_))
+            )
     }
 }
 
@@ -64,6 +76,14 @@ pub(crate) struct RendererAssetRecord {
     pub(crate) kind: RendererAssetKind,
     pub(crate) id: RendererAssetId,
     pub(crate) backing: AssetBacking,
+    pub(crate) demand_restoration: DemandRestoration,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum DemandRestoration {
+    Pending,
+    Resident,
+    Unavailable,
 }
 
 #[derive(Debug, Default)]
@@ -79,12 +99,18 @@ impl RendererAssetLedger {
     pub(crate) fn record(
         &mut self,
         tag: String,
-        record: RendererAssetRecord,
+        mut record: RendererAssetRecord,
     ) -> Result<(), RendererAssetRecord> {
-        if let Some(existing) = self.records.get(&tag)
-            && (existing.kind != record.kind || existing.id != record.id)
-        {
-            return Err(record);
+        if let Some(existing) = self.records.get(&tag) {
+            if existing.kind != record.kind || existing.id != record.id {
+                return Err(record);
+            }
+            record.demand_restoration = match (existing.demand_restoration, &record.backing) {
+                (DemandRestoration::Unavailable, AssetBacking::Cache(_)) => {
+                    DemandRestoration::Pending
+                }
+                (state, _) => state,
+            };
         }
         self.records.insert(tag, record);
         Ok(())
@@ -96,6 +122,50 @@ impl RendererAssetLedger {
             .filter(|(_, record)| record.backing.is_restorable())
             .map(|(tag, record)| (tag.clone(), record.clone()))
             .collect()
+    }
+
+    pub(crate) fn has_pending_restorable(&self) -> bool {
+        self.records.values().any(|record| {
+            record.backing.is_restorable()
+                && record.demand_restoration == DemandRestoration::Pending
+        })
+    }
+
+    pub(crate) fn restorable_referenced_by(
+        &self,
+        references: &RendererAssetReferences,
+    ) -> Vec<(String, RendererAssetRecord)> {
+        self.records
+            .iter()
+            .filter(|(_, record)| {
+                record.backing.is_restorable()
+                    && record.demand_restoration == DemandRestoration::Pending
+                    && match record.id {
+                        RendererAssetId::Svg(id) => references.contains_svg(id),
+                        RendererAssetId::Bitmap(id) => references.contains_bitmap(id),
+                        RendererAssetId::Mesh(id) => references.contains_mesh(id),
+                    }
+            })
+            .map(|(tag, record)| (tag.clone(), record.clone()))
+            .collect()
+    }
+
+    pub(crate) fn disable_restoration(&mut self, tag: &str) {
+        self.set_demand_restoration(tag, DemandRestoration::Unavailable);
+    }
+
+    pub(crate) fn mark_pending(&mut self, tag: &str) {
+        self.set_demand_restoration(tag, DemandRestoration::Pending);
+    }
+
+    pub(crate) fn mark_resident(&mut self, tag: &str) {
+        self.set_demand_restoration(tag, DemandRestoration::Resident);
+    }
+
+    fn set_demand_restoration(&mut self, tag: &str, state: DemandRestoration) {
+        if let Some(record) = self.records.get_mut(tag) {
+            record.demand_restoration = state;
+        }
     }
 
     pub(crate) fn remove_prefix(&mut self, prefix: &str) {
@@ -119,7 +189,23 @@ mod tests {
                 SvgId::from_ffi(id).expect("BUG: fixture SVG ID must be non-zero"),
             ),
             backing,
+            demand_restoration: DemandRestoration::Pending,
         }
+    }
+
+    #[test]
+    fn only_cache_and_volatile_backings_can_replace_each_other() {
+        let package = AssetBacking::Package(PackageAssetId::from_bytes([7; 32]));
+        let cache_a = AssetBacking::Cache("a".into());
+        let cache_b = AssetBacking::Cache("b".into());
+        let volatile = AssetBacking::Volatile;
+
+        assert!(package.can_transition_to(&package));
+        assert!(!package.can_transition_to(&cache_a));
+        assert!(!cache_a.can_transition_to(&package));
+        assert!(cache_a.can_transition_to(&cache_b));
+        assert!(cache_a.can_transition_to(&volatile));
+        assert!(volatile.can_transition_to(&cache_a));
     }
 
     #[test]
@@ -166,6 +252,58 @@ mod tests {
         assert_eq!(
             ledger.get("asset"),
             Some(&svg_record(1, AssetBacking::Volatile))
+        );
+    }
+
+    #[test]
+    fn repeated_registration_preserves_residency_but_cache_refill_rearms_a_miss() {
+        let mut ledger = RendererAssetLedger::default();
+        let record = svg_record(1, AssetBacking::Cache("asset".into()));
+        ledger
+            .record("asset".to_owned(), record.clone())
+            .expect("first record must be accepted");
+        assert!(ledger.has_pending_restorable());
+        ledger.mark_resident("asset");
+        assert!(!ledger.has_pending_restorable());
+        ledger
+            .record("asset".to_owned(), record.clone())
+            .expect("repeated record must be accepted");
+        assert_eq!(
+            ledger.get("asset").map(|record| record.demand_restoration),
+            Some(DemandRestoration::Resident)
+        );
+
+        ledger.disable_restoration("asset");
+        ledger
+            .record("asset".to_owned(), record)
+            .expect("cache refill must be accepted");
+        assert!(ledger.has_pending_restorable());
+        assert_eq!(
+            ledger.get("asset").map(|record| record.demand_restoration),
+            Some(DemandRestoration::Pending)
+        );
+    }
+
+    #[test]
+    fn restoration_state_updates_are_scoped_to_the_ledger_tag() {
+        let mut ledger = RendererAssetLedger::default();
+        let record = svg_record(1, AssetBacking::Cache("asset".into()));
+        ledger
+            .record("first".to_owned(), record.clone())
+            .expect("first record must be accepted");
+        ledger
+            .record("second".to_owned(), record)
+            .expect("second tag may share a renderer ID");
+
+        ledger.mark_resident("second");
+
+        assert_eq!(
+            ledger.get("first").map(|record| record.demand_restoration),
+            Some(DemandRestoration::Pending)
+        );
+        assert_eq!(
+            ledger.get("second").map(|record| record.demand_restoration),
+            Some(DemandRestoration::Resident)
         );
     }
 

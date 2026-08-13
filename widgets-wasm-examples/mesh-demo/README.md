@@ -52,7 +52,7 @@ include_mesh!("assets/D20.glb")  — proc macro at compile time
     ↓  parses glTF, validates constraints, quantizes vertices
     ↓  packs into optimized binary (10-22 bytes/vertex)
     ↓  extracts face normals from extras
-Mesh { data, face_normals }  — static, embedded in WASM binary
+Mesh { source, face_normals } — static, package-backed on WASM
     ↓  data uploaded to GPU on first use (VBO/IBO/textures)
     ↓  face_normals used by WASM for orientation math
 ```

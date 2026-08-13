@@ -24,16 +24,19 @@
 
 mod assets;
 
+use std::time::Instant;
+
 use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Linker};
 
+use bmc_render::FrameTimings;
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
 use bmc_render::tree;
 
 use crate::host_api::HostState;
 
-use super::super::backend::write_touch_hit;
+use super::super::backend::{restore_referenced_renderer_assets, write_touch_hit};
 use super::super::memory::{read_bytes, read_string};
 use super::guards::{forbid_unload, render_or_warn, require_render, warned_latch};
 
@@ -203,59 +206,83 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+fn submit_tree(
+    mut caller: Caller<'_, HostState>,
+    ptr: u32,
+    len: u32,
+    width: u32,
+    height: u32,
+) -> Result<(), wasmi::Error> {
+    require_render(&caller, "host_submit_tree")?;
+    let Some(data) = read_bytes(&caller, ptr, len) else {
+        return Ok(());
+    };
+    let w = width as f32;
+    let h = height as f32;
+    super::with_renderer_and_state(&mut caller, |renderer, state| {
+        let deserialize_started = Instant::now();
+        let tree_node = match tree::deserialize_tree(&data) {
+            Ok(tree_node) => tree_node,
+            Err(error) => {
+                tracing::error!("tree processing failed: {error}");
+                return;
+            }
+        };
+        let deserialize_us =
+            u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
+        state.last_asset_restoration = None;
+        let references = state
+            .renderer_assets
+            .has_pending_restorable()
+            .then(|| tree_node.renderer_asset_references());
+        if let Some(references) = &references
+            && !restore_referenced_renderer_assets(state, renderer, references)
+        {
+            return;
+        }
+        let delta_ms = state.delta_ms;
+        let frame_counter = state.frame_counter;
+        state.frame_counter += 1;
+        let now_unix_secs = state.system_time.timestamp();
+        let mut timings = FrameTimings {
+            deserialize_us,
+            ..FrameTimings::default()
+        };
+        let mut ctx = bmc_render::ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter,
+            delta_ms,
+            now_unix_secs,
+        };
+        match tree::layout_and_render(&tree_node, w, h, renderer, &mut timings, &mut ctx) {
+            Ok((result, has_active)) => {
+                let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
+                state.tree_clicks = result.clicks;
+                state.tree_drags = result.drags;
+                state.last_timings = timings;
+                state.frame_schedule.has_active_animations = has_active;
+                state.frame_schedule.interaction_pending = had_interaction;
+                state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
+                state.cached_tree = Some((tree_node, w, h));
+                state.cached_tree_asset_references = references;
+            }
+            Err(error) => {
+                tracing::error!("tree processing failed: {error}");
+            }
+        }
+    })
+}
+
 fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
     static TOUCH_CLICK_WARNED: std::sync::atomic::AtomicBool = warned_latch();
     static TOUCH_DRAG_WARNED: std::sync::atomic::AtomicBool = warned_latch();
 
-    linker.func_wrap(
-        "env",
-        "host_submit_tree",
-        |mut caller: Caller<'_, HostState>,
-         ptr: u32,
-         len: u32,
-         width: u32,
-         height: u32|
-         -> Result<(), wasmi::Error> {
-            require_render(&caller, "host_submit_tree")?;
-            let Some(data) = read_bytes(&caller, ptr, len) else {
-                return Ok(());
-            };
-            let w = width as f32;
-            let h = height as f32;
-            super::with_renderer_and_state(&mut caller, |renderer, state| {
-                let delta_ms = state.delta_ms;
-                let frame_counter = state.frame_counter;
-                state.frame_counter += 1;
-                let now_unix_secs = state.system_time.timestamp();
-                let mut ctx = bmc_render::ProcessContext {
-                    interaction: &mut state.interaction,
-                    modal_states: &mut state.modal_states,
-                    scroll_states: &mut state.scroll_states,
-                    animation_states: &mut state.animation_states,
-                    transition_states: &mut state.transition_states,
-                    taffy: &mut state.taffy,
-                    frame_counter,
-                    delta_ms,
-                    now_unix_secs,
-                };
-                match tree::process_tree(&data, w, h, renderer, &mut ctx) {
-                    Ok((tree_node, result, has_active, timings)) => {
-                        let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
-                        state.tree_clicks = result.clicks;
-                        state.tree_drags = result.drags;
-                        state.last_timings = timings;
-                        state.frame_schedule.has_active_animations = has_active;
-                        state.frame_schedule.interaction_pending = had_interaction;
-                        state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
-                        state.cached_tree = Some((tree_node, w, h));
-                    }
-                    Err(e) => {
-                        tracing::error!("tree processing failed: {e}");
-                    }
-                }
-            })
-        },
-    )?;
+    linker.func_wrap("env", "host_submit_tree", submit_tree)?;
 
     linker.func_wrap(
         "env",

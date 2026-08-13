@@ -17,13 +17,17 @@ const _: &[u8] = include_bytes!(concat!(
 ));
 
 #[unsafe(no_mangle)]
-pub extern "C" fn package_asset_descriptor() -> u32 {
+pub extern "C" fn package_asset_descriptor(_dependency: u32) -> *const u8 {
     #[cfg(target_arch = "wasm32")]
     {
-        return u32::from(ASSET_ID[0]) + bmc_wasm_assets_fixture_dep::descriptor_byte();
+        return if _dependency != 0 {
+            bmc_wasm_assets_fixture_dep::descriptor_ptr()
+        } else {
+            ASSET_REF.as_ptr()
+        };
     }
     #[cfg(not(target_arch = "wasm32"))]
-    0
+    core::ptr::null()
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -56,7 +56,9 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> TrayIcons {
     // renderer. Registration returning None (parse failure or ID exhaustion)
     // leaves that icon's Option unset and the slot renders empty.
     let mut reg = |icon: &Svg| -> Option<SvgId> {
-        register_icon(icon.name, || renderer.register_svg(icon.name, icon.data))
+        register_icon(icon.name, || {
+            renderer.register_svg(icon.name, icon.source.data())
+        })
     };
     TrayIcons {
         wifi: WifiIcons {

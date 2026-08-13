@@ -40,6 +40,7 @@ members = [
     "bmc-wasm-assets",
     "bmc-wasm-assets/tests/fixtures/asset-dep",
     "bmc-wasm-assets/tests/fixtures/linker-widget",
+    "bmc-wasm-assets/tests/fixtures/macro-widget",
     "bmc-wasm-assets/tests/fixtures/unused-dep",
     "bmc-wasm-host",
     "bmc-wasm-runtime",

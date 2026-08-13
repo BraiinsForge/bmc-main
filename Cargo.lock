@@ -1114,6 +1114,7 @@ version = "0.1.0"
 dependencies = [
  "bmc-render-skin",
  "bmc-svg-compiler",
+ "bmc-wasm-assets",
  "bmc-wasm-protocol",
  "gltf",
  "image",
@@ -1310,6 +1311,7 @@ dependencies = [
  "sha2",
  "tempfile",
  "thiserror 1.0.69",
+ "walkdir",
  "wasmparser 0.244.0",
 ]
 
@@ -1337,6 +1339,13 @@ dependencies = [
  "bmc-wasm-assets-fixture-dep",
  "bmc-wasm-assets-fixture-unused-dep",
  "bmc-wasm-protocol",
+]
+
+[[package]]
+name = "bmc-wasm-assets-macro-widget"
+version = "0.0.0"
+dependencies = [
+ "bmc-wasm-sdk",
 ]
 
 [[package]]

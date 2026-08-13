@@ -9,21 +9,32 @@ license = "GPL-3.0-or-later"
 [package.metadata.nix]
 include = [
     "../bmc-render/assets/panel.9.png",
-    "../bmc-render/assets/skins/storybook_slider/**",
-    "../bmc-wasm-runtime/examples/mesh-demo/assets/suzanne.glb",
-    "../bmc-wasm-runtime/examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav",
+    "../bmc-render/assets/skins/gallery_slider/**",
     "../widgets-wasm/image/assets/renew.svg",
     "../widgets-wasm/iss-position/src/render/texture.jpg",
     "../widgets-wasm/spacex-launch/assets/*.png",
+    "../widgets-wasm-examples/mesh-demo/assets/suzanne.glb",
+    "../widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav",
 ]
+
+[features]
+default = ["cli", "extractor"]
+cli = ["dep:clap", "extractor"]
+extractor = ["dep:anyhow", "dep:tempfile", "dep:walkdir", "dep:wasmparser"]
+
 [dependencies]
-anyhow.workspace = true
+anyhow = { workspace = true, optional = true }
 bmc-wasm-protocol.workspace = true
-clap.workspace = true
+clap = { workspace = true, optional = true }
 sha2.workspace = true
-tempfile.workspace = true
+tempfile = { workspace = true, optional = true }
 thiserror.workspace = true
-wasmparser.workspace = true
+walkdir = { workspace = true, optional = true }
+wasmparser = { workspace = true, optional = true }
+
+[[bin]]
+name = "bmc-wasm-assets"
+required-features = ["cli"]
 
 [dev-dependencies]
 assert_matches.workspace = true

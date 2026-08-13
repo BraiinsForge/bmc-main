@@ -11,11 +11,11 @@
 include!(concat!(env!("OUT_DIR"), "/asset_record.rs"));
 
 #[must_use]
-pub fn descriptor_byte() -> u32 {
+pub fn descriptor_ptr() -> *const u8 {
     #[cfg(target_arch = "wasm32")]
     {
-        return ASSET_ID[0] as u32;
+        return ASSET_REF.as_ptr();
     }
     #[cfg(not(target_arch = "wasm32"))]
-    0
+    core::ptr::null()
 }

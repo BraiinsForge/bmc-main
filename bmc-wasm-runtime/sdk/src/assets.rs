@@ -31,7 +31,7 @@
 
 #![cfg_attr(target_arch = "wasm32", expect(clippy::cast_sign_loss))]
 
-use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, SvgId};
+use bmc_wasm_protocol::{AudioId, BitmapId, MeshId, StaticAssetSource, SvgId};
 
 #[cfg(target_arch = "wasm32")]
 use crate::host;
@@ -46,34 +46,25 @@ type MeshRegistrar = fn(&str, &[u8]) -> Option<MeshId>;
 
 // ── Svg ─────────────────────────────────────────────────────────────
 
-/// Compiled icon data (output of `include_svg!` proc macro).
+/// Compiled icon descriptor (output of `include_svg!`).
 ///
-/// `data` is the compact binary representation of SVG paths produced at
-/// compile time. `name` is a stable, host-unique tag (typically
-/// `"<crate>::<file_stem>"`) used by the host to dedup registrations.
+/// WASM builds keep the processed paths in the widget package; native builds
+/// retain embedded bytes for storybook rendering.
 #[derive(Debug)]
 pub struct Svg {
-    pub data: &'static [u8],
+    pub source: StaticAssetSource,
     pub name: &'static str,
+    pub viewbox: (f32, f32),
 }
 
 impl Svg {
-    /// The compiled-SVG viewBox `(width, height)`, read from the binary header
-    /// emitted by `bmc-svg-compiler`: `[viewbox_w: f32 LE][viewbox_h: f32 LE]…`.
+    /// The compiled-SVG viewBox `(width, height)`.
     /// The host scales X and Y independently, so a non-square glyph must be
     /// fitted by the caller (see [`crate::Draw::svg_contain`]) or it comes out
-    /// stretched. Falls back to `(1.0, 1.0)` for a malformed or empty header.
+    /// stretched.
     #[must_use]
     pub fn viewbox(&self) -> (f32, f32) {
-        let d = self.data;
-        if d.len() >= 8 {
-            let w = f32::from_le_bytes([d[0], d[1], d[2], d[3]]);
-            let h = f32::from_le_bytes([d[4], d[5], d[6], d[7]]);
-            if w > 0.0 && h > 0.0 {
-                return (w, h);
-            }
-        }
-        (1.0, 1.0)
+        self.viewbox
     }
 }
 
@@ -98,24 +89,23 @@ pub fn init_icon_registrar(f: IconRegistrar) {
 pub fn ensure_registered(icon: &Svg) -> Option<SvgId> {
     #[cfg(target_arch = "wasm32")]
     {
-        host::register_svg(icon.name, icon.data)
+        host::register_svg_package(icon.name, icon.source.package_ref())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        icon_native::ICON_REGISTRAR.with(|r| r.borrow()(icon.name, icon.data))
+        icon_native::ICON_REGISTRAR.with(|r| r.borrow()(icon.name, icon.source.data()))
     }
 }
 
 // ── Bitmap ───────────────────────────────────────────────────────────
 
-/// Embedded raster image data (output of `include_bitmap!` proc macro).
+/// Static raster image descriptor (output of `include_bitmap!`).
 ///
-/// `data` is the raw image bytes (PNG/JPEG/etc.). `name` is a stable,
-/// host-unique tag (typically `"<crate>::<file_stem>"`) used by the host to
-/// dedup registrations.
+/// WASM builds load the encoded image from the widget package; native builds
+/// retain embedded bytes for storybook rendering.
 #[derive(Debug)]
 pub struct Bitmap {
-    pub data: &'static [u8],
+    pub source: StaticAssetSource,
     pub name: &'static str,
 }
 
@@ -140,11 +130,11 @@ pub fn init_bitmap_registrar(f: BitmapRegistrar) {
 pub fn ensure_bitmap_registered(bmp: &Bitmap) -> Option<BitmapId> {
     #[cfg(target_arch = "wasm32")]
     {
-        host::register_bitmap(bmp.name, bmp.data)
+        host::register_bitmap_package(bmp.name, bmp.source.package_ref())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        bitmap_native::BITMAP_REGISTRAR.with(|r| r.borrow()(bmp.name, bmp.data))
+        bitmap_native::BITMAP_REGISTRAR.with(|r| r.borrow()(bmp.name, bmp.source.data()))
     }
 }
 
@@ -158,14 +148,13 @@ pub fn register_image(source: crate::cache::CacheSource<'_>) -> Option<BitmapId>
 
 // ── Audio ────────────────────────────────────────────────────────────
 
-/// Embedded audio data (output of `include_audio!` proc macro).
+/// Static audio descriptor (output of `include_audio!`).
 ///
-/// `data` is the raw audio bytes (WAV/OGG/MP3). `name` is a stable,
-/// host-unique tag used by the host to dedup registrations and for fixture
-/// debugging.
+/// WASM builds load the sample from the widget package.
+/// `name` remains the stable host registration tag.
 #[derive(Debug)]
 pub struct Audio {
-    pub data: &'static [u8],
+    pub source: StaticAssetSource,
     pub name: &'static str,
 }
 
@@ -173,7 +162,7 @@ pub struct Audio {
 #[cfg(target_arch = "wasm32")]
 #[must_use]
 pub fn ensure_audio_registered(audio: &Audio) -> Option<AudioId> {
-    host::register_audio(audio.data, audio.name)
+    host::register_audio_package(audio.name, audio.source.package_ref())
 }
 
 /// Placeholder for native compilation (audio not used in the gallery).
@@ -218,10 +207,10 @@ pub fn init_test_registrars() {
 pub fn ensure_mesh_registered(mesh: &Mesh) -> Option<MeshId> {
     #[cfg(target_arch = "wasm32")]
     {
-        host::register_mesh(mesh.name, mesh.data)
+        host::register_mesh_package(mesh.name, mesh.source.package_ref())
     }
     #[cfg(not(target_arch = "wasm32"))]
     {
-        mesh_native::MESH_REGISTRAR.with(|r| r.borrow()(mesh.name, mesh.data))
+        mesh_native::MESH_REGISTRAR.with(|r| r.borrow()(mesh.name, mesh.source.data()))
     }
 }

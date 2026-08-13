@@ -25,7 +25,7 @@ use bmc_wasm_assets::{
     MAX_PACKAGE_ASSET_PAYLOAD_LEN, RecordError, Records, contains_package_asset_section,
     encode_record, extract_package_assets, rewrite_package_asset_sections,
 };
-use bmc_wasm_protocol::{PACKAGE_ASSET_SECTION_NAME, PackageAssetKind};
+use bmc_wasm_protocol::{PACKAGE_ASSET_SECTION_NAME, PackageAssetKind, PackageAssetRef};
 use tempfile::tempdir;
 use wasmparser::{Parser, Payload};
 
@@ -189,14 +189,18 @@ fn extractor_writes_content_addressed_assets_and_a_stripped_module() {
         .expect("one record")
         .expect("parse extraction record")
         .id;
-    let module = module_with_custom_sections(&[(PACKAGE_ASSET_SECTION_NAME, &record)]);
+    let mut module = module_with_custom_sections(&[(PACKAGE_ASSET_SECTION_NAME, &record)]);
+    append_passive_data_segment(
+        &mut module,
+        PackageAssetRef::new(PackageAssetKind::Bitmap, id).as_bytes(),
+    );
     let temporary = tempdir().expect("create fixture directory");
     let input = temporary.path().join("compiler.wasm");
     let output = temporary.path().join("packaged.wasm");
     let assets = temporary.path().join("assets");
     fs::write(&input, module).expect("write compiler fixture");
 
-    extract_package_assets(&input, &output, &assets).expect("extract fixture assets");
+    extract_package_assets(&input, None, &output, &assets).expect("extract fixture assets");
 
     let output_wasm = fs::read(output).expect("read stripped fixture");
     assert!(!contains_package_asset_section(&output_wasm).expect("inspect stripped fixture"));
@@ -204,6 +208,67 @@ fn extractor_writes_content_addressed_assets_and_a_stripped_module() {
         fs::read(assets.join("v1/bitmap").join(format!("{id}.asset")))
             .expect("read extracted bitmap"),
         b"encoded-image"
+    );
+}
+
+#[test]
+fn extractor_rejects_a_reachable_reference_without_a_payload_record() {
+    let id = bmc_wasm_assets::package_asset_id(PackageAssetKind::Bitmap, b"missing");
+    let mut module = module_with_custom_sections(&[]);
+    append_passive_data_segment(
+        &mut module,
+        PackageAssetRef::new(PackageAssetKind::Bitmap, id).as_bytes(),
+    );
+    let temporary = tempdir().expect("create fixture directory");
+    let input = temporary.path().join("compiler.wasm");
+    fs::write(&input, module).expect("write compiler fixture");
+
+    let error = extract_package_assets(
+        &input,
+        None,
+        &temporary.path().join("packaged.wasm"),
+        &temporary.path().join("assets"),
+    )
+    .expect_err("a reachable package reference without bytes must fail packaging");
+    assert!(
+        error
+            .to_string()
+            .contains("references missing package asset"),
+        "unexpected extraction error: {error:#}"
+    );
+}
+
+#[test]
+fn extractor_rejects_a_package_payload_duplicated_into_linear_memory() {
+    let payload = b"payload that must live only in the package";
+    let record = encode_record(PackageAssetKind::Bitmap, "image", payload)
+        .expect("encode extraction record");
+    let id = Records::new(&record)
+        .next()
+        .expect("one record")
+        .expect("parse extraction record")
+        .id;
+    let package_ref = PackageAssetRef::new(PackageAssetKind::Bitmap, id);
+    let mut linear_data = package_ref.as_bytes().to_vec();
+    linear_data.extend_from_slice(payload);
+    let mut module = module_with_custom_sections(&[(PACKAGE_ASSET_SECTION_NAME, &record)]);
+    append_passive_data_segment(&mut module, &linear_data);
+    let temporary = tempdir().expect("create fixture directory");
+    let input = temporary.path().join("compiler.wasm");
+    fs::write(&input, module).expect("write compiler fixture");
+
+    let error = extract_package_assets(
+        &input,
+        None,
+        &temporary.path().join("packaged.wasm"),
+        &temporary.path().join("assets"),
+    )
+    .expect_err("a package payload copied into linear memory must fail packaging");
+    assert!(
+        error
+            .to_string()
+            .contains("remains in WebAssembly linear memory"),
+        "unexpected extraction error: {error:#}"
     );
 }
 
@@ -219,6 +284,17 @@ fn module_with_custom_sections(sections: &[(&str, &[u8])]) -> Vec<u8> {
         module.extend_from_slice(&payload);
     }
     module
+}
+
+fn append_passive_data_segment(module: &mut Vec<u8>, data: &[u8]) {
+    let mut payload = Vec::new();
+    encode_u32_leb(&mut payload, 1);
+    encode_u32_leb(&mut payload, 1);
+    encode_u32_leb(&mut payload, data.len());
+    payload.extend_from_slice(data);
+    module.push(11);
+    encode_u32_leb(module, payload.len());
+    module.extend_from_slice(&payload);
 }
 
 fn encode_u32_leb(output: &mut Vec<u8>, value: usize) {

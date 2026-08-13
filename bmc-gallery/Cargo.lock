@@ -822,6 +822,7 @@ version = "0.1.0"
 dependencies = [
  "bmc-render-skin",
  "bmc-svg-compiler",
+ "bmc-wasm-assets",
  "bmc-wasm-protocol",
  "gltf",
  "image",
@@ -893,10 +894,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-wasm-assets"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-protocol",
+ "sha2",
+ "thiserror 1.0.69",
+]
+
+[[package]]
 name = "bmc-wasm-protocol"
 version = "0.1.0"
 dependencies = [
  "bmc-shared-utils",
+ "hex",
  "palette",
 ]
 

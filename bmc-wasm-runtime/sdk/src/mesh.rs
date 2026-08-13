@@ -20,23 +20,24 @@
 
 //! 3D mesh types for the WASM widget SDK.
 //!
-//! A `Mesh` embeds a preprocessed binary blob (output of `include_mesh!`).
+//! A `Mesh` describes a preprocessed binary blob produced by `include_mesh!`.
 //! `MeshView` defines camera, transform, and lighting for rendering.
+
+use bmc_wasm_protocol::StaticAssetSource;
 
 use crate::orientation::Orientation;
 
-/// Embedded 3D mesh data (output of `include_mesh!` proc macro).
+/// Static 3D mesh descriptor (output of `include_mesh!`).
 ///
-/// The `data` field contains the optimized binary format (header + quantized
-/// vertices + indices + optional texture). On first use, this data is sent to
-/// the host via `host_register_mesh()` which uploads VBO/IBO/texture to GPU.
+/// WASM builds load the optimized mesh from the widget package; native builds
+/// retain embedded bytes for storybook rendering.
 ///
 /// `face_normals` contains per-face normals in glTF Y-up space, ordered by
 /// display face number (index 0 = face 1). Extracted from glTF `extras` at
 /// compile time. Empty if the model has no face normal metadata.
 #[derive(Debug)]
 pub struct Mesh {
-    pub data: &'static [u8],
+    pub source: StaticAssetSource,
     pub face_normals: &'static [[f32; 3]],
     /// Stable, unique-per-host registration tag (e.g. `"crate::stem"`).
     pub name: &'static str,

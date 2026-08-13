@@ -66,14 +66,14 @@
 
 use std::cell::RefCell;
 
-use bmc_wasm_protocol::BitmapId;
 use bmc_wasm_protocol::colors::Color;
+use bmc_wasm_protocol::{BitmapId, StaticAssetSource};
 
 // ---------------------------------------------------------------------------
 // Bitmap registrar callback
 // ---------------------------------------------------------------------------
 
-type BitmapRegistrar = fn(&str, &[u8]) -> Option<BitmapId>;
+type BitmapRegistrar = fn(&str, StaticAssetSource) -> Option<BitmapId>;
 
 thread_local! {
     static BITMAP_REGISTRAR: RefCell<BitmapRegistrar> = const {
@@ -87,21 +87,21 @@ pub fn init(register_fn: BitmapRegistrar) {
     BITMAP_REGISTRAR.with(|r| *r.borrow_mut() = register_fn);
 }
 
-fn register_bitmap(tag: &str, data: &[u8]) -> Option<BitmapId> {
-    BITMAP_REGISTRAR.with(|r| r.borrow()(tag, data))
+fn register_bitmap(tag: &str, source: StaticAssetSource) -> Option<BitmapId> {
+    BITMAP_REGISTRAR.with(|r| r.borrow()(tag, source))
 }
 
 // ---------------------------------------------------------------------------
 // NinePatchAsset (compile-time)
 // ---------------------------------------------------------------------------
 
-/// Compile-time 9-patch data — embedded PNG bytes + insets from the `.9.png` border.
+/// Compile-time 9-patch descriptor and insets from the `.9.png` border.
 ///
 /// Created by the `include_nine_patch!` proc macro which parses the Android-format
-/// `.9.png` at build time, strips the 1px border, and embeds the inner bitmap.
-/// At runtime, the inner bitmap is registered with the host on first use.
+/// `.9.png` at build time and strips the 1px border. WASM builds load the inner
+/// bitmap from the widget package; native builds retain embedded bytes.
 pub struct NinePatchAsset {
-    pub data: &'static [u8],
+    pub source: StaticAssetSource,
     /// Stable, unique-per-host registration tag (e.g. `"<crate>::<file_stem>"`).
     pub name: &'static str,
     pub left: u16,
@@ -152,7 +152,7 @@ impl NinePatch {
 #[must_use]
 pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
     NinePatch {
-        bitmap_id: register_bitmap(asset.name, asset.data),
+        bitmap_id: register_bitmap(asset.name, asset.source),
         left: asset.left,
         top: asset.top,
         right: asset.right,
@@ -170,7 +170,7 @@ pub fn ensure_nine_patch_registered(asset: &NinePatchAsset) -> NinePatch {
 /// `.9.png` files have their insets parsed at build time from the 1px border.
 pub struct SkinAsset {
     pub name: &'static str,
-    pub data: &'static [u8],
+    pub source: StaticAssetSource,
     pub left: u16,
     pub top: u16,
     pub right: u16,
@@ -263,7 +263,7 @@ impl Skin {
         let tag = format!("skin::{}::{}", self.name, asset.name);
         Some(SkinEntry {
             nine_patch: NinePatch {
-                bitmap_id: register_bitmap(&tag, asset.data),
+                bitmap_id: register_bitmap(&tag, asset.source),
                 left: asset.left,
                 top: asset.top,
                 right: asset.right,

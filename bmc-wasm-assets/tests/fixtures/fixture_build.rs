@@ -24,7 +24,7 @@ use std::fs;
 use std::path::Path;
 
 use bmc_wasm_assets::{Records, encode_record};
-use bmc_wasm_protocol::PackageAssetKind;
+use bmc_wasm_protocol::{PACKAGE_ASSET_REF_MAGIC, PackageAssetKind};
 
 pub fn emit_record(kind: PackageAssetKind, logical_name: &str, payload_path: &str) {
     println!("cargo::rerun-if-changed={payload_path}");
@@ -49,12 +49,25 @@ pub fn emit_record(kind: PackageAssetKind, logical_name: &str, payload_path: &st
         source.push('\n');
     }
     source.push_str("];\n");
+    let reference = PACKAGE_ASSET_REF_MAGIC
+        .into_iter()
+        .chain(std::iter::once(kind.to_wire()))
+        .chain(id.as_bytes().iter().copied())
+        .collect::<Vec<_>>();
     writeln!(
         source,
-        "pub const ASSET_ID: [u8; 32] = {:?};",
-        id.as_bytes()
+        "pub static ASSET_REF: [u8; {}] = [",
+        reference.len()
     )
-    .expect("write generated asset ID");
+    .expect("write generated asset reference declaration");
+    for chunk in reference.chunks(16) {
+        source.push_str("    ");
+        for byte in chunk {
+            write!(source, "0x{byte:02x}, ").expect("write generated asset reference byte");
+        }
+        source.push('\n');
+    }
+    source.push_str("];\n");
     let output =
         Path::new(&env::var_os("OUT_DIR").expect("OUT_DIR is set")).join("asset_record.rs");
     fs::write(output, source).expect("write generated linker fixture source");

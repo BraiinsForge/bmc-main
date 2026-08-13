@@ -7,13 +7,13 @@ Proc macros that compile and embed assets at build time.
 Provides the following proc macros:
 
 - `include_icon!` -- compiles SVG into compact binary path data (via usvg)
-- `include_bitmap!` -- embeds a PNG/raster image as raw bytes
+- `include_bitmap!` -- packages a PNG/raster image and emits its static descriptor
 - `include_mesh!` -- parses a `.glb` mesh, validates constraints, quantizes vertices, and packs into an optimized binary
   format
-- `include_nine_patch!` -- decodes `.9.png` border, strips it, embeds inner bitmap + insets
-- `include_skin!` -- loads a skin zip or directory of `.png`/`.9.png` files with a `skin.toml` manifest, embeds all
-  assets with parsed metadata
-- `include_audio!` -- embeds an audio file (WAV, OGG, MP3) as raw bytes
+- `include_nine_patch!` -- decodes a `.9.png` border and packages the inner bitmap + insets
+- `include_skin!` -- loads a skin zip or directory and packages its processed bitmap descriptors assets with parsed
+  metadata
+- `include_audio!` -- packages an audio file (WAV, OGG, MP3)
 
 All processing (SVG simplification, 9-patch parsing, mesh validation, texture compression) happens at compile time.
 Cargo tracks source files for recompilation.

@@ -33,9 +33,12 @@ mod system;
 
 use anyhow::Result;
 use bmc_render::renderer::Renderer;
+use bmc_wasm_protocol::{PACKAGE_ASSET_REF_LEN, PackageAssetId, PackageAssetKind, PackageAssetRef};
 use wasmi::{Caller, Linker};
 
 use crate::host_api::HostState;
+
+use super::memory::read_bytes;
 
 pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<()> {
     render::register(linker)?;
@@ -48,6 +51,20 @@ pub(super) fn register_host_functions(linker: &mut Linker<HostState>) -> Result<
     params::register(linker)?;
     credentials::register(linker)?;
     Ok(())
+}
+
+fn read_package_ref(
+    caller: &Caller<'_, HostState>,
+    ptr: u32,
+    expected_kind: PackageAssetKind,
+) -> Option<PackageAssetId> {
+    let bytes = read_bytes(
+        caller,
+        ptr,
+        u32::try_from(PACKAGE_ASSET_REF_LEN).expect("BUG: package reference length fits u32"),
+    )?;
+    let package_ref = PackageAssetRef::try_from(bytes.as_slice()).ok()?;
+    (package_ref.kind() == expected_kind).then(|| package_ref.id())
 }
 
 /// Reborrow the renderer parked on `HostState::renderer_ptr` for the duration

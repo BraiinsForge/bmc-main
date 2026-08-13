@@ -117,8 +117,22 @@ macro_rules! registrar {
 
 registrar!(registrar_icon, register_svg -> bmc_wasm_sdk::SvgId);
 registrar!(registrar_bitmap, register_bitmap -> bmc_wasm_sdk::BitmapId);
-registrar!(registrar_bitmap_nearest, register_bitmap_nearest -> bmc_wasm_sdk::BitmapId);
 registrar!(registrar_mesh, register_mesh -> bmc_wasm_sdk::MeshId);
+
+fn registrar_bitmap_nearest(
+    tag: &str,
+    source: bmc_wasm_sdk::StaticAssetSource,
+) -> Option<bmc_wasm_sdk::BitmapId> {
+    let ptr = RENDERER_PTR.with(Cell::get);
+    assert!(
+        !ptr.is_null(),
+        "asset registered before the first Deck stage, or from a spawned thread; \
+         scenes must register assets on the render thread"
+    );
+    // SAFETY: the pointer is the boxed renderer in this thread's RENDERER,
+    // which outlives every scene call; registrars only run on this thread.
+    unsafe { &mut *ptr }.register_bitmap_nearest(tag, source.data())
+}
 
 /// The layout and interaction state one staged frame keeps between frames,
 /// keyed by stage identity so a scene's stages don't share scroll or animation

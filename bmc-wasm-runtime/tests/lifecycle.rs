@@ -471,6 +471,48 @@ fn deferred_sleep_then_wake_probe_wat() -> String {
     )
 }
 
+fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
+    let reference_ptr = LIFECYCLE_ASSET_TAG.len();
+    let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
+    let package_ref = PackageAssetRef::new(PackageAssetKind::Svg, PackageAssetId::from_bytes(*id));
+    data.extend_from_slice(package_ref.as_bytes());
+    let tree = active_asset_tree_bytes();
+    let tree_ptr = data.len();
+    data.extend_from_slice(&tree);
+    let data = wat_string_literal(&data);
+    format!(
+        r#"
+        (module
+          (import "env" "host_register_svg_package"
+            (func $register_svg (param i32 i32 i32) (result i32)))
+          (import "env" "host_submit_tree"
+            (func $submit_tree (param i32 i32 i32 i32)))
+          (memory (export "memory") 1)
+          (data (i32.const 0) "{data}")
+          (global $sleep_registration_id (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
+          (func (export "render") (param i32)
+            i32.const {tree_ptr}
+            i32.const {tree_len}
+            i32.const 320
+            i32.const 240
+            call $submit_tree)
+          (func (export "on_sleep")
+            i32.const 0
+            i32.const {tag_len}
+            i32.const {reference_ptr}
+            call $register_svg
+            global.set $sleep_registration_id)
+          (func (export "on_wake"))
+          (func (export "sleep_registration_id") (result i32)
+            global.get $sleep_registration_id))
+        "#,
+        tag_len = LIFECYCLE_ASSET_TAG.len(),
+        tree_len = tree.len(),
+        sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+    )
+}
+
 fn dormant_image_decode_probe_wat() -> String {
     let png = one_px_png([0, 255, 0, 255]);
     let png_ptr = DORMANT_IMAGE_DECODE_TAG.len();
@@ -1508,6 +1550,54 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
         AssetTagState::Resident(asset_id)
+    );
+}
+
+#[test]
+fn first_render_restores_asset_registered_by_coalesced_sleep_hook() {
+    let Some(gl) = headless_egl::try_init(320, 240) else {
+        return;
+    };
+    let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
+    let payload = compiled_empty_svg();
+    let id = bmc_wasm_assets::package_asset_id(PackageAssetKind::Svg, &payload);
+    let asset_dir = package_dir.path().join("v1").join("svg");
+    std::fs::create_dir_all(&asset_dir).expect("BUG: package fixture directory must construct");
+    std::fs::write(asset_dir.join(format!("{id}.asset")), payload)
+        .expect("BUG: package fixture must be writable");
+    let config = RuntimeConfig {
+        package_assets: Some(PackageAssetStore::new(package_dir.path())),
+        ..RuntimeConfig::default()
+    };
+    let (mut runtime, mut renderer) = build_runtime_with_config(
+        coalesced_package_registration_wat(id.as_bytes()),
+        &gl,
+        config,
+    );
+
+    runtime.notify_dormant();
+    runtime.notify_wake();
+    poll_renderer_deliveries(&mut runtime, &mut renderer);
+
+    let registered = runtime
+        .call_export_i32("sleep_registration_id")
+        .and_then(|id| u32::try_from(id).ok())
+        .and_then(SvgId::from_ffi)
+        .expect("BUG: sleep hook must reserve a valid SVG ID");
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Suspended(registered),
+        "wake must leave an unused package asset suspended"
+    );
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Resident(registered),
+        "the first tree referencing the package ID must restore its reservation"
     );
 }
 

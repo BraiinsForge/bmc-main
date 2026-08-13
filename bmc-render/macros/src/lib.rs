@@ -32,6 +32,7 @@ mod mesh;
 
 use std::path::{Path, PathBuf};
 
+use bmc_wasm_protocol::PackageAssetKind;
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{LitStr, parse_macro_input};
@@ -65,23 +66,76 @@ fn resolve_asset(rel_path: &str) -> PathBuf {
     panic!("asset not found: `{rel_path}` (searched from `{manifest_dir}`)");
 }
 
-/// Build a host-unique asset tag of the form `"<crate>::<file_stem>"`.
+/// Build a stable asset tag from the crate and normalized macro path.
 ///
 /// Two crates that ship an asset with the same filename register under
 /// different tags, so they don't alias in the host's shared registry.
-fn asset_tag(full_path: &Path) -> String {
+fn asset_tag(rel_path: &str) -> String {
     let crate_name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "unknown".to_owned());
-    let stem = full_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("unknown");
-    format!("{crate_name}::{stem}")
+    let mut components = Vec::new();
+    for component in Path::new(rel_path).components() {
+        match component {
+            std::path::Component::Normal(value) => components.push(value.to_string_lossy()),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                assert!(
+                    components.pop().is_some(),
+                    "asset path escapes its lexical root: `{rel_path}`"
+                );
+            }
+            std::path::Component::RootDir | std::path::Component::Prefix(_) => {
+                panic!("asset path must be relative: `{rel_path}`");
+            }
+        }
+    }
+    format!("{crate_name}::{}", components.join("/"))
 }
 
-/// Embed a PNG (or other raster image) file as a `Bitmap` at compile time.
+fn static_asset_source(
+    kind: PackageAssetKind,
+    logical_name: &str,
+    payload: &[u8],
+    native_data: &proc_macro2::TokenStream,
+) -> proc_macro2::TokenStream {
+    let record = bmc_wasm_assets::encode_record(kind, logical_name, payload)
+        .expect("BUG: validated macro asset must fit the package record format");
+    let id = bmc_wasm_assets::package_asset_id(kind, payload);
+    let record_len = record.len();
+    let id_bytes = id.as_bytes();
+    let package_kind = match kind {
+        PackageAssetKind::Svg => quote!(bmc_wasm_sdk::PackageAssetKind::Svg),
+        PackageAssetKind::Bitmap => quote!(bmc_wasm_sdk::PackageAssetKind::Bitmap),
+        PackageAssetKind::Mesh => quote!(bmc_wasm_sdk::PackageAssetKind::Mesh),
+        PackageAssetKind::Audio => quote!(bmc_wasm_sdk::PackageAssetKind::Audio),
+    };
+    quote! {
+        {
+            #[cfg(target_arch = "wasm32")]
+            {
+                // Do not add `#[used]`: it copies the framed payload into linear memory.
+                // `ensure_payloads_absent_from_linear_memory` rejects that during packaging.
+                #[expect(dead_code)]
+                #[unsafe(link_section = "bmc_assets_v1")]
+                static _PACKAGE_ASSET: [u8; #record_len] = [#(#record),*];
+                static _PACKAGE_ASSET_REF: bmc_wasm_sdk::PackageAssetRef =
+                    bmc_wasm_sdk::PackageAssetRef::new(
+                        #package_kind,
+                        bmc_wasm_sdk::PackageAssetId::from_bytes([#(#id_bytes),*]),
+                    );
+                bmc_wasm_sdk::StaticAssetSource::package(
+                    &_PACKAGE_ASSET_REF
+                )
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            bmc_wasm_sdk::StaticAssetSource::embedded(#native_data)
+        }
+    }
+}
+
+/// Package a PNG (or other raster image) as a `Bitmap` at compile time.
 ///
-/// The raw file bytes are included directly; the host decodes on first registration.
-/// Cargo tracks the file for recompilation when it changes.
+/// WASM packaging extracts the raw file for host-side decoding. Native builds
+/// retain the bytes for storybook rendering.
 ///
 /// # Usage
 ///
@@ -98,22 +152,33 @@ pub fn include_bitmap(input: TokenStream) -> TokenStream {
 
     let full_path = resolve_asset(&rel_path);
     let abs_path = full_path.display().to_string();
-    let name = asset_tag(&full_path);
+    let name = asset_tag(&rel_path);
+    let payload = std::fs::read(&full_path)
+        .unwrap_or_else(|error| panic!("failed to read bitmap `{}`: {error}", full_path.display()));
+    let source = static_asset_source(
+        PackageAssetKind::Bitmap,
+        &name,
+        &payload,
+        &quote! { include_bytes!(#abs_path) },
+    );
 
     let expanded = quote! {
-        bmc_wasm_sdk::Bitmap {
-            data: include_bytes!(#abs_path),
-            name: #name,
+        {
+            const _TRACK: &[u8] = include_bytes!(#abs_path);
+            bmc_wasm_sdk::Bitmap {
+                source: #source,
+                name: #name,
+            }
         }
     };
 
     expanded.into()
 }
 
-/// Embed an audio file (WAV, OGG, MP3) as an `Audio` asset at compile time.
+/// Package an audio file (WAV, OGG, MP3) as an `Audio` asset at compile time.
 ///
-/// The raw file bytes are included directly; the host decodes on first registration.
-/// Cargo tracks the file for recompilation when it changes.
+/// WASM packaging extracts the raw file for host-side decoding. Native builds
+/// retain the bytes.
 ///
 /// # Usage
 ///
@@ -130,19 +195,30 @@ pub fn include_audio(input: TokenStream) -> TokenStream {
 
     let full_path = resolve_asset(&rel_path);
     let abs_path = full_path.display().to_string();
-    let name = asset_tag(&full_path);
+    let name = asset_tag(&rel_path);
+    let payload = std::fs::read(&full_path)
+        .unwrap_or_else(|error| panic!("failed to read audio `{}`: {error}", full_path.display()));
+    let source = static_asset_source(
+        PackageAssetKind::Audio,
+        &name,
+        &payload,
+        &quote! { include_bytes!(#abs_path) },
+    );
 
     let expanded = quote! {
-        bmc_wasm_sdk::Audio {
-            data: include_bytes!(#abs_path),
-            name: #name,
+        {
+            const _TRACK: &[u8] = include_bytes!(#abs_path);
+            bmc_wasm_sdk::Audio {
+                source: #source,
+                name: #name,
+            }
         }
     };
 
     expanded.into()
 }
 
-/// Embed a glTF 2.0 binary (.glb) mesh at compile time.
+/// Package a glTF 2.0 binary (.glb) mesh at compile time.
 ///
 /// Parses the mesh, validates it against hardware constraints (triangle count,
 /// vertex count, texture size), quantizes vertices, and packs everything into
@@ -190,7 +266,13 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
     }
 
     let (packed, face_normals, extra_tracked_paths) = mesh::pack_mesh(&full_path, span)?;
-    let name = asset_tag(&full_path);
+    let name = asset_tag(&rel_path);
+    let source = static_asset_source(
+        PackageAssetKind::Mesh,
+        &name,
+        &packed,
+        &quote! { &[#(#packed),*] },
+    );
 
     // Generate face_normals as &[[f32; 3]] literal
     let normal_arrays = face_normals.iter().map(|[x, y, z]| {
@@ -217,7 +299,7 @@ fn include_mesh_impl(path_lit: &LitStr) -> syn::Result<proc_macro2::TokenStream>
             const _TRACK: &[u8] = include_bytes!(#abs_path);
             #(#extra_tracks)*
             bmc_wasm_sdk::Mesh {
-                data: &[#(#packed),*],
+                source: #source,
                 face_normals: &[#(#normal_arrays),*],
                 name: #name,
             }
@@ -252,25 +334,50 @@ pub fn include_svg(input: TokenStream) -> TokenStream {
         .unwrap_or_else(|e| panic!("failed to read SVG `{}`: {e}", full_path.display()));
 
     let compiled = bmc_svg_compiler::compile_svg(&svg_data);
-    let name = asset_tag(&full_path);
+    let name = asset_tag(&rel_path);
+    let source = static_asset_source(
+        PackageAssetKind::Svg,
+        &name,
+        &compiled,
+        &quote! { &[#(#compiled),*] },
+    );
+    let header_width = f32::from_le_bytes(
+        compiled[..4]
+            .try_into()
+            .expect("BUG: compiled SVG header contains width"),
+    );
+    let header_height = f32::from_le_bytes(
+        compiled[4..8]
+            .try_into()
+            .expect("BUG: compiled SVG header contains height"),
+    );
+    let (viewbox_width, viewbox_height) = if header_width > 0.0 && header_height > 0.0 {
+        (header_width, header_height)
+    } else {
+        (1.0, 1.0)
+    };
 
     // Emit const-compatible expression.
     // The include_bytes! ensures Cargo recompiles when the SVG file changes.
     let expanded = quote! {
         {
             const _TRACK: &[u8] = include_bytes!(#abs_path);
-            bmc_wasm_sdk::Svg { data: &[#(#compiled),*], name: #name }
+            bmc_wasm_sdk::Svg {
+                source: #source,
+                name: #name,
+                viewbox: (#viewbox_width, #viewbox_height),
+            }
         }
     };
 
     expanded.into()
 }
 
-/// Embed a `.9.png` (Android 9-patch) file at compile time.
+/// Package a `.9.png` (Android 9-patch) file at compile time.
 ///
 /// The macro decodes the 1px black-pixel border that encodes stretchable regions,
-/// strips it, re-encodes the inner bitmap as PNG, and embeds both the image bytes
-/// and the computed insets as a `NinePatchAsset`.
+/// strips it, re-encodes the inner bitmap as PNG, and emits a package descriptor
+/// with the computed insets.
 ///
 /// # Usage
 ///
@@ -337,14 +444,20 @@ fn include_nine_patch_impl(input: TokenStream) -> syn::Result<proc_macro2::Token
     let png_data = png_bytes.as_slice();
 
     let abs_path = full_path.display().to_string();
-    let name = asset_tag(&full_path);
+    let name = asset_tag(&rel_path);
+    let source = static_asset_source(
+        PackageAssetKind::Bitmap,
+        &name,
+        &png_bytes,
+        &quote! { &[#(#png_data),*] },
+    );
 
     Ok(quote! {
         {
             // Track the source file for recompilation
             const _TRACK: &[u8] = include_bytes!(#abs_path);
             bmc_wasm_sdk::NinePatchAsset {
-                data: &[#(#png_data),*],
+                source: #source,
                 name: #name,
                 left: #left,
                 top: #top,
@@ -451,15 +564,23 @@ fn include_skin_impl(input: TokenStream) -> syn::Result<proc_macro2::TokenStream
 
     let assets = process_skin_files(&files, &meta, span)?;
 
+    let base_name = asset_tag(&rel_path);
     let asset_tokens: Vec<_> = assets
         .iter()
         .map(
             |(name, data, left, top, right, bottom, width, height, color)| {
                 let data_slice = data.as_slice();
+                let logical_name = format!("{base_name}::{name}");
+                let source = static_asset_source(
+                    PackageAssetKind::Bitmap,
+                    &logical_name,
+                    data,
+                    &quote! { &[#(#data_slice),*] },
+                );
                 quote! {
                     bmc_wasm_sdk::SkinAsset {
                         name: #name,
-                        data: &[#(#data_slice),*],
+                        source: #source,
                         left: #left,
                         top: #top,
                         right: #right,

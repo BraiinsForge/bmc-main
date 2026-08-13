@@ -33,8 +33,9 @@ use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
 use bmc_render::FrameTimings;
-use bmc_render::renderer::{AssetSuspendResult, Renderer};
-use bmc_render::tree::{self, TouchHit};
+use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
+use bmc_render::tree;
+use bmc_render::tree::{RendererAssetReferences, TouchHit};
 
 use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle};
 use crate::network::NetworkInfo;
@@ -314,6 +315,269 @@ enum PendingHook {
     WakeThenSleep,
 }
 
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RendererAssetSuspensionObservation {
+    pub svg_suspended: usize,
+    pub bitmap_suspended: usize,
+    pub mesh_suspended: usize,
+    #[cfg(feature = "profiling")]
+    pub svg_heap_bytes_released: u64,
+    #[cfg(feature = "profiling")]
+    pub svg_path_bytes_released: u64,
+    #[cfg(feature = "profiling")]
+    pub bitmap_released: u64,
+    #[cfg(feature = "profiling")]
+    pub mesh_bytes_released: u64,
+    #[cfg(feature = "profiling")]
+    pub svg_path_bytes_resident_total_before: u64,
+    #[cfg(feature = "profiling")]
+    pub svg_path_bytes_resident_total_after: u64,
+    #[cfg(feature = "profiling")]
+    pub bitmap_resident_total_before: u64,
+    #[cfg(feature = "profiling")]
+    pub bitmap_resident_total_after: u64,
+    #[cfg(feature = "profiling")]
+    pub mesh_bytes_resident_total_before: u64,
+    #[cfg(feature = "profiling")]
+    pub mesh_bytes_resident_total_after: u64,
+}
+
+impl RendererAssetSuspensionObservation {
+    #[cfg(feature = "profiling")]
+    fn start(renderer: &dyn Renderer) -> Self {
+        Self {
+            svg_path_bytes_resident_total_before: renderer.svg_resident_path_bytes(),
+            bitmap_resident_total_before: renderer.bitmap_resident_bytes(),
+            mesh_bytes_resident_total_before: renderer.mesh_resident_bytes(),
+            ..Self::default()
+        }
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn start(_renderer: &dyn Renderer) -> Self {
+        Self::default()
+    }
+
+    #[cfg(feature = "profiling")]
+    fn finish(mut self, renderer: &dyn Renderer) -> Self {
+        self.svg_path_bytes_resident_total_after = renderer.svg_resident_path_bytes();
+        self.bitmap_resident_total_after = renderer.bitmap_resident_bytes();
+        self.mesh_bytes_resident_total_after = renderer.mesh_resident_bytes();
+        self.svg_path_bytes_released = self
+            .svg_path_bytes_resident_total_before
+            .saturating_sub(self.svg_path_bytes_resident_total_after);
+        self.bitmap_released = self
+            .bitmap_resident_total_before
+            .saturating_sub(self.bitmap_resident_total_after);
+        self.mesh_bytes_released = self
+            .mesh_bytes_resident_total_before
+            .saturating_sub(self.mesh_bytes_resident_total_after);
+        self
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn finish(self, _renderer: &dyn Renderer) -> Self {
+        self
+    }
+}
+
+#[cfg(feature = "profiling")]
+fn suspend_svg_profiled(
+    renderer: &mut dyn Renderer,
+    tag: &str,
+    instance_id: &str,
+    raw_tag: &str,
+    observation: &mut RendererAssetSuspensionObservation,
+) -> AssetSuspendResult<bmc_wasm_protocol::SvgId> {
+    let deallocation_probe = bmc_render::profile::DeallocationProbe::start();
+    let result = renderer.suspend_svg(tag);
+    if let Some(probe) = deallocation_probe {
+        let svg_heap_bytes_released = probe.finish();
+        observation.svg_heap_bytes_released = observation
+            .svg_heap_bytes_released
+            .saturating_add(svg_heap_bytes_released);
+        tracing::info!(
+            target: bmc_render::profile::TARGET,
+            instance_id,
+            tag = raw_tag,
+            svg_heap_bytes_released,
+            "widget SVG heap released"
+        );
+    }
+    result
+}
+
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RendererAssetRestorationObservation {
+    pub svg_restored: usize,
+    pub bitmap_restored: usize,
+    pub mesh_restored: usize,
+    pub already_resident: usize,
+    pub skipped: usize,
+}
+
+enum RendererAssetRestore {
+    Restored,
+    AlreadyResident,
+    Skipped,
+}
+
+pub(super) fn restore_referenced_renderer_assets(
+    state: &mut HostState,
+    renderer: &mut dyn Renderer,
+    references: &RendererAssetReferences,
+) -> bool {
+    state.last_asset_restoration = None;
+    let records = state.renderer_assets.restorable_referenced_by(references);
+    #[cfg(feature = "profiling")]
+    let started = Instant::now();
+    let mut observation = RendererAssetRestorationObservation::default();
+    for (raw_tag, record) in records {
+        let restore_started = Instant::now();
+        match restore_renderer_asset(state, renderer, &raw_tag, &record) {
+            Ok(RendererAssetRestore::Restored) => {
+                state.renderer_assets.mark_resident(&raw_tag);
+                state.add_profile_us(
+                    "asset_restore_us",
+                    u64::try_from(restore_started.elapsed().as_micros()).unwrap_or(u64::MAX),
+                );
+                match record.kind {
+                    RendererAssetKind::Svg => observation.svg_restored += 1,
+                    RendererAssetKind::Bitmap(_) => observation.bitmap_restored += 1,
+                    RendererAssetKind::Mesh => observation.mesh_restored += 1,
+                }
+                #[cfg(feature = "profiling")]
+                tracing::info!(
+                    target: bmc_render::profile::TARGET,
+                    instance_id = %state.instance_id,
+                    tag = %raw_tag,
+                    asset_kind = record.kind.name(),
+                    asset_id = record.id.to_ffi(),
+                    "widget renderer asset restored on demand"
+                );
+            }
+            Ok(RendererAssetRestore::AlreadyResident) => {
+                observation.already_resident += 1;
+                state.renderer_assets.mark_resident(&raw_tag);
+            }
+            Ok(RendererAssetRestore::Skipped) => {
+                observation.skipped += 1;
+                state.renderer_assets.disable_restoration(&raw_tag);
+            }
+            Err(error) => {
+                tracing::error!(
+                    instance_id = %state.instance_id,
+                    %error,
+                    "renderer asset restoration failed"
+                );
+                state.renderer_asset_failure = Some(error);
+                return false;
+            }
+        }
+    }
+    let demand_work = observation.svg_restored
+        + observation.bitmap_restored
+        + observation.mesh_restored
+        + observation.skipped;
+    if demand_work == 0 {
+        return true;
+    }
+    state.last_asset_restoration = Some(observation);
+    #[cfg(feature = "profiling")]
+    tracing::info!(
+        target: bmc_render::profile::TARGET,
+        instance_id = %state.instance_id,
+        svg_restored = observation.svg_restored,
+        bitmap_restored = observation.bitmap_restored,
+        mesh_restored = observation.mesh_restored,
+        already_resident = observation.already_resident,
+        assets_skipped = observation.skipped,
+        restore_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
+        "widget renderer assets restored on demand"
+    );
+    true
+}
+
+fn restore_renderer_asset(
+    state: &HostState,
+    renderer: &mut dyn Renderer,
+    raw_tag: &str,
+    record: &RendererAssetRecord,
+) -> Result<RendererAssetRestore, String> {
+    let tag = state.namespaced_tag(raw_tag);
+    let already_resident = match (record.kind, record.id) {
+        (RendererAssetKind::Svg, RendererAssetId::Svg(expected)) => {
+            renderer.svg_tag_state(&tag) == AssetTagState::Resident(expected)
+        }
+        (RendererAssetKind::Bitmap(_), RendererAssetId::Bitmap(expected)) => {
+            renderer.bitmap_tag_state(&tag) == AssetTagState::Resident(expected)
+        }
+        (RendererAssetKind::Mesh, RendererAssetId::Mesh(expected)) => {
+            renderer.mesh_tag_state(&tag) == AssetTagState::Resident(expected)
+        }
+        _ => false,
+    };
+    if already_resident {
+        return Ok(RendererAssetRestore::AlreadyResident);
+    }
+    let restored = match &record.backing {
+        AssetBacking::Package(id) => {
+            let Some(store) = state.package_assets.as_ref() else {
+                return Err(format!(
+                    "package store unavailable while restoring {raw_tag}"
+                ));
+            };
+            let kind = match record.kind {
+                RendererAssetKind::Svg => bmc_wasm_protocol::PackageAssetKind::Svg,
+                RendererAssetKind::Bitmap(_) => bmc_wasm_protocol::PackageAssetKind::Bitmap,
+                RendererAssetKind::Mesh => bmc_wasm_protocol::PackageAssetKind::Mesh,
+            };
+            let payload = store
+                .load(kind, *id)
+                .map_err(|error| format!("load package asset {raw_tag}: {error}"))?;
+            match record.kind {
+                RendererAssetKind::Svg => renderer
+                    .register_svg(&tag, &payload)
+                    .map(RendererAssetId::Svg),
+                RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Linear) => renderer
+                    .register_bitmap(&tag, &payload)
+                    .map(RendererAssetId::Bitmap),
+                RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Nearest) => renderer
+                    .register_bitmap_nearest(&tag, &payload)
+                    .map(RendererAssetId::Bitmap),
+                RendererAssetKind::Mesh => renderer
+                    .register_mesh(&tag, &payload)
+                    .map(RendererAssetId::Mesh),
+            }
+        }
+        AssetBacking::Cache(key) => {
+            let Some(cache) = state.asset_cache.as_ref() else {
+                return Ok(RendererAssetRestore::Skipped);
+            };
+            let Some(blob) = cache.get(key) else {
+                return Ok(RendererAssetRestore::Skipped);
+            };
+            let Some((width, height)) = cached_bitmap_dimensions(&blob) else {
+                cache.evict(key);
+                return Ok(RendererAssetRestore::Skipped);
+            };
+            renderer
+                .register_bitmap_rgba(&tag, blob.bytes(), width, height)
+                .map(RendererAssetId::Bitmap)
+        }
+        AssetBacking::Volatile => return Ok(RendererAssetRestore::Skipped),
+    };
+    if restored == Some(record.id) {
+        Ok(RendererAssetRestore::Restored)
+    } else {
+        Err(format!(
+            "asset reservation changed while restoring {raw_tag}"
+        ))
+    }
+}
+
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
@@ -372,7 +636,7 @@ pub struct WasmWidgetRuntime {
     lifecycle_trap: Option<anyhow::Error>,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
-    renderer_asset_failure: Option<String>,
+    last_asset_suspension: Option<RendererAssetSuspensionObservation>,
     /// How many consecutive fuel-outs before the widget is killed.
     max_fuel_strikes: u32,
     #[cfg(feature = "profiling")]
@@ -572,7 +836,7 @@ impl WasmWidgetRuntime {
             #[cfg(feature = "capture")]
             lifecycle_trap: None,
             fuel_dead: false,
-            renderer_asset_failure: None,
+            last_asset_suspension: None,
             max_fuel_strikes: 5,
             #[cfg(feature = "profiling")]
             wasm_w: ii_stopwatch::StopWatch::default(),
@@ -613,7 +877,7 @@ impl WasmWidgetRuntime {
             "render start"
         );
 
-        if let Some(error) = &self.renderer_asset_failure {
+        if let Some(error) = &state.renderer_asset_failure {
             tracing::error!(instance_id = %state.instance_id, %error, "widget renderer assets failed");
             state.interaction.begin_frame();
             state.begin_render_frame();
@@ -651,7 +915,10 @@ impl WasmWidgetRuntime {
         state.delta_ms = delta_ms;
 
         if animation_only {
-            Self::render_cached_tree(state, delta_ms);
+            if !Self::render_cached_tree(state, delta_ms) {
+                Self::draw_dead_overlay(state);
+                return Ok(RenderStatus::Dead);
+            }
             tracing::trace!(
                 instance_id = %state.instance_id,
                 delta_ms,
@@ -722,7 +989,12 @@ impl WasmWidgetRuntime {
         match call_result {
             Ok(()) => {
                 let wasm_us = wasm_t0.elapsed().as_micros() as u32;
-                self.store.data_mut().last_timings.wasm_us = wasm_us;
+                let state = self.store.data_mut();
+                state.last_timings.wasm_us = wasm_us;
+                if state.renderer_asset_failure.is_some() {
+                    Self::draw_dead_overlay(state);
+                    return Ok(RenderStatus::Dead);
+                }
                 self.fuel_strikes = 0;
                 tracing::trace!(
                     instance_id = %self.store.data().instance_id,
@@ -752,7 +1024,10 @@ impl WasmWidgetRuntime {
                 // retry so the widget can run again with any state
                 // changes that happened before the fuel trap.
                 let state = self.store.data_mut();
-                Self::render_cached_tree(state, delta_ms);
+                if !Self::render_cached_tree(state, delta_ms) {
+                    Self::draw_dead_overlay(state);
+                    return Ok(RenderStatus::Dead);
+                }
                 Self::draw_fuel_warning(state, self.fuel_strikes, self.max_fuel_strikes);
                 // Force a retry next frame so the widget can run again with
                 // any state changes that happened before the fuel trap.
@@ -778,7 +1053,43 @@ impl WasmWidgetRuntime {
     /// Invariant: callers must be inside a [`Self::with_renderer`] scope so
     /// `HostState::renderer_ptr` is installed; the `expect` below asserts the
     /// host's own invariant, not the guest's.
-    fn render_cached_tree(state: &mut HostState, delta_ms: u32) {
+    fn render_cached_tree(state: &mut HostState, delta_ms: u32) -> bool {
+        state.last_asset_restoration = None;
+        if state.cached_tree.is_none() {
+            return true;
+        }
+        let mut ptr = state
+            .renderer_ptr
+            .expect("BUG: render_cached_tree called outside `with_renderer` scope");
+        // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
+        // thread; single-threaded wasmi dispatch keeps it unique for this borrow.
+        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+        if state.renderer_assets.has_pending_restorable() {
+            if state.cached_tree_asset_references.is_none() {
+                state.cached_tree_asset_references = Some(
+                    state
+                        .cached_tree
+                        .as_ref()
+                        .expect("BUG: cached tree was checked above")
+                        .0
+                        .renderer_asset_references(),
+                );
+            }
+            let references = state
+                .cached_tree_asset_references
+                .take()
+                .expect("BUG: cached tree references were initialized above");
+            let restored = restore_referenced_renderer_assets(state, renderer, &references);
+            state.cached_tree_asset_references = Some(references);
+            if !restored {
+                return false;
+            }
+        }
+        Self::layout_cached_tree(state, renderer, delta_ms);
+        true
+    }
+
+    fn layout_cached_tree(state: &mut HostState, renderer: &mut dyn Renderer, delta_ms: u32) {
         let Some((ref tree_node, width, height)) = state.cached_tree else {
             return;
         };
@@ -787,12 +1098,6 @@ impl WasmWidgetRuntime {
         let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
-        let mut ptr = state
-            .renderer_ptr
-            .expect("BUG: render_cached_tree called outside `with_renderer` scope");
-        // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
-        // thread; single-threaded wasmi dispatch keeps it unique for this borrow.
-        let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,
@@ -819,6 +1124,11 @@ impl WasmWidgetRuntime {
                 tracing::error!("cached tree render failed: {e}");
             }
         }
+    }
+
+    fn render_stopped_cached_tree(state: &mut HostState, delta_ms: u32) {
+        let _ = Self::render_cached_tree(state, delta_ms);
+        state.begin_render_frame();
     }
 
     /// Subtle red bar at the top edge indicating fuel exhaustion.
@@ -1089,8 +1399,7 @@ impl WasmWidgetRuntime {
             Some(PendingHook::Sleep | PendingHook::SleepThenWake) => {
                 Some(PendingHook::SleepThenWake)
             }
-            Some(PendingHook::Wake) | None => Some(PendingHook::Wake),
-            Some(PendingHook::WakeThenSleep) => Some(PendingHook::SleepThenWake),
+            Some(PendingHook::Wake | PendingHook::WakeThenSleep) | None => Some(PendingHook::Wake),
         };
         let state = self.store.data_mut();
         state.mark_renderer_assets_active();
@@ -1104,16 +1413,14 @@ impl WasmWidgetRuntime {
         self.pending_hook.is_some()
     }
 
-    /// Deliver queued hooks with renderer access for suspension and wake restoration.
+    /// Deliver queued hooks with renderer access for suspension and guest imports.
     pub(super) fn flush_pending_lifecycle(&mut self) {
         if self.pending_hook.is_some() && self.store.data().renderer_ptr.is_none() {
             return;
         }
         match self.pending_hook.take() {
             Some(PendingHook::Wake) => {
-                if self.restore_renderer_assets() {
-                    self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
-                }
+                self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
             }
             Some(PendingHook::Sleep) => {
                 self.fire_sleep();
@@ -1134,13 +1441,37 @@ impl WasmWidgetRuntime {
 
     fn fire_sleep(&mut self) {
         self.fire_update_hook(self.on_sleep_func, "on_sleep", Lifecycle::Sleep);
-        if let Err(error) = self.suspend_renderer_assets() {
-            tracing::error!(
-                instance_id = %self.store.data().instance_id,
-                %error,
-                "renderer asset suspension failed"
-            );
-            self.renderer_asset_failure = Some(error);
+        match self.suspend_renderer_assets() {
+            Ok(observation) => {
+                self.last_asset_suspension = Some(observation);
+                #[cfg(feature = "profiling")]
+                tracing::info!(
+                    target: bmc_render::profile::TARGET,
+                    instance_id = %self.store.data().instance_id,
+                    svg_suspended = observation.svg_suspended,
+                    bitmap_suspended = observation.bitmap_suspended,
+                    mesh_suspended = observation.mesh_suspended,
+                    svg_heap_bytes_released = observation.svg_heap_bytes_released,
+                    svg_path_bytes_released = observation.svg_path_bytes_released,
+                    bitmap_released = observation.bitmap_released,
+                    mesh_bytes_released = observation.mesh_bytes_released,
+                    svg_path_bytes_resident_total_before = observation.svg_path_bytes_resident_total_before,
+                    svg_path_bytes_resident_total_after = observation.svg_path_bytes_resident_total_after,
+                    bitmap_resident_total_before = observation.bitmap_resident_total_before,
+                    bitmap_resident_total_after = observation.bitmap_resident_total_after,
+                    mesh_bytes_resident_total_before = observation.mesh_bytes_resident_total_before,
+                    mesh_bytes_resident_total_after = observation.mesh_bytes_resident_total_after,
+                    "widget renderer assets suspended"
+                );
+            }
+            Err(error) => {
+                tracing::error!(
+                    instance_id = %self.store.data().instance_id,
+                    %error,
+                    "renderer asset suspension failed"
+                );
+                self.store.data_mut().renderer_asset_failure = Some(error);
+            }
         }
     }
 
@@ -1178,63 +1509,26 @@ impl WasmWidgetRuntime {
                     "asset reservation changed while suspending {raw_tag}"
                 ));
             }
+            self.store.data_mut().renderer_assets.mark_pending(&raw_tag);
+            if newly_suspended {
+                match record.kind {
+                    RendererAssetKind::Svg => observation.svg_suspended += 1,
+                    RendererAssetKind::Bitmap(_) => observation.bitmap_suspended += 1,
+                    RendererAssetKind::Mesh => observation.mesh_suspended += 1,
+                }
+            }
+            #[cfg(feature = "profiling")]
+            tracing::info!(
+                target: bmc_render::profile::TARGET,
+                instance_id = %self.store.data().instance_id,
+                tag = %raw_tag,
+                asset_kind = record.kind.name(),
+                asset_id = record.id.to_ffi(),
+                newly_suspended,
+                "widget renderer asset suspension observed"
+            );
         }
         Ok(())
-    }
-
-    fn restore_renderer_assets(&mut self) -> bool {
-        let records = self.store.data().renderer_assets.restorable();
-        for (raw_tag, record) in records {
-            if let Err(error) = self.restore_renderer_asset(&raw_tag, &record) {
-                tracing::error!(
-                    instance_id = %self.store.data().instance_id,
-                    %error,
-                    "renderer asset restoration failed"
-                );
-                self.renderer_asset_failure = Some(error);
-                return false;
-            }
-        }
-        true
-    }
-
-    fn restore_renderer_asset(
-        &mut self,
-        raw_tag: &str,
-        record: &RendererAssetRecord,
-    ) -> Result<(), String> {
-        let tag = self.store.data().namespaced_tag(raw_tag);
-        let Some(mut pointer) = self.store.data().renderer_ptr else {
-            return Err("renderer unavailable during asset restoration".to_owned());
-        };
-        // SAFETY: lifecycle delivery runs inside `with_renderer`; no guest import is
-        // active while this exact-tag restore owns the renderer reborrow.
-        let renderer: &mut dyn Renderer = unsafe { pointer.as_mut() };
-        let restored = match &record.backing {
-            AssetBacking::Cache(key) => {
-                let Some(cache) = self.store.data().asset_cache.as_ref() else {
-                    return Ok(());
-                };
-                let Some(blob) = cache.get(key) else {
-                    return Ok(());
-                };
-                let Some((width, height)) = cached_bitmap_dimensions(&blob) else {
-                    cache.evict(key);
-                    return Ok(());
-                };
-                renderer
-                    .register_bitmap_rgba(&tag, blob.bytes(), width, height)
-                    .map(RendererAssetId::Bitmap)
-            }
-            AssetBacking::Volatile => return Ok(()),
-        };
-        if restored == Some(record.id) {
-            Ok(())
-        } else {
-            Err(format!(
-                "asset reservation changed while restoring {raw_tag}"
-            ))
-        }
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:
@@ -1475,6 +1769,24 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn renderer_assets_are_dormant_for_test(&self) -> bool {
         self.store.data().renderer_assets_are_dormant()
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn last_asset_suspension_for_test(&self) -> Option<RendererAssetSuspensionObservation> {
+        self.last_asset_suspension
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn last_asset_restoration_for_test(&self) -> Option<RendererAssetRestorationObservation> {
+        self.store.data().last_asset_restoration
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn frame_counter_for_test(&self) -> u64 {
+        self.store.data().frame_counter
     }
 
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.

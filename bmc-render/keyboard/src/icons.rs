@@ -53,7 +53,7 @@ thread_local! {
 }
 
 fn id_for(renderer: &mut dyn Renderer, icon: &Svg) -> Option<SvgId> {
-    let id = renderer.register_svg(icon.name, icon.data);
+    let id = renderer.register_svg(icon.name, icon.source.data());
     if id.is_none() {
         WARNED.with_borrow_mut(|w| {
             if w.insert(icon.name) {

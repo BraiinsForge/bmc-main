@@ -40,6 +40,8 @@ enum Command {
         wasm_output: PathBuf,
         #[arg(long)]
         asset_root: PathBuf,
+        #[arg(long)]
+        artifact_root: Option<PathBuf>,
     },
     VerifyStripped {
         #[arg(long)]
@@ -53,7 +55,8 @@ fn main() -> Result<()> {
             input,
             wasm_output,
             asset_root,
-        } => extract_package_assets(&input, &wasm_output, &asset_root),
+            artifact_root,
+        } => extract_package_assets(&input, artifact_root.as_deref(), &wasm_output, &asset_root),
         Command::VerifyStripped { input } => {
             let wasm = fs::read(&input)?;
             ensure!(

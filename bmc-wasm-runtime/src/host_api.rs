@@ -355,7 +355,7 @@ pub(crate) enum Lifecycle {
     NetworkUpdate,
     /// `on_sleep` is on the stack — release off-scene resources.
     Sleep,
-    /// `on_wake` is on the stack — restore resources; `request_frame` is legal.
+    /// `on_wake` is on the stack — rebuild guest state; `request_frame` is legal.
     Wake,
     /// `unload` is on the stack. Synchronous cleanup only; frame requests no-op.
     Unload,
@@ -715,6 +715,8 @@ pub(crate) struct HostState {
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
 
+    pub(crate) cached_tree_asset_references: Option<bmc_render::tree::RendererAssetReferences>,
+
     /// Current wall-clock time, set by the host before each render().
     /// Used by `host_get_system_time()` — the runtime never calls `Local::now()`.
     pub system_time: chrono::DateTime<chrono::FixedOffset>,
@@ -936,6 +938,10 @@ pub(crate) struct HostState {
 
     pub(crate) renderer_assets: crate::renderer_assets::RendererAssetLedger,
 
+    pub(crate) renderer_asset_failure: Option<String>,
+
+    pub(crate) last_asset_restoration: Option<crate::runtime::RendererAssetRestorationObservation>,
+
     /// Audio output stream — must stay alive for the entire session.
     /// `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
@@ -981,16 +987,6 @@ impl HostState {
         false
     }
 
-    pub(crate) fn renderer_asset_decode_matches(
-        &self,
-        raw_tag: &str,
-        kind: crate::renderer_assets::RendererAssetKind,
-    ) -> bool {
-        self.renderer_assets
-            .get(raw_tag)
-            .is_none_or(|existing| existing.kind == kind)
-    }
-
     pub(crate) fn record_renderer_asset(
         &mut self,
         raw_tag: String,
@@ -1001,7 +997,16 @@ impl HostState {
         self.renderer_assets
             .record(
                 raw_tag,
-                crate::renderer_assets::RendererAssetRecord { kind, id, backing },
+                crate::renderer_assets::RendererAssetRecord {
+                    kind,
+                    id,
+                    demand_restoration: if backing.is_restorable() {
+                        crate::renderer_assets::DemandRestoration::Pending
+                    } else {
+                        crate::renderer_assets::DemandRestoration::Unavailable
+                    },
+                    backing,
+                },
             )
             .is_ok()
     }
@@ -1035,12 +1040,18 @@ impl HostState {
     /// The renderer is owned by the caller of [`crate::WasmWidgetRuntime::new`]
     /// and installed on `renderer_ptr` per-frame via
     /// `WasmWidgetRuntime::with_renderer`.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "constructor initializes every independent host service and runtime registry"
+    )]
     pub fn new(resource_limits: RuntimeResourceLimits, system_time: DateTime<FixedOffset>) -> Self {
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
             renderer_asset_gate: RendererAssetGate::Active,
             renderer_assets: crate::renderer_assets::RendererAssetLedger::default(),
+            renderer_asset_failure: None,
+            last_asset_restoration: None,
             interaction: InteractionState::new(),
             frame_schedule: FrameScheduleState::new(),
             tree_clicks: HashMap::new(),
@@ -1052,6 +1063,7 @@ impl HostState {
             transition_states: HashMap::new(),
             frame_counter: 0,
             cached_tree: None,
+            cached_tree_asset_references: None,
             system_time,
             monotonic_ms: 0,
             params: VersionedSnapshotCache::new(ParamsSnapshot::new(BTreeMap::new())),

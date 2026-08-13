@@ -19,13 +19,17 @@
 // the grant above.
 
 mod digest;
+#[cfg(feature = "extractor")]
 mod extract;
 mod record;
+#[cfg(feature = "extractor")]
 mod rewrite;
 
 pub use digest::package_asset_id;
+#[cfg(feature = "extractor")]
 pub use extract::extract_package_assets;
 pub use record::{MAX_PACKAGE_ASSET_PAYLOAD_LEN, RecordError, RecordRef, Records, encode_record};
+#[cfg(feature = "extractor")]
 pub use rewrite::{
     RewrittenModule, contains_package_asset_section, rewrite_package_asset_sections,
 };
