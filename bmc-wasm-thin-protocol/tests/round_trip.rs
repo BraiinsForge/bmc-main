@@ -122,6 +122,7 @@ fn hello_with_fd_round_trip() {
         &a,
         &HelloMsg::Load {
             wasm_path: "/path/to/widget.wasm".into(),
+            asset_root: Some("/path/to/assets".into()),
         },
         fd_a.as_fd(),
     )
@@ -131,7 +132,13 @@ fn hello_with_fd_round_trip() {
 
     let (msg, recovered_fd) = recv_hello_with_fd(&b).expect("BUG: test fixture expects recv_hello_with_fd to decode bytes written by send_hello_with_fd");
     match msg {
-        HelloMsg::Load { wasm_path } => assert_eq!(wasm_path, "/path/to/widget.wasm"),
+        HelloMsg::Load {
+            wasm_path,
+            asset_root,
+        } => {
+            assert_eq!(wasm_path, "/path/to/widget.wasm");
+            assert_eq!(asset_root.as_deref(), Some("/path/to/assets"));
+        }
     }
     assert!(
         recovered_fd.as_raw_fd() >= 0,
@@ -195,6 +202,7 @@ fn hello_without_scm_rights_is_protocol_error() {
         PROTOCOL_VERSION,
         &HelloMsg::Load {
             wasm_path: "/x".into(),
+            asset_root: None,
         },
     );
     (&sender)
@@ -234,6 +242,7 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
         PROTOCOL_VERSION,
         &HelloMsg::Load {
             wasm_path: "/x".into(),
+            asset_root: None,
         },
     );
 
@@ -298,6 +307,7 @@ fn hello_with_wrong_version_is_rejected_before_payload() {
         0xFFFF,
         &HelloMsg::Load {
             wasm_path: "/tmp/x.wasm".into(),
+            asset_root: None,
         },
     );
     raw_sendmsg_with_fd(&a, &frame, dummy.as_fd());

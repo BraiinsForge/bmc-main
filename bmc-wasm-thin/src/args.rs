@@ -36,6 +36,9 @@ pub struct RawArgs {
     #[arg(long)]
     pub wasm: PathBuf,
 
+    #[arg(long)]
+    pub asset_root: Option<PathBuf>,
+
     #[arg(long, value_name = "PATH")]
     pub host_socket: Option<PathBuf>,
 
@@ -52,6 +55,7 @@ pub struct RawArgs {
 #[derive(Debug, Clone)]
 pub struct Config {
     pub wasm: PathBuf,
+    pub asset_root: Option<PathBuf>,
     pub host_socket: PathBuf,
     pub lockfile: PathBuf,
     pub owner_record: PathBuf,
@@ -109,6 +113,7 @@ impl Config {
         let host_bin = raw.host_bin.unwrap_or_else(default_host_bin);
         Ok(Self {
             wasm: raw.wasm,
+            asset_root: raw.asset_root,
             host_socket,
             lockfile,
             owner_record,

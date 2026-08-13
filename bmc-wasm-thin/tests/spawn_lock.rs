@@ -42,6 +42,7 @@ fn make_config(td: &TempDir, name: &str) -> Config {
     let lockfile = td.path().join(format!("{name}.lock"));
     Config {
         wasm: PathBuf::from("/dev/null"),
+        asset_root: None,
         host_socket,
         lockfile,
         owner_record: td.path().join(format!("{name}.owner")),

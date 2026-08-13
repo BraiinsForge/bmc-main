@@ -38,6 +38,7 @@ use crate::args::Config;
 pub fn run(config: Config) -> Result<()> {
     tracing::info!(
         wasm = %config.wasm.display(),
+        asset_root = ?config.asset_root,
         host_socket = %config.host_socket.display(),
         host_bin = %config.host_bin.display(),
         lockfile = %config.lockfile.display(),
@@ -50,8 +51,13 @@ pub fn run(config: Config) -> Result<()> {
     tracing::info!("connected to Wayland; connecting to wasm host");
     let control = spawn::connect_or_spawn(&config)?;
     tracing::info!("connected to wasm host; sending load request");
-    let control =
-        host_client::send_load_and_wait_ack(control, &config.wasm, wayland, config.ack_wait)?;
+    let control = host_client::send_load_and_wait_ack(
+        control,
+        &config.wasm,
+        config.asset_root.as_deref(),
+        wayland,
+        config.ack_wait,
+    )?;
     tracing::info!("host acknowledged widget load; idling as lifetime witness");
     let idle_exit = host_client::idle_until_exit(control)?;
     tracing::info!(?idle_exit, "bmc-wasm-thin exiting");

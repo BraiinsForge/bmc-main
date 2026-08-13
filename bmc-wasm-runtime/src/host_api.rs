@@ -920,6 +920,9 @@ pub(crate) struct HostState {
     /// Per-instance asset cache, curried to this widget's bucket.
     pub asset_cache: Option<crate::disk_cache::DiskCache>,
 
+    /// Per-widget immutable source for package-backed assets.
+    pub package_assets: Option<crate::PackageAssetStore>,
+
     /// Audio output stream — must stay alive for the entire session.
     /// `None` if audio output is unavailable (headless, no ALSA, etc.).
     #[cfg(feature = "audio")]
@@ -1067,6 +1070,7 @@ impl HostState {
             audio: AudioRegistry::new(),
             instance_id: synthetic_instance_id(),
             asset_cache: None,
+            package_assets: None,
             #[cfg(feature = "audio")]
             audio_stream: {
                 match rodio::OutputStream::try_default() {

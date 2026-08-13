@@ -117,10 +117,13 @@ pub use disk_cache::DiskCache;
 mod host_api;
 pub mod led_request;
 pub mod network;
+mod package_assets;
 #[cfg(feature = "perf-overlay")]
 pub mod perf_overlay;
 mod runtime;
 pub mod system;
+
+pub use package_assets::{PackageAssetError, PackageAssetStore};
 
 #[cfg(feature = "fixtures")]
 pub mod capture_config;

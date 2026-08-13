@@ -107,6 +107,7 @@ fn wayland_display_path_resolution_matches_widget_manager_defaults() {
 fn config_defaults_use_protocol_paths() {
     let raw = RawArgs {
         wasm: Path::new("/tmp/widget.wasm").to_path_buf(),
+        asset_root: None,
         host_socket: None,
         host_bin: None,
         host_wait_ms: None,
@@ -124,6 +125,7 @@ fn config_defaults_use_protocol_paths() {
 fn production_config_entrypoint_reads_explicit_env_overrides() {
     let raw = RawArgs {
         wasm: Path::new("/tmp/widget.wasm").to_path_buf(),
+        asset_root: None,
         host_socket: None,
         host_bin: None,
         host_wait_ms: None,

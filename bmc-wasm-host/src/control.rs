@@ -102,8 +102,12 @@ pub fn accept_and_load(
     })?;
     client.set_read_timeout(None).map_err(anyhow::Error::from)?;
 
-    let HelloMsg::Load { wasm_path } = msg;
+    let HelloMsg::Load {
+        wasm_path,
+        asset_root,
+    } = msg;
     let path = PathBuf::from(&wasm_path);
+    let asset_root = asset_root.map(PathBuf::from);
     tracing::info!(
         ?peer_pid,
         wasm = %path.display(),
@@ -121,11 +125,18 @@ pub fn accept_and_load(
         .unwrap_or("widget");
     let slot = {
         let _span = tracing::info_span!("widget", wasm).entered();
-        WidgetSlot::from_handshake(&path, wayland_fd, client.try_clone()?, peer_pid, factory)
-            .map_err(|e| {
-                let _ = write_ack(&client, &AckMsg::Err(format!("load: {e}")));
-                e
-            })?
+        WidgetSlot::from_handshake(
+            &path,
+            asset_root.as_deref(),
+            wayland_fd,
+            client.try_clone()?,
+            peer_pid,
+            factory,
+        )
+        .map_err(|e| {
+            let _ = write_ack(&client, &AckMsg::Err(format!("load: {e}")));
+            e
+        })?
     };
 
     write_ack(&client, &AckMsg::Ok)?;

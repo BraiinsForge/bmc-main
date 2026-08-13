@@ -39,7 +39,13 @@ fn sends_hello_with_one_wayland_fd_and_reads_ok_ack() {
         let (msg, fd) =
             recv_hello_with_fd(&control_server).expect("BUG: fake host should receive Hello");
         match msg {
-            HelloMsg::Load { wasm_path } => assert_eq!(wasm_path, "/tmp/widget.wasm"),
+            HelloMsg::Load {
+                wasm_path,
+                asset_root,
+            } => {
+                assert_eq!(wasm_path, "/tmp/widget.wasm");
+                assert_eq!(asset_root.as_deref(), Some("/tmp/assets"));
+            }
         }
         assert!(fd.as_raw_fd() >= 0);
         write_ack(&control_server, &AckMsg::Ok).expect("BUG: fake host should write Ack::Ok");
@@ -48,6 +54,7 @@ fn sends_hello_with_one_wayland_fd_and_reads_ok_ack() {
     send_load_and_wait_ack(
         control_client,
         Path::new("/tmp/widget.wasm"),
+        Some(Path::new("/tmp/assets")),
         wayland_client,
         Duration::from_secs(1),
     )
@@ -69,6 +76,7 @@ fn ack_err_is_a_load_error() {
     let err = send_load_and_wait_ack(
         control_client,
         Path::new("/tmp/bad.wasm"),
+        None,
         wayland_client,
         Duration::from_secs(1),
     )
@@ -90,6 +98,7 @@ fn silent_host_times_out_without_busy_looping() {
     let err = send_load_and_wait_ack(
         control_client,
         Path::new("/tmp/widget.wasm"),
+        None,
         wayland_client,
         Duration::from_millis(50),
     )
@@ -110,6 +119,7 @@ fn eof_before_ack_is_startup_error() {
     let err = send_load_and_wait_ack(
         control_client,
         Path::new("/tmp/widget.wasm"),
+        None,
         wayland_client,
         Duration::from_secs(1),
     )

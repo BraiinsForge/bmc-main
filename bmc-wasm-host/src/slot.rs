@@ -290,6 +290,7 @@ struct SlotIdentity {
 impl WidgetSlot {
     pub fn from_handshake(
         wasm_path: &Path,
+        asset_root: Option<&Path>,
         wayland_fd: std::os::fd::OwnedFd,
         control_socket: UnixStream,
         peer_pid: Option<libc::pid_t>,
@@ -357,6 +358,7 @@ impl WidgetSlot {
                     PathBuf::from(WIDGET_CACHE_DIR).join(&token),
                     WIDGET_CACHE_BUCKET_MAX_BYTES,
                 )),
+                package_assets: asset_root.map(bmc_wasm_runtime::PackageAssetStore::new),
                 instance_token: Some(token.clone()),
                 ..RuntimeConfig::default()
             },

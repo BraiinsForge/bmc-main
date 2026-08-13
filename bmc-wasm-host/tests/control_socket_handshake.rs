@@ -75,6 +75,7 @@ fn handshake_with_nonwayland_fd_returns_err_ack() {
         &client,
         &HelloMsg::Load {
             wasm_path: "/nonexistent/widget.wasm".into(),
+            asset_root: Some("/nonexistent/assets".into()),
         },
         fd_to_send.as_fd(),
     )

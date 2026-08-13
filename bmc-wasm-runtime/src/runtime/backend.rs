@@ -262,6 +262,8 @@ pub struct RuntimeConfig {
     pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     /// Per-instance asset cache, curried to this widget's bucket; `None` disables it.
     pub asset_cache: Option<crate::disk_cache::DiskCache>,
+    /// Immutable package source for assets extracted from this widget's WASM.
+    pub package_assets: Option<crate::PackageAssetStore>,
     /// Compositor token for asset-tag namespacing; `None` → synthetic `dev-N`.
     pub instance_token: Option<String>,
 }
@@ -293,6 +295,7 @@ impl Default for RuntimeConfig {
             credentials: CredentialView::default(),
             credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             asset_cache: None,
+            package_assets: None,
             instance_token: None,
         }
     }
@@ -422,6 +425,7 @@ impl WasmWidgetRuntime {
             credentials,
             credential_secrets,
             asset_cache,
+            package_assets,
             instance_token,
             ..
         } = config;
@@ -438,6 +442,7 @@ impl WasmWidgetRuntime {
         engine_config.wasm_custom_page_sizes(false);
         engine_config.wasm_wide_arithmetic(false);
         let engine = wasmi::Engine::new(&engine_config);
+        crate::package_assets::reject_embedded_package_assets(wasm_bytes)?;
         let module = wasmi::Module::new(&engine, wasm_bytes)?;
 
         let host_state = HostState::new(resource_limits, initial_system_time);
@@ -462,6 +467,7 @@ impl WasmWidgetRuntime {
         state.display_dpi = display.dpi;
         state.kv_store_path = kv_store_path;
         state.asset_cache = asset_cache;
+        state.package_assets = package_assets;
         if let Some(token) = instance_token {
             state.instance_id = token;
         }

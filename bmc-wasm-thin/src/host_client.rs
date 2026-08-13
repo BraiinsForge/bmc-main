@@ -30,11 +30,13 @@ use bmc_wasm_thin_protocol::{AckDecoder, AckMsg, HelloMsg, send_hello_with_fd};
 pub fn send_load_and_wait_ack(
     control: UnixStream,
     wasm: &Path,
+    asset_root: Option<&Path>,
     wayland: UnixStream,
     ack_wait: Duration,
 ) -> Result<UnixStream> {
     let msg = HelloMsg::Load {
         wasm_path: wasm.display().to_string(),
+        asset_root: asset_root.map(|path| path.display().to_string()),
     };
     tracing::info!(wasm = %wasm.display(), "sending Hello with Wayland fd");
     send_hello_with_fd(&control, &msg, wayland.as_fd()).context("send Hello with Wayland fd")?;

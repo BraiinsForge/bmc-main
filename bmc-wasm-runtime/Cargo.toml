@@ -36,6 +36,8 @@ wasmi.workspace = true
 femtovg.workspace = true
 glow.workspace = true
 image.workspace = true
+sha2.workspace = true
+wasmparser.workspace = true
 
 # Layout
 taffy.workspace = true
@@ -89,7 +91,6 @@ tempfile = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 toml_edit = { workspace = true, optional = true }
 wasm-encoder = { workspace = true, optional = true }
-wasmparser = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -100,7 +101,7 @@ audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete", "clap"]
-capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder", "wasmparser"]
+capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder"]
 
 [[bin]]
 name = "testbed"
@@ -113,6 +114,7 @@ path = "src/bin/capture/main.rs"
 required-features = ["capture"]
 
 [dev-dependencies]
+bmc-wasm-assets = { path = "../bmc-wasm-assets" }
 # Pull the SDK parser in for the host-encoder → SDK-parser round-trip test in
 # `runtime::imports::params::tests`. The wasm32-gated externs aren't compiled
 # on native; only the parser (`Params::from_bytes`, `entries()`) is exercised.
