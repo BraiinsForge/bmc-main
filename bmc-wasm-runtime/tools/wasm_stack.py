@@ -26,6 +26,9 @@ only way to confirm it survived is to read the linked module back. wasm-ld lays
 the shadow stack out downwards from its initial `__stack_pointer`, placing
 static data immediately above, so that pointer is the reservation.
 
+The capture profiler in `src/stack_profile.rs` validates the same global
+with `wasmparser`. Keep the two sets of assumptions aligned.
+
 Reports every module unless `--expect` is given, which turns the report into an
 assertion and exits 1 on the first module that disagrees.
 

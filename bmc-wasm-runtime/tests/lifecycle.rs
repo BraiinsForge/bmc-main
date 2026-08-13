@@ -379,6 +379,20 @@ fn build_runtime_without_renderer(wat: impl AsRef<str>) -> WasmWidgetRuntime {
     .expect("BUG: probe runtime must construct")
 }
 
+fn fuel_exhausting_update_wat() -> String {
+    format!(
+        r#"
+    (module
+      (memory (export "memory") 1)
+      (func (export "__bmc_sdk_init") (result i64) i64.const {})
+      (func (export "render") (param i32))
+      (func (export "on_params_update")
+        (loop $forever br $forever)))
+    "#,
+        bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
+    )
+}
+
 fn build_runtime(
     wat: impl AsRef<str>,
     gl: &headless_egl::HeadlessGl,
@@ -547,6 +561,57 @@ fn host_params_snapshot_traps_on_oob_out_ptr() {
          (the prior behaviour) makes a misbehaving guest see 'no snapshot' instead of \
          finding out it bugged itself"
     );
+}
+
+#[test]
+fn poll_deliveries_rejects_a_runtime_after_a_lifecycle_hook_trap() {
+    let wasm = wat::parse_str(fuel_exhausting_update_wat()).expect("BUG: probe WAT must parse");
+    let config = RuntimeConfig {
+        fuel_per_frame: 1_000,
+        ..RuntimeConfig::default()
+    };
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
+        config,
+    )
+    .expect("BUG: probe runtime must construct");
+
+    assert!(!runtime.deliver_params_update(BTreeMap::new()));
+    let trap = runtime
+        .poll_deliveries()
+        .expect_err("a lifecycle hook trap leaves the guest stack unsafe to reuse");
+    assert!(trap.to_string().contains("all fuel consumed"));
+}
+
+#[cfg(feature = "capture")]
+#[test]
+fn capture_observes_fuel_exhaustion_from_lifecycle_hook() {
+    let wasm = wat::parse_str(fuel_exhausting_update_wat()).expect("BUG: probe WAT must parse");
+    let config = RuntimeConfig {
+        fuel_per_frame: 1_000,
+        ..RuntimeConfig::default()
+    };
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
+        config,
+    )
+    .expect("BUG: probe runtime must construct");
+
+    assert!(!runtime.deliver_params_update(BTreeMap::new()));
+    let trap = runtime
+        .take_lifecycle_trap()
+        .expect_err("capture must reject a profile after a lifecycle hook exhausts fuel");
+    assert!(trap.to_string().contains("all fuel consumed"));
 }
 
 #[test]

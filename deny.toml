@@ -39,6 +39,10 @@ skip = [
     { crate = "rand_chacha@0.3" },
     { crate = "rand_core@0.6" },
 
+    # wasmi 1.0.9 uses wasmparser 0.228 while capture instrumentation matches
+    # wasm-encoder 0.244. Remove after upgrading wasmi.
+    { crate = "wasmparser@0.228" },
+
     # Font/text ecosystem (cosmic-text pulls swash+harfrust with different versions)
     { crate = "font-types@0.10" },
     { crate = "read-fonts@0.35" },

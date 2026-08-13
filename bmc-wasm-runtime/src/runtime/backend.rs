@@ -353,12 +353,14 @@ pub struct WasmWidgetRuntime {
     pub(super) fuel_per_frame: u64,
     /// Consecutive frames that exceeded the fuel budget.
     fuel_strikes: u32,
-    /// Trap taken by a delivery callback, drained by `poll_deliveries`.
+    /// Trap taken by a guest callback, drained by `poll_deliveries`.
     ///
     /// A trap unwinds the guest's wasm frames without running their epilogues,
     /// so `__stack_pointer` keeps whatever value it had when the trap fired.
     /// Later calls start from there; the instance must not be driven again.
     pub(super) guest_trap: Option<anyhow::Error>,
+    #[cfg(feature = "capture")]
+    lifecycle_trap: Option<anyhow::Error>,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
     /// Off-screen (`on_sleep` fired); suppresses async-decode GPU uploads.
@@ -556,6 +558,8 @@ impl WasmWidgetRuntime {
             fuel_per_frame,
             fuel_strikes: 0,
             guest_trap: None,
+            #[cfg(feature = "capture")]
+            lifecycle_trap: None,
             fuel_dead: false,
             dormant: false,
             max_fuel_strikes: 5,
@@ -1078,6 +1082,13 @@ impl WasmWidgetRuntime {
         };
         if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
             tracing::warn!("{hook_name}: could not set fuel: {e}");
+            if self.guest_trap.is_none() {
+                self.guest_trap = Some(anyhow::anyhow!("{hook_name}: could not set fuel: {e}"));
+            }
+            #[cfg(feature = "capture")]
+            if self.lifecycle_trap.is_none() {
+                self.lifecycle_trap = Some(anyhow::anyhow!("{hook_name}: could not set fuel: {e}"));
+            }
             return false;
         }
         let call_result = in_lifecycle(&mut self.store, phase, |s| hook.call(s, ()));
@@ -1085,8 +1096,28 @@ impl WasmWidgetRuntime {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!("{hook_name} trapped: {e}");
+                if self.guest_trap.is_none() {
+                    self.guest_trap = Some(anyhow::anyhow!("{hook_name} trapped: {e}"));
+                }
+                #[cfg(feature = "capture")]
+                if self.lifecycle_trap.is_none() {
+                    self.lifecycle_trap = Some(anyhow::anyhow!("{hook_name} trapped: {e}"));
+                }
                 false
             }
+        }
+    }
+
+    /// Reject a capture replay after a lifecycle hook trapped.
+    ///
+    /// # Errors
+    ///
+    /// Returns the first hook trap since the previous call.
+    #[cfg(feature = "capture")]
+    pub fn take_lifecycle_trap(&mut self) -> Result<()> {
+        match self.lifecycle_trap.take() {
+            Some(trap) => Err(trap),
+            None => Ok(()),
         }
     }
 
@@ -1256,6 +1287,15 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn instance(&self) -> &wasmi::Instance {
         &self.instance
+    }
+
+    #[cfg(feature = "capture")]
+    #[must_use]
+    pub fn exported_global_i32(&self, name: &str) -> Option<i32> {
+        self.instance
+            .get_global(&self.store, name)?
+            .get(&self.store)
+            .i32()
     }
 
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.

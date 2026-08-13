@@ -96,6 +96,9 @@ enum Command {
         /// `--size`), each into `<output>/<size>/`.
         #[arg(long)]
         all_sizes: bool,
+        /// Instrument the linked module and print its shadow-stack high-water use.
+        #[arg(long, value_name = "RESERVED_BYTES")]
+        stack_profile: Option<i32>,
     },
     /// Build and capture every widget across the given workspaces (or one widget).
     RunAll {
@@ -110,6 +113,9 @@ enum Command {
         /// Capture widgets in parallel. Optionally specify thread count (default: nproc/2).
         #[arg(long, num_args = 0..=1, default_missing_value = "0")]
         parallel: Option<usize>,
+        /// Instrument every module and print a stack-use table after capture.
+        #[arg(long, value_name = "RESERVED_BYTES")]
+        stack_profile: Option<i32>,
     },
     /// Compare current captures against baselines for a single widget.
     Diff {
@@ -151,6 +157,9 @@ enum Command {
         /// Capture widgets in parallel. Optionally specify thread count (default: nproc/2).
         #[arg(long, num_args = 0..=1, default_missing_value = "0")]
         parallel: Option<usize>,
+        /// Instrument every module and print a verified stack-use table.
+        #[arg(long, value_name = "RESERVED_BYTES")]
+        stack_profile: Option<i32>,
     },
     /// Generate mp4 preview videos from captured frames.
     Preview {
@@ -253,6 +262,7 @@ fn dispatch() -> Result<()> {
             capture_dir,
             online,
             all_sizes,
+            stack_profile,
         } => {
             // Honour targeted RUST_LOG directives (e.g. `bmc_wasm_runtime=info`
             // from the justfile / run-all) so a failing replay.log carries
@@ -276,6 +286,7 @@ fn dispatch() -> Result<()> {
                 capture_dir,
                 online,
                 all_sizes,
+                stack_profiling: stack_profile.into(),
             })
         }
         Command::RunAll {
@@ -283,12 +294,14 @@ fn dispatch() -> Result<()> {
             ws,
             output_dir,
             parallel,
+            stack_profile,
         } => run_all::execute(&run_all::RunAllArgs {
             widget,
             workspaces: ws.workspace,
             wasm_dirs: ws.wasm_dir,
             output_dir,
             parallel,
+            stack_profiling: stack_profile.into(),
         }),
         Command::Diff {
             capture_dir,
@@ -315,6 +328,7 @@ fn dispatch() -> Result<()> {
             ws,
             output_dir,
             parallel,
+            stack_profile,
         } => verify::execute(&verify::VerifyArgs {
             widget,
             threshold,
@@ -324,6 +338,7 @@ fn dispatch() -> Result<()> {
             wasm_dirs: ws.wasm_dir,
             output_dir,
             parallel,
+            stack_profiling: stack_profile.into(),
         }),
         Command::Preview { output, size, fps } => {
             preview::execute(&preview::PreviewArgs { output, size, fps })

@@ -126,6 +126,8 @@ pub mod system;
 pub mod capture_config;
 #[cfg(feature = "fixtures")]
 pub mod fixtures;
+#[cfg(feature = "capture")]
+pub mod stack_profile;
 #[cfg(feature = "fixtures")]
 pub mod unified_fixture;
 

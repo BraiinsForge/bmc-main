@@ -90,6 +90,8 @@ sevenz-rust2 = { workspace = true, optional = true }
 tempfile = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 toml_edit = { workspace = true, optional = true }
+wasm-encoder = { workspace = true, optional = true }
+wasmparser = { workspace = true, optional = true }
 
 [features]
 default = []
@@ -100,7 +102,7 @@ audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "flate2", "owo-colors", "toml", "toml_edit"]
 testbed = ["host", "perf-overlay", "notify", "fixtures", "audio", "eframe", "egui", "egui_autocomplete", "clap"]
-capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile"]
+capture = ["host", "askama", "base64", "clap", "console", "khronos-egl", "libc", "fixtures", "rayon", "sevenz-rust2", "tempfile", "wasm-encoder", "wasmparser"]
 
 [[bin]]
 name = "testbed"

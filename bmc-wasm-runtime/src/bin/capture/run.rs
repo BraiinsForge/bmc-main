@@ -64,6 +64,33 @@ const DRAG_FRAMES: u32 = 10;
 
 // ── Public interface ────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
+pub enum StackProfiling {
+    Disabled,
+    Enabled { expected_origin: i32 },
+}
+
+impl StackProfiling {
+    pub fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled { .. })
+    }
+
+    fn expected_origin(self) -> Option<i32> {
+        match self {
+            Self::Disabled => None,
+            Self::Enabled { expected_origin } => Some(expected_origin),
+        }
+    }
+}
+
+impl From<Option<i32>> for StackProfiling {
+    fn from(expected_origin: Option<i32>) -> Self {
+        expected_origin.map_or(Self::Disabled, |expected_origin| Self::Enabled {
+            expected_origin,
+        })
+    }
+}
+
 /// Arguments passed from the CLI `run` subcommand.
 pub struct RunArgs {
     pub wasm_path: PathBuf,
@@ -81,6 +108,7 @@ pub struct RunArgs {
     /// Render every `CAPTURE_SIZES` viewport the widget's manifest supports,
     /// each into `<output>/<size>/`. Ignores `--size`.
     pub all_sizes: bool,
+    pub stack_profiling: StackProfiling,
 }
 
 /// Parsed capture parameters (size string → width/height/name).
@@ -93,6 +121,7 @@ struct CaptureCtx {
     fixture: Option<PathBuf>,
     variant: Option<String>,
     online: bool,
+    stack_profiling: StackProfiling,
 }
 
 pub fn execute(args: RunArgs) -> Result<()> {
@@ -144,6 +173,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         fixture: args.fixture,
         variant: args.variant,
         online: args.online,
+        stack_profiling: args.stack_profiling,
     };
 
     run_capture(&ctx, &config)
@@ -262,6 +292,7 @@ fn run_all_supported_sizes(args: &RunArgs, config: &CaptureConfig) -> Result<()>
             fixture: args.fixture.clone(),
             variant: args.variant.clone(),
             online: args.online,
+            stack_profiling: args.stack_profiling,
         };
         // Offline replay needs a recorded fixture; skip sizes without one so
         // partial coverage (e.g. only `full`) renders what it can.
@@ -435,7 +466,7 @@ fn run_unified_capture(
         while monotonic_ms < target_ms {
             runtime.set_time(system_time, monotonic_ms);
             runtime.inject_fixture_events(fixture_ms);
-            deliver_all_io(&mut runtime, &mut renderer);
+            deliver_all_io(&mut runtime, &mut renderer)?;
             if !config.honor_frame_schedule || gate.due(&runtime, monotonic_ms) {
                 if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                     bail!("widget died at frame {frame_count}");
@@ -464,7 +495,7 @@ fn run_unified_capture(
                     for _ in 0..config.settle_delay {
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
-                        deliver_all_io(&mut runtime, &mut renderer);
+                        deliver_all_io(&mut runtime, &mut renderer)?;
                         if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died during settle at frame {frame_count}");
                         }
@@ -493,7 +524,7 @@ fn run_unified_capture(
                             break;
                         }
                         std::thread::sleep(std::time::Duration::from_millis(2));
-                        deliver_all_io(&mut runtime, &mut renderer);
+                        deliver_all_io(&mut runtime, &mut renderer)?;
                         if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died draining I/O at frame {frame_count}");
                         }
@@ -539,7 +570,7 @@ fn run_unified_capture(
                         while monotonic_ms < next_capture_at {
                             runtime.set_time(system_time, monotonic_ms);
                             runtime.inject_fixture_events(fixture_ms);
-                            deliver_all_io(&mut runtime, &mut renderer);
+                            deliver_all_io(&mut runtime, &mut renderer)?;
                             if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                                 bail!("widget died at frame {frame_count}");
                             }
@@ -552,7 +583,7 @@ fn run_unified_capture(
                         // Render and capture
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
-                        deliver_all_io(&mut runtime, &mut renderer);
+                        deliver_all_io(&mut runtime, &mut renderer)?;
                         if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
                             bail!("widget died at frame {frame_count}");
                         }
@@ -777,6 +808,14 @@ fn run_unified_capture(
                 | UnifiedEvent::LedStop => {}
             }
 
+            runtime.take_lifecycle_trap().with_context(|| {
+                if ctx.stack_profiling.is_enabled() {
+                    "stack profile invalid: lifecycle callback trapped"
+                } else {
+                    "widget lifecycle callback trapped"
+                }
+            })?;
+
             if is_tty {
                 eprint!(
                     "\r  frame {frame_count}  [{event_cursor}/{}]  ({captured_count} captured)   ",
@@ -800,6 +839,13 @@ fn run_unified_capture(
             ctx.height,
             breaches.join("\n  ")
         );
+    }
+
+    if ctx.stack_profiling.is_enabled() {
+        let high_water = runtime
+            .exported_global_i32(bmc_wasm_runtime::stack_profile::STACK_HIGH_WATER_EXPORT)
+            .context("instrumented widget did not expose its stack measurement")?;
+        println!("BMC_STACK_HIGH_WATER={high_water}");
     }
 
     eprintln!(
@@ -831,7 +877,7 @@ fn tick_one_frame(
 ) -> Result<()> {
     runtime.set_time(*system_time, *monotonic_ms);
     runtime.inject_fixture_events(*fixture_ms);
-    deliver_all_io(runtime, renderer);
+    deliver_all_io(runtime, renderer)?;
     if !render_frame(runtime, renderer, ctx, *frame_count) {
         bail!("widget died at frame {}", *frame_count);
     }
@@ -901,6 +947,10 @@ fn render_frame(
             eprintln!("Widget died at frame {frame_count}");
             false
         }
+        Ok(RenderStatus::FuelExhausted) if ctx.stack_profiling.is_enabled() => {
+            eprintln!("Stack profile invalid: widget exhausted its production fuel budget");
+            false
+        }
         Ok(_) => {
             renderer.flush();
             true
@@ -912,23 +962,12 @@ fn render_frame(
     }
 }
 
-/// Deliver all async I/O to the runtime. Returns true if any data arrived.
-fn deliver_all_io(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer) -> bool {
-    let had_pending_fetches = runtime.has_pending_fetches();
+/// Deliver all async I/O to the runtime.
+fn deliver_all_io(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer) -> Result<()> {
     let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
     let ptr = std::ptr::NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
-    runtime.with_renderer(ptr, |runtime| {
-        runtime.deliver_fetch_responses();
-        let fetches_completed = had_pending_fetches && !runtime.has_pending_fetches();
-        let had_ws = runtime.deliver_ws_messages();
-        let had_socket = runtime.deliver_socket_events();
-        let had_mdns = runtime.deliver_mdns_events();
-        let had_ssdp = runtime.deliver_ssdp_events();
-        let had_udp = runtime.deliver_udp_broadcast_events();
-        runtime.deliver_http_requests();
-        runtime.deliver_image_decode_results();
-        fetches_completed || had_ws || had_socket || had_mdns || had_ssdp || had_udp
-    })
+    runtime.poll_deliveries_with_renderer(ptr)?;
+    runtime.take_lifecycle_trap()
 }
 
 // ── KV directory setup ──────────────────────────────────────────────
@@ -1454,6 +1493,12 @@ fn setup_gl_and_runtime(
     let fbo_id = fbo.0.get();
 
     let wasm_bytes = std::fs::read(&ctx.wasm_path).context("failed to read WASM file")?;
+    let wasm_bytes = match ctx.stack_profiling.expected_origin() {
+        Some(expected_origin) => {
+            bmc_wasm_runtime::stack_profile::instrument(&wasm_bytes, expected_origin)?
+        }
+        None => wasm_bytes,
+    };
     // SAFETY: GL context is current on this thread for the lifetime
     // of the returned `keep_alive` bundle, which holds `gl_context`.
     let renderer = unsafe {

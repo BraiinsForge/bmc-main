@@ -36,6 +36,8 @@ use owo_colors::OwoColorize;
 
 use bmc_wasm_runtime::capture_config;
 
+use super::run::StackProfiling;
+
 // ── Constants ───────────────────────────────────────────────────────
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
@@ -64,6 +66,7 @@ pub struct RunAllArgs {
     /// Capture widgets in parallel. `Some(0)` = nproc/2 threads,
     /// `Some(n)` = n threads, `None` = sequential.
     pub parallel: Option<usize>,
+    pub stack_profiling: StackProfiling,
 }
 
 /// Resolved widget — knows its workspace and pre-built wasm dir (if any).
@@ -77,7 +80,11 @@ pub struct WidgetEntry {
 }
 
 pub fn execute(args: &RunAllArgs) -> Result<()> {
-    let widgets = resolve_widgets(&args.workspaces, &args.wasm_dirs, args.widget.as_deref())?;
+    let widgets = filter_profile_widgets(
+        resolve_widgets(&args.workspaces, &args.wasm_dirs, args.widget.as_deref())?,
+        args.stack_profiling,
+    );
+    ensure_profile_has_widgets(&widgets, args.stack_profiling)?;
 
     let capture_binary =
         std::env::current_exe().context("failed to resolve capture binary path")?;
@@ -88,6 +95,11 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
     // ── Capture ─────────────────────────────────────────────────────
     section("Capture");
     let capture_t0 = Instant::now();
+    if args.stack_profiling.is_enabled() {
+        println!("# WASM stack high-water marks\n");
+        println!("| Widget | Maximum observed stack use (bytes) |");
+        println!("| --- | ---: |");
+    }
 
     if let Some(n) = args.parallel {
         if widgets.len() > 1 {
@@ -97,12 +109,28 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
             } else {
                 n
             };
-            capture_parallel(&capture_binary, &args.output_dir, &widgets, threads)?;
+            capture_parallel(
+                &capture_binary,
+                &args.output_dir,
+                &widgets,
+                threads,
+                args.stack_profiling,
+            )?;
         } else {
-            capture_sequential(&capture_binary, &args.output_dir, &widgets)?;
+            capture_sequential(
+                &capture_binary,
+                &args.output_dir,
+                &widgets,
+                args.stack_profiling,
+            )?;
         }
     } else {
-        capture_sequential(&capture_binary, &args.output_dir, &widgets)?;
+        capture_sequential(
+            &capture_binary,
+            &args.output_dir,
+            &widgets,
+            args.stack_profiling,
+        )?;
     }
 
     let capture_elapsed = capture_t0.elapsed().as_secs_f64();
@@ -381,7 +409,8 @@ fn capture_widget(
     output_dir: &Path,
     entry: &WidgetEntry,
     show_progress: bool,
-) -> Result<f64> {
+    stack_profiling: StackProfiling,
+) -> Result<(f64, Option<u32>)> {
     let example = entry.name.as_str();
     let wasm = wasm_in_dir(&wasm_dir_for(entry)?, example);
     let cap_dir = capture_dir(&entry.workspace, example);
@@ -392,13 +421,14 @@ fn capture_widget(
         let _ = std::fs::remove_dir_all(&output_root);
     }
 
-    let fixture_sizes = configured_sizes(&cap_dir);
+    let fixture_sizes = configured_sizes(&cap_dir, stack_profiling)?;
     if fixture_sizes.is_empty() {
-        return Ok(0.0);
+        return Ok((0.0, None));
     }
 
-    let variants = list_variants(binary, &wasm, &cap_dir);
+    let variants = list_variants(binary, &wasm, &cap_dir, stack_profiling)?;
     let t0 = Instant::now();
+    let mut stack_high_water = None;
 
     for variant in &variants {
         for &(size_name, w, h) in CAPTURE_SIZES {
@@ -431,6 +461,12 @@ fn capture_widget(
                 .arg(format!("--capture-dir={}", cap_dir.display()));
             if variant != "_default" {
                 cmd.arg(format!("--variant={variant}"));
+            }
+            if stack_profiling.is_enabled() {
+                let StackProfiling::Enabled { expected_origin } = stack_profiling else {
+                    unreachable!("BUG: enabled stack profiling must carry its expected origin");
+                };
+                cmd.arg(format!("--stack-profile={expected_origin}"));
             }
             // Give a failing run's replay.log the widget's own diagnostics —
             // per-poll telemetry and the click/capture trace, not the frame trail.
@@ -470,10 +506,55 @@ fn capture_widget(
                     log_path.display(),
                 );
             }
+            if stack_profiling.is_enabled() {
+                let stdout = String::from_utf8(result.stdout)
+                    .context("capture stack profile emitted non-UTF-8 output")?;
+                let value = stdout
+                    .lines()
+                    .filter_map(|line| line.strip_prefix("BMC_STACK_HIGH_WATER="))
+                    .map(str::parse::<u32>)
+                    .collect::<Result<Vec<_>, _>>()
+                    .context("capture stack profile emitted an invalid measurement")?
+                    .into_iter()
+                    .max()
+                    .context("capture stack profile emitted no measurement")?;
+                stack_high_water = Some(stack_high_water.map_or(value, |old: u32| old.max(value)));
+            }
         }
     }
 
-    Ok(t0.elapsed().as_secs_f64())
+    if stack_profiling.is_enabled() && stack_high_water.is_none() {
+        bail!("stack profile produced no measurement for {example}");
+    }
+
+    Ok((t0.elapsed().as_secs_f64(), stack_high_water))
+}
+
+fn ensure_profile_has_widgets(
+    widgets: &[WidgetEntry],
+    stack_profiling: StackProfiling,
+) -> Result<()> {
+    if widgets.is_empty() && stack_profiling.is_enabled() {
+        bail!("stack profile discovered no widgets");
+    }
+    Ok(())
+}
+
+fn filter_profile_widgets(
+    widgets: Vec<WidgetEntry>,
+    stack_profiling: StackProfiling,
+) -> Vec<WidgetEntry> {
+    if !stack_profiling.is_enabled() {
+        return widgets;
+    }
+    widgets
+        .into_iter()
+        .filter(|widget| {
+            capture_dir(&widget.workspace, &widget.name)
+                .join("config.toml")
+                .is_file()
+        })
+        .collect()
 }
 
 /// Strip a failed capture's stderr to the error — drop the GL stack's
@@ -512,15 +593,23 @@ fn is_tracing_line(line: &str) -> bool {
     b.len() > 4 && b[..4].iter().all(u8::is_ascii_digit) && b[4] == b'-'
 }
 
-fn capture_sequential(binary: &Path, output_dir: &Path, widgets: &[WidgetEntry]) -> Result<()> {
+fn capture_sequential(
+    binary: &Path,
+    output_dir: &Path,
+    widgets: &[WidgetEntry],
+    stack_profiling: StackProfiling,
+) -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
     let mut failures: Vec<(&str, &str, String)> = Vec::new();
     for entry in widgets {
         let ws = workspace_label(&entry.workspace);
-        match capture_widget(binary, output_dir, entry, is_tty) {
-            Ok(elapsed) => {
+        match capture_widget(binary, output_dir, entry, is_tty, stack_profiling) {
+            Ok((elapsed, high_water)) => {
                 clear_progress();
                 widget_status_line(ws, &entry.name, elapsed);
+                if let Some(bytes) = high_water {
+                    println!("| {} | {bytes} |", entry.name);
+                }
             }
             Err(e) => {
                 clear_progress();
@@ -542,6 +631,7 @@ fn capture_parallel(
     output_dir: &Path,
     widgets: &[WidgetEntry],
     threads: usize,
+    stack_profiling: StackProfiling,
 ) -> Result<()> {
     use rayon::prelude::*;
 
@@ -554,7 +644,7 @@ fn capture_parallel(
         widgets
             .par_iter()
             .map(|entry| {
-                let result = capture_widget(binary, output_dir, entry, false);
+                let result = capture_widget(binary, output_dir, entry, false, stack_profiling);
                 (
                     workspace_label(&entry.workspace).to_owned(),
                     entry.name.clone(),
@@ -568,7 +658,12 @@ fn capture_parallel(
     let mut failures: Vec<(&str, &str, String)> = Vec::new();
     for (ws, name, result) in &results {
         match result {
-            Ok(elapsed) => widget_status_line(ws, name, *elapsed),
+            Ok((elapsed, high_water)) => {
+                widget_status_line(ws, name, *elapsed);
+                if let Some(bytes) = high_water {
+                    println!("| {name} | {bytes} |");
+                }
+            }
             Err(e) => {
                 eprintln!("  {} {}/{}", "✗".red(), ws.red().dimmed(), name.red());
                 failures.push((ws, name, format!("{e:#}")));
@@ -610,15 +705,33 @@ fn report_capture_failures(failures: &[(&str, &str, String)]) -> Result<()> {
 // ── Config helpers ──────────────────────────────────────────────────
 
 /// Read [fixtures] keys from capture/config.toml to determine which sizes have fixtures.
-fn configured_sizes(capture_dir: &Path) -> Vec<String> {
-    let Ok(config) = capture_config::load_from_capture_dir(capture_dir) else {
-        return Vec::new();
+fn configured_sizes(capture_dir: &Path, stack_profiling: StackProfiling) -> Result<Vec<String>> {
+    let config = match capture_config::load_from_capture_dir(capture_dir) {
+        Ok(config) => config,
+        Err(error) if stack_profiling.is_enabled() => {
+            return Err(error).context("stack profile requires a valid capture configuration");
+        }
+        Err(_) => return Ok(Vec::new()),
     };
-    config.fixtures.keys().cloned().collect()
+    let sizes = config
+        .fixtures
+        .keys()
+        .filter(|size| config.sizes.is_empty() || config.sizes.contains(*size))
+        .cloned()
+        .collect::<Vec<_>>();
+    if sizes.is_empty() && stack_profiling.is_enabled() {
+        bail!("stack profile requires at least one configured fixture size");
+    }
+    Ok(sizes)
 }
 
 /// Query available KV variants via the capture binary.
-fn list_variants(binary: &Path, wasm: &Path, capture_dir: &Path) -> Vec<String> {
+fn list_variants(
+    binary: &Path,
+    wasm: &Path,
+    capture_dir: &Path,
+    stack_profiling: StackProfiling,
+) -> Result<Vec<String>> {
     let output = Command::new(binary)
         .args(["run"])
         .arg(wasm)
@@ -626,7 +739,7 @@ fn list_variants(binary: &Path, wasm: &Path, capture_dir: &Path) -> Vec<String> 
         .arg(format!("--capture-dir={}", capture_dir.display()))
         .output();
 
-    match output {
+    let variants = match output {
         Ok(out) if out.status.success() => {
             let stdout = String::from_utf8_lossy(&out.stdout);
             stdout
@@ -635,8 +748,18 @@ fn list_variants(binary: &Path, wasm: &Path, capture_dir: &Path) -> Vec<String> 
                 .filter(|l| !l.is_empty())
                 .collect()
         }
+        Ok(out) if stack_profiling.is_enabled() => {
+            bail!("stack profile could not discover variants: {}", out.status);
+        }
+        Err(error) if stack_profiling.is_enabled() => {
+            return Err(error).context("stack profile could not discover variants");
+        }
         _ => vec!["_default".to_owned()],
+    };
+    if variants.is_empty() && stack_profiling.is_enabled() {
+        bail!("stack profile discovered no variants");
     }
+    Ok(variants)
 }
 
 // ── Display helpers ─────────────────────────────────────────────────
@@ -688,7 +811,16 @@ fn format_time(seconds: f64) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{distill_capture_error, renderer_from_stderr};
+    use std::path::Path;
+
+    use super::{
+        StackProfiling, WidgetEntry, configured_sizes, distill_capture_error,
+        ensure_profile_has_widgets, filter_profile_widgets, list_variants, renderer_from_stderr,
+    };
+
+    const STACK_PROFILING: StackProfiling = StackProfiling::Enabled {
+        expected_origin: 65_536,
+    };
 
     #[test]
     fn distill_keeps_the_error_and_drops_capture_chatter() {
@@ -739,6 +871,80 @@ mod tests {
         assert_eq!(
             distill_capture_error(raw),
             "error: hermetic capture breach in iss (1280x480):"
+        );
+    }
+
+    #[test]
+    fn stack_profile_rejects_missing_capture_configuration() {
+        let missing = Path::new("/capture-config-that-does-not-exist");
+        assert!(configured_sizes(missing, STACK_PROFILING).is_err());
+        assert_eq!(
+            configured_sizes(missing, StackProfiling::Disabled)
+                .expect("missing configs remain skippable for ordinary capture"),
+            Vec::<String>::new()
+        );
+    }
+
+    #[test]
+    fn stack_profile_rejects_failed_variant_discovery() {
+        let missing = Path::new("/capture-binary-that-does-not-exist");
+        let placeholder = Path::new("/unused");
+        assert!(list_variants(missing, placeholder, placeholder, STACK_PROFILING).is_err());
+        assert_eq!(
+            list_variants(missing, placeholder, placeholder, StackProfiling::Disabled)
+                .expect("variant discovery remains optional for ordinary capture"),
+            vec!["_default"]
+        );
+    }
+
+    #[test]
+    fn stack_profile_rejects_an_empty_widget_set() {
+        assert!(ensure_profile_has_widgets(&[], STACK_PROFILING).is_err());
+        ensure_profile_has_widgets(&[], StackProfiling::Disabled)
+            .expect("ordinary capture may select no widgets");
+    }
+
+    #[test]
+    fn stack_profile_uses_only_fixture_sizes_enabled_by_the_config() {
+        let temp = tempfile::tempdir().expect("temporary capture directory must be created");
+        std::fs::write(temp.path().join("small.json"), "")
+            .expect("fixture placeholder must be writable");
+        std::fs::write(temp.path().join("full.json"), "")
+            .expect("fixture placeholder must be writable");
+        std::fs::write(
+            temp.path().join("config.toml"),
+            "sizes = [\"small\"]\n[fixtures]\nsmall = \"small.json\"\nfull = \"full.json\"\n",
+        )
+        .expect("capture config must be writable");
+
+        assert_eq!(
+            configured_sizes(temp.path(), STACK_PROFILING).expect("valid capture config must load"),
+            ["small"]
+        );
+    }
+
+    #[test]
+    fn stack_profile_skips_widgets_without_a_capture_config() {
+        let temp = tempfile::tempdir().expect("temporary workspace must be created");
+        let configured_capture = temp.path().join("configured/capture");
+        std::fs::create_dir_all(&configured_capture)
+            .expect("configured widget directory must be writable");
+        std::fs::write(configured_capture.join("config.toml"), "")
+            .expect("capture config must be writable");
+        let widgets = ["configured", "unconfigured"].map(|name| WidgetEntry {
+            name: name.to_owned(),
+            workspace: temp.path().to_owned(),
+            wasm_dir: None,
+        });
+
+        let filtered = filter_profile_widgets(widgets.to_vec(), STACK_PROFILING);
+
+        assert_eq!(
+            filtered
+                .into_iter()
+                .map(|widget| widget.name)
+                .collect::<Vec<_>>(),
+            ["configured"]
         );
     }
 }

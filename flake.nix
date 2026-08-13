@@ -77,7 +77,7 @@
         capture = import ./bmc-wasm-runtime/capture.nix {
           inherit pkgs commonDeps;
           inherit (workspace.bmc) profiles;
-          inherit (workspace) wasmExamples wasmWidgetsBundle;
+          inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
         };
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin;
@@ -285,6 +285,7 @@
 
         packages = workspace.packages // {
           wasm-capture = capture.package;
+          wasm-stack-usage-report = capture.stackUsageReport;
           wasm-regression-report = wasmRegression.report;
           wasm-examples = capture.wasmExamples;
           wasm-widgets = capture.wasmWidgetsBundle;

@@ -41,6 +41,7 @@ pub struct VerifyArgs {
     pub wasm_dirs: Vec<PathBuf>,
     pub output_dir: PathBuf,
     pub parallel: Option<usize>,
+    pub stack_profiling: super::run::StackProfiling,
 }
 
 pub fn execute(args: &VerifyArgs) -> Result<()> {
@@ -71,6 +72,7 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         wasm_dirs: args.wasm_dirs.clone(),
         output_dir: args.output_dir.clone(),
         parallel: args.parallel,
+        stack_profiling: args.stack_profiling,
     })?;
 
     eprintln!();

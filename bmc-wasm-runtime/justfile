@@ -100,6 +100,10 @@ size WIDGET:
 size-check WIDGET:
     {{ dir }}/tools/wasm_size.py -e {{ WIDGET }} --check
 
+# Re-run every capture fixture and report the observed shadow-stack high-water marks.
+stack-profile:
+    cd {{ dir }}/.. && nix build -L .#wasm-stack-usage-report
+
 # === Codegen ===
 
 # Regenerate `manifest_params.rs` from `manifest.json`.

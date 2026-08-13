@@ -419,7 +419,9 @@ usvg = "0.45"
 uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
 ux = { version = "0.1.6" }
 walkdir = "2.5.0"
+wasm-encoder = { version = "0.244", default-features = false, features = ["std", "wasmparser"] }
 wasmi = "1.0"
+wasmparser = { version = "0.244", default-features = false, features = ["simd", "std"] }
 wat = "1"
 wayland-backend = { version = "0.3", features = ["client_system"] }
 wayland-client = "0.31.14"
