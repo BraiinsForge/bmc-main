@@ -34,6 +34,21 @@ const BUCKETS: [(SizeBucket, &str); 4] = [
     (SizeBucket::Small, "Small"),
 ];
 
+/// Put the fixtures' sample images where the screens restore images
+/// from, so the seeded ones render and the rest hold placeholders.
+fn seed_images() {
+    for (kind, url, bytes) in fixtures::image_seeds() {
+        let (width, height) = kind.decode_size();
+        seed_image(
+            &formula_1::images::tag_for(kind, &url),
+            bytes,
+            width,
+            height,
+            url.as_str().as_bytes(),
+        );
+    }
+}
+
 /// Each design size on its own stage, under whichever settings the knobs
 /// hold — the distances, clocks and separators all read from them.
 ///
@@ -46,6 +61,7 @@ fn size_stages<Build: FnOnce() -> Node>(
     mut view: impl FnMut(SizeBucket) -> Build,
 ) {
     deck_settings(ctx);
+    seed_images();
     for (bucket, label) in BUCKETS {
         let build = view(bucket);
         ui.heading(label);
@@ -143,6 +159,7 @@ fn driver_unavailable(ctx: &mut SceneCtx, ui: &mut Ui) {
 #[scene]
 fn driver_grid(ctx: &mut SceneCtx, ui: &mut Ui) {
     deck_settings(ctx);
+    seed_images();
     for stats in fixtures::drivers() {
         let (name, team) = (stats.name.clone(), stats.team.clone());
         let view = driver::DriverViewData {

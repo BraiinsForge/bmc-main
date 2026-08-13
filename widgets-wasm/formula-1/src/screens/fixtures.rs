@@ -25,6 +25,8 @@
 
 use bmc_wasm_sdk::{CalendarDate, Length, LocalDateTime, Mass};
 
+#[cfg(not(target_arch = "wasm32"))]
+use crate::images::ImageKind;
 use crate::model::{
     CarNumber, DriverStats, ImageUrl, NextRace, Session, SizeBucket, StandingsRow, team_color,
 };
@@ -48,9 +50,56 @@ const GRID: [(&str, &str, &str, &str, u16); 10] = [
     ("Pierre Gasly", "FRA", "Alpine", "0090FF", 42),
 ];
 
-/// An image the widget has a URL for; a fixture only says "there is one".
-fn some_image() -> ImageUrl {
-    ImageUrl::from("https://cdn.example.test/f1.png".to_owned())
+/// A fixture URL under the fake CDN, from whatever names the subject.
+/// The `.test` TLD never resolves: fixtures are cache keys the stories
+/// seed, not addresses.
+fn image_url(kind: &str, subject: &str) -> ImageUrl {
+    let mut url = String::from("https://cdn.example.test/");
+    url.push_str(kind);
+    url.push('/');
+    url.push_str(&subject.to_lowercase().replace(' ', "-"));
+    url.push_str(".png");
+    ImageUrl::from(url)
+}
+
+fn flag_url(country: &str) -> ImageUrl {
+    image_url("flag", country)
+}
+
+fn headshot_url(driver: &str) -> ImageUrl {
+    image_url("headshot", driver)
+}
+
+fn logo_url(team: &str) -> ImageUrl {
+    image_url("logo", team)
+}
+
+/// What the stories seed the image cache with: every headshot and flag
+/// URL the fixtures carry, backed by one generic avatar and one
+/// fictional flag, plus a generated circuit outline. Team logos are
+/// left unseeded so the embedded marks keep drawing.
+#[cfg(not(target_arch = "wasm32"))]
+#[must_use]
+pub fn image_seeds() -> Vec<(ImageKind, ImageUrl, &'static [u8])> {
+    const HEADSHOT: &[u8] = include_bytes!("../../assets/fixtures/headshot-generic.png");
+    const FLAG: &[u8] = include_bytes!("../../assets/fixtures/flag-generic.png");
+
+    let mut seeds = Vec::new();
+    for (driver, country, ..) in &GRID {
+        seeds.push((ImageKind::Headshot, headshot_url(driver), HEADSHOT));
+        seeds.push((ImageKind::Flag, flag_url(country), FLAG));
+    }
+    for driver in &DRIVERS {
+        seeds.push((ImageKind::Headshot, headshot_url(driver.name), HEADSHOT));
+        seeds.push((ImageKind::Flag, flag_url(driver.nationality), FLAG));
+    }
+    seeds.push((ImageKind::Flag, flag_url("Netherlands"), FLAG));
+    seeds.push((
+        ImageKind::Circuit,
+        image_url("circuit", "Circuit Zandvoort"),
+        include_bytes!("../../assets/fixtures/circuit.png"),
+    ));
+    seeds
 }
 
 #[must_use]
@@ -70,12 +119,12 @@ pub fn standings_rows() -> Vec<StandingsRow> {
                     .take(3)
                     .collect(),
                 team_name: (*team).to_owned(),
-                team_logo_url: some_image(),
+                team_logo_url: logo_url(team),
                 team_color: team_color(livery),
                 country_code: (*country).to_owned(),
-                country_flag_url: some_image(),
+                country_flag_url: flag_url(country),
                 points: *points,
-                headshot_url: some_image(),
+                headshot_url: headshot_url(driver),
             },
         )
         .collect()
@@ -183,12 +232,12 @@ pub fn next_race_weekend() -> NextRace {
     NextRace {
         gp_name: "Dutch GP".to_owned(),
         country_name: "Netherlands".to_owned(),
-        country_flag_url: some_image(),
+        country_flag_url: flag_url("Netherlands"),
         venue_timezone: Some("Europe/Brussels".to_owned()),
         date_start: Some(weekend_day(21)),
         date_end: Some(weekend_day(23)),
         circuit_name: "Circuit Zandvoort".to_owned(),
-        circuit_image_url: some_image(),
+        circuit_image_url: image_url("circuit", "Circuit Zandvoort"),
         track_length: Some(Length::from_kilometers(4.259)),
         total_laps: Some(72),
         race_distance: Some(Length::from_kilometers(306.648)),
@@ -633,13 +682,13 @@ pub fn drivers() -> Vec<DriverStats> {
         .map(|driver| DriverStats {
             name: driver.name.to_owned(),
             number: CarNumber::new(driver.number),
-            headshot_url: some_image(),
+            headshot_url: headshot_url(driver.name),
             team: driver.team.to_owned(),
             team_color: team_color(driver.livery),
             ranking: driver.ranking,
             points: driver.points,
             nationality: driver.nationality.to_owned(),
-            nationality_flag_url: some_image(),
+            nationality_flag_url: flag_url(driver.nationality),
             gp_wins: Some(driver.gp_wins),
             world_titles: Some(driver.world_titles),
             age: Some(driver.age),

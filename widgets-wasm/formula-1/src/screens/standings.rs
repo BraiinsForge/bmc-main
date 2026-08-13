@@ -29,6 +29,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::images::ImageKind;
 use crate::model::{SizeBucket, StandingsRow};
 use crate::screens::parts::{self, color, font};
 
@@ -71,10 +72,10 @@ fn columns(bucket: SizeBucket) -> Columns {
         SizeBucket::Full => Columns {
             rows: 10,
             stripe: true,
-            name: 449.0,
+            name: 443.0,
             name_chars: 41,
-            country: Some(224.0),
-            team: Some(449.0),
+            country: Some(221.0),
+            team: Some(443.0),
             team_chars: 34,
             points: 56.0,
             points_weight: FontWeight::BOLD,
@@ -82,10 +83,10 @@ fn columns(bucket: SizeBucket) -> Columns {
         SizeBucket::Large => Columns {
             rows: 10,
             stripe: false,
-            name: 245.0,
+            name: 237.0,
             name_chars: 22,
             country: None,
-            team: Some(245.0),
+            team: Some(237.0),
             team_chars: 16,
             points: 56.0,
             points_weight: FontWeight::BOLD,
@@ -164,7 +165,13 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
             row(
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
-                    parts::image_placeholder(LOGO, None),
+                    parts::remote_image(
+                        ImageKind::Flag,
+                        &entry.country_flag_url,
+                        LOGO,
+                        LOGO * 0.7,
+                        parts::image_placeholder(LOGO, None),
+                    ),
                     plain(entry.country_code.clone()),
                 ],
             ),
@@ -176,7 +183,12 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
             row(
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
-                    parts::team_mark(LOGO, &entry.team_name, entry.team_color),
+                    parts::team_mark(
+                        LOGO,
+                        &entry.team_name,
+                        &entry.team_logo_url,
+                        entry.team_color,
+                    ),
                     plain(truncate(&entry.team_name, cols.team_chars)),
                 ],
             ),
@@ -207,6 +219,7 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
     let mut children = vec![parts::header(
         vec![parts::title("Drivers Standing")],
         cols.stripe,
+        view.bucket,
     )];
     if view.rows.is_empty() {
         children.push(center(
@@ -216,7 +229,7 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
                 style!(size: font::ROW, color: color::TEXT_MUTED),
             )],
         ));
-        return parts::frame(children);
+        return parts::frame(children, view.bucket);
     }
 
     let mut table = Vec::new();
@@ -229,7 +242,7 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
     // No gap: the dividers already separate the rows, and a gap
     // between all of them costs more height than the frame has.
     children.push(col(props!(flex: 1.0), table));
-    parts::frame(children)
+    parts::frame(children, view.bucket)
 }
 
 #[cfg(test)]
@@ -253,7 +266,7 @@ mod tests {
         for bucket in ALL {
             let cols = columns(bucket);
             let (width, _) = bucket.design_size();
-            let content = width - space::PADDING * 2.0;
+            let content = width - space::padding(bucket) * 2.0;
             let taken = POSITION
                 + cols.name
                 + cols.country.unwrap_or(0.0)

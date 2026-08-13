@@ -32,7 +32,8 @@ use bmc_wasm_sdk::*;
 
 use bmc_wasm_sdk::system::{self, DateFormat, TimeFormat};
 
-use crate::model::SizeBucket;
+use crate::images::{self, ImageKind};
+use crate::model::{ImageUrl, SizeBucket};
 use crate::screens::icons;
 
 // The Figma variables these screens draw from:
@@ -58,8 +59,29 @@ pub mod font {
 }
 
 pub mod space {
-    pub const PADDING: f32 = 16.0;
+    use crate::model::SizeBucket;
+
     pub const GAP: f32 = 8.0;
+
+    /// The frame's padding, which the half-height frames tighten.
+    #[must_use]
+    pub fn padding(bucket: SizeBucket) -> f32 {
+        match bucket {
+            SizeBucket::Small | SizeBucket::Medium => 16.0,
+            SizeBucket::Large | SizeBucket::Full => 24.0,
+        }
+    }
+
+    /// What the header holds off the content under it,
+    /// beyond the frame's gap.
+    #[must_use]
+    pub fn below_header(bucket: SizeBucket) -> f32 {
+        match bucket {
+            SizeBucket::Medium => 16.0 - GAP,
+            SizeBucket::Small => 24.0 - GAP,
+            SizeBucket::Large | SizeBucket::Full => 28.0 - GAP,
+        }
+    }
 }
 
 /// The swept bars, at the artwork's own 10:1 aspect — fitting them to a
@@ -69,11 +91,11 @@ const STRIPE_WIDTH: f32 = STRIPE_HEIGHT * 10.0;
 
 /// The frame every screen sits in: the design's black field, padded.
 #[must_use]
-pub fn frame(children: Vec<Node>) -> Node {
+pub fn frame(children: Vec<Node>, bucket: SizeBucket) -> Node {
     col(
         props!(
             background: color::BG,
-            padding: space::PADDING,
+            padding: space::padding(bucket),
             gap: space::GAP,
             flex: 1.0
         ),
@@ -84,16 +106,22 @@ pub fn frame(children: Vec<Node>) -> Node {
 /// The `F1` mark, whatever the screen names itself, and optionally the
 /// swept bars. Which frames carry the bars is the screen's call.
 #[must_use]
-pub fn header(content: Vec<Node>, stripe: bool) -> Node {
+pub fn header(content: Vec<Node>, stripe: bool, bucket: SizeBucket) -> Node {
     let mut children = vec![text(
         "F1",
         style!(size: font::TITLE, weight: FontWeight::BOLD, color: color::TEXT),
     )];
     children.extend(content);
     if stripe {
-        children.push(spacer(1.0));
+        // Absolutely positioned, as the design bleeds the bars through
+        // the frame's padding to the widget's right edge.
         children.push(canvas(
-            props!(width: STRIPE_WIDTH, height: STRIPE_HEIGHT),
+            props!(
+                width: STRIPE_WIDTH,
+                height: STRIPE_HEIGHT,
+                inset_top: 0.0,
+                inset_right: -space::padding(bucket)
+            ),
             [Draw::svg(
                 0.0,
                 0.0,
@@ -105,9 +133,15 @@ pub fn header(content: Vec<Node>, stripe: bool) -> Node {
             .with_anti_alias()],
         ));
     }
-    row(
-        props!(gap: space::GAP * 2.0, cross_align: CrossAlign::Center),
-        children,
+    col(
+        props!(),
+        [
+            row(
+                props!(gap: space::GAP * 2.0, cross_align: CrossAlign::Center),
+                children,
+            ),
+            col(props!(height: space::below_header(bucket)), []),
+        ],
     )
 }
 
@@ -127,7 +161,7 @@ pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
     };
     text(
         label,
-        style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+        style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
     )
 }
 
@@ -151,9 +185,12 @@ pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> N
     let label = match weight {
         LabelWeight::Strong => text(
             label,
-            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
         ),
-        LabelWeight::Muted => text(label, style!(size: size, color: color::TEXT_MUTED)),
+        LabelWeight::Muted => text(
+            label,
+            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0),
+        ),
     };
     row(
         props!(
@@ -166,7 +203,7 @@ pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> N
             label,
             text(
                 value,
-                style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right),
+                style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0),
             ),
         ],
     )
@@ -234,26 +271,58 @@ pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
     fmt!("{} \u{2013} {}", opening, day_and_month(end, month_first))
 }
 
-/// A team's mark, or its livery colour where this build carries no
-/// artwork for the team — a new constructor, or one renamed since.
+/// A cached remote image in a fixed box, or `fallback` while nothing
+/// has arrived — the box never reflows when the image lands.
 #[must_use]
-pub fn team_mark(size: f32, team_name: &str, livery: Color) -> Node {
-    let Some(mark) = icons::team_mark(team_name) else {
-        return image_placeholder(size, Some(livery));
+pub fn remote_image(
+    kind: ImageKind,
+    url: &ImageUrl,
+    width: f32,
+    height: f32,
+    fallback: Node,
+) -> Node {
+    let Some(resolved) = images::resolve(kind, url) else {
+        return fallback;
     };
     canvas(
-        props!(width: size, height: size),
-        [Draw::bitmap(0.0, 0.0, size, size, mark)],
+        props!(width: width, height: height),
+        [Draw::bitmap_id(
+            0.0,
+            0.0,
+            width,
+            height,
+            Some(resolved.bitmap),
+        )],
     )
 }
 
-/// A country's flag, at the 10:7 box a flag is drawn in.
+/// A team's mark: the server's logo once cached, the embedded mark
+/// until then, and the livery colour where this build carries no
+/// artwork for the team — a new constructor, or one renamed since.
 #[must_use]
-pub fn flag(width: f32) -> Node {
-    col(
+pub fn team_mark(size: f32, team_name: &str, url: &ImageUrl, livery: Color) -> Node {
+    let embedded = match icons::team_mark(team_name) {
+        Some(mark) => canvas(
+            props!(width: size, height: size),
+            [Draw::bitmap(0.0, 0.0, size, size, mark)],
+        ),
+        None => image_placeholder(size, Some(livery)),
+    };
+    remote_image(ImageKind::TeamLogo, url, size, size, embedded)
+}
+
+/// A country's flag, at the 10:7 box a flag is drawn in.
+///
+/// Text beside a flag needs `line_height: 1.0`: with the default line
+/// height the text box is a fifth taller than its glyphs, and the flag
+/// centers against that slack rather than against the letters.
+#[must_use]
+pub fn flag(width: f32, url: &ImageUrl) -> Node {
+    let placeholder = col(
         props!(width: width, height: width * 0.7, background: color::PLACEHOLDER),
         [],
-    )
+    );
+    remote_image(ImageKind::Flag, url, width, width * 0.7, placeholder)
 }
 
 /// Holds an image's box before it arrives, so the row does not reflow

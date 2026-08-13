@@ -29,6 +29,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::images::{self, ImageKind};
 use crate::model::{DriverStats, SizeBucket};
 use crate::screens::parts::{self, LabelWeight, color, font, space};
 
@@ -182,26 +183,36 @@ fn nationality_row(driver: &DriverStats, layout: Layout) -> Node {
                 [
                     text(
                         driver.nationality.as_str(),
-                        style!(size: layout.stat_font, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+                        style!(size: layout.stat_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
                     ),
-                    parts::flag(FLAG),
+                    parts::flag(FLAG, &driver.nationality_flag_url),
                 ],
             ),
         ],
     )
 }
 
-/// Holds the headshot's box, in the driver's livery until it arrives.
+/// The headshot, in a box the driver's livery holds until it arrives.
 fn photo(driver: &DriverStats, width: f32, height: f32) -> Node {
-    col(
-        props!(
-            width: width,
-            height: height,
-            background: driver.team_color,
-            border_radius: PHOTO_RADIUS
+    let frame = props!(
+        width: width,
+        height: height,
+        background: driver.team_color,
+        border_radius: PHOTO_RADIUS
+    );
+    match images::resolve(ImageKind::Headshot, &driver.headshot_url) {
+        Some(resolved) => canvas(
+            frame,
+            [Draw::bitmap_id(
+                0.0,
+                0.0,
+                width,
+                height,
+                Some(resolved.bitmap),
+            )],
         ),
-        [],
-    )
+        None => col(frame, []),
+    }
 }
 
 /// The headshot where the frame has room for one, with the driver named
@@ -240,7 +251,14 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
 }
 
 fn header(driver: &DriverStats, bucket: SizeBucket) -> Node {
-    let mark = parts::team_mark(TEAM_MARK, &driver.team, driver.team_color);
+    // The driver payload names no team logo URL, so the mark draws the
+    // embedded artwork or the livery.
+    let mark = parts::team_mark(
+        TEAM_MARK,
+        &driver.team,
+        &crate::model::ImageUrl::default(),
+        driver.team_color,
+    );
     let content = match bucket {
         SizeBucket::Full | SizeBucket::Large => {
             vec![parts::title("Driver stats"), spacer(1.0), mark]
@@ -255,7 +273,7 @@ fn header(driver: &DriverStats, bucket: SizeBucket) -> Node {
             bucket,
         )],
     };
-    parts::header(content, false)
+    parts::header(content, false, bucket)
 }
 
 /// The stats, split into two columns where the frame is wide enough.
@@ -292,25 +310,30 @@ fn stats(driver: &DriverStats, layout: Layout) -> Node {
 pub fn driver_view(view: &DriverViewData) -> Node {
     let layout = layout(view.bucket);
     let Some(driver) = view.driver.as_ref() else {
-        return parts::frame(vec![
-            parts::header(vec![parts::title("Driver stats")], false),
-            center(
-                props!(flex: 1.0),
-                [text(
-                    "Driver unavailable",
-                    style!(size: font::ROW, color: color::TEXT_MUTED),
-                )],
-            ),
-        ]);
+        return parts::frame(
+            vec![
+                parts::header(vec![parts::title("Driver stats")], false, view.bucket),
+                center(
+                    props!(flex: 1.0),
+                    [text(
+                        "Driver unavailable",
+                        style!(size: font::ROW, color: color::TEXT_MUTED),
+                    )],
+                ),
+            ],
+            view.bucket,
+        );
     };
 
     let body = match portrait(driver, layout) {
         None => stats(driver, layout),
         Some(portrait) => {
+            // The single-column frames give the seam's spare width to
+            // the stats: their longest row barely seats its engineer.
             let gap = if layout.split_stats {
                 space::GAP * 6.0
             } else {
-                space::GAP * 3.0
+                space::GAP * 2.0
             };
             row(
                 props!(flex: 1.0, gap: gap),
@@ -318,7 +341,7 @@ pub fn driver_view(view: &DriverViewData) -> Node {
             )
         }
     };
-    parts::frame(vec![header(driver, view.bucket), body])
+    parts::frame(vec![header(driver, view.bucket), body], view.bucket)
 }
 
 #[cfg(test)]

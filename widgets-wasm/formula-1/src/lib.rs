@@ -26,6 +26,7 @@
 //! Its CSS is the source for any rule given here as one the port keeps.
 
 pub mod api;
+pub mod images;
 pub mod model;
 pub mod screens;
 

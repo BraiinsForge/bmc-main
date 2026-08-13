@@ -29,6 +29,7 @@
 )]
 use bmc_wasm_sdk::*;
 
+use crate::images::{self, ImageKind};
 use crate::model::{NextRace, SizeBucket};
 use crate::screens::parts::{self, LabelWeight, color, font, space};
 
@@ -46,6 +47,9 @@ const UNKNOWN: &str = "N/A";
 const COLUMN_GAP: f32 = 40.0;
 /// The Grand Prix name, the largest type on the widget.
 const GP_NAME: u32 = 32;
+/// What the design floats the Grand Prix block off the header, past
+/// the frame's own gap.
+const GP_BLOCK_LEAD: f32 = 12.0;
 /// What the design leaves between the Grand Prix block and the columns.
 const GP_BLOCK_GAP: f32 = 48.0;
 const TRACK_MAP_RADIUS: f32 = 8.0;
@@ -114,7 +118,7 @@ fn layout(bucket: SizeBucket) -> Layout {
 /// One of the three columns the widest frame divides into.
 fn third(bucket: SizeBucket) -> f32 {
     let (width, _) = bucket.design_size();
-    (width - space::PADDING * 2.0 - COLUMN_GAP * 2.0) / 3.0
+    (width - space::padding(bucket) * 2.0 - COLUMN_GAP * 2.0) / 3.0
 }
 
 fn count(value: Option<u16>) -> String {
@@ -174,9 +178,9 @@ fn gp_block(race: &NextRace) -> Node {
                 [
                     text(
                         race.gp_name.as_str(),
-                        style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT),
+                        style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
                     ),
-                    parts::flag(32.0),
+                    parts::flag(32.0, &race.country_flag_url),
                 ],
             ),
             text(
@@ -187,27 +191,47 @@ fn gp_block(race: &NextRace) -> Node {
     )
 }
 
-/// Holds the circuit outline's box, naming the circuit until it lands.
+/// The circuit outline, in a box that names the circuit until it lands.
 ///
 /// The fixed width sits on this column rather than on the `center` it
 /// wraps: a `center` given no flex is grown to fill instead, which would
 /// take half the frame and squeeze the stats beside it.
 fn track_map(race: &NextRace, bucket: SizeBucket) -> Node {
+    let inner = match images::resolve(ImageKind::Circuit, &race.circuit_image_url) {
+        // Contain-fit to the box's width, so the outline keeps its
+        // aspect whatever the server drew it at.
+        Some(resolved) if resolved.width > 0 => {
+            let width = third(bucket) - space::padding(bucket) * 2.0;
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "decoded image dims are far below f32 precision limits"
+            )]
+            let height = width * resolved.height as f32 / resolved.width as f32;
+            canvas(
+                props!(width: width, height: height),
+                [Draw::bitmap_id(
+                    0.0,
+                    0.0,
+                    width,
+                    height,
+                    Some(resolved.bitmap),
+                )],
+            )
+        }
+        Some(_) | None => text(
+            race.circuit_name.as_str(),
+            style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center),
+        ),
+    };
     col(
         props!(
             width: third(bucket),
-            padding: space::PADDING,
+            padding: space::padding(bucket),
             border_width: 1.0,
             border_color: color::DIVIDER,
             border_radius: TRACK_MAP_RADIUS
         ),
-        [center(
-            props!(flex: 1.0),
-            [text(
-                race.circuit_name.as_str(),
-                style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center),
-            )],
-        )],
+        [center(props!(flex: 1.0), [inner])],
     )
 }
 
@@ -223,7 +247,7 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
         SizeBucket::Medium => vec![
             parts::title("Next Race"),
             parts::subtitle(&race.gp_name, bucket),
-            parts::flag(24.0),
+            parts::flag(24.0, &race.country_flag_url),
         ],
         // The smallest frame has room for one name, and prefers the
         // country's: it fits where a Grand Prix's full title would not.
@@ -233,10 +257,13 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
             } else {
                 &race.country_name
             };
-            vec![parts::subtitle(name, bucket), parts::flag(18.0)]
+            vec![
+                parts::subtitle(name, bucket),
+                parts::flag(18.0, &race.country_flag_url),
+            ]
         }
     };
-    parts::header(content, layout.stripe)
+    parts::header(content, layout.stripe, bucket)
 }
 
 /// The columns of stats, and the schedule where the frame keeps one.
@@ -256,22 +283,30 @@ fn columns(race: &NextRace, layout: Layout) -> Node {
 pub fn next_race_view(view: &NextRaceViewData) -> Node {
     let layout = layout(view.bucket);
     let Some(race) = view.race.as_ref() else {
-        return parts::frame(vec![
-            parts::header(vec![parts::title("Next Race")], layout.stripe),
-            center(
-                props!(flex: 1.0),
-                [text(
-                    "Next race unavailable",
-                    style!(size: font::ROW, color: color::TEXT_MUTED),
-                )],
-            ),
-        ]);
+        return parts::frame(
+            vec![
+                parts::header(vec![parts::title("Next Race")], layout.stripe, view.bucket),
+                center(
+                    props!(flex: 1.0),
+                    [text(
+                        "Next race unavailable",
+                        style!(size: font::ROW, color: color::TEXT_MUTED),
+                    )],
+                ),
+            ],
+            view.bucket,
+        );
     };
 
     let mut body = if layout.gp_block {
         col(
-            props!(flex: 1.0, gap: GP_BLOCK_GAP),
-            [gp_block(race), columns(race, layout)],
+            props!(flex: 1.0),
+            [
+                col(props!(height: GP_BLOCK_LEAD), []),
+                gp_block(race),
+                col(props!(height: GP_BLOCK_GAP), []),
+                columns(race, layout),
+            ],
         )
     } else {
         columns(race, layout)
@@ -282,7 +317,7 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
             [body, track_map(race, view.bucket)],
         );
     }
-    parts::frame(vec![header(race, view.bucket, layout), body])
+    parts::frame(vec![header(race, view.bucket, layout), body], view.bucket)
 }
 
 #[cfg(test)]
