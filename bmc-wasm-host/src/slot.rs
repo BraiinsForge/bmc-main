@@ -996,27 +996,15 @@ impl<S: SlotSurface> WidgetSlot<S> {
         self.rendered_since_acquire = true;
         self.forced_render_pending = false;
         self.frame_count += 1;
-        if self.frame_count <= 3 || self.frame_count.is_multiple_of(120) {
-            tracing::info!(
-                peer_pid = ?self.peer_pid,
-                wasm = %self.wasm_basename,
-                frame = self.frame_count,
-                delta_ms,
-                ?status,
-                wants_immediate,
-                "widget frame submitted"
-            );
-        } else {
-            tracing::debug!(
-                peer_pid = ?self.peer_pid,
-                wasm = %self.wasm_basename,
-                frame = self.frame_count,
-                delta_ms,
-                ?status,
-                wants_immediate,
-                "widget frame submitted"
-            );
-        }
+        tracing::debug!(
+            peer_pid = ?self.peer_pid,
+            wasm = %self.wasm_basename,
+            frame = self.frame_count,
+            delta_ms,
+            ?status,
+            wants_immediate,
+            "widget frame submitted"
+        );
         Ok(status)
     }
 
