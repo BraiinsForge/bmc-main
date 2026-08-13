@@ -350,7 +350,6 @@ owo-colors = "4.3.0"
 packed_struct = "0.10.1"
 palette = { version = "0.7.6", default-features = false, features = ["libm"] }
 parking_lot = "0.12.3"
-pcap-file = "3.0.0-rc1"
 percent-encoding = { version = "2.3", default-features = false }
 pin-project = "1.1.10"
 ping = "0.4.0"

@@ -20,25 +20,15 @@
 // the grant above.
 
 //! Network diagnostics shared by the support-archive collectors: interface
-//! dump, public-IP discovery, ping report, and per-interface packet capture.
+//! dump, public-IP discovery, and ping report.
 
 use anyhow::{Context, Result, anyhow};
 use bmc_net_dns::IiResolver;
-use pcap_file::DataLink;
-use pcap_file::pcapng::PcapNgWriter;
-use pcap_file::pcapng::blocks::enhanced_packet::EnhancedPacketBlock;
-use pcap_file::pcapng::blocks::interface_description::InterfaceDescriptionBlock;
-use pnet::datalink::{self, Channel, Config, NetworkInterface};
+use pnet::datalink;
 use reqwest::blocking::Client;
-use std::borrow::Cow;
 use std::collections::HashMap;
-use std::convert::TryInto;
-use std::io::{Cursor, ErrorKind};
 use std::net::{IpAddr, SocketAddr};
-use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use thiserror::Error;
-use tracing::{debug, error, info, warn};
+use std::time::Duration;
 
 /// Renders a human-readable dump of all local network interfaces.
 #[must_use]
@@ -179,146 +169,4 @@ pub fn ping_report(hosts: &[&str]) -> Result<String> {
     };
 
     Ok(report)
-}
-
-/// Captures traffic on `interface` for up to `duration` and returns a pcapng
-/// buffer. Capture also stops early once a fixed byte cap (16 MiB) is reached,
-/// so a busy interface cannot exhaust memory on a constrained BMC.
-pub fn pcap(interface: &NetworkInterface, duration: Duration) -> Result<Vec<u8>, PcapError> {
-    const READ_TIMEOUT: Duration = Duration::from_millis(100);
-    // Cap in-memory capture size (16 MiB) so a busy link can't exhaust RAM.
-    const MAX_CAPTURE_BYTES: usize = 16 * 1024 * 1024;
-
-    info!("Starting packet capture on interface: {}", interface.name);
-
-    let mut buffer = vec![];
-    let mut pcap_ng_writer =
-        PcapNgWriter::new(Cursor::new(&mut buffer)).expect("BUG: pcap writing failed");
-
-    let idb = InterfaceDescriptionBlock {
-        linktype: DataLink::ETHERNET,
-        snaplen: 0xFFFF,
-        options: vec![],
-    };
-
-    pcap_ng_writer.write_pcapng_block(idb)?;
-
-    let config = Config {
-        // Since `rx.next()` is a blocking call, we want it to return once in a while when there are no incoming
-        // ethernet frames so that we can check if the specified capture duration has elapsed.
-        read_timeout: Some(READ_TIMEOUT),
-        read_buffer_size: u16::MAX.into(),
-        ..Default::default()
-    };
-
-    let Channel::Ethernet(_tx, mut rx) = datalink::channel(interface, config)? else {
-        return Err(PcapError::UnsupportedInterface(interface.name.clone()));
-    };
-
-    let start_time = Instant::now();
-    // Tracked separately because `buffer` is mutably borrowed by the writer.
-    let mut captured_bytes = 0_usize;
-    while start_time.elapsed() < duration {
-        if captured_bytes >= MAX_CAPTURE_BYTES {
-            warn!(
-                "Packet capture on '{}' hit the {MAX_CAPTURE_BYTES}-byte cap; stopping early",
-                interface.name
-            );
-            break;
-        }
-        match rx.next() {
-            Ok(frame) => {
-                debug!("Received packet on interface '{}'", interface.name);
-
-                captured_bytes += frame.len();
-                let mut epb = EnhancedPacketBlock::default();
-
-                epb.interface_id = 0;
-                epb.timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap_or_else(|_| {
-                        warn!("System time is before UNIX epoch, using fallback timestamp");
-                        Duration::ZERO // Fallback to UNIX epoch
-                    });
-                epb.original_len = frame
-                    .len()
-                    .try_into()
-                    .map_err(|_| PcapError::OverflowError)?;
-                epb.data = Cow::Borrowed(frame);
-
-                pcap_ng_writer.write_pcapng_block(epb)?;
-            }
-            Err(io_error) if io_error.kind() == ErrorKind::TimedOut => continue,
-            Err(io_error) => {
-                let msg = format!("I/O error on {}: {}", interface.name, io_error);
-                error!("{}", msg);
-                return Err(PcapError::IoError(std::io::Error::other(msg)));
-            }
-        }
-    }
-    Ok(buffer)
-}
-
-/// One interface's capture result: the interface name paired with the pcapng
-/// bytes or the [`PcapError`]. The name is captured before the capture starts,
-/// so a failed capture still says which interface it belongs to.
-pub type PcapResult = (String, Result<Vec<u8>, PcapError>);
-
-/// A set of per-interface packet captures running concurrently, returned by
-/// [`pcap_all`]. Enumeration and threading are internal so callers do not need
-/// to depend on `pnet` or manage threads themselves.
-#[must_use]
-#[derive(Debug)]
-pub struct PcapCapture {
-    handles: Vec<JoinHandle<PcapResult>>,
-}
-
-/// Starts a [`pcap`] capture on every local interface concurrently for
-/// `duration` and returns a handle to collect the results with
-/// [`PcapCapture::collect`]. The captures run in the background so the caller
-/// can do other work while they proceed.
-pub fn pcap_all(duration: Duration) -> PcapCapture {
-    let handles = datalink::interfaces()
-        .into_iter()
-        .map(|interface| {
-            thread::spawn(move || {
-                // Bind the name up front so the pairing survives a failure.
-                let name = interface.name.clone();
-                (name, pcap(&interface, duration))
-            })
-        })
-        .collect();
-    PcapCapture { handles }
-}
-
-impl PcapCapture {
-    /// Waits for every capture to finish and returns each interface's name with
-    /// its result (the pcapng bytes on success, or the [`PcapError`]). Threads
-    /// that panic are logged and dropped from the result.
-    #[must_use]
-    pub fn collect(self) -> Vec<PcapResult> {
-        self.handles
-            .into_iter()
-            .filter_map(|handle| {
-                handle.join().ok().or_else(|| {
-                    error!("Thread panicked while capturing pcap data");
-                    None
-                })
-            })
-            .collect()
-    }
-}
-
-/// Errors that can occur while capturing packets in [`pcap`].
-#[derive(Error, Debug)]
-#[non_exhaustive]
-pub enum PcapError {
-    #[error("Unsupported channel type for interface: {0}")]
-    UnsupportedInterface(String),
-    #[error("I/O error: {0}")]
-    IoError(#[from] std::io::Error),
-    #[error("Pcap error: {0}")]
-    Pcap(#[from] pcap_file::PcapError),
-    #[error("Overflow error")]
-    OverflowError,
 }
