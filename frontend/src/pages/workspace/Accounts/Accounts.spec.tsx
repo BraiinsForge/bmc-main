@@ -105,6 +105,19 @@ describe('Accounts page', () => {
         fireEvent.click(submit);
     };
 
+    /// jsdom is laxer than a browser: an invalid `selectorPrimaryFocus` yields null
+    /// here and throws there. Neither moves the focus, so assert where it lands.
+    it('opens the add dialog with the focus inside the form', async () => {
+        oneGenericType();
+        registerMocks(pb.services.AccountManagementService, { getAllAccounts: () => ({ accounts: [] }) });
+
+        renderPage();
+        fireEvent.click((await screen.findAllByText('Add New Account'))[0]);
+        await screen.findByLabelText('Account Name');
+
+        expect(document.activeElement?.tagName).toBe('INPUT');
+    });
+
     /// The server reports allow-hosts violations as "Line N" against the list it
     /// received, and that number is the operator's only pointer. Normalizing the
     /// textarea before the send — and freezing it while the save is in flight —

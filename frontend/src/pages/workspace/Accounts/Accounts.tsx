@@ -404,7 +404,7 @@ class View extends Component<Props, State> {
                 open
                 size="sm"
                 modalHeading={isEdit ? txt.edit : txt.add}
-                selectorPrimaryFocus="input[type='radio']|input[type='text']"
+                selectorPrimaryFocus="input[type='radio'],input[type='text']"
                 onRequestSubmit={this.#submit}
                 primaryButtonText={isEdit ? txt.save : txt.add}
                 primaryButtonDisabled={isSaving}
