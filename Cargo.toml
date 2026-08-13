@@ -459,4 +459,4 @@ wayland-server = "0.31"
 webpki-roots = "1.0.6"
 winit = "0.30"
 wl-nl80211 = "0.3.2"
-zip = { version = "4.3.0", default-features = false }
+zip = { version = "8.6.0", default-features = false }
