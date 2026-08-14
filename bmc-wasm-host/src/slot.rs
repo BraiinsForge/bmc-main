@@ -58,6 +58,7 @@ use crate::lifecycle::{
     LifecycleEgl, LifecycleHook, LifecycleState, LifecycleStateMachine, LifecycleSurface,
     SlotApplyCtx, frame_callback_enabled, lifecycle_hook, should_render,
 };
+use crate::module_cache::{ModuleCache, ModuleLease};
 use crate::render_target::{EglRenderTarget, RenderTarget, RenderTargetFactory};
 
 /// Per-slot inter-frame floor — caps a misbehaving widget that returns
@@ -230,6 +231,8 @@ impl SlotSurface for DeckWidgetSurfaceClient {
 pub struct WidgetSlot<S = DeckWidgetSurfaceClient> {
     pub surface: S,
     pub runtime: WasmWidgetRuntime,
+    // Declaration order drops the Store before its compiled-module lease.
+    module_lease: Option<ModuleLease>,
     pub lifecycle: LifecycleStateMachine,
     pub render_target: Option<RenderTarget>,
     pub retired_render_targets: Vec<RenderTarget>,
@@ -287,10 +290,37 @@ struct SlotIdentity {
     cache_token: Option<String>,
 }
 
+fn instantiate_cached_runtime(
+    lease: ModuleLease,
+    width: u32,
+    height: u32,
+    viewport_shape: bmc_wasm_protocol::ViewportShape,
+    display: bmc_wasm_runtime::RuntimeDisplayInfo,
+    initial_system_time: chrono::DateTime<chrono::FixedOffset>,
+    config: RuntimeConfig,
+) -> Result<(WasmWidgetRuntime, ModuleLease)> {
+    let runtime = WasmWidgetRuntime::from_module(
+        lease.module(),
+        width,
+        height,
+        viewport_shape,
+        display,
+        initial_system_time,
+        config,
+    )?;
+    Ok((runtime, lease))
+}
+
+fn release_runtime_and_module(runtime: WasmWidgetRuntime, module_lease: &mut Option<ModuleLease>) {
+    drop(runtime);
+    drop(module_lease.take());
+}
+
 impl WidgetSlot {
-    pub fn from_handshake(
+    pub(crate) fn from_handshake(
         wasm_path: &Path,
         asset_root: Option<&Path>,
+        module_cache: &ModuleCache,
         wayland_fd: std::os::fd::OwnedFd,
         control_socket: UnixStream,
         peer_pid: Option<libc::pid_t>,
@@ -312,13 +342,18 @@ impl WidgetSlot {
             settings = initial.settings.len(),
             "widget Wayland configure received"
         );
-        let wasm_bytes =
-            std::fs::read(wasm_path).with_context(|| format!("read {}", wasm_path.display()))?;
+        let module_load = module_cache.load(wasm_path)?;
+        let digest = module_load.lease.digest();
         tracing::info!(
             ?peer_pid,
             wasm = %wasm_path.display(),
-            bytes = wasm_bytes.len(),
-            "wasm module read"
+            bytes = module_load.byte_len,
+            digest = %format_args!(
+                "{:02x}{:02x}{:02x}{:02x}",
+                digest[0], digest[1], digest[2], digest[3]
+            ),
+            outcome = ?module_load.outcome,
+            "wasm module loaded"
         );
         // Seed the system snapshot from any per-field setting events
         // the compositor  included in the initial configure batch.
@@ -336,8 +371,8 @@ impl WidgetSlot {
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
         let token = initial.token.clone();
         let (led_tx, led_rx) = mpsc::channel();
-        let runtime = WasmWidgetRuntime::new(
-            &wasm_bytes,
+        let (runtime, module_lease) = instantiate_cached_runtime(
+            module_load.lease,
             initial.width,
             initial.height,
             viewport_shape,
@@ -390,6 +425,7 @@ impl WidgetSlot {
             control_socket,
             led_rx,
             identity,
+            Some(module_lease),
         ))
     }
 }
@@ -411,6 +447,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
             control_socket,
             led_rx,
             SlotIdentity::default(),
+            None,
         )
     }
 
@@ -421,11 +458,13 @@ impl<S: SlotSurface> WidgetSlot<S> {
         control_socket: UnixStream,
         led_rx: mpsc::Receiver<LedRequest>,
         identity: SlotIdentity,
+        module_lease: Option<ModuleLease>,
     ) -> Self {
         runtime.initialize_dormant();
         Self {
             surface,
             runtime,
+            module_lease,
             lifecycle: LifecycleStateMachine::new(),
             render_target: None,
             retired_render_targets: Vec::new(),
@@ -1026,7 +1065,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
         renderer: &mut FemtoVgRenderer,
     ) {
         let asset_namespace = self.runtime.asset_namespace();
-        drop(self.runtime);
+        release_runtime_and_module(self.runtime, &mut self.module_lease);
 
         let evicted_renderer_assets = evict_renderer_assets(renderer, &asset_namespace);
         if evicted_renderer_assets > 0 {
@@ -1542,14 +1581,162 @@ pub(crate) fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u
 mod tests {
     use super::{
         HostRenderFrameContext, RendererAssetEvictor, SystemSnapshot, apply_setting_update,
-        evict_renderer_assets, led_request_to_action,
+        evict_renderer_assets, instantiate_cached_runtime, led_request_to_action,
+        release_runtime_and_module,
     };
-    use bmc_wasm_runtime::{LedEffect, LedRequest, LedScope, Rgb};
+    use crate::module_cache::ModuleCache;
+    use bmc_wasm_runtime::{
+        LedEffect, LedRequest, LedScope, Rgb, RuntimeConfig, RuntimeDisplayInfo,
+    };
     use bmc_widget_protocol::{
         ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope,
         NextAlarm as WireNextAlarm, RgbColor, SettingUpdate,
     };
+    use std::path::Path;
     use std::time::Duration;
+
+    fn cached_runtime_wat(render: bool, trapping_init: bool) -> Vec<u8> {
+        let render_export = if render {
+            r#"(func (export "render") (param i32))"#
+        } else {
+            ""
+        };
+        let init_export = if trapping_init {
+            r#"(func (export "init") unreachable)"#
+        } else {
+            r#"(func (export "init"))"#
+        };
+        wat::parse_str(format!(
+            r#"
+            (module
+              (memory (export "memory") 1)
+              (func (export "__bmc_sdk_init") (result i64)
+                i64.const {})
+              {render_export}
+              {init_export}
+              (func (export "probe") (result i32) i32.const 7))
+            "#,
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        ))
+        .expect("BUG: cached-runtime test WAT must parse")
+    }
+
+    fn write_cached_runtime(directory: &Path, name: &str, bytes: &[u8]) -> std::path::PathBuf {
+        let path = directory.join(name);
+        std::fs::write(&path, bytes).expect("BUG: cached-runtime fixture must be writable");
+        path
+    }
+
+    fn instantiate_test_runtime(
+        cache: &ModuleCache,
+        path: &Path,
+    ) -> anyhow::Result<(
+        bmc_wasm_runtime::WasmWidgetRuntime,
+        crate::module_cache::ModuleLease,
+    )> {
+        let loaded = cache.load(path)?;
+        instantiate_cached_runtime(
+            loaded.lease,
+            320,
+            240,
+            bmc_wasm_protocol::ViewportShape::Rectangular,
+            RuntimeDisplayInfo {
+                width: 320,
+                height: 240,
+                shape: bmc_wasm_protocol::DisplayShape::Rectangular,
+                dpi: 1,
+            },
+            chrono::Local::now().fixed_offset(),
+            RuntimeConfig::default(),
+        )
+    }
+
+    #[test]
+    fn cached_runtime_handoff_retains_one_compiled_module() {
+        let directory = tempfile::tempdir().expect("BUG: slot test needs a temporary directory");
+        let path = write_cached_runtime(
+            directory.path(),
+            "widget.wasm",
+            &cached_runtime_wat(true, false),
+        );
+        let cache = ModuleCache::new();
+        let (first_runtime, first_lease) =
+            instantiate_test_runtime(&cache, &path).expect("first runtime must instantiate");
+        let (mut second_runtime, second_lease) =
+            instantiate_test_runtime(&cache, &path).expect("second runtime must instantiate");
+
+        assert_eq!(
+            cache.compile_count(),
+            1,
+            "two successful runtimes must share one compilation"
+        );
+        assert!(
+            first_lease.ptr_eq(&second_lease),
+            "both slots must retain the same cached module"
+        );
+        assert_eq!(second_runtime.call_export_i32("probe"), Some(7));
+        drop((first_runtime, first_lease, second_runtime, second_lease));
+        assert_eq!(
+            cache.entry_count(),
+            0,
+            "dropping both runtime leases must evict the module"
+        );
+    }
+
+    #[test]
+    fn cached_runtime_failure_releases_a_new_entry() {
+        let directory = tempfile::tempdir().expect("BUG: slot test needs a temporary directory");
+        let cache = ModuleCache::new();
+        let missing_render = write_cached_runtime(
+            directory.path(),
+            "missing-render.wasm",
+            &cached_runtime_wat(false, false),
+        );
+
+        assert!(instantiate_test_runtime(&cache, &missing_render).is_err());
+        assert_eq!(
+            cache.entry_count(),
+            0,
+            "export lookup failure must release the miss lease"
+        );
+
+        let trapping_init = write_cached_runtime(
+            directory.path(),
+            "trapping-init.wasm",
+            &cached_runtime_wat(true, true),
+        );
+        assert!(instantiate_test_runtime(&cache, &trapping_init).is_err());
+        assert_eq!(
+            cache.entry_count(),
+            0,
+            "init failure must release the miss lease"
+        );
+    }
+
+    #[test]
+    fn runtime_release_evicts_the_final_module_lease() {
+        let directory = tempfile::tempdir().expect("BUG: slot test needs a temporary directory");
+        let path = write_cached_runtime(
+            directory.path(),
+            "widget.wasm",
+            &cached_runtime_wat(true, false),
+        );
+        let cache = ModuleCache::new();
+        let (runtime, lease) =
+            instantiate_test_runtime(&cache, &path).expect("runtime must instantiate");
+        let mut lease = Some(lease);
+
+        release_runtime_and_module(runtime, &mut lease);
+        assert!(
+            lease.is_none(),
+            "runtime release must consume its module lease"
+        );
+        assert_eq!(
+            cache.entry_count(),
+            0,
+            "runtime release must evict the final module lease"
+        );
+    }
 
     #[test]
     fn apply_setting_update_timezone_folds_into_snapshot() {

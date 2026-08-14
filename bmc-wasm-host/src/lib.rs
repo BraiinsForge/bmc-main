@@ -26,6 +26,7 @@ pub mod host;
 pub mod lifecycle;
 pub mod logging;
 pub mod main_loop;
+pub(crate) mod module_cache;
 mod overlays;
 pub mod render_target;
 pub mod slot;

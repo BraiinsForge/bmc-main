@@ -89,7 +89,7 @@ impl Drop for ListenSocket {
 )]
 pub fn accept_and_load(
     client: UnixStream,
-    _shared: &mut SharedHost,
+    shared: &mut SharedHost,
 ) -> Result<WidgetSlot, anyhow::Error> {
     let peer_pid = peer_pid_of(&client);
     tracing::info!(?peer_pid, "thin control connection accepted");
@@ -128,6 +128,7 @@ pub fn accept_and_load(
         WidgetSlot::from_handshake(
             &path,
             asset_root.as_deref(),
+            &shared.module_cache,
             wayland_fd,
             client.try_clone()?,
             peer_pid,

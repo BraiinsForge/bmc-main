@@ -26,6 +26,8 @@ use bmc_render::gpu::FemtoVgRenderer;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 use glow::HasContext;
 
+use crate::module_cache::ModuleCache;
+
 const FENCE_WAIT_TIMEOUT_NS: i32 = 1_000_000;
 
 /// State shared across all widget slots within a host.
@@ -41,6 +43,7 @@ pub struct SharedHost {
     pub egl: EglContext,
     pub scratch: SharedRenderScratch,
     pub font_cache: FontCache,
+    pub(crate) module_cache: ModuleCache,
     gpu_render_lock: GpuRenderLock,
     gl_sync_support: GpuCompletionWaitStrategy,
 }
@@ -80,6 +83,7 @@ impl SharedHost {
                 egl,
                 scratch,
                 font_cache: FontCache,
+                module_cache: ModuleCache::new(),
                 gpu_render_lock,
                 gl_sync_support,
             },
