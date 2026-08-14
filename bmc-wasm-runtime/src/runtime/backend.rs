@@ -702,6 +702,55 @@ fn restore_package_asset(
     Ok(restored)
 }
 
+/// A validated WebAssembly widget and its shared engine.
+#[expect(missing_debug_implementations)]
+pub struct WasmWidgetModule {
+    module: wasmi::Module,
+}
+
+impl WasmWidgetModule {
+    /// Validate a WebAssembly widget using the runtime's process-wide configuration.
+    pub fn compile(wasm_bytes: &[u8]) -> Result<Self> {
+        let started = Instant::now();
+        let span = tracing::trace_span!("wasm_module_compile", bytes = wasm_bytes.len());
+        let _entered = span.enter();
+        let result = (|| {
+            crate::package_assets::reject_embedded_package_assets(wasm_bytes)?;
+            let mut engine_config = wasmi::Config::default();
+            engine_config.consume_fuel(true);
+            // Wasmi 1.0.9's EngineStacks::reuse_or_new allocates on pool exhaustion;
+            // execute_root_func and executor/stack reset reused stacks and initialize
+            // every newly live frame slot. Re-audit on upgrade.
+            engine_config.set_max_cached_stacks(4);
+            // Disable Wasm proposals not used by our Rust-compiled widgets.
+            // Saves validation/translation overhead.
+            engine_config.wasm_tail_call(false);
+            engine_config.wasm_multi_memory(false);
+            engine_config.wasm_memory64(false);
+            engine_config.wasm_extended_const(false);
+            engine_config.wasm_custom_page_sizes(false);
+            engine_config.wasm_wide_arithmetic(false);
+            let engine = wasmi::Engine::new(&engine_config);
+            // Wasmi validates eagerly; its default lazy mode defers function translation.
+            // First call stores translated code in the shared engine's code map.
+            // That call consumes 7 fuel per function-body byte from its Store;
+            // later sibling instances do not pay.
+            let module = wasmi::Module::new(&engine, wasm_bytes)?;
+            Ok(Self { module })
+        })();
+        match &result {
+            Ok(_) => tracing::trace!(
+                elapsed_us = started.elapsed().as_micros(),
+                "wasm module compiled"
+            ),
+            Err(error) => {
+                tracing::trace!(elapsed_us = started.elapsed().as_micros(), %error, "wasm module compilation failed");
+            }
+        }
+        result
+    }
+}
+
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
@@ -775,6 +824,30 @@ impl WasmWidgetRuntime {
 
     /// Create a new runtime from WASM bytes.
     ///
+    /// See [`Self::from_module`] for the initialization contract.
+    pub fn new(
+        wasm_bytes: &[u8],
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_wasm_protocol::ViewportShape,
+        display: DisplayInfo,
+        initial_system_time: DateTime<FixedOffset>,
+        config: RuntimeConfig,
+    ) -> Result<Self> {
+        let module = WasmWidgetModule::compile(wasm_bytes)?;
+        Self::from_module(
+            &module,
+            width,
+            height,
+            viewport_shape,
+            display,
+            initial_system_time,
+            config,
+        )
+    }
+
+    /// Create per-instance runtime state from an already validated widget module.
+    ///
     /// The renderer is owned by the caller; reach it per-frame via
     /// [`Self::with_renderer`]. `width` / `height` describe widget surface
     /// dimensions and are also installed on `HostState` before `init()` runs.
@@ -782,14 +855,47 @@ impl WasmWidgetRuntime {
     /// All configuration from [`RuntimeConfig`] is applied **before** the WASM
     /// `init()` export runs, so interceptors, KV, and event fixtures are available
     /// from the widget's first instruction.
+    pub fn from_module(
+        module: &WasmWidgetModule,
+        width: u32,
+        height: u32,
+        viewport_shape: bmc_wasm_protocol::ViewportShape,
+        display: DisplayInfo,
+        initial_system_time: DateTime<FixedOffset>,
+        config: RuntimeConfig,
+    ) -> Result<Self> {
+        let started = Instant::now();
+        let span = tracing::trace_span!("wasm_runtime_instantiate", width, height);
+        let _entered = span.enter();
+        let result = Self::from_module_inner(
+            module,
+            width,
+            height,
+            viewport_shape,
+            display,
+            initial_system_time,
+            config,
+        );
+        match &result {
+            Ok(_) => tracing::trace!(
+                elapsed_us = started.elapsed().as_micros(),
+                "wasm runtime instantiated"
+            ),
+            Err(error) => {
+                tracing::trace!(elapsed_us = started.elapsed().as_micros(), %error, "wasm runtime instantiation failed");
+            }
+        }
+        result
+    }
+
     #[expect(
         clippy::too_many_lines,
-        reason = "construction sets up engine, store, linker, host state, and stages \
+        reason = "construction sets up store, linker, host state, and stages \
                   all RuntimeConfig fields before init() runs — splitting helpers \
                   would scatter the ordering contract"
     )]
-    pub fn new(
-        wasm_bytes: &[u8],
+    fn from_module_inner(
+        module: &WasmWidgetModule,
         width: u32,
         height: u32,
         viewport_shape: bmc_wasm_protocol::ViewportShape,
@@ -823,27 +929,14 @@ impl WasmWidgetRuntime {
             ..
         } = config;
 
-        let mut engine_config = wasmi::Config::default();
-        engine_config.consume_fuel(true);
-        engine_config.set_max_cached_stacks(4);
-        // Disable Wasm proposals not used by our Rust-compiled widgets.
-        // Saves validation/translation overhead.
-        engine_config.wasm_tail_call(false);
-        engine_config.wasm_multi_memory(false);
-        engine_config.wasm_memory64(false);
-        engine_config.wasm_extended_const(false);
-        engine_config.wasm_custom_page_sizes(false);
-        engine_config.wasm_wide_arithmetic(false);
-        let engine = wasmi::Engine::new(&engine_config);
-        crate::package_assets::reject_embedded_package_assets(wasm_bytes)?;
-        let module = wasmi::Module::new(&engine, wasm_bytes)?;
+        let engine = module.module.engine();
 
         let host_state = HostState::new(resource_limits, initial_system_time);
 
-        let mut store = wasmi::Store::new(&engine, host_state);
+        let mut store = wasmi::Store::new(engine, host_state);
         store.set_fuel(fuel_per_frame)?;
 
-        let mut linker = Linker::new(&engine);
+        let mut linker = Linker::new(engine);
         Self::register_host_functions(&mut linker)?;
 
         // Stage geometry + all RuntimeConfig before instantiation. wasmi runs
@@ -900,7 +993,7 @@ impl WasmWidgetRuntime {
         let instance_id = state.instance_id.clone();
 
         // State is staged; instantiate (running `start`, if any) and resolve exports.
-        let instance = linker.instantiate_and_start(&mut store, &module)?;
+        let instance = linker.instantiate_and_start(&mut store, &module.module)?;
         let sdk_version = check_sdk_version(instance, &mut store)?;
         let render_func = instance.get_typed_func::<u32, ()>(&store, "render")?;
         let unload_func = instance.get_typed_func::<(), ()>(&store, "unload").ok();
@@ -2221,7 +2314,11 @@ impl Drop for WasmWidgetRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeadOverlayBackground, DisplayInfo, RuntimeConfig, WasmWidgetRuntime};
+    use std::collections::BTreeMap;
+
+    use super::{
+        DeadOverlayBackground, DisplayInfo, RuntimeConfig, WasmWidgetModule, WasmWidgetRuntime,
+    };
     use bmc_wasm_protocol::{DisplayShape, ViewportShape};
 
     /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
@@ -2237,6 +2334,97 @@ mod tests {
         "#,
             bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
         )
+    }
+
+    fn shared_state_wat() -> String {
+        format!(
+            r#"
+        (module
+          (memory (export "memory") 1)
+          (global $value (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const {})
+          (func (export "render") (param i32))
+          (func $recurse (param $depth i32)
+            local.get $depth
+            i32.const 0
+            i32.gt_s
+            if
+              local.get $depth
+              i32.const 1
+              i32.sub
+              call $recurse
+            end)
+          (func (export "exercise_stack") (result i32)
+            i32.const 8
+            call $recurse
+            global.get $value
+            i32.const 1
+            i32.add
+            global.set $value
+            i32.const 0
+            i32.const 0
+            i32.load8_u
+            i32.const 1
+            i32.add
+            i32.store8
+            global.get $value)
+          (func (export "memory_value") (result i32)
+            i32.const 0
+            i32.load8_u)
+          (func (export "global_value") (result i32)
+            global.get $value))
+        "#,
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        )
+    }
+
+    fn fuel_probe_wat() -> String {
+        format!(
+            r#"
+        (module
+          (memory (export "memory") 1)
+          (global $completed (mut i32) (i32.const 0))
+          (func (export "__bmc_sdk_init") (result i64)
+            i64.const {})
+          (func (export "render") (param i32))
+          (func (export "on_params_update") (local $i i32)
+            (block $done
+              (loop $again
+                local.get $i
+                i32.const 10000
+                i32.ge_u
+                br_if $done
+                local.get $i
+                i32.const 1
+                i32.add
+                local.set $i
+                br $again))
+            i32.const 1
+            global.set $completed)
+          (func (export "completed") (result i32)
+            global.get $completed))
+        "#,
+            bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
+        )
+    }
+
+    fn runtime_from_module(module: &WasmWidgetModule, config: RuntimeConfig) -> WasmWidgetRuntime {
+        WasmWidgetRuntime::from_module(
+            module,
+            320,
+            240,
+            ViewportShape::Rectangular,
+            DisplayInfo {
+                width: 320,
+                height: 240,
+                shape: DisplayShape::Rectangular,
+                dpi: 1,
+            },
+            chrono::Local::now().fixed_offset(),
+            config,
+        )
+        .expect("BUG: shared-module test runtime must construct")
     }
 
     fn minimal_runtime() -> WasmWidgetRuntime {
@@ -2292,6 +2480,45 @@ mod tests {
     }
 
     #[test]
+    fn module_instances_keep_store_memory_and_host_state_independent() {
+        let wasm = wat::parse_str(shared_state_wat()).expect("BUG: shared-state WAT must parse");
+        let module =
+            WasmWidgetModule::compile(&wasm).expect("BUG: shared-state module must compile");
+        let mut first = runtime_from_module(
+            &module,
+            RuntimeConfig {
+                instance_token: Some("first".to_owned()),
+                ..RuntimeConfig::default()
+            },
+        );
+        let mut second = runtime_from_module(
+            &module,
+            RuntimeConfig {
+                instance_token: Some("second".to_owned()),
+                ..RuntimeConfig::default()
+            },
+        );
+
+        assert_eq!(first.call_export_i32("exercise_stack"), Some(1));
+        assert_eq!(first.call_export_i32("memory_value"), Some(1));
+        assert_eq!(
+            second.call_export_i32("memory_value"),
+            Some(0),
+            "one Store's memory must not affect another"
+        );
+        assert_eq!(
+            second.call_export_i32("global_value"),
+            Some(0),
+            "one Store's globals must not affect another"
+        );
+        assert_ne!(
+            first.asset_namespace(),
+            second.asset_namespace(),
+            "instance identity must remain per Store"
+        );
+    }
+
+    #[test]
     fn renderer_asset_failure_overlay_replaces_the_partial_frame() {
         let renderer_failure = DeadOverlayBackground::for_stopped_widget(Some("missing asset"));
         let fuel_failure = DeadOverlayBackground::for_stopped_widget(None);
@@ -2300,5 +2527,50 @@ mod tests {
         assert_eq!(renderer_failure.scrim().alpha(), 255);
         assert_eq!(fuel_failure, DeadOverlayBackground::PreserveFrame);
         assert!(fuel_failure.scrim().alpha() < 255);
+    }
+
+    #[test]
+    fn recycled_engine_stack_preserves_store_isolation() {
+        let wasm = wat::parse_str(shared_state_wat()).expect("BUG: shared-state WAT must parse");
+        let module =
+            WasmWidgetModule::compile(&wasm).expect("BUG: shared-state module must compile");
+        let mut runtimes: Vec<_> = (0..5)
+            .map(|_| runtime_from_module(&module, RuntimeConfig::default()))
+            .collect();
+
+        for runtime in &mut runtimes {
+            assert_eq!(runtime.call_export_i32("exercise_stack"), Some(1));
+        }
+        assert_eq!(runtimes[0].call_export_i32("exercise_stack"), Some(2));
+
+        for (index, runtime) in runtimes.iter_mut().enumerate() {
+            let expected = if index == 0 { 2 } else { 1 };
+            assert_eq!(runtime.call_export_i32("memory_value"), Some(expected));
+            assert_eq!(runtime.call_export_i32("global_value"), Some(expected));
+        }
+    }
+
+    #[test]
+    fn shared_module_keeps_each_stores_fuel_budget_independent() {
+        let wasm = wat::parse_str(fuel_probe_wat()).expect("BUG: fuel-probe WAT must parse");
+        let module = WasmWidgetModule::compile(&wasm).expect("BUG: fuel-probe module must compile");
+        let mut low = runtime_from_module(
+            &module,
+            RuntimeConfig {
+                fuel_per_frame: 1_000,
+                ..RuntimeConfig::default()
+            },
+        );
+        let mut normal = runtime_from_module(&module, RuntimeConfig::default());
+
+        assert_eq!(low.call_export_i32("completed"), Some(0));
+        assert_eq!(normal.call_export_i32("completed"), Some(0));
+        assert!(!low.deliver_params_update(BTreeMap::new()));
+        let error = low
+            .poll_deliveries()
+            .expect_err("fuel exhaustion must reject the trapped runtime");
+        assert!(error.to_string().contains("all fuel consumed"));
+        assert!(normal.deliver_params_update(BTreeMap::new()));
+        assert_eq!(normal.call_export_i32("completed"), Some(1));
     }
 }

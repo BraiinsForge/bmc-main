@@ -142,7 +142,7 @@ pub use network::NetworkInfo;
 pub use runtime::{
     BoundCredential, CredentialView, RenderStatus, RendererAssetRestorationObservation,
     RendererAssetSuspensionObservation, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits,
-    WasmWidgetRuntime,
+    WasmWidgetModule, WasmWidgetRuntime,
 };
 pub use system::{NextAlarm, SystemSettings, SystemSnapshot};
 
