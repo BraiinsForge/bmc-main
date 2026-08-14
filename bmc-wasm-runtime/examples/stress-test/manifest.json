@@ -1,0 +1,26 @@
+{
+  "$schema": "../../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "550e8400-e29b-41d4-a716-446655440209",
+  "version": "0.1.0",
+  "name": "Stress Test",
+  "subname": "Host limits",
+  "description": "Drives a widget past the host fuel budget and past the 64 KiB stack reservation on demand",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/stress-test",
+  "icon": "assets/icon.svg",
+  "category": "utility",
+  "settings": [],
+  "supported_viewports": [
+    {
+      "type": "rectangular",
+      "min_width": 317,
+      "max_width": 1280,
+      "min_height": 238,
+      "max_height": 480
+    }
+  ],
+  "params": {}
+}

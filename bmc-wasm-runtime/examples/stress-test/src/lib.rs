@@ -20,8 +20,12 @@
 
 #![allow(clippy::cast_precision_loss)]
 
-//! Fuel limiter stress test — toggles between normal, CPU-burn, and draw-spam
-//! modes to exercise the host fuel budget enforcement.
+//! Host limit stress test — toggles between normal, CPU-burn, draw-spam
+//! and stack-bomb modes to exercise the fuel budget and the stack reservation.
+//!
+//! The two limits fail differently on purpose: a fuel overrun is recoverable,
+//! so `render` retries and the instance lives on, while a stack overflow traps
+//! and the host tears the slot down.
 
 use bmc_wasm_sdk::{
     FontWeight, GRAY_10, GRAY_50, GRAY_70, Node, ORANGE_50, RED_50, WidgetSize, button, col, props,
@@ -30,11 +34,11 @@ use bmc_wasm_sdk::{
 use std::cell::Cell;
 
 thread_local! {
-    /// 0 = normal, 1 = CPU burn, 2 = draw spam
+    /// 0 = normal, 1 = CPU burn, 2 = draw spam, 3 = stack bomb
     static MODE: Cell<u32> = const { Cell::new(0) };
 }
 
-const MODE_NAMES: [&str; 3] = ["Normal", "CPU Burn", "Draw Spam"];
+const MODE_NAMES: [&str; 4] = ["Normal", "CPU Burn", "Draw Spam", "Stack Bomb"];
 
 /// Re-render in response to touch — the host no longer renders on touch by
 /// itself, so an interactive widget must ask for the frame here.
@@ -53,7 +57,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     let mode = MODE.get();
 
     let mode_color = match mode {
-        1 => RED_50,
+        1 | 3 => RED_50,
         2 => ORANGE_50,
         _ => GRAY_50,
     };
@@ -62,7 +66,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     // Expensive work (cpu_burn / draw_spam) happens AFTER render_ui returns.
     let small = w < 640;
     let children: Vec<Node> = vec![
-        text("Fuel Limiter Stress Test", style!(size: 24, color: GRAY_10)),
+        text("Host Limit Stress Test", style!(size: 24, color: GRAY_10)),
         row(
             props!(gap: 12.0),
             [
@@ -82,12 +86,14 @@ pub extern "C" fn render(_delta_ms: u32) {
                     button!("normal", "Normal", style: Primary, size: Small),
                     button!("cpu_burn", "CPU Burn", style: Danger, size: Small),
                     button!("draw_spam", "Draw Spam", style: Secondary, size: Small),
+                    button!("stack_bomb", "Stack Bomb", style: Danger, size: Small),
                 ]
             } else {
                 vec![
                     button!("normal", "Normal", style: Primary),
                     button!("cpu_burn", "CPU Burn", style: Danger),
                     button!("draw_spam", "Draw Spam", style: Secondary),
+                    button!("stack_bomb", "Stack Bomb", style: Danger),
                 ]
             },
         ),
@@ -103,6 +109,10 @@ pub extern "C" fn render(_delta_ms: u32) {
         MODE.set(1);
     } else if result.clicks.contains_key("draw_spam") {
         MODE.set(2);
+    } else if result.clicks.contains_key("stack_bomb") {
+        MODE.set(3);
+        // The mode is read when a render starts, and a tap schedules no render.
+        request_frame();
     }
 
     // Expensive work runs AFTER the tree is submitted.
@@ -110,6 +120,7 @@ pub extern "C" fn render(_delta_ms: u32) {
     match mode {
         1 => cpu_burn(),
         2 => draw_spam(),
+        3 => stack_bomb(),
         _ => {}
     }
 }
@@ -118,6 +129,7 @@ fn mode_description(mode: u32) -> &'static str {
     match mode {
         1 => "Tight math loop that exceeds fuel budget every frame.",
         2 => "Heavy memory allocation that simulates complex tree building.",
+        3 => "Recursion that runs the stack off the bottom of linear memory.",
         _ => "Well-behaved render, comfortably within budget.",
     }
 }
@@ -147,4 +159,29 @@ fn draw_spam() {
     }
     // Prevent the optimizer from removing the loop.
     core::hint::black_box(&buf);
+}
+
+/// Stack claimed per recursion step. Large enough that the linker's reservation
+/// gives out well before the interpreter's own call-depth limit.
+const STACK_BOMB_FRAME_BYTES: usize = 4096;
+
+/// Four times the 64 KiB reservation, so the trap still lands if it grows.
+const STACK_BOMB_FRAMES: u32 = 64;
+
+/// Recursion deep enough to run the stack off the bottom of linear memory,
+/// where it traps as an ordinary out-of-bounds access.
+fn stack_bomb() {
+    core::hint::black_box(claim_stack(STACK_BOMB_FRAMES));
+}
+
+/// `#[inline(never)]` and the `black_box` keep every step a real stack frame
+/// rather than a value the optimizer folds away.
+#[inline(never)]
+fn claim_stack(frames_left: u32) -> u32 {
+    if frames_left == 0 {
+        return 0;
+    }
+    let mut frame = [0xA5_u8; STACK_BOMB_FRAME_BYTES];
+    core::hint::black_box(&mut frame);
+    claim_stack(frames_left - 1).wrapping_add(u32::from(frame[0]))
 }
