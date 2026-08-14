@@ -119,7 +119,12 @@ impl TestbedApp {
                     .auto_shrink([false, false])
                     .show(&mut ui, |scroll| {
                         if has_params {
-                            section_header_bar(scroll, "Params", PARAMS_ACCENT, section_fill);
+                            section_header_bar(
+                                scroll,
+                                "Params",
+                                palette.params_accent,
+                                section_fill,
+                            );
                             egui::Frame::NONE
                                 .inner_margin(egui::Margin::same(8))
                                 .show(scroll, |inner| {
@@ -144,7 +149,7 @@ impl TestbedApp {
                                 });
                             scroll.add_space(12.0);
                         }
-                        section_header_bar(scroll, "System", SYSTEM_ACCENT, section_fill);
+                        section_header_bar(scroll, "System", palette.system_accent, section_fill);
                         egui::Frame::NONE
                             .inner_margin(egui::Margin::same(8))
                             .show(scroll, |inner| {
@@ -156,7 +161,7 @@ impl TestbedApp {
                             scroll,
                             &credential_slots,
                             &mut working_credentials,
-                            section_fill,
+                            palette,
                         );
                     });
             });
@@ -172,9 +177,6 @@ impl TestbedApp {
         }
     }
 }
-
-const PARAMS_ACCENT: egui::Color32 = bmc_wasm_protocol::colors::ORANGE_40.to_egui();
-pub(super) const SYSTEM_ACCENT: egui::Color32 = bmc_wasm_protocol::colors::TEAL_40.to_egui();
 
 /// Render a section header as a full-width horizontal accent banner with
 /// black text — no left stripe.

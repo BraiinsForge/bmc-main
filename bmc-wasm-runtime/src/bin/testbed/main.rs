@@ -37,9 +37,7 @@
     clippy::cast_precision_loss,
     clippy::cast_sign_loss,
     clippy::integer_division,
-    clippy::items_after_statements,
-    reason = "UI math on small bounded positive values plus inline ui-block constants \
-              placed next to where they're used — all intentional in this testbed binary"
+    reason = "UI math on small bounded positive values — intentional in this testbed binary"
 )]
 
 mod canvas;
@@ -49,6 +47,7 @@ mod icon;
 mod paint;
 mod params_ui;
 mod recording;
+mod status_bar;
 mod system_ui;
 mod theme;
 mod toolbar;
@@ -563,6 +562,57 @@ mod platforms_startup_tests {
         assert_eq!(platform.id, "bmc100");
     }
 
+    /// A manifest admitting the rectangular range the deck's own viewports
+    /// span, which is what the bundled examples declare.
+    fn rectangular_manifest() -> bmc_widget_manifest::Manifest {
+        let json = serde_json::json!({
+            "uid": "550e8400-e29b-41d4-a716-446655440200",
+            "version": "0.1.0",
+            "name": "Test",
+            "description": "Fixture",
+            "author": { "name": "Braiins Forge", "url": "https://braiinsforge.com" },
+            "binary": "bin/test",
+            "icon": "assets/icon.svg",
+            "category": "utility",
+            "settings": [],
+            "supported_viewports": [{
+                "type": "rectangular",
+                "min_width": 317, "max_width": 1280,
+                "min_height": 238, "max_height": 480,
+            }],
+            "params": {},
+        })
+        .to_string();
+        <bmc_widget_manifest::Manifest as std::str::FromStr>::from_str(&json)
+            .expect("BUG: the fixture manifest must parse")
+    }
+
+    #[test]
+    fn startup_opens_every_platform_the_widget_admits() {
+        let manifest = rectangular_manifest();
+        let default = platform_catalog::select(None).expect("BUG: default must resolve");
+
+        let open = super::startup_platforms(default, false, &manifest);
+
+        let ids: Vec<&str> = open.iter().map(|p| p.id).collect();
+        assert_eq!(
+            ids,
+            ["bmc100", "bmm100", "bmm101"],
+            "the round platform is not rectangular, so it stays shut"
+        );
+    }
+
+    #[test]
+    fn a_pinned_platform_opens_on_its_own() {
+        let manifest = rectangular_manifest();
+        let requested = platform_catalog::select(Some("bmm101")).expect("BUG: must resolve");
+
+        let open = super::startup_platforms(requested, true, &manifest);
+
+        let ids: Vec<&str> = open.iter().map(|p| p.id).collect();
+        assert_eq!(ids, ["bmm101"], "a pinned run opens what it was pointed at");
+    }
+
     #[test]
     fn startup_selects_the_requested_platform() {
         let cli = parse_test_args(&["testbed", "widget.wasm", "--platform", "BFM100"])
@@ -877,12 +927,13 @@ pub(crate) struct TestbedApp {
     canvas: canvas::Canvas,
     /// Chrome theme; Auto follows the system.
     theme: theme::ThemeChoice,
-    /// Toolbar icons, tessellated once at startup.
+    /// Toolbar icons, rasterized on demand per drawn pixel size.
     icons: icon::Icons,
+    /// Whether each view carries its own timings — off by default:
+    /// an instrument over the widget, while the status bar covers the whole.
+    show_view_timings: bool,
     /// A one-shot window rearrangement, consumed at the next paint.
     arrange: Option<device_window::ArrangeMode>,
-    /// Where that arrangement put the stats window, handed across because
-    /// the stats window paints in a later pass than the device windows.
     /// Set once the perf report is sealed, so the host can close the window.
     exit_requested: bool,
     /// Builds the per-view `FemtoVgRenderer` GL contexts.
@@ -952,7 +1003,7 @@ struct HotReload {
 }
 
 /// Per-frame performance accounting. The rolling window drives the FPS readout
-/// in the stats panel; the full vector is what `--perf-report=` writes to disk at exit.
+/// in the status bar; the full vector is what `--perf-report=` writes to disk at exit.
 struct PerfState {
     /// Total frames rendered so far. Used to drive the `--perf-frames` exit condition.
     frame_count: u32,
@@ -1052,6 +1103,9 @@ impl TestbedApp {
             }
         });
 
+        let pinned = recording_state.is_some() || cli.platform_id.is_some();
+        let open_platforms = startup_platforms(active_platform, pinned, &manifest);
+
         let now = std::time::Instant::now();
         let declared = declared_slots(&manifest);
         let secrets = cli.credential_secrets(&declared)?;
@@ -1064,6 +1118,7 @@ impl TestbedApp {
             canvas: canvas::Canvas::default(),
             theme: theme::ThemeChoice::Auto,
             icons: icon::Icons::new(),
+            show_view_timings: false,
             arrange: None,
             exit_requested: false,
             get_proc,
@@ -1097,7 +1152,7 @@ impl TestbedApp {
                 state: recording_state,
                 fetch_events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
             },
-            open_platforms: vec![active_platform],
+            open_platforms,
         })
     }
 
@@ -1475,112 +1530,6 @@ impl TestbedApp {
         next_wake_ms
     }
 
-    /// Paint the stats panel inside an explicit rect (the empty slot right of SMALL tile).
-    /// Includes the FPS readout, FULL-tile timing breakdown, reload + debug-toggle buttons,
-    /// and a stacked-bar chart of recent per-frame timings.
-    fn paint_stats_panel(&mut self, ui: &mut egui::Ui) {
-        // ── FPS + last-frame breakdown ──
-        let avg_us = if self.perf.recent_frame_us.is_empty() {
-            0
-        } else {
-            let sum: u32 = self.perf.recent_frame_us.iter().sum();
-            sum / self.perf.recent_frame_us.len() as u32
-        };
-        let fps = if avg_us > 0 {
-            1_000_000.0 / avg_us as f32
-        } else {
-            0.0
-        };
-        // Stats table — egui::Grid gives column alignment without manual width math.
-        // Value strings are padded with leading spaces to a fixed width (`{:>5}`)
-        // so under a monospace font the digit columns stay anchored even
-        // as the number widens from single digit to triple digit between frames.
-        // 5 digits covers up to 99 999 µs (~100 ms / frame), well past
-        // the realistic budget for any sub-stage.
-        let mono = egui::FontId::monospace(11.0);
-        let val_color = ui.visuals().strong_text_color();
-        let lbl = |txt: &str| ui_helpers::key_label(txt);
-        let cell_us = |n: u32| {
-            egui::RichText::new(format!("{n:>5} µs"))
-                .font(mono.clone())
-                .color(val_color)
-        };
-        let cell_fps = |f: f32| {
-            egui::RichText::new(format!("{f:>5.1} fps"))
-                .font(mono.clone())
-                .color(val_color)
-        };
-        let cell_ms = |ms: Option<u64>| {
-            let val = ms.map_or_else(|| "—".to_owned(), |ms| ms.to_string());
-            egui::RichText::new(format!("{val:>5} ms"))
-                .font(mono.clone())
-                .color(val_color)
-        };
-        egui::Frame::NONE
-            .inner_margin(egui::Margin::same(8))
-            .show(ui, |body| {
-                egui::Grid::new("testbed_stats_table")
-                    .num_columns(4)
-                    .spacing([12.0, 2.0])
-                    .min_col_width(0.0)
-                    .show(body, |g| {
-                        g.add(lbl("host frame:"));
-                        g.label(cell_us(avg_us));
-                        g.add(lbl(""));
-                        g.label(cell_fps(fps));
-                        g.end_row();
-                        if let Some(t) = self.tiles.first().and_then(DeviceView::last_timings) {
-                            g.add(lbl("FULL wasm:"));
-                            g.label(cell_us(t.wasm_us));
-                            g.add(lbl("deser:"));
-                            g.label(cell_us(t.deserialize_us));
-                            g.end_row();
-                            g.add(lbl("layout:"));
-                            g.label(cell_us(t.layout_us));
-                            g.add(lbl("render:"));
-                            g.label(cell_us(t.render_us));
-                            g.end_row();
-                            g.add(lbl("flush:"));
-                            g.label(cell_us(t.flush_us));
-                            // How late the render ran against the cadence the widget asked for;
-                            // climbing numbers mean animations running slower than intended.
-                            g.add(lbl("slip:"));
-                            g.label(cell_ms(
-                                self.tiles.first().and_then(DeviceView::last_slip_ms),
-                            ));
-                            g.end_row();
-                        }
-                    });
-
-                // ── Stacked bar chart, legend below it as its key ──
-                const CHART_W: f32 = 384.0;
-                const CHART_H: f32 = 100.0;
-                const LEGEND_H: f32 = 14.0;
-                body.add_space(4.0);
-                // Allocated before any samples arrive, so the window settles
-                // at one size instead of growing on the first sampled frame.
-                let (block, _) = body.allocate_exact_size(
-                    egui::vec2(CHART_W, CHART_H + LEGEND_H),
-                    egui::Sense::hover(),
-                );
-                if !self.perf.samples.is_empty() {
-                    let chart_rect = egui::Rect::from_min_max(
-                        block.min,
-                        egui::pos2(block.max.x, block.max.y - LEGEND_H),
-                    );
-                    let legend_rect = egui::Rect::from_min_max(
-                        egui::pos2(block.min.x, block.max.y - LEGEND_H),
-                        block.max,
-                    );
-                    // `painter_at` clips chart draws so spikes don't bleed past the rect.
-                    let chart_painter = body.painter_at(chart_rect);
-                    let text = body.visuals().text_color();
-                    paint_timing_chart(&chart_painter, chart_rect, &self.perf.samples, text);
-                    paint_timing_legend(body.painter(), legend_rect, text);
-                }
-            });
-    }
-
     /// Trim `recent_frame_us` to a 60-sample sliding window so the FPS readout averages
     /// roughly the last second at 60 fps.
     fn record_frame_us(&mut self, us: u32) {
@@ -1596,6 +1545,33 @@ fn can_switch_platform(recording_active: bool) -> Result<(), &'static str> {
         Err("recording is active")
     } else {
         Ok(())
+    }
+}
+
+/// The devices a fresh testbed opens.
+///
+/// Every platform the widget admits, since watching one change land
+/// everywhere at once is what the canvas is for.
+/// `pinned` — a recording, or an explicit `--platform` — asks for one
+/// device and gets only that.
+fn startup_platforms(
+    active: &'static Platform,
+    pinned: bool,
+    manifest: &bmc_widget_manifest::Manifest,
+) -> Vec<&'static Platform> {
+    if pinned {
+        return vec![active];
+    }
+    let supported: Vec<&'static Platform> = platform_catalog::PLATFORMS
+        .iter()
+        .filter(|platform| toolbar::platform_supported(platform, manifest))
+        .collect();
+    // A manifest admitting nothing still opens where it was pointed, so the
+    // operator sees the placeholder saying so rather than an empty canvas.
+    if supported.is_empty() {
+        vec![active]
+    } else {
+        supported
     }
 }
 
@@ -1976,6 +1952,7 @@ impl TestbedApp {
         // Sidebar changes propagate to all tile runtimes and (when recording)
         // append `ParamDelivery` / `SystemDelivery` events to the timeline.
         self.paint_toolbar(root_ui);
+        self.paint_status_bar(root_ui);
         self.paint_right_panel(root_ui);
 
         // The canvas: a pannable backdrop the device windows float over.
@@ -2000,7 +1977,7 @@ impl TestbedApp {
             });
 
         self.paint_device_windows(&ctx, time_s);
-        self.paint_stats_window(&ctx);
+        self.paint_recording_window(&ctx);
 
         // Earliest tile deadline, capped at the drain tick for deliveries + chrome.
         let repaint_ms = next_wake.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));

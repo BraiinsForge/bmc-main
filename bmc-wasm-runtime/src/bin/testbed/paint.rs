@@ -467,11 +467,21 @@ pub(super) fn paint_timing_chart(
     painter: &egui::Painter,
     rect: egui::Rect,
     samples: &[bmc_render::FrameTimings],
-    text: egui::Color32,
 ) {
+    // Below this it is a sparkline, and the guides cost more legibility than
+    // they add: seven grid lines and two 9 pt labels in twenty pixels leave
+    // nothing to read but themselves.
+    const DETAIL_H: f32 = 48.0;
     // Fixed column width — bars stay the same size and newest samples append at the right edge,
     // older samples scroll off the left. Avoids the "bars resize as the window fills" effect.
     const COL_W: f32 = 2.0;
+
+    let detailed = rect.height() >= DETAIL_H;
+
+    // Its own backing, like any instrument: the component colours are chosen
+    // against dark, and the bar has a different tone in each theme.
+    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(190));
+    let guide_text = egui::Color32::from_gray(190);
     let max_cols = (rect.width() / COL_W).floor().max(1.0) as usize;
     let n = samples.len().min(max_cols);
     if n == 0 {
@@ -500,18 +510,20 @@ pub(super) fn paint_timing_chart(
     let col_w = COL_W;
 
     // Subtle horizontal grid every 5 ms — drawn first so bars overlay on top.
-    let grid_color = egui::Color32::from_rgba_unmultiplied(140, 140, 140, 30);
-    let grid_step_us = 5_000.0_f32;
-    let mut grid_us = grid_step_us;
-    while grid_us < y_scale_us {
-        let y = rect.max.y - (grid_us / y_scale_us) * rect.height();
-        if y > rect.min.y && y < rect.max.y {
-            painter.line_segment(
-                [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-                egui::Stroke::new(1.0_f32, grid_color),
-            );
+    if detailed {
+        let grid_color = egui::Color32::from_rgba_unmultiplied(140, 140, 140, 30);
+        let grid_step_us = 5_000.0_f32;
+        let mut grid_us = grid_step_us;
+        while grid_us < y_scale_us {
+            let y = rect.max.y - (grid_us / y_scale_us) * rect.height();
+            if y > rect.min.y && y < rect.max.y {
+                painter.line_segment(
+                    [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
+                    egui::Stroke::new(1.0_f32, grid_color),
+                );
+            }
+            grid_us += grid_step_us;
         }
-        grid_us += grid_step_us;
     }
     // Component colours mirror PerfOverlay's legend ordering.
     let colours = [
@@ -562,12 +574,74 @@ pub(super) fn paint_timing_chart(
         );
         // Label sits BELOW the line so it doesn't get clipped against `rect.min.y`
         // when the line itself is near the top of the chart (e.g. 30 fps marker at peak scale).
+        if detailed {
+            painter.text(
+                egui::pos2(rect.max.x - 2.0, y + 1.0),
+                egui::Align2::RIGHT_TOP,
+                label,
+                egui::FontId::monospace(9.0),
+                guide_text,
+            );
+        }
+    }
+}
+
+/// What one view spent on its last frame, over the corner of that view.
+///
+/// A corner overlay rather than a strip: a frame can hold several views
+/// inside one faithful device mock, and anything that adds height would
+/// displace the mock's own geometry.
+///
+/// Deliberately unthemed. It reads over whatever the widget drew, which is
+/// neither of the testbed's two backgrounds, so it carries its own contrast.
+pub(super) fn paint_view_timings(
+    painter: &egui::Painter,
+    view: egui::Rect,
+    timings: &bmc_render::FrameTimings,
+    slip_ms: Option<u64>,
+) {
+    let line_h: f32 = 11.0;
+    let rows = [
+        ("wasm", format!("{:>5} µs", timings.wasm_us)),
+        ("lay", format!("{:>5} µs", timings.layout_us)),
+        ("ren", format!("{:>5} µs", timings.render_us)),
+        (
+            "slip",
+            slip_ms.map_or_else(|| "    — ms".to_owned(), |ms| format!("{ms:>5} ms")),
+        ),
+    ];
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "four rows of a fixed-size overlay"
+    )]
+    let size = egui::vec2(96.0, line_h.mul_add(rows.len() as f32, 4.0));
+    // Skip a view the overlay would cover more than a quarter of:
+    // an instrument that hides what it measures reads as a broken render.
+    if view.width() < size.x * 2.0 || view.height() < size.y * 2.0 {
+        return;
+    }
+
+    let rect = egui::Rect::from_min_size(view.min, size);
+    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(190));
+    for (idx, (label, value)) in rows.iter().enumerate() {
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "four rows of a fixed-size overlay"
+        )]
+        let y = line_h.mul_add(idx as f32, rect.min.y + 2.0);
         painter.text(
-            egui::pos2(rect.max.x - 2.0, y + 1.0),
-            egui::Align2::RIGHT_TOP,
+            egui::pos2(rect.min.x + 4.0, y),
+            egui::Align2::LEFT_TOP,
             label,
             egui::FontId::monospace(9.0),
-            text,
+            egui::Color32::from_gray(150),
+        );
+        painter.text(
+            egui::pos2(rect.max.x - 4.0, y),
+            egui::Align2::RIGHT_TOP,
+            value,
+            egui::FontId::monospace(9.0),
+            egui::Color32::from_gray(230),
         );
     }
 }

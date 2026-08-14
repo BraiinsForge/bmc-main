@@ -136,9 +136,8 @@ fn first_fit(
 
 /// Bare enclosure showing between the screen's bottom edge and the LED diffuser.
 const STRIP_SEAM: f32 = 4.0;
-/// The recording panel's content area, which its readouts assume;
-/// the stats readout sizes itself, and this stands in for it when arranging.
-const STATS_WINDOW_SIZE: egui::Vec2 = egui::vec2(400.0, 280.0);
+/// The recording panel's content area, which its readouts assume.
+const RECORDING_PANEL_SIZE: egui::Vec2 = egui::vec2(400.0, 280.0);
 /// Height of the hand-painted title strip. Ours rather than egui's,
 /// because egui hard-centres its window titles.
 const TITLE_H: f32 = 24.0;
@@ -343,7 +342,7 @@ impl TestbedApp {
             })
             .collect();
 
-        // The stats window is chrome, not canvas, so it keeps out of this.
+        // The recording window is chrome, not canvas, so it keeps out of this.
         let arranged = self.arrange.take().map(|mode| match mode {
             ArrangeMode::Stack => {
                 let zoom = self.canvas.zoom();
@@ -490,6 +489,11 @@ impl TestbedApp {
                     egui::StrokeKind::Inside,
                 );
             }
+            if self.show_view_timings
+                && let Some(timings) = view.last_timings()
+            {
+                paint::paint_view_timings(ui.painter(), rect, &timings, view.last_slip_ms());
+            }
             let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
             let rec = if active_record_idx == Some(*view_idx) {
                 self.recording_mode.state.as_mut()
@@ -526,34 +530,31 @@ impl TestbedApp {
         }
     }
 
-    /// Stats — or, while recording, the recording panel — in its own window.
-    /// Chrome, not canvas: the layer is never pan-transformed.
-    pub(super) fn paint_stats_window(&mut self, ctx: &egui::Context) {
+    /// The recording panel, for as long as a recording is running.
+    ///
+    /// Chrome, not canvas: the layer is never pan-transformed. It earns a
+    /// window because it is transient and carries actions; the timings that
+    /// used to share it are always-on, so they live in the status bar.
+    pub(super) fn paint_recording_window(&mut self, ctx: &egui::Context) {
+        if self.recording_mode.state.is_none() {
+            return;
+        }
         let mut action = None;
-        let title = if self.recording_mode.state.is_some() {
-            "Recording"
-        } else {
-            "Stats"
-        };
         let palette = self.theme.palette(ctx);
         let window = egui::Window::new("")
-            .id(egui::Id::new("stats"))
+            .id(egui::Id::new("recording"))
             .title_bar(false)
             .resizable(false)
             // Flush like the device windows; the readouts pad themselves.
             .frame(egui::Frame::window(&ctx.style()).inner_margin(WINDOW_INSET))
             .default_pos(egui::pos2(40.0, 620.0));
         let response = window.show(ctx, |ui| {
-            title_strip(ui, title, STATS_WINDOW_SIZE.x, palette);
-            if self.recording_mode.state.is_some() {
-                let (rect, _) = ui.allocate_exact_size(STATS_WINDOW_SIZE, egui::Sense::hover());
-                action = self.paint_recording_panel(ui, rect);
-            } else {
-                self.paint_stats_panel(ui);
-            }
+            title_strip(ui, "Recording", RECORDING_PANEL_SIZE.x, palette);
+            let (rect, _) = ui.allocate_exact_size(RECORDING_PANEL_SIZE, egui::Sense::hover());
+            action = self.paint_recording_panel(ui, rect);
         });
         // Device windows share this layer order and stack by last click;
-        // holding the top keeps the readout from settling between them.
+        // holding the top keeps the panel from settling between them.
         if let Some(response) = response {
             ctx.move_to_top(response.response.layer_id);
         }

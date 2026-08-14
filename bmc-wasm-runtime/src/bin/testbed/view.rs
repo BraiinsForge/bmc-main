@@ -200,7 +200,7 @@ impl DeviceView {
         self.runtime.as_ref().map(WasmWidgetRuntime::sdk_version)
     }
 
-    /// Timings from the last render, for the stats panel.
+    /// Timings from the last render, for the status bar and view overlays.
     pub(crate) fn last_timings(&self) -> Option<bmc_render::FrameTimings> {
         self.runtime.as_ref().map(WasmWidgetRuntime::last_timings)
     }

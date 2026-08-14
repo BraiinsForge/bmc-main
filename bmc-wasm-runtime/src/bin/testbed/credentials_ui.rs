@@ -100,7 +100,7 @@ impl TestbedApp {
         scroll: &mut egui::Ui,
         slots: &[(String, String)],
         working: &mut serde_json::Map<String, serde_json::Value>,
-        section_fill: egui::Color32,
+        palette: &super::theme::Palette,
     ) -> bool {
         if slots.is_empty() {
             return false;
@@ -108,8 +108,8 @@ impl TestbedApp {
         super::params_ui::section_header_bar(
             scroll,
             "Credentials",
-            super::params_ui::SYSTEM_ACCENT,
-            section_fill,
+            palette.system_accent,
+            palette.section_fill,
         );
         let mut changed = false;
         egui::Frame::NONE

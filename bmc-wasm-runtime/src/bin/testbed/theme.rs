@@ -49,8 +49,11 @@ pub(crate) struct Palette {
     pub(crate) divider: Color32,
     /// Face of interactive fields: text inputs, selects, checkboxes, buttons.
     pub(crate) field_fill: Color32,
-    /// Section header bars in the sidebar.
+    /// Section header bars in the sidebar, and the accents naming them.
+    /// The accents ride on the bar, so they step with it between themes.
     pub(crate) section_fill: Color32,
+    pub(crate) params_accent: Color32,
+    pub(crate) system_accent: Color32,
     // Device mock — identical in both themes.
     pub(crate) bezel: Color32,
     pub(crate) strip_plate: Color32,
@@ -72,6 +75,8 @@ pub(crate) const DARK: Palette = Palette {
     divider: swatch::GRAY_80.to_egui(),
     field_fill: swatch::GRAY_80.to_egui(),
     section_fill: swatch::BLACK.to_egui(),
+    params_accent: swatch::ORANGE_40.to_egui(),
+    system_accent: swatch::TEAL_40.to_egui(),
     bezel: BEZEL,
     strip_plate: swatch::GRAY_90.to_egui(),
     placeholder_fill: PLACEHOLDER_FILL,
@@ -93,7 +98,9 @@ pub(crate) const LIGHT: Palette = Palette {
     // A full step off the panel: without widget strokes, the face fill is
     // all that separates a control from the panel it sits on.
     field_fill: swatch::WHITE.to_egui(),
-    section_fill: swatch::GRAY_80.to_egui(),
+    section_fill: swatch::GRAY_30.to_egui(),
+    params_accent: swatch::ORANGE_70.to_egui(),
+    system_accent: swatch::TEAL_70.to_egui(),
     bezel: BEZEL,
     strip_plate: swatch::GRAY_90.to_egui(),
     placeholder_fill: PLACEHOLDER_FILL,

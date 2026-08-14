@@ -18,20 +18,46 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Shared widget primitives for the testbed's right sidebar + stats panel.
+//! Shared widget primitives for the testbed's chrome — the sidebar's fields
+//! and the bars' groupings.
 
-/// Monospace 11pt gray field-label. Non-selectable, click-sensible.
+/// How far a group divider stops short of its bar's edges.
+const DIVIDER_INSET: f32 = 9.0;
+
+/// Separate two groups of controls or readouts.
+///
+/// Painted rather than `Separator`-ed: egui's rules the bar's full height,
+/// which partitions regions instead of parting neighbours.
+pub(super) fn group_divider(ui: &mut egui::Ui, color: egui::Color32, bar_h: f32) {
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.spacing().item_spacing.x * 2.0, bar_h),
+        egui::Sense::hover(),
+    );
+    ui.painter().vline(
+        rect.center().x,
+        egui::Rangef::new(rect.top() + DIVIDER_INSET, rect.bottom() - DIVIDER_INSET),
+        egui::Stroke::new(1.0_f32, color),
+    );
+}
+
+/// Monospace 11pt gray field-label. Non-selectable, click-sensible:
+/// clicking one acts on the input beside it.
 ///
 /// ```text
 /// timezone        [ Europe/Prague        ]
 /// ^^^^^^^^
 /// ```
 pub(super) fn key_label(text: &str) -> egui::Label {
+    key_caption(text).sense(egui::Sense::click())
+}
+
+/// The same label with nothing beside it to act on — a readout's caption.
+/// Unsensed on purpose: a hover highlight promises a click that never comes.
+pub(super) fn key_caption(text: &str) -> egui::Label {
     // No explicit colour: the label inherits the theme's text tone.
     // Weak proved too faint on the light panel, plain reads on both.
     egui::Label::new(egui::RichText::new(text).font(egui::FontId::monospace(11.0)))
         .selectable(false)
-        .sense(egui::Sense::click())
 }
 
 /// Enum params with at most this many variants render as an always-visible

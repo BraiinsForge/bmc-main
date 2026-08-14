@@ -33,7 +33,7 @@ use super::TestbedApp;
 pub(super) const TOOLBAR_H: f32 = 36.0;
 
 /// Keeps the outermost buttons off the window edges.
-const BAR_INLINE_PAD: f32 = 8.0;
+pub(super) const BAR_INLINE_PAD: f32 = 8.0;
 
 impl TestbedApp {
     pub(super) fn paint_toolbar(&mut self, root_ui: &mut egui::Ui) {
@@ -82,10 +82,10 @@ impl TestbedApp {
                             }
                         }
                     });
-                    group_divider(row, palette.divider);
+                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
 
                     self.paint_view_controls(row);
-                    group_divider(row, palette.divider);
+                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
 
                     // The widget's own build and its rendering.
                     if icon_button(row, &mut self.icons.reload, Some("Reload WASM"), false)
@@ -101,7 +101,14 @@ impl TestbedApp {
                     {
                         bmc_render::tree::toggle_debug_layout();
                     }
-                    group_divider(row, palette.divider);
+                    if row
+                        .add(egui::Button::new("Timings").selected(self.show_view_timings))
+                        .on_hover_text("show each view's own frame cost over it")
+                        .clicked()
+                    {
+                        self.show_view_timings = !self.show_view_timings;
+                    }
+                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
 
                     // Simulated conditions: what the device can and cannot
                     // reach, and when it thinks it is.
@@ -212,25 +219,6 @@ impl TestbedApp {
 /// Toolbar icons are square and sized to sit beside the button text.
 const ICON_SIZE: f32 = 14.0;
 
-/// How far a group divider stops short of the toolbar's edges.
-const DIVIDER_INSET: f32 = 9.0;
-
-/// Separate two groups of controls.
-///
-/// Painted rather than `Separator`-ed: egui's rules the bar's full height,
-/// which partitions regions instead of parting neighbours.
-fn group_divider(row: &mut egui::Ui, color: egui::Color32) {
-    let (rect, _) = row.allocate_exact_size(
-        egui::vec2(row.spacing().item_spacing.x * 2.0, TOOLBAR_H),
-        egui::Sense::hover(),
-    );
-    row.painter().vline(
-        rect.center().x,
-        egui::Rangef::new(rect.top() + DIVIDER_INSET, rect.bottom() - DIVIDER_INSET),
-        egui::Stroke::new(1.0_f32, color),
-    );
-}
-
 /// A button carrying an icon, and optionally a label beside it.
 ///
 /// The icon takes whatever text colour the button's own state resolves to,
@@ -282,7 +270,10 @@ fn icon_button(
 
 /// Whether the widget's manifest admits at least one of `platform`'s
 /// viewports at the platform's display density.
-fn platform_supported(platform: &Platform, manifest: &bmc_widget_manifest::Manifest) -> bool {
+pub(super) fn platform_supported(
+    platform: &Platform,
+    manifest: &bmc_widget_manifest::Manifest,
+) -> bool {
     let dpi = platform.display().dpi;
     platform.viewports.iter().any(|vp| {
         let shape = match vp.shape {
