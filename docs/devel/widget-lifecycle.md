@@ -51,9 +51,10 @@ Lifecycle state is derived by `WidgetTracker::lifecycle_states()` from:
 
 Automatic scene cycling adds a pre-transition phase before slide motion. During that phase the compositor emits
 lifecycle changes first: outgoing widgets become `Leaving`, incoming widgets become `Entering`, and frame callbacks are
-held until the transition reaches a stable state or is cancelled. Neighbour preparation changes for the post-transition
-scene are emitted only after the transition commits. The incoming widgets also receive `transition_incoming`, a one-shot
-render warm-up event that is not emitted for manual drags.
+kept active so widgets continue animating while the incoming scene warms up. Frame callbacks are held only during slide
+motion and resume when the transition reaches a stable state or is cancelled. Neighbour preparation changes for the
+post-transition scene are emitted only after the transition commits. The incoming widgets also receive
+`transition_incoming`, a one-shot render warm-up event that is not emitted for manual drags.
 
 The derivation is pure scene state. It does not inspect GL state, Wayland buffers, widget runtime state, or whether a
 widget has already rendered.
@@ -177,8 +178,8 @@ flush boundary between them.
 Automatic scene cycling sends `transition_incoming` to visible widgets in the incoming scene during the pre-transition
 phase, after the lifecycle acquire batch has made those widgets `Entering`. The event tells hosts to render one fresh
 frame before slide motion starts. The compositor waits for that fresh commit before starting slide motion, bounded by a
-short timeout so a stalled widget cannot stop scene cycling. The event does not enable frame callbacks and does not
-change lifecycle state.
+one-second timeout so a stalled widget cannot stop scene cycling. Frame callbacks remain active throughout warm-up; the
+event does not change lifecycle state.
 
 Manual drags do not send `transition_incoming`. Dragging still uses lifecycle `Entering`/`Leaving`, but hosts must not
 start animation or warm-up renders merely because a user is dragging through a scene.

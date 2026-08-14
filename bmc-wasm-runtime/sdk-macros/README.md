@@ -23,6 +23,6 @@ Asset macros (`include_icon!`, `include_bitmap!`, `include_mesh!`, `include_nine
 
 **IS NOT its responsibility:**
 
-- Asset embedding (that is `bmc-render-macros`)
+- Asset packaging (that is `bmc-render-macros`)
 - Runtime string formatting (that is `ufmt`, invoked by the generated code)
 - Wire format types (that is `bmc-wasm-protocol`)

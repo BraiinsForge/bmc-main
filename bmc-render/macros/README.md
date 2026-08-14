@@ -1,6 +1,6 @@
 # bmc-render-macros
 
-Proc macros that compile and embed assets at build time.
+Proc macros that compile and package static assets at build time.
 
 ## Purpose
 
@@ -16,7 +16,8 @@ Provides the following proc macros:
 - `include_audio!` -- packages an audio file (WAV, OGG, MP3)
 
 All processing (SVG simplification, 9-patch parsing, mesh validation, texture compression) happens at compile time.
-Cargo tracks source files for recompilation.
+Cargo tracks source files for recompilation. WASM builds emit package records that the Nix widget build extracts from
+the final module; native builds retain embedded payloads for storybook rendering.
 
 ## Boundaries
 

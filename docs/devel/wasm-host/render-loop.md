@@ -178,12 +178,16 @@ keep the host waking at that cadence.
 
 ## Runtime Deliveries
 
-The current loop calls `runtime.poll_deliveries_with_renderer(renderer_ptr)` for every slot on every loop pass, after
-Wayland/control dispatch and lifecycle application.
+After Wayland/control dispatch and lifecycle application, the loop stages delivery readiness for every slot. CPU-only
+work can be staged without acquiring the renderer. If pending lifecycle or callback work can access the renderer, the
+host enters the cross-process GPU lock, polls the staged renderer deliveries, and waits for GPU completion before
+leaving the scope. An idle slot, including a dormant slot with suspended reservations, does not acquire the lock or
+issue a fence merely because it exists.
 
-This delivery polling can process host work such as completed fetches, sockets, WebSocket events, discovery events, and
-delayed work. A delivery callback may mutate guest state and request a frame. Lifecycle gating still decides whether
-that frame request can become an actual render.
+Deliveries include completed fetches and image decodes, sockets, WebSocket and discovery events, delayed work, and
+lifecycle hooks. A callback may mutate guest state and request a frame. Lifecycle gating still decides whether that
+request can become an actual render. Renderer asset suspension and restoration are described in
+[`renderer-assets.md`](renderer-assets.md).
 
 ## Compositor Lifecycle Emission
 

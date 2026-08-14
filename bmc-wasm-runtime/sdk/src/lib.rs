@@ -239,14 +239,17 @@
 //! #[unsafe(no_mangle)]
 //! pub extern "C" fn on_sleep() { /* release off-scene resources */ }
 //! #[unsafe(no_mangle)]
-//! pub extern "C" fn on_wake() { /* restore them before the first frame */ }
+//! pub extern "C" fn on_wake() { /* rebuild guest state before the first frame */ }
 //! ```
 //!
 //! Optional, paired with the dormancy edge. `on_sleep` fires when the widget
 //! scrolls off-scene; `on_wake` fires before the first frame when it returns.
 //! After `on_sleep`, the host releases package- and cache-backed renderer payloads
-//! while preserving their IDs. It restores available payloads before `on_wake`;
-//! a missing cache entry remains recoverable through the widget's normal refetch path.
+//! while preserving their IDs. `on_wake` runs without restoring them. The host
+//! restores a package/cache ID at its first draw,
+//! whether the tree is newly submitted or cached.
+//! Layout does not pre-load other assets.
+//! A missing cache entry remains recoverable through the widget's normal refetch path.
 //! Assets registered from guest memory have no external restore source, so they stay
 //! resident and usable while dormant for compatibility with SDK 0.2 widgets.
 //! Explicit `Slot::evict()` or `evict_all()` always destroys the reservation,

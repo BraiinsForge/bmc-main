@@ -3,7 +3,8 @@
 How the on-disk widget asset cache is laid out, and how orphaned entries are reclaimed when several host versions can
 run at once.
 
-For why multiple hosts coexist, see [`process-model.md`](process-model.md) (one daemon per SDK major) and
+For why cache-backed renderer assets survive dormancy, see [`renderer-assets.md`](renderer-assets.md). For why multiple
+hosts coexist, see [`process-model.md`](process-model.md) (one daemon per SDK major) and
 [`sdk-versioning.md`](sdk-versioning.md) (why a protocol break forks the host).
 
 ## Cache layout

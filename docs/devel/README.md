@@ -160,3 +160,5 @@ Implementation notes for the multi-widget WASM runtime:
   thin/host control protocol, and teardown behavior.
 - [Render Loop](wasm-host/render-loop.md) - slot lifecycle states, render-target ownership, render gating, frame
   scheduling, runtime delivery polling, and compositor lifecycle emission.
+- [Renderer Asset Lifecycle](wasm-host/renderer-assets.md) - static package extraction, package/cache/volatile backing,
+  stable renderer reservations, selective dormancy suspension, wake restoration, and image-widget cache behavior.

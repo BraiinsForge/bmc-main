@@ -107,7 +107,7 @@ impl BitmapSlot {
     /// Decode `data` to fit within (`cover` false) or cover-crop to (`cover` true)
     /// `max_w`×`max_h`, off the render thread; `on_ready` fires when it replaces
     /// the slot's bitmap. `identity` is recorded in the per-instance asset cache
-    /// so the host can restore the bitmap on wake.
+    /// so the host can restore the bitmap when a draw uses it.
     #[must_use]
     pub fn set_fit(
         &self,
@@ -164,7 +164,7 @@ pub extern "C" fn __on_image_ready(job_id: u32, bitmap_id: u32) {
 }
 
 /// Reclaim a decode's pending entry without dispatching — fired when the decode
-/// finished while dormant (the result is cached; wake restores it).
+/// finished while dormant (the result stays cached until a draw uses it).
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_image_dropped(job_id: u32) {
     let Some(job_id) = ImageJobId::from_wire(job_id) else {
