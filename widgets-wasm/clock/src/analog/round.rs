@@ -163,51 +163,10 @@ pub(crate) fn render(
             .fill("rim-outer", palette.dial_rim),
     );
 
-    // Timezone label inside the dial: two stacked lines, city on top,
-    // signed `±HH:MM` offset below. The IANA region prefix is dropped
-    // so the city fits the dial inner-rect on Small/Medium; the offset
-    // line disambiguates same-named cities across regions.
     if params.show_timezone {
-        let (city, offset_str, tz_color) = match &label {
-            TzLabel::Resolved { city, offset_secs } => {
-                let mut s = String::new();
-                push_utc_offset(&mut s, *offset_secs);
-                (city.clone(), s, palette.text)
-            }
-            TzLabel::Unknown { city, .. } => (city.clone(), "unknown".to_owned(), RED_50),
-        };
-        // Per-variant authored size scaled by `fit`, so the label keeps its
-        // legible size at each variant's canonical viewport and only shrinks
-        // when the viewport is smaller — unlike the dial geometry above.
-        let city_size = scale_font(size.timezone_font_size, ws.fit());
-        let offset_size = city_size.saturating_mul(85) / 100;
-        let line_h = f32_from_u32(city_size) * 1.05;
-        let group_centre_y = dial_top_y + dial * size.timezone_y_frac;
-        let weight = font_weight(params.numbers_font_style);
-        draws.push(Draw::text(
-            centre_x,
-            group_centre_y - line_h / 2.0,
-            city,
-            style!(
-                size: city_size,
-                weight: weight,
-                color: tz_color,
-                align: TextAlign::Center,
-                valign: VerticalAlign::Center,
-            ),
-        ));
-        draws.push(Draw::text(
-            centre_x,
-            group_centre_y + line_h / 2.0,
-            offset_str,
-            style!(
-                size: offset_size,
-                weight: weight,
-                color: tz_color,
-                align: TextAlign::Center,
-                valign: VerticalAlign::Center,
-            ),
-        ));
+        timezone_label(
+            centre_x, dial_top_y, dial, size, ws, params, &label, palette, &mut draws,
+        );
     }
 
     // Date window (Full / Large only, when `show_date` is set).
@@ -249,11 +208,75 @@ pub(crate) fn render(
     let h_ang = hour_angle(hour12, minute);
     let m_ang = minute_angle(minute);
     let s_ang = params.show_seconds.then(|| second_angle(second));
+    let mut hands: Vec<Draw> = Vec::with_capacity(8);
     super::push_hands_and_centre(
-        centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, true, &mut draws,
+        centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, true, &mut hands,
     );
 
-    canvas(props!(width: viewport_w, height: viewport_h), draws)
+    super::dial_and_hands(viewport_w, viewport_h, draws, hands)
+}
+
+// ── Timezone label ─────────────────────────────────────────────────────
+
+/// Two stacked lines inside the dial: city on top, signed `±HH:MM` offset
+/// below. The IANA region prefix is dropped so the city fits the dial
+/// inner-rect on Small/Medium; the offset line disambiguates same-named
+/// cities across regions.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "flat geometry helper that forwards explicit dial-space metrics"
+)]
+fn timezone_label(
+    centre_x: f32,
+    dial_top_y: f32,
+    dial: f32,
+    size: &AnalogRoundSizeParams,
+    ws: WidgetSize,
+    params: &Params,
+    label: &TzLabel,
+    palette: &ClockPalette,
+    draws: &mut Vec<Draw>,
+) {
+    let (city, offset_str, tz_color) = match label {
+        TzLabel::Resolved { city, offset_secs } => {
+            let mut s = String::new();
+            push_utc_offset(&mut s, *offset_secs);
+            (city.clone(), s, palette.text)
+        }
+        TzLabel::Unknown { city, .. } => (city.clone(), "unknown".to_owned(), RED_50),
+    };
+    // Per-variant authored size scaled by `fit`, so the label keeps its
+    // legible size at each variant's canonical viewport and only shrinks
+    // when the viewport is smaller — unlike the dial geometry above.
+    let city_size = scale_font(size.timezone_font_size, ws.fit());
+    let offset_size = city_size.saturating_mul(85) / 100;
+    let line_h = f32_from_u32(city_size) * 1.05;
+    let group_centre_y = dial_top_y + dial * size.timezone_y_frac;
+    let weight = font_weight(params.numbers_font_style);
+    draws.push(Draw::text(
+        centre_x,
+        group_centre_y - line_h / 2.0,
+        city,
+        style!(
+            size: city_size,
+            weight: weight,
+            color: tz_color,
+            align: TextAlign::Center,
+            valign: VerticalAlign::Center,
+        ),
+    ));
+    draws.push(Draw::text(
+        centre_x,
+        group_centre_y + line_h / 2.0,
+        offset_str,
+        style!(
+            size: offset_size,
+            weight: weight,
+            color: tz_color,
+            align: TextAlign::Center,
+            valign: VerticalAlign::Center,
+        ),
+    ));
 }
 
 // ── Date window ────────────────────────────────────────────────────────

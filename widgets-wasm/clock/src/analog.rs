@@ -123,6 +123,46 @@ pub(crate) fn local_clock_components(now: &SystemTime, offset_secs: i32) -> (u8,
     (local.hour, local.minute, local.second)
 }
 
+// ── Dial / hand layering ───────────────────────────────────────────────
+
+/// Compose the two halves of an analog face: the dial in its own canvas, and
+/// the hands in a second canvas positioned over it.
+///
+/// The split is the widget saying out loud what the renderer would otherwise
+/// have to infer per draw — everything in `dial` holds still between guest
+/// renders and belongs in the cached static layer; everything in `hands` moves
+/// on every host frame. Both canvases span the viewport because the SDK's
+/// rotation primitive pivots on canvas centre, so a hand can only sweep about
+/// the dial midpoint if its canvas is centred on it.
+///
+/// The centre-disc stack rides with the hands rather than the dial: it is static
+/// but paints *over* them, and static content drawn after dynamic content in the
+/// same region has to stay on the dynamic side to keep that order.
+pub(crate) fn dial_and_hands(
+    viewport_w: f32,
+    viewport_h: f32,
+    dial: Vec<Draw>,
+    hands: Vec<Draw>,
+) -> Node {
+    center(
+        props!(width: viewport_w, height: viewport_h),
+        [
+            canvas(props!(width: viewport_w, height: viewport_h), dial),
+            canvas(
+                props!(
+                    width: viewport_w,
+                    height: viewport_h,
+                    inset_top: 0.0,
+                    inset_right: 0.0,
+                    inset_bottom: 0.0,
+                    inset_left: 0.0,
+                ),
+                hands,
+            ),
+        ],
+    )
+}
+
 // ── Hand & centre placement ────────────────────────────────────────────
 
 /// Position a hand icon at the canvas so its SVG-coordinate

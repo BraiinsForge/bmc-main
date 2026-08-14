@@ -337,9 +337,10 @@ pub(crate) fn render(
     let m_ang = minute_angle(minute);
     let s_ang = params.show_seconds.then(|| second_angle(second));
     let hand_scale = viewport_h / HAND_SCALE_REF_HEIGHT;
+    let mut hands: Vec<Draw> = Vec::with_capacity(8);
     super::push_hands_and_centre(
-        centre_x, centre_y, hand_scale, h_ang, m_ang, s_ang, palette, false, &mut draws,
+        centre_x, centre_y, hand_scale, h_ang, m_ang, s_ang, palette, false, &mut hands,
     );
 
-    canvas(props!(width: viewport_w, height: viewport_h), draws)
+    super::dial_and_hands(viewport_w, viewport_h, draws, hands)
 }
