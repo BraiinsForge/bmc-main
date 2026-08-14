@@ -25,9 +25,9 @@ use bmc_widget_manifest::{ParamKey, ParamValue};
 use uuid::Uuid;
 
 use crate::config::widget_uuids::{
-    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, ISS_POSITION_UID, MINING_CLOCK_UID,
-    MINING_INFO_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID,
-    WEATHER_UID,
+    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, HALVING_COUNTDOWN_UID, ISS_POSITION_UID,
+    MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
+    SPACEX_LAUNCH_UID, WEATHER_UID,
 };
 
 #[derive(Debug)]
@@ -63,11 +63,12 @@ pub fn default_widgets() -> Vec<DefaultWidget> {
 }
 
 #[must_use]
-pub fn widget_uids() -> [(&'static str, Uuid); 11] {
+pub fn widget_uids() -> [(&'static str, Uuid); 12] {
     [
         ("clock", CLOCK_UID),
         ("weather", WEATHER_UID),
         ("blockheight", BLOCK_HEIGHT_UID),
+        ("halving-countdown", HALVING_COUNTDOWN_UID),
         ("mining-info", MINING_INFO_UID),
         ("mining-clock", MINING_CLOCK_UID),
         ("image", REMOTE_IMAGE_UID),
@@ -83,6 +84,7 @@ pub fn widget_uids() -> [(&'static str, Uuid); 11] {
 pub struct MigrationManifestExpectations {
     pub clock_font: &'static str,
     pub block_height_font: &'static str,
+    pub halving_countdown_font: &'static str,
     pub weather_location: &'static str,
     pub weather_time_zone: &'static str,
     pub image_refresh_seconds: i32,

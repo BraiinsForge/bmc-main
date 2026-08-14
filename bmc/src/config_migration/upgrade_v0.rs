@@ -31,12 +31,13 @@
 //!   the current schema or is dropped outright with a `warn!`. There
 //!   is no `_legacy` / `_legacy_remote` placeholder in the output.
 //! - **Each mapped widget targets a real manifest UID.** Native
-//!   kinds (`clock`, `block_height`, `remote_image`) map to the
-//!   `uid` declared in their `widgets-wasm/*/manifest.json`. Legacy
-//!   remote widgets with a native equivalent (`weather`, `nameday`,
-//!   `iss-position`, `random-facts`, `spacex-launch`) map to their
-//!   native manifest UID; every other legacy remote widget drops
-//!   until it gains a native counterpart.
+//!   kinds (`clock`, `block_height`, `halving_countdown`,
+//!   `remote_image`, `braiins_pool`) map to the `uid`
+//!   declared in their `widgets-wasm/*/manifest.json`.
+//!   Legacy remote widgets with a native equivalent (`weather`,
+//!   `nameday`, `iss-position`, `random-facts`, `spacex-launch`)
+//!   map to their native manifest UID; every other legacy remote
+//!   widget drops until it gains a native counterpart.
 //! - **Deep translation where param shape changed.** `clock`,
 //!   `block_height`, `remote_image`, `weather`, and `nameday` get
 //!   value-level translation (font-weight vocabulary, humantime →
@@ -59,8 +60,8 @@ use uuid::Uuid;
 
 use super::{Report, v0};
 use crate::config::widget_uuids::{
-    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID,
-    REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, WEATHER_UID,
+    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, HALVING_COUNTDOWN_UID, ISS_POSITION_UID,
+    NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings};
 use crate::data::{AccountId, SceneCycling};
@@ -88,6 +89,8 @@ const BRAIINSFORGE_URL_PREFIX: &str = "https://widgets.braiinsforge.com/";
 const CLOCK_FONT_DEFAULT: &str = "semi-bold";
 /// Block-height `numbers_font_style` fallback — blockheight manifest default.
 const BLOCK_HEIGHT_FONT_DEFAULT: &str = "bold";
+/// Halving-countdown `numbers_font_style` fallback — manifest default.
+const HALVING_COUNTDOWN_FONT_DEFAULT: &str = "bold";
 /// Weather `location` fallback — weather manifest `default_value`.
 const DEFAULT_WEATHER_LOCATION: &str = "Prague";
 /// Weather `time_zone` fallback — weather manifest `default_value`.
@@ -118,6 +121,7 @@ pub(crate) fn manifest_test_expectations()
     crate::manifest_test_support::MigrationManifestExpectations {
         clock_font: CLOCK_FONT_DEFAULT,
         block_height_font: BLOCK_HEIGHT_FONT_DEFAULT,
+        halving_countdown_font: HALVING_COUNTDOWN_FONT_DEFAULT,
         weather_location: DEFAULT_WEATHER_LOCATION,
         weather_time_zone: DEFAULT_WEATHER_TIME_ZONE,
         image_refresh_seconds: DEFAULT_REFRESH_SECONDS,
@@ -242,6 +246,7 @@ fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
     let (widget_type_id, params, credential_bindings) = match widget.kind.as_str() {
         "clock" => with_no_bindings(dispatch_clock(widget)),
         "block_height" => with_no_bindings(dispatch_block_height(widget)),
+        "halving_countdown" => with_no_bindings(dispatch_halving_countdown()),
         "remote_image" => with_no_bindings(dispatch_remote_image(widget)),
         "remote_widget" => with_no_bindings(dispatch_remote_widget(widget)?),
         "braiins_pool" => dispatch_braiins_pool(widget),
@@ -407,6 +412,15 @@ fn dispatch_block_height(widget: &v0::Widget) -> (Uuid, Value) {
     params.insert("numbers_font_style".to_owned(), json!(font_style));
 
     (BLOCK_HEIGHT_UID, Value::Object(params))
+}
+
+/// v0 `halving_countdown` had no supported settings.
+/// Hand-edited legacy params are therefore discarded.
+fn dispatch_halving_countdown() -> (Uuid, Value) {
+    (
+        HALVING_COUNTDOWN_UID,
+        json!({ "numbers_font_style": HALVING_COUNTDOWN_FONT_DEFAULT }),
+    )
 }
 
 /// v0's `braiins_pool` widget maps onto the WASM one ([`BRAIINS_POOL_UID`]).
@@ -911,6 +925,24 @@ mod tests {
         assert_eq!(
             upgraded.params["show_timestamp"],
             ParamValue::Boolean(false)
+        );
+    }
+
+    // --- halving countdown --------------------------------------------------
+
+    #[test]
+    fn halving_countdown_ignores_legacy_params_and_fills_required_font_default() {
+        let upgraded = upgrade(
+            "halving_countdown",
+            json!({ "numbers_font_style": "light", "junk": 1 }),
+        );
+        assert_eq!(upgraded.widget_type_id, HALVING_COUNTDOWN_UID);
+        assert_eq!(
+            upgraded.params,
+            param_map(&[(
+                "numbers_font_style",
+                str_param(HALVING_COUNTDOWN_FONT_DEFAULT),
+            )])
         );
     }
 

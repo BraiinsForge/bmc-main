@@ -67,11 +67,13 @@ widget either has a shipped manifest to map to, or it drops.)
 
 Native v0 kinds:
 
-| v0 `kind`      | Target manifest            | Param translation                                                                    |
-| -------------- | -------------------------- | ------------------------------------------------------------------------------------ |
-| `clock`        | `widgets-wasm/clock`       | style/booleans pass through, font vocabulary remap, `timezone` → `timezone_override` |
-| `block_height` | `widgets-wasm/blockheight` | `show_timestamp` pass-through, font vocabulary remap                                 |
-| `remote_image` | `widgets-wasm/image`       | `refresh_duration` (humantime) → `refresh_seconds`, `image_scale_mode` → `sizing`    |
+| v0 `kind`           | Target manifest                  | Param translation                                                                    |
+| ------------------- | -------------------------------- | ------------------------------------------------------------------------------------ |
+| `clock`             | `widgets-wasm/clock`             | style/booleans pass through, font vocabulary remap, `timezone` → `timezone_override` |
+| `block_height`      | `widgets-wasm/blockheight`       | `show_timestamp` pass-through, font vocabulary remap                                 |
+| `halving_countdown` | `widgets-wasm/halving-countdown` | required font weight takes the manifest default                                      |
+| `braiins_pool`      | `widgets-wasm/braiins-pool`      | style pass-through, chart window respell, `account_id` → `pool` credential binding   |
+| `remote_image`      | `widgets-wasm/image`             | `refresh_duration` (humantime) → `refresh_seconds`, `image_scale_mode` → `sizing`    |
 
 Legacy `remote_widget` entries, dispatched by URL slug under `https://widgets.braiinsforge.com/<slug>`:
 
@@ -83,10 +85,8 @@ Legacy `remote_widget` entries, dispatched by URL slug under `https://widgets.br
 | `random-facts`  | `widgets-wasm/random-facts`  | none (manifest has no params)                              |
 | `spacex-launch` | `widgets-wasm/spacex-launch` | none (legacy `showSeconds` drops with the mapping)         |
 
-Widgets with **no native counterpart drop**: native kinds `ticker_btc`, `braiins_pool`, `blockchain_data`,
-`halving_countdown`; remote slugs `exchange-rate`, `formula-1`, `nasa-picture-of-the-day`, `ticker-list`,
-`ticker-single-candlestick`, `ticker-single-sparkline`. (`braiins_pool` is *not* mapped to `mining-info` — the new
-widget reads a LAN miner device via `miner_url`, a fundamentally different data source than a pool account.)
+Widgets with **no native counterpart drop**: native kinds `ticker_btc`, `blockchain_data`; remote slugs `exchange-rate`,
+`formula-1`, `nasa-picture-of-the-day`, `ticker-list`, `ticker-single-candlestick`, and `ticker-single-sparkline`.
 
 ### Required params are always filled
 

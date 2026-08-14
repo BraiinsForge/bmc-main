@@ -162,6 +162,7 @@ fn migration_fallbacks_match_the_shipped_manifests() {
     let expected = migration_manifest_expectations();
     let clock = load_wasm_manifest("clock");
     let block_height = load_wasm_manifest("blockheight");
+    let halving_countdown = load_wasm_manifest("halving-countdown");
     let weather = load_wasm_manifest("weather");
     let image = load_wasm_manifest("image");
     let nameday = load_wasm_manifest("nameday");
@@ -174,6 +175,10 @@ fn migration_fallbacks_match_the_shipped_manifests() {
     assert_eq!(
         string_default(&block_height, "numbers_font_style"),
         expected.block_height_font
+    );
+    assert_eq!(
+        string_default(&halving_countdown, "numbers_font_style"),
+        expected.halving_countdown_font
     );
     assert_eq!(
         string_default(&weather, "location"),

@@ -1,0 +1,23 @@
+{
+  "scenes": [
+    {
+      "enabled": true,
+      "id": "f4598d7e-7f6e-4cae-9342-43f39224dbb8",
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "col": 0,
+          "id": "5249afb9-b1e6-4619-80de-398b82633436",
+          "params": {
+            "numbers_font_style": "bold"
+          },
+          "placement": "fullscreen",
+          "row": 0,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "8a87742d-192d-4c80-bda2-d446e9b9aeae"
+        }
+      ]
+    }
+  ],
+  "version": 2
+}

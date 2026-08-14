@@ -1,0 +1,19 @@
+{
+  "scenes": [
+    {
+      "id": "f4598d7e-7f6e-4cae-9342-43f39224dbb8",
+      "enabled": true,
+      "kind": "fullscreen",
+      "widgets": [
+        {
+          "id": "5249afb9-b1e6-4619-80de-398b82633436",
+          "row": 0,
+          "col": 0,
+          "size": "full",
+          "kind": "halving_countdown"
+        }
+      ]
+    }
+  ],
+  "accounts": []
+}
