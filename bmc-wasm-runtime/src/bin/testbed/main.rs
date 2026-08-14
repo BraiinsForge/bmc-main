@@ -63,21 +63,17 @@ use egui_glow::glow::HasContext as _;
 
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
-use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::interaction::TouchEvent;
 use bmc_wasm_runtime::fixtures::{
     self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
 use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Viewport};
 use bmc_wasm_runtime::unified_fixture::TimelineEvent;
-use bmc_wasm_runtime::{
-    DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
-};
+use bmc_wasm_runtime::{DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot};
 use clap::Parser;
 
 use paint::{
-    GlProcAddress, TileGpu, draw_checkerboard, paint_timing_chart, paint_timing_legend,
-    proc_loader, write_perf_report,
+    GlProcAddress, draw_checkerboard, paint_timing_chart, paint_timing_legend, write_perf_report,
 };
 use recording::{GestureTracker, RecordingAction, RecordingState, classify_and_record_gesture};
 use view::{DeviceView, ViewCommand};
@@ -223,6 +219,53 @@ struct CliArgs {
     /// secrets entry needs a matching `allow_hosts` pin.
     #[arg(long = "rewrite-url")]
     rewrite_url: Vec<String>,
+    /// Report whether this machine can drive views on their own threads, then exit.
+    /// Answers the two questions that decide it — a context in the window's share group,
+    /// and a pbuffer to make it current on — plus the frame-handoff strategy the GL version allows.
+    #[arg(long = "check-shared-gl")]
+    check_shared_gl: bool,
+    /// Render every view on the UI thread instead of giving each its own.
+    ///
+    /// Views are threaded by default, falling back on their own when a shared
+    /// context cannot be made. This forces the fallback for the whole run —
+    /// worth reaching for when a driver misbehaves, or to compare against.
+    /// `--check-shared-gl` reports what a machine can do.
+    #[arg(long = "inline-views")]
+    inline_views: bool,
+    /// How a threaded view hands a finished frame to the compositor:
+    /// `fence` orders the two GPU-side, `finish` drains the view's queue before
+    /// it reports. Defaults to what the GL version supports.
+    #[arg(long = "view-handoff")]
+    view_handoff: Option<view::GpuWait>,
+}
+
+/// Where this run's views render.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ViewPlacement {
+    OwnThread,
+    UiThread,
+}
+
+/// Decide where views render, and say so when a mode takes the choice away.
+///
+/// Recording and profiling pin every view to the UI thread: both ask the
+/// runtime questions that have to be answered inside the frame that asks them
+/// — the recorder hit-tests within the gesture it is classifying, and the
+/// profiler reads fuel sections from the render it just drove — and neither
+/// has an answer that can arrive a frame later.
+fn view_placement(cli: &CliArgs) -> ViewPlacement {
+    if cli.inline_views {
+        return ViewPlacement::UiThread;
+    }
+    let pinned = if cli.record_target.is_some() {
+        "recording"
+    } else if cli.perf_report_path.is_some() {
+        "profiling"
+    } else {
+        return ViewPlacement::OwnThread;
+    };
+    tracing::info!("{pinned}: views render on the UI thread, where their queries can be answered");
+    ViewPlacement::UiThread
 }
 
 /// The manifest's credential slots, each with the field names its type
@@ -360,6 +403,46 @@ mod platforms_startup_tests {
 
     fn parse_test_args(args: &[&str]) -> Result<CliArgs> {
         CliArgs::try_parse_from(args.iter().copied()).map_err(anyhow::Error::from)
+    }
+
+    #[test]
+    fn views_get_their_own_threads_by_default() {
+        let cli = parse_test_args(&["testbed", "widget.wasm"]).expect("BUG: bare args must parse");
+
+        assert_eq!(view_placement(&cli), ViewPlacement::OwnThread);
+    }
+
+    #[test]
+    fn inline_views_forces_every_view_onto_the_ui_thread() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--inline-views"])
+            .expect("BUG: inline-views must parse");
+
+        assert_eq!(view_placement(&cli), ViewPlacement::UiThread);
+    }
+
+    #[test]
+    fn recording_pins_views_inline() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--record=bmc100:full"])
+            .expect("BUG: record args must parse");
+
+        assert_eq!(
+            view_placement(&cli),
+            ViewPlacement::UiThread,
+            "the recorder hit-tests inside the gesture it is classifying, \
+             which a threaded view cannot answer"
+        );
+    }
+
+    #[test]
+    fn profiling_pins_views_inline() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--perf-report=out.json"])
+            .expect("BUG: perf-report args must parse");
+
+        assert_eq!(
+            view_placement(&cli),
+            ViewPlacement::UiThread,
+            "the profiler reads fuel sections from the render it just drove"
+        );
     }
 
     #[test]
@@ -934,8 +1017,12 @@ pub(crate) struct TestbedApp {
     show_view_timings: bool,
     /// A one-shot window rearrangement, consumed at the next paint.
     arrange: Option<device_window::ArrangeMode>,
+    /// Where views render, once the modes that cannot thread have had their say.
+    views: ViewPlacement,
     /// Set once the perf report is sealed, so the host can close the window.
     exit_requested: bool,
+    /// What the view pass left for the paint pass that follows it.
+    pass: FramePass,
     /// Builds the per-view `FemtoVgRenderer` GL contexts.
     get_proc: GlProcAddress,
     /// Parsed manifest — read by the param-mutation panel to render type-appropriate inputs
@@ -961,9 +1048,8 @@ pub(crate) struct TestbedApp {
     url_rewrites: Vec<(String, String)>,
     gl: Arc<egui_glow::glow::Context>,
     pub(crate) tiles: Vec<DeviceView>,
-    /// Views taken out of service, waiting for a pass that can free their
-    /// textures. Never holds more than one platform's worth.
-    retired: Vec<DeviceView>,
+    /// Whatever is on its way out, drained a little each frame.
+    teardown: Teardown,
     clock: Clock,
     /// Offline toggle: seals every tile's live I/O so refreshes fail.
     offline: bool,
@@ -1000,6 +1086,61 @@ struct HotReload {
     /// Set by the toolbar's "Reload WASM" button; consumed as a synthetic
     /// watcher event on the next `poll_hot_reload` tick.
     manual_reload: bool,
+}
+
+/// What the view pass hands to the paint pass that follows it.
+///
+/// The two are separate phases because the views' GL work — drawing, and
+/// waiting on a threaded view's fence — belongs outside a pass that only
+/// builds a draw list.
+#[derive(Debug, Clone, Copy)]
+struct FramePass {
+    /// When the views ran, so the pass animates against the frame they
+    /// rendered rather than the moment it happens to paint.
+    now: std::time::Instant,
+    /// Earliest deadline across the views, or `None` when all of them idle.
+    next_wake_ms: Option<u64>,
+}
+
+/// The teardown pipeline: whatever was closed, on its way out across frames.
+///
+/// A closed view first waits for a pass that can free its texture — the
+/// painter is only in hand between passes — and a threaded view's worker then
+/// winds down in the background until a poll collects it. Spreading that over
+/// frames is the point: a runtime's teardown can hold a fetch for its whole
+/// I/O timeout, and closing a platform must never stall the UI on it.
+#[derive(Default)]
+struct Teardown {
+    /// Views taken out of service. Never holds more than one platform's worth.
+    views: Vec<DeviceView>,
+    /// Worker threads asked to stop, polled until they exit.
+    workers: Vec<view::worker::Retired>,
+}
+
+impl Teardown {
+    /// Advance the pipeline one step: free what the painter can, poll the rest.
+    fn drain(&mut self, gl: &egui_glow::glow::Context, painter: &mut egui_glow::Painter) {
+        for view in std::mem::take(&mut self.views) {
+            self.workers.extend(view.release(gl, painter));
+        }
+        self.workers = std::mem::take(&mut self.workers)
+            .into_iter()
+            .filter_map(view::worker::Retired::reap)
+            .collect();
+    }
+
+    /// Run the pipeline to the end, waiting out every worker.
+    ///
+    /// For process exit only: blocking is fine with no UI left, and a detached
+    /// worker would race its GL context against the dying display connection.
+    fn finish(&mut self, gl: &egui_glow::glow::Context, painter: &mut egui_glow::Painter) {
+        for view in std::mem::take(&mut self.views) {
+            self.workers.extend(view.release(gl, painter));
+        }
+        for retired in std::mem::take(&mut self.workers) {
+            retired.reap_blocking();
+        }
+    }
 }
 
 /// Per-frame performance accounting. The rolling window drives the FPS readout
@@ -1110,6 +1251,7 @@ impl TestbedApp {
         let declared = declared_slots(&manifest);
         let secrets = cli.credential_secrets(&declared)?;
         let url_rewrites = cli.url_rewrites()?;
+        let views = view_placement(&cli);
         Ok(Self {
             cli,
             prepared_widget,
@@ -1120,7 +1262,12 @@ impl TestbedApp {
             icons: icon::Icons::new(),
             show_view_timings: false,
             arrange: None,
+            views,
             exit_requested: false,
+            pass: FramePass {
+                now,
+                next_wake_ms: None,
+            },
             get_proc,
             manifest,
             params,
@@ -1128,7 +1275,7 @@ impl TestbedApp {
             credentials: serde_json::Map::new(),
             gl,
             tiles: Vec::new(),
-            retired: Vec::new(),
+            teardown: Teardown::default(),
             clock: Clock {
                 last_frame: now,
                 start_instant: now,
@@ -1193,6 +1340,8 @@ impl TestbedApp {
                 return;
             }
         };
+        // Shared, because every view's seed carries a handle to the same bytes.
+        let wasm_bytes: Arc<[u8]> = wasm_bytes.into();
         tracing::info!(
             wasm_bytes = wasm_bytes.len(),
             tiles = self.tiles.len(),
@@ -1217,31 +1366,33 @@ impl TestbedApp {
             } else {
                 (None, None)
             };
-            let rt_config = RuntimeConfig {
-                params: params.clone(),
-                system: system.clone(),
-                led_request_sender: led_tx,
-                asset_cache: self.cli.asset_cache(),
-                package_assets: Some(PackageAssetStore::new(prepared_widget.asset_root())),
-                url_rewrites: self.url_rewrites.clone(),
-                ..RuntimeConfig::default()
+            let seed = view::ViewSeed {
+                wasm: Arc::clone(&wasm_bytes),
+                width: view.width(),
+                height: view.height(),
+                geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed_shape),
+                config: RuntimeConfig {
+                    params: params.clone(),
+                    system: system.clone(),
+                    led_request_sender: led_tx,
+                    asset_cache: self.cli.asset_cache(),
+                    package_assets: Some(PackageAssetStore::new(prepared_widget.asset_root())),
+                    url_rewrites: self.url_rewrites.clone(),
+                    ..RuntimeConfig::default()
+                },
+                label: view.label().to_owned(),
+                // Only live views reach here, and a view is live because its
+                // viewport was supported when it was built.
+                supported: true,
+                get_proc: self.get_proc.clone(),
             };
-            let geometry = RuntimeTileGeometry::for_viewport_shape(platform, placed_shape);
-            match WasmWidgetRuntime::new(
-                &wasm_bytes,
-                view.gpu.width,
-                view.gpu.height,
-                geometry.viewport_shape,
-                geometry.display,
-                chrono::Local::now().fixed_offset(),
-                rt_config,
-            ) {
-                Ok(mut rt) => {
-                    rt.set_network_info(stub_network());
-                    rt.deliver_credentials_update(credentials.clone(), secrets.clone());
-                    view.replace_runtime(Some(rt), led_rx);
-                }
-                Err(e) => tracing::warn!("hot reload: {}: {e}", view.label()),
+            let rebind = view::Rebind {
+                credentials: Box::new(credentials.clone()),
+                secrets: Box::new(secrets.clone()),
+                led_rx,
+            };
+            if let Err(e) = view.reload(seed, rebind) {
+                tracing::warn!("hot reload: {}: {e:#}", view.label());
             }
         }
         self.prepared_widget = prepared_widget;
@@ -1265,7 +1416,7 @@ impl TestbedApp {
             let (closed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tiles)
                 .into_iter()
                 .partition(|view| view.platform.id == platform.id);
-            self.retired.extend(closed);
+            self.teardown.views.extend(closed);
             self.tiles = kept;
         }
         ctx.request_repaint();
@@ -1275,7 +1426,11 @@ impl TestbedApp {
     ///
     /// Runs outside the egui pass, because registering a texture and painting
     /// with it both want the painter.
-    fn ensure_views(&mut self, painter: &mut egui_glow::Painter) -> Result<()> {
+    fn ensure_views(
+        &mut self,
+        painter: &mut egui_glow::Painter,
+        window: &window::GlWindow,
+    ) -> Result<()> {
         let missing: Vec<&'static Platform> = self
             .open_platforms
             .iter()
@@ -1283,7 +1438,7 @@ impl TestbedApp {
             .filter(|p| !self.tiles.iter().any(|view| view.platform.id == p.id))
             .collect();
         for platform in missing {
-            self.build_views(platform, painter)?;
+            self.build_views(platform, painter, window)?;
         }
         Ok(())
     }
@@ -1293,14 +1448,17 @@ impl TestbedApp {
         &mut self,
         platform: &'static Platform,
         painter: &mut egui_glow::Painter,
+        window: &window::GlWindow,
     ) -> Result<()> {
         let get_proc = self.get_proc.clone();
-        let wasm_bytes = std::fs::read(self.prepared_widget.wasm_path()).with_context(|| {
-            format!(
-                "failed to read {}",
-                self.prepared_widget.wasm_path().display()
-            )
-        })?;
+        let wasm_bytes: Arc<[u8]> = std::fs::read(self.prepared_widget.wasm_path())
+            .with_context(|| {
+                format!(
+                    "failed to read {}",
+                    self.prepared_widget.wasm_path().display()
+                )
+            })?
+            .into();
         let first_build = self.tiles.is_empty();
         let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
         let widget_name = self
@@ -1324,7 +1482,6 @@ impl TestbedApp {
             let placed = &PlacedTile::for_viewport(platform, viewport);
             let (w, h) = (placed.w, placed.h);
             let label = placed.label.clone();
-            let gpu = TileGpu::new(&self.gl, painter, w, h)?;
             let (led_tx, led_rx) = if placed.led_count.is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
                 (Some(led_tx), Some(led_rx))
@@ -1345,39 +1502,17 @@ impl TestbedApp {
             let mut rt_config =
                 self.view_runtime_config(kv_path, active_record_idx == Some(tile_idx));
             rt_config.led_request_sender = led_tx;
-            // SAFETY: the context is current on this thread for the window's lifetime.
-            let renderer = unsafe {
-                FemtoVgRenderer::new(
-                    proc_loader(get_proc.clone()),
-                    w,
-                    h,
-                    gpu.fbo_id(),
-                    rt_config.mesh_msaa_samples,
-                )
-            }
-            .with_context(|| format!("create renderer for {label}"))?;
-            let geometry = RuntimeTileGeometry::for_viewport_shape(platform, placed.shape);
-            // A runtime only for a supported size: constructing one runs the guest's
-            // `init` (and its discovery), so placeholders stay wasm-free.
-            let runtime = if viewport_supported(placed, &self.manifest.supported_viewports) {
-                let mut rt = WasmWidgetRuntime::new(
-                    &wasm_bytes,
-                    w,
-                    h,
-                    geometry.viewport_shape,
-                    geometry.display,
-                    chrono::Local::now().fixed_offset(),
-                    rt_config,
-                )
-                .with_context(|| format!("create runtime for {label}"))?;
-                rt.set_network_info(stub_network());
-                Some(rt)
-            } else {
-                None
+            let seed = view::ViewSeed {
+                wasm: Arc::clone(&wasm_bytes),
+                width: w,
+                height: h,
+                geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed.shape),
+                config: rt_config,
+                label,
+                supported: viewport_supported(placed, &self.manifest.supported_viewports),
+                get_proc: get_proc.clone(),
             };
-            tiles.push(DeviceView::new(
-                placed, platform, runtime, renderer, gpu, led_rx,
-            ));
+            tiles.push(self.build_one_view(placed, platform, seed, led_rx, painter, window)?);
         }
         if first_build
             && let Some((major, minor, patch)) = tiles.iter().find_map(DeviceView::sdk_version)
@@ -1395,6 +1530,55 @@ impl TestbedApp {
         }
         self.tiles.extend(tiles);
         Ok(())
+    }
+
+    /// Build one view, on a thread of its own where the driver allows it.
+    ///
+    /// A view that cannot get a shared context falls back to the UI thread on
+    /// its own rather than failing the run: the fallback is only slower, and a
+    /// testbed that refuses to open teaches nothing about the widget.
+    fn build_one_view(
+        &mut self,
+        placed: &PlacedTile,
+        platform: &'static Platform,
+        seed: view::ViewSeed,
+        led_rx: Option<std::sync::mpsc::Receiver<bmc_wasm_runtime::LedRequest>>,
+        painter: &mut egui_glow::Painter,
+        window: &window::GlWindow,
+    ) -> Result<DeviceView> {
+        if self.views == ViewPlacement::OwnThread {
+            // Only the context is tried here. A build that fails on the worker
+            // would fail inline too — a bad wasm is not a threading problem —
+            // so that one is reported rather than quietly downgraded.
+            match window.shared_offscreen() {
+                Ok(offscreen) => {
+                    let (worker, textures) = view::worker::spawn(view::worker::WorkerSeed {
+                        offscreen,
+                        seed,
+                        label: placed.label.clone(),
+                        led_rx,
+                        handoff: self.cli.view_handoff,
+                    })?;
+                    let mut tex_ids = [egui::TextureId::default(); 2];
+                    for (tex_id, texture) in tex_ids.iter_mut().zip(textures) {
+                        let texture = std::num::NonZeroU32::new(texture)
+                            .context("the view thread handed back texture 0")?;
+                        *tex_id = painter
+                            .register_native_texture(egui_glow::glow::NativeTexture(texture));
+                    }
+                    return Ok(DeviceView::new_threaded(placed, platform, worker, tex_ids));
+                }
+                Err(e) => tracing::warn!(
+                    label = %placed.label,
+                    "view: no context of its own ({e:#}); rendering on the UI thread"
+                ),
+            }
+        }
+        let parts = seed.build(&self.gl)?;
+        let tex_id = parts.targets.register(painter);
+        Ok(DeviceView::new_inline(
+            placed, platform, parts, tex_id, led_rx,
+        ))
     }
 
     /// Runtime config for one view, carrying the sidebar state it starts from.
@@ -1437,23 +1621,41 @@ impl TestbedApp {
         self.perf.written = true;
     }
 
-    /// Drive one frame: each tile's WASM runtime renders into its FBO.
-    /// Egui paints the textures afterward via `painter.image`.
+    /// Advance every view for this frame, ahead of the pass that paints them.
     ///
-    /// Saves the GL framebuffer binding + viewport before mutating them
-    /// per tile and restores both at the end so egui's own draw list runs
-    /// against the screen framebuffer the way it expects.
+    /// Separate from the pass because this is where GL happens — widgets draw
+    /// into their framebuffers and threaded ones are waited on — while the
+    /// pass only describes what to paint.
+    fn drive_views(&mut self) {
+        let now = std::time::Instant::now();
+        let frame_us = now.duration_since(self.clock.last_frame).as_micros() as u32;
+        self.clock.last_frame = now;
+        self.record_frame_us(frame_us);
+        self.pass = FramePass {
+            now,
+            next_wake_ms: self.render_tiles(now),
+        };
+
+        // Seal the report and close once enough real renders are collected.
+        if self.cli.perf_report_path.is_some() && self.perf.frame_count >= self.cli.perf_frames {
+            self.finish_perf_report();
+            self.exit_requested = true;
+        }
+    }
+
+    /// Drive each tile off its own runtime scheduler, returning the earliest
+    /// next render across them (ms) for the host wake.
     ///
-    /// Skipping this caused screen-wide trails
-    /// (egui's clear hit a tile FBO instead of the default framebuffer).
-    ///
-    /// Drive each tile on-demand off its own runtime scheduler;
-    /// returns the earliest next render across tiles (ms) for the host wake.
+    /// Saves the GL framebuffer binding and viewport before an inline view
+    /// mutates them, and restores both afterwards, so egui's own draw list runs
+    /// against the screen framebuffer the way it expects. Skipping that caused
+    /// screen-wide trails, egui's clear landing on a tile FBO instead of the
+    /// default one.
     ///
     /// Clock and delivery drain run every tick; the WASM render is gated,
     /// so idle tiles cost nothing — the contract the device host honours.
     fn render_tiles(&mut self, now: std::time::Instant) -> Option<u64> {
-        // SAFETY: gl is current on this thread inside `App::ui`; the queries below only read.
+        // SAFETY: gl is current on this thread; the queries below only read.
         let (prev_fbo, prev_viewport) = unsafe {
             let prev_fbo = self
                 .gl
@@ -1496,7 +1698,7 @@ impl TestbedApp {
             if active_record_idx.is_some_and(|active| active != idx) {
                 continue;
             }
-            let ticked = view.tick(&tick);
+            let ticked = view.tick(&tick, &self.gl);
             if let Some(delay) = ticked.next_wake_ms {
                 next_wake_ms = Some(next_wake_ms.map_or(delay, |w| w.min(delay)));
             }
@@ -1656,7 +1858,7 @@ fn paint_tile_texture(ui: &egui::Ui, tile: &DeviceView, rect: egui::Rect) {
     // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
     ui.painter()
-        .image(tile.gpu.egui_tex_id, rect, uv, egui::Color32::WHITE);
+        .image(tile.tex_id(), rect, uv, egui::Color32::WHITE);
     if paint::is_round(tile.shape) {
         paint::paint_round_overlay(ui.painter(), rect);
     }
@@ -1692,6 +1894,112 @@ struct AppSeed {
     rss_before_gl: Option<u64>,
 }
 
+/// Print what this machine can do about per-view threads.
+///
+/// Creating the context proves little on its own: a share group is only usable
+/// if the context can go current on the thread that will own it, and a driver
+/// is free to refuse that. So the probe hands it to a real thread and reports
+/// what that thread sees.
+fn report_shared_gl(window: &window::GlWindow, gl: &egui_glow::glow::Context) {
+    use egui_glow::glow::HasContext as _;
+
+    /// Side of the texture the view thread allocates for the compositor to find.
+    const PROBE_TEXTURE_SIZE: i32 = 4;
+    /// `GL_TEXTURE_WIDTH`, which glow exposes only as a raw enum. It is a
+    /// per-level parameter, so it reads back through `glGetTexLevelParameteriv`;
+    /// `glGetTexParameteriv` rejects it and answers 0.
+    const TEXTURE_WIDTH: u32 = 0x1000;
+
+    // SAFETY: the window context is current on this thread.
+    let compositor_version = unsafe { gl.get_parameter_string(egui_glow::glow::VERSION) };
+    println!("compositor GL: {compositor_version}");
+
+    let offscreen = match window.shared_offscreen() {
+        Ok(offscreen) => offscreen,
+        Err(e) => {
+            println!("shared context: unavailable — {e:#}");
+            println!("per-view threads: no, views would stay inline");
+            return;
+        }
+    };
+
+    let outcome = std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                use glutin::context::NotCurrentGlContext as _;
+                use glutin::display::{GetGlDisplay as _, GlDisplay as _};
+
+                // Moved in whole, never borrowed — see `OffscreenContext`.
+                let window::OffscreenContext { context, surface } = offscreen;
+                let context = context
+                    .make_current(&surface)
+                    .map_err(|e| format!("make current on the view thread: {e}"))?;
+                // SAFETY: made current on this thread immediately above, and
+                // the loader outlives the scope.
+                let view_gl = unsafe {
+                    egui_glow::glow::Context::from_loader_function_cstr(|name| {
+                        context.display().get_proc_address(name)
+                    })
+                };
+                // SAFETY: current on this thread for every call below.
+                unsafe {
+                    let version = view_gl.get_parameter_string(egui_glow::glow::VERSION);
+                    let texture = view_gl
+                        .create_texture()
+                        .map_err(|e| format!("create a texture on the view thread: {e}"))?;
+                    view_gl.bind_texture(egui_glow::glow::TEXTURE_2D, Some(texture));
+                    view_gl.tex_image_2d(
+                        egui_glow::glow::TEXTURE_2D,
+                        0,
+                        egui_glow::glow::RGBA8.cast_signed(),
+                        PROBE_TEXTURE_SIZE,
+                        PROBE_TEXTURE_SIZE,
+                        0,
+                        egui_glow::glow::RGBA,
+                        egui_glow::glow::UNSIGNED_BYTE,
+                        egui_glow::glow::PixelUnpackData::Slice(None),
+                    );
+                    // The compositor reads this texture back, so the allocation
+                    // has to have landed before the probe hands it over.
+                    view_gl.finish();
+                    Ok((version, texture))
+                }
+            })
+            .join()
+            .unwrap_or_else(|_| Err("the view thread panicked".to_owned()))
+    });
+
+    let (version, texture) = match outcome {
+        Ok(outcome) => outcome,
+        Err(e) => {
+            println!("shared context: {e}");
+            println!("per-view threads: no, views would stay inline");
+            return;
+        }
+    };
+    println!("view GL: {version}");
+
+    // The share group is the whole premise: a view renders into its own texture
+    // and the compositor samples it by name. Reading the size back proves the
+    // name resolves to that allocation here, not merely that the number crossed.
+    // SAFETY: the window context is current on this thread.
+    let shared_size = unsafe {
+        gl.bind_texture(egui_glow::glow::TEXTURE_2D, Some(texture));
+        let width = gl.get_tex_level_parameter_i32(egui_glow::glow::TEXTURE_2D, 0, TEXTURE_WIDTH);
+        gl.bind_texture(egui_glow::glow::TEXTURE_2D, None);
+        gl.delete_texture(texture);
+        width
+    };
+    if shared_size == PROBE_TEXTURE_SIZE {
+        println!("texture sharing: ok");
+        println!("frame handoff: {:?}", view::gpu_wait_for_version(&version));
+        println!("per-view threads: yes");
+    } else {
+        println!("texture sharing: the view's texture reads back as {shared_size}px here");
+        println!("per-view threads: no, views would stay inline");
+    }
+}
+
 struct TestbedHandler {
     proxy: winit::event_loop::EventLoopProxy<UserEvent>,
     /// Taken by the first `resumed`; a later one finds the window already built.
@@ -1718,6 +2026,12 @@ impl TestbedHandler {
         let (window, gl, get_proc) =
             window::GlWindow::new(event_loop, seed.inner_size, "WASM Widget Testbed")?;
         let gl = Arc::new(gl);
+
+        if seed.cli.check_shared_gl {
+            report_shared_gl(&window, &gl);
+            event_loop.exit();
+            return Ok(());
+        }
 
         let egui_glow = egui_glow::EguiGlow::new(
             event_loop,
@@ -1771,11 +2085,16 @@ impl TestbedHandler {
 
         // Registering a texture and painting with it both want the painter,
         // so views are retired and (re)built here rather than in the pass below.
-        for view in std::mem::take(&mut app.retired) {
-            view.release(&app.gl, &mut egui_glow.painter);
-        }
-        if let Err(e) = app.ensure_views(&mut egui_glow.painter) {
+        app.teardown.drain(&app.gl, &mut egui_glow.painter);
+        if let Err(e) = app.ensure_views(&mut egui_glow.painter, window) {
             self.fatal_error = Some(e.context("failed to build views"));
+            event_loop.exit();
+            return;
+        }
+
+        app.poll_hot_reload();
+        app.drive_views();
+        if app.exit_requested {
             event_loop.exit();
             return;
         }
@@ -1794,10 +2113,6 @@ impl TestbedHandler {
             tracing::error!("present failed: {e:#}");
         }
         window.show();
-
-        if app.exit_requested {
-            event_loop.exit();
-        }
     }
 }
 
@@ -1881,11 +2196,9 @@ impl winit::application::ApplicationHandler<UserEvent> for TestbedHandler {
     fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         if let (Some(app), Some(egui_glow)) = (self.app.as_mut(), self.egui_glow.as_mut()) {
             let gl = Arc::clone(&app.gl);
-            let mut views = std::mem::take(&mut app.tiles);
-            views.append(&mut app.retired);
-            for view in views {
-                view.release(&gl, &mut egui_glow.painter);
-            }
+            let live = std::mem::take(&mut app.tiles);
+            app.teardown.views.extend(live);
+            app.teardown.finish(&gl, &mut egui_glow.painter);
         }
         drop(self.app.take());
         if let Some(mut egui_glow) = self.egui_glow.take() {
@@ -1924,27 +2237,10 @@ impl TestbedApp {
         let palette = self.theme.palette(root_ui.ctx());
         theme::apply(root_ui.ctx(), palette);
 
-        // Hot reload check — rebuild runtimes if the wasm changed on disk.
-        self.poll_hot_reload();
-
-        let now = std::time::Instant::now();
-        let frame_us = now.duration_since(self.clock.last_frame).as_micros() as u32;
-        self.clock.last_frame = now;
-        self.record_frame_us(frame_us);
-
         let ctx = root_ui.ctx().clone();
-
-        // Render each widget into its FBO before egui submits its own draw list.
-        // Must happen before checkerboard / image draws to keep GL state contained.
-        // On-demand per tile; `next_wake` = earliest a tile wants a frame (ms).
-        let next_wake = self.render_tiles(now);
-
-        // Seal the report and close once enough real renders are collected.
-        if self.cli.perf_report_path.is_some() && self.perf.frame_count >= self.cli.perf_frames {
-            self.finish_perf_report();
-            self.exit_requested = true;
-            return;
-        }
+        // The views already ran for this frame, outside the pass; this paints
+        // what they produced.
+        let FramePass { now, next_wake_ms } = self.pass;
         let time_s = now.duration_since(self.clock.start_instant).as_secs_f32();
 
         // Chrome claims its edges before the CentralPanel takes the rest:
@@ -1980,7 +2276,7 @@ impl TestbedApp {
         self.paint_recording_window(&ctx);
 
         // Earliest tile deadline, capped at the drain tick for deliveries + chrome.
-        let repaint_ms = next_wake.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));
+        let repaint_ms = next_wake_ms.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }
 }

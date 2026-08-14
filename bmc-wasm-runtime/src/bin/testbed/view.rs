@@ -22,22 +22,26 @@
 //! and the schedule that decides when it runs.
 //!
 //! Everything the runtime needs is reached through this type, so the UI never
-//! holds a `WasmWidgetRuntime` itself. That keeps the interaction surface small
-//! enough to become a message protocol, and later to sit on its own thread —
-//! `FemtoVgRenderer` and the runtime are both `!Send`, so whoever owns them
-//! must construct them in place and keep them for life.
+//! holds a `WasmWidgetRuntime` itself. That is what lets a view sit on a thread
+//! of its own: `FemtoVgRenderer` and the runtime are both `!Send`, so they are
+//! built in place by whoever will own them, and reached only by message.
+//!
+//! `ViewCore` is that owned half; `DeviceView` is the UI's handle on it, and
+//! holds the same fields whether the core is here or on a worker.
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
 use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, WasmWidgetRuntime};
 
+mod fence;
 mod protocol;
+pub(crate) mod worker;
 
+pub(crate) use fence::{GpuWait, gpu_wait_for_version};
 pub(crate) use protocol::{Delivery, ViewCommand};
 
 use super::PlacedTile;
-use super::paint::TileGpu;
 
 /// The host state a view needs to advance one tick.
 #[derive(Debug, Clone, Copy)]
@@ -63,8 +67,6 @@ pub(crate) struct ViewTicked {
 /// LED strip state mirrored from the widget's requests.
 #[derive(Default)]
 struct LedState {
-    /// `None` on a platform without a strip.
-    count: Option<usize>,
     rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
     scene: Option<bmc_led::data::LedScene>,
     enabled: bool,
@@ -94,97 +96,346 @@ struct ViewSched {
     last_slip_ms: Option<u64>,
 }
 
-pub(crate) struct DeviceView {
+/// Everything one view needs to exist, and nothing that ties it to a thread.
+///
+/// A renderer and a runtime are both `!Send`, so they can only be built by the
+/// thread that will own them. Passing the ingredients instead of the objects is
+/// what lets the same code build a view inline or on a thread of its own.
+pub(crate) struct ViewSeed {
+    pub(crate) wasm: std::sync::Arc<[u8]>,
+    pub(crate) width: u32,
+    pub(crate) height: u32,
+    pub(crate) geometry: super::RuntimeTileGeometry,
+    pub(crate) config: bmc_wasm_runtime::RuntimeConfig,
+    pub(crate) label: String,
+    /// `false` for a viewport the manifest declines. Constructing a runtime
+    /// runs the guest's `init` and its discovery, so a declined viewport skips
+    /// it and stays wasm-free.
+    pub(crate) supported: bool,
+    pub(crate) get_proc: super::paint::GlProcAddress,
+}
+
+/// A view's GL and wasm state, all of it belonging to one context.
+pub(crate) struct ViewParts {
+    pub(crate) runtime: Option<WasmWidgetRuntime>,
+    pub(crate) renderer: FemtoVgRenderer,
+    pub(crate) targets: super::paint::ViewTargets,
+}
+
+impl ViewSeed {
+    /// Build against the context current on this thread.
+    pub(crate) fn build(self, gl: &egui_glow::glow::Context) -> anyhow::Result<ViewParts> {
+        use anyhow::Context as _;
+
+        let targets = super::paint::ViewTargets::create(gl, self.width, self.height)?;
+        // SAFETY: the caller holds a context current on this thread, and the
+        // renderer keeps its own glow context for as long as it lives.
+        let renderer = unsafe {
+            FemtoVgRenderer::new(
+                super::paint::proc_loader(self.get_proc.clone()),
+                self.width,
+                self.height,
+                targets.fbo_id(),
+                self.config.mesh_msaa_samples,
+            )
+        }
+        .with_context(|| format!("create renderer for {}", self.label))?;
+
+        Ok(ViewParts {
+            runtime: self.build_runtime()?,
+            renderer,
+            targets,
+        })
+    }
+
+    /// Build only the widget, for a view whose GPU side already exists.
+    ///
+    /// This is what a hot reload needs: the renderer and its targets outlive
+    /// the runtime, and rebuilding them would cost a font system and a shader
+    /// compile per view for nothing.
+    pub(crate) fn build_runtime(self) -> anyhow::Result<Option<WasmWidgetRuntime>> {
+        use anyhow::Context as _;
+
+        if !self.supported {
+            return Ok(None);
+        }
+        let mut rt = WasmWidgetRuntime::new(
+            &self.wasm,
+            self.width,
+            self.height,
+            self.geometry.viewport_shape,
+            self.geometry.display,
+            chrono::Local::now().fixed_offset(),
+            self.config,
+        )
+        .with_context(|| format!("create runtime for {}", self.label))?;
+        rt.set_network_info(super::stub_network());
+        Ok(Some(rt))
+    }
+}
+
+/// The half of a view that a GL context owns: the widget, the renderer that
+/// draws it, and the schedule deciding when it runs.
+///
+/// Every field here is `!Send` or belongs beside one that is, so this whole
+/// struct lives on whichever thread built it and never crosses back.
+pub(crate) struct ViewCore {
     /// `None` for a viewport the manifest declines. No runtime is built,
     /// so there is no live widget and no discovery, and the UI paints a slab.
     runtime: Option<WasmWidgetRuntime>,
     /// Caller-owned renderer. Every `runtime.render(...)` is bracketed by
     /// `runtime.with_renderer(ptr, ...)`, which parks a pointer to it.
     renderer: FemtoVgRenderer,
-    pub(crate) gpu: TileGpu,
+    width: u32,
+    height: u32,
+    label: String,
+    sched: ViewSched,
+    led: LedState,
+}
+
+impl ViewCore {
+    fn new(
+        parts_runtime: Option<WasmWidgetRuntime>,
+        renderer: FemtoVgRenderer,
+        width: u32,
+        height: u32,
+        label: String,
+        led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
+    ) -> Self {
+        Self {
+            runtime: parts_runtime,
+            renderer,
+            width,
+            height,
+            label,
+            sched: ViewSched::default(),
+            led: LedState {
+                rx: led_rx,
+                ..LedState::default()
+            },
+        }
+    }
+
+    pub(crate) fn renderer_mut(&mut self) -> &mut FemtoVgRenderer {
+        &mut self.renderer
+    }
+
+    /// Swap in a freshly built runtime, keeping the renderer and its targets.
+    /// The old runtime's assets go with it, so the renderer starts clean.
+    pub(crate) fn install_runtime(
+        &mut self,
+        runtime: Option<WasmWidgetRuntime>,
+        led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
+    ) {
+        self.renderer.drop_all();
+        self.runtime = runtime;
+        self.led.rx = led_rx;
+        self.led.scene = None;
+        self.led.enabled = false;
+        self.sched = ViewSched::default();
+    }
+
+    /// Hand the sidebar's bindings to a runtime that has just been built and
+    /// so knows nothing of them.
+    pub(crate) fn rebind_credentials(
+        &mut self,
+        credentials: bmc_wasm_runtime::CredentialView,
+        secrets: bmc_widget_protocol::CredentialSecrets,
+    ) {
+        if let Some(rt) = self.runtime.as_mut() {
+            rt.deliver_credentials_update(credentials, secrets);
+        }
+    }
+
+    /// Apply one queued request to the widget.
+    pub(crate) fn apply(&mut self, command: ViewCommand) {
+        // A dead widget is never driven again — a delivery callback would run
+        // on the trapped instance, whose stack the trap left where it stood.
+        if self.sched.dead {
+            return;
+        }
+        // A touch has to reach the widget for its reaction to be rendered.
+        // The tick applies its commands before deciding whether a render is
+        // due, so arming here is what makes that decision see the touch.
+        if matches!(command, ViewCommand::Touch(_)) {
+            self.sched.pending_interaction = true;
+        }
+        let Some(rt) = self.runtime.as_mut() else {
+            return;
+        };
+        match command {
+            // The deliver_* calls report whether anything changed; the view
+            // renders on its own schedule either way.
+            ViewCommand::Deliver(Delivery::Params(params)) => {
+                let _ = rt.deliver_params_update(params);
+            }
+            ViewCommand::Deliver(Delivery::System(system)) => {
+                let _ = rt.deliver_system_update(*system);
+            }
+            ViewCommand::Deliver(Delivery::Credentials { view, secrets }) => {
+                let _ = rt.deliver_credentials_update(*view, *secrets);
+            }
+            ViewCommand::Touch(event) => rt.push_touch_event(event),
+            ViewCommand::DeliverTouch => {
+                let _ = rt.deliver_touch();
+            }
+        }
+    }
+
+    /// What the UI needs to know about a view that it cannot ask across a
+    /// thread boundary once the view owns one.
+    pub(crate) fn info(&self) -> ViewInfo {
+        ViewInfo {
+            live: self.runtime.is_some(),
+            sdk_version: self.runtime.as_ref().map(WasmWidgetRuntime::sdk_version),
+            exports_on_touch: self
+                .runtime
+                .as_ref()
+                .is_some_and(WasmWidgetRuntime::exports_on_touch),
+        }
+    }
+
+    /// The state the UI mirrors after every tick.
+    pub(crate) fn report(&self) -> ViewReport {
+        ViewReport {
+            timings: self.runtime.as_ref().map(WasmWidgetRuntime::last_timings),
+            slip_ms: self.sched.last_slip_ms,
+            led_scene: self.led.scene.filter(|_| self.led.enabled),
+        }
+    }
+}
+
+/// Per-instance constants, read once so a threaded view never has to be asked.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ViewInfo {
+    pub(crate) live: bool,
+    pub(crate) sdk_version: Option<(u16, u16, u16)>,
+    pub(crate) exports_on_touch: bool,
+}
+
+/// The state a rebuilt widget has to be given back.
+///
+/// A fresh runtime starts with nothing bound and no LED channel, so a reload
+/// that skipped this would drop a credential-fed widget to its unbound state
+/// and leave its strip dark.
+pub(crate) struct Rebind {
+    pub(crate) credentials: Box<bmc_wasm_runtime::CredentialView>,
+    pub(crate) secrets: Box<bmc_widget_protocol::CredentialSecrets>,
+    pub(crate) led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
+}
+
+/// What one tick leaves behind for the UI to paint.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ViewReport {
+    pub(crate) timings: Option<bmc_render::FrameTimings>,
+    pub(crate) slip_ms: Option<u64>,
+    pub(crate) led_scene: Option<bmc_led::data::LedScene>,
+}
+
+pub(crate) struct DeviceView {
+    /// Inline, the core sits here and ticks on the UI thread; threaded, it
+    /// lives on a worker and this holds the channels instead.
+    render: Render,
+    /// The painter's handles on this view's colour textures: one inline, one
+    /// per present target when threaded. Registered once and never displaced —
+    /// the painter deletes whatever a registration displaces, and these
+    /// textures belong to the view.
+    tex_ids: Vec<egui::TextureId>,
     /// The device this view previews; several platforms can be open at once.
     pub(crate) platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
     pub(crate) shape: DisplayShape,
     label: String,
-    sched: ViewSched,
-    led: LedState,
+    width: u32,
+    height: u32,
+    led_count: Option<usize>,
+    info: ViewInfo,
+    report: ViewReport,
     /// Requests from the UI, applied at the start of the next tick.
     ///
     /// Queued rather than applied on arrival because the UI runs after
     /// the render pass: a change made while painting the panels belongs
-    /// to the next frame either way, and holding it as data is what lets
-    /// the same request cross a channel once views move to their own threads.
+    /// to the next frame either way, and it is the same queue a threaded
+    /// view drains from its channel.
     inbox: std::collections::VecDeque<ViewCommand>,
 }
 
+enum Render {
+    Inline {
+        core: Box<ViewCore>,
+        targets: super::paint::ViewTargets,
+    },
+    Threaded(worker::Worker),
+}
+
 impl DeviceView {
-    /// Build a view for one placed viewport. The placement carries where it
-    /// sits and what hardware it stands for; the rest is what drives it.
-    pub(crate) fn new(
+    /// Build a view that renders on the UI thread.
+    pub(crate) fn new_inline(
         placed: &PlacedTile,
         platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
-        runtime: Option<WasmWidgetRuntime>,
-        renderer: FemtoVgRenderer,
-        gpu: TileGpu,
+        parts: ViewParts,
+        egui_tex_id: egui::TextureId,
         led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
     ) -> Self {
+        let core = ViewCore::new(
+            parts.runtime,
+            parts.renderer,
+            parts.targets.width,
+            parts.targets.height,
+            placed.label.clone(),
+            led_rx,
+        );
+        let info = core.info();
+        let (width, height) = (parts.targets.width, parts.targets.height);
         Self {
-            runtime,
-            renderer,
-            gpu,
+            render: Render::Inline {
+                core: Box::new(core),
+                targets: parts.targets,
+            },
+            tex_ids: vec![egui_tex_id],
             platform,
             shape: placed.shape,
             label: placed.label.clone(),
-            sched: ViewSched::default(),
-            led: LedState {
-                count: placed.led_count,
-                rx: led_rx,
-                ..LedState::default()
-            },
+            width,
+            height,
+            led_count: placed.led_count,
+            info,
+            report: ViewReport::default(),
+            inbox: std::collections::VecDeque::new(),
+        }
+    }
+
+    /// Adopt a view already running on its own thread.
+    pub(crate) fn new_threaded(
+        placed: &PlacedTile,
+        platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
+        worker: worker::Worker,
+        tex_ids: [egui::TextureId; 2],
+    ) -> Self {
+        let info = worker.info();
+        let (width, height) = (placed.w, placed.h);
+        Self {
+            render: Render::Threaded(worker),
+            tex_ids: tex_ids.to_vec(),
+            platform,
+            shape: placed.shape,
+            label: placed.label.clone(),
+            width,
+            height,
+            led_count: placed.led_count,
+            info,
+            report: ViewReport::default(),
             inbox: std::collections::VecDeque::new(),
         }
     }
 
     /// Queue a request. Applied at the start of the next tick, in order.
     pub(crate) fn send(&mut self, command: ViewCommand) {
-        // A touch has to reach the widget for its reaction to be rendered.
-        // Arm the schedule on arrival rather than at drain time: the drain
-        // runs inside the tick that then decides whether a render is due.
-        if matches!(command, ViewCommand::Touch(_)) {
-            self.sched.pending_interaction = true;
-        }
         self.inbox.push_back(command);
-    }
-
-    /// Apply everything queued since the last tick.
-    fn drain_inbox(&mut self) {
-        while let Some(command) = self.inbox.pop_front() {
-            let Some(rt) = self.runtime.as_mut() else {
-                continue;
-            };
-            match command {
-                // The deliver_* calls report whether anything changed; the view
-                // renders on its own schedule either way.
-                ViewCommand::Deliver(Delivery::Params(params)) => {
-                    let _ = rt.deliver_params_update(params);
-                }
-                ViewCommand::Deliver(Delivery::System(system)) => {
-                    let _ = rt.deliver_system_update(*system);
-                }
-                ViewCommand::Deliver(Delivery::Credentials { view, secrets }) => {
-                    let _ = rt.deliver_credentials_update(*view, *secrets);
-                }
-                ViewCommand::Touch(event) => rt.push_touch_event(event),
-                ViewCommand::DeliverTouch => {
-                    let _ = rt.deliver_touch();
-                }
-            }
-        }
     }
 
     /// Whether a runtime was built for this viewport.
     pub(crate) fn is_live(&self) -> bool {
-        self.runtime.is_some()
+        self.info.live
     }
 
     pub(crate) fn label(&self) -> &str {
@@ -192,52 +443,69 @@ impl DeviceView {
     }
 
     pub(crate) fn led_count(&self) -> Option<usize> {
-        self.led.count
+        self.led_count
+    }
+
+    /// The texture holding this view's newest frame.
+    pub(crate) fn tex_id(&self) -> egui::TextureId {
+        let slot = match &self.render {
+            Render::Inline { .. } => 0,
+            Render::Threaded(worker) => worker.showing(),
+        };
+        self.tex_ids[slot]
+    }
+
+    pub(crate) fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub(crate) fn height(&self) -> u32 {
+        self.height
     }
 
     /// The SDK the loaded widget was built against.
     pub(crate) fn sdk_version(&self) -> Option<(u16, u16, u16)> {
-        self.runtime.as_ref().map(WasmWidgetRuntime::sdk_version)
+        self.info.sdk_version
     }
 
     /// Timings from the last render, for the status bar and view overlays.
     pub(crate) fn last_timings(&self) -> Option<bmc_render::FrameTimings> {
-        self.runtime.as_ref().map(WasmWidgetRuntime::last_timings)
+        self.report.timings
     }
 
     /// How late the last deadline-driven render ran, in ms.
     /// `None` when a touch or a delivery drove it instead.
     pub(crate) fn last_slip_ms(&self) -> Option<u64> {
-        self.sched.last_slip_ms
+        self.report.slip_ms
     }
 
     /// The scene to draw on the strip, or `None` when it is off.
     pub(crate) fn led_scene(&self) -> Option<&bmc_led::data::LedScene> {
-        self.led.scene.as_ref().filter(|_| self.led.enabled)
+        self.report.led_scene.as_ref()
+    }
+
+    /// Whether the widget exports an `on_touch` handler at all.
+    pub(crate) fn exports_on_touch(&self) -> bool {
+        self.info.exports_on_touch
     }
 
     // ── Synchronous queries ──────────────────────────────────────────
     //
-    // These read the runtime rather than mutate it, and the recorder needs
-    // an answer within the gesture it is classifying, so they stay direct.
-
-    /// Whether the widget exports an `on_touch` handler at all.
-    pub(crate) fn exports_on_touch(&self) -> bool {
-        self.runtime
-            .as_ref()
-            .is_some_and(WasmWidgetRuntime::exports_on_touch)
-    }
+    // These read the runtime within the gesture the recorder is classifying,
+    // so they have no answer that could arrive a frame later. Recording and
+    // profiling therefore pin their view inline (`--record`, `--perf-report`),
+    // and a threaded view answers as if the widget declined.
 
     /// The element under a widget-local point, for the recorder's gesture log.
     pub(crate) fn hit_test(&mut self, x: f32, y: f32) -> Option<String> {
-        self.runtime.as_mut().and_then(|rt| rt.hit_test(x, y))
+        self.core_mut()?.runtime.as_mut()?.hit_test(x, y)
     }
 
     // ── Recording ────────────────────────────────────────────────────
 
     pub(crate) fn take_recorded_events(&mut self) -> Vec<bmc_wasm_runtime::FixtureEvent> {
-        self.runtime
-            .as_mut()
+        self.core_mut()
+            .and_then(|core| core.runtime.as_mut())
             .map(WasmWidgetRuntime::take_recorded_events)
             .unwrap_or_default()
     }
@@ -251,46 +519,99 @@ impl DeviceView {
         bmc_render::FrameTimings,
         std::collections::BTreeMap<String, u64>,
     )> {
-        self.runtime
-            .as_mut()
-            .map(|rt| (rt.last_timings(), rt.take_profile_sections()))
+        let rt = self.core_mut()?.runtime.as_mut()?;
+        Some((rt.last_timings(), rt.take_profile_sections()))
+    }
+
+    /// The core, for the queries only an inline view can answer.
+    fn core_mut(&mut self) -> Option<&mut ViewCore> {
+        match &mut self.render {
+            Render::Inline { core, .. } => Some(core),
+            Render::Threaded(_) => None,
+        }
     }
 
     // ── Lifecycle ────────────────────────────────────────────────────
 
-    /// Swap in a freshly built runtime, keeping the renderer and GPU target.
-    /// The old runtime's assets go with it, so the renderer starts clean.
-    pub(crate) fn replace_runtime(
-        &mut self,
-        runtime: Option<WasmWidgetRuntime>,
-        led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
-    ) {
-        self.renderer.drop_all();
-        self.runtime = runtime;
-        self.led.rx = led_rx;
-        self.led.scene = None;
-        self.led.enabled = false;
-        self.sched = ViewSched::default();
+    /// Rebuild the widget from `seed`, keeping the renderer and its targets.
+    ///
+    /// The seed is passed rather than a built runtime because a threaded view
+    /// must construct its own: the renderer whose assets go with the old one
+    /// lives on that thread, and a runtime built here could not reach it.
+    pub(crate) fn reload(&mut self, seed: ViewSeed, rebind: Rebind) -> anyhow::Result<()> {
         // Requests aimed at the runtime being replaced would land on a widget
         // that never saw the state they build on.
         self.inbox.clear();
+        self.report = ViewReport::default();
+
+        match &mut self.render {
+            Render::Inline { core, .. } => {
+                let runtime = seed.build_runtime()?;
+                core.install_runtime(runtime, rebind.led_rx);
+                if let Some(rt) = core.runtime.as_mut() {
+                    rt.deliver_credentials_update(*rebind.credentials, *rebind.secrets);
+                }
+                self.info = core.info();
+            }
+            Render::Threaded(worker) => worker.reload(seed, rebind),
+        }
+        Ok(())
     }
 
     /// Tear the view down, giving its GPU resources back.
     ///
-    /// Kept separate from `Drop` because both halves need the GL context
-    /// current and the painter in hand, and neither is reachable from there.
+    /// Kept separate from `Drop` because the texture needs the painter in
+    /// hand, which is not reachable from there. A threaded view hands back
+    /// its departing thread rather than waiting for it: the runtime's own
+    /// teardown can hold it for a fetch timeout, which is not the UI's to sit
+    /// through.
+    #[must_use = "a departing worker must be reaped, or its panic goes unseen"]
     pub(crate) fn release(
-        mut self,
+        self,
         gl: &egui_glow::glow::Context,
         painter: &mut egui_glow::Painter,
-    ) {
-        self.renderer.drop_all();
-        self.gpu.destroy(gl, painter);
+    ) -> Option<worker::Retired> {
+        let retired = match self.render {
+            Render::Inline { mut core, targets } => {
+                core.renderer.drop_all();
+                targets.destroy_container_objects(gl);
+                None
+            }
+            Render::Threaded(worker) => Some(worker.shutdown()),
+        };
+        for tex_id in self.tex_ids {
+            painter.free_texture(tex_id);
+        }
+        retired
     }
 
     // ── Drive ────────────────────────────────────────────────────────
 
+    /// Advance the view by one tick, wherever it renders.
+    ///
+    /// The queue is drained here rather than inside the core, because a
+    /// threaded view's commands travel to it one message at a time.
+    pub(crate) fn tick(&mut self, tick: &ViewTick, gl: &egui_glow::glow::Context) -> ViewTicked {
+        let commands: Vec<ViewCommand> = self.inbox.drain(..).collect();
+        match &mut self.render {
+            Render::Inline { core, .. } => {
+                for command in commands {
+                    core.apply(command);
+                }
+                let ticked = core.tick(tick);
+                self.report = core.report();
+                ticked
+            }
+            Render::Threaded(worker) => {
+                let ticked = worker.drive(tick, commands, gl);
+                self.report = worker.report();
+                ticked
+            }
+        }
+    }
+}
+
+impl ViewCore {
     /// Advance one tick: drain LED requests and pending I/O,
     /// then render if the widget's own scheduler asks for it.
     ///
@@ -299,10 +620,8 @@ impl DeviceView {
     /// honours too.
     pub(crate) fn tick(&mut self, tick: &ViewTick) -> ViewTicked {
         if self.runtime.is_none() || self.sched.dead {
-            self.inbox.clear();
             return ViewTicked::default();
         }
-        self.drain_inbox();
         self.drain_led_commands();
 
         // `*mut FemtoVgRenderer` → `*mut dyn Renderer` is a coercion, not an
@@ -359,8 +678,7 @@ impl DeviceView {
         let delta_ms = animation_delta_ms(self.sched.last_render_at, tick.now);
         self.sched.last_render_at = Some(tick.now);
 
-        self.renderer
-            .begin_frame(self.gpu.width, self.gpu.height, 1.0);
+        self.renderer.begin_frame(self.width, self.height, 1.0);
         let outcome = self
             .runtime
             .as_mut()

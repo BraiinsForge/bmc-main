@@ -45,6 +45,16 @@ pub(crate) struct GlWindow {
     window: winit::window::Window,
 }
 
+/// A view's GL context, before it is made current on the thread that owns it.
+///
+/// The pair is `Send` but not `Sync`, and `make_current` binds the context
+/// to the calling thread. So a view thread takes ownership of both halves;
+/// borrowing them across the spawn does not compile.
+pub(crate) struct OffscreenContext {
+    pub(crate) context: glutin::context::NotCurrentContext,
+    pub(crate) surface: glutin::surface::Surface<glutin::surface::PbufferSurface>,
+}
+
 impl GlWindow {
     /// Build the window, pick a config, and make the context current.
     ///
@@ -158,6 +168,55 @@ impl GlWindow {
             gl,
             proc_address,
         ))
+    }
+
+    /// Build a context in the window context's share group, for a view that
+    /// renders on its own thread.
+    ///
+    /// The pbuffer is 1×1 and never drawn to: a view renders into its own FBO,
+    /// and the surface exists only because `make_current` demands one.
+    ///
+    /// Its config is searched separately from the window's:
+    /// a driver may offer window and pbuffer support on disjoint configs.
+    /// Narrowing the window's own search would risk startup for everyone,
+    /// to serve the few who opt into threads.
+    /// Sharing spans configs — only the display and client API must match.
+    pub(crate) fn shared_offscreen(&self) -> Result<OffscreenContext> {
+        let gl_display = self.gl_context.display();
+        let template = glutin::config::ConfigTemplateBuilder::new()
+            .with_surface_type(glutin::config::ConfigSurfaceTypes::PBUFFER)
+            .with_depth_size(0)
+            .with_stencil_size(0)
+            .build();
+
+        // SAFETY: the display outlives this call; it is owned by the window
+        // context, which borrows `self` for the whole body.
+        let config = unsafe { gl_display.find_configs(template) }
+            .map_err(|e| anyhow::anyhow!("pbuffer config: {e}"))?
+            .next()
+            .context("no pbuffer-capable GL config")?;
+
+        let attributes = glutin::context::ContextAttributesBuilder::new()
+            .with_sharing(&self.gl_context)
+            .build(None);
+        // SAFETY: sharing borrows a context that lives as long as the window.
+        let context = unsafe {
+            gl_display
+                .create_context(&config, &attributes)
+                .map_err(|e| anyhow::anyhow!("shared GL context: {e}"))?
+        };
+
+        let surface_attributes =
+            glutin::surface::SurfaceAttributesBuilder::<glutin::surface::PbufferSurface>::new()
+                .build(NonZeroU32::MIN, NonZeroU32::MIN);
+        // SAFETY: same display, and the surface is dropped with the context.
+        let surface = unsafe {
+            gl_display
+                .create_pbuffer_surface(&config, &surface_attributes)
+                .map_err(|e| anyhow::anyhow!("pbuffer surface: {e}"))?
+        };
+
+        Ok(OffscreenContext { context, surface })
     }
 
     pub(crate) fn window(&self) -> &winit::window::Window {

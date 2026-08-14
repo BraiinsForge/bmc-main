@@ -45,64 +45,109 @@ use super::view::DeviceView;
 
 // ── GL helpers ──────────────────────────────────────────────────────
 
-/// FBO + texture pair on the window's glow context, one per tile.
-/// `WasmWidgetRuntime` renders into the FBO; egui paints the texture.
-pub(super) struct TileGpu {
+/// What a view draws into, in the context that created it.
+///
+/// A framebuffer is a container object, which a share group does *not* share,
+/// so it can only be created and destroyed by the context that renders through
+/// it. The colour texture is shared, and its name is all the compositor needs.
+/// The painter's registration is therefore held apart from these, by the
+/// thread that owns the painter rather than the one that draws.
+pub(super) struct ViewTargets {
     fbo: egui_glow::glow::Framebuffer,
     rbo: egui_glow::glow::Renderbuffer,
-    /// Keys the painter's registration of the texture, which the painter owns
-    /// from then on — including deleting it.
-    pub(super) egui_tex_id: egui::TextureId,
+    texture: egui_glow::glow::Texture,
     pub(super) width: u32,
     pub(super) height: u32,
 }
 
-impl TileGpu {
-    /// Create an `width × height` RGBA8 colour texture + matching framebuffer.
-    /// The texture is registered with the painter so callers paint it
-    /// as an `egui::Image` after the underlying GL render finishes.
-    pub(super) fn new(
-        gl: &egui_glow::glow::Context,
-        painter: &mut egui_glow::Painter,
-        width: u32,
-        height: u32,
-    ) -> Result<Self> {
-        // SAFETY: the context is current on this thread for the window's lifetime.
+impl ViewTargets {
+    /// Allocate a `width × height` RGBA8 colour texture and a framebuffer that
+    /// draws into it, on whichever context is current.
+    pub(super) fn create(gl: &egui_glow::glow::Context, width: u32, height: u32) -> Result<Self> {
+        // SAFETY: the caller holds a context current on this thread.
         unsafe {
             let texture = gl
                 .create_texture()
                 .map_err(|e| anyhow::anyhow!("create_texture: {e}"))?;
             configure_texture(gl, texture, width, height);
             let (fbo, rbo) = create_render_target(gl, texture, width, height)?;
-
-            let egui_tex_id = painter.register_native_texture(texture);
-
             Ok(Self {
                 fbo,
                 rbo,
-                egui_tex_id,
+                texture,
                 width,
                 height,
             })
         }
     }
 
-    /// Release everything this tile holds on the GPU.
-    ///
-    /// The texture is left to `free_texture`, which deletes the GL object
-    /// as well as dropping the registration; deleting it here would double free.
-    pub(super) fn destroy(self, gl: &egui_glow::glow::Context, painter: &mut egui_glow::Painter) {
-        // SAFETY: the context is current on this thread for the window's lifetime.
+    /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`.
+    pub(super) fn fbo_id(&self) -> u32 {
+        self.fbo.0.get()
+    }
+
+    /// GL name of the colour texture — the one part of these targets that a
+    /// share group shares, and so the only part another context can name.
+    pub(super) fn texture_name(&self) -> u32 {
+        self.texture.0.get()
+    }
+
+    /// Hand the colour texture to the painter, which owns it from then on —
+    /// including deleting it, which is why `destroy_container_objects` leaves
+    /// it alone. Only the thread the painter runs on may call this.
+    pub(super) fn register(&self, painter: &mut egui_glow::Painter) -> egui::TextureId {
+        painter.register_native_texture(self.texture)
+    }
+
+    /// Delete the objects a share group does not share, in the context that
+    /// created them. The colour texture is not among them: the painter deletes
+    /// it with the registration, and deleting it here would double free.
+    pub(super) fn destroy_container_objects(self, gl: &egui_glow::glow::Context) {
+        // SAFETY: the caller holds the creating context current on this thread.
         unsafe {
             gl.delete_framebuffer(self.fbo);
             gl.delete_renderbuffer(self.rbo);
         }
-        painter.free_texture(self.egui_tex_id);
     }
 
-    /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`.
-    pub(super) fn fbo_id(&self) -> u32 {
-        self.fbo.0.get()
+    /// Delete everything, texture included — for targets that were never
+    /// registered with the painter, whose texture nobody else will free.
+    pub(super) fn destroy(self, gl: &egui_glow::glow::Context) {
+        let texture = self.texture;
+        self.destroy_container_objects(gl);
+        // SAFETY: the caller holds the creating context current on this thread.
+        unsafe {
+            gl.delete_texture(texture);
+        }
+    }
+
+    /// Copy this target's colour into `dest`, on whichever context is current.
+    ///
+    /// This is the frame handoff for a threaded view: the renderer always
+    /// draws into one target — femtovg believes it is the screen, and its
+    /// drop-shadow pass restores `RenderTarget::Screen` mid-frame on that
+    /// assumption (`bmc-render/src/gpu/renderer.rs`, `drop_shadow`) — so the
+    /// double buffering happens by copying frames out, never by retargeting.
+    pub(super) fn blit_to(&self, gl: &egui_glow::glow::Context, dest: &ViewTargets) {
+        // SAFETY: the caller holds the creating context current on this
+        // thread, and both targets were created against it.
+        unsafe {
+            gl.bind_framebuffer(egui_glow::glow::READ_FRAMEBUFFER, Some(self.fbo));
+            gl.bind_framebuffer(egui_glow::glow::DRAW_FRAMEBUFFER, Some(dest.fbo));
+            gl.blit_framebuffer(
+                0,
+                0,
+                self.width as i32,
+                self.height as i32,
+                0,
+                0,
+                dest.width as i32,
+                dest.height as i32,
+                egui_glow::glow::COLOR_BUFFER_BIT,
+                egui_glow::glow::NEAREST,
+            );
+            gl.bind_framebuffer(egui_glow::glow::FRAMEBUFFER, None);
+        }
     }
 }
 
