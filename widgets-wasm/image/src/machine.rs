@@ -79,6 +79,13 @@ pub enum Event {
         aspect: f32,
         saved_at_secs: i64,
     },
+    Woke {
+        remaining_ms: u32,
+        saved_at_secs: i64,
+    },
+    WokeStale {
+        saved_at_secs: i64,
+    },
     RestoreMiss,
     DecodeStarted {
         job: ImageJobId,
@@ -157,6 +164,37 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             },
             vec![A::SeedAnchor(saved_at_secs), A::ResumePoll, A::RequestFrame],
         ),
+        E::Woke {
+            remaining_ms,
+            saved_at_secs,
+        } => match view {
+            View::Shown { bitmap, aspect, .. } => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge: Badge::Fresh,
+                    decode: None,
+                },
+                vec![
+                    A::SeedAnchor(saved_at_secs),
+                    A::EnablePollAfter(remaining_ms),
+                    A::RequestFrame,
+                ],
+            ),
+            other => (other, vec![]),
+        },
+        E::WokeStale { saved_at_secs } => match view {
+            View::Shown { bitmap, aspect, .. } => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge: Badge::Updating,
+                    decode: None,
+                },
+                vec![A::SeedAnchor(saved_at_secs), A::ResumePoll, A::RequestFrame],
+            ),
+            other => (other, vec![]),
+        },
         // A URL/sizing change drops the shown image (Loading, not stale-over-wrong);
         // evict stays out of here — it needs render scope (host import traps otherwise).
         E::RestoreMiss | E::ParamsChanged => (
@@ -265,7 +303,23 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 vec![A::ResumePoll, A::RequestFrame],
             ),
         },
-        E::Sleep => (View::Loading { decode: None }, vec![A::DisablePoll]),
+        E::Sleep => match view {
+            View::Shown {
+                bitmap,
+                aspect,
+                badge,
+                ..
+            } => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge,
+                    decode: None,
+                },
+                vec![A::DisablePoll],
+            ),
+            _ => (View::Loading { decode: None }, vec![A::DisablePoll]),
+        },
     }
 }
 
@@ -562,26 +616,38 @@ mod tests {
     }
 
     #[test]
-    fn dormant_releases_view_and_disables_poll() {
+    fn dormant_retains_bitmap_id_and_disables_poll() {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::Sleep);
-        assert!(matches!(next, View::Loading { decode: None }));
+        assert!(matches!(
+            next,
+            View::Shown {
+                bitmap,
+                decode: None,
+                ..
+            } if bitmap == bmp(1)
+        ));
         assert_eq!(actions, vec![Action::DisablePoll]);
     }
 
     #[test]
-    fn dormant_then_restore_returns_to_shown() {
+    fn dormant_then_wake_reuses_bitmap_id() {
         let (dormant, _) = step(shown(Badge::Fresh, None), Event::Sleep);
-        assert!(matches!(dormant, View::Loading { decode: None }));
+        assert!(matches!(dormant, View::Shown { .. }));
         let (woken, _) = step(
             dormant,
-            Event::Restored {
-                bitmap: bmp(1),
-                aspect: 2.0,
+            Event::Woke {
                 remaining_ms: 4_000,
                 saved_at_secs: 900,
             },
         );
-        assert!(matches!(woken, View::Shown { .. }));
+        assert!(matches!(
+            woken,
+            View::Shown {
+                bitmap,
+                aspect: 1.0,
+                ..
+            } if bitmap == bmp(1)
+        ));
     }
 
     #[test]

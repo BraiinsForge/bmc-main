@@ -250,29 +250,23 @@ mod wasm_glue {
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
         INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes the cold-start restore
-        dispatch(restore_event());
+        let has_bitmap = VIEW.with(|view| matches!(&*view.borrow(), View::Shown { .. }));
+        dispatch(if has_bitmap {
+            wake_event()
+        } else {
+            restore_event()
+        });
     }
 
     /// Restore the cached image if its identity matches; renderer-scope only.
     fn restore_event() -> Event {
-        let Some(identity) = cache_identity() else {
+        let Some((w, h, remaining, saved_at_secs)) = cached_image_state() else {
             return Event::RestoreMiss;
         };
-        let Some(stat) = cache::stat(IMAGE.name()) else {
-            return Event::RestoreMiss;
-        };
-        let Some((w, h, id_bytes)) = parse_meta(&stat.metadata) else {
-            return Event::RestoreMiss;
-        };
-        if id_bytes != identity.as_bytes() {
-            return Event::RestoreMiss;
-        }
         let Some(bitmap) = assets::register_image(cache::lazy_get(IMAGE.name())) else {
             return Event::RestoreMiss;
         };
         let aspect = render::aspect_of(w, h);
-        let remaining = remaining_ttl_ms(stat.saved_at);
-        let saved_at_secs = i64::try_from(stat.saved_at / 1000).unwrap_or(i64::MAX);
         if remaining > 0 {
             Event::Restored {
                 bitmap,
@@ -287,6 +281,32 @@ mod wasm_glue {
                 saved_at_secs,
             }
         }
+    }
+
+    fn wake_event() -> Event {
+        let Some((_, _, remaining, saved_at_secs)) = cached_image_state() else {
+            return Event::RestoreMiss;
+        };
+        if remaining > 0 {
+            Event::Woke {
+                remaining_ms: remaining,
+                saved_at_secs,
+            }
+        } else {
+            Event::WokeStale { saved_at_secs }
+        }
+    }
+
+    fn cached_image_state() -> Option<(u32, u32, u32, i64)> {
+        let identity = cache_identity()?;
+        let stat = cache::stat(IMAGE.name())?;
+        let (w, h, id_bytes) = parse_meta(&stat.metadata)?;
+        if id_bytes != identity.as_bytes() {
+            return None;
+        }
+        let remaining = remaining_ttl_ms(stat.saved_at);
+        let saved_at_secs = i64::try_from(stat.saved_at / 1000).unwrap_or(i64::MAX);
+        Some((w, h, remaining, saved_at_secs))
     }
 
     // Cache metadata is `[w u32 | h u32 | identity]` (the host write path).
