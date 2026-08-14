@@ -56,6 +56,7 @@ enum HelloLayout {
     MediumCompact,
     LargeCompact,
     FullShowcase,
+    RoundShowcase,
 }
 
 #[cfg(test)]
@@ -66,14 +67,20 @@ enum CompactControls {
     MediumButtonsModalLedEffectsIconShowcaseAndAnimatedText,
     LargeButtonsModalColorsIconsLedEffectsAndRichText,
     FullShowcase,
+    RoundClockControlsAndLedEffects,
 }
 
-fn hello_layout(variant: SizeVariant) -> HelloLayout {
-    match variant {
-        SizeVariant::Small => HelloLayout::SmallCompact,
-        SizeVariant::Medium => HelloLayout::MediumCompact,
-        SizeVariant::Large => HelloLayout::LargeCompact,
-        SizeVariant::Full => HelloLayout::FullShowcase,
+/// Shape decides before size does: `SizeVariant` names the deck's rectangular
+/// slots, and a round display is none of them however its pixels measure.
+fn hello_layout(variant: SizeVariant, shape: ViewportShape) -> HelloLayout {
+    match shape {
+        ViewportShape::Round => HelloLayout::RoundShowcase,
+        ViewportShape::Rectangular => match variant {
+            SizeVariant::Small => HelloLayout::SmallCompact,
+            SizeVariant::Medium => HelloLayout::MediumCompact,
+            SizeVariant::Large => HelloLayout::LargeCompact,
+            SizeVariant::Full => HelloLayout::FullShowcase,
+        },
     }
 }
 
@@ -88,6 +95,7 @@ fn compact_controls(layout: HelloLayout) -> CompactControls {
             CompactControls::LargeButtonsModalColorsIconsLedEffectsAndRichText
         }
         HelloLayout::FullShowcase => CompactControls::FullShowcase,
+        HelloLayout::RoundShowcase => CompactControls::RoundClockControlsAndLedEffects,
     }
 }
 
@@ -683,6 +691,50 @@ fn compact_clock(time: &SystemTime, size: f32, label_size: u32) -> Node {
     )
 }
 
+/// The diameter this layout's proportions are authored against.
+const ROUND_NATIVE: f32 = 480.0;
+
+/// Margin from the circle, as a fraction of the diameter.
+///
+/// The largest square a circle contains would need `(1 − 1/√2) / 2` ≈ 0.146,
+/// which is what a layout has to respect when any row might be full width.
+/// This column centres its rows and keeps the outermost ones — the LED and
+/// icon strips — narrower than the middle, so the corners the square was
+/// protecting are never occupied and the extra width is free.
+const ROUND_INSET: f32 = 0.10;
+
+/// A round BFM100 has half again the area of the Deck's Small slot, so it
+/// carries the fuller set: the animation and clock side by side across the
+/// widest part of the circle, then every counter button, the icon strip and
+/// the LED effects.
+///
+/// Geometry scales with the diameter; type does not, per project convention.
+fn round_showcase(time: &SystemTime, counts: [u32; 4], diameter: f32) -> Node {
+    let scale = diameter / ROUND_NATIVE;
+
+    col(
+        props!(
+            background: BG_COLOR,
+            padding: diameter * ROUND_INSET,
+            gap: 8.0 * scale,
+            cross_align: CrossAlign::Center
+        ),
+        [
+            row(
+                props!(gap: 16.0 * scale, cross_align: CrossAlign::Center),
+                [
+                    compact_animation(52.0 * scale, "Pulse + Spin", 11),
+                    compact_clock(time, 112.0 * scale, 11),
+                ],
+            ),
+            large_controls_section(counts),
+            medium_icon_showcase_section(),
+            small_led_effects_section(),
+            about_modal(),
+        ],
+    )
+}
+
 fn small_compact(time: &SystemTime, counts: [u32; 4]) -> Node {
     col(
         props!(background: BG_COLOR, padding: 6.0, gap: 5.0),
@@ -770,12 +822,19 @@ fn full_showcase(time: &SystemTime, counts: [u32; 4]) -> Node {
     )
 }
 
-fn build_ui(size: WidgetSize, time: &SystemTime, counts: [u32; 4]) -> Node {
-    match hello_layout(size.variant) {
+fn build_ui(size: WidgetSize, shape: ViewportShape, time: &SystemTime, counts: [u32; 4]) -> Node {
+    match hello_layout(size.variant, shape) {
         HelloLayout::SmallCompact => small_compact(time, counts),
         HelloLayout::MediumCompact => medium_compact(time, counts),
         HelloLayout::LargeCompact => large_compact(time, counts),
         HelloLayout::FullShowcase => full_showcase(time, counts),
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a viewport is a few hundred pixels"
+        )]
+        HelloLayout::RoundShowcase => {
+            round_showcase(time, counts, size.width.min(size.height) as f32)
+        }
     }
 }
 
@@ -933,8 +992,9 @@ pub extern "C" fn render(_delta_ms: u32) {
     };
     let time = SystemTime::now();
     let counts = COUNTS.with(|c| *c.borrow());
+    let shape = widget_viewport().shape;
 
-    let result = render_ui(w, h, build_ui(size, &time, counts));
+    let result = render_ui(w, h, build_ui(size, shape, &time, counts));
 
     handle_clicks(&result);
 }
@@ -942,17 +1002,47 @@ pub extern "C" fn render(_delta_ms: u32) {
 #[cfg(test)]
 mod tests {
     use super::{CompactControls, HelloLayout, compact_controls, hello_layout};
-    use bmc_wasm_sdk::SizeVariant;
+    use bmc_wasm_sdk::{SizeVariant, ViewportShape};
+
+    const RECT: ViewportShape = ViewportShape::Rectangular;
 
     #[test]
     fn compact_variants_drop_full_showcase_content_that_would_overflow() {
-        assert_eq!(hello_layout(SizeVariant::Small), HelloLayout::SmallCompact);
         assert_eq!(
-            hello_layout(SizeVariant::Medium),
+            hello_layout(SizeVariant::Small, RECT),
+            HelloLayout::SmallCompact
+        );
+        assert_eq!(
+            hello_layout(SizeVariant::Medium, RECT),
             HelloLayout::MediumCompact
         );
-        assert_eq!(hello_layout(SizeVariant::Large), HelloLayout::LargeCompact);
-        assert_eq!(hello_layout(SizeVariant::Full), HelloLayout::FullShowcase);
+        assert_eq!(
+            hello_layout(SizeVariant::Large, RECT),
+            HelloLayout::LargeCompact
+        );
+        assert_eq!(
+            hello_layout(SizeVariant::Full, RECT),
+            HelloLayout::FullShowcase
+        );
+    }
+
+    #[test]
+    fn a_round_display_takes_the_round_layout_whatever_it_measures() {
+        // BFM100 is 480×480, which `SizeVariant` reports as one of its
+        // rectangular slots; the shape has to win or the layout would be
+        // laid out for a slot and cropped by the circle.
+        for variant in [
+            SizeVariant::Small,
+            SizeVariant::Medium,
+            SizeVariant::Large,
+            SizeVariant::Full,
+        ] {
+            assert_eq!(
+                hello_layout(variant, ViewportShape::Round),
+                HelloLayout::RoundShowcase,
+                "{variant:?} on a round display"
+            );
+        }
     }
 
     #[test]
