@@ -145,6 +145,10 @@ const TITLE_H: f32 = 24.0;
 const TITLE_FONT: f32 = 12.0;
 const TITLE_PAD: f32 = 8.0;
 
+/// Hit area of the strip's close cross, and half the length of each arm.
+const CLOSE_SIZE: f32 = 16.0;
+const CLOSE_ARM: f32 = 3.5;
+
 /// How long the title strip takes to reach its hovered tone.
 const HOVER_FADE_SECS: f32 = 0.12;
 
@@ -162,7 +166,15 @@ const WINDOW_INSET: egui::Margin = egui::Margin::ZERO;
 /// `width` is the body's: a window sizes to its widest child, so a strip
 /// taking whatever is offered would set the width and pad narrow platforms.
 ///
-fn title_strip(ui: &mut egui::Ui, title: &str, width: f32, palette: &super::theme::Palette) {
+/// `close_hint` adds a close affordance and names what it closes; strips with
+/// no meaningful close pass `None`. Returns whether it was clicked.
+fn title_strip(
+    ui: &mut egui::Ui,
+    title: &str,
+    width: f32,
+    palette: &super::theme::Palette,
+    close_hint: Option<&str>,
+) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TITLE_H), egui::Sense::hover());
     // Nothing else marks these as draggable, and fading rather than
     // switching keeps the cue from flickering under a moving cursor.
@@ -191,10 +203,51 @@ fn title_strip(ui: &mut egui::Ui, title: &str, width: f32, palette: &super::them
         egui::FontId::proportional(TITLE_FONT),
         ui.visuals().strong_text_color(),
     );
+    let closed = close_hint.is_some_and(|hint| paint_close(ui, rect, hint));
     // The body meets the strip as a window edge, not as the next widget down.
     // Taken here rather than off the window's style, which the body inherits.
     let gap = ui.spacing().item_spacing.y;
     ui.add_space(-gap);
+    closed
+}
+
+/// The strip's close affordance, at its trailing edge.
+///
+/// A cross rather than a labelled button: the strip is 24 px tall and the
+/// title already fills it, and the hint says what closing means here — a
+/// device is opened and closed as a whole, so either of BMC100's two frames
+/// closes the device.
+fn paint_close(ui: &mut egui::Ui, strip: egui::Rect, hint: &str) -> bool {
+    let centre = egui::pos2(
+        strip.right() - TITLE_PAD - CLOSE_SIZE / 2.0,
+        strip.center().y,
+    );
+    let hit = egui::Rect::from_center_size(centre, egui::Vec2::splat(CLOSE_SIZE));
+    let response = ui
+        .interact(hit, ui.id().with(("close", hint)), egui::Sense::click())
+        .on_hover_text(hint);
+    if response.hovered() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
+    let colour = if response.hovered() {
+        ui.visuals().strong_text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    let arm = CLOSE_ARM;
+    let stroke = egui::Stroke::new(1.5_f32, colour);
+    ui.painter().line_segment(
+        [centre - egui::vec2(arm, arm), centre + egui::vec2(arm, arm)],
+        stroke,
+    );
+    ui.painter().line_segment(
+        [
+            centre + egui::vec2(arm, -arm),
+            centre - egui::vec2(arm, -arm),
+        ],
+        stroke,
+    );
+    response.clicked()
 }
 
 /// Air between windows in a packed arrangement.
@@ -420,14 +473,19 @@ impl TestbedApp {
             .resizable(false)
             .frame(egui::Frame::window(&ctx.style()).inner_margin(WINDOW_INSET))
             .current_pos(pos);
+        let close_hint = format!("close {}", platform.id.to_uppercase());
+        let mut closed = false;
         let response = window.show(ctx, |ui| {
-            title_strip(ui, &title, title_width, palette);
+            closed = title_strip(ui, &title, title_width, palette, Some(&close_hint));
             self.paint_frame(ui, platform, frame, &flat, active_record_idx, time_s);
         });
 
         // Where it ended up, which is where it was put unless it was dragged.
         if let Some(response) = response {
             self.canvas.record(id, response.response.rect);
+        }
+        if closed {
+            self.toggle_platform(platform.id, ctx);
         }
     }
 
@@ -550,7 +608,8 @@ impl TestbedApp {
             .frame(egui::Frame::window(&ctx.style()).inner_margin(WINDOW_INSET))
             .default_pos(egui::pos2(40.0, 620.0));
         let response = window.show(ctx, |ui| {
-            title_strip(ui, "Recording", RECORDING_PANEL_SIZE.x, palette);
+            // Left through Save or Cancel, which decide the take's fate.
+            title_strip(ui, "Recording", RECORDING_PANEL_SIZE.x, palette, None);
             let (rect, _) = ui.allocate_exact_size(RECORDING_PANEL_SIZE, egui::Sense::hover());
             action = self.paint_recording_panel(ui, rect);
         });
