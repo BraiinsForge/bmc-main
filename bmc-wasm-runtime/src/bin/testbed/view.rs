@@ -94,6 +94,9 @@ struct ViewSched {
     /// How late the last deadline-driven render ran against its own deadline.
     /// `None` when the render was not deadline-driven.
     last_slip_ms: Option<u64>,
+    /// How long the last `flush` took. The runtime cannot measure it, since
+    /// the renderer is the caller's, so the view fills the figure in itself.
+    last_flush_us: u32,
 }
 
 /// Everything one view needs to exist, and nothing that ties it to a thread.
@@ -298,7 +301,10 @@ impl ViewCore {
     /// The state the UI mirrors after every tick.
     pub(crate) fn report(&self) -> ViewReport {
         ViewReport {
-            timings: self.runtime.as_ref().map(WasmWidgetRuntime::last_timings),
+            timings: self.runtime.as_ref().map(|rt| bmc_render::FrameTimings {
+                flush_us: self.sched.last_flush_us,
+                ..rt.last_timings()
+            }),
             slip_ms: self.sched.last_slip_ms,
             led_scene: self.led.scene.filter(|_| self.led.enabled),
         }
@@ -694,7 +700,10 @@ impl ViewCore {
             .expect("BUG: checked above")
             .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
         self.log_render_outcome(&outcome);
+        let flush_started = std::time::Instant::now();
         self.renderer.flush();
+        self.sched.last_flush_us =
+            u32::try_from(flush_started.elapsed().as_micros()).unwrap_or(u32::MAX);
 
         ViewTicked {
             next_wake_ms: self.arm_next_deadline(tick.monotonic_ms),
