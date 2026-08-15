@@ -1046,6 +1046,10 @@ impl AppState {
     }
 
     fn reevaluate_automatic_cycling(&mut self, now: Instant) {
+        let transition_was_active = matches!(
+            self.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PreTransition { .. } | AutomaticCyclingPhase::Transition { .. }
+        );
         let touch_active = !self.active_touch_slots.is_empty();
         if touch_active {
             self.cancel_automatic_transition_for_interruption();
@@ -1056,6 +1060,19 @@ impl AppState {
             self.compositor.widgets.scene_count(),
             touch_active,
         );
+        if transition_was_active
+            && !matches!(
+                self.automatic_cycling.phase(),
+                AutomaticCyclingPhase::PreTransition { .. }
+                    | AutomaticCyclingPhase::Transition { .. }
+            )
+        {
+            if self.compositor.widgets.automatic_transition_active() {
+                self.cancel_automatic_transition_for_interruption();
+            } else {
+                self.finish_automatic_transition_interruption();
+            }
+        }
         self.schedule_scene_cycling_timer(now);
     }
 
@@ -1086,7 +1103,7 @@ impl AppState {
         }
 
         self.compositor.widgets.cancel_automatic_transition();
-        self.pending_transition_warm_up = None;
+        self.finish_automatic_transition_interruption();
         self.compositor.mark_full_output_damage();
         if self.pending_lifecycle_emission {
             return;
@@ -1111,6 +1128,15 @@ impl AppState {
             "BUG: reverting an automatic transition restores widgets to \
              Visible/Prepared and must not release dormant buffers",
         );
+    }
+
+    fn discard_automatic_transition_for_scene_replacement(&mut self) {
+        self.compositor.widgets.cancel_automatic_transition();
+        self.finish_automatic_transition_interruption();
+    }
+
+    fn finish_automatic_transition_interruption(&mut self) {
+        self.pending_transition_warm_up = None;
     }
 
     fn schedule_scene_cycling_timer(&mut self, now: Instant) {
@@ -2082,6 +2108,7 @@ fn handle_reset_to_first_scene_command(state: &mut AppState) {
         state.compositor.widgets.active_scene_id(),
         state.compositor.widgets.active_visible_widget_ids(),
     );
+    state.discard_automatic_transition_for_scene_replacement();
     state.compositor.widgets.reset_to_first_scene();
     after_scene_change(state);
     emit_active_scene_changed_if_changed(state, &active_scene_before);
@@ -2162,6 +2189,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                     w.visible
                 );
             }
+            state.discard_automatic_transition_for_scene_replacement();
             state.compositor.widgets.set_active_scene(layout);
             after_scene_change(state);
             emit_active_scene_changed_if_changed(state, &active_scene_before);
@@ -2173,6 +2201,7 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 state.compositor.widgets.active_visible_widget_ids(),
             );
             tracing::info!("Setting scene cycling with {} scenes", scenes.len());
+            state.discard_automatic_transition_for_scene_replacement();
             state.compositor.widgets.set_scene_cycling(scenes);
             after_scene_change(state);
             emit_active_scene_changed_if_changed(state, &active_scene_before);
@@ -3395,18 +3424,24 @@ mod tests {
     }
 
     #[test]
-    fn set_active_scene_resets_stale_automatic_transition_phase() {
+    fn set_active_scene_discards_stale_transition_without_emitting_old_lifecycle() {
         let mut state = make_app_state();
         state
             .compositor
             .widgets
             .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let _ = emit_lifecycle_transitions(&mut state);
         state
             .compositor
             .widgets
             .begin_automatic_transition_to_next()
             .expect("BUG: two scenes should have an automatic transition target");
         state.automatic_cycling.enter_pre_transition(Instant::now());
+        let _ = emit_lifecycle_transitions(&mut state);
+        state.pending_transition_warm_up = Some(TransitionWarmUp {
+            started_at: Instant::now(),
+            widgets: HashMap::new(),
+        });
 
         handle_command(
             &mut state,
@@ -3420,6 +3455,41 @@ mod tests {
             state.automatic_cycling.phase(),
             AutomaticCyclingPhase::PausedDisabled { .. }
         ));
+        assert!(state.pending_transition_warm_up.is_none());
+        assert_eq!(
+            state.compositor.lifecycle.last_state(&"a".to_owned()),
+            Some(LifecycleState::Leaving),
+            "scene replacement must not emit a lifecycle rollback for the outgoing scene"
+        );
+        assert_eq!(
+            state.compositor.lifecycle.last_state(&"b".to_owned()),
+            Some(LifecycleState::Entering),
+            "scene replacement must not wake the old transition target before removing it"
+        );
+    }
+
+    #[test]
+    fn reset_to_first_scene_clears_stale_automatic_transition() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state.automatic_cycling.enter_pre_transition(Instant::now());
+        state.pending_transition_warm_up = Some(TransitionWarmUp {
+            started_at: Instant::now(),
+            widgets: HashMap::new(),
+        });
+
+        handle_command(&mut state, CompositorCommand::ResetToFirstScene);
+
+        assert!(!state.compositor.widgets.automatic_transition_active());
+        assert!(state.pending_transition_warm_up.is_none());
     }
 
     #[test]
@@ -3435,6 +3505,10 @@ mod tests {
             .begin_automatic_transition_to_next()
             .expect("BUG: two scenes should have an automatic transition target");
         state.automatic_cycling.enter_pre_transition(Instant::now());
+        state.pending_transition_warm_up = Some(TransitionWarmUp {
+            started_at: Instant::now(),
+            widgets: HashMap::new(),
+        });
 
         handle_command(
             &mut state,
@@ -3448,6 +3522,33 @@ mod tests {
             state.automatic_cycling.phase(),
             AutomaticCyclingPhase::WaitingForTimer { .. }
         ));
+        assert!(
+            state.pending_transition_warm_up.is_none(),
+            "replacing scenes must complete interruption cleanup before clearing the widget transition"
+        );
+    }
+
+    #[test]
+    fn reevaluation_cleans_up_a_transition_when_cycling_becomes_invalid() {
+        let mut state = make_cycling_app_state();
+        begin_automatic_slide(&mut state);
+        state.pending_transition_warm_up = Some(TransitionWarmUp {
+            started_at: Instant::now(),
+            widgets: HashMap::new(),
+        });
+        state.automatic_cycling.set_suspended(true);
+
+        state.reevaluate_automatic_cycling(Instant::now());
+
+        assert!(
+            !state.compositor.widgets.automatic_transition_active(),
+            "cycling phase and tracker transition must leave motion together"
+        );
+        assert!(matches!(
+            state.automatic_cycling.phase(),
+            AutomaticCyclingPhase::PausedDisabled { .. }
+        ));
+        assert!(state.pending_transition_warm_up.is_none());
     }
 
     #[test]

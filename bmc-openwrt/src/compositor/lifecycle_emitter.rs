@@ -123,6 +123,12 @@ impl LifecycleEmitter {
         self.last.remove(instance_id);
     }
 
+    #[cfg(test)]
+    #[must_use]
+    pub fn last_state(&self, instance_id: &InstanceId) -> Option<LifecycleState> {
+        self.last.get(instance_id).copied()
+    }
+
     /// Record `state` as the last value emitted for `instance_id` without
     /// producing an emission. Used by the connect path (via
     /// [`CompositorState::send_initial_lifecycle`]), which sends the
