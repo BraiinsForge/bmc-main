@@ -57,7 +57,13 @@ impl TestbedApp {
                     egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(BAR_INLINE_PAD, 0.0))),
                 );
                 bar.horizontal_centered(|row| {
-                    let recording = self.recording_mode.state.is_some();
+                    // While the record mode is engaged it owns the whole bar:
+                    // nothing else the toolbar offers belongs to a take.
+                    if self.paint_record_controls(row, palette) {
+                        return;
+                    }
+                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
+
                     // A segmented set: independent on/off per device, one flat
                     // control. The 1 px gaps let the panel show through as
                     // dividers, so neighbouring inactive buttons read apart.
@@ -68,15 +74,13 @@ impl TestbedApp {
                             let supported = platform_supported(p, &self.manifest);
                             let response = set
                                 .add_enabled(
-                                    supported && !recording,
+                                    supported,
                                     egui::Button::new(p.id.to_uppercase()).selected(open),
                                 )
                                 .on_hover_text(p.label)
-                                .on_disabled_hover_text(if recording {
-                                    "the platform is pinned while recording"
-                                } else {
-                                    "the manifest admits no viewport of this platform"
-                                });
+                                .on_disabled_hover_text(
+                                    "the manifest admits no viewport of this platform",
+                                );
                             if response.clicked() {
                                 chosen = Some(p.id);
                             }
@@ -131,6 +135,115 @@ impl TestbedApp {
             let ctx = root_ui.ctx().clone();
             self.toggle_platform(target, &ctx);
         }
+    }
+
+    /// The record mode's toolbar controls, leading the bar.
+    ///
+    /// Off, this is one red button that opens the choosing phase. Engaged —
+    /// choosing or mid-take — the mode owns the bar: a status chip says which
+    /// phase is on, Save lands the take, Cancel backs out.
+    /// Returns whether the mode is engaged, hiding the rest of the bar.
+    fn paint_record_controls(
+        &mut self,
+        row: &mut egui::Ui,
+        palette: &super::theme::Palette,
+    ) -> bool {
+        let choosing = self.recording_mode.is_choosing();
+        let recording = self.recording_mode.active().is_some();
+        let accent = palette.record_accent;
+
+        if !choosing && !recording {
+            // Red in rest too: this is the one destructive-adjacent control
+            // on the bar, and its colour is its identity.
+            let response = row
+                .scope(|ui| {
+                    let widgets = &mut ui.style_mut().visuals.widgets;
+                    widgets.inactive.fg_stroke.color = accent;
+                    widgets.hovered.fg_stroke.color = accent;
+                    widgets.active.fg_stroke.color = accent;
+                    let cause = if self.cli.perf_report_path.is_some() {
+                        Some("a profiling run cannot record")
+                    } else if self.cli.resolved_widget_root().is_none() {
+                        Some("recording needs a widget root to write the fixture into")
+                    } else if recordable_targets(&self.manifest).is_empty() {
+                        Some("the manifest admits no viewport")
+                    } else {
+                        None
+                    };
+                    let inner = ui
+                        .add_enabled_ui(cause.is_none(), |ui| {
+                            icon_button(ui, &mut self.icons.record, Some("Record"), false)
+                                .on_hover_text("record a capture fixture from a live take")
+                        })
+                        .inner;
+                    match cause {
+                        Some(cause) => inner.on_disabled_hover_text(cause),
+                        None => inner,
+                    }
+                })
+                .inner;
+            if response.clicked() {
+                let ctx = row.ctx().clone();
+                self.start_choosing(&ctx);
+            }
+            return false;
+        }
+
+        // A status readout, not a button: the mode is left through Save or
+        // Cancel, and a control that only names the phase must not look
+        // like it does anything.
+        let status = if recording {
+            self.recording_mode
+                .active()
+                .map_or_else(String::new, |rec| format!("RECORDING — {}", rec.target()))
+        } else {
+            "RECORD — choose a viewport".to_owned()
+        };
+        let icon_rect = row
+            .allocate_exact_size(egui::Vec2::splat(ICON_SIZE), egui::Sense::hover())
+            .0;
+        self.icons.record.paint(row, icon_rect, accent);
+        row.label(egui::RichText::new(status).color(accent).strong());
+
+        let save_cause = if !recording {
+            Some("choose a viewport to record first")
+        } else if self
+            .recording_mode
+            .active()
+            .is_some_and(|rec| !rec.has_events())
+        {
+            Some("nothing recorded yet")
+        } else if self.recording_mode.active().is_some_and(|rec| {
+            !bmc_wasm_runtime::capture_config::is_valid_dataset_name(rec.dataset())
+        }) {
+            Some("the dataset name is invalid")
+        } else {
+            None
+        };
+        let save_button = egui::Button::new(
+            egui::RichText::new("Save")
+                .color(egui::Color32::WHITE)
+                .strong(),
+        )
+        .fill(accent);
+        let save = row
+            .add_enabled(save_cause.is_none(), save_button)
+            .on_hover_text("write the fixture and leave the take");
+        if let Some(cause) = save_cause {
+            save.on_disabled_hover_text(cause);
+        } else if save.clicked() {
+            let ctx = row.ctx().clone();
+            self.save_recording(&ctx);
+        }
+        if row
+            .button("Cancel")
+            .on_hover_text("discard the take and put the canvas back")
+            .clicked()
+        {
+            let ctx = row.ctx().clone();
+            self.cancel_record_mode(&ctx);
+        }
+        true
     }
 
     /// Where the devices sit and how large they read.
@@ -282,4 +395,42 @@ pub(super) fn platform_supported(
         };
         manifest.supports_viewport_at_dpi(shape, vp.width, vp.height, dpi)
     })
+}
+
+/// Whether the manifest admits `target` at its platform's display density —
+/// what the choose overlays offer. Strictly stricter than the live-view gate,
+/// which checks size and shape alone, so an offered target always builds live
+/// rather than as a placeholder.
+pub(super) fn target_recordable(
+    manifest: &bmc_widget_manifest::Manifest,
+    target: bmc_wasm_runtime::platform_catalog::Target,
+) -> bool {
+    let shape = match target.viewport.shape {
+        DisplayShape::Rectangular => bmc_widget_manifest::ViewportShape::Rectangular,
+        DisplayShape::Round => bmc_widget_manifest::ViewportShape::Round,
+    };
+    manifest.supports_viewport_at_dpi(
+        shape,
+        target.viewport.width,
+        target.viewport.height,
+        target.platform.display().dpi,
+    )
+}
+
+/// Every (platform, viewport) the manifest admits, per [`target_recordable`].
+pub(super) fn recordable_targets(
+    manifest: &bmc_widget_manifest::Manifest,
+) -> Vec<bmc_wasm_runtime::platform_catalog::Target> {
+    PLATFORMS
+        .iter()
+        .flat_map(|platform| {
+            platform.viewports.iter().filter_map(move |vp| {
+                let target = bmc_wasm_runtime::platform_catalog::Target {
+                    platform,
+                    viewport: vp,
+                };
+                target_recordable(manifest, target).then_some(target)
+            })
+        })
+        .collect()
 }

@@ -38,7 +38,6 @@
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
 use super::TestbedApp;
-use super::recording::record_delivery;
 use super::view::{Delivery, ViewCommand};
 
 /// Wire-shape entry for one bound slot, matching the `credentials` event.
@@ -73,10 +72,11 @@ impl TestbedApp {
         }
         self.credentials = new_credentials;
 
-        if let Some(rec) = self.recording_mode.state.as_mut() {
-            let credentials = self.credentials.clone();
-            record_delivery(rec, || UnifiedEvent::CredentialDelivery { credentials });
-        }
+        let credentials = &self.credentials;
+        self.recording_mode
+            .record_delivery(|| UnifiedEvent::CredentialDelivery {
+                credentials: credentials.clone(),
+            });
     }
 
     /// Slot key paired with the type its manifest fixes it to.

@@ -27,9 +27,9 @@
 //! them stay live at once — the point of the preview is watching one wasm
 //! change render everywhere it can land.
 
-use bmc_wasm_runtime::platform_catalog::Platform;
+use bmc_wasm_runtime::platform_catalog::{self, Platform};
 
-use super::{RecordingAction, TestbedApp, dispatch_touch_events, paint, paint_placeholder};
+use super::{TestbedApp, dispatch_touch_events, paint, paint_placeholder, toolbar};
 
 /// One display state of the device: which viewports show, and where.
 pub(crate) struct DeviceFrame {
@@ -136,8 +136,6 @@ fn first_fit(
 
 /// Bare enclosure showing between the screen's bottom edge and the LED diffuser.
 const STRIP_SEAM: f32 = 4.0;
-/// The recording panel's content area, which its readouts assume.
-const RECORDING_PANEL_SIZE: egui::Vec2 = egui::vec2(400.0, 280.0);
 /// Height of the hand-painted title strip. Ours rather than egui's,
 /// because egui hard-centres its window titles.
 const TITLE_H: f32 = 24.0;
@@ -148,6 +146,9 @@ const TITLE_PAD: f32 = 8.0;
 /// Hit area of the strip's close cross, and half the length of each arm.
 const CLOSE_SIZE: f32 = 16.0;
 const CLOSE_ARM: f32 = 3.5;
+
+/// Leading between the choose card's two lines.
+const LINE_GAP: f32 = 2.0;
 
 /// How long the title strip takes to reach its hovered tone.
 const HOVER_FADE_SECS: f32 = 0.12;
@@ -394,10 +395,29 @@ impl TestbedApp {
                     .into_iter()
                     .map(move |frame| (platform, frame))
             })
+            // Mid-take, only the frame holding the recorded viewport: the
+            // others' views are inert slabs with nothing to interact with.
+            .filter(|(platform, frame)| {
+                self.recording_mode.active().is_none_or(|rec| {
+                    rec.target().platform.id == platform.id
+                        && frame.views.iter().any(|(idx, _)| *idx == rec.active_tile())
+                })
+            })
             .collect();
 
-        // The recording window is chrome, not canvas, so it keeps out of this.
-        let arranged = self.arrange.take().map(|mode| match mode {
+        // Held rather than consumed until every open platform has its views:
+        // a mode swap retires them all, and an arrangement computed over the
+        // one-frame gap would place (and spend itself on) an empty canvas.
+        let views_ready = self
+            .open_platforms
+            .iter()
+            .all(|p| self.tiles.iter().any(|view| view.platform.id == p.id));
+        let arranged = if views_ready {
+            self.arrange.take()
+        } else {
+            None
+        };
+        let arranged = arranged.map(|mode| match mode {
             ArrangeMode::Stack => {
                 let zoom = self.canvas.zoom();
                 let sizes: Vec<egui::Vec2> = entries
@@ -435,10 +455,9 @@ impl TestbedApp {
         // Recording pins one platform; other windows never hold its index.
         let active_record_idx = self
             .recording_mode
-            .state
-            .as_ref()
-            .filter(|r| r.target.platform.id == platform.id)
-            .map(|r| r.active_tile);
+            .active()
+            .filter(|r| r.target().platform.id == platform.id)
+            .map(super::RecordingState::active_tile);
         // Flat indices of this platform's views, in viewport order —
         // `build_views` appends them contiguously, so the order holds.
         let flat: Vec<usize> = self
@@ -540,6 +559,18 @@ impl TestbedApp {
                 continue;
             }
             super::paint_tile_texture(ui, view, rect);
+            // A choose overlay per candidate viewport: clicking it is what
+            // starts the take, so it swallows the view's touch input.
+            if self.recording_mode.is_choosing() {
+                let target = platform_catalog::Target {
+                    platform,
+                    viewport: &platform.viewports[*view_idx],
+                };
+                if toolbar::target_recordable(&self.manifest, target) {
+                    self.paint_choose_overlay(ui, rect, target);
+                }
+                continue;
+            }
             if active_record_idx == Some(*view_idx) {
                 ui.painter().rect_stroke(
                     rect,
@@ -555,7 +586,7 @@ impl TestbedApp {
             }
             let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
             let rec = if active_record_idx == Some(*view_idx) {
-                self.recording_mode.state.as_mut()
+                self.recording_mode.active_mut()
             } else {
                 None
             };
@@ -589,40 +620,116 @@ impl TestbedApp {
         }
     }
 
-    /// The recording panel, for as long as a recording is running.
-    ///
-    /// Chrome, not canvas: the layer is never pan-transformed. It earns a
-    /// window because it is transient and carries actions; the timings that
-    /// used to share it are always-on, so they live in the status bar.
-    pub(super) fn paint_recording_window(&mut self, ctx: &egui::Context) {
-        if self.recording_mode.state.is_none() {
-            return;
+    /// One choosing-phase overlay: the whole view is the button that starts
+    /// the take on its target. A target with a fixture wears a badge saying
+    /// which datasets it carries, and asks a second time before a take that
+    /// will overwrite one.
+    fn paint_choose_overlay(
+        &mut self,
+        ui: &mut egui::Ui,
+        rect: egui::Rect,
+        target: platform_catalog::Target,
+    ) {
+        let palette = self.theme.palette(ui.ctx());
+        let accent = palette.record_accent;
+        let recorded = self.recording_mode.recorded_datasets(target).join(", ");
+        let confirming = self.recording_mode.is_confirming(target);
+
+        let response = ui.interact(
+            rect,
+            ui.id()
+                .with(("choose", target.platform.id, target.viewport.id)),
+            egui::Sense::click(),
+        );
+        if response.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
         }
-        let mut action = None;
-        let palette = self.theme.palette(ctx);
-        let window = egui::Window::new("")
-            .id(egui::Id::new("recording"))
-            .title_bar(false)
-            .resizable(false)
-            // Flush like the device windows; the readouts pad themselves.
-            .frame(egui::Frame::window(&ctx.style()).inner_margin(WINDOW_INSET))
-            .default_pos(egui::pos2(40.0, 620.0));
-        let response = window.show(ctx, |ui| {
-            // Left through Save or Cancel, which decide the take's fate.
-            title_strip(ui, "Recording", RECORDING_PANEL_SIZE.x, palette, None);
-            let (rect, _) = ui.allocate_exact_size(RECORDING_PANEL_SIZE, egui::Sense::hover());
-            action = self.paint_recording_panel(ui, rect);
+        // A light veil, so the live content stays legible under the card;
+        // hover answers with the accent border, marking the view as the button.
+        let veil = if response.hovered() { 40 } else { 80 };
+        ui.painter()
+            .rect_filled(rect, 0.0, egui::Color32::from_black_alpha(veil));
+        if response.hovered() {
+            ui.painter().rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(2.0_f32, accent),
+                egui::StrokeKind::Inside,
+            );
+        }
+
+        // The centre card: what the click does, and what it costs — an
+        // existing fixture is named here rather than off in a corner, where
+        // it went unread. Asking twice only works if the first click visibly
+        // answers, so confirming flips the card to solid accent rather than
+        // just rewording it.
+        let (title, detail) = match (confirming, recorded.is_empty()) {
+            (true, _) => (
+                format!("Overwrite {recorded}?"),
+                "click again to replace it".to_owned(),
+            ),
+            (false, true) => (format!("Record {target}"), String::new()),
+            (false, false) => (
+                format!("Re-record {target}"),
+                format!("replaces {recorded}"),
+            ),
+        };
+        let (fill, title_colour, detail_colour) = if confirming {
+            (
+                accent,
+                egui::Color32::WHITE,
+                egui::Color32::from_white_alpha(200),
+            )
+        } else {
+            (
+                egui::Color32::from_black_alpha(210),
+                ui.visuals().strong_text_color(),
+                accent,
+            )
+        };
+
+        let title =
+            ui.painter()
+                .layout_no_wrap(title, egui::FontId::proportional(15.0), title_colour);
+        let detail = (!detail.is_empty()).then(|| {
+            ui.painter()
+                .layout_no_wrap(detail, egui::FontId::proportional(12.0), detail_colour)
         });
-        // Device windows share this layer order and stack by last click;
-        // holding the top keeps the panel from settling between them.
-        if let Some(response) = response {
-            ctx.move_to_top(response.response.layer_id);
+        let icon_side = 18.0;
+        let text_w = title
+            .size()
+            .x
+            .max(detail.as_ref().map_or(0.0, |d| d.size().x));
+        let text_h = title.size().y + detail.as_ref().map_or(0.0, |d| d.size().y + LINE_GAP);
+        let pad = egui::vec2(14.0, 10.0);
+        let content = egui::vec2(icon_side + 8.0 + text_w, icon_side.max(text_h));
+        let card = egui::Rect::from_center_size(rect.center(), content + 2.0 * pad);
+        ui.painter().rect_filled(card, 4.0, fill);
+        ui.painter().rect_stroke(
+            card,
+            4.0,
+            egui::Stroke::new(if confirming { 2.0_f32 } else { 1.0_f32 }, accent),
+            egui::StrokeKind::Inside,
+        );
+        let inner = card.shrink2(pad);
+        let icon_rect = egui::Rect::from_min_size(
+            egui::pos2(inner.min.x, inner.center().y - icon_side / 2.0),
+            egui::Vec2::splat(icon_side),
+        );
+        self.icons.record.paint(ui, icon_rect, title_colour);
+        let text_x = icon_rect.max.x + 8.0;
+        let mut text_y = inner.center().y - text_h / 2.0;
+        let title_h = title.size().y;
+        ui.painter()
+            .galley(egui::pos2(text_x, text_y), title, title_colour);
+        if let Some(detail) = detail {
+            text_y += title_h + LINE_GAP;
+            ui.painter()
+                .galley(egui::pos2(text_x, text_y), detail, detail_colour);
         }
-        match action {
-            Some(RecordingAction::Save) => self.finish_recording(),
-            Some(RecordingAction::Cancel) => self.recording_mode.state = None,
-            Some(RecordingAction::Capture) => self.push_manual_capture(),
-            None => {}
+
+        if response.clicked() {
+            self.recording_mode.choose(target);
         }
     }
 }

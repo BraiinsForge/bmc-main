@@ -39,7 +39,6 @@ use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 use bmc_wasm_runtime::{NextAlarm, SystemSnapshot};
 
 use super::TestbedApp;
-use super::recording::record_delivery;
 use super::ui_helpers::{combo_cell, key_label};
 use super::view::{Delivery, ViewCommand};
 
@@ -62,10 +61,11 @@ impl TestbedApp {
         }
         self.system = new_system;
 
-        if let Some(rec) = self.recording_mode.state.as_mut() {
-            let snapshot = self.system.clone();
-            record_delivery(rec, || UnifiedEvent::SystemDelivery { system: snapshot });
-        }
+        let system = &self.system;
+        self.recording_mode
+            .record_delivery(|| UnifiedEvent::SystemDelivery {
+                system: system.clone(),
+            });
     }
 
     /// Render the system-mutation form directly into the provided UI.

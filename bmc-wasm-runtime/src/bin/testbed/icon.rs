@@ -74,9 +74,18 @@ pub(crate) struct Icons {
     pub(crate) arrange_grid: Icon,
     pub(crate) debug: Icon,
     pub(crate) offline: Icon,
+    pub(crate) record: Icon,
     pub(crate) reload: Icon,
     pub(crate) scale_in: Icon,
     pub(crate) scale_out: Icon,
+    // The notice banner's two outcomes.
+    pub(crate) saved: Icon,
+    pub(crate) warning: Icon,
+    // The recording log's per-event-kind marks.
+    pub(crate) touch: Icon,
+    pub(crate) delivery: Icon,
+    pub(crate) network: Icon,
+    pub(crate) output: Icon,
 }
 
 impl Icons {
@@ -89,9 +98,16 @@ impl Icons {
             arrange_grid: Icon::new(include_bytes!("assets/icons/arrange-grid.svg")),
             debug: Icon::new(include_bytes!("assets/icons/debug.svg")),
             offline: Icon::new(include_bytes!("assets/icons/offline.svg")),
+            record: Icon::new(include_bytes!("assets/icons/record.svg")),
             reload: Icon::new(include_bytes!("assets/icons/reset.svg")),
             scale_in: Icon::new(include_bytes!("assets/icons/scale-in.svg")),
             scale_out: Icon::new(include_bytes!("assets/icons/scale-out.svg")),
+            saved: Icon::new(include_bytes!("assets/icons/saved.svg")),
+            warning: Icon::new(include_bytes!("assets/icons/warning.svg")),
+            touch: Icon::new(include_bytes!("assets/icons/touch.svg")),
+            delivery: Icon::new(include_bytes!("assets/icons/delivery.svg")),
+            network: Icon::new(include_bytes!("assets/icons/network.svg")),
+            output: Icon::new(include_bytes!("assets/icons/output.svg")),
         }
     }
 }
@@ -137,7 +153,7 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 10] = [
+        let named: [(&str, &Icon); 17] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
@@ -145,7 +161,14 @@ mod tests {
             ("arrange-grid", &icons.arrange_grid),
             ("debug", &icons.debug),
             ("offline", &icons.offline),
+            ("record", &icons.record),
             ("reset", &icons.reload),
+            ("saved", &icons.saved),
+            ("warning", &icons.warning),
+            ("touch", &icons.touch),
+            ("delivery", &icons.delivery),
+            ("network", &icons.network),
+            ("output", &icons.output),
             ("scale-in", &icons.scale_in),
             ("scale-out", &icons.scale_out),
         ];

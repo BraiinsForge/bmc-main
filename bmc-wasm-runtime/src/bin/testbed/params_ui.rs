@@ -31,7 +31,6 @@
 
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
-use super::recording::record_delivery;
 use super::ui_helpers::{RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell};
 use super::view::{Delivery, ViewCommand};
 use super::{PARAM_PANEL_W, TestbedApp};
@@ -60,16 +59,14 @@ impl TestbedApp {
         }
         self.params = new_params;
 
-        if let Some(rec) = self.recording_mode.state.as_mut() {
-            let json_params: serde_json::Map<String, serde_json::Value> = self
-                .params
-                .iter()
-                .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
-                .collect();
-            record_delivery(rec, || UnifiedEvent::ParamDelivery {
-                params: json_params,
+        let params = &self.params;
+        self.recording_mode
+            .record_delivery(|| UnifiedEvent::ParamDelivery {
+                params: params
+                    .iter()
+                    .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
+                    .collect(),
             });
-        }
     }
 
     /// Render the unified right-side sidebar:

@@ -68,14 +68,13 @@ use bmc_wasm_runtime::fixtures::{
     self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
 use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Viewport};
-use bmc_wasm_runtime::unified_fixture::TimelineEvent;
 use bmc_wasm_runtime::{DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot};
 use clap::Parser;
 
 use paint::{
     GlProcAddress, draw_checkerboard, paint_timing_chart, paint_timing_legend, write_perf_report,
 };
-use recording::{GestureTracker, RecordingAction, RecordingState, classify_and_record_gesture};
+use recording::{RecordUnwind, RecordingMode, RecordingState};
 use view::{DeviceView, ViewCommand};
 
 /// Height of the LED diffuser strip rendered below a device frame.
@@ -153,7 +152,7 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
     let dataset = cli
         .record_name
         .clone()
-        .unwrap_or_else(|| format!("{}-{}", target.platform.id, target.viewport.id));
+        .unwrap_or_else(|| default_dataset(target));
     if !bmc_wasm_runtime::capture_config::is_valid_dataset_name(&dataset) {
         anyhow::bail!(
             "--record-name={dataset} must be non-empty and use only letters, digits, '-', '_' or '.'"
@@ -163,11 +162,21 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
     Ok(Some(RecordRequest { target, dataset }))
 }
 
+/// The dataset a take writes when the operator names none — the target,
+/// which identifies a recording unless a sim scenario distinguishes takes.
+fn default_dataset(target: platform_catalog::Target) -> String {
+    format!("{}-{}", target.platform.id, target.viewport.id)
+}
+
 /// Width of the right-side sidebar housing both the per-widget Params
 /// section (when the manifest declares any) and the deck-wide System
 /// section (always shown). Added to the window's outer size so the tile
 /// area stays at native dimensions instead of getting squeezed.
 pub(crate) const PARAM_PANEL_W: u32 = 320;
+
+/// Width of the notice banner: wide enough for a fixture path to fit
+/// on one monospaced line.
+const NOTICE_W: f32 = 520.0;
 
 // ── CLI ─────────────────────────────────────────────────────────────
 
@@ -248,24 +257,35 @@ enum ViewPlacement {
 
 /// Decide where views render, and say so when a mode takes the choice away.
 ///
-/// Recording and profiling pin every view to the UI thread: both ask the
-/// runtime questions that have to be answered inside the frame that asks them
-/// — the recorder hit-tests within the gesture it is classifying, and the
-/// profiler reads fuel sections from the render it just drove — and neither
-/// has an answer that can arrive a frame later.
+/// Profiling pins every view to the UI thread: the profiler reads fuel
+/// sections from the render it just drove, an answer that cannot arrive
+/// a frame later. Recording pins the same way but per build,
+/// while the mode is active ([`placement_for_build`]) —
+/// it comes and goes at runtime, which a launch-time decision would outlive.
 fn view_placement(cli: &CliArgs) -> ViewPlacement {
     if cli.inline_views {
         return ViewPlacement::UiThread;
     }
-    let pinned = if cli.record_target.is_some() {
-        "recording"
-    } else if cli.perf_report_path.is_some() {
-        "profiling"
+    if cli.perf_report_path.is_some() {
+        tracing::info!(
+            "profiling: views render on the UI thread, where their queries can be answered"
+        );
+        return ViewPlacement::UiThread;
+    }
+    ViewPlacement::OwnThread
+}
+
+/// Where a view built right now renders: recording pins it inline,
+/// since the recorder's hit-test and event drain are synchronous queries
+/// only an inline view answers. Recording also pins the canvas to one
+/// platform, so every view that exists during a take is pinned by this —
+/// `--record`'s old whole-run pin, scoped to the mode instead.
+fn placement_for_build(configured: ViewPlacement, recording: bool) -> ViewPlacement {
+    if recording {
+        ViewPlacement::UiThread
     } else {
-        return ViewPlacement::OwnThread;
-    };
-    tracing::info!("{pinned}: views render on the UI thread, where their queries can be answered");
-    ViewPlacement::UiThread
+        configured
+    }
 }
 
 /// The manifest's credential slots, each with the field names its type
@@ -422,15 +442,37 @@ mod platforms_startup_tests {
 
     #[test]
     fn recording_pins_views_inline() {
-        let cli = parse_test_args(&["testbed", "widget.wasm", "--record=bmc100:full"])
-            .expect("BUG: record args must parse");
-
         assert_eq!(
-            view_placement(&cli),
+            placement_for_build(ViewPlacement::OwnThread, true),
             ViewPlacement::UiThread,
             "the recorder hit-tests inside the gesture it is classifying, \
              which a threaded view cannot answer"
         );
+    }
+
+    #[test]
+    fn placement_is_the_configured_one_outside_recording() {
+        assert_eq!(
+            placement_for_build(ViewPlacement::OwnThread, false),
+            ViewPlacement::OwnThread,
+        );
+        assert_eq!(
+            placement_for_build(ViewPlacement::UiThread, false),
+            ViewPlacement::UiThread,
+            "recording must not un-pin what the CLI pinned",
+        );
+    }
+
+    #[test]
+    fn the_default_dataset_matches_the_cli_default() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--record=bmc100:small"])
+            .expect("BUG: record args must parse");
+        let request = resolve_record_request(&cli)
+            .expect("BUG: record request must resolve")
+            .expect("BUG: a record target was given");
+
+        assert_eq!(request.dataset, default_dataset(request.target));
+        assert_eq!(request.dataset, "bmc100-small");
     }
 
     #[test]
@@ -948,15 +990,8 @@ fn dispatch_touch_events(
         view.send(ViewCommand::Touch(TouchEvent::Up));
         touched = true;
         if let Some(r) = rec.as_mut() {
-            // A quick click never triggers `drag_started` — synthesise + immediately classify
-            // a zero-distance gesture so it's recorded as a click on the hit element.
             let start_element = view.hit_test(x, y);
-            let gesture = GestureTracker {
-                start_pos: (x, y),
-                current_pos: (x, y),
-                start_element,
-            };
-            classify_and_record_gesture(r, &gesture);
+            r.record_tap((x, y), start_element);
         }
     }
     if response.drag_started()
@@ -967,11 +1002,7 @@ fn dispatch_touch_events(
         touched = true;
         if let Some(r) = rec.as_mut() {
             let start_element = view.hit_test(x, y);
-            r.gesture = Some(GestureTracker {
-                start_pos: (x, y),
-                current_pos: (x, y),
-                start_element,
-            });
+            r.begin_gesture((x, y), start_element);
         }
     } else if response.dragged()
         && let Some(pos) = response.interact_pointer_pos()
@@ -979,19 +1010,15 @@ fn dispatch_touch_events(
         let (x, y) = ((pos.x - rect.min.x) / scale, (pos.y - rect.min.y) / scale);
         view.send(ViewCommand::Touch(TouchEvent::Move { x, y }));
         touched = true;
-        if let Some(r) = rec.as_mut()
-            && let Some(g) = r.gesture.as_mut()
-        {
-            g.current_pos = (x, y);
+        if let Some(r) = rec.as_mut() {
+            r.update_gesture((x, y));
         }
     }
     if response.drag_stopped() {
         view.send(ViewCommand::Touch(TouchEvent::Up));
         touched = true;
-        if let Some(r) = rec.as_mut()
-            && let Some(gesture) = r.gesture.take()
-        {
-            classify_and_record_gesture(r, &gesture);
+        if let Some(r) = rec.as_mut() {
+            r.finish_gesture();
         }
     }
     if touched {
@@ -1017,6 +1044,7 @@ pub(crate) struct TestbedApp {
     show_view_timings: bool,
     /// A one-shot window rearrangement, consumed at the next paint.
     arrange: Option<device_window::ArrangeMode>,
+    notice: Option<Notice>,
     /// Where views render, once the modes that cannot thread have had their say.
     views: ViewPlacement,
     /// Set once the perf report is sealed, so the host can close the window.
@@ -1111,7 +1139,8 @@ struct FramePass {
 /// I/O timeout, and closing a platform must never stall the UI on it.
 #[derive(Default)]
 struct Teardown {
-    /// Views taken out of service. Never holds more than one platform's worth.
+    /// Views taken out of service — a closed platform's worth,
+    /// or every open one at once when recording mode swaps the whole canvas.
     views: Vec<DeviceView>,
     /// Worker threads asked to stop, polled until they exit.
     workers: Vec<view::worker::Retired>,
@@ -1145,6 +1174,36 @@ impl Teardown {
 
 /// Per-frame performance accounting. The rolling window drives the FPS readout
 /// in the status bar; the full vector is what `--perf-report=` writes to disk at exit.
+/// A transient chrome banner: the outcome of an action whose other traces
+/// left the screen — a saved take, mostly. Expires on its own or on click.
+struct Notice {
+    text: String,
+    error: bool,
+    shown_at: std::time::Instant,
+}
+
+impl Notice {
+    /// How long a notice lingers; enough to read a path, short enough
+    /// to never need dismissing by hand.
+    const TTL: std::time::Duration = std::time::Duration::from_secs(10);
+
+    fn success(text: String) -> Self {
+        Self {
+            text,
+            error: false,
+            shown_at: std::time::Instant::now(),
+        }
+    }
+
+    fn error(text: String) -> Self {
+        Self {
+            text,
+            error: true,
+            shown_at: std::time::Instant::now(),
+        }
+    }
+}
+
 struct PerfState {
     /// Total frames rendered so far. Used to drive the `--perf-frames` exit condition.
     frame_count: u32,
@@ -1159,17 +1218,6 @@ struct PerfState {
     /// Last frame's wall-clock duration (microseconds);
     /// recent samples averaged for FPS.
     recent_frame_us: std::collections::VecDeque<u32>,
-}
-
-/// Recording-mode bundle: the optional in-flight recording state plus
-/// the shared fetch buffer the active tile's fetch observer pushes into.
-pub(crate) struct RecordingMode {
-    /// `Some` only when started via `--record=<size>`;
-    /// `None` resets it after Save/Cancel.
-    pub(crate) state: Option<RecordingState>,
-    /// Shared buffer for fetch events captured by the active tile's fetch observer.
-    /// Held behind `Arc<Mutex<_>>` because the observer runs on background fetch threads.
-    pub(crate) fetch_events: std::sync::Arc<std::sync::Mutex<Vec<TimelineEvent>>>,
 }
 
 impl TestbedApp {
@@ -1204,47 +1252,9 @@ impl TestbedApp {
             night_mode: false,
         };
 
-        let recording_state = record_request.map(|RecordRequest { target, dataset }| {
-            let active_tile = active_platform
-                .viewports
-                .iter()
-                .position(|v| v.id == target.viewport.id)
-                .expect("BUG: a target's viewport must exist on its own platform");
-            let widget_root = cli.resolved_widget_root();
-            // Capture's fixture-header parser requires a timezone suffix on the time
-            // field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime is rejected.
-            let start_time_iso = chrono::Local::now().to_rfc3339();
-            // Initial params snapshot — what the host has staged in `RuntimeConfig::params`
-            // at this moment, pre-encoded into the JSON shape `FixtureHeader::initial_params`
-            // expects. Captured at recording start so the fixture is self-contained:
-            // replay no longer needs to locate the widget's `manifest.json` on disk to
-            // reconstruct the starting snapshot.
-            let params_snapshot: serde_json::Map<String, serde_json::Value> = params
-                .iter()
-                .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
-                .collect();
-            RecordingState {
-                active_tile,
-                target,
-                dataset,
-                events: Vec::new(),
-                gesture: None,
-                widget_root,
-                recording_start: std::time::Instant::now(),
-                kv_snapshot: std::collections::HashMap::new(),
-                params_snapshot,
-                // Testbed's starting `SystemSnapshot`, mirroring
-                // `params_snapshot`. Replay installs this directly into
-                // `RuntimeConfig::system`.
-                system_snapshot: pending_system.clone(),
-                // Nothing is bound until the operator binds it in the sidebar.
-                credentials_snapshot: serde_json::Map::new(),
-                start_time_iso,
-                auto_capture: true,
-            }
-        });
-
-        let pinned = recording_state.is_some() || cli.platform_id.is_some();
+        // Recording no longer pins here: `enter_recording` below saves
+        // this set as what Save/Cancel restores, then pins to the take's platform.
+        let pinned = cli.platform_id.is_some();
         let open_platforms = startup_platforms(active_platform, pinned, &manifest);
 
         let now = std::time::Instant::now();
@@ -1252,7 +1262,7 @@ impl TestbedApp {
         let secrets = cli.credential_secrets(&declared)?;
         let url_rewrites = cli.url_rewrites()?;
         let views = view_placement(&cli);
-        Ok(Self {
+        let mut app = Self {
             cli,
             prepared_widget,
             secrets,
@@ -1262,6 +1272,7 @@ impl TestbedApp {
             icons: icon::Icons::new(),
             show_view_timings: false,
             arrange: None,
+            notice: None,
             views,
             exit_requested: false,
             pass: FramePass {
@@ -1295,12 +1306,13 @@ impl TestbedApp {
                 written: false,
                 recent_frame_us: std::collections::VecDeque::with_capacity(60),
             },
-            recording_mode: RecordingMode {
-                state: recording_state,
-                fetch_events: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
-            },
+            recording_mode: RecordingMode::new(),
             open_platforms,
-        })
+        };
+        if let Some(RecordRequest { target, dataset }) = record_request {
+            app.enter_recording(target, dataset);
+        }
+        Ok(app)
     }
 
     fn prepare_updated_widget(&self) -> Result<(PreparedWidget, Vec<u8>)> {
@@ -1351,7 +1363,10 @@ impl TestbedApp {
         // a credential-fed widget back to its unbound state.
         let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
         let secrets = self.secrets.clone();
-        let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+        let active_record_idx = self
+            .recording_mode
+            .active()
+            .map(RecordingState::active_tile);
         for idx in 0..self.tiles.len() {
             let view = &self.tiles[idx];
             if !view.is_live() {
@@ -1399,7 +1414,7 @@ impl TestbedApp {
     /// Open or close a device on the canvas, leaving params and system state
     /// intact. Recording keeps its platform pinned by refusing toggles.
     pub(crate) fn toggle_platform(&mut self, target_id: &str, ctx: &egui::Context) {
-        if let Err(reason) = can_switch_platform(self.recording_mode.state.is_some()) {
+        if let Err(reason) = can_switch_platform(self.recording_mode.engaged()) {
             tracing::warn!("toggle: refusing platform toggle of '{target_id}': {reason}");
             return;
         }
@@ -1418,6 +1433,158 @@ impl TestbedApp {
             self.tiles = kept;
         }
         ctx.request_repaint();
+    }
+
+    /// Open the choosing phase: every supported platform on the canvas,
+    /// packed to fit, each viewport wearing its choose overlay. The take
+    /// starts when one of them is clicked; Cancel puts the canvas back.
+    fn start_choosing(&mut self, ctx: &egui::Context) {
+        if !self
+            .recording_mode
+            .open_choosing(self.recorded_targets(), self.open_platforms.clone())
+        {
+            return;
+        }
+        self.open_platforms = platform_catalog::PLATFORMS
+            .iter()
+            .filter(|p| toolbar::platform_supported(p, &self.manifest))
+            .collect();
+        // Pack chooses the zoom that fits everything, so every candidate is
+        // in view when the overlays appear.
+        self.arrange = Some(device_window::ArrangeMode::Pack);
+        ctx.request_repaint();
+    }
+
+    /// The datasets each target already carries in the widget's capture
+    /// config — the overlays badge them, since choosing one again overwrites
+    /// its fixture on Save.
+    fn recorded_targets(&self) -> std::collections::HashMap<String, Vec<String>> {
+        let mut recorded = std::collections::HashMap::<String, Vec<String>>::new();
+        let Some(widget_root) = self.cli.resolved_widget_root() else {
+            return recorded;
+        };
+        let capture_dir = widget_root.join("capture");
+        let Ok(config) = bmc_wasm_runtime::capture_config::load_from_capture_dir(&capture_dir)
+        else {
+            return recorded;
+        };
+        for (dataset, target) in config.capture_matrix() {
+            recorded
+                .entry(target.to_string())
+                .or_default()
+                .push(dataset.to_owned());
+        }
+        recorded
+    }
+
+    /// Enter recording mode: pin the canvas to the take's platform and retire
+    /// every tile, so the next redraw rebuilds them through `build_views` with
+    /// the recording config, inline.
+    ///
+    /// Ctx-free, so startup (`--record`) can call it before the first frame;
+    /// UI callers follow it with `request_repaint`.
+    /// The take wipes the recorded viewport's KV store for a deterministic
+    /// baseline, so the live dir is stashed aside first and put back on exit.
+    pub(crate) fn enter_recording(&mut self, target: platform_catalog::Target, dataset: String) {
+        if self.recording_mode.active().is_some() {
+            tracing::warn!("record: already recording, ignoring a second entry");
+            return;
+        }
+        let kv_stash = self.stash_kv_dir(target);
+        let started = self.recording_mode.begin_take(
+            target,
+            dataset,
+            self.cli.resolved_widget_root(),
+            &self.params,
+            &self.system,
+            &self.credentials,
+            kv_stash,
+            &self.open_platforms,
+        );
+        assert!(started, "BUG: begin_take refused after the active() guard");
+        self.teardown.views.extend(std::mem::take(&mut self.tiles));
+        self.open_platforms = vec![target.platform];
+        // Repack once the rebuilt views exist: the recording sidebar just
+        // took a slice of the canvas, and the window would sit under it.
+        self.arrange = Some(device_window::ArrangeMode::Pack);
+    }
+
+    /// Save the take: write the fixture first — it drains the live view,
+    /// which the unwind then retires — and put the canvas back after.
+    /// The outcome stays on screen as a notice; the unwound canvas alone
+    /// would say nothing about where the fixture went.
+    fn save_recording(&mut self, ctx: &egui::Context) {
+        let Some((take, unwind)) = self.recording_mode.finish() else {
+            return;
+        };
+        self.notice = Some(match self.write_recording(take) {
+            Ok(text) => Notice::success(text),
+            Err(text) => Notice::error(text),
+        });
+        self.apply_record_unwind(unwind, ctx);
+    }
+
+    /// Cancel whichever record phase is on, putting the canvas back.
+    fn cancel_record_mode(&mut self, ctx: &egui::Context) {
+        let Some(unwind) = self.recording_mode.end() else {
+            return;
+        };
+        self.apply_record_unwind(unwind, ctx);
+    }
+
+    /// Undo what the record mode displaced, per what its end handed back.
+    fn apply_record_unwind(&mut self, unwind: RecordUnwind, ctx: &egui::Context) {
+        match unwind {
+            // The extras close; views the restored canvas keeps are plain
+            // and stay as they are.
+            RecordUnwind::Choosing { restore_platforms } => {
+                let (kept, closed): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tiles)
+                    .into_iter()
+                    .partition(|view| restore_platforms.iter().any(|p| p.id == view.platform.id));
+                self.tiles = kept;
+                self.teardown.views.extend(closed);
+                self.open_platforms = restore_platforms;
+            }
+            // Every view carries the recording config, so all of them retire
+            // and rebuild plain; the stashed KV dir goes back.
+            RecordUnwind::Take {
+                restore_platforms,
+                kv_stash: (live, stash),
+            } => {
+                let _ = std::fs::remove_dir_all(&live);
+                if let Some(stash) = stash
+                    && let Err(e) = std::fs::rename(&stash, &live)
+                {
+                    tracing::warn!("record: cannot restore KV dir {}: {e}", live.display());
+                }
+                self.teardown.views.extend(std::mem::take(&mut self.tiles));
+                self.open_platforms = restore_platforms;
+            }
+        }
+        // The canvas widens by the sidebar's slice on the way out, and the
+        // windows were placed against the narrower one — entering already
+        // repacked them, so there is no untouched arrangement left to keep.
+        self.arrange = Some(device_window::ArrangeMode::Pack);
+        ctx.request_repaint();
+    }
+
+    /// Move the take's KV dir to a `.pre-record` sibling,
+    /// returning `(live, stash)`. A rename rather than a key snapshot,
+    /// since the snapshot format is string-typed and this must be exact.
+    fn stash_kv_dir(&self, target: platform_catalog::Target) -> (PathBuf, Option<PathBuf>) {
+        let live = self.kv_dir(target.platform, target.viewport.id);
+        if !live.exists() {
+            return (live, None);
+        }
+        let stash = live.with_extension("pre-record");
+        let _ = std::fs::remove_dir_all(&stash);
+        match std::fs::rename(&live, &stash) {
+            Ok(()) => (live, Some(stash)),
+            Err(e) => {
+                tracing::warn!("record: cannot stash KV dir {}: {e}", live.display());
+                (live, None)
+            }
+        }
     }
 
     /// Make sure every open platform has its views, building the missing ones.
@@ -1458,7 +1625,10 @@ impl TestbedApp {
             })?
             .into();
         let first_build = self.tiles.is_empty();
-        let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+        let active_record_idx = self
+            .recording_mode
+            .active()
+            .map(RecordingState::active_tile);
 
         let mut tiles = Vec::with_capacity(platform.viewports.len());
         for (tile_idx, viewport) in platform.viewports.iter().enumerate() {
@@ -1506,15 +1676,12 @@ impl TestbedApp {
         // so the fixture's `header.kv` reproduces the initial state on replay.
         let recording_kv = self
             .recording_mode
-            .state
-            .as_ref()
-            .filter(|rec| rec.target.platform.id == platform.id)
-            .and_then(|rec| platform.viewports.get(rec.active_tile))
-            .map(|viewport| self.kv_dir(platform, viewport.id));
-        if let Some(kv_path) = recording_kv
-            && let Some(rec) = self.recording_mode.state.as_mut()
-        {
-            rec.kv_snapshot = snapshot_kv_dir(&kv_path);
+            .active()
+            .filter(|rec| rec.target().platform.id == platform.id)
+            .map(|rec| self.kv_dir(platform, rec.target().viewport.id));
+        if let Some(kv_path) = recording_kv {
+            self.recording_mode
+                .set_kv_baseline(snapshot_kv_dir(&kv_path));
         }
         self.tiles.extend(tiles);
         Ok(())
@@ -1534,7 +1701,8 @@ impl TestbedApp {
         painter: &mut egui_glow::Painter,
         window: &window::GlWindow,
     ) -> Result<DeviceView> {
-        if self.views == ViewPlacement::OwnThread {
+        let placement = placement_for_build(self.views, self.recording_mode.active().is_some());
+        if placement == ViewPlacement::OwnThread {
             // Only the context is tried here. A build that fails on the worker
             // would fail inline too — a bad wasm is not a threading problem —
             // so that one is reported rather than quietly downgraded.
@@ -1596,16 +1764,11 @@ impl TestbedApp {
     /// The observer stamps `at_ms` against the take's own start, so a view
     /// rebuilt mid-recording keeps writing on the timeline earlier events used.
     fn view_runtime_config(&self, kv_path: PathBuf, recording: bool) -> RuntimeConfig {
-        let recording_start = self
-            .recording_mode
-            .state
-            .as_ref()
-            .filter(|_| recording)
-            .map(|rec| rec.recording_start);
+        let recording_start = self.recording_mode.take_epoch().filter(|_| recording);
         let mut config = if let Some(start) = recording_start {
             fixtures::build_unified_recording_config(
                 kv_path,
-                self.recording_mode.fetch_events.clone(),
+                self.recording_mode.fetch_buffer(),
                 start,
             )
         } else {
@@ -1705,7 +1868,10 @@ impl TestbedApp {
         // In recording mode only the active view runs; `App::ui` paints the rest
         // as blank slabs. Skipping their render keeps the visual focus clear,
         // and stops idle runtimes spending fuel on frames nobody keeps.
-        let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
+        let active_record_idx = self
+            .recording_mode
+            .active()
+            .map(RecordingState::active_tile);
         // The perf report follows the first live view (placeholders have none).
         let perf_idx = self.tiles.iter().position(DeviceView::is_live);
         let mut next_wake_ms: Option<u64> = None;
@@ -2271,6 +2437,7 @@ impl TestbedApp {
         self.paint_toolbar(root_ui);
         self.paint_status_bar(root_ui);
         self.paint_right_panel(root_ui);
+        self.paint_recording_sidebar(root_ui);
 
         // The canvas: a pannable backdrop the device windows float over.
         // Dragging any empty spot moves every canvas window in step.
@@ -2294,11 +2461,77 @@ impl TestbedApp {
             });
 
         self.paint_device_windows(&ctx, time_s);
-        self.paint_recording_window(&ctx);
+        self.paint_notice(&ctx);
+        // The overlay's click, deferred here: it lands inside a borrow of the
+        // choosing state, and entering the take swaps the whole canvas.
+        if let Some(target) = self.recording_mode.take_choice() {
+            self.enter_recording(target, default_dataset(target));
+            ctx.request_repaint();
+        }
 
         // Earliest tile deadline, capped at the drain tick for deliveries + chrome.
         let repaint_ms = next_wake_ms.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
+    }
+
+    /// The saved-a-take banner, floating over the top of the canvas.
+    ///
+    /// A take leaves nothing else behind — the sidebar, the pinned platform and
+    /// the log all go with the unwind — so the write's result is stated here:
+    /// where the fixture landed, how much it holds, and what to run next.
+    fn paint_notice(&mut self, ctx: &egui::Context) {
+        const OK: egui::Color32 = egui::Color32::from_rgb(120, 200, 150);
+
+        let Some(notice) = &self.notice else { return };
+        if notice.shown_at.elapsed() > Notice::TTL {
+            self.notice = None;
+            return;
+        }
+        let error = notice.error;
+        let text = notice.text.clone();
+
+        let palette = self.theme.palette(ctx);
+        let accent = if error { palette.record_accent } else { OK };
+        let (icon, heading) = if error {
+            (&mut self.icons.warning, "Recording failed")
+        } else {
+            (&mut self.icons.saved, "Recording saved")
+        };
+
+        let mut dismissed = false;
+        egui::Area::new(egui::Id::new("testbed_notice"))
+            .order(egui::Order::Foreground)
+            .fixed_pos(egui::pos2(
+                self.canvas.rect.center().x - NOTICE_W / 2.0,
+                self.canvas.rect.min.y + 16.0,
+            ))
+            .show(ctx, |ui| {
+                egui::Frame::NONE
+                    .fill(palette.panel_fill)
+                    .stroke(egui::Stroke::new(1.0_f32, accent))
+                    .corner_radius(4.0)
+                    .inner_margin(10.0)
+                    .show(ui, |ui| {
+                        ui.set_width(NOTICE_W);
+                        ui.horizontal(|row| {
+                            row.spacing_mut().item_spacing.x = 8.0;
+                            let icon_rect = row
+                                .allocate_exact_size(egui::Vec2::splat(16.0), egui::Sense::hover())
+                                .0;
+                            icon.paint(row, icon_rect, accent);
+                            row.label(egui::RichText::new(heading).color(accent).strong());
+                        });
+                        ui.add_space(4.0);
+                        ui.label(egui::RichText::new(text).font(egui::FontId::monospace(11.0)));
+                    });
+                dismissed = ui
+                    .interact(ui.min_rect(), ui.id().with("dismiss"), egui::Sense::click())
+                    .on_hover_text("dismiss")
+                    .clicked();
+            });
+        if dismissed {
+            self.notice = None;
+        }
     }
 }
 
