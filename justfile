@@ -121,6 +121,12 @@ fmt-images *PATHS:
 validate-full:
     nix flake check -L --option max-jobs 4
 
+# One nix check attribute, as the CI check jobs run it: `just check nextest`,
+# `check clippy`, `check build`. These build in the `ci` profile, which is where
+# Mesa and surfaceless EGL come from — the GL-harness tests cannot run outside it.
+check ATTR:
+    nix build .#{{ ATTR }} -L --no-link
+
 # === Tooling ===
 
 # Find unused workspace dependencies declared in Cargo.toml.
