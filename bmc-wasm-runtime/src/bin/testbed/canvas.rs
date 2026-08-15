@@ -29,10 +29,11 @@ use std::collections::HashMap;
 
 use egui::emath::TSTransform;
 
-/// Zoom range. The floor keeps a canvas full of devices legible; the ceiling
-/// is where one small device already fills the pane.
+/// Zoom range. The floor keeps a canvas full of devices legible.
+/// The ceiling is the device's own pixels: beyond them, type is judged
+/// at a size it never has on hardware.
 pub(super) const MIN_ZOOM: f32 = 0.1;
-pub(super) const MAX_ZOOM: f32 = 4.0;
+pub(super) const MAX_ZOOM: f32 = 1.0;
 
 /// Breathing room left around the windows when fitting them.
 const FIT_MARGIN: f32 = 16.0;
@@ -173,12 +174,34 @@ mod tests {
         let anchor = egui::pos2(400.0, 300.0);
         let before = canvas.to_screen.inverse() * anchor;
 
-        canvas.zoom_about(2.5, anchor);
+        // Out, not in: the ceiling is 1× and the canvas starts there, so
+        // zooming in would clamp to a transform identical to the one under
+        // test and hold the anchor for no reason.
+        canvas.zoom_about(0.4, anchor);
 
         let after = canvas.to_screen.inverse() * anchor;
         assert!(
             (before - after).length() < 0.01,
             "the canvas point under {anchor:?} moved from {before:?} to {after:?}"
+        );
+    }
+
+    #[test]
+    fn fitting_one_small_device_stops_at_its_own_pixels() {
+        let mut canvas = canvas();
+        canvas.request_fit();
+        // A BMM100 panel on a canvas with room for ten of them.
+        canvas.record(
+            egui::Id::new("window"),
+            egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(320.0, 240.0)),
+        );
+
+        canvas.apply_pending_fit();
+
+        assert!(
+            canvas.zoom() <= super::MAX_ZOOM,
+            "a fit magnified the device to {}×, which shows pixels the hardware does not have",
+            canvas.zoom(),
         );
     }
 

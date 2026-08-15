@@ -161,6 +161,7 @@ const WINDOW_INSET: egui::Margin = egui::Margin::ZERO;
 ///
 /// `width` is the body's: a window sizes to its widest child, so a strip
 /// taking whatever is offered would set the width and pad narrow platforms.
+///
 fn title_strip(ui: &mut egui::Ui, title: &str, width: f32, palette: &super::theme::Palette) {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TITLE_H), egui::Sense::hover());
     // Nothing else marks these as draggable, and fading rather than
