@@ -1438,6 +1438,7 @@ dependencies = [
  "rodio",
  "roxmltree 0.20.0",
  "rrule",
+ "rustix 0.38.44",
  "rustls 0.23.37",
  "serde",
  "serde_json",

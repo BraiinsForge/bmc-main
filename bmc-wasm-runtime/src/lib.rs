@@ -115,6 +115,7 @@ mod audio_registry;
 pub mod disk_cache;
 pub use disk_cache::DiskCache;
 mod host_api;
+mod image_decode_lock;
 pub mod led_request;
 pub mod network;
 mod package_assets;

@@ -31,7 +31,7 @@ use bmc_render::{
 use bmc_wasm_protocol::{BitmapSampling, ImageJobId, PackageAssetId, PackageAssetKind};
 use wasmi::{Caller, Extern, Linker};
 
-use crate::host_api::{CacheWriteOutcome, CompletedImageDecode, HostState};
+use crate::host_api::{CacheWriteOutcome, CompletedImageDecode, DecodedImage, HostState};
 use crate::renderer_assets::{
     AssetBacking, RendererAssetId, RendererAssetKind, cached_bitmap_dimensions,
 };
@@ -496,6 +496,52 @@ fn decode_target_within_budget(max_w: u32, max_h: u32) -> bool {
         .is_some_and(|px| px <= MAX_DECODE_IMAGE_PIXELS)
 }
 
+type TimedBitmapDecode = (std::result::Result<DecodedImage, String>, u64);
+
+fn decode_bitmap_fit(
+    data: &[u8],
+    max_w: u32,
+    max_h: u32,
+    cover: bool,
+    lock_path: Option<&std::path::Path>,
+) -> TimedBitmapDecode {
+    let permit = match crate::image_decode_lock::ImageDecodePermit::acquire(lock_path) {
+        Ok(permit) => permit,
+        Err(error) => return (Err(error.to_string()), 0),
+    };
+    // Timed from permit grant so lock waits don't inflate the decode profile;
+    // failures and panics stay timed like successes.
+    let started = std::time::Instant::now();
+    // Report panics as completed failures so the in-flight slot is released.
+    let outcome = std::panic::catch_unwind(|| {
+        #[cfg(feature = "profiling")]
+        let probe = bmc_render::profile::MemProbe::start();
+        let decoded = if cover {
+            decode_scaled_to_cover(data, max_w, max_h)
+        } else {
+            decode_scaled_to_fit(data, max_w, max_h)
+        }
+        .map_err(|error| error.to_string())?;
+        #[cfg(feature = "profiling")]
+        log_host_decode_image(
+            decoded.1,
+            decoded.2,
+            u32::try_from(data.len()).expect("BUG: guest image length originated as u32"),
+            &probe,
+        );
+        Ok(decoded)
+    });
+    let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
+    match outcome {
+        Ok(Ok((rgba, width, height))) => (
+            Ok(DecodedImage::new(rgba, width, height, permit)),
+            decode_us,
+        ),
+        Ok(Err(error)) => (Err(error), decode_us),
+        Err(_) => (Err("image decode panicked".to_owned()), decode_us),
+    }
+}
+
 /// Decode off the render thread, register when done.
 /// Returns a job id (`0` = rejected); guest notified via `__on_image_ready`.
 fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
@@ -555,32 +601,22 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
             state.in_flight_image_decodes += 1;
             let tx = state.image_decode_tx.clone();
             let cache = state.asset_cache.clone();
+            let image_decode_lock_path = state.image_decode_lock_path.clone();
             let saved_at = u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
             std::thread::spawn(move || {
-                let started = std::time::Instant::now();
-                #[cfg(feature = "profiling")]
-                let probe = bmc_render::profile::MemProbe::start();
-                // catch_unwind so a decode panic still reports a failed job and
-                // releases the in-flight slot instead of leaking it forever.
-                let result = std::panic::catch_unwind(|| {
-                    if cover != 0 {
-                        decode_scaled_to_cover(&data, max_w, max_h)
-                    } else {
-                        decode_scaled_to_fit(&data, max_w, max_h)
-                    }
-                    .map_err(|e| e.to_string())
-                })
-                .unwrap_or_else(|_| Err("image decode panicked".to_owned()));
-                let decode_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                #[cfg(feature = "profiling")]
-                if let Ok((_, w, h)) = &result {
-                    log_host_decode_image(*w, *h, data_len, &probe);
-                }
+                let (result, decode_us) = decode_bitmap_fit(
+                    &data,
+                    max_w,
+                    max_h,
+                    cover != 0,
+                    image_decode_lock_path.as_deref(),
+                );
                 // Write-at-decode, off the render thread; the first draw restores from it.
-                let cache_write = if let (Ok((rgba, w, h)), Some(cache)) = (&result, &cache) {
+                let cache_write = if let (Ok(decoded), Some(cache)) = (&result, &cache) {
+                    let (rgba, width, height) = decoded.into();
                     let mut meta = Vec::with_capacity(8 + identity.len());
-                    meta.extend_from_slice(&w.to_le_bytes());
-                    meta.extend_from_slice(&h.to_le_bytes());
+                    meta.extend_from_slice(&width.to_le_bytes());
+                    meta.extend_from_slice(&height.to_le_bytes());
                     meta.extend_from_slice(&identity);
                     match cache.put(&raw_tag, saved_at, &meta, rgba) {
                         Ok(()) => CacheWriteOutcome::Stored,
@@ -865,13 +901,14 @@ fn decode_image_rgba_limited(data: &[u8]) -> Result<image::RgbaImage> {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
     use std::io::Cursor;
 
     use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba, RgbaImage};
 
     use super::{
-        MAX_DECODE_IMAGE_PIXELS, decode_image_rgba_limited, decode_target_within_budget,
-        probe_image_dimensions, rgba_byte_len_limited,
+        MAX_DECODE_IMAGE_PIXELS, decode_bitmap_fit, decode_image_rgba_limited,
+        decode_target_within_budget, probe_image_dimensions, rgba_byte_len_limited,
     };
 
     #[test]
@@ -904,6 +941,34 @@ mod tests {
 
         assert_eq!((rgba.width(), rgba.height()), (2, 2));
         assert_eq!(rgba.as_raw().len(), 16);
+    }
+
+    #[test]
+    fn decode_bitmap_fit_holds_the_device_wide_permit() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir should be available");
+        let path = dir.path().join("image-decode.lock");
+        let encoded = encode(ImageFormat::Png);
+        let (result, _) = decode_bitmap_fit(&encoded, 2, 2, false, Some(&path));
+        let decoded = result.expect("BUG: fixture should decode");
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("BUG: contender should open the image decode lock");
+
+        let error = rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .expect_err("fit decode must hold the device-wide permit");
+        assert_eq!(error, rustix::io::Errno::WOULDBLOCK);
+
+        drop(decoded);
+        rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .expect("permit should release with the decoded image");
     }
 
     #[test]

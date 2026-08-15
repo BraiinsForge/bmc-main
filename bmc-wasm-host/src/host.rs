@@ -44,6 +44,8 @@ pub struct SharedHost {
     pub scratch: SharedRenderScratch,
     pub font_cache: FontCache,
     pub(crate) module_cache: ModuleCache,
+    /// Path to the device-wide image decode lock.
+    pub image_decode_lock_path: std::path::PathBuf,
     gpu_render_lock: GpuRenderLock,
     gl_sync_support: GpuCompletionWaitStrategy,
 }
@@ -52,7 +54,11 @@ pub struct SharedHost {
 pub struct FontCache;
 
 impl SharedHost {
-    pub fn init(display_max_w: u32, display_max_h: u32) -> anyhow::Result<(Self, FemtoVgRenderer)> {
+    pub fn init(
+        display_max_w: u32,
+        display_max_h: u32,
+        image_decode_lock_path: std::path::PathBuf,
+    ) -> anyhow::Result<(Self, FemtoVgRenderer)> {
         tracing::info!(
             display_max_w,
             display_max_h,
@@ -84,6 +90,7 @@ impl SharedHost {
                 scratch,
                 font_cache: FontCache,
                 module_cache: ModuleCache::new(),
+                image_decode_lock_path,
                 gpu_render_lock,
                 gl_sync_support,
             },

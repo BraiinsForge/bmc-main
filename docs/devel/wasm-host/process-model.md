@@ -59,6 +59,20 @@ The default lockfile is derived from the socket path:
 /run/bmc/wasm-host-sdk-v{major}.lock
 ```
 
+Image-widget fit decodes share a separate device-wide lockfile named `image-decode.lock` in the socket's directory:
+
+```text
+/run/bmc/image-decode.lock
+```
+
+The file name is fixed within the directory, so hosts for different SDK majors — which run concurrently through an
+upgrade — serialize their decodes on the same lock, while a custom `--host-socket` directory gets its own writable,
+hermetic lock.
+
+Each fit-decode job holds the shared exclusive lock through decode, resize, cache persistence, and GPU upload. The
+decoded RGBA buffer is released before the lock, preventing another host from starting a decode while the prior image
+remains in anonymous memory.
+
 The SDK major is `bmc_wasm_protocol::SDK_VERSION.0`. A future incompatible SDK major gets a different socket and
 therefore a different host process.
 

@@ -49,6 +49,7 @@ use bmc_wasm_protocol::{
 };
 
 use crate::audio_registry::AudioRegistry;
+use crate::image_decode_lock::ImageDecodePermit;
 use crate::network::NetworkInfo;
 use crate::runtime::{CredentialView, ParamsSnapshot};
 use crate::runtime_limits::RuntimeResourceLimits;
@@ -198,6 +199,39 @@ impl FetchState {
     }
 }
 
+/// A decoded RGBA buffer that retains the device-wide permit through consumption.
+#[derive(Debug)]
+pub struct DecodedImage {
+    rgba: Vec<u8>,
+    width: u32,
+    height: u32,
+    permit: ImageDecodePermit,
+}
+
+impl DecodedImage {
+    pub(crate) fn new(rgba: Vec<u8>, width: u32, height: u32, permit: ImageDecodePermit) -> Self {
+        Self {
+            rgba,
+            width,
+            height,
+            permit,
+        }
+    }
+
+    pub(crate) fn consume_with_rgba<R>(self, consume: impl FnOnce(&[u8], u32, u32) -> R) -> R {
+        let result = consume(&self.rgba, self.width, self.height);
+        drop(self.rgba);
+        drop(self.permit);
+        result
+    }
+}
+
+impl<'a> From<&'a DecodedImage> for (&'a [u8], u32, u32) {
+    fn from(value: &'a DecodedImage) -> Self {
+        (&value.rgba, value.width, value.height)
+    }
+}
+
 /// A completed off-thread image decode, ready for GPU upload and delivery.
 #[derive(Debug)]
 pub enum CacheWriteOutcome {
@@ -211,7 +245,7 @@ pub struct CompletedImageDecode {
     pub raw_tag: String,
     /// Registry tag (slot-namespaced) for the GPU texture upload.
     pub tag: String,
-    pub result: Result<(Vec<u8>, u32, u32), String>,
+    pub result: Result<DecodedImage, String>,
     pub cache_write: CacheWriteOutcome,
     pub decode_us: u64,
 }
@@ -806,6 +840,8 @@ pub(crate) struct HostState {
     /// Number of image decodes currently in flight.
     pub in_flight_image_decodes: u32,
 
+    pub(crate) image_decode_lock_path: Option<std::path::PathBuf>,
+
     /// Parsed JSON documents, keyed by doc_id.
     pub json_docs: HashMap<JsonId, Value>,
 
@@ -1177,6 +1213,7 @@ impl HostState {
             staged_guest_deliveries: StagedGuestDeliveries::default(),
             next_image_job_id: 1,
             in_flight_image_decodes: 0,
+            image_decode_lock_path: None,
             json_docs: HashMap::new(),
             next_json_id: 1,
             xml_indices: HashMap::new(),
@@ -1337,12 +1374,52 @@ impl HostState {
 
 #[cfg(test)]
 mod tests {
+    use std::fs::OpenOptions;
+
     use super::{
-        CancelDisposition, DelayedFetch, FetchState, FrameScheduleState, HermeticRun, HostState,
-        RendererAssetGate,
+        CancelDisposition, DecodedImage, DelayedFetch, FetchState, FrameScheduleState, HermeticRun,
+        HostState, RendererAssetGate,
     };
-    use crate::runtime_limits::RuntimeResourceLimits;
     use bmc_wasm_protocol::FetchRequestId;
+
+    use crate::image_decode_lock::ImageDecodePermit;
+    use crate::runtime_limits::RuntimeResourceLimits;
+
+    #[test]
+    fn decoded_image_holds_permit_while_rgba_is_consumed() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir should be available");
+        let path = dir.path().join("image-decode.lock");
+        let decoded = DecodedImage::new(
+            vec![0; 4],
+            1,
+            1,
+            ImageDecodePermit::acquire(Some(&path))
+                .expect("BUG: image decode permit should be available"),
+        );
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .expect("BUG: contender should open the image decode lock");
+
+        let rgba_len = decoded.consume_with_rgba(|rgba, width, height| {
+            assert_eq!((width, height), (1, 1));
+            let error = rustix::fs::flock(
+                &contender,
+                rustix::fs::FlockOperation::NonBlockingLockExclusive,
+            )
+            .expect_err("next decode must wait while GPU upload consumes RGBA");
+            assert_eq!(error, rustix::io::Errno::WOULDBLOCK);
+            rgba.len()
+        });
+        assert_eq!(rgba_len, 4);
+
+        rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .expect("image decode permit should release after RGBA consumption");
+    }
 
     /// A cancel names one request, and an id naming none can never settle.
     /// Remembering it would grow `cancelled` for as long as the widget runs,

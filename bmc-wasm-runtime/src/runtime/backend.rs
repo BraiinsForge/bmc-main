@@ -228,6 +228,8 @@ pub struct RuntimeConfig {
     pub event_fixtures: Vec<FixtureEvent>,
     /// Per-runtime caps for host-side resources such as fetches and sockets.
     pub resource_limits: RuntimeResourceLimits,
+    /// Shared file whose exclusive lock permits one image decode at a time.
+    pub image_decode_lock_path: Option<std::path::PathBuf>,
     /// MSAA samples used by the mesh atlas renderer. `0` disables mesh MSAA.
     pub mesh_msaa_samples: u32,
     /// Seed for the host RNG.
@@ -294,6 +296,7 @@ impl Default for RuntimeConfig {
             record_events: false,
             event_fixtures: Vec::new(),
             resource_limits: RuntimeResourceLimits::default(),
+            image_decode_lock_path: None,
             mesh_msaa_samples: 0,
             rng_seed: None,
             led_request_sender: None,
@@ -917,6 +920,7 @@ impl WasmWidgetRuntime {
             record_events,
             event_fixtures,
             resource_limits,
+            image_decode_lock_path,
             rng_seed,
             led_request_sender,
             animation_frame_delay_ms,
@@ -954,6 +958,7 @@ impl WasmWidgetRuntime {
         state.kv_store_path = kv_store_path;
         state.asset_cache = asset_cache;
         state.package_assets = package_assets;
+        state.image_decode_lock_path = image_decode_lock_path;
         if let Some(token) = instance_token {
             state.instance_id = token;
         }

@@ -340,10 +340,17 @@ impl WasmWidgetRuntime {
             let skip_dormant_upload = dormant && !cache_backed;
             let bitmap_id = match done.result {
                 Ok(_) if skip_dormant_upload => 0,
-                Ok((rgba, w, h)) => {
+                Ok(decoded) => decoded.consume_with_rgba(|rgba, width, height| {
                     let started = std::time::Instant::now();
                     let id = self
-                        .register_decoded_bitmap(&done.raw_tag, &done.tag, &rgba, w, h, backing)
+                        .register_decoded_bitmap(
+                            &done.raw_tag,
+                            &done.tag,
+                            rgba,
+                            width,
+                            height,
+                            backing,
+                        )
                         .map_or(0, BitmapId::to_ffi);
                     let upload_us =
                         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
@@ -353,7 +360,7 @@ impl WasmWidgetRuntime {
                             .add_profile_us("image_upload_us", upload_us);
                     }
                     id
-                }
+                }),
                 Err(e) => {
                     tracing::error!(job = done.job_id.to_wire(), "image decode failed: {e}");
                     0

@@ -110,6 +110,18 @@ pub fn derive_log_path(socket_path: &std::path::Path) -> std::path::PathBuf {
     std::path::PathBuf::from(format!("/var/log/bmc/{flat}.log"))
 }
 
+/// Derive the path to the device-wide image decode lock for the host
+/// serving `socket_path`.
+///
+/// The file name is fixed within the socket's directory, so every host
+/// there — including different SDK majors running through an upgrade —
+/// serializes decodes on the same lock, while a custom socket directory
+/// (tests, sandboxes) gets its own writable, hermetic lock.
+#[must_use]
+pub fn derive_image_decode_lock_path(socket_path: &std::path::Path) -> std::path::PathBuf {
+    socket_path.with_file_name("image-decode.lock")
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub enum HelloMsg {
     Load {
@@ -365,6 +377,33 @@ mod log_path_tests {
         assert_eq!(
             derive_log_path(Path::new("/")),
             Path::new("/var/log/bmc/bmc-wasm-host.log")
+        );
+    }
+}
+
+#[cfg(test)]
+mod image_decode_lock_path_tests {
+    use std::path::Path;
+
+    use super::derive_image_decode_lock_path;
+
+    #[test]
+    fn hosts_sharing_a_socket_directory_share_the_lock() {
+        assert_eq!(
+            derive_image_decode_lock_path(Path::new("/run/bmc/wasm-host-sdk-v1.sock")),
+            derive_image_decode_lock_path(Path::new("/run/bmc/wasm-host-sdk-v2.sock")),
+        );
+        assert_eq!(
+            derive_image_decode_lock_path(Path::new("/run/bmc/wasm-host-sdk-v1.sock")),
+            Path::new("/run/bmc/image-decode.lock")
+        );
+    }
+
+    #[test]
+    fn custom_socket_directories_get_a_hermetic_lock() {
+        assert_eq!(
+            derive_image_decode_lock_path(Path::new("/tmp/e2e/host.sock")),
+            Path::new("/tmp/e2e/image-decode.lock")
         );
     }
 }

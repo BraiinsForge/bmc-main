@@ -58,7 +58,7 @@ use crate::lifecycle::{
     LifecycleEgl, LifecycleHook, LifecycleState, LifecycleStateMachine, LifecycleSurface,
     SlotApplyCtx, frame_callback_enabled, lifecycle_hook, should_render,
 };
-use crate::module_cache::{ModuleCache, ModuleLease};
+use crate::module_cache::ModuleLease;
 use crate::render_target::{EglRenderTarget, RenderTarget, RenderTargetFactory};
 
 /// Per-slot inter-frame floor — caps a misbehaving widget that returns
@@ -320,7 +320,7 @@ impl WidgetSlot {
     pub(crate) fn from_handshake(
         wasm_path: &Path,
         asset_root: Option<&Path>,
-        module_cache: &ModuleCache,
+        shared: &SharedHost,
         wayland_fd: std::os::fd::OwnedFd,
         control_socket: UnixStream,
         peer_pid: Option<libc::pid_t>,
@@ -342,7 +342,7 @@ impl WidgetSlot {
             settings = initial.settings.len(),
             "widget Wayland configure received"
         );
-        let module_load = module_cache.load(wasm_path)?;
+        let module_load = shared.module_cache.load(wasm_path)?;
         let digest = module_load.lease.digest();
         tracing::info!(
             ?peer_pid,
@@ -389,6 +389,7 @@ impl WidgetSlot {
                 credentials: credentials.clone(),
                 credential_secrets: credential_secrets.clone(),
                 led_request_sender: Some(led_tx),
+                image_decode_lock_path: Some(shared.image_decode_lock_path.clone()),
                 asset_cache: Some(DiskCache::new(
                     PathBuf::from(WIDGET_CACHE_DIR).join(&token),
                     WIDGET_CACHE_BUCKET_MAX_BYTES,

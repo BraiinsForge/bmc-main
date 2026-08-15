@@ -128,7 +128,7 @@ pub fn accept_and_load(
         WidgetSlot::from_handshake(
             &path,
             asset_root.as_deref(),
-            &shared.module_cache,
+            shared,
             wayland_fd,
             client.try_clone()?,
             peer_pid,

@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use anyhow::Context as _;
 use anyhow::Result;
 use bmc_wasm_host::startup::{StartupDecision, prepare_listener};
-use bmc_wasm_thin_protocol::{default_socket_path, derive_log_path};
+use bmc_wasm_thin_protocol::{default_socket_path, derive_image_decode_lock_path, derive_log_path};
 use clap::Parser;
 
 #[cfg(feature = "profiling")]
@@ -71,8 +71,11 @@ fn main() -> Result<()> {
     };
     tracing::info!(socket = %socket_path.display(), "listening");
 
-    let (mut shared, mut renderer) =
-        bmc_wasm_host::host::SharedHost::init(STAGING_MAX_WIDTH, STAGING_MAX_HEIGHT)?;
+    let (mut shared, mut renderer) = bmc_wasm_host::host::SharedHost::init(
+        STAGING_MAX_WIDTH,
+        STAGING_MAX_HEIGHT,
+        derive_image_decode_lock_path(&socket_path),
+    )?;
 
     if let Some(lock) = release_lock {
         lock.release()?;
