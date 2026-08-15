@@ -184,9 +184,7 @@ impl FemtoVgRenderer {
     /// Like [`Renderer::begin_frame`] but renders to the given Image instead of
     /// the screen FBO. femtovg manages its own FBO with stencil for the Image.
     ///
-    /// `set_size` sets the canvas device-pixel ratio (logical → physical scaling,
-    /// canvas-level) but queues `SetRenderTarget(Screen)`, so bind the Image after
-    /// it. The image must be `width·dpi_scale × height·dpi_scale` texels.
+    /// The image must be `width·dpi_scale × height·dpi_scale` texels.
     pub fn begin_frame_to_image(
         &mut self,
         image_id: femtovg::ImageId,
@@ -198,21 +196,32 @@ impl FemtoVgRenderer {
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
         self.frame_counter += 1;
-        self.canvas.set_size(width, height, dpi_scale);
+        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let (pw, ph) = (
+            (width as f32 * dpi_scale) as u32,
+            (height as f32 * dpi_scale) as u32,
+        );
+        self.canvas.set_size(pw, ph, dpi_scale);
         // femtovg 0.20.4: `set_size` queues a switch to the screen without updating the
         // target it remembers, so `set_render_target` skips the switch back as redundant
         // and a second frame into the same image lands on the screen, freezing the image.
         self.canvas.set_render_target(RenderTarget::Screen);
         self.canvas.set_render_target(RenderTarget::Image(image_id));
         self.frame_target = RenderTarget::Image(image_id);
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let (pw, ph) = (
-            (width as f32 * dpi_scale) as u32,
-            (height as f32 * dpi_scale) as u32,
-        );
         self.canvas
             .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+        self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame(self.frame_counter);
+    }
+
+    /// Put the canvas back into logical coordinates for the frame ahead.
+    ///
+    /// The reset comes first: the transform survives a frame in canvas state,
+    /// so premultiplying onto what the last frame left would square the ratio
+    /// every frame.
+    fn scale_to_logical(&mut self, dpi_scale: f32) {
+        self.canvas.reset_transform();
+        self.canvas.scale(dpi_scale, dpi_scale);
     }
 
     /// Run `inner` translated to the canvas origin `(cx, cy)`.
@@ -1233,10 +1242,11 @@ impl Renderer for FemtoVgRenderer {
         };
 
         // Rasterise the inner draw into `unblurred` at FBO-local coordinates.
-        // `reset` drops transform + scissor; the device-pixel ratio is canvas-level
-        // and survives, so logical coords still scale to physical.
+        // `reset` drops transform and scissor, and the scale has to go back on:
+        // the FBO is sized in physical pixels while the inner draw is logical.
         self.canvas.save();
         self.canvas.reset();
+        self.scale_to_logical(dpi);
         self.canvas
             .set_render_target(RenderTarget::Image(unblurred));
         self.canvas
@@ -1320,18 +1330,20 @@ impl Renderer for FemtoVgRenderer {
         }
         self.canvas.set_render_target(RenderTarget::Screen);
         self.frame_target = RenderTarget::Screen;
-        self.canvas.set_size(width, height, dpi_scale);
-        // clear_rect uses physical pixels when dpi_scale > 1.0
+        // Physical pixels: femtovg sizes its viewport in them, and takes `dpi`
+        // only as a tessellation hint. `clear_rect` is untransformed too.
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (pw, ph) = (
             (width as f32 * dpi_scale) as u32,
             (height as f32 * dpi_scale) as u32,
         );
+        self.canvas.set_size(pw, ph, dpi_scale);
         let clear = match clear {
             FrameClear::OpaqueBlack => femtovg::Color::rgbf(0.0, 0.0, 0.0),
             FrameClear::TransparentBlack => femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
         };
         self.canvas.clear_rect(0, 0, pw, ph, clear);
+        self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame(self.frame_counter);
     }
 
@@ -2109,6 +2121,89 @@ mod multiline_text_tests {
         let pixels = read_pixels_top_down(&harness.gl, fbo, W, H);
         drop(renderer);
         pixels
+    }
+
+    /// The whole point of `dpi_scale`: the caller keeps drawing in logical
+    /// pixels while the target holds `×dpi` of them. femtovg gives no such
+    /// scaling on its own — `set_size` spends `dpi` on tessellation tolerance —
+    /// so a frame that forgets the transform draws at 1× into the corner of its
+    /// target, which is what a widget preview zoomed past 1:1 used to show.
+    #[test]
+    fn a_dpi_scaled_frame_still_draws_in_logical_coordinates() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, W * 2, H * 2);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+
+        renderer.begin_frame(W, H, 2.0);
+
+        let transform = renderer.canvas.transform().0;
+        assert!(
+            (transform[0] - 2.0).abs() < f32::EPSILON && (transform[3] - 2.0).abs() < f32::EPSILON,
+            "logical coordinates must be premultiplied onto the device ratio, got {transform:?}",
+        );
+    }
+
+    /// Render `draw` at twice the device scale into a target of that size, and
+    /// return the physical pixels. Without the scale the drawing covers a
+    /// quarter of the target and the far corner stays black.
+    fn render_at_2x(draw: impl FnOnce(&mut FemtoVgRenderer)) -> Vec<[u8; 4]> {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, W * 2, H * 2);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        renderer.begin_frame(W, H, 2.0);
+        draw(&mut renderer);
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, W * 2, H * 2);
+        drop(renderer);
+        pixels
+    }
+
+    /// The pixel one in from the far corner, where a frame drawn at 1× into a
+    /// 2× target has nothing.
+    fn far_corner(pixels: &[[u8; 4]]) -> [u8; 4] {
+        let (w, h) = ((W * 2) as usize, (H * 2) as usize);
+        pixels[(h - 2) * w + (w - 2)]
+    }
+
+    #[test]
+    fn a_dpi_scaled_frame_fills_its_whole_target() {
+        let pixels = render_at_2x(|renderer| {
+            renderer.fill_rect(0.0, 0.0, W as f32, H as f32, Color::from_rgb(255, 255, 255));
+        });
+
+        assert!(
+            lit(far_corner(&pixels)),
+            "a logical-size fill must reach the far corner of a 2× target",
+        );
+    }
+
+    #[test]
+    fn a_dpi_scaled_drop_shadow_fills_its_whole_target() {
+        // The shadow's offscreen pass resets the canvas, which drops the scale
+        // unless it is put back — and the reset is inside `drop_shadow`, so no
+        // caller can compensate for it.
+        let pixels = render_at_2x(|renderer| {
+            renderer.drop_shadow(
+                0.0,
+                0.0,
+                W,
+                H,
+                0.0,
+                0.0,
+                0.0,
+                Color::from_rgb(0, 0, 0),
+                &mut |inner: &mut dyn Renderer| {
+                    inner.fill_rect(0.0, 0.0, W as f32, H as f32, Color::from_rgb(255, 255, 255));
+                },
+            );
+        });
+
+        assert!(
+            lit(far_corner(&pixels)),
+            "a shadowed draw must reach the far corner of a 2× target too",
+        );
     }
 
     fn lit(px: [u8; 4]) -> bool {
