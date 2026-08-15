@@ -345,6 +345,9 @@ pub(crate) struct DeviceView {
     pub(crate) platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
     pub(crate) shape: DisplayShape,
     label: String,
+    /// Names this view's KV store, so a hot reload points the rebuilt runtime
+    /// back at the store it was already using.
+    kv_key: String,
     width: u32,
     height: u32,
     led_count: Option<usize>,
@@ -395,6 +398,7 @@ impl DeviceView {
             platform,
             shape: placed.shape,
             label: placed.label.clone(),
+            kv_key: placed.kv_key.clone(),
             width,
             height,
             led_count: placed.led_count,
@@ -419,6 +423,7 @@ impl DeviceView {
             platform,
             shape: placed.shape,
             label: placed.label.clone(),
+            kv_key: placed.kv_key.clone(),
             width,
             height,
             led_count: placed.led_count,
@@ -440,6 +445,10 @@ impl DeviceView {
 
     pub(crate) fn label(&self) -> &str {
         &self.label
+    }
+
+    pub(crate) fn kv_key(&self) -> &str {
+        &self.kv_key
     }
 
     pub(crate) fn led_count(&self) -> Option<usize> {

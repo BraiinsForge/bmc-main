@@ -1314,9 +1314,8 @@ impl TestbedApp {
         Ok((prepared, wasm))
     }
 
-    /// Drain pending watcher events; if any fired, rebuild every tile's `WasmWidgetRuntime`
-    /// (and the host-owned `TileGpu`; see [`Self::reload_one_tile`] for why) from the
-    /// (now-updated) wasm bytes on disk.
+    /// Drain pending watcher events; if any fired, rebuild every live view's
+    /// runtime from the (now-updated) wasm bytes on disk.
     fn poll_hot_reload(&mut self) {
         let manual = self.hot_reload.manual_reload;
         self.hot_reload.manual_reload = false;
@@ -1347,40 +1346,38 @@ impl TestbedApp {
             tiles = self.tiles.len(),
             "hot reload: rebuilding tile runtime(s)"
         );
-        let params = self.params.clone();
-        let system = self.system.clone();
         // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
         // are re-delivered below — without that, a hot reload drops
         // a credential-fed widget back to its unbound state.
         let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
         let secrets = self.secrets.clone();
+        let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
         for idx in 0..self.tiles.len() {
-            let view = &mut self.tiles[idx];
-            let (platform, placed_shape) = (view.platform, view.shape);
+            let view = &self.tiles[idx];
             if !view.is_live() {
                 continue; // placeholder — no runtime to rebuild
             }
+            let (platform, placed_shape) = (view.platform, view.shape);
+            let (width, height) = (view.width(), view.height());
+            let label = view.label().to_owned();
             let (led_tx, led_rx) = if view.led_count().is_some() {
                 let (led_tx, led_rx) = std::sync::mpsc::channel();
                 (Some(led_tx), Some(led_rx))
             } else {
                 (None, None)
             };
+            // The same config the view was built with, so a reload keeps its
+            // KV store and — mid-recording — its fetch observer.
+            let kv_path = self.kv_dir(platform, view.kv_key());
+            let mut config = self.view_runtime_config(kv_path, active_record_idx == Some(idx));
+            config.led_request_sender = led_tx;
             let seed = view::ViewSeed {
                 wasm: Arc::clone(&wasm_bytes),
-                width: view.width(),
-                height: view.height(),
+                width,
+                height,
                 geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed_shape),
-                config: RuntimeConfig {
-                    params: params.clone(),
-                    system: system.clone(),
-                    led_request_sender: led_tx,
-                    asset_cache: self.cli.asset_cache(),
-                    package_assets: Some(PackageAssetStore::new(prepared_widget.asset_root())),
-                    url_rewrites: self.url_rewrites.clone(),
-                    ..RuntimeConfig::default()
-                },
-                label: view.label().to_owned(),
+                config,
+                label,
                 // Only live views reach here, and a view is live because its
                 // viewport was supported when it was built.
                 supported: true,
@@ -1391,6 +1388,7 @@ impl TestbedApp {
                 secrets: Box::new(secrets.clone()),
                 led_rx,
             };
+            let view = &mut self.tiles[idx];
             if let Err(e) = view.reload(seed, rebind) {
                 tracing::warn!("hot reload: {}: {e:#}", view.label());
             }
@@ -1461,21 +1459,6 @@ impl TestbedApp {
             .into();
         let first_build = self.tiles.is_empty();
         let active_record_idx = self.recording_mode.state.as_ref().map(|r| r.active_tile);
-        let widget_name = self
-            .cli
-            .wasm_path
-            .file_stem()
-            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
-        // Platform-qualified so two open devices sharing a viewport id
-        // (every platform names one "full") don't write into one store.
-        let kv_base = self
-            .cli
-            .wasm_path
-            .parent()
-            .unwrap_or_else(|| Path::new("."))
-            .join("widget_data")
-            .join(&widget_name)
-            .join(platform.id);
 
         let mut tiles = Vec::with_capacity(platform.viewports.len());
         for (tile_idx, viewport) in platform.viewports.iter().enumerate() {
@@ -1490,7 +1473,7 @@ impl TestbedApp {
             };
             // Active recording tile wipes its KV first so the fixture
             // starts from a known baseline.
-            let kv_path = kv_base.join(&placed.kv_key);
+            let kv_path = self.kv_dir(platform, &placed.kv_key);
             if active_record_idx == Some(tile_idx) {
                 let _ = std::fs::remove_dir_all(&kv_path);
                 let _ = std::fs::create_dir_all(&kv_path);
@@ -1521,11 +1504,16 @@ impl TestbedApp {
         }
         // Snapshot the active recording tile's KV directory at start
         // so the fixture's `header.kv` reproduces the initial state on replay.
-        if let Some(ref mut rec) = self.recording_mode.state
-            && rec.target.platform.id == platform.id
-            && let Some(viewport) = platform.viewports.get(rec.active_tile)
+        let recording_kv = self
+            .recording_mode
+            .state
+            .as_ref()
+            .filter(|rec| rec.target.platform.id == platform.id)
+            .and_then(|rec| platform.viewports.get(rec.active_tile))
+            .map(|viewport| self.kv_dir(platform, viewport.id));
+        if let Some(kv_path) = recording_kv
+            && let Some(rec) = self.recording_mode.state.as_mut()
         {
-            let kv_path = kv_base.join(viewport.id);
             rec.kv_snapshot = snapshot_kv_dir(&kv_path);
         }
         self.tiles.extend(tiles);
@@ -1581,16 +1569,44 @@ impl TestbedApp {
         ))
     }
 
+    /// Where one view keeps its KV store.
+    ///
+    /// Platform-qualified so two open devices sharing a viewport id
+    /// (every platform names one "full") don't write into one store.
+    fn kv_dir(&self, platform: &Platform, kv_key: &str) -> PathBuf {
+        let widget_name = self
+            .cli
+            .wasm_path
+            .file_stem()
+            .map_or("widget".into(), |s| s.to_string_lossy().into_owned());
+        self.cli
+            .wasm_path
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .join("widget_data")
+            .join(widget_name)
+            .join(platform.id)
+            .join(kv_key)
+    }
+
     /// Runtime config for one view, carrying the sidebar state it starts from.
     ///
     /// The recording view gets the unified fetch observer, so its traffic
     /// reaches the timeline; every other view takes the plain default.
+    /// The observer stamps `at_ms` against the take's own start, so a view
+    /// rebuilt mid-recording keeps writing on the timeline earlier events used.
     fn view_runtime_config(&self, kv_path: PathBuf, recording: bool) -> RuntimeConfig {
-        let mut config = if recording {
+        let recording_start = self
+            .recording_mode
+            .state
+            .as_ref()
+            .filter(|_| recording)
+            .map(|rec| rec.recording_start);
+        let mut config = if let Some(start) = recording_start {
             fixtures::build_unified_recording_config(
                 kv_path,
                 self.recording_mode.fetch_events.clone(),
-                std::time::Instant::now(),
+                start,
             )
         } else {
             RuntimeConfig {
