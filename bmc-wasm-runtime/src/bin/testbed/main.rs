@@ -1619,6 +1619,11 @@ impl TestbedApp {
         config.package_assets = Some(PackageAssetStore::new(self.prepared_widget.asset_root()));
         config.params = self.params.clone();
         config.system = self.system.clone();
+        // The sidebar's bindings as well: a rebuilt runtime starts unbound,
+        // and replay installs `initial_credentials` identically,
+        // so a recording's first delivery diffs against the operator's real state.
+        config.credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
+        config.credential_secrets = self.secrets.clone();
         config.url_rewrites.clone_from(&self.url_rewrites);
         config
     }
