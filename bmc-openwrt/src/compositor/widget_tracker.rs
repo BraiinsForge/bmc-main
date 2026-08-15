@@ -315,11 +315,6 @@ impl WidgetTracker {
         self.automatic_transition.is_some()
     }
 
-    #[must_use]
-    pub fn suppresses_frame_callbacks(&self) -> bool {
-        self.drag_offset().is_some() || self.automatic_transition_active()
-    }
-
     pub fn begin_automatic_transition_to_next(&mut self) -> Option<SceneTransitionTarget> {
         if self.drag_offset.is_some() {
             return None;
@@ -734,26 +729,6 @@ mod tests {
             t.presented_widget_ids(),
             std::collections::HashSet::from([String::from("active")])
         );
-    }
-
-    #[test]
-    fn suppresses_frame_callbacks_during_drag_or_automatic_transition() {
-        let mut t = WidgetTracker::with_screen_width(1000);
-        t.set_scene_cycling(vec![scene_with_widget("a"), scene_with_widget("b")]);
-
-        assert!(!t.suppresses_frame_callbacks());
-
-        t.start_drag();
-        assert!(t.suppresses_frame_callbacks());
-
-        t.end_drag(0, 0.0);
-        assert!(!t.suppresses_frame_callbacks());
-
-        t.begin_automatic_transition_to_next();
-        assert!(t.suppresses_frame_callbacks());
-
-        t.finish_automatic_transition();
-        assert!(!t.suppresses_frame_callbacks());
     }
 
     #[test]

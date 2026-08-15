@@ -101,7 +101,8 @@ const HEADLESS_REFRESH_MHZ: i32 = 60_000;
 /// transitions, since there is no DRM device to emit real ones.
 const FRAME_CALLBACK_TICK: Duration = Duration::from_millis(16);
 const TRANSITION_WARM_UP_RETRY: Duration = Duration::from_millis(16);
-const TRANSITION_WARM_UP_TIMEOUT: Duration = Duration::from_millis(300);
+// Device profiling observed valid incoming renders taking up to 615 ms.
+const TRANSITION_WARM_UP_TIMEOUT: Duration = Duration::from_secs(1);
 
 /// How often, while an alarm is ringing, the loop probes for a live overlay so
 /// a mid-ring overlay crash is noticed promptly (see `on_alarm_fallback_tick`).
@@ -616,9 +617,11 @@ impl EglCompositor {
                     .as_ref()
                     .and_then(|r| r.output().last_vblank_ms()),
             );
-            state
-                .compositor
-                .send_frame_callbacks_for_presented_widgets(time);
+            if !state.widget_frame_callbacks_suppressed() {
+                state
+                    .compositor
+                    .send_frame_callbacks_for_presented_widgets(time);
+            }
 
             TimeoutAction::ToDuration(FRAME_CALLBACK_TICK)
         }) {
@@ -1037,6 +1040,17 @@ struct AppState {
 }
 
 impl AppState {
+    /// Keep outgoing widgets animated during warm-up.
+    /// Suppress callbacks during scene motion to avoid contention with compositor work.
+    /// Suppressed callbacks remain queued.
+    fn widget_frame_callbacks_suppressed(&self) -> bool {
+        self.compositor.widgets.drag_offset().is_some()
+            || matches!(
+                self.automatic_cycling.phase(),
+                AutomaticCyclingPhase::Transition { .. }
+            )
+    }
+
     fn active_scene_cycle_duration(&self) -> Duration {
         self.compositor
             .widgets
@@ -1926,13 +1940,12 @@ struct TransitionWarmUp {
 /// Whether the slide may start: every incoming widget has committed a
 /// fresh frame since `transition_incoming` was sent.
 ///
-/// Readiness requires the generation to *strictly* advance — a widget that
-/// honours the render request commits within a frame, so this resolves in
-/// ~16 ms. The `TRANSITION_WARM_UP_TIMEOUT` ceiling is the deliberate
-/// escape hatch for the pathological case (a crashed/respawning widget, or
-/// one that ignores the request and never produces a new generation): it
-/// keeps a single misbehaving widget from stalling scene cycling forever,
-/// at the cost of sliding it in with a stale frame.
+/// Readiness requires the generation to *strictly* advance.
+/// Valid restoration and decoding can take hundreds of milliseconds;
+/// device profiling observed 615 ms even for responsive widgets.
+/// `TRANSITION_WARM_UP_TIMEOUT` caps the warm-up.
+/// This prevents indefinite stalls when a widget is crashed, respawning, or unresponsive.
+/// The timeout may instead slide it in with a stale frame.
 fn transition_warm_up_ready(
     warm_up: Option<&TransitionWarmUp>,
     now: Instant,
@@ -2797,11 +2810,10 @@ impl Compositor for EglCompositor {
 mod tests {
     use super::{
         ALARM_FALLBACK_GRACE, AppState, CompositorState, Emission, GestureConfig, GestureState,
-        LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState,
-        TRANSITION_WARM_UP_TIMEOUT, TouchSlot, TransitionWarmUp, clamp_initial_lifecycle,
-        dispatch_timeout, emit_lifecycle_batches, emit_lifecycle_transitions,
-        emit_transition_incoming_batch, handle_clear_pid_command, handle_command,
-        transition_incoming_widget_ids, transition_warm_up_ready,
+        LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
+        TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
+        emit_lifecycle_transitions, emit_transition_incoming_batch, handle_clear_pid_command,
+        handle_command, transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::CompositorCommand;
     use crate::compositor::scene_cycling::{
@@ -3261,6 +3273,45 @@ mod tests {
         state.on_scene_cycling_timer(now + Duration::from_millis(16));
 
         assert!(state.compositor.needs_redraw());
+    }
+
+    #[test]
+    fn pre_transition_keeps_widget_animation_running_until_motion_starts() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+        let now = Instant::now();
+        state
+            .compositor
+            .widgets
+            .begin_automatic_transition_to_next()
+            .expect("BUG: two scenes should have an automatic transition target");
+        state.automatic_cycling.enter_pre_transition(now);
+
+        assert!(!state.widget_frame_callbacks_suppressed());
+
+        state.automatic_cycling.enter_transition(now);
+
+        assert!(state.widget_frame_callbacks_suppressed());
+    }
+
+    #[test]
+    fn manual_drag_suppresses_widget_animation() {
+        let mut state = make_app_state();
+        state
+            .compositor
+            .widgets
+            .set_scene_cycling(vec![test_scene("a"), test_scene("b")]);
+
+        state.compositor.widgets.start_drag();
+
+        assert!(state.widget_frame_callbacks_suppressed());
+
+        state.compositor.widgets.end_drag(0, 0.0);
+
+        assert!(!state.widget_frame_callbacks_suppressed());
     }
 
     #[test]
@@ -3776,16 +3827,21 @@ mod tests {
     }
 
     #[test]
-    fn transition_warm_up_timeout_prevents_stalled_cycle() {
+    fn transition_warm_up_allows_one_second_for_a_slow_widget() {
         let started_at = Instant::now();
         let warm_up = TransitionWarmUp {
             started_at,
             widgets: HashMap::from([(String::from("incoming"), Some(gen_nz(7)))]),
         };
 
+        assert!(!transition_warm_up_ready(
+            Some(&warm_up),
+            started_at + Duration::from_millis(999),
+            |_| Some(gen_nz(7)),
+        ));
         assert!(transition_warm_up_ready(
             Some(&warm_up),
-            started_at + TRANSITION_WARM_UP_TIMEOUT,
+            started_at + Duration::from_secs(1),
             |_| Some(gen_nz(7)),
         ));
     }

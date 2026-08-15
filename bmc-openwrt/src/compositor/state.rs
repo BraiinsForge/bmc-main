@@ -627,14 +627,6 @@ impl CompositorState {
     }
 
     pub fn send_frame_callbacks_for_presented_widgets(&mut self, time: u32) {
-        // A scene transition in progress freezes widget animation: skip
-        // firing so the render budget goes to transition motion, not
-        // competing widget redraws. Pending callbacks stay queued and fire on
-        // the first tick after the transition ends.
-        if self.widgets.suppresses_frame_callbacks() {
-            return;
-        }
-
         let eligible_generations = self.eligible_callback_generations();
         let pending_callbacks = std::mem::take(&mut self.pending_frame_callbacks);
         let mut deferred = Vec::with_capacity(pending_callbacks.len());
