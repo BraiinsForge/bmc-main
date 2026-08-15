@@ -24,7 +24,7 @@
 
 use crate::colors::*;
 use crate::interaction::{InteractionState, Rect};
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 use crate::tree::ButtonSkinData;
 
 use bmc_wasm_protocol::SvgId;
@@ -95,6 +95,40 @@ const BTN_DISABLED_FG: Color = GRAY_10.with_alpha(0.25);
 #[expect(clippy::too_many_arguments)]
 pub fn draw_button(
     renderer: &mut dyn Renderer,
+    interaction: &mut InteractionState,
+    key: &str,
+    label: &str,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    style: ButtonStyle,
+    size: ButtonSize,
+    icon_id: Option<SvgId>,
+    disabled: bool,
+    skin: Option<&ButtonSkinData>,
+) -> (bool, Option<(f32, f32)>) {
+    let mut target = RenderTarget::new(renderer, None);
+    draw_button_with_target(
+        &mut target,
+        interaction,
+        key,
+        label,
+        x,
+        y,
+        w,
+        h,
+        style,
+        size,
+        icon_id,
+        disabled,
+        skin,
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+pub(crate) fn draw_button_with_target(
+    renderer: &mut RenderTarget<'_, '_, '_>,
     interaction: &mut InteractionState,
     key: &str,
     label: &str,
@@ -190,7 +224,7 @@ pub fn draw_button(
 /// - **Skinned**: 9-patch with darkened overlay + dimmed text/icon.
 #[expect(clippy::too_many_arguments)]
 fn draw_button_disabled(
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     label: &str,
     x: f32,
     y: f32,
@@ -227,7 +261,7 @@ fn draw_button_disabled(
 /// Render button content (icon and/or label) centered in the given bounds.
 #[expect(clippy::too_many_arguments)]
 fn draw_button_content(
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     label: &str,
     x: f32,
     y: f32,
@@ -264,7 +298,13 @@ fn draw_button_content(
             let text_y = y + (h - text_h) / 2.0;
             let max_text_w = w - pad - icon_sz - gap - pad;
             draw_text_ellipsis(
-                renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
+                &mut *renderer,
+                label,
+                text_x,
+                text_y,
+                font_size,
+                max_text_w,
+                fg_color,
             );
         }
         (Some(icon_id), false) => {
@@ -288,7 +328,13 @@ fn draw_button_content(
             let text_y = y + (h - text_h) / 2.0;
             let max_text_w = w - pad * 2.0;
             draw_text_ellipsis(
-                renderer, label, text_x, text_y, font_size, max_text_w, fg_color,
+                &mut *renderer,
+                label,
+                text_x,
+                text_y,
+                font_size,
+                max_text_w,
+                fg_color,
             );
         }
     }

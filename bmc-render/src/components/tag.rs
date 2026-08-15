@@ -26,7 +26,7 @@ use bmc_wasm_protocol::{
     TagKind,
 };
 
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 
 // ── Geometry ───────────────────────────────────────────────────────────
 const TAG_RADIUS: f32 = 16.0; // pill `border-radius`, clamped to a stadium (h/2)
@@ -86,7 +86,7 @@ pub(crate) fn render_tag(
     y: f32,
     w: f32,
     h: f32,
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
 ) {
     let theme = tag_theme(tag.kind);
     // Clamp to a stadium: a radius above h/2 draws broken (non-half-circle) ends.

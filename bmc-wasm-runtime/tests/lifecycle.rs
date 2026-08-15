@@ -497,17 +497,27 @@ fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
     let mut data = LIFECYCLE_ASSET_TAG.as_bytes().to_vec();
     let package_ref = PackageAssetRef::new(PackageAssetKind::Svg, PackageAssetId::from_bytes(*id));
     data.extend_from_slice(package_ref.as_bytes());
+    let tree = active_asset_tree_bytes();
+    let tree_ptr = data.len();
+    data.extend_from_slice(&tree);
     let data = wat_string_literal(&data);
     format!(
         r#"
         (module
           (import "env" "host_register_svg_package"
             (func $register_svg (param i32 i32 i32) (result i32)))
+          (import "env" "host_submit_tree"
+            (func $submit_tree (param i32 i32 i32 i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $sleep_registration_id (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
-          (func (export "render") (param i32))
+          (func (export "render") (param i32)
+            i32.const {tree_ptr}
+            i32.const {tree_len}
+            i32.const 320
+            i32.const 240
+            call $submit_tree)
           (func (export "on_sleep")
             i32.const 0
             i32.const {tag_len}
@@ -519,6 +529,7 @@ fn coalesced_package_registration_wat(id: &[u8; 32]) -> String {
             global.get $sleep_registration_id))
         "#,
         tag_len = LIFECYCLE_ASSET_TAG.len(),
+        tree_len = tree.len(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
     )
 }
@@ -1568,7 +1579,7 @@ fn wake_after_rendererless_delivery_runs_hooks_without_asset_churn() {
 }
 
 #[test]
-fn coalesced_sleep_then_wake_restores_asset_registered_by_sleep_hook() {
+fn first_render_restores_asset_registered_by_coalesced_sleep_hook() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1600,8 +1611,18 @@ fn coalesced_sleep_then_wake_restores_asset_registered_by_sleep_hook() {
         .expect("BUG: sleep hook must reserve a valid SVG ID");
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
+        AssetTagState::Suspended(registered),
+        "wake must leave an unused package asset suspended"
+    );
+
+    assert_eq!(
+        render_frame(&mut runtime, &mut renderer, 16),
+        RenderStatus::Ok
+    );
+    assert_eq!(
+        lifecycle_svg_state(&runtime, &renderer),
         AssetTagState::Resident(registered),
-        "wake must restore a package asset first registered while the sleep gate was active"
+        "the first tree referencing the package ID must restore its reservation"
     );
 }
 
@@ -1714,7 +1735,7 @@ fn rendererless_dormant_poll_defers_uncached_image_decode_without_upload() {
 }
 
 #[test]
-fn sleep_eviction_and_wake_cache_restore_allocate_a_fresh_bitmap_id() {
+fn sleep_eviction_and_wake_cache_registration_allocate_a_fresh_suspended_bitmap_id() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1748,7 +1769,8 @@ fn sleep_eviction_and_wake_cache_restore_allocate_a_fresh_bitmap_id() {
         .expect("BUG: initial cache restore must return an ID");
     assert_eq!(
         renderer.bitmap_tag_state(&renderer_tag),
-        AssetTagState::Resident(first_id)
+        AssetTagState::Suspended(first_id),
+        "cache registration must reserve without uploading before a draw uses the ID"
     );
 
     assert!(runtime.notify_dormant());
@@ -1774,7 +1796,8 @@ fn sleep_eviction_and_wake_cache_restore_allocate_a_fresh_bitmap_id() {
     );
     assert_eq!(
         renderer.bitmap_tag_state(&renderer_tag),
-        AssetTagState::Resident(wake_id)
+        AssetTagState::Suspended(wake_id),
+        "wake registration must leave the fresh reservation lazy until a draw uses it"
     );
 }
 

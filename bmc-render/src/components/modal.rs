@@ -33,9 +33,9 @@ use taffy::prelude::*;
 
 use bmc_wasm_protocol::*;
 
-use crate::components::{ButtonSize, ButtonStyle, draw_button};
+use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
 use crate::interaction::InteractionState;
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 use crate::tree::{
     AnimationContext, NodeContext, TouchHit, TreeNode, TreeResult, build_taffy_node,
     compute_taffy_layout, debug_layout_enabled, render_taffy_node,
@@ -77,7 +77,7 @@ pub(crate) fn render_modal(
     modal: &ModalInfo,
     width: f32,
     height: f32,
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     interaction: &mut InteractionState,
     modal_states: &mut HashMap<String, ModalState>,
     scroll_states: &mut HashMap<String, ScrollState>,
@@ -255,7 +255,7 @@ pub(crate) fn render_modal(
 
     let close_key = format!("{}::close", modal.modal_id);
 
-    let (close_was_clicked, _) = draw_button(
+    let (close_was_clicked, _) = draw_button_with_target(
         renderer,
         interaction,
         &close_key,
@@ -308,7 +308,7 @@ pub(crate) fn render_modal(
         result,
         &mut dummy_modals,
     ) {
-        let _ = compute_taffy_layout(taffy, body_root, renderer);
+        let _ = compute_taffy_layout(taffy, body_root, &mut *renderer);
         render_taffy_node(
             taffy,
             body_root,
@@ -339,7 +339,7 @@ pub(crate) fn render_modal(
 
         // Secondary button (left half) or empty space
         if has_secondary {
-            let (clicked, click_pos) = draw_button(
+            let (clicked, click_pos) = draw_button_with_target(
                 renderer,
                 interaction,
                 &modal.footer_secondary_key,
@@ -369,7 +369,7 @@ pub(crate) fn render_modal(
 
         // Primary button (right half)
         let primary_x = modal_x + half_w;
-        let (clicked, click_pos) = draw_button(
+        let (clicked, click_pos) = draw_button_with_target(
             renderer,
             interaction,
             &modal.footer_primary_key,

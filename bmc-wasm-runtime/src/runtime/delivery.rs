@@ -289,7 +289,7 @@ impl WasmWidgetRuntime {
     }
 
     /// Register completed off-thread image decodes and notify the guest via
-    /// `__on_image_ready`. Cache-backed pixels upload when a tree references them.
+    /// `__on_image_ready`. Dormant cache-backed pixels upload when a draw uses them.
     /// A renderer-less poll stages completed work until a renderer is available.
     pub fn deliver_image_decode_results(&mut self) {
         self.stage_image_decode_results();
@@ -336,6 +336,7 @@ impl WasmWidgetRuntime {
                 }
             };
             let cache_backed = matches!(&backing, crate::renderer_assets::AssetBacking::Cache(_));
+            let lazy = dormant && cache_backed;
             let skip_dormant_upload = dormant && !cache_backed;
             let bitmap_id = match done.result {
                 Ok(_) if skip_dormant_upload => 0,
@@ -346,7 +347,7 @@ impl WasmWidgetRuntime {
                         .map_or(0, BitmapId::to_ffi);
                     let upload_us =
                         u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
-                    if !cache_backed {
+                    if !lazy {
                         self.store
                             .data_mut()
                             .add_profile_us("image_upload_us", upload_us);
@@ -405,7 +406,8 @@ impl WasmWidgetRuntime {
         // single-threaded wasmi dispatch means no other `&mut Renderer` is live.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
         let cache_backed = matches!(backing, crate::renderer_assets::AssetBacking::Cache(_));
-        let id = if cache_backed {
+        let lazy = cache_backed && self.store.data().renderer_assets_are_dormant();
+        let id = if lazy {
             let id = renderer.reserve_bitmap(tag)?;
             match renderer.bitmap_tag_state(tag) {
                 AssetTagState::Resident(resident) if resident == id => {
@@ -428,15 +430,21 @@ impl WasmWidgetRuntime {
             renderer.register_bitmap_rgba(tag, rgba, width, height)
         }?;
         self.store.data_mut().mark_renderer_accessed();
-        self.store
-            .data_mut()
-            .record_renderer_asset(
-                raw_tag.to_owned(),
-                kind,
-                crate::renderer_assets::RendererAssetId::Bitmap(id),
-                backing,
-            )
-            .then_some(id)
+        let asset_id = crate::renderer_assets::RendererAssetId::Bitmap(id);
+        let recorded = self.store.data_mut().record_renderer_asset(
+            raw_tag.to_owned(),
+            kind,
+            asset_id,
+            backing,
+        );
+        if recorded && cache_backed {
+            if lazy {
+                self.store.data_mut().renderer_assets.mark_pending(raw_tag);
+            } else {
+                self.store.data_mut().renderer_assets.mark_resident(raw_tag);
+            }
+        }
+        recorded.then_some(id)
     }
 
     /// Whether there are pending or in-flight fetches that need polling.

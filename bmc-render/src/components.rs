@@ -33,5 +33,5 @@ pub(crate) mod tag;
 pub use button::*;
 pub use notification::{measure_notification_banner, render_notification_banner};
 pub use relative_time::{format_rel, next_change_delay_ms};
-pub use switcher::{SwitcherData, SwitcherTabData, render_switcher, switcher_size};
+pub use switcher::{SwitcherData, SwitcherTabData, switcher_size};
 pub use tag::{TagTheme, tag_theme};

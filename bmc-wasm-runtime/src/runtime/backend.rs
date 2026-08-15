@@ -22,21 +22,25 @@
 
 #![expect(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ptr::NonNull;
 use std::time::Instant;
 
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
-use bmc_wasm_protocol::{BLACK, ICON_METER, RED_60, SDK_INIT_EXPORT, SDK_VERSION, version_unpack};
+use bmc_wasm_protocol::{
+    BLACK, BitmapId, ICON_METER, MeshId, RED_60, SDK_INIT_EXPORT, SDK_VERSION, SvgId,
+    version_unpack,
+};
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
 
-use bmc_render::FrameTimings;
 use bmc_render::renderer::{AssetSuspendResult, AssetTagState, Renderer};
-use bmc_render::tree::{self, TouchHit};
+use bmc_render::tree;
+use bmc_render::tree::TouchHit;
+use bmc_render::{FrameTimings, RendererAssetResolver, layout_and_render_with_asset_resolver};
 
-use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle};
+use crate::host_api::{FixtureEvent, HermeticRun, HostState, Lifecycle, namespaced_tag};
 use crate::network::NetworkInfo;
 use crate::renderer_assets::{
     AssetBacking, RendererAssetId, RendererAssetKind, RendererAssetRecord, cached_bitmap_dimensions,
@@ -422,6 +426,282 @@ enum RendererAssetRestore {
     Skipped,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+enum DeadOverlayBackground {
+    PreserveFrame,
+    ReplaceFrame,
+}
+
+impl DeadOverlayBackground {
+    fn for_stopped_widget(renderer_asset_failure: Option<&str>) -> Self {
+        if renderer_asset_failure.is_some() {
+            Self::ReplaceFrame
+        } else {
+            Self::PreserveFrame
+        }
+    }
+
+    fn scrim(self) -> Color {
+        match self {
+            Self::PreserveFrame => BLACK.with_alpha(0.69),
+            Self::ReplaceFrame => BLACK,
+        }
+    }
+}
+
+pub(super) struct RendererAssetRestorer<'a> {
+    instance_id: &'a str,
+    asset_cache: Option<&'a crate::disk_cache::DiskCache>,
+    package_assets: Option<&'a crate::PackageAssetStore>,
+    renderer_assets: &'a mut crate::renderer_assets::RendererAssetLedger,
+    profile_sections: &'a mut BTreeMap<String, u64>,
+    has_pending: bool,
+    seen: HashSet<RendererAssetId>,
+    observation: RendererAssetRestorationObservation,
+    failure: Option<String>,
+    #[cfg(feature = "profiling")]
+    restore_us: u64,
+}
+
+impl<'a> RendererAssetRestorer<'a> {
+    pub(super) fn new(
+        instance_id: &'a str,
+        asset_cache: Option<&'a crate::disk_cache::DiskCache>,
+        package_assets: Option<&'a crate::PackageAssetStore>,
+        renderer_assets: &'a mut crate::renderer_assets::RendererAssetLedger,
+        profile_sections: &'a mut BTreeMap<String, u64>,
+    ) -> Self {
+        let has_pending = renderer_assets.has_pending_restorable();
+        Self {
+            instance_id,
+            asset_cache,
+            package_assets,
+            renderer_assets,
+            profile_sections,
+            has_pending,
+            seen: HashSet::new(),
+            observation: RendererAssetRestorationObservation::default(),
+            failure: None,
+            #[cfg(feature = "profiling")]
+            restore_us: 0,
+        }
+    }
+
+    fn resolve(&mut self, renderer: &mut dyn Renderer, id: RendererAssetId) -> bool {
+        if self.failure.is_some() {
+            return false;
+        }
+        if !self.has_pending {
+            return true;
+        }
+        if !self.seen.insert(id) {
+            return true;
+        }
+        let pending = self.renderer_assets.pending_by_id(id);
+        if pending.is_empty() {
+            return true;
+        }
+        for (raw_tag, record) in pending {
+            let restore_started = Instant::now();
+            let restore_result = restore_renderer_asset(
+                self.instance_id,
+                self.asset_cache,
+                self.package_assets,
+                renderer,
+                &raw_tag,
+                &record,
+            );
+            let restore_us =
+                u64::try_from(restore_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+            #[cfg(feature = "profiling")]
+            {
+                self.restore_us = self.restore_us.saturating_add(restore_us);
+            }
+            match restore_result {
+                Ok(RendererAssetRestore::Restored) => {
+                    self.renderer_assets.mark_resident(&raw_tag);
+                    *self
+                        .profile_sections
+                        .entry("asset_restore_us".to_owned())
+                        .or_default() += restore_us;
+                    match record.kind {
+                        RendererAssetKind::Svg => self.observation.svg_restored += 1,
+                        RendererAssetKind::Bitmap(_) => self.observation.bitmap_restored += 1,
+                        RendererAssetKind::Mesh => self.observation.mesh_restored += 1,
+                    }
+                    #[cfg(feature = "profiling")]
+                    tracing::info!(
+                        target: bmc_render::profile::TARGET,
+                        instance_id = self.instance_id,
+                        tag = %raw_tag,
+                        asset_kind = record.kind.name(),
+                        asset_id = record.id.to_ffi(),
+                        "widget renderer asset restored on demand"
+                    );
+                }
+                Ok(RendererAssetRestore::AlreadyResident) => {
+                    self.observation.already_resident += 1;
+                    self.renderer_assets.mark_resident(&raw_tag);
+                }
+                Ok(RendererAssetRestore::Skipped) => {
+                    self.observation.skipped += 1;
+                    self.renderer_assets.disable_restoration(&raw_tag);
+                }
+                Err(error) => {
+                    tracing::error!(
+                        instance_id = self.instance_id,
+                        %error,
+                        "renderer asset restoration failed"
+                    );
+                    self.failure = Some(error);
+                    return false;
+                }
+            }
+        }
+        self.has_pending = self.renderer_assets.has_pending_restorable();
+        true
+    }
+
+    pub(super) fn finish(self) -> Result<Option<RendererAssetRestorationObservation>, String> {
+        if let Some(error) = self.failure {
+            return Err(error);
+        }
+        let observation = self.observation;
+        let demand_work = observation.svg_restored
+            + observation.bitmap_restored
+            + observation.mesh_restored
+            + observation.already_resident
+            + observation.skipped;
+        if demand_work == 0 {
+            return Ok(None);
+        }
+        #[cfg(feature = "profiling")]
+        tracing::info!(
+            target: bmc_render::profile::TARGET,
+            instance_id = self.instance_id,
+            svg_restored = observation.svg_restored,
+            bitmap_restored = observation.bitmap_restored,
+            mesh_restored = observation.mesh_restored,
+            already_resident = observation.already_resident,
+            assets_skipped = observation.skipped,
+            restore_us = self.restore_us,
+            "widget renderer assets restored on demand"
+        );
+        Ok(Some(observation))
+    }
+}
+
+impl RendererAssetResolver for RendererAssetRestorer<'_> {
+    fn resolve_svg(&mut self, renderer: &mut dyn Renderer, id: SvgId) -> bool {
+        self.resolve(renderer, RendererAssetId::Svg(id))
+    }
+
+    fn resolve_bitmap(&mut self, renderer: &mut dyn Renderer, id: BitmapId) -> bool {
+        self.resolve(renderer, RendererAssetId::Bitmap(id))
+    }
+
+    fn resolve_mesh(&mut self, renderer: &mut dyn Renderer, id: MeshId) -> bool {
+        self.resolve(renderer, RendererAssetId::Mesh(id))
+    }
+}
+
+fn restore_renderer_asset(
+    instance_id: &str,
+    asset_cache: Option<&crate::disk_cache::DiskCache>,
+    package_assets: Option<&crate::PackageAssetStore>,
+    renderer: &mut dyn Renderer,
+    raw_tag: &str,
+    record: &RendererAssetRecord,
+) -> Result<RendererAssetRestore, String> {
+    let tag = namespaced_tag(instance_id, raw_tag);
+    let already_resident = match (record.kind, record.id) {
+        (RendererAssetKind::Svg, RendererAssetId::Svg(expected)) => {
+            renderer.svg_tag_state(&tag) == AssetTagState::Resident(expected)
+        }
+        (RendererAssetKind::Bitmap(_), RendererAssetId::Bitmap(expected)) => {
+            renderer.bitmap_tag_state(&tag) == AssetTagState::Resident(expected)
+        }
+        (RendererAssetKind::Mesh, RendererAssetId::Mesh(expected)) => {
+            renderer.mesh_tag_state(&tag) == AssetTagState::Resident(expected)
+        }
+        _ => false,
+    };
+    if already_resident {
+        return Ok(RendererAssetRestore::AlreadyResident);
+    }
+    let restored = match &record.backing {
+        AssetBacking::Package(id) => {
+            restore_package_asset(package_assets, renderer, raw_tag, &tag, record, *id)?
+        }
+        AssetBacking::Cache(key) => {
+            let Some(cache) = asset_cache else {
+                return Ok(RendererAssetRestore::Skipped);
+            };
+            let Some(blob) = cache.get(key) else {
+                return Ok(RendererAssetRestore::Skipped);
+            };
+            let Some((width, height)) = cached_bitmap_dimensions(&blob) else {
+                cache.evict(key);
+                return Ok(RendererAssetRestore::Skipped);
+            };
+            renderer
+                .register_bitmap_rgba(&tag, blob.bytes(), width, height)
+                .map(RendererAssetId::Bitmap)
+        }
+        AssetBacking::Volatile => return Ok(RendererAssetRestore::Skipped),
+    };
+    let Some(restored) = restored else {
+        return Err(format!(
+            "renderer failed to register asset while restoring {raw_tag}"
+        ));
+    };
+    if restored == record.id {
+        Ok(RendererAssetRestore::Restored)
+    } else {
+        Err(format!(
+            "asset reservation changed while restoring {raw_tag}"
+        ))
+    }
+}
+
+fn restore_package_asset(
+    package_assets: Option<&crate::PackageAssetStore>,
+    renderer: &mut dyn Renderer,
+    raw_tag: &str,
+    tag: &str,
+    record: &RendererAssetRecord,
+    id: bmc_wasm_protocol::PackageAssetId,
+) -> Result<Option<RendererAssetId>, String> {
+    let Some(store) = package_assets else {
+        return Err(format!(
+            "package store unavailable while restoring {raw_tag}"
+        ));
+    };
+    let kind = match record.kind {
+        RendererAssetKind::Svg => bmc_wasm_protocol::PackageAssetKind::Svg,
+        RendererAssetKind::Bitmap(_) => bmc_wasm_protocol::PackageAssetKind::Bitmap,
+        RendererAssetKind::Mesh => bmc_wasm_protocol::PackageAssetKind::Mesh,
+    };
+    let payload = store
+        .load(kind, id)
+        .map_err(|error| format!("load package asset {raw_tag}: {error}"))?;
+    let restored = match record.kind {
+        RendererAssetKind::Svg => renderer
+            .register_svg(tag, &payload)
+            .map(RendererAssetId::Svg),
+        RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Linear) => renderer
+            .register_bitmap(tag, &payload)
+            .map(RendererAssetId::Bitmap),
+        RendererAssetKind::Bitmap(bmc_wasm_protocol::BitmapSampling::Nearest) => renderer
+            .register_bitmap_nearest(tag, &payload)
+            .map(RendererAssetId::Bitmap),
+        RendererAssetKind::Mesh => renderer
+            .register_mesh(tag, &payload)
+            .map(RendererAssetId::Mesh),
+    };
+    Ok(restored)
+}
+
 /// WebAssembly widget runtime.
 ///
 /// Executes WASM modules in a sandboxed environment with fuel metering.
@@ -480,9 +760,7 @@ pub struct WasmWidgetRuntime {
     lifecycle_trap: Option<anyhow::Error>,
     /// Widget permanently stopped after exceeding [`Self::max_fuel_strikes`].
     fuel_dead: bool,
-    renderer_asset_failure: Option<String>,
     last_asset_suspension: Option<RendererAssetSuspensionObservation>,
-    last_asset_restoration: Option<RendererAssetRestorationObservation>,
     /// How many consecutive fuel-outs before the widget is killed.
     max_fuel_strikes: u32,
     #[cfg(feature = "profiling")]
@@ -682,9 +960,7 @@ impl WasmWidgetRuntime {
             #[cfg(feature = "capture")]
             lifecycle_trap: None,
             fuel_dead: false,
-            renderer_asset_failure: None,
             last_asset_suspension: None,
-            last_asset_restoration: None,
             max_fuel_strikes: 5,
             #[cfg(feature = "profiling")]
             wasm_w: ii_stopwatch::StopWatch::default(),
@@ -713,6 +989,7 @@ impl WasmWidgetRuntime {
     )]
     pub fn render(&mut self, delta_ms: u32) -> Result<RenderStatus> {
         let state = self.store.data_mut();
+        state.last_asset_restoration = None;
         tracing::trace!(
             instance_id = %state.instance_id,
             delta_ms,
@@ -729,7 +1006,7 @@ impl WasmWidgetRuntime {
             tracing::error!(instance_id = %state.instance_id, %error, "widget renderer assets failed");
             state.interaction.begin_frame();
             state.begin_render_frame();
-            Self::draw_dead_overlay(state);
+            Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
             return Ok(RenderStatus::Dead);
         }
 
@@ -739,7 +1016,9 @@ impl WasmWidgetRuntime {
             state.interaction.begin_frame();
             state.begin_render_frame();
             Self::render_stopped_cached_tree(state, delta_ms);
-            Self::draw_dead_overlay(state);
+            let background =
+                DeadOverlayBackground::for_stopped_widget(state.renderer_asset_failure.as_deref());
+            Self::draw_dead_overlay(state, background);
             tracing::trace!(instance_id = %state.instance_id, "render skipped because widget is dead");
             return Ok(RenderStatus::Dead);
         }
@@ -765,7 +1044,7 @@ impl WasmWidgetRuntime {
 
         if animation_only {
             if !Self::render_cached_tree(state, delta_ms) {
-                Self::draw_dead_overlay(state);
+                Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                 return Ok(RenderStatus::Dead);
             }
             tracing::trace!(
@@ -841,7 +1120,7 @@ impl WasmWidgetRuntime {
                 let state = self.store.data_mut();
                 state.last_timings.wasm_us = wasm_us;
                 if state.renderer_asset_failure.is_some() {
-                    Self::draw_dead_overlay(state);
+                    Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                     return Ok(RenderStatus::Dead);
                 }
                 self.fuel_strikes = 0;
@@ -867,7 +1146,10 @@ impl WasmWidgetRuntime {
                     self.fuel_dead = true;
                     let state = self.store.data_mut();
                     Self::render_stopped_cached_tree(state, delta_ms);
-                    Self::draw_dead_overlay(state);
+                    let background = DeadOverlayBackground::for_stopped_widget(
+                        state.renderer_asset_failure.as_deref(),
+                    );
+                    Self::draw_dead_overlay(state, background);
                     return Ok(RenderStatus::Dead);
                 }
                 // Show last good frame + warning bar, and request a
@@ -875,7 +1157,7 @@ impl WasmWidgetRuntime {
                 // changes that happened before the fuel trap.
                 let state = self.store.data_mut();
                 if !Self::render_cached_tree(state, delta_ms) {
-                    Self::draw_dead_overlay(state);
+                    Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                     return Ok(RenderStatus::Dead);
                 }
                 Self::draw_fuel_warning(state, self.fuel_strikes, self.max_fuel_strikes);
@@ -897,8 +1179,8 @@ impl WasmWidgetRuntime {
 
     /// Re-render the last successfully submitted tree (no WASM execution).
     ///
-    /// Calls `layout_and_render` directly on the cached `TreeNode`, skipping
-    /// deserialization entirely.
+    /// Runs the cached `TreeNode` through the layout-and-render pipeline
+    /// without deserializing it again.
     ///
     /// Invariant: callers must be inside a [`Self::with_renderer`] scope so
     /// `HostState::renderer_ptr` is installed; the `expect` below asserts the
@@ -914,34 +1196,16 @@ impl WasmWidgetRuntime {
         // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
         // thread; single-threaded wasmi dispatch keeps it unique for this borrow.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-        if state.renderer_assets.has_pending_restorable() {
-            if state.cached_tree_asset_references.is_none() {
-                state.cached_tree_asset_references = Some(
-                    state
-                        .cached_tree
-                        .as_ref()
-                        .expect("BUG: cached tree was checked above")
-                        .0
-                        .renderer_asset_references(),
-                );
-            }
-            let references = state
-                .cached_tree_asset_references
-                .take()
-                .expect("BUG: cached tree references were initialized above");
-            let restored = restore_referenced_renderer_assets(state, renderer, &references);
-            state.cached_tree_asset_references = Some(references);
-            if !restored {
-                return false;
-            }
-        }
-        Self::layout_cached_tree(state, renderer, delta_ms);
-        true
+        Self::layout_cached_tree(state, renderer, delta_ms)
     }
 
-    fn layout_cached_tree(state: &mut HostState, renderer: &mut dyn Renderer, delta_ms: u32) {
+    fn layout_cached_tree(
+        state: &mut HostState,
+        renderer: &mut dyn Renderer,
+        delta_ms: u32,
+    ) -> bool {
         let Some((ref tree_node, width, height)) = state.cached_tree else {
-            return;
+            return true;
         };
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
@@ -959,7 +1223,30 @@ impl WasmWidgetRuntime {
             delta_ms,
             now_unix_secs,
         };
-        match tree::layout_and_render(tree_node, width, height, renderer, &mut timings, &mut ctx) {
+        let mut resolver = RendererAssetRestorer::new(
+            &state.instance_id,
+            state.asset_cache.as_ref(),
+            state.package_assets.as_ref(),
+            &mut state.renderer_assets,
+            &mut state.profile_sections,
+        );
+        let render_result = layout_and_render_with_asset_resolver(
+            tree_node,
+            width,
+            height,
+            renderer,
+            &mut resolver,
+            &mut timings,
+            &mut ctx,
+        );
+        match resolver.finish() {
+            Ok(observation) => state.last_asset_restoration = observation,
+            Err(error) => {
+                state.renderer_asset_failure = Some(error);
+                return false;
+            }
+        }
+        match render_result {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
@@ -969,15 +1256,17 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.has_active_animations = has_active;
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
+                true
             }
             Err(e) => {
                 tracing::error!("cached tree render failed: {e}");
+                true
             }
         }
     }
 
     fn render_stopped_cached_tree(state: &mut HostState, delta_ms: u32) {
-        Self::render_cached_tree(state, delta_ms);
+        let _ = Self::render_cached_tree(state, delta_ms);
         state.begin_render_frame();
     }
 
@@ -999,7 +1288,7 @@ impl WasmWidgetRuntime {
     }
 
     /// Full error overlay for a dead widget — CDS notification banner.
-    fn draw_dead_overlay(state: &mut HostState) {
+    fn draw_dead_overlay(state: &mut HostState, background: DeadOverlayBackground) {
         let mut ptr = state
             .renderer_ptr
             .expect("BUG: draw_dead_overlay called outside `with_renderer` scope");
@@ -1013,8 +1302,7 @@ impl WasmWidgetRuntime {
         let banner_w = f32::clamp(canvas_w * 0.6, 250.0, 400.0);
         let banner_h = tree::measure_notification_banner(title, subtitle, banner_w, renderer);
 
-        // Semi-transparent dark scrim
-        renderer.fill_rect(0.0, 0.0, canvas_w, canvas_h, BLACK.with_alpha(0.69));
+        renderer.fill_rect(0.0, 0.0, canvas_w, canvas_h, background.scrim());
 
         tree::render_notification_banner(
             title,
@@ -1279,9 +1567,7 @@ impl WasmWidgetRuntime {
                 self.store.data_mut().mark_renderer_assets_dormant();
                 self.fire_update_hook(self.on_sleep_func, "on_sleep", Lifecycle::Sleep);
                 self.store.data_mut().mark_renderer_assets_active();
-                if self.restore_renderer_assets() {
-                    self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
-                }
+                self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
             }
             Some(PendingHook::WakeThenSleep) => {
                 self.fire_update_hook(self.on_wake_func, "on_wake", Lifecycle::Wake);
@@ -1322,7 +1608,7 @@ impl WasmWidgetRuntime {
                     %error,
                     "renderer asset suspension failed"
                 );
-                self.renderer_asset_failure = Some(error);
+                self.store.data_mut().renderer_asset_failure = Some(error);
             }
         }
     }
@@ -1402,6 +1688,7 @@ impl WasmWidgetRuntime {
                     "asset reservation changed while suspending {raw_tag}"
                 ));
             }
+            self.store.data_mut().renderer_assets.mark_pending(&raw_tag);
             if newly_suspended {
                 match record.kind {
                     RendererAssetKind::Svg => observation.svg_suspended += 1,
@@ -1421,136 +1708,6 @@ impl WasmWidgetRuntime {
             );
         }
         Ok(observation.finish(renderer))
-    }
-
-    fn restore_renderer_assets(&mut self) -> bool {
-        let records = self.store.data().renderer_assets.restorable();
-        #[cfg(feature = "profiling")]
-        let started = Instant::now();
-        let mut observation = RendererAssetRestorationObservation::default();
-        for (raw_tag, record) in records {
-            match self.restore_renderer_asset(&raw_tag, &record) {
-                Ok(RendererAssetRestore::Restored) => {
-                    match record.kind {
-                        RendererAssetKind::Svg => observation.svg_restored += 1,
-                        RendererAssetKind::Bitmap(_) => observation.bitmap_restored += 1,
-                        RendererAssetKind::Mesh => observation.mesh_restored += 1,
-                    }
-                    #[cfg(feature = "profiling")]
-                    tracing::info!(
-                        target: bmc_render::profile::TARGET,
-                        instance_id = %self.store.data().instance_id,
-                        tag = %raw_tag,
-                        asset_kind = record.kind.name(),
-                        asset_id = record.id.to_ffi(),
-                        "widget renderer asset restored"
-                    );
-                }
-                Ok(RendererAssetRestore::AlreadyResident) => observation.already_resident += 1,
-                Ok(RendererAssetRestore::Skipped) => observation.skipped += 1,
-                Err(error) => {
-                    tracing::error!(
-                        instance_id = %self.store.data().instance_id,
-                        %error,
-                        "renderer asset restoration failed"
-                    );
-                    self.renderer_asset_failure = Some(error);
-                    return false;
-                }
-            }
-        }
-        self.last_asset_restoration = Some(observation);
-        #[cfg(feature = "profiling")]
-        tracing::info!(
-            target: bmc_render::profile::TARGET,
-            instance_id = %self.store.data().instance_id,
-            svg_restored = observation.svg_restored,
-            bitmap_restored = observation.bitmap_restored,
-            mesh_restored = observation.mesh_restored,
-            already_resident = observation.already_resident,
-            assets_skipped = observation.skipped,
-            restore_us = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX),
-            "widget renderer assets restored"
-        );
-        true
-    }
-
-    fn restore_renderer_asset(
-        &mut self,
-        raw_tag: &str,
-        record: &RendererAssetRecord,
-    ) -> Result<RendererAssetRestore, String> {
-        let tag = self.store.data().namespaced_tag(raw_tag);
-        let Some(mut pointer) = self.store.data().renderer_ptr else {
-            return Err("renderer unavailable during asset restoration".to_owned());
-        };
-        // SAFETY: lifecycle delivery runs inside `with_renderer`; no guest import is
-        // active while this exact-tag restore owns the renderer reborrow.
-        let renderer: &mut dyn Renderer = unsafe { pointer.as_mut() };
-        let already_resident = match (record.kind, record.id) {
-            (RendererAssetKind::Svg, RendererAssetId::Svg(expected)) => {
-                renderer.svg_tag_state(&tag) == AssetTagState::Resident(expected)
-            }
-            (RendererAssetKind::Bitmap(_), RendererAssetId::Bitmap(expected)) => {
-                renderer.bitmap_tag_state(&tag) == AssetTagState::Resident(expected)
-            }
-            (RendererAssetKind::Mesh, RendererAssetId::Mesh(expected)) => {
-                renderer.mesh_tag_state(&tag) == AssetTagState::Resident(expected)
-            }
-            _ => false,
-        };
-        if already_resident {
-            return Ok(RendererAssetRestore::AlreadyResident);
-        }
-        let restored = match &record.backing {
-            AssetBacking::Package(id) => {
-                let Some(store) = self.store.data().package_assets.as_ref() else {
-                    return Err(format!(
-                        "package store unavailable while restoring {raw_tag}"
-                    ));
-                };
-                let kind = match record.kind {
-                    RendererAssetKind::Svg => bmc_wasm_protocol::PackageAssetKind::Svg,
-                    RendererAssetKind::Bitmap(_) => bmc_wasm_protocol::PackageAssetKind::Bitmap,
-                    RendererAssetKind::Mesh => bmc_wasm_protocol::PackageAssetKind::Mesh,
-                };
-                let payload = store
-                    .load(kind, *id)
-                    .map_err(|error| format!("load package asset {raw_tag}: {error}"))?;
-                match record.kind {
-                    RendererAssetKind::Svg => observation.svg_suspended += 1,
-                    RendererAssetKind::Bitmap(_) => observation.bitmap_suspended += 1,
-                    RendererAssetKind::Mesh => observation.mesh_suspended += 1,
-                }
-            }
-            AssetBacking::Cache(key) => {
-                let Some(cache) = self.store.data().asset_cache.as_ref() else {
-                    return Ok(RendererAssetRestore::Skipped);
-                };
-                let Some(blob) = cache.get(key) else {
-                    return Ok(RendererAssetRestore::Skipped);
-                };
-                let Some((width, height)) = cached_bitmap_dimensions(&blob) else {
-                    cache.evict(key);
-                    return Ok(RendererAssetRestore::Skipped);
-                };
-                renderer
-                    .register_bitmap_rgba(&tag, blob.bytes(), width, height)
-                    .map(RendererAssetId::Bitmap)
-            }
-            AssetBacking::Volatile => return Ok(RendererAssetRestore::Skipped),
-        };
-        if restored.is_some() {
-            self.store.data_mut().mark_renderer_accessed();
-        }
-        if restored == Some(record.id) {
-            Ok(RendererAssetRestore::Restored)
-        } else {
-            Err(format!(
-                "asset reservation changed while restoring {raw_tag}"
-            ))
-        }
-        Ok(())
     }
 
     /// Common tail of `deliver_params_update` / `deliver_system_update`:
@@ -1802,13 +1959,30 @@ impl WasmWidgetRuntime {
     #[doc(hidden)]
     #[must_use]
     pub fn last_asset_restoration_for_test(&self) -> Option<RendererAssetRestorationObservation> {
-        self.last_asset_restoration
+        self.store.data().last_asset_restoration
+    }
+
+    #[doc(hidden)]
+    #[must_use]
+    pub fn renderer_asset_failure_for_test(&self) -> Option<&str> {
+        self.store.data().renderer_asset_failure.as_deref()
     }
 
     #[doc(hidden)]
     #[must_use]
     pub fn frame_counter_for_test(&self) -> u64 {
         self.store.data().frame_counter
+    }
+
+    #[doc(hidden)]
+    pub fn replay_cached_tree_for_test(
+        &mut self,
+        renderer: NonNull<dyn Renderer>,
+        delta_ms: u32,
+    ) -> bool {
+        self.with_renderer(renderer, |runtime| {
+            Self::render_cached_tree(runtime.store.data_mut(), delta_ms)
+        })
     }
 
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.
@@ -2042,7 +2216,7 @@ impl Drop for WasmWidgetRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::{DisplayInfo, RuntimeConfig, WasmWidgetRuntime};
+    use super::{DeadOverlayBackground, DisplayInfo, RuntimeConfig, WasmWidgetRuntime};
     use bmc_wasm_protocol::{DisplayShape, ViewportShape};
 
     /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
@@ -2088,5 +2262,16 @@ mod tests {
                 42
             )
         );
+    }
+
+    #[test]
+    fn renderer_asset_failure_overlay_replaces_the_partial_frame() {
+        let renderer_failure = DeadOverlayBackground::for_stopped_widget(Some("missing asset"));
+        let fuel_failure = DeadOverlayBackground::for_stopped_widget(None);
+
+        assert_eq!(renderer_failure, DeadOverlayBackground::ReplaceFrame);
+        assert_eq!(renderer_failure.scrim().alpha(), 255);
+        assert_eq!(fuel_failure, DeadOverlayBackground::PreserveFrame);
+        assert!(fuel_failure.scrim().alpha() < 255);
     }
 }

@@ -26,7 +26,7 @@
 use bmc_wasm_protocol::*;
 use taffy::prelude::*;
 
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 use crate::tree::{SpanData, min_content_paragraph_width};
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -157,10 +157,10 @@ pub(crate) fn render_notification(
     y: f32,
     w: f32,
     h: f32,
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
 ) {
     let (accent, icon_id) = notification_accent(notif.kind);
-    render_notification_banner(
+    render_notification_banner_with_target(
         &notif.title,
         &notif.subtitle,
         accent,
@@ -216,6 +216,32 @@ pub fn render_notification_banner(
     w: f32,
     h: f32,
     renderer: &mut dyn Renderer,
+) {
+    let mut target = RenderTarget::new(renderer, None);
+    render_notification_banner_with_target(
+        title,
+        subtitle,
+        accent,
+        icon_id,
+        x,
+        y,
+        w,
+        h,
+        &mut target,
+    );
+}
+
+#[expect(clippy::too_many_arguments)]
+fn render_notification_banner_with_target(
+    title: &str,
+    subtitle: &str,
+    accent: Color,
+    icon_id: SvgId,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    renderer: &mut RenderTarget<'_, '_, '_>,
 ) {
     // Background
     renderer.fill_rect(x, y, w, h, GRAY_90);

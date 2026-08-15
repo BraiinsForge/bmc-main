@@ -28,7 +28,7 @@
 
 use bmc_wasm_protocol::{Color, ProgressKind};
 
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 use crate::tree::{AnimationContext, SliderSkinData};
 
 // ── Data ─────────────────────────────────────────────────────────────
@@ -56,7 +56,7 @@ const PB_WAVE_LENGTH: f32 = 16.0;
 /// Render a host-side progress bar. Returns `true` if animations are active
 /// (caller should request next frame).
 pub(crate) fn render_progress_bar(
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     pb: &ProgressBarData,
     x: f32,
     y: f32,
@@ -67,7 +67,7 @@ pub(crate) fn render_progress_bar(
     if let Some(skin) = &pb.skin {
         render_progress_bar_skinned(renderer, pb, skin, x, y, w, h)
     } else {
-        render_progress_bar_flat(renderer, pb, x, y, w, h, anim_ctx)
+        render_progress_bar_flat(&mut *renderer, pb, x, y, w, h, anim_ctx)
     }
 }
 
@@ -149,7 +149,7 @@ fn render_progress_bar_flat(
 
 /// Skinned progress bar: 9-patch track + bitmap thumb.
 fn render_progress_bar_skinned(
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     pb: &ProgressBarData,
     skin: &SliderSkinData,
     x: f32,

@@ -28,7 +28,8 @@ use bmc_wasm_protocol::{
     BitmapId, MeshId, PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId,
 };
 use bmc_wasm_runtime::{
-    DiskCache, PackageAssetStore, RenderStatus, RuntimeConfig, WasmWidgetRuntime,
+    DiskCache, PackageAssetStore, RenderStatus, RendererAssetSuspensionObservation, RuntimeConfig,
+    WasmWidgetRuntime,
 };
 
 #[path = "common/asset_fixtures.rs"]
@@ -132,6 +133,56 @@ impl AssetKind {
             ),
         }
     }
+
+    fn demand_draw(self, raw_id: u32) -> bmc_wasm_sdk::Draw {
+        match self {
+            Self::Svg => bmc_wasm_sdk::Draw::svg_builtin(
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                SvgId::from_ffi(raw_id).expect("BUG: fixture SVG ID must be valid"),
+                bmc_wasm_protocol::colors::WHITE,
+            ),
+            Self::Bitmap | Self::BitmapNearest => bmc_wasm_sdk::Draw::bitmap_id(
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                Some(BitmapId::from_ffi(raw_id).expect("BUG: fixture bitmap ID must be valid")),
+            ),
+            Self::Mesh => bmc_wasm_sdk::Draw::Mesh {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+                mesh_id: Some(
+                    MeshId::from_ffi(raw_id).expect("BUG: fixture mesh ID must be valid"),
+                ),
+                fov: 45.0,
+                distance: 3.0,
+                qx: 0.0,
+                qy: 0.0,
+                qz: 0.0,
+                qw: 1.0,
+                px: 0.0,
+                py: 0.0,
+                pz: 0.0,
+                scale: 1.0,
+                light_pitch: f32::NAN,
+                light_yaw: f32::NAN,
+                ambient: 0.3,
+                specular: 0.4,
+                hl_u_min: f32::NAN,
+                hl_v_min: 0.0,
+                hl_u_max: 0.0,
+                hl_v_max: 0.0,
+                hl_r: 0.0,
+                hl_g: 0.0,
+                hl_b: 0.0,
+            },
+        }
+    }
 }
 
 fn package_registration_wat(kind: AssetKind, id: &[u8; 32]) -> String {
@@ -167,23 +218,28 @@ fn package_registration_wat(kind: AssetKind, id: &[u8; 32]) -> String {
     )
 }
 
-fn package_svg_demand_wat(id: &[u8; 32]) -> String {
+fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
     bmc_wasm_sdk::init_test_registrars();
-    let svg_id = SvgId::from_ffi(1).expect("BUG: first SVG registry ID must be valid");
+    let wire_marker = 0xA55A_u16;
     let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
         bmc_wasm_sdk::PropsData::default(),
-        [bmc_wasm_sdk::Draw::svg_builtin(
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            svg_id,
-            bmc_wasm_protocol::colors::WHITE,
-        )],
+        [kind.demand_draw(u32::from(wire_marker))],
     ));
+    let marker = wire_marker.to_le_bytes();
+    let mut marker_offsets = tree
+        .windows(marker.len())
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == marker).then_some(offset));
+    let tree_id_offset = marker_offsets
+        .next()
+        .expect("BUG: serialized demand tree must contain its asset ID marker");
+    assert!(
+        marker_offsets.next().is_none(),
+        "BUG: asset ID marker must occur exactly once in the demand tree"
+    );
     let mut data = Vec::from(REGISTERED_TAG.as_bytes());
     let reference_ptr = data.len();
-    let package_ref = PackageAssetRef::new(PackageAssetKind::Svg, PackageAssetId::from_bytes(*id));
+    let package_ref = PackageAssetRef::new(kind.package_kind(), PackageAssetId::from_bytes(*id));
     data.extend_from_slice(package_ref.as_bytes());
     let tree_ptr = data.len();
     data.extend_from_slice(&tree);
@@ -191,15 +247,19 @@ fn package_svg_demand_wat(id: &[u8; 32]) -> String {
     format!(
         r#"
         (module
-          (import "env" "host_register_svg_package"
+          (import "env" "{import}"
             (func $register (param i32 i32 i32) (result i32)))
           (import "env" "host_submit_tree"
             (func $submit_tree (param i32 i32 i32 i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $wake_count (mut i32) (i32.const 0))
+          (global $asset_id (mut i32) (i32.const 0))
           (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
           (func (export "render") (param i32)
+            i32.const {tree_id_ptr}
+            global.get $asset_id
+            i32.store16
             i32.const {tree_ptr}
             i32.const {tree_len}
             i32.const 64
@@ -214,10 +274,14 @@ fn package_svg_demand_wat(id: &[u8; 32]) -> String {
             i32.const 0
             i32.const {tag_len}
             i32.const {reference_ptr}
-            call $register)
+            call $register
+            global.set $asset_id
+            global.get $asset_id)
           (func (export "wake_count") (result i32) global.get $wake_count))
         "#,
+        import = kind.package_import_name(),
         tag_len = REGISTERED_TAG.len(),
+        tree_id_ptr = tree_ptr + tree_id_offset,
         tree_len = tree.len(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
     )
@@ -225,15 +289,33 @@ fn package_svg_demand_wat(id: &[u8; 32]) -> String {
 
 fn cache_bitmap_demand_wat() -> String {
     let bitmap_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
+    cache_bitmap_demand_wat_for(bmc_wasm_sdk::Draw::bitmap_id(
+        0.0,
+        0.0,
+        1.0,
+        1.0,
+        Some(bitmap_id),
+    ))
+}
+
+fn shadowed_cache_bitmap_demand_wat() -> String {
+    let bitmap_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
+    cache_bitmap_demand_wat_for(
+        bmc_wasm_sdk::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(bitmap_id)).with_drop_shadow(
+            bmc_wasm_sdk::DropShadow {
+                dx: 1.0,
+                dy: 1.0,
+                blur: 2.0,
+                color: bmc_wasm_protocol::colors::BLACK.with_alpha(0.5),
+            },
+        ),
+    )
+}
+
+fn cache_bitmap_demand_wat_for(draw: bmc_wasm_sdk::Draw) -> String {
     let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
         bmc_wasm_sdk::PropsData::default(),
-        [bmc_wasm_sdk::Draw::bitmap_id(
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            Some(bitmap_id),
-        )],
+        [draw],
     ));
     let tree_ptr = DORMANT_CACHE_TAG.len();
     let mut data = Vec::from(DORMANT_CACHE_TAG.as_bytes());
@@ -256,6 +338,11 @@ fn cache_bitmap_demand_wat() -> String {
             i32.const 64
             i32.const 64
             call $submit_tree)
+          (func (export "on_sleep")
+            i32.const 0
+            i32.const {tag_len}
+            call $register_cache
+            global.set $cache_id)
           (func (export "register_cache") (result i32)
             i32.const 0
             i32.const {tag_len}
@@ -270,17 +357,155 @@ fn cache_bitmap_demand_wat() -> String {
     )
 }
 
+#[test]
+fn cache_bitmap_can_be_restored_inside_a_shadow_pass() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
+    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
+    let metadata = [1_u32.to_le_bytes(), 1_u32.to_le_bytes()].concat();
+    cache
+        .put(DORMANT_CACHE_TAG, 1, &metadata, &[0x11, 0x22, 0x33, 0xFF])
+        .expect("BUG: cache fixture must be writable");
+    let wasm = wat::parse_str(shadowed_cache_bitmap_demand_wat())
+        .expect("BUG: shadowed cache demand WAT must parse");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            asset_cache: Some(cache),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime must construct");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+
+    let bitmap_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "register_cache"))
+        .expect("BUG: cached bitmap reservation must be valid");
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: shadowed cache-demand render must complete"),
+        RenderStatus::Ok
+    );
+    assert_eq!(
+        runtime
+            .last_asset_restoration_for_test()
+            .expect("shadow content must restore its cache-backed bitmap")
+            .bitmap_restored,
+        1
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&format!(
+            "{}:{DORMANT_CACHE_TAG}",
+            runtime.asset_namespace()
+        )),
+        AssetTagState::Resident(bitmap_id)
+    );
+}
+
+#[test]
+fn coalesced_sleep_cache_reregistration_restores_on_first_draw() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
+    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
+    let metadata = [1_u32.to_le_bytes(), 1_u32.to_le_bytes()].concat();
+    cache
+        .put(DORMANT_CACHE_TAG, 1, &metadata, &[0x11, 0x22, 0x33, 0xFF])
+        .expect("BUG: cache fixture must be writable");
+    let wasm = wat::parse_str(cache_bitmap_demand_wat())
+        .expect("BUG: cache-demand lifecycle WAT must parse");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            asset_cache: Some(cache),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime must construct");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let renderer_tag = format!("{}:{DORMANT_CACHE_TAG}", runtime.asset_namespace());
+    let bitmap_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "register_cache"))
+        .expect("BUG: cache registration must return a bitmap ID");
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: initial cache-backed draw must complete"),
+        RenderStatus::Ok
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Resident(bitmap_id)
+    );
+
+    runtime.notify_dormant();
+    runtime.notify_wake();
+    runtime
+        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+        .expect("BUG: coalesced lifecycle delivery must not trap");
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Suspended(bitmap_id),
+        "dormant cache re-registration must preserve and suspend the same ID"
+    );
+
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: first draw after coalesced cache registration must complete"),
+        RenderStatus::Ok
+    );
+    assert_eq!(
+        runtime
+            .last_asset_restoration_for_test()
+            .expect("BUG: first draw must record cache restoration")
+            .bitmap_restored,
+        1
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Resident(bitmap_id),
+        "first draw must restore the cache ID suspended by the sleep hook"
+    );
+}
+
 fn selective_cache_bitmap_demand_wat() -> String {
-    let bitmap_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
-    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
+    let used_id = BitmapId::from_ffi(1).expect("BUG: first bitmap registry ID must be valid");
+    let unused_id = BitmapId::from_ffi(2).expect("BUG: second bitmap registry ID must be valid");
+    let bitmap = |id| {
+        bmc_wasm_sdk::canvas(
+            bmc_wasm_sdk::PropsData {
+                width: 64.0,
+                height: 64.0,
+                ..bmc_wasm_sdk::PropsData::default()
+            },
+            [bmc_wasm_sdk::Draw::bitmap_id(0.0, 0.0, 1.0, 1.0, Some(id))],
+        )
+    };
+    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::col(
         bmc_wasm_sdk::PropsData::default(),
-        [bmc_wasm_sdk::Draw::bitmap_id(
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            Some(bitmap_id),
-        )],
+        [
+            bitmap(used_id),
+            bmc_wasm_sdk::modal("closed", false, "", vec![bitmap(unused_id)], None),
+        ],
     ));
     let unused_tag = "unused-cache";
     let unused_tag_ptr = DORMANT_CACHE_TAG.len();
@@ -300,13 +525,17 @@ fn selective_cache_bitmap_demand_wat() -> String {
           (data (i32.const 0) "{data}")
           (global $used_id (mut i32) (i32.const 0))
           (global $unused_id (mut i32) (i32.const 0))
+          (global $submit_enabled (mut i32) (i32.const 1))
           (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
           (func (export "render") (param i32)
-            i32.const {tree_ptr}
-            i32.const {tree_len}
-            i32.const 64
-            i32.const 64
-            call $submit_tree)
+            global.get $submit_enabled
+            if
+              i32.const {tree_ptr}
+              i32.const {tree_len}
+              i32.const 64
+              i32.const 64
+              call $submit_tree
+            end)
           (func (export "register_both") (result i32)
             i32.const 0
             i32.const {used_tag_len}
@@ -316,6 +545,10 @@ fn selective_cache_bitmap_demand_wat() -> String {
             i32.const {unused_tag_len}
             call $register_cache
             global.set $unused_id
+            i32.const 1)
+          (func (export "skip_submit") (result i32)
+            i32.const 0
+            global.set $submit_enabled
             i32.const 1)
           (func (export "used_id") (result i32) global.get $used_id)
           (func (export "unused_id") (result i32) global.get $unused_id))
@@ -328,6 +561,33 @@ fn selective_cache_bitmap_demand_wat() -> String {
 }
 
 fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
+    bmc_wasm_sdk::init_test_registrars();
+    let wire_marker = 0xA55A_u16;
+    let tree = bmc_wasm_sdk::serialize_node_to_bytes(&bmc_wasm_sdk::canvas(
+        bmc_wasm_sdk::PropsData::default(),
+        [bmc_wasm_sdk::Draw::bitmap_id(
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            Some(
+                BitmapId::from_ffi(u32::from(wire_marker))
+                    .expect("BUG: fixture bitmap ID must be valid"),
+            ),
+        )],
+    ));
+    let marker = wire_marker.to_le_bytes();
+    let mut marker_offsets = tree
+        .windows(marker.len())
+        .enumerate()
+        .filter_map(|(offset, bytes)| (bytes == marker).then_some(offset));
+    let tree_id_offset = marker_offsets
+        .next()
+        .expect("BUG: serialized bitmap tree must contain its asset ID marker");
+    assert!(
+        marker_offsets.next().is_none(),
+        "BUG: bitmap ID marker must occur exactly once in the tree"
+    );
     let mut data = Vec::from(REGISTERED_TAG.as_bytes());
     let reference_ptr = data.len();
     let package_ref =
@@ -335,6 +595,8 @@ fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
     data.extend_from_slice(package_ref.as_bytes());
     let bitmap_ptr = data.len();
     data.extend_from_slice(bitmap);
+    let tree_ptr = data.len();
+    data.extend_from_slice(&tree);
     let data = wat_string_literal(&data);
     format!(
         r#"
@@ -343,11 +605,21 @@ fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
             (func $package (param i32 i32 i32) (result i32)))
           (import "env" "host_register_bitmap_fit"
             (func $fit (param i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
+          (import "env" "host_submit_tree"
+            (func $submit_tree (param i32 i32 i32 i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $ready_id (mut i32) (i32.const -1))
           (func (export "__bmc_sdk_init") (result i64) i64.const {sdk})
-          (func (export "render") (param i32))
+          (func (export "render") (param i32)
+            i32.const {tree_id_ptr}
+            global.get $ready_id
+            i32.store16
+            i32.const {tree_ptr}
+            i32.const {tree_len}
+            i32.const 64
+            i32.const 64
+            call $submit_tree)
           (func (export "__on_image_ready") (param i32 i32)
             local.get 1
             global.set $ready_id)
@@ -371,6 +643,8 @@ fn package_bitmap_fit_collision_wat(id: &[u8; 32], bitmap: &[u8]) -> String {
         "#,
         tag_len = REGISTERED_TAG.len(),
         bitmap_len = bitmap.len(),
+        tree_id_ptr = tree_ptr + tree_id_offset,
+        tree_len = tree.len(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION),
     )
 }
@@ -712,6 +986,21 @@ fn package_runtime(kind: AssetKind, id: &[u8; 32], config: RuntimeConfig) -> Was
     .expect("BUG: package runtime must construct")
 }
 
+fn package_svg_demand_runtime(id: &[u8; 32], config: RuntimeConfig) -> WasmWidgetRuntime {
+    let wasm = wat::parse_str(package_demand_wat(AssetKind::Svg, id))
+        .expect("BUG: package demand WAT must parse");
+    WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        config,
+    )
+    .expect("BUG: package demand runtime must construct")
+}
+
 fn assert_initial_suspension(kind: AssetKind, observation: RendererAssetSuspensionObservation) {
     assert_eq!(
         (
@@ -738,12 +1027,10 @@ fn assert_initial_suspension(kind: AssetKind, observation: RendererAssetSuspensi
                 released.0 > 0 && released.1 == 0 && released.2 == 0,
                 "SVG suspension must release only non-empty path payloads: {released:?}"
             ),
-            AssetKind::Bitmap | AssetKind::BitmapNearest => {
-                assert!(
-                    released.0 == 0 && released.1 > 0 && released.2 == 0,
-                    "bitmap suspension must release only non-empty texture payloads: {released:?}"
-                );
-            }
+            AssetKind::Bitmap | AssetKind::BitmapNearest => assert!(
+                released.0 == 0 && released.1 > 0 && released.2 == 0,
+                "bitmap suspension must release only non-empty texture payloads: {released:?}"
+            ),
             AssetKind::Mesh => assert!(
                 released.0 == 0 && released.1 == 0 && released.2 > 0,
                 "mesh suspension must release only non-empty buffer payloads: {released:?}"
@@ -752,16 +1039,7 @@ fn assert_initial_suspension(kind: AssetKind, observation: RendererAssetSuspensi
     }
 }
 
-fn assert_package_demand_fails(runtime: &mut WasmWidgetRuntime, gl: &headless_egl::HeadlessGl) {
-    let mut proc = gl.proc_address();
-    // SAFETY: HeadlessGl keeps the GL context current.
-    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
-        .expect("BUG: renderer must construct");
-    let registered = call_export(runtime, &mut renderer, "register_valid");
-    assert_ne!(
-        registered, 0,
-        "registration must reserve an ID without loading the package payload"
-    );
+fn assert_repeated_suspension(observation: RendererAssetSuspensionObservation) {
     assert_eq!(
         (
             observation.svg_suspended,
@@ -781,6 +1059,25 @@ fn assert_package_demand_fails(runtime: &mut WasmWidgetRuntime, gl: &headless_eg
         ),
         (0, 0, 0, 0),
         "an already suspended reservation must not release payload bytes"
+    );
+}
+
+fn assert_package_demand_fails(runtime: &mut WasmWidgetRuntime, gl: &headless_egl::HeadlessGl) {
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let registered = call_export(runtime, &mut renderer, "register_valid");
+    assert_ne!(
+        registered, 0,
+        "registration must reserve an ID without loading the package payload"
+    );
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: demand failure must produce a render status"),
+        RenderStatus::Dead,
+        "the first referencing tree must surface an unavailable package payload"
     );
 }
 
@@ -911,19 +1208,11 @@ fn legacy_0_2_widget_keeps_the_pointer_asset_abi() {
 }
 
 #[test]
-#[expect(
-    clippy::too_many_lines,
-    reason = "the contract repeats the full suspend and restore cycle for every asset kind"
-)]
-fn dormant_package_assets_survive_coalesced_edges_and_restore_the_same_ids() {
+fn dormant_package_reservations_survive_coalesced_edges_without_loading() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
     };
     let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
-    let mut proc = gl.proc_address();
-    // SAFETY: HeadlessGl keeps the GL context current.
-    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
-        .expect("BUG: renderer must construct");
 
     for kind in [
         AssetKind::Svg,
@@ -931,6 +1220,10 @@ fn dormant_package_assets_survive_coalesced_edges_and_restore_the_same_ids() {
         AssetKind::BitmapNearest,
         AssetKind::Mesh,
     ] {
+        let mut proc = gl.proc_address();
+        // SAFETY: HeadlessGl keeps the GL context current.
+        let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+            .expect("BUG: renderer must construct");
         let payload = kind.fixture();
         let id = write_package_asset(package_dir.path(), kind.package_kind(), &payload);
         let wasm = wat::parse_str(package_registration_wat(kind, &id))
@@ -960,24 +1253,12 @@ fn dormant_package_assets_survive_coalesced_edges_and_restore_the_same_ids() {
         runtime.notify_dormant();
         runtime.notify_wake();
         assert!(
-            runtime
+            !runtime
                 .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
                 .expect("BUG: lifecycle delivery must not trap"),
-            "{kind:?} restoration must request a GPU completion fence"
+            "{kind:?} coalesced edges must not load an unreferenced reservation"
         );
-        kind.assert_resident(&renderer, &renderer_tag, reserved_id);
-
-        runtime.notify_dormant();
-        assert!(
-            runtime
-                .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
-                .expect("BUG: lifecycle delivery must not trap"),
-            "{kind:?} suspension must request a GPU completion fence"
-        );
-        let observation = runtime
-            .last_asset_suspension_for_test()
-            .expect("BUG: a completed sleep must record suspension accounting");
-        assert_initial_suspension(kind, observation);
+        kind.assert_suspended(&renderer, &renderer_tag, reserved_id);
         assert_eq!(
             call_export(&mut runtime, &mut renderer, "register_valid"),
             reserved_id,
@@ -991,10 +1272,6 @@ fn dormant_package_assets_survive_coalesced_edges_and_restore_the_same_ids() {
                 .expect("BUG: repeated lifecycle delivery must not trap"),
             "repeated {kind:?} suspension must not fence an already-suspended payload"
         );
-        let repeated = runtime
-            .last_asset_suspension_for_test()
-            .expect("BUG: repeated sleep must record suspension accounting");
-        assert_repeated_suspension(repeated);
         runtime.stage_deliveries();
         assert!(
             !runtime.has_staged_renderer_delivery(),
@@ -1010,6 +1287,75 @@ fn dormant_package_assets_survive_coalesced_edges_and_restore_the_same_ids() {
             call_export(&mut runtime, &mut renderer, "register_valid"),
             reserved_id,
             "{kind:?} dedup must not open an unreferenced package payload"
+        );
+    }
+}
+
+#[test]
+fn demand_restored_package_assets_report_suspension_once() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+
+    for kind in [
+        AssetKind::Svg,
+        AssetKind::Bitmap,
+        AssetKind::BitmapNearest,
+        AssetKind::Mesh,
+    ] {
+        let payload = kind.fixture();
+        let id = write_package_asset(package_dir.path(), kind.package_kind(), &payload);
+        let wasm = wat::parse_str(package_demand_wat(kind, &id))
+            .expect("BUG: package demand WAT must parse");
+        let mut runtime = WasmWidgetRuntime::new(
+            &wasm,
+            64,
+            64,
+            bmc_wasm_protocol::ViewportShape::Rectangular,
+            common::test_display(64, 64),
+            chrono::Local::now().fixed_offset(),
+            RuntimeConfig {
+                package_assets: Some(PackageAssetStore::new(package_dir.path())),
+                ..RuntimeConfig::default()
+            },
+        )
+        .expect("BUG: runtime must construct");
+        let renderer_tag = format!("{}:{REGISTERED_TAG}", runtime.asset_namespace());
+        let reserved_id = call_export(&mut runtime, &mut renderer, "register_valid");
+
+        assert_eq!(
+            runtime
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+                .expect("BUG: package-demand render must complete"),
+            RenderStatus::Ok
+        );
+        kind.assert_resident(&renderer, &renderer_tag, reserved_id);
+
+        runtime.notify_dormant();
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: package suspension must not trap");
+        assert_initial_suspension(
+            kind,
+            runtime
+                .last_asset_suspension_for_test()
+                .expect("BUG: initial sleep must record suspension accounting"),
+        );
+        kind.assert_suspended(&renderer, &renderer_tag, reserved_id);
+
+        runtime.notify_dormant();
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: repeated package suspension must not trap");
+        assert_repeated_suspension(
+            runtime
+                .last_asset_suspension_for_test()
+                .expect("BUG: repeated sleep must record suspension accounting"),
         );
     }
 }
@@ -1146,6 +1492,52 @@ fn package_renderer_failures_are_deferred_until_a_tree_demands_the_asset() {
         },
     );
     assert_package_demand_fails(&mut invalid, &gl);
+    assert_eq!(
+        invalid.renderer_asset_failure_for_test(),
+        Some("renderer failed to register asset while restoring resident")
+    );
+}
+
+#[test]
+fn package_restore_reports_a_changed_reservation_separately() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
+    let payload = compiled_empty_svg();
+    let id = write_package_asset(package_dir.path(), PackageAssetKind::Svg, &payload);
+    let mut runtime = package_svg_demand_runtime(
+        &id,
+        RuntimeConfig {
+            package_assets: Some(PackageAssetStore::new(package_dir.path())),
+            ..RuntimeConfig::default()
+        },
+    );
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let namespace = runtime.asset_namespace();
+    let renderer_tag = format!("{namespace}:{REGISTERED_TAG}");
+    let reserved_id = call_export(&mut runtime, &mut renderer, "register_valid");
+
+    assert_eq!(renderer.evict_prefix(namespace.as_str()), 1);
+    let replacement_id = renderer
+        .register_svg(&renderer_tag, &payload)
+        .expect("BUG: replacement SVG must register")
+        .to_ffi();
+    assert_ne!(replacement_id, reserved_id);
+
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: reservation mismatch must produce a render status"),
+        RenderStatus::Dead
+    );
+    assert_eq!(
+        runtime.renderer_asset_failure_for_test(),
+        Some("asset reservation changed while restoring resident")
+    );
 }
 
 #[test]
@@ -1178,8 +1570,8 @@ fn failed_demand_restore_marks_the_widget_dead_after_on_wake() {
     let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
     let payload = compiled_empty_svg();
     let id = write_package_asset(package_dir.path(), PackageAssetKind::Svg, &payload);
-    let wasm =
-        wat::parse_str(package_svg_demand_wat(&id)).expect("BUG: package demand WAT must parse");
+    let wasm = wat::parse_str(package_demand_wat(AssetKind::Svg, &id))
+        .expect("BUG: package demand WAT must parse");
     let mut runtime = WasmWidgetRuntime::new(
         &wasm,
         64,
@@ -1287,6 +1679,75 @@ fn bitmap_fit_cannot_replace_package_backing() {
         call_export(&mut runtime, &mut renderer, "register_package"),
         package_id.to_ffi(),
         "package re-registration must still resolve through its immutable backing"
+    );
+}
+
+#[test]
+fn resident_cache_backed_decode_survives_cache_eviction_without_restoration() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
+    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
+    let bitmap = one_px_png([0x11, 0x22, 0x33, 0xFF]);
+    let package_id = [0_u8; 32];
+    let wasm = wat::parse_str(package_bitmap_fit_collision_wat(&package_id, &bitmap))
+        .expect("BUG: active bitmap-fit WAT must parse");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            asset_cache: Some(cache.clone()),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime must construct");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+    let renderer_tag = format!("{}:{REGISTERED_TAG}", runtime.asset_namespace());
+
+    assert_ne!(call_export(&mut runtime, &mut renderer, "start_fit"), 0);
+    let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
+    while runtime.has_pending_image_decodes() && Instant::now() < deadline {
+        runtime
+            .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
+            .expect("BUG: active image decode delivery must not trap");
+        std::thread::yield_now();
+    }
+    assert!(
+        !runtime.has_pending_image_decodes(),
+        "active image decode did not complete within {IMAGE_DECODE_COMPLETION_TIMEOUT:?}"
+    );
+    let bitmap_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "ready_id"))
+        .expect("BUG: active image decode must report a bitmap ID");
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Resident(bitmap_id),
+        "an active decode must upload the pixels already in hand"
+    );
+
+    cache.evict(REGISTERED_TAG);
+
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: first post-decode draw must complete"),
+        RenderStatus::Ok
+    );
+    assert!(
+        runtime.last_asset_restoration_for_test().is_none(),
+        "an active decode is resident before its first draw and must not require restoration"
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&renderer_tag),
+        AssetTagState::Resident(bitmap_id),
+        "disk-cache eviction before first draw must not invalidate an active bitmap ID"
     );
 }
 
@@ -1519,7 +1980,11 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
 }
 
 #[test]
-fn render_restores_only_the_cache_bitmap_referenced_by_the_tree() {
+#[expect(
+    clippy::too_many_lines,
+    reason = "one lifecycle sequence verifies fresh and cached restoration"
+)]
+fn render_restores_only_the_cache_bitmap_used_by_a_draw() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
     };
@@ -1571,7 +2036,7 @@ fn render_restores_only_the_cache_bitmap_referenced_by_the_tree() {
     assert_eq!(
         renderer.bitmap_tag_state(&format!("{namespace}:unused-cache")),
         AssetTagState::Suspended(unused_id),
-        "a registered cache bitmap absent from the tree must remain unloaded"
+        "a cache bitmap in a closed modal must remain unloaded because no draw uses it"
     );
 
     assert_eq!(
@@ -1582,7 +2047,7 @@ fn render_restores_only_the_cache_bitmap_referenced_by_the_tree() {
     );
     assert!(
         runtime.last_asset_restoration_for_test().is_none(),
-        "resident demand-loaded assets must leave the steady-state preflight empty"
+        "resident demand-loaded assets must leave steady-state rendering without restoration work"
     );
 
     runtime.notify_dormant();
@@ -1598,6 +2063,40 @@ fn render_restores_only_the_cache_bitmap_referenced_by_the_tree() {
         AssetTagState::Suspended(used_id)
     );
 
+    assert!(
+        runtime.replay_cached_tree_for_test(renderer_ptr(&mut renderer), 16),
+        "cached-tree replay must restore the asset encountered during rendering"
+    );
+    assert_eq!(
+        runtime
+            .last_asset_restoration_for_test()
+            .expect("BUG: cached-tree replay must record restoration accounting")
+            .bitmap_restored,
+        1
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&format!("{namespace}:{DORMANT_CACHE_TAG}")),
+        AssetTagState::Resident(used_id),
+        "cached-tree replay must preserve the original bitmap reservation"
+    );
+    assert_eq!(
+        renderer.bitmap_tag_state(&format!("{namespace}:unused-cache")),
+        AssetTagState::Suspended(unused_id),
+        "cached-tree replay must not restore the bitmap in the closed modal"
+    );
+
+    assert_eq!(call_export(&mut runtime, &mut renderer, "skip_submit"), 1);
+    assert_eq!(
+        runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: render without a submitted tree must complete"),
+        RenderStatus::Ok
+    );
+    assert!(
+        runtime.last_asset_restoration_for_test().is_none(),
+        "a frame without a tree submission must not inherit the previous frame's restoration"
+    );
+
     runtime.notify_wake();
     runtime
         .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
@@ -1609,7 +2108,7 @@ fn render_restores_only_the_cache_bitmap_referenced_by_the_tree() {
     let repeated_suspension = runtime
         .last_asset_suspension_for_test()
         .expect("repeated sleep must produce a suspension observation");
-    assert_eq!(repeated_suspension.bitmap_suspended, 0);
+    assert_eq!(repeated_suspension.bitmap_suspended, 1);
 }
 
 #[test]
@@ -1717,72 +2216,5 @@ fn missing_cache_payload_is_reported_as_skipped_when_rendered() {
         renderer.bitmap_tag_state(&cache_tag),
         AssetTagState::Resident(cache_id),
         "re-registration must re-enable demand restoration"
-    );
-}
-
-#[test]
-fn missing_cache_payload_is_reported_as_skipped_on_wake() {
-    let Some(gl) = headless_egl::try_init(64, 64) else {
-        return;
-    };
-    let cache_dir = tempfile::tempdir().expect("BUG: cache tempdir must construct");
-    let cache = DiskCache::new(cache_dir.path().to_path_buf(), 1_048_576);
-    let mut metadata = Vec::from(1_u32.to_le_bytes());
-    metadata.extend_from_slice(&1_u32.to_le_bytes());
-    cache
-        .put(DORMANT_CACHE_TAG, 1, &metadata, &[0x11, 0x22, 0x33, 0xFF])
-        .expect("BUG: cache fixture must be writable");
-    let wasm = wat::parse_str(dormant_registration_probe_wat())
-        .expect("BUG: dormant registration WAT must parse");
-    let mut runtime = WasmWidgetRuntime::new(
-        &wasm,
-        64,
-        64,
-        bmc_wasm_protocol::ViewportShape::Rectangular,
-        common::test_display(64, 64),
-        chrono::Local::now().fixed_offset(),
-        RuntimeConfig {
-            asset_cache: Some(cache.clone()),
-            ..RuntimeConfig::default()
-        },
-    )
-    .expect("BUG: runtime must construct");
-    let mut proc = gl.proc_address();
-    // SAFETY: HeadlessGl keeps the GL context current.
-    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
-        .expect("BUG: renderer must construct");
-    let cache_tag = format!("{}:{DORMANT_CACHE_TAG}", runtime.asset_namespace());
-
-    assert_eq!(
-        call_export(&mut runtime, &mut renderer, "register_reservations"),
-        1
-    );
-    let cache_id = BitmapId::from_ffi(call_export(&mut runtime, &mut renderer, "cache_id"))
-        .expect("BUG: cache registration must return an ID");
-    runtime.notify_dormant();
-    runtime
-        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
-        .expect("BUG: dormant delivery must not trap");
-    cache.evict(DORMANT_CACHE_TAG);
-
-    runtime.notify_wake();
-    runtime
-        .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
-        .expect("BUG: wake delivery must not trap");
-
-    assert_eq!(
-        runtime
-            .last_asset_restoration_for_test()
-            .expect("BUG: wake must record restoration accounting"),
-        bmc_wasm_runtime::RendererAssetRestorationObservation {
-            skipped: 1,
-            ..bmc_wasm_runtime::RendererAssetRestorationObservation::default()
-        },
-        "a missing cache payload must not be counted as restored"
-    );
-    assert_eq!(
-        renderer.bitmap_tag_state(&cache_tag),
-        AssetTagState::Suspended(cache_id),
-        "the missing cache payload must retain its suspended reservation"
     );
 }

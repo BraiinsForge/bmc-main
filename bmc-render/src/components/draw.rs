@@ -37,7 +37,7 @@ use bmc_wasm_protocol::*;
 
 use crate::animation::{apply_easing, compute_animation_value, interpolate_color};
 use crate::gpu::mesh::{MeshDrawArgs, MeshLighting, MeshTransform};
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 use crate::tree::{AnimationContext, DrawCommand, HostAnimationDef};
 use crate::{AnimationState, PrevDrawValues, TransitionState};
 
@@ -187,7 +187,7 @@ fn dash_runs(points: &[(f32, f32)], on: f32, off: f32) -> Vec<Vec<(f32, f32)>> {
 }
 
 pub(crate) fn render_draw_command(
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     draw: &DrawCommand,
     cx: f32,
     cy: f32,
@@ -300,7 +300,7 @@ fn render_qr(
 /// Render a draw command with accumulated transforms and animation modifiers.
 #[expect(clippy::too_many_arguments, clippy::too_many_lines)]
 fn render_draw_inner(
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     draw: &DrawCommand,
     cx: f32,
     cy: f32,
@@ -428,7 +428,7 @@ fn render_draw_inner(
                 (*dark, *light)
             };
             if rotation == 0.0 {
-                render_qr(renderer, rx, ry, es, dark, light, *quiet_zone, text);
+                render_qr(&mut *renderer, rx, ry, es, dark, light, *quiet_zone, text);
             } else {
                 let pivot_x = cx + cw / 2.0;
                 let pivot_y = cy + ch / 2.0;
@@ -436,7 +436,7 @@ fn render_draw_inner(
                 renderer.translate(pivot_x, pivot_y);
                 renderer.rotate(rotation);
                 render_qr(
-                    renderer,
+                    &mut *renderer,
                     rx - pivot_x,
                     ry - pivot_y,
                     es,
@@ -1498,10 +1498,13 @@ fn slerp_quat(a: Quat, b: Quat, t: f32) -> Quat {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
     use std::collections::HashMap;
+    use std::rc::Rc;
 
     use super::*;
     use crate::TransitionStateKey;
+    use crate::renderer::RendererAssetResolver;
     use crate::tree::{AutoFit, SpanData};
 
     #[test]
@@ -1662,10 +1665,24 @@ mod tests {
         },
     }
 
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum Asset {
+        Svg(SvgId),
+        Bitmap(BitmapId),
+        Mesh(MeshId),
+    }
+
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+    enum AssetEvent {
+        Resolve(Asset),
+        Draw(Asset),
+    }
+
     #[derive(Default)]
     struct RecordingRenderer {
         events: Vec<RenderEvent>,
         rects: Vec<(f32, f32, f32, f32, Color)>,
+        asset_events: Rc<RefCell<Vec<AssetEvent>>>,
     }
 
     impl Renderer for RecordingRenderer {
@@ -1817,10 +1834,13 @@ mod tests {
             _w: f32,
             _h: f32,
             _color: Color,
-            _icon_id: SvgId,
+            icon_id: SvgId,
             _anti_alias: bool,
             _fills: &[(String, Color)],
         ) {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Draw(Asset::Svg(icon_id)));
         }
 
         fn register_bitmap(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
@@ -1841,7 +1861,11 @@ mod tests {
             None
         }
 
-        fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
+        fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, bitmap_id: BitmapId) {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Draw(Asset::Bitmap(bitmap_id)));
+        }
 
         fn draw_nine_patch(
             &mut self,
@@ -1849,12 +1873,15 @@ mod tests {
             _y: f32,
             _w: f32,
             _h: f32,
-            _bitmap_id: BitmapId,
+            bitmap_id: BitmapId,
             _left: u16,
             _top: u16,
             _right: u16,
             _bottom: u16,
         ) {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Draw(Asset::Bitmap(bitmap_id)));
         }
 
         fn register_mesh(&mut self, _tag: &str, _data: &[u8]) -> Option<MeshId> {
@@ -1868,9 +1895,12 @@ mod tests {
             _w: f32,
             _h: f32,
             _slot_index: u8,
-            _mesh_id: MeshId,
+            mesh_id: MeshId,
             _args: MeshDrawArgs,
         ) {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Draw(Asset::Mesh(mesh_id)));
         }
 
         fn draw_sphere(
@@ -1879,7 +1909,7 @@ mod tests {
             _y: f32,
             _w: f32,
             _h: f32,
-            _bitmap_id: BitmapId,
+            bitmap_id: BitmapId,
             _center_lat: f32,
             _center_lon: f32,
             _zoom: f32,
@@ -1887,6 +1917,9 @@ mod tests {
             _light_lon: f32,
             _atmosphere: bool,
         ) {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Draw(Asset::Bitmap(bitmap_id)));
         }
 
         fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
@@ -1987,6 +2020,118 @@ mod tests {
         }
     }
 
+    struct RecordingAssetResolver {
+        asset_events: Rc<RefCell<Vec<AssetEvent>>>,
+    }
+
+    impl RendererAssetResolver for RecordingAssetResolver {
+        fn resolve_svg(&mut self, _renderer: &mut dyn Renderer, id: SvgId) -> bool {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Resolve(Asset::Svg(id)));
+            true
+        }
+
+        fn resolve_bitmap(&mut self, _renderer: &mut dyn Renderer, id: BitmapId) -> bool {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Resolve(Asset::Bitmap(id)));
+            true
+        }
+
+        fn resolve_mesh(&mut self, _renderer: &mut dyn Renderer, id: MeshId) -> bool {
+            self.asset_events
+                .borrow_mut()
+                .push(AssetEvent::Resolve(Asset::Mesh(id)));
+            true
+        }
+    }
+
+    fn test_mesh_draw_args() -> MeshDrawArgs {
+        MeshDrawArgs {
+            transform: MeshTransform {
+                fov: 0.0,
+                distance: 0.0,
+                quat: [0.0; 4],
+                position: [0.0; 3],
+                scale: 1.0,
+            },
+            lighting: MeshLighting {
+                pitch: f32::NAN,
+                yaw: 0.0,
+                ambient: 0.0,
+                specular: 0.0,
+            },
+            highlight: crate::gpu::mesh::MeshHighlight {
+                u_min: f32::NAN,
+                v_min: 0.0,
+                u_max: 0.0,
+                v_max: 0.0,
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    fn render_target_resolves_asset_ids_at_each_draw_including_shadow_content() {
+        let svg = SvgId::from_wire(1).expect("BUG: fixture SVG ID must be non-zero");
+        let bitmap = BitmapId::from_wire(2).expect("BUG: fixture bitmap ID must be non-zero");
+        let mesh = MeshId::from_wire(3).expect("BUG: fixture mesh ID must be non-zero");
+        let mut renderer = RecordingRenderer::default();
+        let mut resolver = RecordingAssetResolver {
+            asset_events: Rc::clone(&renderer.asset_events),
+        };
+        {
+            let resolver = RefCell::new(&mut resolver as &mut dyn RendererAssetResolver);
+            let mut target = RenderTarget::new(&mut renderer, Some(&resolver));
+            target.drop_shadow(
+                0.0,
+                0.0,
+                1,
+                1,
+                0.0,
+                0.0,
+                0.0,
+                Color::default(),
+                &mut |target| {
+                    target.draw_svg(0.0, 0.0, 1.0, 1.0, WHITE, svg, false, &[]);
+                },
+            );
+            target.draw_bitmap(0.0, 0.0, 1.0, 1.0, bitmap);
+            target.draw_nine_patch(0.0, 0.0, 1.0, 1.0, bitmap, 0, 0, 0, 0);
+            target.draw_sphere(
+                0.0,
+                0.0,
+                1.0,
+                1.0,
+                bitmap,
+                0.0,
+                0.0,
+                1.0,
+                f32::NAN,
+                0.0,
+                false,
+            );
+            target.draw_mesh(0.0, 0.0, 1.0, 1.0, 0, mesh, test_mesh_draw_args());
+        }
+
+        let expected = [
+            AssetEvent::Resolve(Asset::Svg(svg)),
+            AssetEvent::Draw(Asset::Svg(svg)),
+            AssetEvent::Resolve(Asset::Bitmap(bitmap)),
+            AssetEvent::Draw(Asset::Bitmap(bitmap)),
+            AssetEvent::Resolve(Asset::Bitmap(bitmap)),
+            AssetEvent::Draw(Asset::Bitmap(bitmap)),
+            AssetEvent::Resolve(Asset::Bitmap(bitmap)),
+            AssetEvent::Draw(Asset::Bitmap(bitmap)),
+            AssetEvent::Resolve(Asset::Mesh(mesh)),
+            AssetEvent::Draw(Asset::Mesh(mesh)),
+        ];
+        assert_eq!(*renderer.asset_events.borrow(), expected);
+    }
+
     fn animation_context<'a>(
         animation_states: &'a mut HashMap<u64, AnimationState>,
         transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
@@ -2003,6 +2148,42 @@ mod tests {
             has_active: false,
             now_unix_secs: 0,
         }
+    }
+
+    #[expect(clippy::too_many_arguments)]
+    fn render_draw_inner_for_test(
+        renderer: &mut dyn Renderer,
+        draw: &DrawCommand,
+        cx: f32,
+        cy: f32,
+        cw: f32,
+        ch: f32,
+        offset_x: f32,
+        offset_y: f32,
+        rotation: f32,
+        scale: f32,
+        alpha: f32,
+        orbit_angle_offset: f32,
+        color_override: Option<Color>,
+        anim_ctx: &mut AnimationContext<'_>,
+    ) {
+        let mut target = RenderTarget::new(renderer, None);
+        render_draw_inner(
+            &mut target,
+            draw,
+            cx,
+            cy,
+            cw,
+            ch,
+            offset_x,
+            offset_y,
+            rotation,
+            scale,
+            alpha,
+            orbit_angle_offset,
+            color_override,
+            anim_ctx,
+        );
     }
 
     fn transition_arc(end_angle: f32) -> DrawCommand {
@@ -2035,7 +2216,7 @@ mod tests {
         let mut transition_states = HashMap::new();
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
 
-        render_draw_inner(
+        render_draw_inner_for_test(
             &mut renderer,
             &transition_arc(1.0),
             0.0,
@@ -2056,7 +2237,7 @@ mod tests {
         anim_ctx.delta_ms = 500;
         anim_ctx.frame_counter = 1;
 
-        render_draw_inner(
+        render_draw_inner_for_test(
             &mut renderer,
             &transition_arc(3.0),
             0.0,
@@ -2120,7 +2301,7 @@ mod tests {
             },
         };
 
-        render_draw_inner(
+        render_draw_inner_for_test(
             &mut renderer,
             &draw,
             10.0,
@@ -2183,7 +2364,7 @@ mod tests {
             },
         };
 
-        render_draw_inner(
+        render_draw_inner_for_test(
             &mut renderer,
             &draw,
             10.0,
@@ -2250,7 +2431,7 @@ mod tests {
             },
         };
 
-        render_draw_inner(
+        render_draw_inner_for_test(
             &mut renderer,
             &draw,
             0.0,

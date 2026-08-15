@@ -29,7 +29,7 @@
 use bmc_wasm_protocol::*;
 
 use crate::interaction::{InteractionState, Rect};
-use crate::renderer::Renderer;
+use crate::renderer::{RenderTarget, Renderer};
 use crate::tree::{TouchHit, TreeResult};
 
 // ── Geometry / theme ─────────────────────────────────────────────────
@@ -75,13 +75,13 @@ pub fn switcher_size(data: &SwitcherData) -> (f32, f32) {
     clippy::too_many_arguments,
     reason = "position, size, and the render sinks each need their own arg"
 )]
-pub fn render_switcher(
+pub(crate) fn render_switcher(
     data: &SwitcherData,
     x: f32,
     y: f32,
     w: f32,
     h: f32,
-    renderer: &mut dyn Renderer,
+    renderer: &mut RenderTarget<'_, '_, '_>,
     interaction: &mut InteractionState,
     result: &mut TreeResult,
 ) {

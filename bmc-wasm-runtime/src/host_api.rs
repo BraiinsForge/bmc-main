@@ -56,6 +56,10 @@ use crate::system::SystemSnapshot;
 use crate::xml::XmlDocumentIndex;
 use bmc_wasm_protocol::versioned_snapshot::VersionedSnapshotCache;
 
+pub(crate) fn namespaced_tag(instance_id: &str, tag: &str) -> String {
+    format!("{instance_id}:{tag}")
+}
+
 /// Refused live-I/O attempts collected during a hermetic capture run.
 #[derive(Default)]
 pub struct HermeticRun {
@@ -748,8 +752,6 @@ pub(crate) struct HostState {
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
 
-    pub(crate) cached_tree_asset_references: Option<bmc_render::tree::RendererAssetReferences>,
-
     /// Current wall-clock time, set by the host before each render().
     /// Used by `host_get_system_time()` — the runtime never calls `Local::now()`.
     pub system_time: chrono::DateTime<chrono::FixedOffset>,
@@ -1107,7 +1109,6 @@ impl HostState {
             transition_states: HashMap::new(),
             frame_counter: 0,
             cached_tree: None,
-            cached_tree_asset_references: None,
             system_time,
             monotonic_ms: 0,
             params: VersionedSnapshotCache::new(ParamsSnapshot::new(BTreeMap::new())),
@@ -1227,7 +1228,7 @@ impl HostState {
     /// same slot names without collision.
     #[must_use]
     pub fn namespaced_tag(&self, tag: &str) -> String {
-        format!("{}:{tag}", self.instance_id)
+        namespaced_tag(&self.instance_id, tag)
     }
 
     /// The bare namespace root (`instance_id`) every asset tag lives under.

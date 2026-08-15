@@ -63,6 +63,7 @@ pub const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
 /// Decode image bytes to RGBA off the render thread — fit within `w`×`h`
 /// (letterbox) or cover-crop to exactly `w`×`h` (fill).
 pub use gpu::bitmap::{decode_scaled_to_cover, decode_scaled_to_fit};
+pub use renderer::RendererAssetResolver;
 
 #[cfg(all(test, target_os = "linux"))]
 mod test_harness;
@@ -71,7 +72,10 @@ mod test_harness;
 pub mod colors {
     pub use bmc_wasm_protocol::colors::*;
 }
-pub use tree::{ProcessContext, deserialize_tree, layout_and_render, process_tree};
+pub use tree::{
+    ProcessContext, deserialize_tree, layout_and_render, layout_and_render_with_asset_resolver,
+    process_tree,
+};
 
 // ── State types needed by layout_and_render ─────────────────────────
 

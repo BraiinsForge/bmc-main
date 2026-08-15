@@ -22,8 +22,6 @@ use std::collections::BTreeMap;
 
 use bmc_wasm_protocol::{BitmapId, BitmapSampling, MeshId, PackageAssetId, SvgId};
 
-use bmc_render::tree::RendererAssetReferences;
-
 pub(crate) fn cached_bitmap_dimensions(blob: &crate::disk_cache::CachedBlob) -> Option<(u32, u32)> {
     let metadata = blob.metadata();
     let width = u32::from_le_bytes(metadata.get(..4)?.try_into().ok()?);
@@ -76,7 +74,7 @@ impl RendererAssetKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub(crate) enum RendererAssetId {
     Svg(SvgId),
     Bitmap(BitmapId),
@@ -153,20 +151,13 @@ impl RendererAssetLedger {
         })
     }
 
-    pub(crate) fn restorable_referenced_by(
-        &self,
-        references: &RendererAssetReferences,
-    ) -> Vec<(String, RendererAssetRecord)> {
+    pub(crate) fn pending_by_id(&self, id: RendererAssetId) -> Vec<(String, RendererAssetRecord)> {
         self.records
             .iter()
             .filter(|(_, record)| {
                 record.backing.is_restorable()
                     && record.demand_restoration == DemandRestoration::Pending
-                    && match record.id {
-                        RendererAssetId::Svg(id) => references.contains_svg(id),
-                        RendererAssetId::Bitmap(id) => references.contains_bitmap(id),
-                        RendererAssetId::Mesh(id) => references.contains_mesh(id),
-                    }
+                    && record.id == id
             })
             .map(|(tag, record)| (tag.clone(), record.clone()))
             .collect()
@@ -317,6 +308,18 @@ mod tests {
             .record("second".to_owned(), record)
             .expect("second tag may share a renderer ID");
 
+        let shared_id =
+            RendererAssetId::Svg(SvgId::from_ffi(1).expect("BUG: fixture SVG ID must be non-zero"));
+        assert_eq!(
+            ledger
+                .pending_by_id(shared_id)
+                .into_iter()
+                .map(|(tag, _)| tag)
+                .collect::<Vec<_>>(),
+            ["first", "second"],
+            "an encountered ID must select every pending alias"
+        );
+
         ledger.mark_resident("second");
 
         assert_eq!(
@@ -326,6 +329,15 @@ mod tests {
         assert_eq!(
             ledger.get("second").map(|record| record.demand_restoration),
             Some(DemandRestoration::Resident)
+        );
+        assert_eq!(
+            ledger
+                .pending_by_id(shared_id)
+                .into_iter()
+                .map(|(tag, _)| tag)
+                .collect::<Vec<_>>(),
+            ["first"],
+            "an encountered ID must not select a resident alias"
         );
     }
 

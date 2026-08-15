@@ -30,13 +30,13 @@ use anyhow::Result;
 use bmc_wasm_protocol::colors::Color;
 use wasmi::{Caller, Linker};
 
-use bmc_render::FrameTimings;
 use bmc_render::components::{ButtonSize, ButtonStyle, draw_button};
 use bmc_render::tree;
+use bmc_render::{FrameTimings, layout_and_render_with_asset_resolver};
 
 use crate::host_api::HostState;
 
-use super::super::backend::{restore_referenced_renderer_assets, write_touch_hit};
+use super::super::backend::{RendererAssetRestorer, write_touch_hit};
 use super::super::memory::{read_bytes, read_string};
 use super::guards::{forbid_unload, render_or_warn, require_render, warned_latch};
 
@@ -231,15 +231,6 @@ fn submit_tree(
         let deserialize_us =
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
         state.last_asset_restoration = None;
-        let references = state
-            .renderer_assets
-            .has_pending_restorable()
-            .then(|| tree_node.renderer_asset_references());
-        if let Some(references) = &references
-            && !restore_referenced_renderer_assets(state, renderer, references)
-        {
-            return;
-        }
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
@@ -259,7 +250,30 @@ fn submit_tree(
             delta_ms,
             now_unix_secs,
         };
-        match tree::layout_and_render(&tree_node, w, h, renderer, &mut timings, &mut ctx) {
+        let mut resolver = RendererAssetRestorer::new(
+            &state.instance_id,
+            state.asset_cache.as_ref(),
+            state.package_assets.as_ref(),
+            &mut state.renderer_assets,
+            &mut state.profile_sections,
+        );
+        let render_result = layout_and_render_with_asset_resolver(
+            &tree_node,
+            w,
+            h,
+            renderer,
+            &mut resolver,
+            &mut timings,
+            &mut ctx,
+        );
+        match resolver.finish() {
+            Ok(observation) => state.last_asset_restoration = observation,
+            Err(error) => {
+                state.renderer_asset_failure = Some(error);
+                return;
+            }
+        }
+        match render_result {
             Ok((result, has_active)) => {
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 state.tree_clicks = result.clicks;
@@ -269,7 +283,6 @@ fn submit_tree(
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
                 state.cached_tree = Some((tree_node, w, h));
-                state.cached_tree_asset_references = references;
             }
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");
