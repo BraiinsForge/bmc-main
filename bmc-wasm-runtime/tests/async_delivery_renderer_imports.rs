@@ -55,7 +55,54 @@ fn wat_string_literal(bytes: &[u8]) -> String {
     out
 }
 
-fn fetch_callback_wat(register_bitmap: bool, initial_bitmap: Option<&[u8]>) -> String {
+#[derive(Clone, Copy)]
+enum CallbackAction {
+    None,
+    RegisterBitmap,
+    DrawText,
+    Button,
+}
+
+fn callback_action_wat(action: CallbackAction, tag_ptr: usize, tag_len: usize) -> String {
+    match action {
+        CallbackAction::None => String::new(),
+        CallbackAction::RegisterBitmap => format!(
+            r"
+            (drop
+              (call $host_register_bitmap
+                (i32.const {tag_ptr})
+                (i32.const {tag_len})
+                (local.get $body_ptr)
+                (local.get $body_len)))",
+        ),
+        CallbackAction::DrawText => format!(
+            r"
+            (call $host_draw_text
+              (i32.const {tag_ptr})
+              (i32.const {tag_len})
+              (i32.const 0)
+              (i32.const 0)
+              (i32.const 12)
+            (i32.const -1))",
+        ),
+        CallbackAction::Button => format!(
+            r"
+            (drop
+              (call $host_button
+                (i32.const {tag_ptr})
+                (i32.const {tag_len})
+                (i32.const {tag_ptr})
+                (i32.const {tag_len})
+                (i32.const 0)
+                (i32.const 0)
+                (i32.const 32)
+                (i32.const 16)
+                (i32.const 0)))",
+        ),
+    }
+}
+
+fn fetch_callback_wat(action: CallbackAction, initial_bitmap: Option<&[u8]>) -> String {
     let method = b"GET";
     let url = b"https://example.test/art.png";
     let tag = b"album_art";
@@ -73,16 +120,7 @@ fn fetch_callback_wat(register_bitmap: bool, initial_bitmap: Option<&[u8]>) -> S
         data.extend_from_slice(initial_bitmap);
     }
     let data = wat_string_literal(&data);
-    let register_bitmap = register_bitmap.then_some(format!(
-        r"
-            (drop
-              (call $host_register_bitmap
-                (i32.const {tag_ptr})
-                (i32.const {tag_len})
-                (local.get $body_ptr)
-                (local.get $body_len)))",
-        tag_len = tag.len(),
-    ));
+    let callback_action = callback_action_wat(action, tag_ptr, tag.len());
     let register_initial = initial_bitmap.map(|bytes| {
         format!(
             r#"
@@ -107,6 +145,13 @@ fn fetch_callback_wat(register_bitmap: bool, initial_bitmap: Option<&[u8]>) -> S
           (import "env" "host_register_bitmap"
             (func $host_register_bitmap
               (param i32 i32 i32 i32)
+              (result i32)))
+          (import "env" "host_draw_text"
+            (func $host_draw_text
+              (param i32 i32 i32 i32 i32 i32)))
+          (import "env" "host_button"
+            (func $host_button
+              (param i32 i32 i32 i32 i32 i32 i32 i32 i32)
               (result i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
@@ -134,7 +179,7 @@ fn fetch_callback_wat(register_bitmap: bool, initial_bitmap: Option<&[u8]>) -> S
             (param $body_len i32)
             (global.set $callback_count
               (i32.add (global.get $callback_count) (i32.const 1)))
-            {register_bitmap})
+            {callback_action})
           (func (export "callback_count") (result i32)
             (global.get $callback_count))
           {register_initial}
@@ -143,32 +188,42 @@ fn fetch_callback_wat(register_bitmap: bool, initial_bitmap: Option<&[u8]>) -> S
         "#,
         method_len = method.len(),
         url_len = url.len(),
-        register_bitmap = register_bitmap.unwrap_or_default(),
+        callback_action = callback_action,
         register_initial = register_initial.unwrap_or_default(),
         sdk = bmc_wasm_protocol::version_pack(bmc_wasm_protocol::SDK_VERSION)
     )
 }
 
-fn poll_fetch_delivery(runtime: &mut WasmWidgetRuntime, renderer: &mut FemtoVgRenderer) -> bool {
+fn poll_fetch_delivery(
+    runtime: &mut WasmWidgetRuntime,
+    renderer: &mut FemtoVgRenderer,
+) -> (bool, usize) {
     let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
     let ptr = NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
     let deadline = Instant::now() + Duration::from_secs(2);
     let mut renderer_accessed = false;
+    let gpu_acquisitions = std::cell::Cell::new(0);
     while runtime.has_pending_fetches() && Instant::now() < deadline {
         renderer_accessed |= runtime
-            .poll_deliveries_with_renderer(ptr)
+            .poll_deliveries_with_renderer_and_gpu_access(ptr, || {
+                gpu_acquisitions.set(gpu_acquisitions.get() + 1);
+                Ok(())
+            })
             .expect("BUG: fixture delivery must not trap");
         std::thread::yield_now();
     }
     renderer_accessed |= runtime
-        .poll_deliveries_with_renderer(ptr)
+        .poll_deliveries_with_renderer_and_gpu_access(ptr, || {
+            gpu_acquisitions.set(gpu_acquisitions.get() + 1);
+            Ok(())
+        })
         .expect("BUG: fixture delivery must not trap");
     assert_eq!(
         runtime.call_export_i32("callback_count"),
         Some(1),
         "the intercepted fetch must reach its guest callback"
     );
-    renderer_accessed
+    (renderer_accessed, gpu_acquisitions.get())
 }
 
 #[test]
@@ -177,8 +232,8 @@ fn fetch_response_callback_can_register_renderer_asset() {
         return;
     };
     let png = one_px_png([0, 255, 0, 255]);
-    let wasm =
-        wat::parse_str(fetch_callback_wat(true, None)).expect("BUG: callback WAT must parse");
+    let wasm = wat::parse_str(fetch_callback_wat(CallbackAction::RegisterBitmap, None))
+        .expect("BUG: callback WAT must parse");
     let mut proc = gl.proc_address();
     // SAFETY: HeadlessGl keeps the GL context current.
     let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
@@ -198,9 +253,14 @@ fn fetch_response_callback_can_register_renderer_asset() {
     .expect("BUG: runtime construct");
     let namespace = runtime.asset_namespace();
 
+    let (gpu_accessed, gpu_acquisitions) = poll_fetch_delivery(&mut runtime, &mut renderer);
     assert!(
-        poll_fetch_delivery(&mut runtime, &mut renderer),
+        gpu_accessed,
         "delivery must report the renderer import so the host fences its GPU work"
+    );
+    assert_eq!(
+        gpu_acquisitions, 1,
+        "one upload must acquire GPU access once"
     );
 
     assert!(
@@ -214,8 +274,8 @@ fn fetch_response_callback_without_renderer_import_needs_no_gpu_fence() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
     };
-    let wasm =
-        wat::parse_str(fetch_callback_wat(false, None)).expect("BUG: callback WAT must parse");
+    let wasm = wat::parse_str(fetch_callback_wat(CallbackAction::None, None))
+        .expect("BUG: callback WAT must parse");
     let mut proc = gl.proc_address();
     // SAFETY: HeadlessGl keeps the GL context current.
     let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
@@ -234,10 +294,12 @@ fn fetch_response_callback_without_renderer_import_needs_no_gpu_fence() {
     )
     .expect("BUG: runtime construct");
 
+    let (gpu_accessed, gpu_acquisitions) = poll_fetch_delivery(&mut runtime, &mut renderer);
     assert!(
-        !poll_fetch_delivery(&mut runtime, &mut renderer),
+        !gpu_accessed,
         "a pure guest callback must not request a GPU completion fence"
     );
+    assert_eq!(gpu_acquisitions, 0, "a pure callback must remain lock-free");
 }
 
 #[test]
@@ -246,8 +308,11 @@ fn fetch_response_callback_querying_a_resident_asset_needs_no_gpu_fence() {
         return;
     };
     let png = one_px_png([0, 255, 0, 255]);
-    let wasm =
-        wat::parse_str(fetch_callback_wat(true, Some(&png))).expect("BUG: callback WAT must parse");
+    let wasm = wat::parse_str(fetch_callback_wat(
+        CallbackAction::RegisterBitmap,
+        Some(&png),
+    ))
+    .expect("BUG: callback WAT must parse");
     let mut proc = gl.proc_address();
     // SAFETY: HeadlessGl keeps the GL context current.
     let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
@@ -275,8 +340,85 @@ fn fetch_response_callback_querying_a_resident_asset_needs_no_gpu_fence() {
         "the fixture must make the callback registration a resident lookup"
     );
 
+    let (gpu_accessed, gpu_acquisitions) = poll_fetch_delivery(&mut runtime, &mut renderer);
     assert!(
-        !poll_fetch_delivery(&mut runtime, &mut renderer),
+        !gpu_accessed,
         "a resident asset lookup must not request a GPU completion fence"
+    );
+    assert_eq!(
+        gpu_acquisitions, 0,
+        "resident lookup must not acquire GPU access"
+    );
+}
+
+#[test]
+fn fetch_response_callback_drawing_text_acquires_gpu_access() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let wasm = wat::parse_str(fetch_callback_wat(CallbackAction::DrawText, None))
+        .expect("BUG: callback WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, Vec::new())))),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime construct");
+
+    let (gpu_accessed, gpu_acquisitions) = poll_fetch_delivery(&mut runtime, &mut renderer);
+    assert!(
+        gpu_accessed,
+        "a drawing import during delivery must request a GPU completion fence"
+    );
+    assert_eq!(
+        gpu_acquisitions, 1,
+        "drawing imports in one callback must acquire GPU access once"
+    );
+}
+
+#[test]
+fn fetch_response_callback_drawing_button_acquires_gpu_access() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let wasm = wat::parse_str(fetch_callback_wat(CallbackAction::Button, None))
+        .expect("BUG: callback WAT must parse");
+    let mut proc = gl.proc_address();
+    // SAFETY: HeadlessGl keeps the GL context current.
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        64,
+        64,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(64, 64),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig {
+            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, Vec::new())))),
+            ..RuntimeConfig::default()
+        },
+    )
+    .expect("BUG: runtime construct");
+
+    let (gpu_accessed, gpu_acquisitions) = poll_fetch_delivery(&mut runtime, &mut renderer);
+    assert!(
+        gpu_accessed,
+        "a button import during delivery must request a GPU completion fence"
+    );
+    assert_eq!(
+        gpu_acquisitions, 1,
+        "a button import must acquire GPU access once"
     );
 }

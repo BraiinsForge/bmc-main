@@ -177,6 +177,7 @@ impl BitmapRegistry {
         }
         let pixels_rgba: &[RGBA8] = rgba.as_rgba();
         let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, width as usize, height as usize));
+        crate::gpu_access::assert_gpu_access_authorized();
         let image_id = match canvas.create_image(src, flags) {
             Ok(i) => i,
             Err(e) => {
@@ -236,6 +237,7 @@ impl BitmapRegistry {
         };
         let id = reservation.id;
         if let Some(bitmap) = self.bitmaps.remove(&id) {
+            crate::gpu_access::assert_gpu_access_authorized();
             canvas.delete_image(bitmap.image_id);
             AssetSuspendResult::Suspended(id)
         } else {
@@ -258,6 +260,14 @@ impl BitmapRegistry {
             .sum()
     }
 
+    #[must_use]
+    pub fn has_resident_prefix(&self, prefix: &str) -> bool {
+        self.by_tag.iter().any(|(tag, reservation)| {
+            bmc_wasm_protocol::tag_matches_prefix(tag, prefix)
+                && self.bitmaps.contains_key(&reservation.id)
+        })
+    }
+
     /// Get the FemtoVG `ImageId` and source dimensions for a registered bitmap.
     #[must_use]
     pub fn get_with_size(&self, id: BitmapId) -> Option<(ImageId, u32, u32)> {
@@ -268,6 +278,9 @@ impl BitmapRegistry {
 
     /// Delete all registered FemtoVG images.
     pub fn clear(&mut self, canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>) {
+        if !self.bitmaps.is_empty() {
+            crate::gpu_access::assert_gpu_access_authorized();
+        }
         for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
             canvas.delete_image(bitmap.image_id);
         }
@@ -288,6 +301,7 @@ impl BitmapRegistry {
             return false;
         };
         if let Some(stored) = self.bitmaps.remove(&reservation.id) {
+            crate::gpu_access::assert_gpu_access_authorized();
             canvas.delete_image(stored.image_id);
         }
         true
@@ -329,8 +343,16 @@ fn decode_and_upload(
     let pixels_rgba: &[RGBA8] = rgba.as_raw().as_rgba();
 
     let src = ImageSource::Rgba(ImgRef::new(pixels_rgba, w as usize, h as usize));
+    crate::gpu_access::assert_gpu_access_authorized();
     let image_id = canvas.create_image(src, flags)?;
     Ok((image_id, w, h))
+}
+
+/// Decode PNG/JPEG/etc. bytes into tightly packed RGBA pixels without GPU access.
+pub fn decode_bitmap_rgba(data: &[u8]) -> anyhow::Result<(Vec<u8>, u32, u32)> {
+    let rgba = decode_full_to_dynamic(data)?.into_rgba8();
+    let (width, height) = rgba.dimensions();
+    Ok((rgba.into_raw(), width, height))
 }
 
 /// Decode to RGBA scaled to fit within `max_w`×`max_h` (no upscale), letterboxed

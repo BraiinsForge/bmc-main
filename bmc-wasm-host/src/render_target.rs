@@ -85,6 +85,25 @@ fn prepared_compaction_slot(
 
 impl EglRenderTarget {
     #[must_use]
+    pub fn has_prepared_compaction_work(&self) -> bool {
+        prepared_compaction_slot(
+            self.wl_buffers.release_state(),
+            self.buffers.allocated_slots(),
+            self.buffers.current_slot(),
+        )
+        .is_some()
+    }
+
+    #[must_use]
+    pub fn has_released_slot_cleanup(&self) -> bool {
+        self.wl_buffers
+            .release_state()
+            .destroyable_slots(self.buffers.allocated_slots())
+            .next()
+            .is_some()
+    }
+
+    #[must_use]
     pub fn current_slot_available(&self) -> bool {
         self.wl_buffers.is_available(self.buffers.current_slot())
     }

@@ -984,6 +984,27 @@ impl Renderer for FemtoVgRenderer {
         Some(bitmap_id)
     }
 
+    fn register_bitmap_rgba_nearest(
+        &mut self,
+        tag: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<BitmapId> {
+        let bitmap_id = self.bitmap_registry.register_rgba(
+            tag,
+            rgba,
+            width,
+            height,
+            &mut self.canvas,
+            femtovg::ImageFlags::NEAREST,
+        )?;
+        if self.sphere_bitmap_id == Some(bitmap_id) {
+            self.sphere_bitmap_id = None;
+        }
+        Some(bitmap_id)
+    }
+
     fn bitmap_tag_state(&self, tag: &str) -> AssetTagState<BitmapId> {
         self.bitmap_registry.tag_state(tag)
     }
@@ -1025,6 +1046,9 @@ impl Renderer for FemtoVgRenderer {
     }
 
     fn register_mesh(&mut self, tag: &str, data: &[u8]) -> Option<MeshId> {
+        if !matches!(self.mesh_tag_state(tag), AssetTagState::Resident(_)) {
+            crate::gpu_access::assert_gpu_access_authorized();
+        }
         self.lazy_init_mesh_renderer();
         let renderer = self.mesh_renderer.as_mut()?;
         renderer.register_mesh(&self.gl, tag, data)
@@ -1039,6 +1063,9 @@ impl Renderer for FemtoVgRenderer {
     }
 
     fn suspend_mesh(&mut self, tag: &str) -> AssetSuspendResult<MeshId> {
+        if matches!(self.mesh_tag_state(tag), AssetTagState::Resident(_)) {
+            crate::gpu_access::assert_gpu_access_authorized();
+        }
         if let Some(renderer) = self.mesh_renderer.as_mut() {
             renderer.suspend_exact(&self.gl, tag)
         } else {
@@ -1335,6 +1362,14 @@ impl Renderer for FemtoVgRenderer {
             self.sphere_bitmap_id = None;
         }
         n
+    }
+
+    fn evict_prefix_requires_gpu_access(&self, prefix: &str) -> bool {
+        self.bitmap_registry.has_resident_prefix(prefix)
+            || self
+                .mesh_renderer
+                .as_ref()
+                .is_some_and(|mesh| mesh.has_resident_prefix(prefix))
     }
 
     fn bitmap_resident_bytes(&self) -> u64 {
@@ -1738,6 +1773,65 @@ mod tests {
         assert!(
             renderer.canvas.get_native_texture(old_image_id).is_err(),
             "RGBA replacement must delete the previous native texture"
+        );
+
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            replacement_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        renderer.flush();
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
+        assert!(
+            center[2] > 240 && center[0] < 16 && center[1] < 16,
+            "replacement blue texture must be sampled at sphere center, got {center:?}"
+        );
+    }
+
+    #[test]
+    fn sphere_rebinds_resident_nearest_rgba_replacement() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let tag = "widget-42:nearest-sphere";
+
+        let bitmap_id = renderer
+            .register_bitmap_rgba_nearest(tag, &[255, 0, 0, 255], 1, 1)
+            .expect("BUG: initial nearest RGBA registration should succeed");
+        renderer.begin_frame(64, 64, 1.0);
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+        renderer.flush();
+        assert_eq!(renderer.sphere_bitmap_id, Some(bitmap_id));
+
+        let replacement_id = renderer
+            .register_bitmap_rgba_nearest(tag, &[0, 0, 255, 255], 1, 1)
+            .expect("BUG: replacement nearest RGBA registration should succeed");
+        assert_eq!(
+            replacement_id, bitmap_id,
+            "nearest RGBA replacement must preserve its tag reservation"
         );
 
         renderer.begin_frame(64, 64, 1.0);

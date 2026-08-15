@@ -47,6 +47,7 @@
 pub mod animation;
 pub mod components;
 pub mod gpu;
+pub mod gpu_access;
 pub mod interaction;
 #[cfg(any(feature = "profiling", test))]
 pub mod proc_mem;
@@ -62,7 +63,7 @@ pub const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
 
 /// Decode image bytes to RGBA off the render thread — fit within `w`×`h`
 /// (letterbox) or cover-crop to exactly `w`×`h` (fill).
-pub use gpu::bitmap::{decode_scaled_to_cover, decode_scaled_to_fit};
+pub use gpu::bitmap::{decode_bitmap_rgba, decode_scaled_to_cover, decode_scaled_to_fit};
 pub use renderer::RendererAssetResolver;
 
 #[cfg(all(test, target_os = "linux"))]

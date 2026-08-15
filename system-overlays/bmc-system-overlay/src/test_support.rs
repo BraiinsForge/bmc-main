@@ -181,6 +181,16 @@ impl Renderer for TestRenderer {
         None
     }
 
+    fn register_bitmap_rgba_nearest(
+        &mut self,
+        _tag: &str,
+        _rgba: &[u8],
+        _width: u32,
+        _height: u32,
+    ) -> Option<BitmapId> {
+        None
+    }
+
     fn bitmap_resident_bytes(&self) -> u64 {
         0
     }

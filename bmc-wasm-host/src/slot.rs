@@ -628,6 +628,27 @@ impl<S: SlotSurface> WidgetSlot<S> {
         self.retired_render_targets = pending;
     }
 
+    #[must_use]
+    pub fn has_retired_render_target_cleanup(&self) -> bool {
+        self.retired_render_targets.iter().any(|target| {
+            target
+                .as_egl()
+                .is_some_and(EglRenderTarget::has_released_slot_cleanup)
+        })
+    }
+
+    #[must_use]
+    pub fn has_lifecycle_gpu_work(&self, now: Instant) -> bool {
+        self.lifecycle.render_target_change_ready(now)
+            || ((self.lifecycle.current() == LifecycleState::Prepared
+                || self.lifecycle.target() == LifecycleState::Prepared)
+                && self.render_target.as_ref().is_some_and(|target| {
+                    target
+                        .as_egl()
+                        .is_some_and(EglRenderTarget::has_prepared_compaction_work)
+                }))
+    }
+
     pub fn dispatch_control_socket(&mut self) -> Result<()> {
         use std::io::Read;
         let mut buf = [0_u8; 1];
@@ -987,7 +1008,23 @@ impl<S: SlotSurface> WidgetSlot<S> {
         Ok(())
     }
 
-    pub fn shutdown(mut self, shared: &mut SharedHost, renderer: &mut FemtoVgRenderer) {
+    pub fn shutdown(
+        self,
+        shared: &mut SharedHost,
+        renderer: &mut FemtoVgRenderer,
+    ) -> anyhow::Result<()> {
+        let gpu_render_lock = shared.acquire_gpu_render_lock("host_widget_shutdown")?;
+        self.shutdown_with_gpu_access(shared, renderer);
+        shared.flush_and_wait_gl();
+        drop(gpu_render_lock);
+        Ok(())
+    }
+
+    pub(crate) fn shutdown_with_gpu_access(
+        mut self,
+        shared: &mut SharedHost,
+        renderer: &mut FemtoVgRenderer,
+    ) {
         let asset_namespace = self.runtime.asset_namespace();
         drop(self.runtime);
 

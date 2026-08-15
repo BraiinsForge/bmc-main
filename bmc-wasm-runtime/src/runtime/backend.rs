@@ -1625,7 +1625,6 @@ impl WasmWidgetRuntime {
         for (raw_tag, record) in records {
             let tag = self.store.data().namespaced_tag(&raw_tag);
             let mut newly_suspended = false;
-            let mut renderer_mutated = false;
             let result_matches = match (record.kind, record.id) {
                 (RendererAssetKind::Svg, RendererAssetId::Svg(expected)) => {
                     #[cfg(feature = "profiling")]
@@ -1638,7 +1637,6 @@ impl WasmWidgetRuntime {
                     );
                     #[cfg(not(feature = "profiling"))]
                     let result = renderer.suspend_svg(&tag);
-                    renderer_mutated = matches!(result, AssetSuspendResult::Suspended(_));
                     match result {
                         AssetSuspendResult::Suspended(id) if id == expected => {
                             newly_suspended = true;
@@ -1651,8 +1649,13 @@ impl WasmWidgetRuntime {
                     }
                 }
                 (RendererAssetKind::Bitmap(_), RendererAssetId::Bitmap(expected)) => {
+                    if matches!(renderer.bitmap_tag_state(&tag), AssetTagState::Resident(_)) {
+                        self.store
+                            .data_mut()
+                            .require_renderer_gpu_access()
+                            .map_err(|error| error.to_string())?;
+                    }
                     let result = renderer.suspend_bitmap(&tag);
-                    renderer_mutated = matches!(result, AssetSuspendResult::Suspended(_));
                     match result {
                         AssetSuspendResult::Suspended(id) if id == expected => {
                             newly_suspended = true;
@@ -1665,8 +1668,13 @@ impl WasmWidgetRuntime {
                     }
                 }
                 (RendererAssetKind::Mesh, RendererAssetId::Mesh(expected)) => {
+                    if matches!(renderer.mesh_tag_state(&tag), AssetTagState::Resident(_)) {
+                        self.store
+                            .data_mut()
+                            .require_renderer_gpu_access()
+                            .map_err(|error| error.to_string())?;
+                    }
                     let result = renderer.suspend_mesh(&tag);
-                    renderer_mutated = matches!(result, AssetSuspendResult::Suspended(_));
                     match result {
                         AssetSuspendResult::Suspended(id) if id == expected => {
                             newly_suspended = true;
@@ -1680,9 +1688,6 @@ impl WasmWidgetRuntime {
                 }
                 _ => false,
             };
-            if renderer_mutated {
-                self.store.data_mut().mark_renderer_accessed();
-            }
             if !result_matches {
                 return Err(format!(
                     "asset reservation changed while suspending {raw_tag}"
@@ -1785,19 +1790,19 @@ impl WasmWidgetRuntime {
     /// documented contact point for that obligation.
     ///
     /// # Panic safety
-    /// If `f` panics, `renderer_ptr` is left set. The host loop will wrap each
-    /// `render` call in `catch_unwind` and drop the entire runtime on a panic,
-    /// so a stale pointer is never observed; installing a `Drop` guard here
-    /// would buy nothing and is intentionally omitted.
+    /// The parked pointer is cleared before a panic resumes unwinding.
     pub fn with_renderer<R>(
         &mut self,
         renderer: NonNull<dyn Renderer>,
         f: impl FnOnce(&mut Self) -> R,
     ) -> R {
         self.store.data_mut().renderer_ptr = Some(renderer);
-        let result = f(self);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| f(self)));
         self.store.data_mut().renderer_ptr = None;
-        result
+        match result {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// Per-component timing breakdown from the last rendered frame.
@@ -2234,10 +2239,9 @@ mod tests {
         )
     }
 
-    #[test]
-    fn new_installs_geometry_on_host_state() {
+    fn minimal_runtime() -> WasmWidgetRuntime {
         let wasm = wat::parse_str(minimal_wat()).expect("BUG: minimal WAT must parse");
-        let rt = WasmWidgetRuntime::new(
+        WasmWidgetRuntime::new(
             &wasm,
             480,
             480,
@@ -2251,7 +2255,12 @@ mod tests {
             chrono::Local::now().fixed_offset(),
             RuntimeConfig::default(),
         )
-        .expect("BUG: runtime should construct from the minimal fixture");
+        .expect("BUG: runtime should construct from the minimal fixture")
+    }
+
+    #[test]
+    fn new_installs_geometry_on_host_state() {
+        let rt = minimal_runtime();
         assert_eq!(
             rt.test_geometry(),
             (
@@ -2261,6 +2270,24 @@ mod tests {
                 DisplayShape::Rectangular,
                 42
             )
+        );
+    }
+
+    #[test]
+    fn panic_clears_renderer_gpu_access_callback() {
+        let mut runtime = minimal_runtime();
+        let mut require_gpu_access = || Ok(());
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            runtime.with_renderer_gpu_access(&mut require_gpu_access, |_| {
+                panic!("fixture delivery panic")
+            });
+        }));
+
+        assert!(result.is_err(), "the fixture panic must propagate");
+        assert!(
+            !runtime.store.data().renderer_gpu_access_is_installed(),
+            "unwinding must not leave a callback pointer into the dead delivery frame"
         );
     }
 

@@ -291,6 +291,7 @@ impl SlotTable {
 
 pub fn drain_and_shutdown(
     slots: &mut SlotTable,
+    pending_shutdown: &mut Vec<WidgetSlot>,
     shared: &mut SharedHost,
     renderer: &mut FemtoVgRenderer,
 ) -> usize {
@@ -303,9 +304,22 @@ pub fn drain_and_shutdown(
                 wasm = %slot.wasm_basename,
                 "slot drained on fatal exit",
             );
-            slot.shutdown(shared, renderer);
+            if let Err(error) = slot.shutdown(shared, renderer) {
+                tracing::error!(?error, "failed to release drained widget GPU resources");
+            }
             count += 1;
         }
+    }
+    for slot in pending_shutdown.drain(..) {
+        tracing::info!(
+            peer_pid = ?slot.peer_pid,
+            wasm = %slot.wasm_basename,
+            "pending slot drained on fatal exit",
+        );
+        if let Err(error) = slot.shutdown(shared, renderer) {
+            tracing::error!(?error, "failed to release pending widget GPU resources");
+        }
+        count += 1;
     }
     count
 }
@@ -313,17 +327,19 @@ pub fn drain_and_shutdown(
 pub fn drain_if_err<T>(
     result: Result<T, FatalError>,
     slots: &mut SlotTable,
+    pending_shutdown: &mut Vec<WidgetSlot>,
     shared: &mut SharedHost,
     renderer: &mut FemtoVgRenderer,
 ) -> Result<T, FatalError> {
     if result.is_err() {
-        let drained = drain_and_shutdown(slots, shared, renderer);
+        let drained = drain_and_shutdown(slots, pending_shutdown, shared, renderer);
         tracing::warn!(drained, "fatal exit drained slots");
     }
     result
 }
 
 const LISTENER_INDEX: usize = 0;
+const GPU_CLEANUP_RETRY_AFTER_FAILURE: Duration = Duration::from_secs(1);
 
 /// Publish this host's live cache tokens to its GC-root file. Best-effort: a
 /// write failure is logged, never fatal — the next tick retries.
@@ -392,20 +408,32 @@ fn drain_accept_burst(
 
 fn run_renderer_delivery_scope_if_ready<Guard>(
     ready: bool,
-    acquire: impl FnOnce() -> anyhow::Result<Guard>,
-    deliver: impl FnOnce() -> anyhow::Result<bool>,
+    mut acquire: impl FnMut() -> anyhow::Result<Guard>,
+    deliver: impl FnOnce(&mut dyn FnMut() -> anyhow::Result<()>) -> anyhow::Result<bool>,
     fence: impl FnOnce(),
 ) -> anyhow::Result<bool> {
     if !ready {
         return Ok(false);
     }
-    let guard = acquire()?;
-    let renderer_accessed = deliver()?;
-    if renderer_accessed {
+    let _validation = bmc_render::gpu_access::GpuAccessValidationScope::enter();
+    let mut guard = None;
+    let delivery_result = {
+        let mut require_gpu_access = || {
+            if guard.is_none() {
+                guard = Some(acquire()?);
+            }
+            Ok(())
+        };
+        deliver(&mut require_gpu_access)
+    };
+    let gpu_accessed = guard.is_some();
+    if gpu_accessed {
         fence();
     }
     drop(guard);
-    Ok(renderer_accessed)
+    let runtime_reported_gpu_access = delivery_result?;
+    debug_assert_eq!(runtime_reported_gpu_access, gpu_accessed);
+    Ok(gpu_accessed)
 }
 
 #[expect(
@@ -417,6 +445,7 @@ fn run_loop(
     renderer: &mut FemtoVgRenderer,
     listener: &ListenSocket,
     slots: &mut SlotTable,
+    pending_shutdown: &mut Vec<WidgetSlot>,
     overlays: &mut Vec<HostedOverlay>,
 ) -> Result<(), FatalError> {
     listener
@@ -441,8 +470,12 @@ fn run_loop(
     // An empty root now would let a peer's sweep wipe buckets we re-use;
     // the previous run's root protects them until the scheduled pass.
     let mut next_gc = Instant::now() + GC_SETTLE_DELAY;
-
-    while lifetime.should_continue(slots.len(), overlays.iter().any(HostedOverlay::running)) {
+    while lifetime.should_continue(slots.len(), overlays.iter().any(HostedOverlay::running))
+        || !pending_shutdown.is_empty()
+        || overlays
+            .iter()
+            .any(|overlay| !overlay.running() || overlay.is_failed())
+    {
         let poll_now = Instant::now();
         let slot_ms = compute_poll_timeout(slots, poll_now);
         let mut wake = u64::try_from(slot_ms).ok().map(Duration::from_millis);
@@ -450,6 +483,15 @@ fn run_loop(
             if let Some(d) = overlay.poll_timeout(poll_now) {
                 wake = Some(wake.map_or(d, |w| w.min(d)));
             }
+        }
+        if !pending_shutdown.is_empty()
+            || overlays
+                .iter()
+                .any(|overlay| !overlay.running() || overlay.is_failed())
+        {
+            wake = Some(wake.map_or(GPU_CLEANUP_RETRY_AFTER_FAILURE, |duration| {
+                duration.min(GPU_CLEANUP_RETRY_AFTER_FAILURE)
+            }));
         }
         // -1 = block-forever sentinel; only when neither slots nor overlays want a wake.
         let slot_timeout = wake.map_or(-1, |d| i32::try_from(d.as_millis()).unwrap_or(i32::MAX));
@@ -520,13 +562,31 @@ fn run_loop(
                 continue;
             }
             slot.refresh_network();
-            slot.reclaim_retired_render_targets(shared);
+            if slot.has_retired_render_target_cleanup()
+                && let Err(error) =
+                    shared.with_gpu_render_lock("host_widget_target_reclaim", |shared| {
+                        slot.reclaim_retired_render_targets(shared);
+                        Ok(())
+                    })
+            {
+                tracing::error!(?error, "failed to reclaim retired widget GPU resources");
+            }
             if slot.dispatch_control_socket().is_err() {
                 to_teardown.push(*id);
                 continue;
             }
             let now = Instant::now();
-            slot.apply_lifecycle(now, &shared.egl);
+            if slot.has_lifecycle_gpu_work(now) {
+                if let Err(error) = shared.with_gpu_render_lock("host_widget_lifecycle", |shared| {
+                    slot.apply_lifecycle(now, &shared.egl);
+                    Ok(())
+                }) {
+                    tracing::error!(?error, "failed to apply widget GPU lifecycle work");
+                    continue;
+                }
+            } else {
+                slot.apply_lifecycle(now, &shared.egl);
+            }
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
             slot.runtime.stage_deliveries();
             let renderer_delivery_ready = slot.runtime.has_staged_renderer_delivery();
@@ -535,13 +595,16 @@ fn run_loop(
             let delivery_result = run_renderer_delivery_scope_if_ready(
                 renderer_delivery_ready,
                 || shared.acquire_gpu_render_lock("host_widget_delivery"),
-                || {
+                |require_gpu_access| {
                     #[cfg(feature = "profiling")]
                     {
                         delivery_memory = Some(MemProbe::start());
                     }
                     slot.runtime
-                        .poll_staged_deliveries_with_renderer(renderer_ptr)
+                        .poll_staged_deliveries_with_renderer_and_gpu_access(
+                            renderer_ptr,
+                            require_gpu_access,
+                        )
                 },
                 || shared.flush_and_wait_gl(),
             );
@@ -592,7 +655,16 @@ fn run_loop(
         }
 
         for overlay in overlays.iter_mut() {
-            if let Err(e) = overlay.dispatch(&shared.egl) {
+            if let Err(e) = overlay.dispatch_with_target_resize(
+                |target, client, free_before_resize, width, height| {
+                    shared.with_gpu_render_lock("host_overlay_dispatch_resize", |shared| {
+                        if free_before_resize {
+                            target.free_for_hide(&shared.egl, client)?;
+                        }
+                        target.resize(&shared.egl, client, width, height)
+                    })
+                },
+            ) {
                 // A persistent dispatch error that never delivers Closed would
                 // otherwise log every pass. Treat it as terminal; the cleanup
                 // loop below drops + cleans it up.
@@ -668,7 +740,11 @@ fn run_loop(
         for overlay in overlays.iter_mut() {
             overlay.tick(now);
             if overlay.needs_hide() {
-                if let Err(e) = overlay.hide(&shared.egl) {
+                if let Err(e) = overlay.hide_with_target_cleanup(|target, client| {
+                    shared.with_gpu_render_lock("host_overlay_hide", |shared| {
+                        target.free_for_hide(&shared.egl, client)
+                    })
+                }) {
                     tracing::error!("overlay hide error, dropping overlay: {e}");
                     overlay.mark_failed();
                 }
@@ -706,7 +782,14 @@ fn run_loop(
         let mut idx = 0;
         while idx < overlays.len() {
             if !overlays[idx].running() || overlays[idx].is_failed() {
-                overlays[idx].shutdown(&shared.egl);
+                if let Err(error) = shared.with_gpu_render_lock("host_overlay_shutdown", |shared| {
+                    overlays[idx].shutdown(&shared.egl);
+                    Ok(())
+                }) {
+                    tracing::error!(?error, "failed to release hosted overlay GPU resources");
+                    idx += 1;
+                    continue;
+                }
                 overlays.remove(idx);
             } else {
                 idx += 1;
@@ -717,10 +800,26 @@ fn run_loop(
             for id in to_teardown {
                 if let Some(slot) = slots.remove(&id) {
                     tracing::info!(peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, "slot teardown");
-                    slot.shutdown(shared, renderer);
+                    pending_shutdown.push(slot);
                 }
             }
         }
+
+        let mut retry_shutdown = Vec::new();
+        for slot in pending_shutdown.drain(..) {
+            match shared.acquire_gpu_render_lock("host_widget_shutdown") {
+                Ok(gpu_render_lock) => {
+                    slot.shutdown_with_gpu_access(shared, renderer);
+                    shared.flush_and_wait_gl();
+                    drop(gpu_render_lock);
+                }
+                Err(error) => {
+                    tracing::error!(?error, "failed to release widget GPU resources; retrying");
+                    retry_shutdown.push(slot);
+                }
+            }
+        }
+        *pending_shutdown = retry_shutdown;
 
         // The loop-top exit check runs before the next poll()/accept(), so a
         // thin that connected into the backlog while this iteration tore down
@@ -751,11 +850,24 @@ pub fn run_with_slots(
     slots: &mut SlotTable,
 ) -> Result<(), FatalError> {
     let mut overlays = crate::overlays::build_overlays(&shared.egl);
-    let result = run_loop(shared, renderer, listener, slots, &mut overlays);
+    let mut pending_shutdown = Vec::new();
+    let result = run_loop(
+        shared,
+        renderer,
+        listener,
+        slots,
+        &mut pending_shutdown,
+        &mut overlays,
+    );
     for overlay in &mut overlays {
-        overlay.shutdown(&shared.egl);
+        if let Err(error) = shared.with_gpu_render_lock("host_overlay_shutdown", |shared| {
+            overlay.shutdown(&shared.egl);
+            Ok(())
+        }) {
+            tracing::error!(?error, "failed to release hosted overlay GPU resources");
+        }
     }
-    drain_if_err(result, slots, shared, renderer)
+    drain_if_err(result, slots, &mut pending_shutdown, shared, renderer)
 }
 
 pub fn run(
@@ -785,9 +897,9 @@ mod tests {
                 lock_count.set(lock_count.get() + 1);
                 Ok(())
             },
-            || {
+            |_require_gpu_access| {
                 delivery_count.set(delivery_count.get() + 1);
-                Ok(true)
+                Ok(false)
             },
             || fence_count.set(fence_count.get() + 1),
         )
@@ -805,8 +917,10 @@ mod tests {
                 lock_count.set(lock_count.get() + 1);
                 Ok(())
             },
-            || {
+            |require_gpu_access| {
                 delivery_count.set(delivery_count.get() + 1);
+                require_gpu_access()?;
+                require_gpu_access()?;
                 Ok(true)
             },
             || fence_count.set(fence_count.get() + 1),
@@ -824,7 +938,7 @@ mod tests {
                 lock_count.set(lock_count.get() + 1);
                 Ok(())
             },
-            || {
+            |_require_gpu_access| {
                 delivery_count.set(delivery_count.get() + 1);
                 Ok(false)
             },
@@ -833,8 +947,58 @@ mod tests {
         .expect("BUG: a staged event without a guest callback cannot fail");
         assert_eq!(
             (lock_count.get(), delivery_count.get(), fence_count.get()),
-            (2, 2, 1),
+            (1, 2, 1),
             "a staged event without runnable guest work must not issue a fence"
+        );
+    }
+
+    #[test]
+    fn failed_delivery_fences_gpu_work_before_releasing_the_lock() {
+        let lock_count = std::cell::Cell::new(0);
+        let fence_count = std::cell::Cell::new(0);
+
+        let result = run_renderer_delivery_scope_if_ready(
+            true,
+            || {
+                lock_count.set(lock_count.get() + 1);
+                Ok(())
+            },
+            |require_gpu_access| {
+                require_gpu_access()?;
+                anyhow::bail!("guest trapped after upload")
+            },
+            || fence_count.set(fence_count.get() + 1),
+        );
+
+        assert!(result.is_err(), "the delivery error must propagate");
+        assert_eq!(
+            (lock_count.get(), fence_count.get()),
+            (1, 1),
+            "submitted GPU work must be fenced before an error releases the lock"
+        );
+    }
+
+    #[test]
+    fn acquisition_failure_prevents_delivery_gpu_work() {
+        let fence_count = std::cell::Cell::new(0);
+        let gpu_work = std::cell::Cell::new(0);
+
+        let result = run_renderer_delivery_scope_if_ready(
+            true,
+            || -> anyhow::Result<()> { anyhow::bail!("flock failed") },
+            |require_gpu_access| {
+                require_gpu_access()?;
+                gpu_work.set(gpu_work.get() + 1);
+                Ok(true)
+            },
+            || fence_count.set(fence_count.get() + 1),
+        );
+
+        assert!(result.is_err(), "the acquisition failure must propagate");
+        assert_eq!(
+            (gpu_work.get(), fence_count.get()),
+            (0, 0),
+            "failed acquisition must prevent mutation and requires no completion fence"
         );
     }
 

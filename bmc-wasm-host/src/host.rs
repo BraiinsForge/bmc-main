@@ -55,10 +55,11 @@ impl SharedHost {
             display_max_h,
             "initializing shared wasm host renderer"
         );
+        let gpu_render_lock = GpuRenderLock::from_env()?;
+        let init_guard = gpu_render_lock.lock("host_init")?;
         let egl = EglContext::new()?;
         let gl_sync_support = Self::detect_gl_sync_support(&egl);
         let scratch = SharedRenderScratch::new(&egl, display_max_w, display_max_h)?;
-        let gpu_render_lock = GpuRenderLock::from_env()?;
         let renderer = unsafe {
             FemtoVgRenderer::new(
                 |sym: &str| EglContext::get_proc_address(sym),
@@ -68,6 +69,11 @@ impl SharedHost {
                 0,
             )?
         };
+        // SAFETY: `EglContext::new` made this context current on the host thread.
+        unsafe {
+            egl.gl().finish();
+        }
+        drop(init_guard);
         tracing::info!("shared wasm host renderer initialized");
         Ok((
             Self {
@@ -167,6 +173,18 @@ impl SharedHost {
         scope: &'static str,
     ) -> anyhow::Result<GpuRenderLockGuard> {
         self.gpu_render_lock.lock(scope)
+    }
+
+    pub(crate) fn with_gpu_render_lock<T>(
+        &mut self,
+        scope: &'static str,
+        operation: impl FnOnce(&mut Self) -> anyhow::Result<T>,
+    ) -> anyhow::Result<T> {
+        let guard = self.acquire_gpu_render_lock(scope)?;
+        let result = operation(self);
+        self.flush_and_wait_gl();
+        drop(guard);
+        result
     }
 
     /// Whether the EGL context has been reported lost (e.g., GPU reset).

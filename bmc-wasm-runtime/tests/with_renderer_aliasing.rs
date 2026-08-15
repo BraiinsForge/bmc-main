@@ -191,19 +191,26 @@ fn host_import_outside_render_scope_traps_guest() {
     }
 }
 
-/// `with_renderer` is intentionally not panic-safe: if `f` panics, the
-/// pointer is left set on `HostState`. The contract is that nothing
-/// reachable from `HostState::drop` may then observe the stale pointer.
-/// If a future `Drop` impl on `HostState` or anything it owns starts
-/// reading `renderer_ptr` on cleanup, this test fails under Miri's
-/// Tree-Borrows checker because the caller-owned renderer on the stack
-/// has been dropped (or aliased) by the time the drop runs.
 #[test]
-fn panic_in_with_renderer_closure_leaves_drop_sound() {
+fn panic_in_with_renderer_closure_clears_pointer() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
-    let (mut runtime, mut renderer) = build(&gl);
+    let wasm = wat::parse_str(painting_wat()).expect("BUG: painting WAT must parse");
+    let mut proc = gl.proc_address();
+    let mut renderer =
+        unsafe { bmc_render::gpu::FemtoVgRenderer::new(&mut proc, 320, 240, gl.fbo_id, 0) }
+            .expect("BUG: probe renderer must construct");
+    let mut runtime = WasmWidgetRuntime::new(
+        &wasm,
+        320,
+        240,
+        bmc_wasm_protocol::ViewportShape::Rectangular,
+        common::test_display(320, 240),
+        chrono::Local::now().fixed_offset(),
+        RuntimeConfig::default(),
+    )
+    .expect("BUG: probe runtime must construct");
 
     renderer.begin_frame(320, 240, 1.0);
     let ptr = renderer_ptr(&mut renderer);
@@ -214,14 +221,12 @@ fn panic_in_with_renderer_closure_leaves_drop_sound() {
         outcome.is_err(),
         "panic must propagate through with_renderer rather than being swallowed"
     );
-    renderer.flush();
-    // Drop the renderer first so the parked pointer dangles before
-    // `HostState::drop` runs. A future regression that derefs
-    // `renderer_ptr` from any Drop reachable from `HostState` then
-    // trips Miri with use-after-free instead of producing a fresh
-    // valid reborrow that might slip through.
-    drop(renderer);
-    drop(runtime);
+
+    let result = runtime.render(16);
+    assert!(
+        result.is_err() || matches!(result, Ok(RenderStatus::Dead)),
+        "a renderer import after unwinding must not reuse the parked pointer"
+    );
 }
 
 fn one_px_png(rgba: [u8; 4]) -> Vec<u8> {

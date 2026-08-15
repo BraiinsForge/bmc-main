@@ -47,10 +47,14 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
                 super::with_renderer_and_state(&mut caller, |renderer, state| {
                     let namespaced = state.namespaced_tag(&prefix);
                     let audio = state.evict_audio_prefix(&namespaced);
+                    if renderer.evict_prefix_requires_gpu_access(&namespaced) {
+                        super::require_renderer_gpu_access(state)?;
+                    }
                     let rend = renderer.evict_prefix(&namespaced);
                     state.renderer_assets.remove_prefix(&prefix);
-                    (audio, rend)
-                })?;
+                    Ok((audio, rend))
+                })
+                .and_then(std::convert::identity)?;
             Ok(u32::try_from(audio_evicted + renderer_evicted).unwrap_or(u32::MAX))
         },
     )?;
@@ -62,10 +66,14 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
                 super::with_renderer_and_state(&mut caller, |renderer, state| {
                     let ns = state.instance_namespace().to_owned();
                     let audio = state.evict_audio_prefix(&ns);
+                    if renderer.evict_prefix_requires_gpu_access(&ns) {
+                        super::require_renderer_gpu_access(state)?;
+                    }
                     let rend = renderer.evict_prefix(&ns);
                     state.renderer_assets.clear();
-                    (audio, rend)
-                })?;
+                    Ok((audio, rend))
+                })
+                .and_then(std::convert::identity)?;
             Ok(u32::try_from(audio_evicted + renderer_evicted).unwrap_or(u32::MAX))
         },
     )?;

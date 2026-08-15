@@ -24,8 +24,8 @@
 
 use anyhow::{Result, bail};
 use bmc_render::{
-    MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_scaled_to_cover,
-    decode_scaled_to_fit,
+    MAX_DECODE_IMAGE_ALLOC_BYTES, MAX_DECODE_IMAGE_PIXELS, decode_bitmap_rgba,
+    decode_scaled_to_cover, decode_scaled_to_fit,
     renderer::{AssetSuspendResult, AssetTagState},
 };
 use bmc_wasm_protocol::{BitmapSampling, ImageJobId, PackageAssetId, PackageAssetKind};
@@ -235,22 +235,23 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                 let tag = state.namespaced_tag(&raw_tag);
                 let id = renderer.reserve_bitmap(&tag);
                 let Some(id) = id else {
-                    return 0;
+                    return Ok(0);
                 };
                 if state.renderer_assets_are_dormant() {
                     match renderer.bitmap_tag_state(&tag) {
                         AssetTagState::Resident(resident) if resident == id => {
+                            super::super::require_renderer_gpu_access(state)?;
                             if !matches!(
                                 renderer.suspend_bitmap(&tag),
                                 AssetSuspendResult::Suspended(suspended) if suspended == id
                             ) {
-                                return 0;
+                                return Ok(0);
                             }
                         }
                         AssetTagState::Suspended(suspended) if suspended == id => {}
                         AssetTagState::Resident(_)
                         | AssetTagState::Suspended(_)
-                        | AssetTagState::Unknown => return 0,
+                        | AssetTagState::Unknown => return Ok(0),
                     }
                 }
                 if !state.record_renderer_asset(
@@ -259,7 +260,7 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                     RendererAssetId::Bitmap(id),
                     backing,
                 ) {
-                    return 0;
+                    return Ok(0);
                 }
                 if state.renderer_assets_are_dormant() {
                     state.renderer_assets.mark_pending(&raw_tag);
@@ -278,8 +279,9 @@ fn register_bitmap_from_cache_import(linker: &mut Linker<HostState>) -> Result<(
                         "cache registration hit"
                     );
                 }
-                id.to_ffi()
+                Ok(id.to_ffi())
             })
+            .and_then(std::convert::identity)
         },
     )?;
     Ok(())
@@ -382,21 +384,32 @@ fn register_bitmap_import(linker: &mut Linker<HostState>) -> Result<()> {
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return Ok(0);
             };
-            let id = super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                let Some(id) = renderer.register_bitmap(&tag, &data) else {
-                    return 0;
-                };
-                if state.record_renderer_asset(
-                    raw_tag,
-                    kind,
-                    RendererAssetId::Bitmap(id),
-                    AssetBacking::Volatile,
-                ) {
-                    id.to_ffi()
-                } else {
-                    0
+            let (rgba, width, height) = match decode_bitmap_rgba(&data) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    tracing::error!(%error, "failed to decode bitmap ({raw_tag})");
+                    return Ok(0);
                 }
-            })?;
+            };
+            let id = super::super::with_renderer_and_state(&mut caller, |renderer, state| {
+                super::super::require_renderer_gpu_access(state)?;
+                let Some(id) = renderer.register_bitmap_rgba(&tag, &rgba, width, height) else {
+                    return Ok(0);
+                };
+                Ok(
+                    if state.record_renderer_asset(
+                        raw_tag,
+                        kind,
+                        RendererAssetId::Bitmap(id),
+                        AssetBacking::Volatile,
+                    ) {
+                        id.to_ffi()
+                    } else {
+                        0
+                    },
+                )
+            })
+            .and_then(std::convert::identity)?;
             Ok(id)
         },
     )?;
@@ -441,21 +454,33 @@ fn register_bitmap_nearest_import(linker: &mut Linker<HostState>) -> Result<()> 
             let Some(data) = read_bytes(&caller, data_ptr, data_len) else {
                 return Ok(0);
             };
-            let id = super::super::with_renderer_and_state(&mut caller, |renderer, state| {
-                let Some(id) = renderer.register_bitmap_nearest(&tag, &data) else {
-                    return 0;
-                };
-                if state.record_renderer_asset(
-                    raw_tag,
-                    kind,
-                    RendererAssetId::Bitmap(id),
-                    AssetBacking::Volatile,
-                ) {
-                    id.to_ffi()
-                } else {
-                    0
+            let (rgba, width, height) = match decode_bitmap_rgba(&data) {
+                Ok(decoded) => decoded,
+                Err(error) => {
+                    tracing::error!(%error, "failed to decode bitmap ({raw_tag})");
+                    return Ok(0);
                 }
-            })?;
+            };
+            let id = super::super::with_renderer_and_state(&mut caller, |renderer, state| {
+                super::super::require_renderer_gpu_access(state)?;
+                let Some(id) = renderer.register_bitmap_rgba_nearest(&tag, &rgba, width, height)
+                else {
+                    return Ok(0);
+                };
+                Ok(
+                    if state.record_renderer_asset(
+                        raw_tag,
+                        kind,
+                        RendererAssetId::Bitmap(id),
+                        AssetBacking::Volatile,
+                    ) {
+                        id.to_ffi()
+                    } else {
+                        0
+                    },
+                )
+            })
+            .and_then(std::convert::identity)?;
             Ok(id)
         },
     )?;
@@ -622,20 +647,24 @@ fn register_mesh_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return Ok(0);
             };
             let id: u32 = super::super::with_renderer_and_state(&mut caller, |renderer, state| {
+                super::super::require_renderer_gpu_access(state)?;
                 let Some(id) = renderer.register_mesh(&tag, &data) else {
-                    return 0;
+                    return Ok(0);
                 };
-                if state.record_renderer_asset(
-                    raw_tag,
-                    kind,
-                    RendererAssetId::Mesh(id),
-                    AssetBacking::Volatile,
-                ) {
-                    id.to_ffi()
-                } else {
-                    0
-                }
-            })?;
+                Ok(
+                    if state.record_renderer_asset(
+                        raw_tag,
+                        kind,
+                        RendererAssetId::Mesh(id),
+                        AssetBacking::Volatile,
+                    ) {
+                        id.to_ffi()
+                    } else {
+                        0
+                    },
+                )
+            })
+            .and_then(std::convert::identity)?;
 
             #[cfg(feature = "profiling")]
             log_host_register_mesh(id, data_len, &probe);

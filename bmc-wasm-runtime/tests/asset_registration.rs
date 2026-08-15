@@ -1292,6 +1292,88 @@ fn dormant_package_reservations_survive_coalesced_edges_without_loading() {
 }
 
 #[test]
+fn stale_ledger_id_still_acquires_gpu_access_before_tag_suspension() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
+
+    for kind in [AssetKind::Bitmap, AssetKind::Mesh] {
+        let payload = kind.fixture();
+        let package_id = write_package_asset(package_dir.path(), kind.package_kind(), &payload);
+        let wasm = wat::parse_str(package_demand_wat(kind, &package_id))
+            .expect("BUG: package demand WAT must parse");
+        let mut proc = gl.proc_address();
+        // SAFETY: HeadlessGl keeps the GL context current.
+        let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+            .expect("BUG: renderer must construct");
+        let mut runtime = WasmWidgetRuntime::new(
+            &wasm,
+            64,
+            64,
+            bmc_wasm_protocol::ViewportShape::Rectangular,
+            common::test_display(64, 64),
+            chrono::Local::now().fixed_offset(),
+            RuntimeConfig {
+                package_assets: Some(PackageAssetStore::new(package_dir.path())),
+                ..RuntimeConfig::default()
+            },
+        )
+        .expect("BUG: runtime must construct");
+        let renderer_tag = format!("{}:{REGISTERED_TAG}", runtime.asset_namespace());
+        let recorded_id = call_export(&mut runtime, &mut renderer, "register_valid");
+        assert_eq!(
+            runtime
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+                .expect("BUG: package-demand render must complete"),
+            RenderStatus::Ok
+        );
+        kind.assert_resident(&renderer, &renderer_tag, recorded_id);
+
+        assert_eq!(
+            renderer.evict_prefix(runtime.asset_namespace().as_str()),
+            1,
+            "the fixture must remove its original reservation"
+        );
+        let replacement_id = match kind {
+            AssetKind::Bitmap => renderer
+                .register_bitmap(&renderer_tag, &payload)
+                .expect("BUG: replacement bitmap must register")
+                .to_ffi(),
+            AssetKind::Mesh => renderer
+                .register_mesh(&renderer_tag, &payload)
+                .expect("BUG: replacement mesh must register")
+                .to_ffi(),
+            AssetKind::Svg | AssetKind::BitmapNearest => {
+                panic!("BUG: stale-ID fixture only covers GPU-backed suspension")
+            }
+        };
+        assert_ne!(
+            replacement_id, recorded_id,
+            "the replacement must make the ledger ID stale"
+        );
+
+        runtime.notify_dormant();
+        let gpu_acquisitions = std::cell::Cell::new(0);
+        let gpu_accessed = runtime
+            .poll_deliveries_with_renderer_and_gpu_access(renderer_ptr(&mut renderer), || {
+                gpu_acquisitions.set(gpu_acquisitions.get() + 1);
+                Ok(())
+            })
+            .expect("BUG: stale reservation must be reported without trapping");
+        assert!(
+            gpu_accessed,
+            "{kind:?} tag suspension must report GPU work despite an ID mismatch"
+        );
+        assert_eq!(
+            gpu_acquisitions.get(),
+            1,
+            "{kind:?} tag suspension must acquire GPU access before deletion"
+        );
+    }
+}
+
+#[test]
 fn demand_restored_package_assets_report_suspension_once() {
     let Some(gl) = headless_egl::try_init(64, 64) else {
         return;
@@ -1867,9 +1949,9 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
         "dormant bitmap-fit must start the cache-producing decode job"
     );
     let deadline = Instant::now() + IMAGE_DECODE_COMPLETION_TIMEOUT;
-    let mut renderer_accessed = false;
+    let mut gpu_accessed = false;
     while runtime.has_pending_image_decodes() && Instant::now() < deadline {
-        renderer_accessed |= runtime
+        gpu_accessed |= runtime
             .poll_deliveries_with_renderer(renderer_ptr(&mut renderer))
             .expect("BUG: image decode delivery must not trap");
         std::thread::yield_now();
@@ -1879,8 +1961,8 @@ fn sleep_suspends_cache_assets_but_keeps_pointer_assets_resident() {
         "dormant bitmap-fit did not complete within {IMAGE_DECODE_COMPLETION_TIMEOUT:?}"
     );
     assert!(
-        renderer_accessed,
-        "a cache-backed dormant decode reservation must request a GPU fence"
+        !gpu_accessed,
+        "a cache-only dormant decode must not request GPU access"
     );
     let cached_fit = cache
         .get(DORMANT_FIT_TAG)

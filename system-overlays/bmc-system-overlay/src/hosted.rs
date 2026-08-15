@@ -123,6 +123,25 @@ impl HostedOverlay {
 
     /// Drain Wayland events, deliver touch, and pick up surface-dirty.
     pub fn dispatch(&mut self, egl: &EglContext) -> anyhow::Result<()> {
+        self.dispatch_with_target_resize(|target, client, free_before_resize, width, height| {
+            if free_before_resize {
+                target.free_for_hide(egl, client)?;
+            }
+            target.resize(egl, client, width, height)
+        })
+    }
+
+    /// Drain Wayland events before delegating a compositor-driven target resize.
+    pub fn dispatch_with_target_resize(
+        &mut self,
+        resize_target: impl FnOnce(
+            &mut OverlayRenderTarget,
+            &mut LayerSurfaceClient,
+            bool,
+            u32,
+            u32,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         // Non-blocking: the host already polled the fd. poll_dispatch(0) runs the
         // correct prepare_read -> poll(0) -> read -> dispatch sequence.
         self.client.poll_dispatch(0)?;
@@ -195,12 +214,17 @@ impl HostedOverlay {
                     self.client.cancel_presentation_fence();
                     self.client.attach_null_buffer()?;
                     self.client.roundtrip_after_resize_unmap(configured_size)?;
-                    self.target.free_for_hide(egl, &mut self.client)?;
                     self.overlay.mark_content_dirty();
                     self.last_render = None;
                 }
                 self.mapped = transition.mapped_after_resize;
-                self.target.resize(egl, &mut self.client, size.0, size.1)?;
+                resize_target(
+                    &mut self.target,
+                    &mut self.client,
+                    transition.unmap_before_resize,
+                    size.0,
+                    size.1,
+                )?;
                 self.size = size;
             }
             self.wants_render = true;
@@ -283,6 +307,20 @@ impl HostedOverlay {
     /// client is gone, so the compositor's last repaint is confirmed shown
     /// before the NULL attach.
     pub fn hide(&mut self, egl: &EglContext) -> anyhow::Result<()> {
+        self.hide_with_target_cleanup(|target, client| target.free_for_hide(egl, client))
+    }
+
+    /// Unmap the surface before delegating render-target cleanup.
+    ///
+    /// The callback lets a host synchronize GPU cleanup without holding that
+    /// synchronization across the compositor roundtrip.
+    pub fn hide_with_target_cleanup(
+        &mut self,
+        free_target: impl FnOnce(
+            &mut OverlayRenderTarget,
+            &mut LayerSurfaceClient,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         let frame_presented = self.client.take_frame_presented();
         let now = Instant::now();
         let action = hide_fence_action(HideFenceGate {
@@ -313,7 +351,7 @@ impl HostedOverlay {
                 // exported buffers so the compositor observes the unmap first.
                 self.client.attach_null_buffer()?;
                 self.client.roundtrip_after_hide_unmap()?;
-                self.target.free_for_hide(egl, &mut self.client)?;
+                free_target(&mut self.target, &mut self.client)?;
                 self.mapped = false;
                 self.wants_render = false;
                 // Clear the frame-floor timestamp so a later re-show renders promptly
@@ -406,13 +444,28 @@ impl HostedOverlay {
     /// Restore layer-shell pending state after a NULL-buffer unmap before
     /// rendering into a new frame.
     pub fn prepare_for_render(&mut self, egl: &EglContext) -> anyhow::Result<()> {
+        self.prepare_for_render_with_target_resize(|target, client, width, height| {
+            target.resize(egl, client, width, height)
+        })
+    }
+
+    /// Restore pending surface state before delegating a required target resize.
+    pub fn prepare_for_render_with_target_resize(
+        &mut self,
+        resize_target: impl FnOnce(
+            &mut OverlayRenderTarget,
+            &mut LayerSurfaceClient,
+            u32,
+            u32,
+        ) -> anyhow::Result<()>,
+    ) -> anyhow::Result<()> {
         if !self.client.ensure_ready_for_buffer_attach()? {
             return Ok(());
         }
 
         let size = resolved_configured_size(self.config_size, self.client.size());
         if self.size != size {
-            self.target.resize(egl, &mut self.client, size.0, size.1)?;
+            resize_target(&mut self.target, &mut self.client, size.0, size.1)?;
             self.size = size;
         }
         Ok(())

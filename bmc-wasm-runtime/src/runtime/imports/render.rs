@@ -183,6 +183,7 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
             };
 
             super::with_renderer_and_state(&mut caller, |renderer, state| {
+                super::require_renderer_gpu_access(state)?;
                 let clicked = draw_button(
                     renderer,
                     &mut state.interaction,
@@ -198,8 +199,9 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
                     false,
                     None,
                 );
-                i32::from(clicked.0)
+                Ok(i32::from(clicked.0))
             })
+            .and_then(std::convert::identity)
         },
     )?;
 

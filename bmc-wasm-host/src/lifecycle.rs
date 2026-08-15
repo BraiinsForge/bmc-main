@@ -165,6 +165,16 @@ impl LifecycleStateMachine {
         self.retry_at
     }
 
+    #[must_use]
+    pub fn render_target_change_ready(&self, now: Instant) -> bool {
+        if has_render_target(self.current) == has_render_target(self.target) {
+            return false;
+        }
+        !self.blocked
+            || !has_render_target(self.target)
+            || self.retry_at.is_some_and(|retry_at| now >= retry_at)
+    }
+
     pub fn on_event(&mut self, new_target: LifecycleState) -> LifecycleEventEffect {
         let previous_target = self.target;
         self.target = new_target;

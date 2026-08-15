@@ -239,6 +239,14 @@ pub trait Renderer {
         height: u32,
     ) -> Option<BitmapId>;
 
+    fn register_bitmap_rgba_nearest(
+        &mut self,
+        tag: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<BitmapId>;
+
     /// Return the bitmap reservation state for `tag`.
     ///
     /// The default does not inspect backend state and returns [`AssetTagState::Unknown`].
@@ -435,6 +443,10 @@ pub trait Renderer {
     /// with `prefix`, releasing the associated GPU resources.
     /// Returns the total count of evicted entries across all three registries.
     fn evict_prefix(&mut self, prefix: &str) -> usize;
+
+    fn evict_prefix_requires_gpu_access(&self, _prefix: &str) -> bool {
+        true
+    }
 
     /// Total resident texture bytes across registered bitmaps.
     fn bitmap_resident_bytes(&self) -> u64;
@@ -695,6 +707,17 @@ impl Renderer for RenderTarget<'_, '_, '_> {
         self.renderer.register_bitmap_rgba(tag, rgba, width, height)
     }
 
+    fn register_bitmap_rgba_nearest(
+        &mut self,
+        tag: &str,
+        rgba: &[u8],
+        width: u32,
+        height: u32,
+    ) -> Option<BitmapId> {
+        self.renderer
+            .register_bitmap_rgba_nearest(tag, rgba, width, height)
+    }
+
     fn bitmap_tag_state(&self, tag: &str) -> AssetTagState<BitmapId> {
         self.renderer.bitmap_tag_state(tag)
     }
@@ -893,6 +916,10 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn evict_prefix(&mut self, prefix: &str) -> usize {
         self.renderer.evict_prefix(prefix)
+    }
+
+    fn evict_prefix_requires_gpu_access(&self, prefix: &str) -> bool {
+        self.renderer.evict_prefix_requires_gpu_access(prefix)
     }
 
     fn bitmap_resident_bytes(&self) -> u64 {

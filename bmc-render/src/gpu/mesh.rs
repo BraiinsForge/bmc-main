@@ -998,6 +998,17 @@ impl MeshRenderer {
             .sum()
     }
 
+    #[must_use]
+    pub fn has_resident_prefix(&self, prefix: &str) -> bool {
+        self.by_tag.iter().any(|(tag, id)| {
+            bmc_wasm_protocol::tag_matches_prefix(tag, prefix)
+                && self
+                    .meshes
+                    .get(mesh_id_to_storage_index(*id))
+                    .is_some_and(Option::is_some)
+        })
+    }
+
     /// Evict a single tag's mesh: drop its GL handles and clear the storage
     /// slot. The `MeshId` returned by earlier `register_mesh(tag, …)` calls
     /// becomes invalid; subsequent renders that reference it no-op safely
@@ -1019,6 +1030,7 @@ impl MeshRenderer {
             .get_mut(index)
             .expect("BUG: mesh tag ID must point into mesh storage");
         if let Some(mesh) = slot.take() {
+            crate::gpu_access::assert_gpu_access_authorized();
             unsafe { mesh.drop_gl(gl) };
         }
         true

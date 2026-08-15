@@ -91,7 +91,9 @@ pub(crate) fn with_renderer<R>(
              init or on_params_update?)",
         ));
     };
-    state.mark_renderer_accessed();
+    state
+        .require_renderer_gpu_access()
+        .map_err(|error| wasmi::Error::new(error.to_string()))?;
     // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
     // same thread; the wasmi dispatch guarantees no other host fn runs
     // concurrently, so no other `&mut Renderer` exists during this reborrow.
@@ -139,10 +141,15 @@ pub(crate) fn with_renderer_and_state<R>(
              init or on_params_update?)",
         ));
     };
-    state.mark_renderer_accessed();
     // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer`; the
     // materialized `&mut dyn Renderer` originates from the caller-owned
     // renderer, not from `state`, so the two `&mut` references do not alias.
     let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
     Ok(f(renderer, state))
+}
+
+pub(crate) fn require_renderer_gpu_access(state: &mut HostState) -> Result<(), wasmi::Error> {
+    state
+        .require_renderer_gpu_access()
+        .map_err(|error| wasmi::Error::new(error.to_string()))
 }

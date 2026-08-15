@@ -225,6 +225,16 @@ impl Renderer for ProbeRenderer {
     ) -> Option<BitmapId> {
         None
     }
+
+    fn register_bitmap_rgba_nearest(
+        &mut self,
+        _tag: &str,
+        _rgba: &[u8],
+        _width: u32,
+        _height: u32,
+    ) -> Option<BitmapId> {
+        None
+    }
     fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
     fn draw_nine_patch(
         &mut self,

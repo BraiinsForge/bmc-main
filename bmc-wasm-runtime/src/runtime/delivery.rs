@@ -411,6 +411,7 @@ impl WasmWidgetRuntime {
             let id = renderer.reserve_bitmap(tag)?;
             match renderer.bitmap_tag_state(tag) {
                 AssetTagState::Resident(resident) if resident == id => {
+                    self.store.data_mut().require_renderer_gpu_access().ok()?;
                     if !matches!(
                         renderer.suspend_bitmap(tag),
                         AssetSuspendResult::Suspended(suspended) if suspended == id
@@ -427,9 +428,9 @@ impl WasmWidgetRuntime {
             }
             Some(id)
         } else {
+            self.store.data_mut().require_renderer_gpu_access().ok()?;
             renderer.register_bitmap_rgba(tag, rgba, width, height)
         }?;
-        self.store.data_mut().mark_renderer_accessed();
         let asset_id = crate::renderer_assets::RendererAssetId::Bitmap(id);
         let recorded = self.store.data_mut().record_renderer_asset(
             raw_tag.to_owned(),
@@ -1185,7 +1186,20 @@ impl WasmWidgetRuntime {
         self.poll_staged_deliveries_with_renderer(renderer)
     }
 
-    /// Deliver staged work and return whether it accessed the renderer.
+    /// Stage and deliver work while acquiring host GPU access on first mutation.
+    pub fn poll_deliveries_with_renderer_and_gpu_access<F>(
+        &mut self,
+        renderer: NonNull<dyn Renderer>,
+        require_gpu_access: F,
+    ) -> Result<bool>
+    where
+        F: FnMut() -> anyhow::Result<()>,
+    {
+        self.stage_deliveries();
+        self.poll_staged_deliveries_with_renderer_and_gpu_access(renderer, require_gpu_access)
+    }
+
+    /// Deliver staged work and return whether it accessed GPU resources.
     ///
     /// # Errors
     ///
@@ -1194,9 +1208,53 @@ impl WasmWidgetRuntime {
         &mut self,
         renderer: NonNull<dyn Renderer>,
     ) -> Result<bool> {
+        self.poll_staged_deliveries_with_renderer_and_gpu_access(renderer, || Ok(()))
+    }
+
+    /// Deliver staged work, acquiring host GPU access only if delivery mutates GPU resources.
+    ///
+    /// # Errors
+    ///
+    /// Propagates a staged callback trap or GPU-access acquisition failure.
+    pub fn poll_staged_deliveries_with_renderer_and_gpu_access<F>(
+        &mut self,
+        renderer: NonNull<dyn Renderer>,
+        mut require_gpu_access: F,
+    ) -> Result<bool>
+    where
+        F: FnMut() -> anyhow::Result<()>,
+    {
         self.store.data_mut().begin_renderer_delivery();
-        self.with_renderer(renderer, Self::deliver_staged)?;
+        let result = self.with_renderer_gpu_access(&mut require_gpu_access, |runtime| {
+            runtime.with_renderer(renderer, Self::deliver_staged)
+        });
+        let gpu_access_failure = self.store.data_mut().take_renderer_gpu_access_failure();
+        result?;
+        if let Some(error) = gpu_access_failure {
+            anyhow::bail!("renderer GPU access failed: {error}");
+        }
         Ok(self.store.data().renderer_was_accessed_during_delivery())
+    }
+
+    pub(super) fn with_renderer_gpu_access<F, R>(
+        &mut self,
+        require_gpu_access: &mut F,
+        operation: impl FnOnce(&mut Self) -> R,
+    ) -> R
+    where
+        F: FnMut() -> anyhow::Result<()>,
+    {
+        self.store
+            .data_mut()
+            .install_renderer_gpu_access(require_gpu_access);
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| operation(self)));
+        let state = self.store.data_mut();
+        state.renderer_ptr = None;
+        state.clear_renderer_gpu_access();
+        match result {
+            Ok(result) => result,
+            Err(payload) => std::panic::resume_unwind(payload),
+        }
     }
 
     /// True while an async image decode is in flight or awaiting renderer delivery.

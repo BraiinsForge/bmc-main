@@ -680,7 +680,13 @@ enum RendererAssetGate {
 enum RendererDeliveryActivity {
     #[default]
     Idle,
-    RendererAccessed,
+    GpuAccessed,
+}
+
+#[derive(Clone, Copy)]
+struct RendererGpuAccess {
+    context: NonNull<()>,
+    invoke: unsafe fn(NonNull<()>) -> anyhow::Result<()>,
 }
 
 #[derive(Default)]
@@ -716,6 +722,9 @@ pub(crate) struct HostState {
     /// trap the guest with `wasmi::Error::new("renderer accessed outside render scope")`
     /// rather than panic the host.
     pub renderer_ptr: Option<NonNull<dyn Renderer>>,
+
+    renderer_gpu_access: Option<RendererGpuAccess>,
+    renderer_gpu_access_failure: Option<String>,
 
     renderer_asset_gate: RendererAssetGate,
 
@@ -1059,14 +1068,60 @@ impl HostState {
 
     pub(crate) fn begin_renderer_delivery(&mut self) {
         self.staged_guest_deliveries.renderer_activity = RendererDeliveryActivity::Idle;
+        self.renderer_gpu_access_failure = None;
     }
 
-    pub(crate) fn mark_renderer_accessed(&mut self) {
-        self.staged_guest_deliveries.renderer_activity = RendererDeliveryActivity::RendererAccessed;
+    pub(crate) fn install_renderer_gpu_access<F>(&mut self, callback: &mut F)
+    where
+        F: FnMut() -> anyhow::Result<()>,
+    {
+        unsafe fn invoke<F>(context: NonNull<()>) -> anyhow::Result<()>
+        where
+            F: FnMut() -> anyhow::Result<()>,
+        {
+            // SAFETY: installation derives this pointer from a live `&mut F`;
+            // delivery clears it before that borrow ends.
+            let callback = unsafe { context.cast::<F>().as_mut() };
+            callback()
+        }
+
+        self.renderer_gpu_access = Some(RendererGpuAccess {
+            context: NonNull::from(callback).cast(),
+            invoke: invoke::<F>,
+        });
+    }
+
+    pub(crate) fn clear_renderer_gpu_access(&mut self) {
+        self.renderer_gpu_access = None;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn renderer_gpu_access_is_installed(&self) -> bool {
+        self.renderer_gpu_access.is_some()
+    }
+
+    pub(crate) fn require_renderer_gpu_access(&mut self) -> anyhow::Result<()> {
+        let Some(access) = self.renderer_gpu_access else {
+            bmc_render::gpu_access::authorize_gpu_access();
+            return Ok(());
+        };
+        // SAFETY: `install_renderer_gpu_access` stores the matching trampoline
+        // and the callback remains live until delivery clears the entry.
+        if let Err(error) = unsafe { (access.invoke)(access.context) } {
+            self.renderer_gpu_access_failure = Some(error.to_string());
+            return Err(error);
+        }
+        bmc_render::gpu_access::authorize_gpu_access();
+        self.staged_guest_deliveries.renderer_activity = RendererDeliveryActivity::GpuAccessed;
+        Ok(())
+    }
+
+    pub(crate) fn take_renderer_gpu_access_failure(&mut self) -> Option<String> {
+        self.renderer_gpu_access_failure.take()
     }
 
     pub(crate) fn renderer_was_accessed_during_delivery(&self) -> bool {
-        self.staged_guest_deliveries.renderer_activity == RendererDeliveryActivity::RendererAccessed
+        self.staged_guest_deliveries.renderer_activity == RendererDeliveryActivity::GpuAccessed
     }
 
     /// In a hermetic run, record a breach and return `true`; else `false`.
@@ -1094,6 +1149,8 @@ impl HostState {
         let (image_decode_tx, image_decode_rx) = mpsc::channel();
         Self {
             renderer_ptr: None,
+            renderer_gpu_access: None,
+            renderer_gpu_access_failure: None,
             renderer_asset_gate: RendererAssetGate::Active,
             renderer_assets: crate::renderer_assets::RendererAssetLedger::default(),
             renderer_asset_failure: None,
