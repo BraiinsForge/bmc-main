@@ -277,6 +277,11 @@ impl FetchState {
         !self.delayed.is_empty() || !self.in_flight.is_empty()
     }
 
+    #[must_use]
+    pub(crate) fn has_in_flight(&self) -> bool {
+        !self.in_flight.is_empty()
+    }
+
     /// Slots a widget is holding, against `max_fetches`.
     #[must_use]
     pub fn slots_used(&self) -> usize {
@@ -1678,6 +1683,29 @@ mod tests {
         state.mark_renderer_assets_active();
         assert!(!state.renderer_assets_are_dormant());
         assert_eq!(state.renderer_asset_gate, RendererAssetGate::Active);
+    }
+
+    #[test]
+    fn delayed_fetch_is_pending_but_not_in_flight() {
+        let mut counter = 1;
+        let mut fetches = FetchState::new();
+        let queued = FetchRequestId::alloc(&mut counter);
+        fetches.queue_delayed(DelayedFetch {
+            fire_at_ms: 1_000,
+            method: "GET".to_owned(),
+            url: "https://example.test/delayed".to_owned(),
+            headers: Vec::new(),
+            body: None,
+            timeout: std::time::Duration::from_secs(10),
+            request_id: queued,
+        });
+
+        assert!(fetches.has_pending());
+        assert!(!fetches.has_in_flight());
+
+        let accepted = FetchRequestId::alloc(&mut counter);
+        let _settle = fetches.accept(accepted);
+        assert!(fetches.has_in_flight());
     }
 
     #[test]

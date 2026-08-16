@@ -526,6 +526,12 @@ impl WasmWidgetRuntime {
         state.fetches.has_pending()
     }
 
+    /// Whether an accepted fetch is awaiting delivery to the widget.
+    #[must_use]
+    pub fn has_in_flight_fetches(&self) -> bool {
+        self.store.data().fetches.has_in_flight()
+    }
+
     fn stage_ws_messages(&mut self) {
         let mut events: Vec<(WebsocketId, WsEvent)> = Vec::new();
         let mut closed_ids: Vec<WebsocketId> = Vec::new();

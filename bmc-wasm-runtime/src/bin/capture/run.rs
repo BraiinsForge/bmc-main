@@ -29,6 +29,7 @@ use std::io::IsTerminal;
 use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use glow::HasContext;
@@ -63,6 +64,9 @@ const DELTA_MS: u32 = 16;
 
 /// Number of frames for a synthetic drag gesture.
 const DRAG_FRAMES: u32 = 10;
+
+const ONLINE_IO_DRAIN_TIMEOUT: Duration = Duration::from_secs(15);
+const OFFLINE_IO_DRAIN_TIMEOUT: Duration = Duration::from_mins(1);
 
 // ── Public interface ────────────────────────────────────────────────
 
@@ -662,24 +666,21 @@ fn run_unified_capture(
                         frame_count += 1;
                     }
 
-                    // Async image decodes finish on a real OS thread; the instant virtual settle frames don't wait.
-                    // Drain in real time but WITHOUT advancing the fixture clock, so the timeline — and the captured
-                    // frame sequence — stays deterministic across machines.
-                    // Online previews additionally wait for the live fetch (all pending I/O)
-                    // and allow longer for the network round-trip.
-                    let drain_start = std::time::Instant::now();
-                    let io_timeout =
-                        std::time::Duration::from_secs(if ctx.online { 15 } else { 5 });
+                    // Drain active fetch → decode chains without advancing fixture time.
+                    // Delayed polls are excluded so scheduled refreshes do not block capture.
+                    let io_drain_started = Instant::now();
                     loop {
                         let pending = if ctx.online {
                             runtime.has_pending_io()
                         } else {
-                            runtime.has_pending_image_decodes()
+                            runtime.has_in_flight_fetches() || runtime.has_pending_image_decodes()
                         };
-                        if !pending || drain_start.elapsed() >= io_timeout {
+                        if !pending
+                            || io_drain_deadline_reached(ctx.online, io_drain_started.elapsed())?
+                        {
                             break;
                         }
-                        std::thread::sleep(std::time::Duration::from_millis(2));
+                        std::thread::sleep(Duration::from_millis(2));
                         deliver_all_io(&mut runtime, &mut renderer)?;
                         gate.render(
                             &mut runtime,
@@ -1115,6 +1116,25 @@ fn run_unified_capture(
         ctx.output_dir.display()
     );
     Ok(())
+}
+
+fn io_drain_deadline_reached(online: bool, elapsed: Duration) -> Result<bool> {
+    let timeout = if online {
+        ONLINE_IO_DRAIN_TIMEOUT
+    } else {
+        OFFLINE_IO_DRAIN_TIMEOUT
+    };
+    if elapsed < timeout {
+        return Ok(false);
+    }
+    if online {
+        Ok(true)
+    } else {
+        bail!(
+            "offline capture I/O did not settle within {} s",
+            timeout.as_secs()
+        )
+    }
 }
 
 // ── Frame helpers ───────────────────────────────────────────────────
@@ -1995,6 +2015,39 @@ pub fn write_default_capture_config(dir: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_io_drain_fails_at_its_ceiling() {
+        let before_ceiling = OFFLINE_IO_DRAIN_TIMEOUT
+            .checked_sub(Duration::from_millis(1))
+            .expect("BUG: offline I/O drain timeout exceeds one millisecond");
+        assert!(
+            !io_drain_deadline_reached(false, before_ceiling)
+                .expect("BUG: an offline drain below its ceiling must continue")
+        );
+
+        let error = io_drain_deadline_reached(false, OFFLINE_IO_DRAIN_TIMEOUT)
+            .expect_err("BUG: an offline drain at its ceiling must fail");
+        assert_eq!(
+            error.to_string(),
+            "offline capture I/O did not settle within 60 s"
+        );
+    }
+
+    #[test]
+    fn online_io_drain_stops_at_its_ceiling() {
+        let before_ceiling = ONLINE_IO_DRAIN_TIMEOUT
+            .checked_sub(Duration::from_millis(1))
+            .expect("BUG: online I/O drain timeout exceeds one millisecond");
+        assert!(
+            !io_drain_deadline_reached(true, before_ceiling)
+                .expect("BUG: an online drain below its ceiling must continue")
+        );
+        assert!(
+            io_drain_deadline_reached(true, ONLINE_IO_DRAIN_TIMEOUT)
+                .expect("BUG: an online drain at its ceiling must stop cleanly")
+        );
+    }
 
     #[test]
     fn a_round_target_carries_round_through_to_the_guest() {
