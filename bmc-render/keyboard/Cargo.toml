@@ -17,6 +17,9 @@ bmc-wasm-protocol = { path = "../../bmc-wasm-runtime/protocol" }
 bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
 tracing.workspace = true
 
+[dev-dependencies]
+bmc-render = { path = "..", features = ["test-support"] }
+
 [build-dependencies]
 roxmltree.workspace = true
 

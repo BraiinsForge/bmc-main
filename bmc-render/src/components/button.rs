@@ -387,3 +387,66 @@ fn draw_text_ellipsis(
     truncated.push('\u{2026}');
     renderer.draw_text(&truncated, x, y, font_size, color);
 }
+
+#[cfg(test)]
+mod truncation_tests {
+    use super::*;
+    use crate::renderer::test_support::ShapingRecorder;
+
+    const LABEL: &str = "Connect to network";
+    const SIZE: ButtonSize = ButtonSize::Normal;
+
+    /// The button whose content box is `slack` wider than the shaped label.
+    fn draw_label_in_button(recorder: &mut ShapingRecorder, slack: f32) {
+        let label_w = recorder.measure_text(LABEL, SIZE.font_size());
+        let mut interaction = InteractionState::new();
+        draw_button(
+            recorder,
+            &mut interaction,
+            "btn",
+            LABEL,
+            0.0,
+            0.0,
+            label_w + SIZE.h_padding() * 2.0 + slack,
+            SIZE.height(),
+            ButtonStyle::Primary,
+            SIZE,
+            None,
+            false,
+            None,
+        );
+    }
+
+    #[test]
+    fn a_label_the_shaper_says_fits_is_drawn_whole() {
+        let mut recorder = ShapingRecorder::default();
+        draw_label_in_button(&mut recorder, 1.0);
+
+        assert_eq!(
+            recorder.only_text().text,
+            LABEL,
+            "a label sized from the same shaper the button measures with must not truncate"
+        );
+    }
+
+    #[test]
+    fn a_label_wider_than_its_button_is_truncated_to_fit() {
+        let mut recorder = ShapingRecorder::default();
+        let font_size = SIZE.font_size();
+        let label_w = recorder.measure_text(LABEL, font_size);
+        // Half the label's shaped width: wide enough that truncation must keep
+        // a prefix, narrow enough that the prefix cannot be the whole label.
+        draw_label_in_button(&mut recorder, -label_w / 2.0);
+
+        let drawn = recorder.only_text().text.clone();
+        let max_text_w = label_w / 2.0;
+        assert!(
+            drawn.ends_with('\u{2026}') && LABEL.starts_with(drawn.trim_end_matches('\u{2026}')),
+            "an overflowing label must draw as an ellipsized prefix of itself, got {drawn:?}"
+        );
+        assert!(
+            recorder.measure_text(&drawn, font_size) <= max_text_w,
+            "the truncated label must shape within the width the button measured against"
+        );
+    }
+}

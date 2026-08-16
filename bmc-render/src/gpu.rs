@@ -24,7 +24,7 @@ pub mod bitmap;
 mod curved_text;
 pub(crate) mod glyph_cache;
 pub mod mesh;
-mod renderer;
+pub(crate) mod renderer;
 mod sphere;
 pub mod svg;
 pub mod text;

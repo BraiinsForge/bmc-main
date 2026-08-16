@@ -35,19 +35,23 @@ use bmc_wasm_protocol::{
 };
 use cosmic_text::fontdb;
 use femtovg::renderer::OpenGl;
-use femtovg::{Canvas, FontId, LineCap, Paint, Path, RenderTarget, Solidity};
+use femtovg::{Canvas, LineCap, Paint, Path, RenderTarget, Solidity};
 use glow::HasContext;
 
 use super::bitmap::BitmapRegistry;
 use super::curved_text::arc_glyph_layout;
+use super::glyph_cache::GlyphCache;
 use super::mesh::{MeshDrawArgs, MeshRenderer, MeshReservations};
 use super::sphere::SphereRenderer;
 use super::svg::SvgRegistry;
 use super::text::{
-    Fonts, ParagraphLayoutCache, WeightedFonts, autofit_bounds, search_fit_size, to_femtovg_color,
+    DIRECT_PATH_CUTOFF_PX, FemtovgPages, FontTable, LineGlyphs, LineStyle, ParagraphLayoutCache,
+    autofit_bounds, baseline_to_alphabetic, build_cached_curved_glyph_commands, build_font_table,
+    build_glyph_commands, curved_glyph_origin_x, draw_line_glyphs, outline_glyph_commands,
+    search_fit_size, submit_glyph_commands, to_femtovg_color,
 };
 use crate::renderer::{AssetSuspendResult, AssetTagState, FrameClear, Renderer};
-use crate::tree::{AutoFit, SpanData, TextAlign, TextStyle, VerticalAlign};
+use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle, VerticalAlign};
 
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
@@ -107,10 +111,14 @@ pub struct FemtoVgRenderer {
     /// `current_render_target` is already `Screen` — which is always true since it's
     /// the default. We must explicitly bind the FBO before each flush.)
     screen_fbo: Option<glow::NativeFramebuffer>,
-    fonts: Fonts,
-    font_fallback: FontId,
     font_system: cosmic_text::FontSystem,
     paragraph_cache: ParagraphLayoutCache,
+    /// The application-owned glyph atlas every text draw goes through,
+    /// and the rasterizer filling it. `font_table` maps cosmic-text's
+    /// per-glyph face choice onto femtovg's handle for the same binary.
+    glyph_cache: GlyphCache<femtovg::ImageId>,
+    swash: cosmic_text::SwashCache,
+    font_table: FontTable,
     icon_registry: SvgRegistry,
     bitmap_registry: BitmapRegistry,
     sphere: Option<SphereRenderer>,
@@ -150,9 +158,10 @@ impl std::fmt::Debug for FemtoVgRenderer {
 pub type FemtovgImageId = femtovg::ImageId;
 
 impl FemtoVgRenderer {
-    /// Direct access to the underlying femtovg canvas (for testbed-only effects).
-    pub fn canvas_mut(&mut self) -> &mut Canvas<OpenGl> {
-        &mut self.canvas
+    /// Release a femtovg image this renderer handed out
+    /// through [`Self::create_render_target`].
+    pub fn delete_image(&mut self, id: femtovg::ImageId) {
+        self.canvas.delete_image(id);
     }
 
     /// Create a femtovg-managed render target image.
@@ -330,22 +339,20 @@ impl FemtoVgRenderer {
         let mut canvas = Canvas::new(gl_renderer)?;
         canvas.set_size(width, height, 1.0);
 
-        // Load fonts into FemtoVG for GPU rendering
-        let fonts = Fonts {
-            sans: WeightedFonts {
-                regular: canvas.add_font_mem(FONT_REGULAR)?,
-                semibold: canvas.add_font_mem(FONT_SEMIBOLD)?,
-                bold: canvas.add_font_mem(FONT_BOLD)?,
-            },
-            deck_sans: WeightedFonts {
-                regular: canvas.add_font_mem(FONT_DECK_REGULAR)?,
-                semibold: canvas.add_font_mem(FONT_DECK_SEMIBOLD)?,
-                bold: canvas.add_font_mem(FONT_DECK_BOLD)?,
-            },
-        };
-        let font_fallback = canvas.add_font_mem(FONT_FALLBACK)?;
+        // Load fonts into FemtoVG for the delegated path above the cutoff,
+        // in the order `build_font_table` pairs them with cosmic-text's faces.
+        let femtovg_fonts = [
+            canvas.add_font_mem(FONT_REGULAR)?,
+            canvas.add_font_mem(FONT_SEMIBOLD)?,
+            canvas.add_font_mem(FONT_BOLD)?,
+            canvas.add_font_mem(FONT_DECK_REGULAR)?,
+            canvas.add_font_mem(FONT_DECK_SEMIBOLD)?,
+            canvas.add_font_mem(FONT_DECK_BOLD)?,
+            canvas.add_font_mem(FONT_FALLBACK)?,
+        ];
 
         let font_system = build_font_system();
+        let font_table = build_font_table(&font_system, &femtovg_fonts);
 
         let mut icon_registry = SvgRegistry::new();
         icon_registry.register_builtins();
@@ -354,10 +361,11 @@ impl FemtoVgRenderer {
             gl,
             canvas,
             screen_fbo,
-            fonts,
-            font_fallback,
             font_system,
             paragraph_cache: ParagraphLayoutCache::new(),
+            glyph_cache: GlyphCache::new(),
+            swash: cosmic_text::SwashCache::new(),
+            font_table,
             icon_registry,
             bitmap_registry: BitmapRegistry::new(),
             sphere: None,
@@ -372,6 +380,14 @@ impl FemtoVgRenderer {
             shadow_fbo_pool: None,
             frame_counter: 0,
         })
+    }
+
+    #[cfg(test)]
+    fn layout_line(&mut self, style: LineStyle, text: &str) -> (Vec<LineGlyphs>, f32) {
+        let entry = self
+            .paragraph_cache
+            .layout_single_line(&mut self.font_system, style, text);
+        (entry.lines.clone(), entry.width)
     }
 
     /// Lazy-initialise the mesh renderer on first use. Logs and leaves
@@ -426,6 +442,146 @@ impl FemtoVgRenderer {
 impl Drop for FemtoVgRenderer {
     fn drop(&mut self) {
         self.release_gpu_assets();
+    }
+}
+
+/// Draw shaped lines anchored at `(x, y)` by `baseline`.
+///
+/// The anchor resolves against each line's own metrics, and the first line's
+/// layout advance is removed so a lone line lands exactly on the anchor.
+#[expect(clippy::too_many_arguments, reason = "one line's full draw state")]
+fn draw_anchored_lines(
+    canvas: &mut Canvas<OpenGl>,
+    glyph_cache: &mut GlyphCache<femtovg::ImageId>,
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut cosmic_text::FontSystem,
+    font_table: &FontTable,
+    lines: &[LineGlyphs],
+    x: f32,
+    y: f32,
+    baseline: femtovg::Baseline,
+    paint: &Paint,
+    font_size: f32,
+) {
+    let Some(first) = lines.first() else {
+        return;
+    };
+    let first_advance = first.baseline_y;
+    for line in lines {
+        let alphabetic_y = baseline_to_alphabetic(y, baseline, line.max_ascent, line.max_descent)
+            + line.baseline_y
+            - first_advance;
+        draw_line_glyphs(
+            canvas,
+            glyph_cache,
+            swash,
+            font_system,
+            font_table,
+            &line.glyphs,
+            x,
+            alphabetic_y,
+            paint,
+            font_size,
+        );
+    }
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "one outlined line's full draw state"
+)]
+fn draw_anchored_lines_with_outline(
+    canvas: &mut Canvas<OpenGl>,
+    glyph_cache: &mut GlyphCache<femtovg::ImageId>,
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut cosmic_text::FontSystem,
+    font_table: &FontTable,
+    lines: &[LineGlyphs],
+    x: f32,
+    y: f32,
+    baseline: femtovg::Baseline,
+    outline_paint: &Paint,
+    paint: &Paint,
+    font_size: f32,
+    rings: u32,
+) {
+    if font_size > DIRECT_PATH_CUTOFF_PX {
+        for ring in 1..=rings {
+            let d = ring as f32;
+            for (dx, dy) in [
+                (d, 0.0),
+                (-d, 0.0),
+                (0.0, d),
+                (0.0, -d),
+                (d, d),
+                (-d, -d),
+                (d, -d),
+                (-d, d),
+            ] {
+                draw_anchored_lines(
+                    canvas,
+                    glyph_cache,
+                    swash,
+                    font_system,
+                    font_table,
+                    lines,
+                    x + dx,
+                    y + dy,
+                    baseline,
+                    outline_paint,
+                    font_size,
+                );
+            }
+        }
+        draw_anchored_lines(
+            canvas,
+            glyph_cache,
+            swash,
+            font_system,
+            font_table,
+            lines,
+            x,
+            y,
+            baseline,
+            paint,
+            font_size,
+        );
+        return;
+    }
+
+    let Some(first) = lines.first() else {
+        return;
+    };
+    let first_advance = first.baseline_y;
+    let mut prepared = Vec::with_capacity(lines.len());
+    for line in lines {
+        let alphabetic_y = baseline_to_alphabetic(y, baseline, line.max_ascent, line.max_descent)
+            + line.baseline_y
+            - first_advance;
+        prepared.push(build_glyph_commands(
+            &mut FemtovgPages { canvas },
+            glyph_cache,
+            swash,
+            font_system,
+            font_table,
+            &line.glyphs,
+            x,
+            alphabetic_y,
+            font_size,
+        ));
+    }
+
+    for commands in &prepared {
+        submit_glyph_commands(
+            canvas,
+            glyph_cache,
+            outline_glyph_commands(commands, rings),
+            outline_paint,
+            font_size,
+        );
+    }
+    for commands in prepared {
+        submit_glyph_commands(canvas, glyph_cache, commands, paint, font_size);
     }
 }
 
@@ -647,83 +803,102 @@ impl Renderer for FemtoVgRenderer {
     // -- Simple text --
 
     fn draw_text(&mut self, text: &str, x: f32, y: f32, size: f32, color: Color) {
-        let mut paint = Paint::color(to_femtovg_color(color.to_u32()));
-        paint.set_font(&[self.fonts.sans.regular, self.font_fallback]);
-        paint.set_font_size(size);
-        paint.set_text_baseline(femtovg::Baseline::Top);
-        let _ = self.canvas.fill_text(x, y, text, &paint);
+        let Self {
+            canvas,
+            font_system,
+            paragraph_cache,
+            glyph_cache,
+            swash,
+            font_table,
+            ..
+        } = self;
+        let entry = paragraph_cache.layout_single_line(font_system, sans_line_style(size), text);
+        let paint = Paint::color(to_femtovg_color(color.to_u32()));
+        draw_anchored_lines(
+            canvas,
+            glyph_cache,
+            swash,
+            font_system,
+            font_table,
+            &entry.lines,
+            x,
+            y,
+            femtovg::Baseline::Top,
+            &paint,
+            size,
+        );
     }
 
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
-        let mut paint = Paint::color(femtovg::Color::white());
-        paint.set_font(&[self.fonts.sans.regular, self.font_fallback]);
-        paint.set_font_size(size);
-        self.canvas
-            .measure_text(0.0, 0.0, text, &paint)
-            .map_or(0.0, |m| m.width())
+        self.paragraph_cache
+            .layout_single_line(&mut self.font_system, sans_line_style(size), text)
+            .width
     }
 
     // -- Canvas text --
 
     fn draw_canvas_text(&mut self, text: &str, x: f32, y: f32, style: &TextStyle) {
-        let font = self.fonts.select(style.family, style.weight);
         let size = style.size as f32;
-        let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
-        paint.set_font(&[font, self.font_fallback]);
-        paint.set_font_size(size);
-        paint.set_text_baseline(femtovg_baseline(style.vertical_align));
+        let baseline = femtovg_baseline(style.vertical_align);
+        let (width, draw_x) = {
+            let Self {
+                canvas,
+                font_system,
+                paragraph_cache,
+                glyph_cache,
+                swash,
+                font_table,
+                ..
+            } = self;
+            let entry =
+                paragraph_cache.layout_single_line(font_system, line_style(style, size), text);
+            let width = entry.width;
+            let draw_x = match style.align {
+                TextAlign::Left => x,
+                TextAlign::Center => x - width / 2.0,
+                TextAlign::Right => x - width,
+            };
 
-        let measured_width = match style.align {
-            TextAlign::Left => 0.0,
-            TextAlign::Center | TextAlign::Right => self
-                .canvas
-                .measure_text(0.0, 0.0, text, &paint)
-                .map_or(0.0, |m| m.width()),
-        };
-
-        // Alignment: measure text width and offset x for Center/Right
-        let draw_x = match style.align {
-            TextAlign::Left => x,
-            TextAlign::Center => x - measured_width / 2.0,
-            TextAlign::Right => x - measured_width,
-        };
-
-        // Text outline via 8-direction fill_text at each 1px ring up to outline_width.
-        // 8 textured-quad draws per ring — cheap on GPU even on embedded.
-        if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
-            let mut outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
-            outline_paint.set_font(&[font, self.font_fallback]);
-            outline_paint.set_font_size(size);
-            outline_paint.set_text_baseline(femtovg_baseline(style.vertical_align));
-            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let rings = style.outline_width.ceil() as u32;
-            for ring in 1..=rings {
-                let d = ring as f32;
-                for &(dx, dy) in &[
-                    (d, 0.0),
-                    (-d, 0.0),
-                    (0.0, d),
-                    (0.0, -d),
-                    (d, d),
-                    (-d, -d),
-                    (d, -d),
-                    (-d, d),
-                ] {
-                    let _ = self
-                        .canvas
-                        .fill_text(draw_x + dx, y + dy, text, &outline_paint);
-                }
+            let paint = Paint::color(to_femtovg_color(style.color.to_u32()));
+            if style.outline_color != crate::colors::TRANSPARENT && style.outline_width > 0.0 {
+                let outline_paint = Paint::color(to_femtovg_color(style.outline_color.to_u32()));
+                #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                let rings = style.outline_width.ceil() as u32;
+                draw_anchored_lines_with_outline(
+                    canvas,
+                    glyph_cache,
+                    swash,
+                    font_system,
+                    font_table,
+                    &entry.lines,
+                    draw_x,
+                    y,
+                    baseline,
+                    &outline_paint,
+                    &paint,
+                    size,
+                    rings,
+                );
+            } else {
+                draw_anchored_lines(
+                    canvas,
+                    glyph_cache,
+                    swash,
+                    font_system,
+                    font_table,
+                    &entry.lines,
+                    draw_x,
+                    y,
+                    baseline,
+                    &paint,
+                    size,
+                );
             }
-        }
-
-        let _ = self.canvas.fill_text(draw_x, y, text, &paint);
+            (width, draw_x)
+        };
 
         // Decorations
         if style.underline || style.strikethrough {
-            let width = self
-                .canvas
-                .measure_text(0.0, 0.0, text, &paint)
-                .map_or(0.0, |m| m.width());
             let thickness = (size / 14.0).max(1.0);
 
             if style.underline {
@@ -752,38 +927,83 @@ impl Renderer for FemtoVgRenderer {
             return;
         }
 
-        let font = self.fonts.select(style.family, style.weight);
         let size = style.size as f32;
-        let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
-        paint.set_font(&[font, self.font_fallback]);
-        paint.set_font_size(size);
-        paint.set_text_baseline(femtovg::Baseline::Middle);
+        // Shaped as one string, never glyph by glyph: per-character layouts
+        // would break clusters and ligatures and lose every kern between
+        // neighbours, which is exactly what the arc advances are made of.
+        let Self {
+            canvas,
+            font_system,
+            paragraph_cache,
+            glyph_cache,
+            swash,
+            font_table,
+            ..
+        } = self;
+        let entry = paragraph_cache.layout_single_line(font_system, line_style(style, size), text);
+        let Some(line) = entry.lines.first() else {
+            return;
+        };
 
-        let widths: Vec<f32> = text
-            .chars()
-            .map(|ch| {
-                let mut buf = [0_u8; 4];
-                let glyph = ch.encode_utf8(&mut buf);
-                self.canvas
-                    .measure_text(0.0, 0.0, glyph, &paint)
-                    .map_or(0.0, |metrics| metrics.width())
-            })
-            .collect();
+        let paint = Paint::color(to_femtovg_color(style.color.to_u32()));
+        let widths: Vec<f32> = line.glyphs.iter().map(|glyph| glyph.w).collect();
+        let alphabetic_y = baseline_to_alphabetic(
+            0.0,
+            femtovg::Baseline::Middle,
+            line.max_ascent,
+            line.max_descent,
+        );
 
-        for (ch, (width, placement)) in text.chars().zip(
-            widths
+        if size > DIRECT_PATH_CUTOFF_PX {
+            for (glyph, placement) in line
+                .glyphs
                 .iter()
-                .zip(arc_glyph_layout(&widths, radius, angle, anchor, facing)),
-        ) {
+                .zip(arc_glyph_layout(&widths, radius, angle, anchor, facing))
+            {
+                let px = cx + radius * placement.theta.sin();
+                let py = cy - radius * placement.theta.cos();
+                canvas.save();
+                canvas.translate(px, py);
+                canvas.rotate(placement.rotation);
+                draw_line_glyphs(
+                    canvas,
+                    glyph_cache,
+                    swash,
+                    font_system,
+                    font_table,
+                    std::slice::from_ref(glyph),
+                    curved_glyph_origin_x(glyph),
+                    alphabetic_y,
+                    &paint,
+                    size,
+                );
+                canvas.restore();
+            }
+            return;
+        }
+
+        let commands = build_cached_curved_glyph_commands(
+            &mut FemtovgPages { canvas },
+            glyph_cache,
+            swash,
+            font_system,
+            &line.glyphs,
+            alphabetic_y,
+        );
+        for (command, placement) in commands
+            .into_iter()
+            .zip(arc_glyph_layout(&widths, radius, angle, anchor, facing))
+        {
+            let Some(command) = command else {
+                continue;
+            };
             let px = cx + radius * placement.theta.sin();
             let py = cy - radius * placement.theta.cos();
-            let mut buf = [0_u8; 4];
-            let glyph = ch.encode_utf8(&mut buf);
-            self.canvas.save();
-            self.canvas.translate(px, py);
-            self.canvas.rotate(placement.rotation);
-            let _ = self.canvas.fill_text(-width / 2.0, 0.0, glyph, &paint);
-            self.canvas.restore();
+            canvas.save();
+            canvas.translate(px, py);
+            canvas.rotate(placement.rotation);
+            submit_glyph_commands(canvas, glyph_cache, std::iter::once(command), &paint, size);
+            canvas.restore();
         }
     }
 
@@ -850,7 +1070,9 @@ impl Renderer for FemtoVgRenderer {
         self.paragraph_cache.draw(
             &mut self.font_system,
             &mut self.canvas,
-            self.fonts,
+            &mut self.glyph_cache,
+            &mut self.swash,
+            &self.font_table,
             &sized,
             &spans,
             x,
@@ -882,7 +1104,9 @@ impl Renderer for FemtoVgRenderer {
         self.paragraph_cache.draw(
             &mut self.font_system,
             &mut self.canvas,
-            self.fonts,
+            &mut self.glyph_cache,
+            &mut self.swash,
+            &self.font_table,
             style,
             spans,
             x,
@@ -1349,6 +1573,9 @@ impl Renderer for FemtoVgRenderer {
 
     fn flush(&mut self) {
         self.canvas.flush();
+        // Paired with the frame's submissions, not with `begin_frame`:
+        // the scratch page's allocations are only free once they have been drawn.
+        self.glyph_cache.end_frame();
     }
 
     fn width(&self) -> f32 {
@@ -1396,6 +1623,28 @@ impl Renderer for FemtoVgRenderer {
         self.mesh_renderer
             .as_ref()
             .map_or(0, MeshRenderer::resident_bytes)
+    }
+}
+
+/// The line style behind [`Renderer::draw_text`] and [`Renderer::measure_text`],
+/// whose signatures carry no family, weight or slant.
+pub(crate) fn sans_line_style(size: f32) -> LineStyle {
+    LineStyle {
+        family: FontFamily::Sans,
+        weight: FontWeight::REGULAR,
+        italic: false,
+        size,
+    }
+}
+
+/// The line style of a canvas [`TextStyle`], whose `size` is whole-pixel `u32`
+/// while animated callers pass the fractional size separately.
+fn line_style(style: &TextStyle, size: f32) -> LineStyle {
+    LineStyle {
+        family: style.family,
+        weight: style.weight,
+        italic: style.italic,
+        size,
     }
 }
 

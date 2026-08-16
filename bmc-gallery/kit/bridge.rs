@@ -237,7 +237,7 @@ fn evict_stale(renderer: &mut FemtoVgRenderer, frames: &mut HashMap<Id, FrameSta
             return true;
         }
         if let Some(image) = state.image.take() {
-            renderer.canvas_mut().delete_image(image.id);
+            renderer.delete_image(image.id);
         }
         false
     });
@@ -281,7 +281,7 @@ fn draw_frame(
         if state.image.is_none_or(|held| held.size != alloc) {
             let fresh = Image::new(renderer, alloc);
             if let Some(stale) = state.image.replace(fresh) {
-                renderer.canvas_mut().delete_image(stale.id);
+                renderer.delete_image(stale.id);
             }
             state.texture = None;
         }

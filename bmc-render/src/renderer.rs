@@ -33,6 +33,9 @@ use bmc_wasm_protocol::{
 use crate::gpu::mesh::MeshDrawArgs;
 use crate::tree::{AutoFit, SpanData, TextStyle};
 
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
+
 /// State of an asset tag's registry reservation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetTagState<Id> {

@@ -3100,3 +3100,48 @@ mod tests {
         assert_eq!(decoded_style.size, style.size);
     }
 }
+
+#[cfg(test)]
+mod intrinsic_button_width_tests {
+    use super::*;
+    use crate::renderer::test_support::ShapingRecorder;
+
+    #[test]
+    fn a_button_sizes_itself_around_its_shaped_label() {
+        const LABEL: &str = "Disconnect";
+        let size = ButtonSize::Normal;
+
+        let mut recorder = ShapingRecorder::default();
+        let label_w = recorder.measure_text(LABEL, size.font_size());
+
+        let mut taffy: TaffyTree<NodeContext> = TaffyTree::new();
+        let button = taffy
+            .new_leaf_with_context(
+                Style::default(),
+                NodeContext {
+                    button: Some(ButtonContext {
+                        id: "btn".to_owned(),
+                        label: LABEL.to_owned(),
+                        style: 0,
+                        size: size as u8,
+                        icon_id: None,
+                        disabled: false,
+                        skin: None,
+                    }),
+                    ..NodeContext::default()
+                },
+            )
+            .expect("BUG: taffy must accept a leaf node");
+        compute_taffy_layout(&mut taffy, button, &mut recorder)
+            .expect("BUG: laying out a single leaf must succeed");
+
+        let laid_out = taffy
+            .layout(button)
+            .expect("BUG: the laid-out leaf must have a layout");
+        assert!(
+            (laid_out.size.width - (label_w + size.h_padding() * 2.0)).abs() < 0.5,
+            "a label-only button must be as wide as its shaped label plus padding, got {}",
+            laid_out.size.width
+        );
+    }
+}

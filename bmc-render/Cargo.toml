@@ -53,6 +53,8 @@ glutin.workspace = true
 [features]
 default = []
 profiling = ["ii-stopwatch/enabled"]
+# Exposes `renderer::test_support` to downstream crates' tests.
+test-support = []
 
 [lints]
 workspace = true

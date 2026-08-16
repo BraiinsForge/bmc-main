@@ -420,3 +420,93 @@ fn ease_out(t: f32) -> f32 {
 fn ease_in(t: f32) -> f32 {
     t.powi(3)
 }
+
+#[cfg(test)]
+mod title_truncation_tests {
+    use super::*;
+    use crate::renderer::test_support::ShapingRecorder;
+
+    const TITLE: &str = "Firmware upgrade in progress";
+    const TITLE_FONT_SIZE: f32 = 16.0;
+    /// The header's title box loses the body padding and the close button.
+    const TITLE_CHROME: f32 = 16.0 + MODAL_HEADER_HEIGHT;
+
+    /// The modal whose title box is `slack` wider than the shaped title.
+    fn render_titled_modal(recorder: &mut ShapingRecorder, slack: f32) -> f32 {
+        let title_w = recorder.measure_text(TITLE, TITLE_FONT_SIZE);
+        let modal = ModalInfo {
+            modal_id: "modal".to_owned(),
+            is_open: true,
+            padding: 48,
+            backdrop_alpha: 128,
+            title: TITLE.to_owned(),
+            bg_color: Color::default(),
+            header_color: Color::default(),
+            title_color: Color::default(),
+            max_width: (title_w + TITLE_CHROME + slack).ceil() as u16,
+            body: Vec::new(),
+            footer_primary_key: String::new(),
+            footer_primary_label: String::new(),
+            footer_secondary_key: String::new(),
+            footer_secondary_label: String::new(),
+            footer_danger: false,
+        };
+        let mut target = RenderTarget::new(recorder, None);
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        render_modal(
+            &modal,
+            1280.0,
+            480.0,
+            &mut target,
+            &mut InteractionState::new(),
+            &mut HashMap::new(),
+            &mut HashMap::new(),
+            1_000,
+            &mut TreeResult::default(),
+            &mut AnimationContext {
+                animation_states: &mut animation_states,
+                transition_states: &mut transition_states,
+                delta_ms: 1_000,
+                frame_counter: 1,
+                draw_counter: 0,
+                canvas_index: 0,
+                draw_in_canvas: 0,
+                mesh_slot_counter: 0,
+                has_active: false,
+                now_unix_secs: 0,
+            },
+            &mut TaffyTree::new(),
+        );
+        f32::from(modal.max_width) - TITLE_CHROME
+    }
+
+    #[test]
+    fn a_title_the_shaper_says_fits_is_drawn_whole() {
+        let mut recorder = ShapingRecorder::default();
+        render_titled_modal(&mut recorder, 1.0);
+
+        assert_eq!(
+            recorder.only_text().text,
+            TITLE,
+            "a title sized from the same shaper the header measures with must not truncate"
+        );
+    }
+
+    #[test]
+    fn a_title_wider_than_its_header_is_truncated_to_fit() {
+        let mut recorder = ShapingRecorder::default();
+        let title_w = recorder.measure_text(TITLE, TITLE_FONT_SIZE);
+        let title_max_w = render_titled_modal(&mut recorder, -title_w / 2.0);
+
+        let drawn = recorder.only_text().text.clone();
+        assert!(
+            drawn.ends_with('\u{2026}') && TITLE.starts_with(drawn.trim_end_matches('\u{2026}')),
+            "an overflowing title must draw as an ellipsized prefix of itself, got {drawn:?}"
+        );
+        assert!(
+            recorder.measure_text(&drawn, TITLE_FONT_SIZE) <= title_max_w,
+            "the truncated title must shape within the width the header measured against"
+        );
+    }
+}

@@ -20,16 +20,11 @@
 
 //! Paragraph layout (cosmic-text) and rendering (FemtoVG).
 //!
-//! cosmic-text handles shaping + line-breaking, FemtoVG renders on the GPU.
-//! Both use rustybuzz internally with the same font binaries (Braiins Sans and
-//! Braiins Deck Sans), so glyph advances agree — with one measured exception:
-//! for a pair the font kerns, cosmic-text applies the kern and FemtoVG does
-//! not, which leaves cosmic-text the tighter of the two.
-//!
-//! [`ParagraphLayoutCache::draw`] takes each segment's origin from cosmic-text
-//! but lets FemtoVG lay out the glyphs inside it, so every additional draw call
-//! is a point where the two can disagree by up to a pixel. Do not read a span
-//! boundary's spacing as evidence about shaping.
+//! cosmic-text is the only shaper: it produces every glyph and every position,
+//! and FemtoVG draws them as cached atlas quads (or, above
+//! [`DIRECT_PATH_CUTOFF_PX`], as pre-positioned glyph runs). FemtoVG's own
+//! shaper is never invoked, so its kerning divergence from cosmic-text
+//! can no longer reach the screen.
 //!
 //! # Coordinate model
 //!
@@ -40,10 +35,11 @@
 //!   `line_top + centering_offset + max_ascent` where
 //!   `centering_offset = (line_height − glyph_height) / 2`.
 //!
-//! We render each text segment with [`femtovg::Baseline::Alphabetic`] at
-//! `run.line_y` so that vertical placement matches what cosmic-text's own
-//! `buffer.draw()` / swash path would produce.  Decorations (underline,
-//! strikethrough) are positioned relative to this baseline.
+//! Glyph quads are placed against `line_y`, so vertical placement matches what
+//! cosmic-text's own `buffer.draw()` / swash path would produce. Decorations
+//! (underline, strikethrough) are positioned relative to this baseline. Callers
+//! anchoring text by any other [`femtovg::Baseline`] convert through
+//! [`baseline_to_alphabetic`] first.
 //!
 //! [`LayoutRun`]: cosmic_text::LayoutRun
 
@@ -63,51 +59,6 @@ use crate::gpu::glyph_cache::{
     GlyphCache, GlyphLookup, GlyphQuad, PageBackend, PageCreateFailed, PageFaultKind, RasterGlyph,
 };
 use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
-
-/// Three weight-variant fonts used to render text spans. The renderer picks
-/// the closest match for each span's `weight` via [`WeightedFonts::select`].
-#[derive(Clone, Copy, Debug)]
-pub struct WeightedFonts {
-    pub regular: FontId,
-    pub semibold: FontId,
-    pub bold: FontId,
-}
-
-impl WeightedFonts {
-    /// Pick the FemtoVG font for a CSS weight. Thresholds match the named
-    /// `FontWeight` constants so an intermediate weight (e.g. `FontWeight(500)`
-    /// for Medium) falls onto the closest available asset.
-    #[must_use]
-    pub fn select(self, weight: FontWeight) -> FontId {
-        if weight >= FontWeight::BOLD {
-            self.bold
-        } else if weight >= FontWeight::SEMIBOLD {
-            self.semibold
-        } else {
-            self.regular
-        }
-    }
-}
-
-/// Multi-family font set held by the renderer. Each family ships in three
-/// weights; selection takes both the requested family and weight so widgets
-/// can opt into the display face via [`FontFamily::DeckSans`].
-#[derive(Clone, Copy, Debug)]
-pub struct Fonts {
-    pub sans: WeightedFonts,
-    pub deck_sans: WeightedFonts,
-}
-
-impl Fonts {
-    /// Pick the FemtoVG font for a `(family, weight)` pair.
-    #[must_use]
-    pub fn select(self, family: FontFamily, weight: FontWeight) -> FontId {
-        match family {
-            FontFamily::Sans => self.sans.select(weight),
-            FontFamily::DeckSans => self.deck_sans.select(weight),
-        }
-    }
-}
 
 // ── Paragraph layout cache ──────────────────────────────────────────
 
@@ -223,7 +174,6 @@ impl ParagraphLayoutCache {
     ///
     /// Kept apart from [`Self::layout`] because [`TextStyle::size`] is `u32`,
     /// which truncates every fractional and animated size to a whole pixel.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
     pub(crate) fn layout_single_line(
         &mut self,
         font_system: &mut FontSystem,
@@ -252,13 +202,15 @@ impl ParagraphLayoutCache {
         entry
     }
 
-    /// Draw a paragraph using cached layout. Calls FemtoVG fill_text per span segment.
-    #[expect(clippy::too_many_arguments)]
-    pub fn draw(
+    /// Draw a paragraph using cached layout, one cached-glyph batch per span.
+    #[expect(clippy::too_many_arguments, reason = "one paragraph's full draw state")]
+    pub(crate) fn draw(
         &mut self,
         font_system: &mut FontSystem,
         canvas: &mut Canvas<OpenGl>,
-        fonts: Fonts,
+        cache: &mut GlyphCache<femtovg::ImageId>,
+        swash: &mut cosmic_text::SwashCache,
+        font_table: &FontTable,
         base_style: &TextStyle,
         spans: &[SpanData],
         x: f32,
@@ -266,7 +218,7 @@ impl ParagraphLayoutCache {
         max_width: f32,
     ) {
         // Nothing to draw, and every `spans[..]` below — including
-        // `span_for_glyph`'s first-span fallback — would be out of bounds.
+        // `span_groups`' first-span fallback — would be out of bounds.
         if spans.is_empty() {
             return;
         }
@@ -274,73 +226,33 @@ impl ParagraphLayoutCache {
         // Ensure layout is cached
         self.measure(font_system, base_style, spans, Some(max_width));
         let key = cache_key(base_style, spans, Some(max_width));
-        let entry = &self.entries[&key];
+        let lines = extract_lines(&self.entries[&key].buffer);
 
-        let flush_segment = |canvas: &mut Canvas<OpenGl>,
-                             span_idx: usize,
-                             text: &str,
-                             start_x: f32,
-                             baseline_y: f32| {
-            let style = spans[span_idx].resolve_style(base_style);
-            draw_text_segment(canvas, fonts, text, x + start_x, baseline_y, &style);
-            let w = segment_width(canvas, fonts, text, &style);
-            draw_decorations_for_segment(canvas, x + start_x, baseline_y, w, &style);
-        };
-
-        for run in entry.buffer.layout_runs() {
-            // run.line_y is the alphabetic baseline (not line top — see module docs)
-            let baseline_y = y + run.line_y;
-
-            // `Some` exactly while a segment is in flight — set and cleared
-            // together with `segment_text`.
-            let mut current_span: Option<usize> = None;
-            let mut segment_start_x = 0.0_f32;
-            let mut segment_text = String::new();
-
-            for glyph in run.glyphs {
-                let span_idx = span_for_glyph(glyph, spans.len());
-
-                if let Some(prev_span) = current_span
-                    && prev_span != span_idx
-                    && !segment_text.is_empty()
-                {
-                    flush_segment(
-                        canvas,
-                        prev_span,
-                        &segment_text,
-                        segment_start_x,
-                        baseline_y,
-                    );
-                    segment_text.clear();
-                }
-
-                if segment_text.is_empty() {
-                    segment_start_x = glyph.x;
-                    current_span = Some(span_idx);
-                }
-
-                // `get` rejects an out-of-range *or* non-char-boundary range, so a
-                // bad offset drops one glyph instead of panicking. Checking only
-                // the length would miss a range landing inside a multi-byte
-                // character, which panics and tears down the widget slot.
-                if let Some(text) = run.text.get(glyph.start..glyph.end) {
-                    segment_text.push_str(text);
-                } else {
-                    tracing::error!(
-                        "text: glyph range {}..{} does not slice line {} (len {})",
-                        glyph.start,
-                        glyph.end,
-                        run.line_i,
-                        run.text.len(),
-                    );
-                }
-            }
-
-            // Flush last segment
-            if let Some(span_idx) = current_span
-                && !segment_text.is_empty()
-            {
-                flush_segment(canvas, span_idx, &segment_text, segment_start_x, baseline_y);
+        for line in &lines {
+            // baseline_y is the alphabetic baseline (not line top — see module docs)
+            let baseline_y = y + line.baseline_y;
+            for group in span_groups(&line.glyphs, spans.len()) {
+                let style = spans[group.span].resolve_style(base_style);
+                let paint = Paint::color(to_femtovg_color(style.color.to_u32()));
+                draw_line_glyphs(
+                    canvas,
+                    cache,
+                    swash,
+                    font_system,
+                    font_table,
+                    group.glyphs,
+                    x,
+                    baseline_y,
+                    &paint,
+                    group.font_size,
+                );
+                draw_decorations_for_segment(
+                    canvas,
+                    x + group.start_x,
+                    baseline_y,
+                    group.width,
+                    &style,
+                );
             }
         }
     }
@@ -564,10 +476,8 @@ fn shape_single_line(
 // ── Per-line glyph extraction ───────────────────────────────────────
 
 /// One visual line's glyphs, with the metrics needed to place it.
-#[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
 pub(crate) struct LineGlyphs {
     pub glyphs: Vec<PositionedGlyphInfo>,
-    pub width: f32,
     pub max_ascent: f32,
     pub max_descent: f32,
     /// Paragraph-relative alphabetic baseline of this visual line.
@@ -582,16 +492,13 @@ pub(crate) struct PositionedGlyphInfo {
     pub y: f32,
     /// Advance width. Origins alone recover neither the last glyph's advance
     /// nor the extents of an RTL run.
-    #[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
     pub w: f32,
     pub font_id: cosmic_text::fontdb::ID,
-    #[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
     pub font_size: f32,
     pub flags: cosmic_text::CacheKeyFlags,
     pub glyph_id: u16,
     /// Span index, as tagged through `Attrs::metadata`.
     /// Selects the glyph's paint and decorations.
-    #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
     pub metadata: usize,
 }
 
@@ -620,7 +527,6 @@ fn positioned_glyph(glyph: &LayoutGlyph) -> PositionedGlyphInfo {
 /// the two metrics the baseline contract is defined in terms of.
 /// `baseline_y` reimplements `LayoutRunIter`'s vertical advance,
 /// which is equivalent only for an unscrolled, height-unbounded buffer.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub(crate) fn extract_lines(buffer: &Buffer) -> Vec<LineGlyphs> {
     assert_eq!(
         buffer.scroll(),
@@ -646,7 +552,6 @@ pub(crate) fn extract_lines(buffer: &Buffer) -> Vec<LineGlyphs> {
             let centering_offset = (line_height - glyph_height) / 2.0;
             lines.push(LineGlyphs {
                 glyphs: layout_line.glyphs.iter().map(positioned_glyph).collect(),
-                width: layout_line.w,
                 max_ascent: layout_line.max_ascent,
                 max_descent: layout_line.max_descent,
                 baseline_y: line_top + centering_offset + layout_line.max_ascent,
@@ -688,7 +593,6 @@ fn assert_lines_match_layout_runs(buffer: &Buffer, lines: &[LineGlyphs]) {
 ///
 /// Derived from the line's own `max_ascent`/`max_descent`.
 /// Never from `line_y − line_top`, which carries half of the line's leading.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub(crate) fn baseline_to_alphabetic(
     y: f32,
     baseline: femtovg::Baseline,
@@ -763,7 +667,7 @@ fn normalize_carriage_returns(spans: &[SpanData]) -> std::borrow::Cow<'_, [SpanD
     std::borrow::Cow::Owned(normalized)
 }
 
-/// Span owning `glyph`, as tagged by [`shape_paragraph`].
+/// Span owning a glyph tagged `metadata`, as tagged by [`shape_paragraph`].
 ///
 /// A glyph outside `0..span_count` — [`NO_SPAN`] included — would mean it was
 /// shaped from attrs we never tagged. Report it and fall back to the first span:
@@ -772,15 +676,49 @@ fn normalize_carriage_returns(spans: &[SpanData]) -> std::borrow::Cow<'_, [SpanD
 ///
 /// Kept as its own function so `span_attribution_tests` can exercise the draw
 /// path's span lookup without a GL context.
-fn span_for_glyph(glyph: &LayoutGlyph, span_count: usize) -> usize {
-    if glyph.metadata < span_count {
-        return glyph.metadata;
+fn span_for_glyph(metadata: usize, span_count: usize) -> usize {
+    if metadata < span_count {
+        return metadata;
     }
-    tracing::error!(
-        "text: glyph metadata {} is not one of the {span_count} span indices",
-        glyph.metadata,
-    );
+    tracing::error!("text: glyph metadata {metadata} is not one of the {span_count} span indices");
     0
+}
+
+/// One span's contiguous glyphs on a line, with what drawing them needs.
+pub(crate) struct SpanGroup<'a> {
+    pub span: usize,
+    pub glyphs: &'a [PositionedGlyphInfo],
+    /// Line-relative left edge of the decorations under this group.
+    pub start_x: f32,
+    /// Decoration width, spanning every glyph of the group.
+    pub width: f32,
+    /// The size these glyphs were shaped at, which the delegated path
+    /// must paint with for femtovg to scale the outlines the same.
+    pub font_size: f32,
+}
+
+/// Split a line into per-span groups, in draw order.
+///
+/// The extent is `min(x)` to `max(x + w)` over the whole group, not
+/// first glyph to last: cosmic emits an RTL run's glyphs at descending x
+/// (`shape.rs:2708-2717`), which first-to-last reads as a negative width.
+fn span_groups(glyphs: &[PositionedGlyphInfo], span_count: usize) -> Vec<SpanGroup<'_>> {
+    glyphs
+        .chunk_by(|a, b| a.metadata == b.metadata)
+        .map(|group| {
+            let first = group.first().expect("BUG: chunk_by yielded an empty group");
+            let (start_x, end_x) = group.iter().fold((f32::MAX, f32::MIN), |(lo, hi), glyph| {
+                (lo.min(glyph.x), hi.max(glyph.x + glyph.w))
+            });
+            SpanGroup {
+                span: span_for_glyph(first.metadata, span_count),
+                glyphs: group,
+                start_x,
+                width: end_x - start_x,
+                font_size: first.font_size,
+            }
+        })
+        .collect()
 }
 
 /// Convert RGBA u32 to femtovg Color.
@@ -794,38 +732,6 @@ pub fn to_femtovg_color(color: u32) -> femtovg::Color {
     )
 }
 
-/// Draw a text segment with FemtoVG at the given **baseline** y-coordinate.
-///
-/// Uses [`femtovg::Baseline::Alphabetic`] because the y-coordinate comes from
-/// cosmic-text's `LayoutRun::line_y` which is the alphabetic baseline
-/// (= `line_top + centering_offset + max_ascent`).
-fn draw_text_segment(
-    canvas: &mut Canvas<OpenGl>,
-    fonts: Fonts,
-    text: &str,
-    x: f32,
-    baseline_y: f32,
-    style: &TextStyle,
-) {
-    let font = fonts.select(style.family, style.weight);
-    let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
-    paint.set_font(&[font]);
-    paint.set_font_size(style.size as f32);
-    paint.set_text_baseline(femtovg::Baseline::Alphabetic);
-    let _ = canvas.fill_text(x, baseline_y, text, &paint);
-}
-
-/// Measure text segment width using FemtoVG.
-fn segment_width(canvas: &mut Canvas<OpenGl>, fonts: Fonts, text: &str, style: &TextStyle) -> f32 {
-    let font = fonts.select(style.family, style.weight);
-    let mut paint = Paint::color(to_femtovg_color(style.color.to_u32()));
-    paint.set_font(&[font]);
-    paint.set_font_size(style.size as f32);
-    canvas
-        .measure_text(0.0, 0.0, text, &paint)
-        .map_or(0.0, |m| m.width())
-}
-
 // ── Glyph rasterization ─────────────────────────────────────────────
 
 /// Rasterize one glyph into 8-bit alpha coverage.
@@ -835,7 +741,6 @@ fn segment_width(canvas: &mut Canvas<OpenGl>, fonts: Fonts, text: &str, style: &
 /// the very growth this cache exists to replace.
 /// `None` covers everything with no coverage to upload — a missing font,
 /// a colour or subpixel bitmap, an empty box such as a space.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub(crate) fn rasterize_glyph(
     swash: &mut cosmic_text::SwashCache,
     font_system: &mut FontSystem,
@@ -917,7 +822,6 @@ impl FontTable {
 /// `faces()` iterates fontdb's private slot map, and a release build whose order
 /// had silently diverged would map glyphs to the wrong fonts forever after.
 /// Seven faces once at init cost nothing.
-#[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
 pub(crate) fn build_font_table(
     font_system: &FontSystem,
     femtovg_ids: &[FontId; EMBEDDED_FACES.len()],
@@ -1215,7 +1119,6 @@ fn direct_paint(paint: &Paint, font_size: f32) -> Paint {
 ///
 /// Takes a slice rather than a [`LineGlyphs`] so callers can submit a subgroup
 /// without building a temporary vector on every warm frame.
-#[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
 #[expect(clippy::too_many_arguments, reason = "one line's full draw state")]
 pub(crate) fn draw_line_glyphs(
     canvas: &mut Canvas<OpenGl>,
@@ -1310,6 +1213,15 @@ pub(crate) fn submit_glyph_commands<I>(
             paint,
         );
     }
+}
+
+/// Origin that centers one glyph's advance on the arc point it is drawn at.
+///
+/// The `− x` cancels the glyph's position within its line, which
+/// [`draw_line_glyphs`] adds back; without it every glyph after the first
+/// is displaced by that position on top of its arc placement.
+pub(crate) fn curved_glyph_origin_x(glyph: &PositionedGlyphInfo) -> f32 {
+    -glyph.w / 2.0 - glyph.x
 }
 
 mod direct_path {
@@ -1602,7 +1514,7 @@ mod span_attribution_tests {
                     glyph.metadata, NO_SPAN,
                     "glyph {text:?} kept the default attrs instead of a span's",
                 );
-                let resolved = span_for_glyph(glyph, spans.len());
+                let resolved = span_for_glyph(glyph.metadata, spans.len());
                 observed.insert(resolved);
                 for c in text.chars().filter(|c| !is_unattributable(*c)) {
                     assert_eq!(
@@ -1829,6 +1741,107 @@ mod span_attribution_tests {
             assert_span_attribution(&spans, 400.0),
             BTreeSet::from([0, 1, 2])
         );
+    }
+}
+
+/// What one line hands to the draw path, span by span.
+/// CPU-only — nothing here needs a GL context.
+#[cfg(test)]
+mod span_group_tests {
+    use super::{
+        LineGlyphs, SpanGroup, extract_lines, normalize_carriage_returns, shape_paragraph,
+        span_groups,
+    };
+    use crate::tree::{SpanData, TextStyle};
+
+    /// An RTL script the embedded faces do not cover,
+    /// so its glyphs come back as boxes —
+    /// the bidi reordering under test is the shaper's, not the font's,
+    /// and holds either way.
+    const HEBREW: &str = "\u{5e9}\u{5dc}\u{5d5}\u{5dd}";
+
+    fn span(text: &str, underline: bool) -> SpanData {
+        SpanData {
+            text: text.to_owned(),
+            weight: None,
+            color: None,
+            italic: false,
+            underline,
+            strikethrough: false,
+        }
+    }
+
+    fn only_line(spans: &[SpanData]) -> LineGlyphs {
+        let normalized = normalize_carriage_returns(spans);
+        let mut font_system = crate::gpu::renderer::build_font_system();
+        let (buffer, _, _) = shape_paragraph(
+            &mut font_system,
+            &TextStyle::default(),
+            &normalized,
+            Some(400.0),
+        );
+        let mut lines = extract_lines(&buffer);
+        assert_eq!(lines.len(), 1, "the fixture must shape to one line");
+        lines.remove(0)
+    }
+
+    /// Every glyph of the group must sit inside the extent its decorations use.
+    fn assert_covers_its_glyphs(group: &SpanGroup<'_>) {
+        for glyph in group.glyphs {
+            assert!(
+                glyph.x >= group.start_x && glyph.x + glyph.w <= group.start_x + group.width,
+                "glyph at {}..{} escapes the extent {}..{}",
+                glyph.x,
+                glyph.x + glyph.w,
+                group.start_x,
+                group.start_x + group.width,
+            );
+        }
+    }
+
+    /// cosmic emits an RTL run's glyphs at descending x,
+    /// so first-glyph to last-glyph reads as a zero or negative width
+    /// and the underline vanishes.
+    #[test]
+    fn rtl_span_extent_covers_its_glyphs() {
+        let spans = [span(HEBREW, true)];
+        let line = only_line(&spans);
+        let groups = span_groups(&line.glyphs, spans.len());
+
+        let [group] = groups.as_slice() else {
+            panic!("BUG: one span must yield one group");
+        };
+        assert!(group.glyphs.len() > 1, "the fixture must shape >1 glyph");
+        assert!(
+            group.glyphs[0].x > group.glyphs[group.glyphs.len() - 1].x,
+            "the fixture must shape right-to-left",
+        );
+        assert!(group.width > 0.0, "the extent is {} wide", group.width);
+        assert_covers_its_glyphs(group);
+    }
+
+    /// A bidi line's two spans each own a disjoint stretch of the line,
+    /// in the visual order the extents place them.
+    #[test]
+    fn bidi_spans_get_disjoint_ordered_extents() {
+        let spans = [span("abc ", true), span(HEBREW, true)];
+        let line = only_line(&spans);
+        let groups = span_groups(&line.glyphs, spans.len());
+
+        let [latin, hebrew] = groups.as_slice() else {
+            panic!("BUG: two spans must yield two groups");
+        };
+        assert_eq!((latin.span, hebrew.span), (0, 1));
+        assert!(
+            latin.start_x + latin.width <= hebrew.start_x,
+            "extents {}..{} and {}..{} overlap",
+            latin.start_x,
+            latin.start_x + latin.width,
+            hebrew.start_x,
+            hebrew.start_x + hebrew.width,
+        );
+        assert_covers_its_glyphs(latin);
+        assert_covers_its_glyphs(hebrew);
     }
 }
 
