@@ -112,7 +112,7 @@ impl TestbedApp {
 
         // Summed, not sampled: every open view spends its own wasm time on
         // the same host frame, and one view's figure would speak for none.
-        let live: Vec<&DeviceView> = self.tiles.iter().filter(|v| v.is_live()).collect();
+        let live: Vec<&DeviceView> = self.stage.tiles().iter().filter(|v| v.is_live()).collect();
         let wasm_us: u32 = live
             .iter()
             .filter_map(|view| view.last_timings())

@@ -47,6 +47,7 @@ mod icon;
 mod paint;
 mod params_ui;
 mod recording;
+mod stage;
 mod status_bar;
 mod system_ui;
 mod theme;
@@ -1042,8 +1043,6 @@ pub(crate) struct TestbedApp {
     /// Whether each view carries its own timings — off by default:
     /// an instrument over the widget, while the status bar covers the whole.
     show_view_timings: bool,
-    /// A one-shot window rearrangement, consumed at the next paint.
-    arrange: Option<device_window::ArrangeMode>,
     notice: Option<Notice>,
     /// Where views render, once the modes that cannot thread have had their say.
     views: ViewPlacement,
@@ -1075,18 +1074,15 @@ pub(crate) struct TestbedApp {
     /// Base-URL rewrites from `--rewrite-url`, installed on every runtime.
     url_rewrites: Vec<(String, String)>,
     gl: Arc<egui_glow::glow::Context>,
-    pub(crate) tiles: Vec<DeviceView>,
-    /// Whatever is on its way out, drained a little each frame.
-    teardown: Teardown,
+    /// The canvas roster: open devices, their views, the teardown pipeline
+    /// and a pending arrangement.
+    pub(crate) stage: stage::Stage,
     clock: Clock,
     /// Offline toggle: seals every tile's live I/O so refreshes fail.
     offline: bool,
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
-    /// The devices currently open on the canvas, one window each.
-    /// Recording pins this to the target's platform alone.
-    pub(crate) open_platforms: Vec<&'static Platform>,
 }
 
 /// Wall-clock instants used to drive per-frame timing.
@@ -1130,50 +1126,6 @@ struct FramePass {
     next_wake_ms: Option<u64>,
 }
 
-/// The teardown pipeline: whatever was closed, on its way out across frames.
-///
-/// A closed view first waits for a pass that can free its texture — the
-/// painter is only in hand between passes — and a threaded view's worker then
-/// winds down in the background until a poll collects it. Spreading that over
-/// frames is the point: a runtime's teardown can hold a fetch for its whole
-/// I/O timeout, and closing a platform must never stall the UI on it.
-#[derive(Default)]
-struct Teardown {
-    /// Views taken out of service — a closed platform's worth,
-    /// or every open one at once when recording mode swaps the whole canvas.
-    views: Vec<DeviceView>,
-    /// Worker threads asked to stop, polled until they exit.
-    workers: Vec<view::worker::Retired>,
-}
-
-impl Teardown {
-    /// Advance the pipeline one step: free what the painter can, poll the rest.
-    fn drain(&mut self, gl: &egui_glow::glow::Context, painter: &mut egui_glow::Painter) {
-        for view in std::mem::take(&mut self.views) {
-            self.workers.extend(view.release(gl, painter));
-        }
-        self.workers = std::mem::take(&mut self.workers)
-            .into_iter()
-            .filter_map(view::worker::Retired::reap)
-            .collect();
-    }
-
-    /// Run the pipeline to the end, waiting out every worker.
-    ///
-    /// For process exit only: blocking is fine with no UI left, and a detached
-    /// worker would race its GL context against the dying display connection.
-    fn finish(&mut self, gl: &egui_glow::glow::Context, painter: &mut egui_glow::Painter) {
-        for view in std::mem::take(&mut self.views) {
-            self.workers.extend(view.release(gl, painter));
-        }
-        for retired in std::mem::take(&mut self.workers) {
-            retired.reap_blocking();
-        }
-    }
-}
-
-/// Per-frame performance accounting. The rolling window drives the FPS readout
-/// in the status bar; the full vector is what `--perf-report=` writes to disk at exit.
 /// A transient chrome banner: the outcome of an action whose other traces
 /// left the screen — a saved take, mostly. Expires on its own or on click.
 struct Notice {
@@ -1204,6 +1156,9 @@ impl Notice {
     }
 }
 
+/// Per-frame performance accounting. The rolling window drives the FPS readout
+/// in the status bar; the full vector is what `--perf-report=` writes to disk
+/// at exit.
 struct PerfState {
     /// Total frames rendered so far. Used to drive the `--perf-frames` exit condition.
     frame_count: u32,
@@ -1271,7 +1226,6 @@ impl TestbedApp {
             theme: theme::ThemeChoice::Auto,
             icons: icon::Icons::new(),
             show_view_timings: false,
-            arrange: None,
             notice: None,
             views,
             exit_requested: false,
@@ -1285,8 +1239,7 @@ impl TestbedApp {
             system: pending_system,
             credentials: serde_json::Map::new(),
             gl,
-            tiles: Vec::new(),
-            teardown: Teardown::default(),
+            stage: stage::Stage::default(),
             clock: Clock {
                 last_frame: now,
                 start_instant: now,
@@ -1307,8 +1260,11 @@ impl TestbedApp {
                 recent_frame_us: std::collections::VecDeque::with_capacity(60),
             },
             recording_mode: RecordingMode::new(),
-            open_platforms,
         };
+        app.stage.set_open(open_platforms);
+        // Arranged from the first frame that has views to arrange: every
+        // device is worth seeing at once.
+        app.stage.request_arrange();
         if let Some(RecordRequest { target, dataset }) = record_request {
             app.enter_recording(target, dataset);
         }
@@ -1355,7 +1311,7 @@ impl TestbedApp {
         let wasm_bytes: Arc<[u8]> = wasm_bytes.into();
         tracing::info!(
             wasm_bytes = wasm_bytes.len(),
-            tiles = self.tiles.len(),
+            tiles = self.stage.tile_count(),
             "hot reload: rebuilding tile runtime(s)"
         );
         // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
@@ -1367,11 +1323,10 @@ impl TestbedApp {
             .recording_mode
             .active()
             .map(RecordingState::active_tile);
-        for idx in 0..self.tiles.len() {
-            let view = &self.tiles[idx];
-            if !view.is_live() {
+        for idx in 0..self.stage.tile_count() {
+            let Some(view) = self.stage.tile(idx).filter(|view| view.is_live()) else {
                 continue; // placeholder — no runtime to rebuild
-            }
+            };
             let (platform, placed_shape) = (view.platform, view.shape);
             let (width, height) = (view.width(), view.height());
             let label = view.label().to_owned();
@@ -1403,7 +1358,9 @@ impl TestbedApp {
                 secrets: Box::new(secrets.clone()),
                 led_rx,
             };
-            let view = &mut self.tiles[idx];
+            let Some(view) = self.stage.tile_mut(idx) else {
+                continue;
+            };
             if let Err(e) = view.reload(seed, rebind) {
                 tracing::warn!("hot reload: {}: {e:#}", view.label());
             }
@@ -1422,16 +1379,8 @@ impl TestbedApp {
             tracing::error!("toggle: platform '{target_id}' not found");
             return;
         };
-        if toggle_open(&mut self.open_platforms, platform) {
-            // Views are built at the next redraw, where the painter is in hand.
-        } else {
-            // Releasing them needs the painter too, so they only retire here.
-            let (closed, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tiles)
-                .into_iter()
-                .partition(|view| view.platform.id == platform.id);
-            self.teardown.views.extend(closed);
-            self.tiles = kept;
-        }
+        // Opening builds at the next redraw, where the painter is in hand.
+        self.stage.toggle(platform);
         ctx.request_repaint();
     }
 
@@ -1441,17 +1390,19 @@ impl TestbedApp {
     fn start_choosing(&mut self, ctx: &egui::Context) {
         if !self
             .recording_mode
-            .open_choosing(self.recorded_targets(), self.open_platforms.clone())
+            .open_choosing(self.recorded_targets(), self.stage.open().to_vec())
         {
             return;
         }
-        self.open_platforms = platform_catalog::PLATFORMS
-            .iter()
-            .filter(|p| toolbar::platform_supported(p, &self.manifest))
-            .collect();
+        self.stage.set_open(
+            platform_catalog::PLATFORMS
+                .iter()
+                .filter(|p| toolbar::platform_supported(p, &self.manifest))
+                .collect(),
+        );
         // Pack chooses the zoom that fits everything, so every candidate is
         // in view when the overlays appear.
-        self.arrange = Some(device_window::ArrangeMode::Pack);
+        self.stage.request_arrange();
         ctx.request_repaint();
     }
 
@@ -1491,6 +1442,7 @@ impl TestbedApp {
             return;
         }
         let kv_stash = self.stash_kv_dir(target);
+        let displaced = self.stage.pin_to(target.platform);
         let started = self.recording_mode.begin_take(
             target,
             dataset,
@@ -1499,14 +1451,12 @@ impl TestbedApp {
             &self.system,
             &self.credentials,
             kv_stash,
-            &self.open_platforms,
+            &displaced,
         );
         assert!(started, "BUG: begin_take refused after the active() guard");
-        self.teardown.views.extend(std::mem::take(&mut self.tiles));
-        self.open_platforms = vec![target.platform];
         // Repack once the rebuilt views exist: the recording sidebar just
         // took a slice of the canvas, and the window would sit under it.
-        self.arrange = Some(device_window::ArrangeMode::Pack);
+        self.stage.request_arrange();
     }
 
     /// Save the take: write the fixture, and put the canvas back only if that
@@ -1552,12 +1502,7 @@ impl TestbedApp {
             // The extras close; views the restored canvas keeps are plain
             // and stay as they are.
             RecordUnwind::Choosing { restore_platforms } => {
-                let (kept, closed): (Vec<_>, Vec<_>) = std::mem::take(&mut self.tiles)
-                    .into_iter()
-                    .partition(|view| restore_platforms.iter().any(|p| p.id == view.platform.id));
-                self.tiles = kept;
-                self.teardown.views.extend(closed);
-                self.open_platforms = restore_platforms;
+                self.stage.set_open(restore_platforms);
             }
             // Every view carries the recording config, so all of them retire
             // and rebuild plain; the stashed KV dir goes back.
@@ -1571,14 +1516,14 @@ impl TestbedApp {
                 {
                     tracing::warn!("record: cannot restore KV dir {}: {e}", live.display());
                 }
-                self.teardown.views.extend(std::mem::take(&mut self.tiles));
-                self.open_platforms = restore_platforms;
+                self.stage.retire_all();
+                self.stage.set_open(restore_platforms);
             }
         }
         // The canvas widens by the sidebar's slice on the way out, and the
         // windows were placed against the narrower one — entering already
         // repacked them, so there is no untouched arrangement left to keep.
-        self.arrange = Some(device_window::ArrangeMode::Pack);
+        self.stage.request_arrange();
         ctx.request_repaint();
     }
 
@@ -1610,13 +1555,7 @@ impl TestbedApp {
         painter: &mut egui_glow::Painter,
         window: &window::GlWindow,
     ) -> Result<()> {
-        let missing: Vec<&'static Platform> = self
-            .open_platforms
-            .iter()
-            .copied()
-            .filter(|p| !self.tiles.iter().any(|view| view.platform.id == p.id))
-            .collect();
-        for platform in missing {
+        for platform in self.stage.unrealised() {
             self.build_views(platform, painter, window)?;
         }
         Ok(())
@@ -1638,7 +1577,7 @@ impl TestbedApp {
                 )
             })?
             .into();
-        let first_build = self.tiles.is_empty();
+        let first_build = self.stage.is_bare();
         let active_record_idx = self
             .recording_mode
             .active()
@@ -1697,7 +1636,7 @@ impl TestbedApp {
             self.recording_mode
                 .set_kv_baseline(snapshot_kv_dir(&kv_path));
         }
-        self.tiles.extend(tiles);
+        self.stage.realise(tiles);
         Ok(())
     }
 
@@ -1887,7 +1826,7 @@ impl TestbedApp {
             .active()
             .map(RecordingState::active_tile);
         // The perf report follows the first live view (placeholders have none).
-        let perf_idx = self.tiles.iter().position(DeviceView::is_live);
+        let perf_idx = self.stage.tiles().iter().position(DeviceView::is_live);
         let mut next_wake_ms: Option<u64> = None;
         // Captured only on a real render, so `--perf-frames` counts widget
         // renders, not idle ticks.
@@ -1895,7 +1834,7 @@ impl TestbedApp {
             bmc_render::FrameTimings,
             std::collections::BTreeMap<String, u64>,
         )> = None;
-        for (idx, view) in self.tiles.iter_mut().enumerate() {
+        for (idx, view) in self.stage.tiles_mut().iter_mut().enumerate() {
             if active_record_idx.is_some_and(|active| active != idx) {
                 continue;
             }
@@ -1975,17 +1914,6 @@ fn startup_platforms(
         vec![active]
     } else {
         supported
-    }
-}
-
-/// Flip `platform` in the open set; returns whether it is open afterwards.
-fn toggle_open(open: &mut Vec<&'static Platform>, platform: &'static Platform) -> bool {
-    if let Some(pos) = open.iter().position(|p| p.id == platform.id) {
-        open.remove(pos);
-        false
-    } else {
-        open.push(platform);
-        true
     }
 }
 
@@ -2286,7 +2214,7 @@ impl TestbedHandler {
 
         // Registering a texture and painting with it both want the painter,
         // so views are retired and (re)built here rather than in the pass below.
-        app.teardown.drain(&app.gl, &mut egui_glow.painter);
+        app.stage.drain_teardown(&app.gl, &mut egui_glow.painter);
         if let Err(e) = app.ensure_views(&mut egui_glow.painter, window) {
             self.fatal_error = Some(e.context("failed to build views"));
             event_loop.exit();
@@ -2397,9 +2325,7 @@ impl winit::application::ApplicationHandler<UserEvent> for TestbedHandler {
     fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         if let (Some(app), Some(egui_glow)) = (self.app.as_mut(), self.egui_glow.as_mut()) {
             let gl = Arc::clone(&app.gl);
-            let live = std::mem::take(&mut app.tiles);
-            app.teardown.views.extend(live);
-            app.teardown.finish(&gl, &mut egui_glow.painter);
+            app.stage.shutdown(&gl, &mut egui_glow.painter);
         }
         drop(self.app.take());
         if let Some(mut egui_glow) = self.egui_glow.take() {
@@ -2653,18 +2579,6 @@ mod app_tests {
         let p = platform("bmm100");
         let tile = PlacedTile::for_viewport(p, &p.viewports[0]);
         assert_eq!(tile.led_count, None);
-    }
-
-    #[test]
-    fn toggling_opens_a_platform_and_toggling_again_closes_it() {
-        let mut open = vec![platform("bmc100")];
-
-        assert!(toggle_open(&mut open, platform("bmm101")), "opens");
-        assert_eq!(open.len(), 2, "both devices stay open together");
-
-        assert!(!toggle_open(&mut open, platform("bmm101")), "closes");
-        assert_eq!(open.len(), 1);
-        assert_eq!(open[0].id, "bmc100", "the other device is untouched");
     }
 
     #[test]

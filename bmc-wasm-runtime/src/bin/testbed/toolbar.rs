@@ -28,9 +28,10 @@ use bmc_wasm_runtime::platform_catalog::{DisplayShape, PLATFORMS, Platform};
 
 use super::TestbedApp;
 
-/// Tall enough for buttons with breathing room; the toolbar owns its height
-/// now that nothing derives the window size from the tiles.
-pub(super) const TOOLBAR_H: f32 = 36.0;
+/// Tall enough for a stacked icon over its label, with breathing room; the
+/// toolbar owns its height now that nothing derives the window size from
+/// the tiles.
+pub(super) const TOOLBAR_H: f32 = 48.0;
 
 /// Keeps the outermost buttons off the window edges.
 pub(super) const BAR_INLINE_PAD: f32 = 8.0;
@@ -70,13 +71,14 @@ impl TestbedApp {
                     row.scope(|set| {
                         set.spacing_mut().item_spacing.x = 1.0;
                         for p in PLATFORMS {
-                            let open = self.open_platforms.iter().any(|o| o.id == p.id);
+                            let open = self.stage.is_open(p);
                             let supported = platform_supported(p, &self.manifest);
                             let response = set
-                                .add_enabled(
-                                    supported,
-                                    egui::Button::new(p.id.to_uppercase()).selected(open),
-                                )
+                                .add_enabled_ui(supported, |ui| {
+                                    let icon = &mut self.icons.devices;
+                                    bar_button(ui, Some(icon), &p.id.to_uppercase(), open)
+                                })
+                                .inner
                                 .on_hover_text(p.label)
                                 .on_disabled_hover_text(
                                     "the manifest admits no viewport of this platform",
@@ -92,21 +94,24 @@ impl TestbedApp {
                     super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
 
                     // The widget's own build and its rendering.
-                    if icon_button(row, &mut self.icons.reload, Some("Reload WASM"), false)
+                    if bar_button(row, Some(&mut self.icons.reload), "Reload", false)
                         .on_hover_text("re-read the widget's wasm from disk")
                         .clicked()
                     {
                         self.hot_reload.manual_reload = true;
                     }
                     let debug_on = bmc_render::tree::debug_layout_enabled();
-                    if icon_button(row, &mut self.icons.debug, Some("Debug layout"), debug_on)
-                        .on_hover_text("outline every layout node in the widget render")
+                    if bar_button(row, Some(&mut self.icons.debug), "Debug", debug_on)
+                        .on_hover_text(
+                            "outline every layout node in the widget render, \
+                             and egui's own inspector over the chrome",
+                        )
                         .clicked()
                     {
                         bmc_render::tree::toggle_debug_layout();
                     }
-                    if row
-                        .add(egui::Button::new("Timings").selected(self.show_view_timings))
+                    let timings_on = self.show_view_timings;
+                    if bar_button(row, Some(&mut self.icons.timer), "Timings", timings_on)
                         .on_hover_text("show each view's own frame cost over it")
                         .clicked()
                     {
@@ -117,7 +122,7 @@ impl TestbedApp {
                     // Simulated conditions: what the device can and cannot
                     // reach, and when it thinks it is.
                     let offline = self.offline;
-                    if icon_button(row, &mut self.icons.offline, Some("Offline"), offline)
+                    if bar_button(row, Some(&mut self.icons.offline), "Offline", offline)
                         .on_hover_text("seal live I/O, mirroring an offline device")
                         .clicked()
                     {
@@ -172,7 +177,7 @@ impl TestbedApp {
                     };
                     let inner = ui
                         .add_enabled_ui(cause.is_none(), |ui| {
-                            icon_button(ui, &mut self.icons.record, Some("Record"), false)
+                            bar_button(ui, Some(&mut self.icons.record), "Record", false)
                                 .on_hover_text("record a capture fixture from a live take")
                         })
                         .inner;
@@ -252,33 +257,34 @@ impl TestbedApp {
     /// zoom is the canvas's, not each window's, so the devices stay
     /// comparable at a glance.
     fn paint_view_controls(&mut self, row: &mut egui::Ui) {
-        if icon_button(row, &mut self.icons.arrange_cascade, Some("Stack"), false)
-            .on_hover_text("cascade the device windows from the top left")
+        if bar_button(row, Some(&mut self.icons.arrange_grid), "Tile", false)
+            .on_hover_text("lay the device windows out to use the canvas tightly")
             .clicked()
         {
-            self.arrange = Some(super::device_window::ArrangeMode::Stack);
+            self.stage.request_arrange();
         }
-        if icon_button(row, &mut self.icons.arrange_grid, Some("Pack"), false)
-            .on_hover_text("pack the device windows to use the canvas tightly")
-            .clicked()
-        {
-            self.arrange = Some(super::device_window::ArrangeMode::Pack);
-        }
-        if icon_button(row, &mut self.icons.scale_out, Some("Fit"), false)
-            .on_hover_text("scale the canvas until every device window is in view")
-            .clicked()
-        {
+        row.add_space(PAIR_GAP);
+
+        let at_full_size = (self.canvas.zoom() - 1.0).abs() < f32::EPSILON;
+        let mut fit = false;
+        let mut full_size = false;
+        row.scope(|pair| {
+            pair.spacing_mut().item_spacing.x = 1.0;
+            fit = bar_button(pair, Some(&mut self.icons.scale_out), "Fit", false)
+                .on_hover_text("scale the canvas until every device window is in view")
+                .clicked();
+            full_size = pair
+                .add_enabled_ui(!at_full_size, |ui| {
+                    bar_button(ui, Some(&mut self.icons.scale_in), "100%", false)
+                        .on_hover_text("show the devices at their own pixel size")
+                })
+                .inner
+                .clicked();
+        });
+        if fit {
             self.canvas.request_fit();
         }
-        let at_full_size = (self.canvas.zoom() - 1.0).abs() < f32::EPSILON;
-        if row
-            .add_enabled_ui(!at_full_size, |ui| {
-                icon_button(ui, &mut self.icons.scale_in, Some("100%"), false)
-                    .on_hover_text("show the devices at their own pixel size")
-            })
-            .inner
-            .clicked()
-        {
+        if full_size {
             let centre = self.canvas.rect.center();
             self.canvas.zoom_about(1.0, centre);
         }
@@ -289,20 +295,27 @@ impl TestbedApp {
     /// so the monotonic clock never rewinds past pending deadlines.
     fn paint_clock_controls(&mut self, row: &mut egui::Ui) {
         let secs = self.clock.offset_ms / 1_000;
-        row.label(format!("Clock +{}:{:02}", secs / 60, secs % 60));
-        if row.button("+1m").clicked() {
-            self.clock.offset_ms += 60_000;
-            self.clock.monotonic_offset_ms += 60_000;
-        }
-        if row.button("+5m").clicked() {
-            self.clock.offset_ms += 300_000;
-            self.clock.monotonic_offset_ms += 300_000;
-        }
-        if row
-            .button("Reset")
-            .on_hover_text("return the clock to real time")
-            .clicked()
-        {
+        let offset = format!("+{}:{:02}", secs / 60, secs % 60);
+        bar_readout(row, Some(&mut self.icons.delay), &offset)
+            .on_hover_text("how far the simulated clock runs ahead of real time");
+
+        let mut advance_ms = 0_u64;
+        let mut reset = false;
+        row.scope(|group| {
+            group.spacing_mut().item_spacing.x = 1.0;
+            if bar_button(group, Some(&mut self.icons.delay), "+1m", false).clicked() {
+                advance_ms = 60_000;
+            }
+            if bar_button(group, Some(&mut self.icons.delay), "+5m", false).clicked() {
+                advance_ms = 300_000;
+            }
+            reset = bar_button(group, Some(&mut self.icons.delay), "Reset", false)
+                .on_hover_text("return the clock to real time")
+                .clicked();
+        });
+        self.clock.offset_ms += advance_ms;
+        self.clock.monotonic_offset_ms += advance_ms;
+        if reset {
             self.clock.offset_ms = 0;
         }
     }
@@ -318,7 +331,7 @@ impl TestbedApp {
                     super::theme::ThemeChoice::Dark => &mut self.icons.theme_dark,
                     super::theme::ThemeChoice::Light => &mut self.icons.theme_light,
                 };
-                if icon_button(set, icon, Some(choice.label()), selected)
+                if bar_button(set, Some(icon), choice.label(), selected)
                     .on_hover_text(choice.describe())
                     .clicked()
                 {
@@ -329,56 +342,107 @@ impl TestbedApp {
     }
 }
 
-/// Toolbar icons are square and sized to sit beside the button text.
+/// Toolbar icons are square and sized to sit over the button text.
 const ICON_SIZE: f32 = 14.0;
 
-/// A button carrying an icon, and optionally a label beside it.
+/// Between a stacked button's icon and its label.
+const STACK_GAP: f32 = 2.0;
+
+/// Between two controls that are the same operation at different settings —
+/// closer to each other than to the groups on either side.
+const PAIR_GAP: f32 = 10.0;
+
+/// Width every button takes at least, so a one-word control and its
+/// three-word neighbour still read as the same kind of thing.
+const MIN_BUTTON_W: f32 = 54.0;
+
+/// A button on the bar: an icon over its label, both centred.
+///
+/// Stacked rather than lengthwise, because the bar carries enough controls
+/// that laying each one out sideways ran it off the window's edge. The icon
+/// row is reserved whether or not a control has one, and every button takes
+/// at least [`MIN_BUTTON_W`], so labels line up across the bar and neighbours
+/// do not vary in size for the length of a word.
 ///
 /// The icon takes whatever text colour the button's own state resolves to,
 /// so it dims, highlights and inverts exactly as the label does.
-fn icon_button(
+fn bar_button(
     ui: &mut egui::Ui,
-    icon: &mut super::icon::Icon,
-    label: Option<&str>,
+    icon: Option<&mut super::icon::Icon>,
+    label: &str,
     selected: bool,
 ) -> egui::Response {
-    let padding = ui.spacing().button_padding;
-    let text = label.map(|label| {
-        ui.painter().layout_no_wrap(
-            label.to_owned(),
-            egui::TextStyle::Button.resolve(ui.style()),
-            egui::Color32::PLACEHOLDER,
-        )
-    });
-    let gap = if text.is_some() {
-        ui.spacing().icon_spacing
-    } else {
-        0.0
-    };
-    let content = egui::vec2(
-        ICON_SIZE + gap + text.as_ref().map_or(0.0, |t| t.size().x),
-        ICON_SIZE.max(text.as_ref().map_or(0.0, |t| t.size().y)),
-    );
-    let (rect, response) = ui.allocate_exact_size(content + 2.0 * padding, egui::Sense::click());
-
+    let (rect, response) = allocate_bar_slot(ui, label, egui::Sense::click());
     let visuals = ui.style().interact_selectable(&response, selected);
     ui.painter()
         .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
-
-    let inner = rect.shrink2(padding);
-    let icon_rect = egui::Rect::from_min_size(
-        egui::pos2(inner.min.x, inner.center().y - ICON_SIZE / 2.0),
-        egui::Vec2::splat(ICON_SIZE),
-    );
-    icon.paint(ui, icon_rect, visuals.fg_stroke.color);
-    if let Some(text) = text {
-        let pos = egui::pos2(
-            icon_rect.max.x + gap,
-            inner.center().y - text.size().y / 2.0,
-        );
-        ui.painter().galley(pos, text, visuals.fg_stroke.color);
-    }
+    paint_bar_slot(ui, rect, icon, label, visuals.fg_stroke.color);
     response
+}
+
+/// A reading on the bar, shaped like the buttons around it but inert.
+fn bar_readout(
+    ui: &mut egui::Ui,
+    icon: Option<&mut super::icon::Icon>,
+    label: &str,
+) -> egui::Response {
+    let (rect, response) = allocate_bar_slot(ui, label, egui::Sense::hover());
+    let colour = ui.visuals().weak_text_color();
+    paint_bar_slot(ui, rect, icon, label, colour);
+    response
+}
+
+/// The room one control takes on the bar, uniform by construction.
+fn allocate_bar_slot(
+    ui: &mut egui::Ui,
+    label: &str,
+    sense: egui::Sense,
+) -> (egui::Rect, egui::Response) {
+    let padding = ui.spacing().button_padding;
+    let text = bar_label(ui, label);
+    let content = egui::vec2(
+        text.size().x.max(ICON_SIZE),
+        ICON_SIZE + STACK_GAP + text.size().y,
+    );
+    let size = egui::vec2(
+        (content.x + 2.0 * padding.x).max(MIN_BUTTON_W),
+        content.y + 2.0 * padding.y,
+    );
+    ui.allocate_exact_size(size, sense)
+}
+
+fn paint_bar_slot(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    icon: Option<&mut super::icon::Icon>,
+    label: &str,
+    colour: egui::Color32,
+) {
+    let inner = rect.shrink2(ui.spacing().button_padding);
+    if let Some(icon) = icon {
+        let icon_rect = egui::Rect::from_min_size(
+            egui::pos2(inner.center().x - ICON_SIZE / 2.0, inner.min.y),
+            egui::Vec2::splat(ICON_SIZE),
+        );
+        icon.paint(ui, icon_rect, colour);
+    }
+    let text = bar_label(ui, label);
+    ui.painter().galley(
+        egui::pos2(
+            inner.center().x - text.size().x / 2.0,
+            inner.max.y - text.size().y,
+        ),
+        text,
+        colour,
+    );
+}
+
+fn bar_label(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
+    ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::TextStyle::Button.resolve(ui.style()),
+        egui::Color32::PLACEHOLDER,
+    )
 }
 
 /// Whether the widget's manifest admits at least one of `platform`'s

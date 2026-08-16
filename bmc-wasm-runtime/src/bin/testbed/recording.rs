@@ -1025,8 +1025,8 @@ impl TestbedApp {
             return;
         };
         let runtime_events = self
-            .tiles
-            .get_mut(active_tile)
+            .stage
+            .tile_mut(active_tile)
             .map(DeviceView::take_recorded_events)
             .unwrap_or_default();
         let mut drained = fixtures::fixture_events_to_timeline(&runtime_events);

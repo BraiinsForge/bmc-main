@@ -41,13 +41,29 @@ impl Icon {
     }
 
     /// Paint the icon into `rect`, in `color`.
+    ///
+    /// Both the destination and the raster are snapped to whole physical
+    /// pixels. Layout hands out fractional coordinates, and an icon drawn
+    /// across a half pixel — or rasterized at one size and drawn at another —
+    /// is resampled, which reads as a blur beside the hinted text next to it.
     pub(crate) fn paint(&mut self, ui: &egui::Ui, rect: egui::Rect, color: egui::Color32) {
+        let ppp = ui.ctx().pixels_per_point();
+        let to_grid = |value: f32| (value * ppp).round() / ppp;
+        let side = to_grid(rect.width().min(rect.height()));
+        let rect = egui::Rect::from_min_size(
+            egui::pos2(to_grid(rect.min.x), to_grid(rect.min.y)),
+            egui::Vec2::splat(side),
+        );
+
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
             reason = "an icon is a handful of physical pixels square"
         )]
-        let px = (rect.width() * ui.ctx().pixels_per_point()).ceil() as u32;
+        let px = (side * ppp).round() as u32;
+        if px == 0 {
+            return;
+        }
         let svg = self.svg;
         let texture = self.cache.entry(px).or_insert_with(|| {
             ui.ctx().load_texture(
@@ -70,12 +86,14 @@ pub(crate) struct Icons {
     pub(crate) theme_auto: Icon,
     pub(crate) theme_dark: Icon,
     pub(crate) theme_light: Icon,
-    pub(crate) arrange_cascade: Icon,
     pub(crate) arrange_grid: Icon,
     pub(crate) debug: Icon,
     pub(crate) offline: Icon,
     pub(crate) record: Icon,
+    pub(crate) delay: Icon,
+    pub(crate) devices: Icon,
     pub(crate) reload: Icon,
+    pub(crate) timer: Icon,
     pub(crate) scale_in: Icon,
     pub(crate) scale_out: Icon,
     // The notice banner's two outcomes.
@@ -94,12 +112,14 @@ impl Icons {
             theme_auto: Icon::new(include_bytes!("assets/icons/theme-auto.svg")),
             theme_dark: Icon::new(include_bytes!("assets/icons/theme-dark.svg")),
             theme_light: Icon::new(include_bytes!("assets/icons/theme-light.svg")),
-            arrange_cascade: Icon::new(include_bytes!("assets/icons/arange-cascade.svg")),
             arrange_grid: Icon::new(include_bytes!("assets/icons/arrange-grid.svg")),
             debug: Icon::new(include_bytes!("assets/icons/debug.svg")),
             offline: Icon::new(include_bytes!("assets/icons/offline.svg")),
             record: Icon::new(include_bytes!("assets/icons/record.svg")),
+            delay: Icon::new(include_bytes!("assets/icons/delay.svg")),
+            devices: Icon::new(include_bytes!("assets/icons/devices.svg")),
             reload: Icon::new(include_bytes!("assets/icons/reset.svg")),
+            timer: Icon::new(include_bytes!("assets/icons/timer.svg")),
             scale_in: Icon::new(include_bytes!("assets/icons/scale-in.svg")),
             scale_out: Icon::new(include_bytes!("assets/icons/scale-out.svg")),
             saved: Icon::new(include_bytes!("assets/icons/saved.svg")),
@@ -153,16 +173,18 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 17] = [
+        let named: [(&str, &Icon); 19] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
-            ("arange-cascade", &icons.arrange_cascade),
             ("arrange-grid", &icons.arrange_grid),
             ("debug", &icons.debug),
             ("offline", &icons.offline),
             ("record", &icons.record),
+            ("delay", &icons.delay),
+            ("devices", &icons.devices),
             ("reset", &icons.reload),
+            ("timer", &icons.timer),
             ("saved", &icons.saved),
             ("warning", &icons.warning),
             ("touch", &icons.touch),

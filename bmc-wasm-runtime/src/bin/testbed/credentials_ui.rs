@@ -64,10 +64,11 @@ impl TestbedApp {
             return;
         }
         let bound = bmc_wasm_runtime::parse_credentials_json(&new_credentials);
-        for view in &mut self.tiles {
+        let secrets = self.secrets.clone();
+        for view in self.stage.tiles_mut() {
             view.send(ViewCommand::Deliver(Delivery::Credentials {
                 view: Box::new(bound.clone()),
-                secrets: Box::new(self.secrets.clone()),
+                secrets: Box::new(secrets.clone()),
             }));
         }
         self.credentials = new_credentials;

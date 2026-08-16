@@ -54,7 +54,7 @@ impl TestbedApp {
         if new_system == self.system {
             return;
         }
-        for view in &mut self.tiles {
+        for view in self.stage.tiles_mut() {
             view.send(ViewCommand::Deliver(Delivery::System(Box::new(
                 new_system.clone(),
             ))));

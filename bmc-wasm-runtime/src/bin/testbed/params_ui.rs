@@ -54,7 +54,7 @@ impl TestbedApp {
         }
         // Fire `on_params_update` on every view: an operator-driven change
         // applies to every previewed viewport, not just the one being recorded.
-        for view in &mut self.tiles {
+        for view in self.stage.tiles_mut() {
             view.send(ViewCommand::Deliver(Delivery::Params(new_params.clone())));
         }
         self.params = new_params;
