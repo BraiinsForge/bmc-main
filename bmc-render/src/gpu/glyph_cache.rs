@@ -64,7 +64,7 @@ impl GlyphKey {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub enum PageFaultKind {
     Invariant,
     Transient,
@@ -410,7 +410,6 @@ impl NegativeCache {
 struct Page<P> {
     id: P,
     alloc: Option<etagere::BucketedAtlasAllocator>,
-    quarantined: bool,
     /// Every rect goes through the two methods below, so a leak is exactly
     /// a gap between these: an eviction path that never handed its rect back.
     #[cfg(test)]
@@ -427,7 +426,6 @@ impl<P> Page<P> {
             alloc: Some(etagere::BucketedAtlasAllocator::new(etagere::size2(
                 size, size,
             ))),
-            quarantined: false,
             #[cfg(test)]
             allocs: 0,
             #[cfg(test)]
@@ -436,9 +434,6 @@ impl<P> Page<P> {
     }
 
     fn allocate(&mut self, size: etagere::Size) -> Option<etagere::Allocation> {
-        if self.quarantined {
-            return None;
-        }
         let placed = self.alloc.as_mut()?.allocate(size)?;
         #[cfg(test)]
         {
@@ -549,7 +544,6 @@ pub struct Counters {
     pub scratch_uses: u64,
     pub glyphs_dropped: u64,
     pub glyphs_oversized: u64,
-    #[expect(dead_code, reason = "consumed in Task 7 (BDK-696)")]
     pub cache_invariant_failures: u64,
     pub page_create_failures: u64,
     pub upload_transient_failures: u64,
@@ -609,6 +603,15 @@ enum AllocFailure {
     PageCreate,
 }
 
+/// Which page an invariant fault named. The two are quarantined differently:
+/// a normal page is retired from a set that shrinks, while the scratch page
+/// is the whole scratch service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Faulted {
+    Normal(usize),
+    Scratch,
+}
+
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     pages: Vec<Page<P>>,
@@ -622,6 +625,10 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     scratch: Option<P>,
     scratch_packer: etagere::AtlasAllocator,
     scratch_map: hashbrown::HashMap<GlyphKey, ScratchEntry>,
+    /// Both latches hold for the renderer's lifetime: an invariant fault is
+    /// deterministic, so any state that expired would just retry it.
+    scratch_latched_off: bool,
+    failed_closed: bool,
     generation: Generation,
     counters: Counters,
     counters_at_last_log: Counters,
@@ -643,6 +650,8 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
                 i32::try_from(PAGE_SIZE_PX).expect("BUG: page size exceeds i32"),
             )),
             scratch_map: hashbrown::HashMap::with_capacity(SCRATCH_MAP_CAP),
+            scratch_latched_off: false,
+            failed_closed: false,
             generation: 0,
             counters: Counters::default(),
             counters_at_last_log: Counters::default(),
@@ -706,6 +715,13 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         key: cosmic_text::CacheKey,
         rasterize: impl FnOnce(GlyphKey) -> Option<RasterGlyph>,
     ) -> GlyphLookup<P> {
+        // Nothing is left to serve from and nothing may be created,
+        // so the glyph goes before the rasterizer ever sees it.
+        if self.failed_closed {
+            self.counters.glyphs_dropped += 1;
+            return GlyphLookup::Dropped;
+        }
+
         let key = GlyphKey::normalize(key);
 
         if let Some(&slot) = self.map.get(&key) {
@@ -784,20 +800,30 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
                 .expect("BUG: eviction placed a rect without freeing a slab slot")
         };
 
-        if backend
-            .upload(
-                self.pages[reserved.page].id,
-                reserved.content_x,
-                reserved.content_y,
+        if let Err(fault) = backend.upload(
+            self.pages[reserved.page].id,
+            reserved.content_x,
+            reserved.content_y,
+            pending.padded_width,
+            pending.padded_height,
+            &pending.pixels,
+        ) {
+            self.roll_back_insertion(reserved, slot);
+            debug_assert!(
+                fault != PageFaultKind::Invariant,
+                "BUG: invariant fault uploading {}x{} at ({}, {}) to page {}",
                 pending.padded_width,
                 pending.padded_height,
-                &pending.pixels,
-            )
-            .is_err()
-        {
-            self.slab.free(slot);
-            self.pages[reserved.page].deallocate(reserved.alloc_id);
-            self.counters.upload_transient_failures += 1;
+                reserved.content_x,
+                reserved.content_y,
+                reserved.page
+            );
+            match fault {
+                PageFaultKind::Transient => self.counters.upload_transient_failures += 1,
+                PageFaultKind::Invariant => {
+                    self.handle_invariant_fault(Faulted::Normal(reserved.page));
+                }
+            }
             return GlyphLookup::Missing;
         }
 
@@ -839,6 +865,10 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         key: GlyphKey,
         pending: &Pending,
     ) -> GlyphLookup<P> {
+        if self.scratch_latched_off {
+            self.counters.glyphs_dropped += 1;
+            return GlyphLookup::Dropped;
+        }
         if self.scratch_map.len() == SCRATCH_MAP_CAP {
             self.counters.glyphs_dropped += 1;
             return GlyphLookup::Dropped;
@@ -863,19 +893,27 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             .expect("BUG: allocation origin outside the scratch page");
         let content_y = usize::try_from(allocation.rectangle.min.y)
             .expect("BUG: allocation origin outside the scratch page");
-        if backend
-            .upload(
-                page,
-                content_x,
-                content_y,
+        if let Err(fault) = backend.upload(
+            page,
+            content_x,
+            content_y,
+            pending.padded_width,
+            pending.padded_height,
+            &pending.pixels,
+        ) {
+            debug_assert!(
+                fault != PageFaultKind::Invariant,
+                "BUG: invariant fault uploading {}x{} at ({}, {}) to the scratch page",
                 pending.padded_width,
                 pending.padded_height,
-                &pending.pixels,
-            )
-            .is_err()
-        {
+                content_x,
+                content_y
+            );
             self.scratch_packer.deallocate(allocation.id);
-            self.counters.upload_transient_failures += 1;
+            match fault {
+                PageFaultKind::Transient => self.counters.upload_transient_failures += 1,
+                PageFaultKind::Invariant => self.handle_invariant_fault(Faulted::Scratch),
+            }
             return GlyphLookup::Missing;
         }
         self.scratch_map.insert(
@@ -888,6 +926,67 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         );
         self.counters.scratch_uses += 1;
         GlyphLookup::Resident(quad_at(page, content_x, content_y, pending.placement))
+    }
+
+    /// Undoes an insertion whose upload failed.
+    /// The slot goes straight back to the slab:
+    /// the entry was never linked into the LRU nor inserted into the map,
+    /// and unlinking a detached node would rewrite the queue's ends
+    /// from its sentinel links, cutting the live entries loose.
+    fn roll_back_insertion(&mut self, reserved: Reserved, slot: u32) {
+        self.slab.free(slot);
+        self.pages[reserved.page].deallocate(reserved.alloc_id);
+    }
+
+    /// Retires what the fault implicated, for the renderer's lifetime.
+    ///
+    /// The image and the page slot are kept: deleting the texture would churn
+    /// what the driver need not free, and a replacement would push the atlas
+    /// past the page textures it is allowed to ever create. Only the packing
+    /// metadata goes, and capacity shrinks by the page.
+    fn handle_invariant_fault(&mut self, faulted: Faulted) {
+        self.counters.cache_invariant_failures += 1;
+        tracing::error!(
+            ?faulted,
+            cache_invariant_failures = self.counters.cache_invariant_failures,
+            "glyph cache fault: quarantining the page for good"
+        );
+
+        match faulted {
+            Faulted::Scratch => {
+                self.scratch_latched_off = true;
+                self.scratch_map.clear();
+            }
+            Faulted::Normal(page) => {
+                self.forget_entries_on(page);
+                self.pages[page].alloc = None;
+                self.failed_closed = self.pages.len() == MAX_NORMAL_PAGES
+                    && self.pages.iter().all(|page| page.alloc.is_none());
+            }
+        }
+    }
+
+    /// Map membership is what makes an entry committed, so the map is what
+    /// this walks: the slab can still hold the provisional slot of the very
+    /// insertion that faulted.
+    ///
+    /// The rects are not handed back — the page's allocator is about to go.
+    fn forget_entries_on(&mut self, page: usize) {
+        let doomed: Vec<u32> = self
+            .map
+            .values()
+            .copied()
+            .filter(|&slot| self.slab.get(slot).page == page)
+            .collect();
+
+        for slot in doomed {
+            let key = self.slab.get(slot).key;
+            self.lru.unlink(&mut self.slab, slot);
+            self.slab.free(slot);
+            self.map
+                .remove(&key)
+                .expect("BUG: resident entry absent from the key map");
+        }
     }
 
     fn allocate_on_existing(&mut self, needed: etagere::Size) -> Option<Reserved> {
@@ -1226,6 +1325,18 @@ mod tests {
         while cursor != NO_LINK {
             order.push(cursor);
             cursor = slab.get(cursor).next;
+        }
+        order
+    }
+
+    /// The same order read through the `prev` links: a botched unlink leaves
+    /// the two directions disagreeing, which the forward walk alone hides.
+    fn cold_to_hot(slab: &EntrySlab, lru: &LruQueue) -> Vec<u32> {
+        let mut order = Vec::new();
+        let mut cursor = lru.tail;
+        while cursor != NO_LINK {
+            order.push(cursor);
+            cursor = slab.get(cursor).prev;
         }
         order
     }
@@ -2270,5 +2381,270 @@ mod tests {
         assert_eq!(cache.counters().glyphs_oversized, 1);
         assert_eq!(cache.counters().upload_transient_failures, 1);
         assert_eq!(records, 1);
+    }
+
+    /// [`fill_cold_pages`] gives every glyph a page of its own in key order,
+    /// so this page holds exactly `test_cache_key(3)`.
+    const FAULTED_PAGE: usize = 3;
+
+    /// Quarantine is release-build behaviour —
+    /// a debug build asserts on the fault instead —
+    /// so the tests reach it through the handler, not an upload.
+    #[test]
+    fn invariant_fault_quarantines_the_page() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+
+        cache.handle_invariant_fault(Faulted::Normal(FAULTED_PAGE));
+
+        assert_eq!(cache.counters().cache_invariant_failures, 1);
+        assert!(cache.pages[FAULTED_PAGE].alloc.is_none());
+        assert!(!cache.map.contains_key(&test_key(FAULTED_PAGE)));
+        assert_eq!(cache.map.len(), MAX_NORMAL_PAGES - 1);
+        assert_eq!(cache.slab.len(), MAX_NORMAL_PAGES - 1);
+        assert_eq!(
+            cache.pages.len(),
+            MAX_NORMAL_PAGES,
+            "the faulted page stays retained, image and all"
+        );
+
+        let rasterized = Cell::new(false);
+        let quad =
+            resident(
+                cache.get_or_insert(&mut backend, test_cache_key(FAULTED_PAGE), |_| {
+                    rasterized.set(true);
+                    Some(page_filling_glyph())
+                }),
+            );
+
+        assert!(rasterized.get(), "a forgotten key must miss again");
+        assert_ne!(quad.page, cache.pages[FAULTED_PAGE].id);
+        assert_eq!(
+            backend.pages_created, MAX_NORMAL_PAGES,
+            "a quarantined page is never replaced"
+        );
+        assert_eq!(
+            cache
+                .pages
+                .iter()
+                .filter(|page| page.alloc.is_some())
+                .count(),
+            MAX_NORMAL_PAGES - 1,
+            "capacity shrinks by the faulted page for good"
+        );
+    }
+
+    /// Past the negative cache's capacity, so its oldest keys age out:
+    /// quarantine kept there would age out with them and retry the fault.
+    const NEGATIVE_CHURN_STEPS: usize = 300;
+
+    #[test]
+    fn quarantine_survives_negative_churn() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        cache.handle_invariant_fault(Faulted::Normal(FAULTED_PAGE));
+        let faulted_id = cache.pages[FAULTED_PAGE].id;
+        let uploads_before = backend.uploads.len();
+
+        for step in 1..=NEGATIVE_CHURN_STEPS {
+            assert_eq!(
+                cache.get_or_insert(&mut backend, empty_key_at(step), |_| None),
+                GlyphLookup::Missing
+            );
+        }
+        assert_eq!(cache.negative.len, NEGATIVE_CACHE_CAP);
+
+        let quad = resident(cache.get_or_insert(
+            &mut backend,
+            test_cache_key(FAULTED_PAGE),
+            |_| Some(page_filling_glyph()),
+        ));
+
+        assert_ne!(quad.page, faulted_id);
+        assert!(cache.pages[FAULTED_PAGE].alloc.is_none());
+        assert!(
+            backend.uploads[uploads_before..]
+                .iter()
+                .all(|&(page, ..)| page != faulted_id),
+            "nothing may be uploaded to a quarantined page"
+        );
+    }
+
+    #[test]
+    fn scratch_fault_latches_scratch_off() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+        let _ = resident(cache.get_or_insert(
+            &mut backend,
+            test_cache_key(MAX_NORMAL_PAGES),
+            |_| Some(page_filling_glyph()),
+        ));
+        let pages_created = backend.pages_created;
+
+        cache.handle_invariant_fault(Faulted::Scratch);
+
+        assert!(cache.scratch_latched_off);
+        assert!(cache.scratch_map.is_empty());
+        assert_eq!(cache.counters().cache_invariant_failures, 1);
+        assert_eq!(
+            cache.get_or_insert(
+                &mut backend,
+                test_cache_key(MAX_NORMAL_PAGES + 1),
+                |_| Some(page_filling_glyph())
+            ),
+            GlyphLookup::Dropped
+        );
+        assert_eq!(cache.counters().glyphs_dropped, 1);
+
+        cache.end_frame();
+        touch_every_resident_entry(&mut cache, &mut backend);
+        assert_eq!(
+            cache.get_or_insert(
+                &mut backend,
+                test_cache_key(MAX_NORMAL_PAGES + 2),
+                |_| Some(page_filling_glyph())
+            ),
+            GlyphLookup::Dropped,
+            "the latch outlives the frame that tripped it"
+        );
+        assert_eq!(cache.counters().glyphs_dropped, 2);
+        assert_eq!(
+            backend.pages_created, pages_created,
+            "no replacement scratch page is ever created"
+        );
+    }
+
+    #[test]
+    fn all_pages_quarantined_fails_closed() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+
+        for page in 0..MAX_NORMAL_PAGES {
+            assert!(!cache.failed_closed, "one healthy page is still a cache");
+            cache.handle_invariant_fault(Faulted::Normal(page));
+        }
+
+        assert!(cache.failed_closed);
+        assert!(cache.map.is_empty());
+        assert_eq!(cache.slab.len(), 0);
+        let pages_created = backend.pages_created;
+
+        for index in 0..3 {
+            assert_eq!(
+                cache.get_or_insert(&mut backend, test_cache_key(index), |_| panic!(
+                    "BUG: a failed-closed cache must not rasterize"
+                )),
+                GlyphLookup::Dropped
+            );
+        }
+        assert_eq!(cache.counters().glyphs_dropped, 3);
+        assert_eq!(backend.pages_created, pages_created);
+    }
+
+    /// The mid-insertion state an upload fault rolls back:
+    /// a rect reserved on a page
+    /// and a slab slot the map and the LRU have never seen.
+    fn provisional_entry(
+        cache: &mut GlyphCache<usize>,
+        backend: &mut test_support::MockBackend,
+        key: GlyphKey,
+    ) -> (Reserved, u32) {
+        let pending = Pending::new(&solid_glyph(30, 30));
+        let Ok(reserved) = cache.allocate(backend, pending.size()) else {
+            panic!("BUG: the test cache refused a rect it had room for");
+        };
+        let slot = cache
+            .slab
+            .alloc(Entry {
+                key,
+                page: reserved.page,
+                alloc_id: reserved.alloc_id,
+                content_x: reserved.content_x,
+                content_y: reserved.content_y,
+                placement: pending.placement,
+                last_used: cache.generation,
+                prev: NO_LINK,
+                next: NO_LINK,
+            })
+            .expect("BUG: slab full in test");
+        (reserved, slot)
+    }
+
+    /// Unlinking the provisional entry would rewrite the queue's ends
+    /// from its sentinel links, cutting every survivor loose —
+    /// which only entries on other pages, untouched by the quarantine,
+    /// can witness.
+    #[test]
+    fn invariant_fault_preserves_unrelated_lru_order() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        for index in 0..3 {
+            let _ = resident(
+                cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
+                    Some(page_filling_glyph())
+                }),
+            );
+            cache.end_frame();
+        }
+        let _ = resident(cache.get_or_insert(&mut backend, test_cache_key(1), |_| {
+            panic!("BUG: a resident glyph must not rasterize")
+        }));
+
+        let (reserved, slot) = provisional_entry(&mut cache, &mut backend, test_key(9));
+        assert_eq!(
+            reserved.page, 0,
+            "the provisional rect must land on the page the fault will quarantine"
+        );
+        let forgotten = cache.map[&test_key(0)];
+        let expected: Vec<u32> = cold_to_hot(&cache.slab, &cache.lru)
+            .into_iter()
+            .filter(|entry| *entry != forgotten)
+            .collect();
+
+        cache.roll_back_insertion(reserved, slot);
+        cache.handle_invariant_fault(Faulted::Normal(reserved.page));
+
+        assert_eq!(cold_to_hot(&cache.slab, &cache.lru), expected);
+        assert_eq!(
+            hot_to_cold(&cache.slab, &cache.lru),
+            expected.iter().rev().copied().collect::<Vec<u32>>()
+        );
+        assert!(cache.map.contains_key(&test_key(1)));
+        assert!(cache.map.contains_key(&test_key(2)));
+        assert_eq!(cache.map.len(), 2);
+        assert_eq!(cache.slab.len(), 2);
+    }
+
+    /// The fault means our own rect geometry or page bookkeeping is wrong,
+    /// so a debug build stops at it instead of quarantining and carrying on.
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "invariant fault")]
+    fn an_invariant_upload_fault_panics_in_debug() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::<usize>::new();
+        backend.fail_next_upload = Some(PageFaultKind::Invariant);
+
+        let _ = cache.get_or_insert(&mut backend, test_cache_key(1), |_| Some(solid_glyph(3, 5)));
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    #[should_panic(expected = "invariant fault")]
+    fn an_invariant_scratch_fault_panics_in_debug() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+        backend.fail_next_upload = Some(PageFaultKind::Invariant);
+
+        let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES), |_| {
+            Some(page_filling_glyph())
+        });
     }
 }
