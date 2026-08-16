@@ -26,7 +26,6 @@ pub const MAX_NORMAL_PAGES: usize = 10;
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub const MAX_RESIDENT_ENTRIES: usize = 8192;
 pub const NEGATIVE_CACHE_CAP: usize = 256;
-#[expect(dead_code, reason = "consumed in Task 6 (BDK-696)")]
 pub const SCRATCH_MAP_CAP: usize = 1024;
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub const MAX_EVICTIONS_PER_MISS: usize = 64;
@@ -289,7 +288,7 @@ impl LruQueue {
     }
 }
 
-/// Keys whose rasterization yielded nothing, kept so a space character cannot
+/// Keys whose rasterization cannot produce an atlas entry, kept so they cannot
 /// re-enter the rasterizer every frame. Storage is inline arrays — an animated
 /// font size mints a fresh exact-size key per frame, so a growable map here
 /// would just relocate the unbounded growth into the heap.
@@ -300,6 +299,7 @@ impl LruQueue {
 /// `prev`/`next` are slot indices sharing [`NO_LINK`] with the resident queue.
 struct NegativeCache {
     keys: [Option<GlyphKey>; NEGATIVE_CACHE_CAP],
+    reasons: [NegativeReason; NEGATIVE_CACHE_CAP],
     prev: [u32; NEGATIVE_CACHE_CAP],
     next: [u32; NEGATIVE_CACHE_CAP],
     head: u32,
@@ -307,10 +307,26 @@ struct NegativeCache {
     len: usize,
 }
 
+#[derive(Clone, Copy)]
+enum NegativeReason {
+    Missing,
+    Oversized,
+}
+
+impl NegativeReason {
+    fn into_lookup<P>(self) -> GlyphLookup<P> {
+        match self {
+            Self::Missing => GlyphLookup::Missing,
+            Self::Oversized => GlyphLookup::Oversized,
+        }
+    }
+}
+
 impl NegativeCache {
     fn new() -> Self {
         Self {
             keys: [None; NEGATIVE_CACHE_CAP],
+            reasons: [NegativeReason::Missing; NEGATIVE_CACHE_CAP],
             prev: [NO_LINK; NEGATIVE_CACHE_CAP],
             next: [NO_LINK; NEGATIVE_CACHE_CAP],
             head: NO_LINK,
@@ -321,16 +337,14 @@ impl NegativeCache {
 
     /// Promotes what it finds: a glyph still being drawn every frame must not
     /// age out under the sizes that arrived after it.
-    fn contains(&mut self, key: &GlyphKey) -> bool {
-        let Some(slot) = self.slot_of(key) else {
-            return false;
-        };
+    fn get(&mut self, key: &GlyphKey) -> Option<NegativeReason> {
+        let slot = self.slot_of(key)?;
         self.unlink(slot);
         self.push_hot(slot);
-        true
+        Some(self.reasons[slot.index()])
     }
 
-    fn insert_absent(&mut self, key: GlyphKey) {
+    fn insert_absent(&mut self, key: GlyphKey, reason: NegativeReason) {
         debug_assert!(
             self.slot_of(&key).is_none(),
             "BUG: inserting a key already present in the negative cache"
@@ -346,6 +360,7 @@ impl NegativeCache {
             slot
         };
         self.keys[slot as usize] = Some(key);
+        self.reasons[slot as usize] = reason;
         self.push_hot(slot);
     }
 
@@ -470,6 +485,59 @@ impl Reserved {
     }
 }
 
+/// A rasterized glyph ready for whichever page will take it.
+/// The bitmap carries a 1 px transparent border, so linear sampling
+/// cannot pull a neighbour's texels into the glyph.
+struct Pending {
+    placement: RasterPlacement,
+    padded_width: usize,
+    padded_height: usize,
+    pixels: Vec<u8>,
+}
+
+impl Pending {
+    fn new(raster: &RasterGlyph) -> Self {
+        let padded_width = raster.width + 2;
+        let padded_height = raster.height + 2;
+        let mut pixels = vec![0_u8; padded_width * padded_height];
+        for row in 0..raster.height {
+            let source = row * raster.width;
+            let target = (row + 1) * padded_width + 1;
+            pixels[target..target + raster.width]
+                .copy_from_slice(&raster.coverage[source..source + raster.width]);
+        }
+
+        Self {
+            placement: RasterPlacement {
+                left: raster.left,
+                top: raster.top,
+                width: raster.width,
+                height: raster.height,
+            },
+            padded_width,
+            padded_height,
+            pixels,
+        }
+    }
+
+    fn size(&self) -> etagere::Size {
+        etagere::size2(
+            i32::try_from(self.padded_width).expect("BUG: padded dim exceeds i32"),
+            i32::try_from(self.padded_height).expect("BUG: padded dim exceeds i32"),
+        )
+    }
+}
+
+/// A glyph packed into the scratch page for the current frame only.
+/// It holds no atlas allocation and no LRU links:
+/// the whole map goes at `end_frame`.
+#[derive(Clone, Copy)]
+struct ScratchEntry {
+    content_x: usize,
+    content_y: usize,
+    placement: RasterPlacement,
+}
+
 /// Lifetime tallies. `u64` because they are monotonic over the renderer's
 /// lifetime and the target is 32-bit.
 #[derive(Debug, Default, Clone, Copy)]
@@ -499,18 +567,46 @@ pub struct GlyphQuad<P> {
     pub placement: RasterPlacement,
 }
 
-/// `Missing` is retryable (the glyph has no coverage, or the backend faulted
-/// transiently); `Dropped` is not (the glyph can never fit a page).
+/// `Missing` is retryable, `Oversized` can never fit an atlas page, and
+/// `Dropped` means the cache could not serve the glyph.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum GlyphLookup<P> {
     Resident(GlyphQuad<P>),
     Missing,
+    Oversized,
     Dropped,
 }
 
 #[expect(clippy::cast_precision_loss, reason = "bounded by PAGE_SIZE_PX")]
 fn uv(px: usize) -> f32 {
     px as f32 / PAGE_SIZE_PX as f32
+}
+
+/// The 1 px border the upload wrote around the content is never sampled.
+fn quad_at<P>(
+    page: P,
+    content_x: usize,
+    content_y: usize,
+    placement: RasterPlacement,
+) -> GlyphQuad<P> {
+    let u0 = uv(content_x + 1);
+    let v0 = uv(content_y + 1);
+    GlyphQuad {
+        page,
+        u0,
+        v0,
+        u1: u0 + uv(placement.width),
+        v1: v0 + uv(placement.height),
+        placement,
+    }
+}
+
+/// Why the normal pages could not take a rect.
+/// Only the first reaches the scratch page: a backend that just refused
+/// a page will refuse the scratch one too, and be counted twice for it.
+enum AllocFailure {
+    Unservable,
+    PageCreate,
 }
 
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
@@ -520,6 +616,12 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     slab: EntrySlab,
     lru: LruQueue,
     negative: NegativeCache,
+    /// Created on first need, then kept for the renderer's lifetime.
+    /// A per-frame image would churn a GL texture that `glDeleteTextures`
+    /// need not have freed, leaving several behind a backlogged driver.
+    scratch: Option<P>,
+    scratch_packer: etagere::AtlasAllocator,
+    scratch_map: hashbrown::HashMap<GlyphKey, ScratchEntry>,
     generation: Generation,
     counters: Counters,
     counters_at_last_log: Counters,
@@ -530,11 +632,17 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
 impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     pub fn new() -> Self {
         Self {
-            pages: Vec::new(),
+            pages: Vec::with_capacity(MAX_NORMAL_PAGES),
             map: hashbrown::HashMap::with_capacity(MAX_RESIDENT_ENTRIES),
             slab: EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES),
             lru: LruQueue::new(),
             negative: NegativeCache::new(),
+            scratch: None,
+            scratch_packer: etagere::AtlasAllocator::new(etagere::size2(
+                i32::try_from(PAGE_SIZE_PX).expect("BUG: page size exceeds i32"),
+                i32::try_from(PAGE_SIZE_PX).expect("BUG: page size exceeds i32"),
+            )),
+            scratch_map: hashbrown::HashMap::with_capacity(SCRATCH_MAP_CAP),
             generation: 0,
             counters: Counters::default(),
             counters_at_last_log: Counters::default(),
@@ -549,6 +657,8 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     pub fn end_frame(&mut self) {
         self.log_pressure();
         self.generation += 1;
+        self.scratch_packer.clear();
+        self.scratch_map.clear();
     }
 
     /// Aggregate pressure across frames because logging every affected glyph
@@ -606,44 +716,46 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         }
         self.counters.misses += 1;
 
-        if self.negative.contains(&key) {
-            return GlyphLookup::Missing;
+        // Before the rasterizer, not after the normal pages refuse again:
+        // a repeat of an unservable glyph would otherwise re-rasterize
+        // and re-run the eviction sweep for every occurrence in the frame.
+        if let Some(&entry) = self.scratch_map.get(&key) {
+            self.counters.scratch_uses += 1;
+            return GlyphLookup::Resident(quad_at(
+                self.scratch
+                    .expect("BUG: scratch entry without a scratch page"),
+                entry.content_x,
+                entry.content_y,
+                entry.placement,
+            ));
+        }
+
+        if let Some(reason) = self.negative.get(&key) {
+            return reason.into_lookup();
         }
         let Some(raster) = rasterize(key) else {
-            self.negative.insert_absent(key);
+            self.negative.insert_absent(key, NegativeReason::Missing);
             return GlyphLookup::Missing;
         };
 
-        let padded_width = raster.width + 2;
-        let padded_height = raster.height + 2;
-        if padded_width > PAGE_SIZE_PX || padded_height > PAGE_SIZE_PX {
+        if raster.width > PAGE_SIZE_PX - 2 || raster.height > PAGE_SIZE_PX - 2 {
             self.counters.glyphs_oversized += 1;
-            return GlyphLookup::Dropped;
+            self.negative.insert_absent(key, NegativeReason::Oversized);
+            return GlyphLookup::Oversized;
         }
+        let pending = Pending::new(&raster);
 
-        let mut pixels = vec![0_u8; padded_width * padded_height];
-        for row in 0..raster.height {
-            let source = row * raster.width;
-            let target = (row + 1) * padded_width + 1;
-            pixels[target..target + raster.width]
-                .copy_from_slice(&raster.coverage[source..source + raster.width]);
-        }
-
-        let needed = etagere::size2(
-            i32::try_from(padded_width).expect("BUG: padded dim exceeds i32"),
-            i32::try_from(padded_height).expect("BUG: padded dim exceeds i32"),
-        );
-        let Some(mut reserved) = self.allocate(backend, needed) else {
-            return GlyphLookup::Missing;
+        let needed = pending.size();
+        let mut reserved = match self.allocate(backend, needed) {
+            Ok(reserved) => reserved,
+            Err(AllocFailure::PageCreate) => return GlyphLookup::Missing,
+            Err(AllocFailure::Unservable) => {
+                return self.serve_from_scratch(backend, key, &pending);
+            }
         };
 
         let generation = self.generation;
-        let placement = RasterPlacement {
-            left: raster.left,
-            top: raster.top,
-            width: raster.width,
-            height: raster.height,
-        };
+        let placement = pending.placement;
         let entry = |reserved: Reserved| Entry {
             key,
             page: reserved.page,
@@ -664,7 +776,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             // bleeding one per miss for as long as the cap holds.
             self.pages[reserved.page].deallocate(reserved.alloc_id);
             let Some(freed) = self.evict_until_placed(needed) else {
-                return GlyphLookup::Missing;
+                return self.serve_from_scratch(backend, key, &pending);
             };
             reserved = freed;
             self.slab
@@ -677,9 +789,9 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
                 self.pages[reserved.page].id,
                 reserved.content_x,
                 reserved.content_y,
-                padded_width,
-                padded_height,
-                &pixels,
+                pending.padded_width,
+                pending.padded_height,
+                &pending.pixels,
             )
             .is_err()
         {
@@ -698,23 +810,84 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         &mut self,
         backend: &mut impl PageBackend<PageId = P>,
         needed: etagere::Size,
-    ) -> Option<Reserved> {
+    ) -> Result<Reserved, AllocFailure> {
         if let Some(reserved) = self.allocate_on_existing(needed) {
-            return Some(reserved);
+            return Ok(reserved);
         }
         if self.pages.len() >= MAX_NORMAL_PAGES {
-            return self.evict_until_placed(needed);
+            return self
+                .evict_until_placed(needed)
+                .ok_or(AllocFailure::Unservable);
         }
 
         let Ok(id) = backend.create_page(PAGE_SIZE_PX) else {
             self.counters.page_create_failures += 1;
-            return None;
+            return Err(AllocFailure::PageCreate);
         };
         self.pages.push(Page::new(id));
-        Some(
-            self.allocate_on_existing(needed)
-                .expect("BUG: a fresh page refused a rect that fits the page"),
-        )
+        Ok(self
+            .allocate_on_existing(needed)
+            .expect("BUG: a fresh page refused a rect that fits the page"))
+    }
+
+    /// The only path past the normal pages. The glyph goes to the shared
+    /// scratch page for this frame alone, taking no slab slot and no LRU
+    /// place: `end_frame` drops the whole map.
+    fn serve_from_scratch(
+        &mut self,
+        backend: &mut impl PageBackend<PageId = P>,
+        key: GlyphKey,
+        pending: &Pending,
+    ) -> GlyphLookup<P> {
+        if self.scratch_map.len() == SCRATCH_MAP_CAP {
+            self.counters.glyphs_dropped += 1;
+            return GlyphLookup::Dropped;
+        }
+
+        let page = if let Some(page) = self.scratch {
+            page
+        } else {
+            let Ok(page) = backend.create_page(PAGE_SIZE_PX) else {
+                self.counters.page_create_failures += 1;
+                return GlyphLookup::Missing;
+            };
+            self.scratch = Some(page);
+            page
+        };
+
+        let Some(allocation) = self.scratch_packer.allocate(pending.size()) else {
+            self.counters.glyphs_dropped += 1;
+            return GlyphLookup::Dropped;
+        };
+        let content_x = usize::try_from(allocation.rectangle.min.x)
+            .expect("BUG: allocation origin outside the scratch page");
+        let content_y = usize::try_from(allocation.rectangle.min.y)
+            .expect("BUG: allocation origin outside the scratch page");
+        if backend
+            .upload(
+                page,
+                content_x,
+                content_y,
+                pending.padded_width,
+                pending.padded_height,
+                &pending.pixels,
+            )
+            .is_err()
+        {
+            self.scratch_packer.deallocate(allocation.id);
+            self.counters.upload_transient_failures += 1;
+            return GlyphLookup::Missing;
+        }
+        self.scratch_map.insert(
+            key,
+            ScratchEntry {
+                content_x,
+                content_y,
+                placement: pending.placement,
+            },
+        );
+        self.counters.scratch_uses += 1;
+        GlyphLookup::Resident(quad_at(page, content_x, content_y, pending.placement))
     }
 
     fn allocate_on_existing(&mut self, needed: etagere::Size) -> Option<Reserved> {
@@ -795,16 +968,12 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
 
     fn quad(&self, slot: u32) -> GlyphQuad<P> {
         let entry = self.slab.get(slot);
-        let u0 = uv(entry.content_x + 1);
-        let v0 = uv(entry.content_y + 1);
-        GlyphQuad {
-            page: self.pages[entry.page].id,
-            u0,
-            v0,
-            u1: u0 + uv(entry.placement.width),
-            v1: v0 + uv(entry.placement.height),
-            placement: entry.placement,
-        }
+        quad_at(
+            self.pages[entry.page].id,
+            entry.content_x,
+            entry.content_y,
+            entry.placement,
+        )
     }
 }
 
@@ -886,6 +1055,7 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1193,6 +1363,7 @@ mod tests {
         match lookup {
             GlyphLookup::Resident(quad) => quad,
             GlyphLookup::Missing => panic!("BUG: expected a resident glyph, got Missing"),
+            GlyphLookup::Oversized => panic!("BUG: expected a resident glyph, got Oversized"),
             GlyphLookup::Dropped => panic!("BUG: expected a resident glyph, got Dropped"),
         }
     }
@@ -1333,18 +1504,28 @@ mod tests {
     }
 
     #[test]
-    fn oversized_raster_is_dropped_without_page_creation() {
+    fn oversized_rasters_are_memoized_without_page_creation() {
         let mut backend = test_support::MockBackend::default();
         let mut cache = GlyphCache::new();
-        let key = test_cache_key(1);
 
-        assert_eq!(
-            cache.get_or_insert(&mut backend, key, |_| Some(solid_glyph(600, 20))),
-            GlyphLookup::Dropped
-        );
+        for (index, dimensions) in [(511, 20), (20, 511)].into_iter().enumerate() {
+            let key = test_cache_key(index);
+            assert_eq!(
+                cache.get_or_insert(&mut backend, key, |_| {
+                    Some(solid_glyph(dimensions.0, dimensions.1))
+                }),
+                GlyphLookup::Oversized
+            );
+            assert_eq!(
+                cache.get_or_insert(&mut backend, key, |_| panic!(
+                    "BUG: a known-oversized glyph must not rasterize"
+                )),
+                GlyphLookup::Oversized
+            );
+            assert!(!cache.map.contains_key(&GlyphKey::normalize(key)));
+        }
         assert_eq!(backend.pages_created, 0);
         assert!(backend.uploads.is_empty());
-        assert!(!cache.map.contains_key(&GlyphKey::normalize(key)));
     }
 
     /// Padded to 402 px, which leaves no shelf a second one could share.
@@ -1352,13 +1533,17 @@ mod tests {
     /// the whole normal budget — instead of thousands of small ones.
     const PAGE_FILLING_GLYPH_PX: usize = 400;
 
+    fn page_filling_glyph() -> RasterGlyph {
+        solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX)
+    }
+
     /// Fills every normal page with entries no frame still references:
     /// each insert ends its own frame, so no entry carries this generation
     /// and every one of them is an eviction candidate.
     fn fill_cold_pages(cache: &mut GlyphCache<usize>, backend: &mut test_support::MockBackend) {
         for index in 0..MAX_NORMAL_PAGES {
             let _ = resident(cache.get_or_insert(backend, test_cache_key(index), |_| {
-                Some(solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX))
+                Some(page_filling_glyph())
             }));
             cache.end_frame();
         }
@@ -1422,30 +1607,35 @@ mod tests {
         );
     }
 
+    /// Draws every entry of a full atlas in the current frame,
+    /// leaving the cache with no eviction candidate at all.
+    fn touch_every_resident_entry(
+        cache: &mut GlyphCache<usize>,
+        backend: &mut test_support::MockBackend,
+    ) {
+        for index in 0..MAX_NORMAL_PAGES {
+            let _ = resident(cache.get_or_insert(backend, test_cache_key(index), |_| {
+                panic!("BUG: a resident glyph must not rasterize")
+            }));
+        }
+    }
+
     /// Overwriting a rect that a queued draw command still references
     /// would corrupt the frame being built, so a cache touched end to end
-    /// refuses the miss instead of evicting.
+    /// keeps every entry however badly the miss needs the space.
     #[test]
     fn current_frame_entries_are_never_evicted() {
         let mut backend = test_support::MockBackend::default();
         let mut cache = GlyphCache::new();
         fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
 
-        for index in 0..MAX_NORMAL_PAGES {
-            let _ = resident(
-                cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
-                    panic!("BUG: a resident glyph must not rasterize")
-                }),
-            );
-        }
+        let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES), |_| {
+            Some(page_filling_glyph())
+        });
 
-        assert_eq!(
-            cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES), |_| Some(
-                solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX)
-            )),
-            GlyphLookup::Missing
-        );
         assert_eq!(cache.counters().evictions, 0);
+        assert_eq!(cache.map.len(), MAX_NORMAL_PAGES);
         assert_eq!(
             cache.counters().hits,
             u64::try_from(MAX_NORMAL_PAGES).expect("BUG: page cap outside the counter range")
@@ -1481,12 +1671,9 @@ mod tests {
         let inserted = fill_with_small_glyphs(&mut cache, &mut backend);
         let evictions_before = cache.counters().evictions;
 
-        assert_eq!(
-            cache.get_or_insert(&mut backend, test_cache_key(inserted), |_| Some(
-                solid_glyph(300, 300)
-            )),
-            GlyphLookup::Missing
-        );
+        let _ = cache.get_or_insert(&mut backend, test_cache_key(inserted), |_| {
+            Some(solid_glyph(300, 300))
+        });
 
         let bound =
             u64::try_from(MAX_EVICTIONS_PER_MISS).expect("BUG: bound outside the counter range");
@@ -1693,6 +1880,264 @@ mod tests {
         );
     }
 
+    fn scratch_page_of(cache: &GlyphCache<usize>) -> usize {
+        cache
+            .scratch
+            .expect("BUG: no scratch page was ever created")
+    }
+
+    /// The miss the protected cache cannot serve has to go somewhere,
+    /// and the scratch page is the only place left that costs no eviction.
+    #[test]
+    fn protected_cache_routes_to_scratch() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+
+        let quad = resident(cache.get_or_insert(
+            &mut backend,
+            test_cache_key(MAX_NORMAL_PAGES),
+            |_| Some(page_filling_glyph()),
+        ));
+
+        assert_eq!(quad.page, scratch_page_of(&cache));
+        assert_eq!(cache.counters().scratch_uses, 1);
+        assert_eq!(cache.counters().evictions, 0);
+        assert_eq!(cache.map.len(), MAX_NORMAL_PAGES);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
+    }
+
+    /// A repeat of an unservable glyph must not re-run the eviction sweep:
+    /// every attempt destroys up to `MAX_EVICTIONS_PER_MISS` cold entries,
+    /// so one glyph repeated in a word would strip the cache several times.
+    #[test]
+    fn scratch_dedups_within_frame() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let inserted = fill_with_small_glyphs(&mut cache, &mut backend);
+        let evictions_before = cache.counters().evictions;
+        let uploads_before = backend.uploads.len();
+
+        let key = test_cache_key(inserted);
+        let rasterizations = Cell::new(0_usize);
+        let quads: Vec<GlyphQuad<usize>> = (0..3)
+            .map(|_| {
+                resident(cache.get_or_insert(&mut backend, key, |_| {
+                    rasterizations.set(rasterizations.get() + 1);
+                    Some(solid_glyph(300, 300))
+                }))
+            })
+            .collect();
+
+        assert_eq!(rasterizations.get(), 1);
+        assert!(quads.iter().all(|quad| *quad == quads[0]));
+        assert_eq!(quads[0].page, scratch_page_of(&cache));
+        assert_eq!(backend.uploads.len(), uploads_before + 1);
+        assert_eq!(cache.counters().scratch_uses, 3);
+        assert_eq!(
+            cache.counters().evictions - evictions_before,
+            u64::try_from(MAX_EVICTIONS_PER_MISS).expect("BUG: bound outside the counter range"),
+            "the repeats must not sweep the cache again"
+        );
+    }
+
+    /// The image is what must survive the flush, never its contents:
+    /// a glyph on the scratch page next frame is one that got there again.
+    #[test]
+    fn scratch_resets_after_flush_but_keeps_image() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+
+        let key = test_cache_key(MAX_NORMAL_PAGES);
+        let first =
+            resident(cache.get_or_insert(&mut backend, key, |_| Some(page_filling_glyph())));
+        let page = scratch_page_of(&cache);
+        let pages_created = backend.pages_created;
+
+        cache.end_frame();
+        assert!(cache.scratch_map.is_empty());
+        assert_eq!(cache.scratch, Some(page));
+
+        touch_every_resident_entry(&mut cache, &mut backend);
+        let rasterizations = Cell::new(0_usize);
+        let second = resident(cache.get_or_insert(&mut backend, key, |_| {
+            rasterizations.set(rasterizations.get() + 1);
+            Some(page_filling_glyph())
+        }));
+
+        assert_eq!(rasterizations.get(), 1);
+        assert_eq!(second, first);
+        assert_eq!(backend.pages_created, pages_created);
+    }
+
+    /// Two page-filling glyphs cannot share the 512 px scratch page,
+    /// so the second one is what the frame gives up on.
+    #[test]
+    fn scratch_full_drops_and_counts() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+
+        let _ = resident(cache.get_or_insert(
+            &mut backend,
+            test_cache_key(MAX_NORMAL_PAGES),
+            |_| Some(page_filling_glyph()),
+        ));
+        assert_eq!(cache.counters().glyphs_dropped, 0);
+
+        assert_eq!(
+            cache.get_or_insert(
+                &mut backend,
+                test_cache_key(MAX_NORMAL_PAGES + 1),
+                |_| Some(page_filling_glyph())
+            ),
+            GlyphLookup::Dropped
+        );
+        assert_eq!(cache.counters().glyphs_dropped, 1);
+        assert_eq!(cache.counters().evictions, 0);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
+    }
+
+    /// Tiny glyphs would pack thousands of frame-local entries into one page,
+    /// so the map — not the pixels — is what bounds the scratch metadata.
+    #[test]
+    fn scratch_map_cap_drops() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        for index in 0..MAX_RESIDENT_ENTRIES {
+            let _ = resident(
+                cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
+                    Some(solid_glyph(2, 2))
+                }),
+            );
+            cache.end_frame();
+        }
+        for index in 0..MAX_RESIDENT_ENTRIES {
+            let _ = resident(
+                cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
+                    panic!("BUG: a resident glyph must not rasterize")
+                }),
+            );
+        }
+
+        for extra in 0..SCRATCH_MAP_CAP {
+            let _ = resident(cache.get_or_insert(
+                &mut backend,
+                test_cache_key(MAX_RESIDENT_ENTRIES + extra),
+                |_| Some(solid_glyph(12, 12)),
+            ));
+        }
+        assert_eq!(cache.scratch_map.len(), SCRATCH_MAP_CAP);
+        assert_eq!(cache.counters().glyphs_dropped, 0);
+
+        assert_eq!(
+            cache.get_or_insert(
+                &mut backend,
+                test_cache_key(MAX_RESIDENT_ENTRIES + SCRATCH_MAP_CAP),
+                |_| Some(solid_glyph(12, 12))
+            ),
+            GlyphLookup::Dropped
+        );
+        assert_eq!(cache.counters().glyphs_dropped, 1);
+        assert_eq!(cache.counters().evictions, 0);
+    }
+
+    #[test]
+    fn churn_never_exceeds_resident_and_scratch_page_cap() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+
+        let mut key = MAX_NORMAL_PAGES;
+        for _ in 0..8 {
+            for _ in 0..MAX_NORMAL_PAGES + 5 {
+                let _ = cache.get_or_insert(&mut backend, test_cache_key(key), |_| {
+                    Some(page_filling_glyph())
+                });
+                key += 1;
+            }
+            cache.end_frame();
+
+            for _ in 0..64 {
+                let _ = cache.get_or_insert(&mut backend, test_cache_key(key), |_| {
+                    Some(solid_glyph(30, 30))
+                });
+                key += 1;
+            }
+            cache.end_frame();
+        }
+
+        assert!(cache.counters().evictions > 0);
+        assert!(cache.counters().scratch_uses > 0);
+        assert!(cache.counters().glyphs_dropped > 0);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
+    }
+
+    #[test]
+    fn scratch_create_failure_is_transient_and_counted() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+
+        let key = test_cache_key(MAX_NORMAL_PAGES);
+        backend.fail_next_create = true;
+        assert_eq!(
+            cache.get_or_insert(&mut backend, key, |_| Some(page_filling_glyph())),
+            GlyphLookup::Missing
+        );
+        assert_eq!(cache.counters().page_create_failures, 1);
+        assert_eq!(cache.scratch, None);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES);
+
+        let quad = resident(cache.get_or_insert(&mut backend, key, |_| Some(page_filling_glyph())));
+        assert_eq!(quad.page, scratch_page_of(&cache));
+        assert_eq!(cache.counters().page_create_failures, 1);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
+    }
+
+    /// A failed upload must return its reservation so the next glyph can
+    /// still use the whole scratch page.
+    #[test]
+    fn scratch_upload_failure_releases_allocation() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+        touch_every_resident_entry(&mut cache, &mut backend);
+
+        backend.fail_next_upload = Some(PageFaultKind::Transient);
+        assert_eq!(
+            cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES), |_| Some(
+                page_filling_glyph()
+            )),
+            GlyphLookup::Missing
+        );
+        assert_eq!(cache.counters().upload_transient_failures, 1);
+        assert!(cache.scratch_map.is_empty());
+        assert!(cache.scratch_packer.is_empty());
+
+        let padded = PAGE_FILLING_GLYPH_PX + 2;
+        let _ = resident(cache.get_or_insert(
+            &mut backend,
+            test_cache_key(MAX_NORMAL_PAGES + 1),
+            |_| Some(page_filling_glyph()),
+        ));
+
+        let &(page, x, y, width, height) = backend
+            .uploads
+            .last()
+            .expect("BUG: the scratch insertion uploaded nothing");
+        assert_eq!(
+            (page, x, y, width, height),
+            (scratch_page_of(&cache), 0, 0, padded, padded)
+        );
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
+    }
+
     /// Counts WARN records without a `tracing-subscriber` dev dependency.
     /// The diagnostic's whole point is that it fires once per interval
     /// however many glyphs suffered, and only a subscriber can witness it.
@@ -1783,22 +2228,45 @@ mod tests {
             fill_cold_pages(&mut cache, &mut backend);
             assert_eq!(warns.count(), 0, "quiet frames must stay silent");
 
+            // A fresh entry on every page stamps the atlas with this frame,
+            // so what follows can only go to scratch.
+            for index in 0..MAX_NORMAL_PAGES {
+                let _ = resident(cache.get_or_insert(
+                    &mut backend,
+                    test_cache_key(MAX_NORMAL_PAGES + index),
+                    |_| Some(page_filling_glyph()),
+                ));
+            }
             let _ = resident(cache.get_or_insert(
                 &mut backend,
-                test_cache_key(MAX_NORMAL_PAGES),
-                |_| Some(solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX)),
+                test_cache_key(2 * MAX_NORMAL_PAGES),
+                |_| Some(page_filling_glyph()),
             ));
-            let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES + 1), |_| {
-                Some(solid_glyph(600, 20))
-            });
+            let _ = cache.get_or_insert(
+                &mut backend,
+                test_cache_key(2 * MAX_NORMAL_PAGES + 1),
+                |_| Some(page_filling_glyph()),
+            );
+            let _ = cache.get_or_insert(
+                &mut backend,
+                test_cache_key(2 * MAX_NORMAL_PAGES + 2),
+                |_| Some(solid_glyph(600, 20)),
+            );
             backend.fail_next_upload = Some(PageFaultKind::Transient);
-            let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES + 2), |_| {
-                Some(solid_glyph(3, 5))
-            });
+            let _ = cache.get_or_insert(
+                &mut backend,
+                test_cache_key(2 * MAX_NORMAL_PAGES + 3),
+                |_| Some(solid_glyph(3, 5)),
+            );
             cache.end_frame();
         });
 
-        assert_eq!(cache.counters().evictions, 1);
+        assert_eq!(
+            cache.counters().evictions,
+            u64::try_from(MAX_NORMAL_PAGES).expect("BUG: page cap outside the counter range")
+        );
+        assert_eq!(cache.counters().scratch_uses, 1);
+        assert_eq!(cache.counters().glyphs_dropped, 1);
         assert_eq!(cache.counters().glyphs_oversized, 1);
         assert_eq!(cache.counters().upload_transient_failures, 1);
         assert_eq!(records, 1);
