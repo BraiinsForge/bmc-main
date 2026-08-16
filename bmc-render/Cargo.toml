@@ -42,6 +42,10 @@ bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 
 [dev-dependencies]
 rqrr.workspace = true
+# `tracing::subscriber::with_default` is std-gated, and the workspace pins
+# tracing with default features off; the glyph cache's rate-limited
+# diagnostics can only be counted by attaching a subscriber in-test.
+tracing = { workspace = true, features = ["std"] }
 
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 glutin.workspace = true

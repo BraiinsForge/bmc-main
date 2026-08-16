@@ -29,10 +29,11 @@ pub const MAX_RESIDENT_ENTRIES: usize = 8192;
 pub const NEGATIVE_CACHE_CAP: usize = 256;
 #[expect(dead_code, reason = "consumed in Task 6 (BDK-696)")]
 pub const SCRATCH_MAP_CAP: usize = 1024;
-#[expect(dead_code, reason = "consumed in Task 4 (BDK-696)")]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub const MAX_EVICTIONS_PER_MISS: usize = 64;
-#[expect(dead_code, reason = "consumed in Task 4 (BDK-696)")]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub const FULL_RETRY_INTERVAL: usize = 8;
+const PRESSURE_LOG_INTERVAL_GENERATIONS: Generation = 8;
 
 /// u64, not usize: generations must never wrap (eviction safety compares
 /// them) and 32-bit usize would wrap on-device within device lifetime.
@@ -296,6 +297,12 @@ struct Page<P> {
     id: P,
     alloc: Option<etagere::BucketedAtlasAllocator>,
     quarantined: bool,
+    /// Every rect goes through the two methods below, so a leak is exactly
+    /// a gap between these: an eviction path that never handed its rect back.
+    #[cfg(test)]
+    allocs: usize,
+    #[cfg(test)]
+    deallocs: usize,
 }
 
 impl<P> Page<P> {
@@ -307,6 +314,10 @@ impl<P> Page<P> {
                 size, size,
             ))),
             quarantined: false,
+            #[cfg(test)]
+            allocs: 0,
+            #[cfg(test)]
+            deallocs: 0,
         }
     }
 
@@ -314,7 +325,12 @@ impl<P> Page<P> {
         if self.quarantined {
             return None;
         }
-        self.alloc.as_mut()?.allocate(size)
+        let placed = self.alloc.as_mut()?.allocate(size)?;
+        #[cfg(test)]
+        {
+            self.allocs += 1;
+        }
+        Some(placed)
     }
 
     fn deallocate(&mut self, id: etagere::AllocId) {
@@ -322,6 +338,36 @@ impl<P> Page<P> {
             .as_mut()
             .expect("BUG: page released its allocator while an entry still held a rect")
             .deallocate(id);
+        #[cfg(test)]
+        {
+            self.deallocs += 1;
+        }
+    }
+}
+
+/// A rect held on a page before any entry owns it.
+/// It stays apart from [`Entry`] because the entry cap can force the rect
+/// back, to be re-taken on the far side of an eviction.
+#[derive(Clone, Copy)]
+struct Reserved {
+    page: usize,
+    alloc_id: etagere::AllocId,
+    content_x: usize,
+    content_y: usize,
+}
+
+impl Reserved {
+    /// The allocation may span the whole shelf height; only its min corner
+    /// is ours, and the content rect is what gets uploaded.
+    fn new(page: usize, allocation: etagere::Allocation) -> Self {
+        Self {
+            page,
+            alloc_id: allocation.id,
+            content_x: usize::try_from(allocation.rectangle.min.x)
+                .expect("BUG: allocation origin outside the page"),
+            content_y: usize::try_from(allocation.rectangle.min.y)
+                .expect("BUG: allocation origin outside the page"),
+        }
     }
 }
 
@@ -329,6 +375,15 @@ impl<P> Page<P> {
 /// lifetime and the target is 32-bit.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
+    pub hits: u64,
+    pub misses: u64,
+    pub evictions: u64,
+    pub max_evictions_per_miss: u64,
+    pub scratch_uses: u64,
+    pub glyphs_dropped: u64,
+    pub glyphs_oversized: u64,
+    #[expect(dead_code, reason = "consumed in Task 7 (BDK-696)")]
+    pub cache_invariant_failures: u64,
     pub page_create_failures: u64,
     pub upload_transient_failures: u64,
 }
@@ -367,6 +422,8 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     lru: LruQueue,
     generation: Generation,
     counters: Counters,
+    counters_at_last_log: Counters,
+    next_log_generation: Generation,
 }
 
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
@@ -379,6 +436,8 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             lru: LruQueue::new(),
             generation: 0,
             counters: Counters::default(),
+            counters_at_last_log: Counters::default(),
+            next_log_generation: 0,
         }
     }
 
@@ -386,9 +445,46 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         &self.counters
     }
 
-    #[expect(dead_code, reason = "consumed in Task 4 (BDK-696)")]
     pub fn end_frame(&mut self) {
+        self.log_pressure();
         self.generation += 1;
+    }
+
+    /// Aggregate pressure across frames because logging every affected glyph
+    /// would flood the log.
+    fn log_pressure(&mut self) {
+        let (base, now) = (self.counters_at_last_log, self.counters);
+        let evictions = now.evictions - base.evictions;
+        let scratch_uses = now.scratch_uses - base.scratch_uses;
+        let glyphs_dropped = now.glyphs_dropped - base.glyphs_dropped;
+        let glyphs_oversized = now.glyphs_oversized - base.glyphs_oversized;
+        let page_create_failures = now.page_create_failures - base.page_create_failures;
+        let upload_transient_failures =
+            now.upload_transient_failures - base.upload_transient_failures;
+
+        let tallies = [
+            evictions,
+            scratch_uses,
+            glyphs_dropped,
+            glyphs_oversized,
+            page_create_failures,
+            upload_transient_failures,
+        ];
+        if tallies == [0; 6] || self.generation < self.next_log_generation {
+            return;
+        }
+
+        tracing::warn!(
+            evictions,
+            scratch_uses,
+            glyphs_dropped,
+            glyphs_oversized,
+            page_create_failures,
+            upload_transient_failures,
+            "glyph cache under pressure"
+        );
+        self.counters_at_last_log = now;
+        self.next_log_generation = self.generation + PRESSURE_LOG_INTERVAL_GENERATIONS;
     }
 
     /// `rasterize` receives the **normalized** key,
@@ -402,10 +498,12 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         let key = GlyphKey::normalize(key);
 
         if let Some(&slot) = self.map.get(&key) {
+            self.counters.hits += 1;
             self.slab.get_mut(slot).last_used = self.generation;
             self.lru.promote(&mut self.slab, slot);
             return GlyphLookup::Resident(self.quad(slot));
         }
+        self.counters.misses += 1;
 
         let Some(raster) = rasterize(key) else {
             return GlyphLookup::Missing;
@@ -414,18 +512,9 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         let padded_width = raster.width + 2;
         let padded_height = raster.height + 2;
         if padded_width > PAGE_SIZE_PX || padded_height > PAGE_SIZE_PX {
+            self.counters.glyphs_oversized += 1;
             return GlyphLookup::Dropped;
         }
-
-        let Some((page, allocation)) = self.allocate(backend, padded_width, padded_height) else {
-            return GlyphLookup::Missing;
-        };
-        // The allocation may span the whole shelf height; only its min corner
-        // is ours, and the content rect is what we upload.
-        let content_x = usize::try_from(allocation.rectangle.min.x)
-            .expect("BUG: allocation origin outside the page");
-        let content_y = usize::try_from(allocation.rectangle.min.y)
-            .expect("BUG: allocation origin outside the page");
 
         let mut pixels = vec![0_u8; padded_width * padded_height];
         for row in 0..raster.height {
@@ -435,31 +524,54 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
                 .copy_from_slice(&raster.coverage[source..source + raster.width]);
         }
 
-        let Some(slot) = self.slab.alloc(Entry {
+        let needed = etagere::size2(
+            i32::try_from(padded_width).expect("BUG: padded dim exceeds i32"),
+            i32::try_from(padded_height).expect("BUG: padded dim exceeds i32"),
+        );
+        let Some(mut reserved) = self.allocate(backend, needed) else {
+            return GlyphLookup::Missing;
+        };
+
+        let generation = self.generation;
+        let placement = RasterPlacement {
+            left: raster.left,
+            top: raster.top,
+            width: raster.width,
+            height: raster.height,
+        };
+        let entry = |reserved: Reserved| Entry {
             key,
-            page,
-            alloc_id: allocation.id,
-            content_x,
-            content_y,
-            placement: RasterPlacement {
-                left: raster.left,
-                top: raster.top,
-                width: raster.width,
-                height: raster.height,
-            },
-            last_used: self.generation,
+            page: reserved.page,
+            alloc_id: reserved.alloc_id,
+            content_x: reserved.content_x,
+            content_y: reserved.content_y,
+            placement,
+            last_used: generation,
             prev: NO_LINK,
             next: NO_LINK,
-        }) else {
-            self.pages[page].deallocate(allocation.id);
-            return GlyphLookup::Missing;
+        };
+
+        let slot = if let Some(slot) = self.slab.alloc(entry(reserved)) {
+            slot
+        } else {
+            // Hand the rect back before evicting: carried through the loop
+            // it gets abandoned as soon as eviction hands out another rect,
+            // bleeding one per miss for as long as the cap holds.
+            self.pages[reserved.page].deallocate(reserved.alloc_id);
+            let Some(freed) = self.evict_until_placed(needed) else {
+                return GlyphLookup::Missing;
+            };
+            reserved = freed;
+            self.slab
+                .alloc(entry(reserved))
+                .expect("BUG: eviction placed a rect without freeing a slab slot")
         };
 
         if backend
             .upload(
-                self.pages[page].id,
-                content_x,
-                content_y,
+                self.pages[reserved.page].id,
+                reserved.content_x,
+                reserved.content_y,
                 padded_width,
                 padded_height,
                 &pixels,
@@ -467,7 +579,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             .is_err()
         {
             self.slab.free(slot);
-            self.pages[page].deallocate(allocation.id);
+            self.pages[reserved.page].deallocate(reserved.alloc_id);
             self.counters.upload_transient_failures += 1;
             return GlyphLookup::Missing;
         }
@@ -480,19 +592,13 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     fn allocate(
         &mut self,
         backend: &mut impl PageBackend<PageId = P>,
-        padded_width: usize,
-        padded_height: usize,
-    ) -> Option<(usize, etagere::Allocation)> {
-        let size = etagere::size2(
-            i32::try_from(padded_width).expect("BUG: padded dim exceeds i32"),
-            i32::try_from(padded_height).expect("BUG: padded dim exceeds i32"),
-        );
-
-        if let Some(placed) = self.allocate_on_existing(size) {
-            return Some(placed);
+        needed: etagere::Size,
+    ) -> Option<Reserved> {
+        if let Some(reserved) = self.allocate_on_existing(needed) {
+            return Some(reserved);
         }
         if self.pages.len() >= MAX_NORMAL_PAGES {
-            return None;
+            return self.evict_until_placed(needed);
         }
 
         let Ok(id) = backend.create_page(PAGE_SIZE_PX) else {
@@ -501,19 +607,85 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         };
         self.pages.push(Page::new(id));
         Some(
-            self.allocate_on_existing(size)
+            self.allocate_on_existing(needed)
                 .expect("BUG: a fresh page refused a rect that fits the page"),
         )
     }
 
-    fn allocate_on_existing(
+    fn allocate_on_existing(&mut self, needed: etagere::Size) -> Option<Reserved> {
+        self.pages.iter_mut().enumerate().find_map(|(index, page)| {
+            page.allocate(needed)
+                .map(|placed| Reserved::new(index, placed))
+        })
+    }
+
+    /// Frees the coldest entries until the rect fits.
+    ///
+    /// Entries stamped with the current generation are never freed:
+    /// femtovg holds their quads in draw commands queued until the flush,
+    /// and overwriting their texels would corrupt the frame being built.
+    /// The pop count is bounded: with adversarial fragmentation a tall rect
+    /// finds no shelf until a large fraction of the cold population drains.
+    fn evict_until_placed(&mut self, needed: etagere::Size) -> Option<Reserved> {
+        let mut pops = 0_usize;
+        let reserved = loop {
+            let Some(cold) = self.lru.coldest() else {
+                break None;
+            };
+            if self.slab.get(cold).last_used == self.generation {
+                break None;
+            }
+            if pops == MAX_EVICTIONS_PER_MISS {
+                break None;
+            }
+
+            let freed_page = self.remove_entry(cold);
+            self.counters.evictions += 1;
+            pops += 1;
+
+            let retry_all = pops.is_multiple_of(FULL_RETRY_INTERVAL);
+            if let Some(reserved) = self.try_allocate(needed, freed_page, retry_all) {
+                break Some(reserved);
+            }
+        };
+
+        let pops = Generation::try_from(pops).expect("BUG: pop count outside the counter range");
+        self.counters.max_evictions_per_miss = self.counters.max_evictions_per_miss.max(pops);
+        reserved
+    }
+
+    /// Sweeping every page after every pop is the expensive part of eviction,
+    /// and only the page that just gave space can plausibly serve the rect,
+    /// so the full sweep runs once per `FULL_RETRY_INTERVAL` pops.
+    fn try_allocate(
         &mut self,
-        size: etagere::Size,
-    ) -> Option<(usize, etagere::Allocation)> {
-        self.pages
-            .iter_mut()
-            .enumerate()
-            .find_map(|(index, page)| page.allocate(size).map(|placed| (index, placed)))
+        needed: etagere::Size,
+        freed_page: usize,
+        retry_all: bool,
+    ) -> Option<Reserved> {
+        if retry_all {
+            return self.allocate_on_existing(needed);
+        }
+        self.pages[freed_page]
+            .allocate(needed)
+            .map(|placed| Reserved::new(freed_page, placed))
+    }
+
+    /// Reports the page whose space was freed.
+    ///
+    /// Freeing a slab slot threads the free chain through the very links
+    /// the LRU uses, so the entry must leave the queue first.
+    fn remove_entry(&mut self, slot: u32) -> usize {
+        let entry = self.slab.get(slot);
+        let (key, page, alloc_id) = (entry.key, entry.page, entry.alloc_id);
+
+        self.lru.unlink(&mut self.slab, slot);
+        self.slab.free(slot);
+        self.map
+            .remove(&key)
+            .expect("BUG: resident entry absent from the key map");
+        self.pages[page].deallocate(alloc_id);
+        page
     }
 
     fn quad(&self, slot: u32) -> GlyphQuad<P> {
@@ -609,6 +781,9 @@ pub(crate) mod test_support {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use cosmic_text::SubpixelBin;
 
@@ -887,6 +1062,22 @@ mod tests {
         }
     }
 
+    /// Coverage that differs per texel, so a blit shifted by a row or a column
+    /// shows up as a byte difference; a solid glyph would hide it.
+    fn ramp_glyph(width: usize, height: usize) -> RasterGlyph {
+        RasterGlyph {
+            width,
+            height,
+            left: 1,
+            top: -2,
+            coverage: (0..width * height)
+                .map(|texel| {
+                    u8::try_from(texel % 251).expect("BUG: ramp value outside the byte range")
+                })
+                .collect(),
+        }
+    }
+
     /// Derived through `f32::from` rather than the cache's own `uv`,
     /// so the expectation is arithmetic the implementation does not supply.
     fn uv_of(px: usize) -> f32 {
@@ -1049,5 +1240,375 @@ mod tests {
         assert_eq!(backend.pages_created, 0);
         assert!(backend.uploads.is_empty());
         assert!(!cache.map.contains_key(&GlyphKey::normalize(key)));
+    }
+
+    /// Padded to 402 px, which leaves no shelf a second one could share.
+    /// Each of these glyphs takes a page to itself, so twenty of them fill
+    /// the whole normal budget — instead of thousands of small ones.
+    const PAGE_FILLING_GLYPH_PX: usize = 400;
+
+    /// Fills every normal page with entries no frame still references:
+    /// each insert ends its own frame, so no entry carries this generation
+    /// and every one of them is an eviction candidate.
+    fn fill_cold_pages(cache: &mut GlyphCache<usize>, backend: &mut test_support::MockBackend) {
+        for index in 0..MAX_NORMAL_PAGES {
+            let _ = resident(cache.get_or_insert(backend, test_cache_key(index), |_| {
+                Some(solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX))
+            }));
+            cache.end_frame();
+        }
+        assert_eq!(
+            backend.pages_created, MAX_NORMAL_PAGES,
+            "BUG: a page-filling glyph must open a page of its own"
+        );
+        assert_eq!(cache.counters().evictions, 0);
+    }
+
+    #[test]
+    fn a_full_atlas_evicts_the_coldest_entry_to_serve_a_miss() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+
+        let newcomer = test_cache_key(MAX_NORMAL_PAGES);
+        let _ = resident(cache.get_or_insert(&mut backend, newcomer, |_| {
+            Some(solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX))
+        }));
+
+        assert_eq!(cache.counters().evictions, 1);
+        assert!(
+            !cache.map.contains_key(&test_key(0)),
+            "the coldest entry is the one that must go"
+        );
+        assert!(cache.map.contains_key(&GlyphKey::normalize(newcomer)));
+        assert_eq!(cache.slab.len(), MAX_NORMAL_PAGES);
+        assert_eq!(cache.pages.len(), MAX_NORMAL_PAGES);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES);
+    }
+
+    /// 4x4 padded rects are small enough that one page holds all 8192 of them,
+    /// so the entry cap binds while nineteen pages' worth of pixels stand free.
+    #[test]
+    fn entry_cap_evicts_before_pixel_space() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        for index in 0..MAX_RESIDENT_ENTRIES {
+            let _ = resident(
+                cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
+                    Some(solid_glyph(2, 2))
+                }),
+            );
+            cache.end_frame();
+        }
+        assert_eq!(cache.slab.len(), MAX_RESIDENT_ENTRIES);
+        assert_eq!(cache.counters().evictions, 0);
+
+        let newcomer = test_cache_key(MAX_RESIDENT_ENTRIES);
+        let _ = resident(cache.get_or_insert(&mut backend, newcomer, |_| Some(solid_glyph(2, 2))));
+
+        assert!(cache.counters().evictions > 0);
+        assert!(cache.slab.len() <= MAX_RESIDENT_ENTRIES);
+        assert_eq!(cache.slab.len(), cache.map.len());
+        assert!(!cache.map.contains_key(&test_key(0)));
+        assert!(cache.map.contains_key(&GlyphKey::normalize(newcomer)));
+        assert!(
+            cache.pages.len() < MAX_NORMAL_PAGES,
+            "pixel space was never the constraint here"
+        );
+    }
+
+    /// Overwriting a rect that a queued draw command still references
+    /// would corrupt the frame being built, so a cache touched end to end
+    /// refuses the miss instead of evicting.
+    #[test]
+    fn current_frame_entries_are_never_evicted() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        fill_cold_pages(&mut cache, &mut backend);
+
+        for index in 0..MAX_NORMAL_PAGES {
+            let _ = resident(
+                cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
+                    panic!("BUG: a resident glyph must not rasterize")
+                }),
+            );
+        }
+
+        assert_eq!(
+            cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES), |_| Some(
+                solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX)
+            )),
+            GlyphLookup::Missing
+        );
+        assert_eq!(cache.counters().evictions, 0);
+        assert_eq!(
+            cache.counters().hits,
+            u64::try_from(MAX_NORMAL_PAGES).expect("BUG: page cap outside the counter range")
+        );
+    }
+
+    /// Fills the normal pages with 32 px padded rects,
+    /// stopping once eviction proves they are full.
+    /// How many rects fit a page is etagere's packing to decide, not ours.
+    fn fill_with_small_glyphs(
+        cache: &mut GlyphCache<usize>,
+        backend: &mut test_support::MockBackend,
+    ) -> usize {
+        let mut inserted = 0;
+        while cache.counters().evictions == 0 {
+            assert!(inserted < 20_000, "BUG: the normal pages never filled");
+            let _ = resident(cache.get_or_insert(backend, test_cache_key(inserted), |_| {
+                Some(solid_glyph(30, 30))
+            }));
+            cache.end_frame();
+            inserted += 1;
+        }
+        inserted
+    }
+
+    /// A 302 px rect needs a shelf taller than any three 32 px shelves
+    /// coalesced. However long the loop runs, freeing cold entries can never
+    /// serve it — only the bound stops it.
+    #[test]
+    fn eviction_bound_holds() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let inserted = fill_with_small_glyphs(&mut cache, &mut backend);
+        let evictions_before = cache.counters().evictions;
+
+        assert_eq!(
+            cache.get_or_insert(&mut backend, test_cache_key(inserted), |_| Some(
+                solid_glyph(300, 300)
+            )),
+            GlyphLookup::Missing
+        );
+
+        let bound =
+            u64::try_from(MAX_EVICTIONS_PER_MISS).expect("BUG: bound outside the counter range");
+        assert_eq!(cache.counters().evictions - evictions_before, bound);
+        assert_eq!(cache.counters().max_evictions_per_miss, bound);
+    }
+
+    /// A fixed shuffle rather than the natural order:
+    /// which bin arrives first must not decide what the cache stores.
+    const SHUFFLED_BINS: [(SubpixelBin, SubpixelBin); 16] = [
+        (SubpixelBin::Two, SubpixelBin::One),
+        (SubpixelBin::Zero, SubpixelBin::Three),
+        (SubpixelBin::Three, SubpixelBin::Three),
+        (SubpixelBin::One, SubpixelBin::Zero),
+        (SubpixelBin::Zero, SubpixelBin::One),
+        (SubpixelBin::Three, SubpixelBin::Zero),
+        (SubpixelBin::Two, SubpixelBin::Three),
+        (SubpixelBin::One, SubpixelBin::Two),
+        (SubpixelBin::Zero, SubpixelBin::Zero),
+        (SubpixelBin::Three, SubpixelBin::One),
+        (SubpixelBin::One, SubpixelBin::Three),
+        (SubpixelBin::Two, SubpixelBin::Zero),
+        (SubpixelBin::Zero, SubpixelBin::Two),
+        (SubpixelBin::Three, SubpixelBin::Two),
+        (SubpixelBin::One, SubpixelBin::One),
+        (SubpixelBin::Two, SubpixelBin::Two),
+    ];
+
+    fn keyed_with_bins(x_bin: SubpixelBin, y_bin: SubpixelBin) -> cosmic_text::CacheKey {
+        cosmic_text::CacheKey {
+            x_bin,
+            y_bin,
+            ..test_cache_key(1)
+        }
+    }
+
+    #[test]
+    fn sixteen_bin_lookups_rasterize_once_with_zero_bins() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let mut rasterized = Vec::new();
+        let mut quads = Vec::new();
+
+        for (x_bin, y_bin) in SHUFFLED_BINS {
+            quads.push(resident(cache.get_or_insert(
+                &mut backend,
+                keyed_with_bins(x_bin, y_bin),
+                |normalized| {
+                    rasterized.push(normalized);
+                    Some(ramp_glyph(3, 5))
+                },
+            )));
+        }
+
+        assert_eq!(rasterized.len(), 1);
+        assert_eq!(rasterized[0].0.x_bin, SubpixelBin::Zero);
+        assert_eq!(rasterized[0].0.y_bin, SubpixelBin::Zero);
+        assert_eq!(backend.uploads.len(), 1);
+        assert!(quads.iter().all(|quad| *quad == quads[0]));
+        assert_eq!(cache.counters().misses, 1);
+        assert_eq!(cache.counters().hits, 15);
+    }
+
+    /// The page bytes a fresh cache holds after one insert with these bins.
+    fn coverage_of_first_insert(x_bin: SubpixelBin, y_bin: SubpixelBin) -> Vec<u8> {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let _ = resident(cache.get_or_insert(
+            &mut backend,
+            keyed_with_bins(x_bin, y_bin),
+            |normalized| {
+                assert_eq!(normalized.0.x_bin, SubpixelBin::Zero);
+                assert_eq!(normalized.0.y_bin, SubpixelBin::Zero);
+                Some(ramp_glyph(3, 5))
+            },
+        ));
+        backend.pages.remove(0).pixels
+    }
+
+    /// The shuffled run above only exercises whichever bin leads it.
+    /// A leak of the raw bins into rasterization or placement stays invisible
+    /// for the other fifteen first arrivals.
+    #[test]
+    fn every_bin_first_inserter_stores_identical_coverage() {
+        let reference = coverage_of_first_insert(SubpixelBin::Zero, SubpixelBin::Zero);
+        for (x_bin, y_bin) in SHUFFLED_BINS {
+            assert!(
+                coverage_of_first_insert(x_bin, y_bin) == reference,
+                "first inserter ({x_bin:?}, {y_bin:?}) stored different coverage"
+            );
+        }
+    }
+
+    /// An orphan is an eviction path that skipped the deallocate,
+    /// and counting live allocations is what catches one.
+    /// etagere's `allocated_space` cannot: it charges whole shelf rectangles
+    /// and returns nothing until an entire bucket drains.
+    #[test]
+    fn entry_cap_churn_does_not_leak_atlas_space() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        for index in 0..MAX_RESIDENT_ENTRIES * 3 {
+            let _ = cache.get_or_insert(&mut backend, test_cache_key(index), |_| {
+                Some(solid_glyph(2, 2))
+            });
+            cache.end_frame();
+        }
+
+        let live: usize = cache
+            .pages
+            .iter()
+            .map(|page| page.allocs - page.deallocs)
+            .sum();
+        assert!(cache.counters().evictions > 0);
+        assert_eq!(live, cache.slab.len());
+        assert_eq!(live, cache.map.len());
+        assert!(cache.slab.len() <= MAX_RESIDENT_ENTRIES);
+    }
+
+    /// Counts WARN records without a `tracing-subscriber` dev dependency.
+    /// The diagnostic's whole point is that it fires once per interval
+    /// however many glyphs suffered, and only a subscriber can witness it.
+    #[derive(Clone, Default)]
+    struct WarnCounter(Arc<AtomicUsize>);
+
+    impl WarnCounter {
+        fn count(&self) -> usize {
+            self.0.load(Ordering::Relaxed)
+        }
+
+        fn reset(&self) {
+            self.0.store(0, Ordering::Relaxed);
+        }
+    }
+
+    impl tracing::Subscriber for WarnCounter {
+        fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
+            *metadata.level() == tracing::Level::WARN
+        }
+
+        fn event(&self, _: &tracing::Event<'_>) {
+            self.0.fetch_add(1, Ordering::Relaxed);
+        }
+
+        fn new_span(&self, _: &tracing::span::Attributes<'_>) -> tracing::span::Id {
+            tracing::span::Id::from_u64(1)
+        }
+
+        fn record(&self, _: &tracing::span::Id, _: &tracing::span::Record<'_>) {}
+        fn record_follows_from(&self, _: &tracing::span::Id, _: &tracing::span::Id) {}
+        fn enter(&self, _: &tracing::span::Id) {}
+        fn exit(&self, _: &tracing::span::Id) {}
+    }
+
+    /// Reaches the diagnostic's callsite from a thread that has a subscriber
+    /// installed, then rebuilds the interest cache.
+    ///
+    /// tracing caches a callsite's interest process-wide on first reach,
+    /// so a sibling test reaching it first from a subscriber-less thread
+    /// would pin it disabled for the whole test binary.
+    fn arm_pressure_callsite() {
+        let mut cache = GlyphCache::<usize>::new();
+        cache.counters.glyphs_dropped += 1;
+        cache.end_frame();
+        tracing::callsite::rebuild_interest_cache();
+    }
+
+    /// Runs `scenario` with a WARN counter installed and reports what it saw.
+    fn counting_warns(scenario: impl FnOnce(&WarnCounter)) -> usize {
+        let warns = WarnCounter::default();
+        tracing::subscriber::with_default(warns.clone(), || {
+            arm_pressure_callsite();
+            warns.reset();
+            scenario(&warns);
+        });
+        warns.count()
+    }
+
+    #[test]
+    fn repeated_failing_frames_log_once_per_interval() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+
+        let records = counting_warns(|_| {
+            for frame in 0..3 {
+                backend.fail_next_upload = Some(PageFaultKind::Transient);
+                assert_eq!(
+                    cache.get_or_insert(&mut backend, test_cache_key(frame), |_| Some(
+                        solid_glyph(3, 5)
+                    )),
+                    GlyphLookup::Missing
+                );
+                cache.end_frame();
+            }
+        });
+
+        assert_eq!(cache.counters().upload_transient_failures, 3);
+        assert_eq!(records, 1);
+    }
+
+    #[test]
+    fn one_record_carries_every_tally_of_a_churning_frame() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+
+        let records = counting_warns(|warns| {
+            fill_cold_pages(&mut cache, &mut backend);
+            assert_eq!(warns.count(), 0, "quiet frames must stay silent");
+
+            let _ = resident(cache.get_or_insert(
+                &mut backend,
+                test_cache_key(MAX_NORMAL_PAGES),
+                |_| Some(solid_glyph(PAGE_FILLING_GLYPH_PX, PAGE_FILLING_GLYPH_PX)),
+            ));
+            let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES + 1), |_| {
+                Some(solid_glyph(600, 20))
+            });
+            backend.fail_next_upload = Some(PageFaultKind::Transient);
+            let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES + 2), |_| {
+                Some(solid_glyph(3, 5))
+            });
+            cache.end_frame();
+        });
+
+        assert_eq!(cache.counters().evictions, 1);
+        assert_eq!(cache.counters().glyphs_oversized, 1);
+        assert_eq!(cache.counters().upload_transient_failures, 1);
+        assert_eq!(records, 1);
     }
 }
