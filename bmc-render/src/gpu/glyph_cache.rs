@@ -21,9 +21,7 @@
 //! Application-owned glyph atlas: cache identity and the page backend it
 //! uploads through.
 
-#[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
 pub const PAGE_SIZE_PX: usize = 512;
-#[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
 pub const MAX_NORMAL_PAGES: usize = 10;
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub const MAX_RESIDENT_ENTRIES: usize = 8192;
@@ -78,7 +76,7 @@ pub enum PageFaultKind {
 /// the caller skips this frame, counts, and retries later.
 /// Only `upload` can fault against a page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub struct PageCreateFailed;
 
 /// GL abstraction so the cache is unit-testable without a context;
@@ -86,7 +84,7 @@ pub struct PageCreateFailed;
 /// Dimensions are `usize` end-to-end:
 /// femtovg's `create_image_empty`/`update_image` take `usize`,
 /// so matching it here means no conversions at the only real boundary.
-#[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub trait PageBackend {
     type PageId: Copy + Eq + core::fmt::Debug;
     fn create_page(&mut self, size_px: usize) -> Result<Self::PageId, PageCreateFailed>;
@@ -101,7 +99,7 @@ pub trait PageBackend {
     ) -> Result<(), PageFaultKind>;
 }
 
-#[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 9 (BDK-696)"))]
 pub struct RasterGlyph {
     pub width: usize,
     pub height: usize,
@@ -112,8 +110,7 @@ pub struct RasterGlyph {
 
 /// Glyph bitmap geometry from swash's `Placement`,
 /// carried on the entry so a hit can emit a quad without re-rasterizing.
-#[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct RasterPlacement {
     pub left: i32,
     pub top: i32,
@@ -292,11 +289,252 @@ impl LruQueue {
     }
 }
 
+/// One atlas page: the backend's image plus the allocator that packs it.
+/// `alloc` is an `Option` so quarantine can drop the allocator's metadata
+/// while the page struct and its image stay retained.
+struct Page<P> {
+    id: P,
+    alloc: Option<etagere::BucketedAtlasAllocator>,
+    quarantined: bool,
+}
+
+impl<P> Page<P> {
+    fn new(id: P) -> Self {
+        let size = i32::try_from(PAGE_SIZE_PX).expect("BUG: page size exceeds i32");
+        Self {
+            id,
+            alloc: Some(etagere::BucketedAtlasAllocator::new(etagere::size2(
+                size, size,
+            ))),
+            quarantined: false,
+        }
+    }
+
+    fn allocate(&mut self, size: etagere::Size) -> Option<etagere::Allocation> {
+        if self.quarantined {
+            return None;
+        }
+        self.alloc.as_mut()?.allocate(size)
+    }
+
+    fn deallocate(&mut self, id: etagere::AllocId) {
+        self.alloc
+            .as_mut()
+            .expect("BUG: page released its allocator while an entry still held a rect")
+            .deallocate(id);
+    }
+}
+
+/// Lifetime tallies. `u64` because they are monotonic over the renderer's
+/// lifetime and the target is 32-bit.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Counters {
+    pub page_create_failures: u64,
+    pub upload_transient_failures: u64,
+}
+
+/// Where a glyph sits in the atlas, ready to be emitted as a textured quad.
+/// The UVs sample the inner `width × height` only, never the 1 px border.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlyphQuad<P> {
+    pub page: P,
+    pub u0: f32,
+    pub v0: f32,
+    pub u1: f32,
+    pub v1: f32,
+    pub placement: RasterPlacement,
+}
+
+/// `Missing` is retryable (the glyph has no coverage, or the backend faulted
+/// transiently); `Dropped` is not (the glyph can never fit a page).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum GlyphLookup<P> {
+    Resident(GlyphQuad<P>),
+    Missing,
+    Dropped,
+}
+
+#[expect(clippy::cast_precision_loss, reason = "bounded by PAGE_SIZE_PX")]
+fn uv(px: usize) -> f32 {
+    px as f32 / PAGE_SIZE_PX as f32
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
+    pages: Vec<Page<P>>,
+    map: hashbrown::HashMap<GlyphKey, u32>,
+    slab: EntrySlab,
+    lru: LruQueue,
+    generation: Generation,
+    counters: Counters,
+}
+
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
+    pub fn new() -> Self {
+        Self {
+            pages: Vec::new(),
+            map: hashbrown::HashMap::with_capacity(MAX_RESIDENT_ENTRIES),
+            slab: EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES),
+            lru: LruQueue::new(),
+            generation: 0,
+            counters: Counters::default(),
+        }
+    }
+
+    pub fn counters(&self) -> &Counters {
+        &self.counters
+    }
+
+    #[expect(dead_code, reason = "consumed in Task 4 (BDK-696)")]
+    pub fn end_frame(&mut self) {
+        self.generation += 1;
+    }
+
+    /// `rasterize` receives the **normalized** key,
+    /// so lookup and rasterization can never disagree on subpixel bins.
+    pub fn get_or_insert(
+        &mut self,
+        backend: &mut impl PageBackend<PageId = P>,
+        key: cosmic_text::CacheKey,
+        rasterize: impl FnOnce(GlyphKey) -> Option<RasterGlyph>,
+    ) -> GlyphLookup<P> {
+        let key = GlyphKey::normalize(key);
+
+        if let Some(&slot) = self.map.get(&key) {
+            self.slab.get_mut(slot).last_used = self.generation;
+            self.lru.promote(&mut self.slab, slot);
+            return GlyphLookup::Resident(self.quad(slot));
+        }
+
+        let Some(raster) = rasterize(key) else {
+            return GlyphLookup::Missing;
+        };
+
+        let padded_width = raster.width + 2;
+        let padded_height = raster.height + 2;
+        if padded_width > PAGE_SIZE_PX || padded_height > PAGE_SIZE_PX {
+            return GlyphLookup::Dropped;
+        }
+
+        let Some((page, allocation)) = self.allocate(backend, padded_width, padded_height) else {
+            return GlyphLookup::Missing;
+        };
+        // The allocation may span the whole shelf height; only its min corner
+        // is ours, and the content rect is what we upload.
+        let content_x = usize::try_from(allocation.rectangle.min.x)
+            .expect("BUG: allocation origin outside the page");
+        let content_y = usize::try_from(allocation.rectangle.min.y)
+            .expect("BUG: allocation origin outside the page");
+
+        let mut pixels = vec![0_u8; padded_width * padded_height];
+        for row in 0..raster.height {
+            let source = row * raster.width;
+            let target = (row + 1) * padded_width + 1;
+            pixels[target..target + raster.width]
+                .copy_from_slice(&raster.coverage[source..source + raster.width]);
+        }
+
+        let Some(slot) = self.slab.alloc(Entry {
+            key,
+            page,
+            alloc_id: allocation.id,
+            content_x,
+            content_y,
+            placement: RasterPlacement {
+                left: raster.left,
+                top: raster.top,
+                width: raster.width,
+                height: raster.height,
+            },
+            last_used: self.generation,
+            prev: NO_LINK,
+            next: NO_LINK,
+        }) else {
+            self.pages[page].deallocate(allocation.id);
+            return GlyphLookup::Missing;
+        };
+
+        if backend
+            .upload(
+                self.pages[page].id,
+                content_x,
+                content_y,
+                padded_width,
+                padded_height,
+                &pixels,
+            )
+            .is_err()
+        {
+            self.slab.free(slot);
+            self.pages[page].deallocate(allocation.id);
+            self.counters.upload_transient_failures += 1;
+            return GlyphLookup::Missing;
+        }
+
+        self.map.insert(key, slot);
+        self.lru.push_hot(&mut self.slab, slot);
+        GlyphLookup::Resident(self.quad(slot))
+    }
+
+    fn allocate(
+        &mut self,
+        backend: &mut impl PageBackend<PageId = P>,
+        padded_width: usize,
+        padded_height: usize,
+    ) -> Option<(usize, etagere::Allocation)> {
+        let size = etagere::size2(
+            i32::try_from(padded_width).expect("BUG: padded dim exceeds i32"),
+            i32::try_from(padded_height).expect("BUG: padded dim exceeds i32"),
+        );
+
+        if let Some(placed) = self.allocate_on_existing(size) {
+            return Some(placed);
+        }
+        if self.pages.len() >= MAX_NORMAL_PAGES {
+            return None;
+        }
+
+        let Ok(id) = backend.create_page(PAGE_SIZE_PX) else {
+            self.counters.page_create_failures += 1;
+            return None;
+        };
+        self.pages.push(Page::new(id));
+        Some(
+            self.allocate_on_existing(size)
+                .expect("BUG: a fresh page refused a rect that fits the page"),
+        )
+    }
+
+    fn allocate_on_existing(
+        &mut self,
+        size: etagere::Size,
+    ) -> Option<(usize, etagere::Allocation)> {
+        self.pages
+            .iter_mut()
+            .enumerate()
+            .find_map(|(index, page)| page.allocate(size).map(|placed| (index, placed)))
+    }
+
+    fn quad(&self, slot: u32) -> GlyphQuad<P> {
+        let entry = self.slab.get(slot);
+        let u0 = uv(entry.content_x + 1);
+        let v0 = uv(entry.content_y + 1);
+        GlyphQuad {
+            page: self.pages[entry.page].id,
+            u0,
+            v0,
+            u1: u0 + uv(entry.placement.width),
+            v1: v0 + uv(entry.placement.height),
+            placement: entry.placement,
+        }
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod test_support {
     use super::{PageBackend, PageCreateFailed, PageFaultKind};
 
-    #[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
     pub(crate) struct MockPage {
         pub size_px: usize,
         pub pixels: Vec<u8>,
@@ -305,7 +543,6 @@ pub(crate) mod test_support {
     /// In-memory stand-in for the femtovg pages, recording every call so tests
     /// can assert on upload rects and the lifetime page budget, not just texels.
     #[derive(Default)]
-    #[expect(dead_code, reason = "consumed in Task 3 (BDK-696)")]
     pub(crate) struct MockBackend {
         pub pages: Vec<MockPage>,
         /// Lifetime count, never decremented — the ≤ 21 page bound is about
@@ -481,11 +718,11 @@ mod tests {
         let _ = GlyphKey::normalize(key);
     }
 
-    /// Slab tests care only that the payload survives a round trip, so the key
-    /// is synthesized rather than shaped — shaping a font system per entry
-    /// would dominate the eight-thousand-entry runs.
-    fn test_key(index: usize) -> GlyphKey {
-        GlyphKey(cosmic_text::CacheKey {
+    /// Cache and slab tests care only that keys stay distinct, so the key is
+    /// synthesized rather than shaped — shaping a font system per entry would
+    /// dominate the eight-thousand-entry runs.
+    fn test_cache_key(index: usize) -> cosmic_text::CacheKey {
+        cosmic_text::CacheKey {
             font_id: cosmic_text::fontdb::ID::dummy(),
             glyph_id: u16::try_from(index).expect("BUG: test index outside glyph id range"),
             font_size_bits: 17.0_f32.to_bits(),
@@ -493,7 +730,11 @@ mod tests {
             y_bin: SubpixelBin::Zero,
             font_weight: cosmic_text::fontdb::Weight::NORMAL,
             flags: cosmic_text::CacheKeyFlags::empty(),
-        })
+        }
+    }
+
+    fn test_key(index: usize) -> GlyphKey {
+        GlyphKey(test_cache_key(index))
     }
 
     /// Every field varies with the index
@@ -634,5 +875,179 @@ mod tests {
         assert_eq!(slab.get(reused), &test_entry(1234));
         assert_eq!(slab.capacity(), cap_before);
         assert_eq!(slab.len(), MAX_RESIDENT_ENTRIES);
+    }
+
+    fn solid_glyph(width: usize, height: usize) -> RasterGlyph {
+        RasterGlyph {
+            width,
+            height,
+            left: 1,
+            top: -2,
+            coverage: vec![0xFF; width * height],
+        }
+    }
+
+    /// Derived through `f32::from` rather than the cache's own `uv`,
+    /// so the expectation is arithmetic the implementation does not supply.
+    fn uv_of(px: usize) -> f32 {
+        f32::from(u16::try_from(px).expect("BUG: test coordinate outside page range")) / 512.0
+    }
+
+    fn resident<P: Copy + Eq + core::fmt::Debug>(lookup: GlyphLookup<P>) -> GlyphQuad<P> {
+        match lookup {
+            GlyphLookup::Resident(quad) => quad,
+            GlyphLookup::Missing => panic!("BUG: expected a resident glyph, got Missing"),
+            GlyphLookup::Dropped => panic!("BUG: expected a resident glyph, got Dropped"),
+        }
+    }
+
+    /// The odd 3 px width is deliberate: its padded row stride of 5 is
+    /// accepted by no GL unpack alignment above 1.
+    #[test]
+    fn miss_uploads_content_rect_with_zeroed_border() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let key = test_cache_key(1);
+
+        let quad = resident(cache.get_or_insert(&mut backend, key, |normalized| {
+            assert_eq!(normalized, GlyphKey::normalize(key));
+            Some(solid_glyph(3, 5))
+        }));
+
+        let &[(page, x, y, width, height)] = backend.uploads.as_slice() else {
+            panic!(
+                "BUG: expected exactly one upload, got {:?}",
+                backend.uploads
+            );
+        };
+        assert_eq!((width, height), (5, 7));
+        assert_eq!(
+            quad,
+            GlyphQuad {
+                page,
+                u0: uv_of(x + 1),
+                v0: uv_of(y + 1),
+                u1: uv_of(x + 4),
+                v1: uv_of(y + 6),
+                placement: RasterPlacement {
+                    left: 1,
+                    top: -2,
+                    width: 3,
+                    height: 5,
+                },
+            }
+        );
+
+        let pixels = &backend.pages[page].pixels;
+        for row in 0..height {
+            for col in 0..width {
+                let on_border = row == 0 || row == height - 1 || col == 0 || col == width - 1;
+                assert_eq!(
+                    pixels[(y + row) * PAGE_SIZE_PX + x + col],
+                    if on_border { 0x00 } else { 0xFF },
+                    "content texel ({col}, {row})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn hit_returns_same_quad_without_rasterizing() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let key = test_cache_key(1);
+
+        let first = resident(cache.get_or_insert(&mut backend, key, |_| Some(solid_glyph(3, 5))));
+        let second = resident(cache.get_or_insert(&mut backend, key, |_| {
+            panic!("BUG: a hit must not rasterize")
+        }));
+
+        assert_eq!(second, first);
+        assert_eq!(backend.uploads.len(), 1);
+        assert_eq!(backend.pages_created, 1);
+    }
+
+    #[test]
+    fn upload_failure_rolls_back_the_allocation() {
+        let key = test_cache_key(1);
+        let mut control_backend = test_support::MockBackend::default();
+        let mut control = GlyphCache::new();
+        let _ = control.get_or_insert(&mut control_backend, key, |_| Some(solid_glyph(3, 5)));
+        let clean_rect = *control_backend
+            .uploads
+            .first()
+            .expect("BUG: the control insertion uploaded nothing");
+
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        backend.fail_next_upload = Some(PageFaultKind::Transient);
+
+        assert_eq!(
+            cache.get_or_insert(&mut backend, key, |_| Some(solid_glyph(3, 5))),
+            GlyphLookup::Missing
+        );
+        assert_eq!(cache.counters().upload_transient_failures, 1);
+        assert!(!cache.map.contains_key(&GlyphKey::normalize(key)));
+        assert_eq!(cache.slab.len(), 0);
+        assert!(backend.uploads.is_empty());
+
+        let _ = resident(cache.get_or_insert(&mut backend, key, |_| Some(solid_glyph(3, 5))));
+        assert_eq!(backend.uploads, vec![clean_rect]);
+    }
+
+    /// The sizes are chosen against etagere's shelf rule —
+    /// a shelf serves a request
+    /// only while its surplus height is at most the request's own height —
+    /// so the 16 px shelf the first rect opens still takes the second,
+    /// while anything shorter would open a shelf of its own.
+    ///
+    /// Asserting the recorded upload rects rather than page texels is
+    /// deliberate: the page starts zeroed, so "texels outside stayed 0" would
+    /// also hold if the whole zero-filled shelf surplus had been uploaded.
+    #[test]
+    fn two_glyph_sizes_share_a_shelf_without_overlap() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+
+        let _ = resident(
+            cache.get_or_insert(&mut backend, test_cache_key(1), |_| Some(solid_glyph(8, 8))),
+        );
+        let _ = resident(
+            cache.get_or_insert(&mut backend, test_cache_key(2), |_| Some(solid_glyph(6, 6))),
+        );
+
+        let &[
+            (first_page, first_x, first_y, 10, 10),
+            (second_page, second_x, second_y, 8, 8),
+        ] = backend.uploads.as_slice()
+        else {
+            panic!(
+                "BUG: expected one 10x10 and one 8x8 content rect, got {:?}",
+                backend.uploads
+            );
+        };
+        assert_eq!(first_page, second_page);
+        assert_eq!(first_y, second_y, "both rects must sit on one shelf");
+        assert!(
+            first_x + 10 <= second_x || second_x + 8 <= first_x,
+            "shelf mates overlap: {first_x}..{} and {second_x}..{}",
+            first_x + 10,
+            second_x + 8
+        );
+    }
+
+    #[test]
+    fn oversized_raster_is_dropped_without_page_creation() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let key = test_cache_key(1);
+
+        assert_eq!(
+            cache.get_or_insert(&mut backend, key, |_| Some(solid_glyph(600, 20))),
+            GlyphLookup::Dropped
+        );
+        assert_eq!(backend.pages_created, 0);
+        assert!(backend.uploads.is_empty());
+        assert!(!cache.map.contains_key(&GlyphKey::normalize(key)));
     }
 }
