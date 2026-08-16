@@ -57,6 +57,7 @@ use cosmic_text::{
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 
+use crate::gpu::glyph_cache::RasterGlyph;
 use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
 
 /// Three weight-variant fonts used to render text spans. The renderer picks
@@ -524,6 +525,49 @@ fn segment_width(canvas: &mut Canvas<OpenGl>, fonts: Fonts, text: &str, style: &
     canvas
         .measure_text(0.0, 0.0, text, &paint)
         .map_or(0.0, |m| m.width())
+}
+
+// ── Glyph rasterization ─────────────────────────────────────────────
+
+/// Rasterize one glyph into 8-bit alpha coverage.
+///
+/// Deliberately `get_image_uncached`:
+/// cosmic-text's `get_image` memoizes into an unbounded map,
+/// the very growth this cache exists to replace.
+/// `None` covers everything with no coverage to upload — a missing font,
+/// a colour or subpixel bitmap, an empty box such as a space.
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
+pub(crate) fn rasterize_glyph(
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut FontSystem,
+    key: cosmic_text::CacheKey,
+) -> Option<RasterGlyph> {
+    let image = swash.get_image_uncached(font_system, key)?;
+    if image.content != cosmic_text::SwashContent::Mask {
+        return None;
+    }
+
+    // The single u32 → usize boundary: swash sizes glyphs in u32, the cache
+    // and everything under it in usize.
+    let width = usize::try_from(image.placement.width).expect("BUG: swash dimension exceeds usize");
+    let height =
+        usize::try_from(image.placement.height).expect("BUG: swash dimension exceeds usize");
+    if width * height == 0 {
+        return None;
+    }
+    assert_eq!(
+        image.data.len(),
+        width * height,
+        "BUG: swash mask is not a tightly packed bitmap of its placement"
+    );
+
+    Some(RasterGlyph {
+        width,
+        height,
+        left: image.placement.left,
+        top: image.placement.top,
+        coverage: image.data,
+    })
 }
 
 // ── Autofit helpers ─────────────────────────────────────────────────
@@ -1086,6 +1130,132 @@ mod autofit_tests {
         assert_eq!(
             search_fit_size(16, 16, Some(100.0), Some(100.0), linear),
             16
+        );
+    }
+}
+
+#[cfg(test)]
+mod rasterize_tests {
+    use cosmic_text::fontdb;
+
+    use super::{FontSystem, rasterize_glyph};
+    use crate::gpu::glyph_cache::PAGE_SIZE_PX;
+
+    const CORPUS_SIZE_PX: f32 = 92.0;
+
+    fn key_for(
+        face: (fontdb::ID, fontdb::Weight),
+        glyph_id: u16,
+        flags: cosmic_text::CacheKeyFlags,
+    ) -> cosmic_text::CacheKey {
+        cosmic_text::CacheKey {
+            font_id: face.0,
+            glyph_id,
+            font_size_bits: CORPUS_SIZE_PX.to_bits(),
+            x_bin: cosmic_text::SubpixelBin::Zero,
+            y_bin: cosmic_text::SubpixelBin::Zero,
+            font_weight: face.1,
+            flags,
+        }
+    }
+
+    /// `FaceInfo` carries no glyph count, and `db()` borrows the font system
+    /// immutably while `get_font` needs it mutably — so faces are snapshotted
+    /// in two owned passes before anything is rasterized.
+    fn corpus(font_system: &mut FontSystem) -> Vec<(fontdb::ID, fontdb::Weight, u16)> {
+        let faces: Vec<(fontdb::ID, fontdb::Weight)> = font_system
+            .db()
+            .faces()
+            .map(|face| (face.id, face.weight))
+            .collect();
+        faces
+            .into_iter()
+            .map(|(id, weight)| {
+                let font = font_system
+                    .get_font(id, weight)
+                    .expect("BUG: font database face has no loaded font");
+                let count = font.as_swash().glyph_metrics(&[]).glyph_count();
+                (id, weight, count)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn corpus_rasterizes_within_page_bounds() {
+        let mut font_system = crate::gpu::renderer::build_font_system();
+        let mut swash = cosmic_text::SwashCache::new();
+
+        let mut rasterized = 0_usize;
+        let mut odd_width = 0_usize;
+        let mut oversized = 0_usize;
+        for (id, weight, glyph_count) in corpus(&mut font_system) {
+            for glyph_id in 0..glyph_count {
+                let key = key_for((id, weight), glyph_id, cosmic_text::CacheKeyFlags::empty());
+                let Some(glyph) = rasterize_glyph(&mut swash, &mut font_system, key) else {
+                    continue;
+                };
+                assert_eq!(
+                    glyph.coverage.len(),
+                    glyph.width * glyph.height,
+                    "coverage must be a tightly packed mask of its placement"
+                );
+                assert!(
+                    glyph.width > 0 && glyph.height > 0,
+                    "empty coverage must be reported as a miss, not a zero-sized glyph"
+                );
+                rasterized += 1;
+                odd_width += usize::from(glyph.width % 2 == 1);
+                oversized +=
+                    usize::from(glyph.width + 2 > PAGE_SIZE_PX || glyph.height + 2 > PAGE_SIZE_PX);
+            }
+        }
+
+        assert!(rasterized > 0, "the shipped fonts must rasterize something");
+        assert!(
+            odd_width > 0,
+            "the corpus must exercise odd widths, which stress row padding"
+        );
+        assert_eq!(
+            oversized, 0,
+            "no shipped glyph at {CORPUS_SIZE_PX} px may exceed a page once padded"
+        );
+    }
+
+    #[test]
+    fn fake_italic_key_produces_skewed_coverage() {
+        let mut font_system = crate::gpu::renderer::build_font_system();
+        let mut swash = cosmic_text::SwashCache::new();
+
+        let (id, weight, _) = corpus(&mut font_system)
+            .into_iter()
+            .next()
+            .expect("BUG: font database is empty");
+        let font = font_system
+            .get_font(id, weight)
+            .expect("BUG: font database face has no loaded font");
+        let glyph_id = font.as_swash().charmap().map('W');
+
+        let upright = rasterize_glyph(
+            &mut swash,
+            &mut font_system,
+            key_for((id, weight), glyph_id, cosmic_text::CacheKeyFlags::empty()),
+        )
+        .expect("BUG: 'W' does not rasterize");
+        let italic = rasterize_glyph(
+            &mut swash,
+            &mut font_system,
+            key_for(
+                (id, weight),
+                glyph_id,
+                cosmic_text::CacheKeyFlags::FAKE_ITALIC,
+            ),
+        )
+        .expect("BUG: skewed 'W' does not rasterize");
+
+        assert_ne!(
+            (upright.width, upright.coverage),
+            (italic.width, italic.coverage),
+            "FAKE_ITALIC is part of the key because it changes the raster"
         );
     }
 }

@@ -99,7 +99,7 @@ pub trait PageBackend {
     ) -> Result<(), PageFaultKind>;
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 9 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub struct RasterGlyph {
     pub width: usize,
     pub height: usize,
