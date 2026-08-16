@@ -53,7 +53,8 @@ use std::collections::HashMap;
 use std::hash::{Hash, Hasher};
 
 use cosmic_text::{
-    Align, Attrs, Buffer, Color, Family, FontSystem, LayoutGlyph, Metrics, Shaping, Style, Weight,
+    Align, Attrs, Buffer, Color, Family, FontSystem, LayoutGlyph, Metrics, Scroll, Shaping, Style,
+    Weight,
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
 
@@ -108,10 +109,10 @@ impl Fonts {
 // ── Paragraph layout cache ──────────────────────────────────────────
 
 /// Cached paragraph layout (cosmic-text Buffer kept for layout_runs during render).
-struct ParagraphLayoutEntry {
-    buffer: Buffer,
-    width: f32,
-    height: f32,
+pub(crate) struct ParagraphLayoutEntry {
+    pub(crate) buffer: Buffer,
+    pub(crate) width: f32,
+    pub(crate) height: f32,
     last_used_frame: u64,
 }
 
@@ -119,14 +120,22 @@ struct ParagraphLayoutEntry {
 pub struct ParagraphLayoutCache {
     entries: HashMap<u64, ParagraphLayoutEntry>,
     frame_counter: u64,
+    /// Shaping runs taken by the single-line miss path.
+    /// Distinguishes a cache hit from a reshape that replaces the same entry,
+    /// which entry count and width stability both survive.
+    #[cfg(test)]
+    single_line_shapes: usize,
 }
 
 impl std::fmt::Debug for ParagraphLayoutCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ParagraphLayoutCache")
+        let mut fields = f.debug_struct("ParagraphLayoutCache");
+        fields
             .field("entries", &self.entries.len())
-            .field("frame_counter", &self.frame_counter)
-            .finish()
+            .field("frame_counter", &self.frame_counter);
+        #[cfg(test)]
+        fields.field("single_line_shapes", &self.single_line_shapes);
+        fields.finish()
     }
 }
 
@@ -136,6 +145,8 @@ impl ParagraphLayoutCache {
         Self {
             entries: HashMap::new(),
             frame_counter: 0,
+            #[cfg(test)]
+            single_line_shapes: 0,
         }
     }
 
@@ -146,18 +157,8 @@ impl ParagraphLayoutCache {
             .retain(|_, e| e.last_used_frame + 1 >= frame_counter);
     }
 
-    /// Measure paragraph dimensions, shaping if not cached.
-    pub fn measure(
-        &mut self,
-        font_system: &mut FontSystem,
-        base_style: &TextStyle,
-        spans: &[SpanData],
-        max_width: Option<f32>,
-    ) -> (f32, f32) {
-        let key = cache_key(base_style, spans, max_width);
-        let frame = self.frame_counter;
-
-        // Evict oldest if at capacity
+    /// Evict the least recently used entry to make room for `key`.
+    fn evict_for(&mut self, key: u64) {
         if self.entries.len() >= 256
             && !self.entries.contains_key(&key)
             && let Some(&oldest) = self
@@ -168,6 +169,35 @@ impl ParagraphLayoutCache {
         {
             self.entries.remove(&oldest);
         }
+    }
+
+    /// Measure paragraph dimensions, shaping if not cached.
+    pub fn measure(
+        &mut self,
+        font_system: &mut FontSystem,
+        base_style: &TextStyle,
+        spans: &[SpanData],
+        max_width: Option<f32>,
+    ) -> (f32, f32) {
+        let entry = self.layout(font_system, base_style, spans, max_width);
+        (entry.width, entry.height)
+    }
+
+    /// Lay a paragraph out, shaping if not cached.
+    ///
+    /// `pub(crate)`, not `pub`: [`ParagraphLayoutEntry`] is crate-private,
+    /// and a public method returning it
+    /// would be a private interface in a public module.
+    pub(crate) fn layout(
+        &mut self,
+        font_system: &mut FontSystem,
+        base_style: &TextStyle,
+        spans: &[SpanData],
+        max_width: Option<f32>,
+    ) -> &ParagraphLayoutEntry {
+        let key = cache_key(base_style, spans, max_width);
+        let frame = self.frame_counter;
+        self.evict_for(key);
 
         let entry = self.entries.entry(key).or_insert_with(|| {
             // Styles still come from `spans` — normalizing only edits text, never
@@ -183,7 +213,40 @@ impl ParagraphLayoutCache {
             }
         });
         entry.last_used_frame = frame;
-        (entry.width, entry.height)
+        entry
+    }
+
+    /// Lay a single line of uniformly styled text out, shaping if not cached.
+    ///
+    /// Kept apart from [`Self::layout`] because [`TextStyle::size`] is `u32`,
+    /// which truncates every fractional and animated size to a whole pixel.
+    #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
+    pub(crate) fn layout_single_line(
+        &mut self,
+        font_system: &mut FontSystem,
+        style: LineStyle,
+        text: &str,
+    ) -> &ParagraphLayoutEntry {
+        let key = single_line_cache_key(style, text);
+        let frame = self.frame_counter;
+        self.evict_for(key);
+
+        #[cfg(test)]
+        if !self.entries.contains_key(&key) {
+            self.single_line_shapes += 1;
+        }
+
+        let entry = self.entries.entry(key).or_insert_with(|| {
+            let (buffer, width, height) = shape_single_line(font_system, style, text);
+            ParagraphLayoutEntry {
+                buffer,
+                width,
+                height,
+                last_used_frame: frame,
+            }
+        });
+        entry.last_used_frame = frame;
+        entry
     }
 
     /// Draw a paragraph using cached layout. Calls FemtoVG fill_text per span segment.
@@ -282,9 +345,21 @@ impl ParagraphLayoutCache {
 
 // ── Internal helpers ────────────────────────────────────────────────
 
+#[derive(Clone, Copy, Hash)]
+enum LayoutDomain {
+    SingleLine,
+    Paragraph,
+}
+
+fn layout_cache_hasher(domain: LayoutDomain) -> std::collections::hash_map::DefaultHasher {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    domain.hash(&mut hasher);
+    hasher
+}
+
 /// Compute cache key from style + spans + max_width.
 fn cache_key(base_style: &TextStyle, spans: &[SpanData], max_width: Option<f32>) -> u64 {
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    let mut hasher = layout_cache_hasher(LayoutDomain::Paragraph);
 
     base_style.size.hash(&mut hasher);
     base_style.weight.hash(&mut hasher);
@@ -402,6 +477,225 @@ pub fn build_attrs(style: &TextStyle) -> Attrs<'static> {
         style.color.blue(),
         style.color.alpha(),
     ))
+}
+
+// ── Single-line layout ──────────────────────────────────────────────
+
+/// Style of one uniformly styled line of text.
+///
+/// Carries the size as `f32`, which [`TextStyle`] cannot:
+/// its `u32` size expresses neither a fractional nor an animated size.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LineStyle {
+    pub family: FontFamily,
+    pub weight: FontWeight,
+    pub italic: bool,
+    pub size: f32,
+}
+
+/// Compute the cache key of a single line.
+///
+/// `to_bits` is what makes the size hashable. Its quirks around `-0.0` and `NaN`
+/// never bite, because a size reaching here is always positive.
+fn single_line_cache_key(style: LineStyle, text: &str) -> u64 {
+    let mut hasher = layout_cache_hasher(LayoutDomain::SingleLine);
+    (style.family as u8).hash(&mut hasher);
+    style.weight.hash(&mut hasher);
+    style.italic.hash(&mut hasher);
+    style.size.to_bits().hash(&mut hasher);
+    text.hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Build cosmic_text Attrs for a single line. No colour: the single-line callers
+/// paint through FemtoVG rather than through cosmic-text.
+fn line_attrs(style: LineStyle) -> Attrs<'static> {
+    let family_name = match style.family {
+        FontFamily::Sans => "Braiins Sans",
+        FontFamily::DeckSans => "Braiins Deck Sans",
+    };
+    let attrs = Attrs::new()
+        .family(Family::Name(family_name))
+        .weight(Weight(u16::from(style.weight)));
+
+    // Every embedded face is upright, so `Style::Italic` is what makes cosmic-text
+    // flag the glyphs `FAKE_ITALIC` and the rasterizer skew them.
+    if style.italic {
+        attrs.style(Style::Italic)
+    } else {
+        attrs
+    }
+}
+
+/// Shape one uniformly styled line, unwrapped. Returns (buffer, width, height).
+fn shape_single_line(
+    font_system: &mut FontSystem,
+    style: LineStyle,
+    text: &str,
+) -> (Buffer, f32, f32) {
+    let metrics = Metrics::new(style.size, style.size);
+    let mut buffer = Buffer::new(font_system, metrics);
+    buffer.set_text(
+        font_system,
+        text,
+        &line_attrs(style),
+        Shaping::Advanced,
+        None,
+    );
+    buffer.shape_until_scroll(font_system, false);
+
+    // Unrounded, unlike the paragraph path.
+    // A single-line measurement feeds layout arithmetic
+    // that a whole-pixel ceiling would visibly shift.
+    let width = buffer
+        .layout_runs()
+        .map(|run| run.line_w)
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap_or(0.0);
+    let line_count = buffer.layout_runs().count().max(1);
+    let height = line_count as f32 * metrics.line_height;
+
+    (buffer, width, height)
+}
+
+// ── Per-line glyph extraction ───────────────────────────────────────
+
+/// One visual line's glyphs, with the metrics needed to place it.
+#[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
+pub(crate) struct LineGlyphs {
+    pub glyphs: Vec<PositionedGlyphInfo>,
+    pub width: f32,
+    pub max_ascent: f32,
+    pub max_descent: f32,
+    /// Paragraph-relative alphabetic baseline of this visual line.
+    pub baseline_y: f32,
+}
+
+/// One glyph, positioned relative to its line's alphabetic baseline.
+#[expect(dead_code, reason = "consumed in Task 11 (BDK-696)")]
+pub(crate) struct PositionedGlyphInfo {
+    pub key: cosmic_text::CacheKey,
+    pub x: f32,
+    /// Alphabetic-baseline-relative, with the shaper's offset folded in.
+    pub y: f32,
+    /// Advance width. Origins alone recover neither the last glyph's advance
+    /// nor the extents of an RTL run.
+    pub w: f32,
+    pub font_id: cosmic_text::fontdb::ID,
+    pub font_size: f32,
+    pub flags: cosmic_text::CacheKeyFlags,
+    pub glyph_id: u16,
+    /// Span index, as tagged through `Attrs::metadata`.
+    /// Selects the glyph's paint and decorations.
+    pub metadata: usize,
+}
+
+/// Fold the shaper's offsets into the glyph position,
+/// exactly as [`LayoutGlyph::physical`] does before deriving the cache key.
+/// The key already accounts for them, so dropping them here
+/// would ask for a mark's raster and then draw it on the base letter's origin.
+fn positioned_glyph(glyph: &LayoutGlyph) -> PositionedGlyphInfo {
+    PositionedGlyphInfo {
+        key: glyph.physical((0.0, 0.0), 1.0).cache_key,
+        x: glyph.x + glyph.font_size * glyph.x_offset,
+        y: glyph.y - glyph.font_size * glyph.y_offset,
+        w: glyph.w,
+        font_id: glyph.font_id,
+        font_size: glyph.font_size,
+        flags: glyph.cache_key_flags,
+        glyph_id: glyph.glyph_id,
+        metadata: glyph.metadata,
+    }
+}
+
+/// Extract every visual line of a shaped buffer, each with its own metrics.
+///
+/// Walks `LayoutLine`s directly rather than `layout_runs`,
+/// which exposes neither `max_ascent` nor `max_descent` —
+/// the two metrics the baseline contract is defined in terms of.
+/// `baseline_y` reimplements `LayoutRunIter`'s vertical advance,
+/// which is equivalent only for an unscrolled, height-unbounded buffer.
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
+pub(crate) fn extract_lines(buffer: &Buffer) -> Vec<LineGlyphs> {
+    assert_eq!(
+        buffer.scroll(),
+        Scroll::default(),
+        "BUG: extract_lines cannot place the lines of a scrolled buffer"
+    );
+    assert!(
+        buffer.size().1.is_none(),
+        "BUG: extract_lines cannot place the lines of a height-bounded buffer"
+    );
+
+    let default_line_height = buffer.metrics().line_height;
+    let mut lines = Vec::new();
+    let mut line_top = 0.0_f32;
+    for buffer_line in &buffer.lines {
+        // `layout_runs` stops at the first unshaped line rather than skipping it.
+        let Some(layout) = buffer_line.layout_opt() else {
+            break;
+        };
+        for layout_line in layout {
+            let line_height = layout_line.line_height_opt.unwrap_or(default_line_height);
+            let glyph_height = layout_line.max_ascent + layout_line.max_descent;
+            let centering_offset = (line_height - glyph_height) / 2.0;
+            lines.push(LineGlyphs {
+                glyphs: layout_line.glyphs.iter().map(positioned_glyph).collect(),
+                width: layout_line.w,
+                max_ascent: layout_line.max_ascent,
+                max_descent: layout_line.max_descent,
+                baseline_y: line_top + centering_offset + layout_line.max_ascent,
+            });
+            line_top += line_height;
+        }
+    }
+
+    #[cfg(debug_assertions)]
+    assert_lines_match_layout_runs(buffer, &lines);
+
+    lines
+}
+
+/// Pin the reimplemented vertical advance to the original,
+/// which it matches only under the preconditions `extract_lines` asserts.
+#[cfg(debug_assertions)]
+#[expect(
+    clippy::float_cmp,
+    reason = "the accumulation must reproduce layout_runs bit for bit"
+)]
+fn assert_lines_match_layout_runs(buffer: &Buffer, lines: &[LineGlyphs]) {
+    let runs: Vec<f32> = buffer.layout_runs().map(|run| run.line_y).collect();
+    debug_assert_eq!(
+        runs.len(),
+        lines.len(),
+        "BUG: extract_lines disagrees with layout_runs on the line count"
+    );
+    for (line_i, (run_y, line)) in runs.iter().zip(lines).enumerate() {
+        debug_assert_eq!(
+            *run_y, line.baseline_y,
+            "BUG: extract_lines disagrees with layout_runs on line {line_i}'s baseline"
+        );
+    }
+}
+
+/// Convert a FemtoVG baseline anchor to the alphabetic baseline
+/// that [`PositionedGlyphInfo::y`] is relative to.
+///
+/// Derived from the line's own `max_ascent`/`max_descent`.
+/// Never from `line_y − line_top`, which carries half of the line's leading.
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
+pub(crate) fn baseline_to_alphabetic(
+    y: f32,
+    baseline: femtovg::Baseline,
+    max_ascent: f32,
+    max_descent: f32,
+) -> f32 {
+    match baseline {
+        femtovg::Baseline::Alphabetic => y,
+        femtovg::Baseline::Top => y + max_ascent,
+        femtovg::Baseline::Bottom => y - max_descent,
+        femtovg::Baseline::Middle => y + (max_ascent - max_descent) / 2.0,
+    }
 }
 
 /// Rewrite `\r` and `\r\n` to a single `\n` before shaping, so a carriage return
@@ -1012,6 +1306,267 @@ mod span_attribution_tests {
         assert_eq!(
             assert_span_attribution(&spans, 400.0),
             BTreeSet::from([0, 1, 2])
+        );
+    }
+}
+
+/// Per-visual-line glyph extraction, the baseline contract,
+/// and the single-line entry point.
+/// CPU-only — nothing here needs a GL context.
+#[cfg(test)]
+mod line_layout_tests {
+    use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Family, FontSystem, Metrics, Shaping};
+
+    use super::{LineStyle, ParagraphLayoutCache, baseline_to_alphabetic, extract_lines};
+    use crate::tree::{FontFamily, FontWeight};
+
+    fn font_system() -> FontSystem {
+        crate::gpu::renderer::build_font_system()
+    }
+
+    fn line_style(size: f32, italic: bool) -> LineStyle {
+        LineStyle {
+            family: FontFamily::Sans,
+            weight: FontWeight::REGULAR,
+            italic,
+            size,
+        }
+    }
+
+    /// Two spans of very different size, forced onto separate lines by `max_width`.
+    ///
+    /// Built as a raw buffer because `SpanData` cannot express a per-span size:
+    /// `resolve_style` overrides weight, colour, italic and decorations only.
+    fn mixed_size_buffer(font_system: &mut FontSystem) -> Buffer {
+        let mut buffer = Buffer::new(font_system, Metrics::new(40.0, 48.0));
+        buffer.set_size(font_system, Some(130.0), None);
+        let family = Family::Name("Braiins Sans");
+        let small = Attrs::new()
+            .family(family)
+            .metrics(Metrics::new(14.0, 20.0))
+            .metadata(0);
+        let large = Attrs::new()
+            .family(family)
+            .metrics(Metrics::new(40.0, 48.0))
+            .metadata(1);
+        buffer.set_rich_text(
+            font_system,
+            [("tiny ", small), ("HUGE", large)],
+            &Attrs::new().family(family),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(font_system, false);
+        buffer
+    }
+
+    /// A wrapped line's metrics come from the glyphs on that line,
+    /// not from the buffer or from the tallest line in the paragraph.
+    /// Otherwise small text following large text sits against the large ascent.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "two ascents differing at all is the point"
+    )]
+    fn wrapped_line_uses_its_own_metrics() {
+        let mut font_system = font_system();
+        let buffer = mixed_size_buffer(&mut font_system);
+        let lines = extract_lines(&buffer);
+
+        assert_eq!(lines.len(), 2, "the two spans must land on separate lines");
+        assert_ne!(
+            lines[0].max_ascent, lines[1].max_ascent,
+            "the two lines must differ in ascent, or this proves nothing",
+        );
+        for (i, line) in lines.iter().enumerate() {
+            assert!(!line.glyphs.is_empty(), "line {i} drew no glyphs");
+            assert!(
+                line.glyphs.iter().all(|g| g.metadata == i),
+                "line {i} carries glyphs from another wrap",
+            );
+        }
+    }
+
+    /// Every femtovg baseline must convert to the alphabetic baseline
+    /// that glyph positions are relative to; a wrong sign here shifts a line.
+    #[test]
+    #[expect(clippy::float_cmp, reason = "the conversion is exact arithmetic")]
+    fn baseline_conversion_matrix() {
+        let (max_ascent, max_descent, y) = (10.0_f32, 4.0_f32, 100.0_f32);
+        assert_eq!(
+            baseline_to_alphabetic(y, femtovg::Baseline::Alphabetic, max_ascent, max_descent),
+            100.0,
+        );
+        assert_eq!(
+            baseline_to_alphabetic(y, femtovg::Baseline::Top, max_ascent, max_descent),
+            110.0,
+        );
+        assert_eq!(
+            baseline_to_alphabetic(y, femtovg::Baseline::Bottom, max_ascent, max_descent),
+            96.0,
+        );
+        assert_eq!(
+            baseline_to_alphabetic(y, femtovg::Baseline::Middle, max_ascent, max_descent),
+            103.0,
+        );
+    }
+
+    /// Repeating a single-line draw within a frame must reuse the shaped buffer,
+    /// so the miss path is what gets counted.
+    #[test]
+    fn single_line_layout_is_cached() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+        let style = line_style(24.0, false);
+
+        assert_eq!(cache.single_line_shapes, 0);
+        cache.layout_single_line(&mut font_system, style, "12:34");
+        assert_eq!(cache.single_line_shapes, 1, "the first call must shape");
+        cache.layout_single_line(&mut font_system, style, "12:34");
+        assert_eq!(
+            cache.single_line_shapes, 1,
+            "the second call must not shape"
+        );
+    }
+
+    /// Fractional sizes must key distinct entries.
+    /// This is why the single-line path exists at all:
+    /// `TextStyle`'s `u32` size would collapse an animated 17.5 px onto 17 px.
+    #[test]
+    fn fractional_sizes_get_distinct_entries() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+
+        let entry = cache.layout_single_line(&mut font_system, line_style(17.0, false), "size");
+        let whole = extract_lines(&entry.buffer);
+        let entry = cache.layout_single_line(&mut font_system, line_style(17.5, false), "size");
+        let fractional = extract_lines(&entry.buffer);
+
+        assert_eq!(
+            cache.entries.len(),
+            2,
+            "a half-pixel step must not collapse"
+        );
+        assert_eq!(
+            whole[0].glyphs[0].key.font_size_bits,
+            17.0_f32.to_bits(),
+            "the whole size must reach the glyph key unrounded",
+        );
+        assert_eq!(
+            fractional[0].glyphs[0].key.font_size_bits,
+            17.5_f32.to_bits(),
+            "the fractional size must reach the glyph key unrounded",
+        );
+    }
+
+    /// Every embedded face is upright, so an italic single-line style renders
+    /// as italic only if cosmic-text flags its glyphs `FAKE_ITALIC`
+    /// and the rasterizer skews them.
+    #[test]
+    fn italic_line_style_emits_fake_italic_keys() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+
+        for italic in [false, true] {
+            let entry =
+                cache.layout_single_line(&mut font_system, line_style(24.0, italic), "Slanted");
+            let lines = extract_lines(&entry.buffer);
+            let glyphs: Vec<_> = lines.iter().flat_map(|l| l.glyphs.iter()).collect();
+            assert!(!glyphs.is_empty(), "italic={italic} shaped no glyphs");
+            assert_eq!(
+                glyphs
+                    .iter()
+                    .all(|g| g.key.flags.contains(CacheKeyFlags::FAKE_ITALIC)),
+                italic,
+                "italic={italic} did not reach the glyph keys",
+            );
+        }
+    }
+
+    /// Line height is leading, not a metric of the glyphs.
+    /// Folding half-leading into ascent or descent would move every baseline
+    /// the moment a widget asks for a non-default line height.
+    #[test]
+    fn non_default_line_height_does_not_shift_baselines() {
+        let mut font_system = font_system();
+        let metrics_of = |font_system: &mut FontSystem, scale: f32| {
+            let mut buffer = Buffer::new(font_system, Metrics::new(24.0, 24.0 * scale));
+            buffer.set_text(
+                font_system,
+                "Leading",
+                &Attrs::new().family(Family::Name("Braiins Sans")),
+                Shaping::Advanced,
+                None,
+            );
+            buffer.shape_until_scroll(font_system, false);
+            let lines = extract_lines(&buffer);
+            assert_eq!(lines.len(), 1);
+            (lines[0].max_ascent, lines[0].max_descent)
+        };
+
+        assert_eq!(
+            metrics_of(&mut font_system, 1.0),
+            metrics_of(&mut font_system, 2.0),
+        );
+    }
+
+    /// A mark's placement lives in `x_offset`/`y_offset`, which the cache key
+    /// already folds in. Dropping them from the position
+    /// would stack every diacritic on its base letter's origin.
+    ///
+    /// The bases below have no precomposed form,
+    /// so the shaper cannot collapse base and mark into a single glyph.
+    #[test]
+    #[expect(
+        clippy::float_cmp,
+        reason = "the folding must reproduce LayoutGlyph::physical bit for bit"
+    )]
+    fn nonzero_offsets_fold_into_position() {
+        let mut font_system = font_system();
+        let mut offset_x = 0_usize;
+        let mut offset_y = 0_usize;
+
+        for family in ["Braiins Sans", "Braiins Deck Sans", "Noto Sans"] {
+            for text in ["b\u{301}", "q\u{308}", "e\u{301}\u{301}", "\u{25cc}\u{301}"] {
+                let mut buffer = Buffer::new(&mut font_system, Metrics::new(32.0, 32.0));
+                buffer.set_text(
+                    &mut font_system,
+                    text,
+                    &Attrs::new().family(Family::Name(family)),
+                    Shaping::Advanced,
+                    None,
+                );
+                buffer.shape_until_scroll(&mut font_system, false);
+                let extracted = extract_lines(&buffer);
+
+                let raw: Vec<_> = buffer
+                    .lines
+                    .iter()
+                    .filter_map(|line| line.layout_opt())
+                    .flatten()
+                    .flat_map(|layout| layout.glyphs.iter())
+                    .collect();
+                let positioned: Vec<_> = extracted.iter().flat_map(|l| l.glyphs.iter()).collect();
+                assert_eq!(raw.len(), positioned.len());
+
+                for (glyph, info) in raw.iter().zip(&positioned) {
+                    assert_eq!(info.x, glyph.x + glyph.font_size * glyph.x_offset);
+                    assert_eq!(info.y, glyph.y - glyph.font_size * glyph.y_offset);
+                    if glyph.x_offset != 0.0 {
+                        assert_ne!(info.x, glyph.x, "{family} {text:?}: x offset was dropped");
+                        offset_x += 1;
+                    }
+                    if glyph.y_offset != 0.0 {
+                        assert_ne!(info.y, glyph.y, "{family} {text:?}: y offset was dropped");
+                        offset_y += 1;
+                    }
+                }
+            }
+        }
+
+        assert!(
+            offset_x > 0 && offset_y > 0,
+            "no shipped face offset a mark in both axes, so nothing was proven",
         );
     }
 }
