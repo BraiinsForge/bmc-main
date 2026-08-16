@@ -21,6 +21,8 @@
 //! Application-owned glyph atlas: cache identity and the page backend it
 //! uploads through.
 
+use core::num::NonZeroU32;
+
 pub const PAGE_SIZE_PX: usize = 512;
 pub const MAX_NORMAL_PAGES: usize = 10;
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
@@ -40,7 +42,6 @@ pub type Generation = u64;
 /// Cache identity: cosmic-text's key with subpixel bins forced to Zero.
 /// Subpixel variants are deliberately not cached.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub struct GlyphKey(cosmic_text::CacheKey);
 
 impl GlyphKey {
@@ -117,14 +118,33 @@ pub(crate) struct RasterPlacement {
     pub height: usize,
 }
 
+/// A compact slab index. Encoding the index plus one gives [`Option`] a
+/// four-byte niche.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SlotId(NonZeroU32);
+
+impl SlotId {
+    fn from_index(index: usize) -> Self {
+        let encoded = u32::try_from(index)
+            .ok()
+            .and_then(|index| index.checked_add(1))
+            .and_then(NonZeroU32::new)
+            .expect("BUG: slab index outside the slab index range");
+        Self(encoded)
+    }
+
+    fn index(self) -> usize {
+        usize::try_from(self.0.get() - 1).expect("BUG: slab index exceeds usize")
+    }
+}
+
+pub type Link = Option<SlotId>;
+
 /// One resident glyph: where it lives in the atlas, how to draw it,
 /// and its place in the LRU order.
-/// `prev`/`next` are slab indices rather than `usize`
-/// — an accepted exception to the workspace usize-for-indices rule —
-/// so the entry fits the spec's 96-byte metadata budget on 64-bit hosts;
-/// on the 32-bit target the two are the same width.
+/// The fixed-width links keep the entry within the 96-byte metadata budget
+/// on 64-bit hosts; they match `usize` on the 32-bit target.
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub struct Entry {
     pub key: GlyphKey,
     pub page: usize,
@@ -133,12 +153,9 @@ pub struct Entry {
     pub content_y: usize,
     pub placement: RasterPlacement,
     pub last_used: Generation,
-    pub prev: u32,
-    pub next: u32,
+    pub prev: Link,
+    pub next: Link,
 }
-
-/// Absent neighbour; also terminates the free-slot chain.
-pub const NO_LINK: u32 = u32::MAX;
 
 /// Fixed-capacity storage for resident entries.
 /// Slots are never released to the allocator: a freed slot joins a chain
@@ -146,7 +163,7 @@ pub const NO_LINK: u32 = u32::MAX;
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub struct EntrySlab {
     entries: Vec<Entry>,
-    free_head: u32,
+    free_head: Link,
     live: usize,
 }
 
@@ -154,32 +171,30 @@ pub struct EntrySlab {
 impl EntrySlab {
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(
-            u32::try_from(capacity).is_ok_and(|as_u32| as_u32 < NO_LINK),
+            u32::try_from(capacity).is_ok(),
             "BUG: slab capacity outside the slab index range"
         );
         Self {
             entries: Vec::with_capacity(capacity),
-            free_head: NO_LINK,
+            free_head: None,
             live: 0,
         }
     }
 
-    pub fn alloc(&mut self, entry: Entry) -> Option<u32> {
+    pub fn alloc(&mut self, entry: Entry) -> Option<SlotId> {
         let capacity = self.entries.capacity();
-        let index = if self.free_head == NO_LINK {
-            if self.entries.len() == capacity {
-                return None;
-            }
-            self.entries.push(entry);
-            let index = self.entries.len() - 1;
-            u32::try_from(index).expect("BUG: slab index outside the slab index range")
-        } else {
-            let index = self.free_head;
+        let index = if let Some(index) = self.free_head {
             let slot = self.get_mut(index);
             let next_free = slot.next;
             *slot = entry;
             self.free_head = next_free;
             index
+        } else {
+            if self.entries.len() == capacity {
+                return None;
+            }
+            self.entries.push(entry);
+            SlotId::from_index(self.entries.len() - 1)
         };
 
         debug_assert_eq!(
@@ -191,22 +206,22 @@ impl EntrySlab {
         Some(index)
     }
 
-    pub fn free(&mut self, index: u32) {
+    pub fn free(&mut self, index: SlotId) {
         let free_head = self.free_head;
         self.get_mut(index).next = free_head;
-        self.free_head = index;
+        self.free_head = Some(index);
         self.live -= 1;
     }
 
-    pub fn get(&self, index: u32) -> &Entry {
+    pub fn get(&self, index: SlotId) -> &Entry {
         self.entries
-            .get(index as usize)
+            .get(index.index())
             .expect("BUG: slab index refers to no slot")
     }
 
-    pub fn get_mut(&mut self, index: u32) -> &mut Entry {
+    pub fn get_mut(&mut self, index: SlotId) -> &mut Entry {
         self.entries
-            .get_mut(index as usize)
+            .get_mut(index.index())
             .expect("BUG: slab index refers to no slot")
     }
 
@@ -229,62 +244,63 @@ impl EntrySlab {
 /// Holding the links in the entries is what keeps promotion allocation-free.
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub struct LruQueue {
-    head: u32,
-    tail: u32,
+    head: Link,
+    tail: Link,
 }
 
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 impl LruQueue {
     pub fn new() -> Self {
         Self {
-            head: NO_LINK,
-            tail: NO_LINK,
+            head: None,
+            tail: None,
         }
     }
 
-    pub fn push_hot(&mut self, slab: &mut EntrySlab, index: u32) {
+    pub fn push_hot(&mut self, slab: &mut EntrySlab, index: SlotId) {
         let old_head = self.head;
         let entry = slab.get_mut(index);
-        entry.prev = NO_LINK;
+        entry.prev = None;
         entry.next = old_head;
 
-        if old_head == NO_LINK {
-            self.tail = index;
+        if let Some(old_head) = old_head {
+            slab.get_mut(old_head).prev = Some(index);
         } else {
-            slab.get_mut(old_head).prev = index;
+            self.tail = Some(index);
         }
-        self.head = index;
+        self.head = Some(index);
     }
 
-    pub fn unlink(&mut self, slab: &mut EntrySlab, index: u32) {
+    pub fn unlink(&mut self, slab: &mut EntrySlab, index: SlotId) {
         let entry = slab.get_mut(index);
         let (prev, next) = (entry.prev, entry.next);
         debug_assert!(
-            (prev != NO_LINK || self.head == index) && (next != NO_LINK || self.tail == index),
+            (prev.is_some() || self.head == Some(index))
+                && (next.is_some() || self.tail == Some(index)),
             "BUG: unlinking an entry the queue does not hold"
         );
-        entry.prev = NO_LINK;
-        entry.next = NO_LINK;
+        entry.prev = None;
+        entry.next = None;
 
-        if prev == NO_LINK {
-            self.head = next;
-        } else {
+        if let Some(prev) = prev {
             slab.get_mut(prev).next = next;
-        }
-        if next == NO_LINK {
-            self.tail = prev;
         } else {
+            self.head = next;
+        }
+        if let Some(next) = next {
             slab.get_mut(next).prev = prev;
+        } else {
+            self.tail = prev;
         }
     }
 
-    pub fn promote(&mut self, slab: &mut EntrySlab, index: u32) {
+    pub fn promote(&mut self, slab: &mut EntrySlab, index: SlotId) {
         self.unlink(slab, index);
         self.push_hot(slab, index);
     }
 
-    pub fn coldest(&self) -> Option<u32> {
-        (self.tail != NO_LINK).then_some(self.tail)
+    pub fn coldest(&self) -> Option<SlotId> {
+        self.tail
     }
 }
 
@@ -296,14 +312,13 @@ impl LruQueue {
 /// Occupied slots are exactly `0..len`;
 /// eviction reuses the coldest slot in place,
 /// so the arrays are written once and never resized.
-/// `prev`/`next` are slot indices sharing [`NO_LINK`] with the resident queue.
 struct NegativeCache {
     keys: [Option<GlyphKey>; NEGATIVE_CACHE_CAP],
     reasons: [NegativeReason; NEGATIVE_CACHE_CAP],
-    prev: [u32; NEGATIVE_CACHE_CAP],
-    next: [u32; NEGATIVE_CACHE_CAP],
-    head: u32,
-    tail: u32,
+    prev: [Link; NEGATIVE_CACHE_CAP],
+    next: [Link; NEGATIVE_CACHE_CAP],
+    head: Link,
+    tail: Link,
     len: usize,
 }
 
@@ -327,10 +342,10 @@ impl NegativeCache {
         Self {
             keys: [None; NEGATIVE_CACHE_CAP],
             reasons: [NegativeReason::Missing; NEGATIVE_CACHE_CAP],
-            prev: [NO_LINK; NEGATIVE_CACHE_CAP],
-            next: [NO_LINK; NEGATIVE_CACHE_CAP],
-            head: NO_LINK,
-            tail: NO_LINK,
+            prev: [None; NEGATIVE_CACHE_CAP],
+            next: [None; NEGATIVE_CACHE_CAP],
+            head: None,
+            tail: None,
             len: 0,
         }
     }
@@ -351,55 +366,58 @@ impl NegativeCache {
         );
 
         let slot = if self.len == NEGATIVE_CACHE_CAP {
-            let coldest = self.tail;
+            let coldest = self
+                .tail
+                .expect("BUG: full negative cache has no coldest slot");
             self.unlink(coldest);
             coldest
         } else {
-            let slot = u32::try_from(self.len).expect("BUG: negative cache index outside u32");
+            let slot = SlotId::from_index(self.len);
             self.len += 1;
             slot
         };
-        self.keys[slot as usize] = Some(key);
-        self.reasons[slot as usize] = reason;
+        self.keys[slot.index()] = Some(key);
+        self.reasons[slot.index()] = reason;
         self.push_hot(slot);
     }
 
-    fn slot_of(&self, key: &GlyphKey) -> Option<u32> {
+    fn slot_of(&self, key: &GlyphKey) -> Option<SlotId> {
         let found = self.keys[..self.len]
             .iter()
             .position(|slot| slot.as_ref() == Some(key))?;
-        Some(u32::try_from(found).expect("BUG: negative cache index outside u32"))
+        Some(SlotId::from_index(found))
     }
 
-    fn push_hot(&mut self, slot: u32) {
+    fn push_hot(&mut self, slot: SlotId) {
         let old_head = self.head;
-        self.prev[slot as usize] = NO_LINK;
-        self.next[slot as usize] = old_head;
+        self.prev[slot.index()] = None;
+        self.next[slot.index()] = old_head;
 
-        if old_head == NO_LINK {
-            self.tail = slot;
+        if let Some(old_head) = old_head {
+            self.prev[old_head.index()] = Some(slot);
         } else {
-            self.prev[old_head as usize] = slot;
+            self.tail = Some(slot);
         }
-        self.head = slot;
+        self.head = Some(slot);
     }
 
-    fn unlink(&mut self, slot: u32) {
-        let (prev, next) = (self.prev[slot as usize], self.next[slot as usize]);
+    fn unlink(&mut self, slot: SlotId) {
+        let (prev, next) = (self.prev[slot.index()], self.next[slot.index()]);
         debug_assert!(
-            (prev != NO_LINK || self.head == slot) && (next != NO_LINK || self.tail == slot),
+            (prev.is_some() || self.head == Some(slot))
+                && (next.is_some() || self.tail == Some(slot)),
             "BUG: unlinking a key the negative cache does not hold"
         );
 
-        if prev == NO_LINK {
+        if let Some(prev) = prev {
+            self.next[prev.index()] = next;
+        } else {
             self.head = next;
-        } else {
-            self.next[prev as usize] = next;
         }
-        if next == NO_LINK {
-            self.tail = prev;
+        if let Some(next) = next {
+            self.prev[next.index()] = prev;
         } else {
-            self.prev[next as usize] = prev;
+            self.tail = prev;
         }
     }
 }
@@ -612,10 +630,30 @@ enum Faulted {
     Scratch,
 }
 
+/// The spec's metadata table prices these three by size:
+/// a layout change that made one bigger would blow the ceiling silently.
+const _: () = assert!(size_of::<Entry>() <= 96);
+const _: () = assert!(size_of::<GlyphKey>() <= 28);
+const _: () = assert!(size_of::<NegativeCache>() <= 10 * 1024);
+const _: () = assert!(size_of::<Link>() == size_of::<u32>());
+
+/// etagere's shelves and buckets are private, so the spec bounds them
+/// from page geometry — 512 px of height at the 8 px minimum shelf,
+/// plus bucket splits — rather than measuring them.
+const ETAGERE_NORMAL_PAGE_ESTIMATE: usize = 8 * 1024;
+
+/// The scratch allocator tracks each allocation individually.
+/// Its 64-byte per-entry budget also covers shelf metadata and vector growth slack.
+const ETAGERE_SCRATCH_ESTIMATE: usize = 64 * SCRATCH_MAP_CAP;
+
+/// The owned swash `ScaleContext` at its high-water — per-face state,
+/// hinting cache, and outline scratch for the largest glyph we rasterize.
+const SWASH_CONTEXT_ESTIMATE: usize = 512 * 1024;
+
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
 pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     pages: Vec<Page<P>>,
-    map: hashbrown::HashMap<GlyphKey, u32>,
+    map: hashbrown::HashMap<GlyphKey, SlotId>,
     slab: EntrySlab,
     lru: LruQueue,
     negative: NegativeCache,
@@ -661,6 +699,41 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
 
     pub fn counters(&self) -> &Counters {
         &self.counters
+    }
+
+    /// The spec's metadata ceiling, measured rather than assumed:
+    /// what this cache allocates itself at its real capacity, plus estimates
+    /// for the two dependencies that expose no capacity of their own.
+    pub fn metadata_capacity_bytes(&self) -> usize {
+        self.app_owned_metadata_bytes()
+            + self.pages.len() * ETAGERE_NORMAL_PAGE_ESTIMATE
+            + ETAGERE_SCRATCH_ESTIMATE
+            + SWASH_CONTEXT_ESTIMATE
+    }
+
+    /// Gray8, so a page texture is exactly its pixel count.
+    pub fn resident_atlas_bytes(&self) -> usize {
+        self.page_textures() * PAGE_SIZE_PX * PAGE_SIZE_PX
+    }
+
+    /// Counted at real capacity, not live length:
+    /// a length cap is not an allocation cap.
+    /// The maps report their own allocation
+    /// rather than having it reconstructed from `capacity()`,
+    /// which is `len + growth_left` and so falls back toward the live count
+    /// as tombstones drain the slack of a table that keeps its buckets.
+    fn app_owned_metadata_bytes(&self) -> usize {
+        self.pages.capacity() * size_of::<Page<P>>()
+            + self.slab.capacity() * size_of::<Entry>()
+            + self.map.allocation_size()
+            + size_of::<NegativeCache>()
+            + self.scratch_map.allocation_size()
+    }
+
+    /// The scratch page counts: it is retained for the renderer's lifetime
+    /// and costs a page texture like any other.
+    fn page_textures(&self) -> usize {
+        self.pages.len() + usize::from(self.scratch.is_some())
     }
 
     pub fn end_frame(&mut self) {
@@ -780,8 +853,8 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             content_y: reserved.content_y,
             placement,
             last_used: generation,
-            prev: NO_LINK,
-            next: NO_LINK,
+            prev: None,
+            next: None,
         };
 
         let slot = if let Some(slot) = self.slab.alloc(entry(reserved)) {
@@ -932,8 +1005,8 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     /// The slot goes straight back to the slab:
     /// the entry was never linked into the LRU nor inserted into the map,
     /// and unlinking a detached node would rewrite the queue's ends
-    /// from its sentinel links, cutting the live entries loose.
-    fn roll_back_insertion(&mut self, reserved: Reserved, slot: u32) {
+    /// from its absent links, cutting the live entries loose.
+    fn roll_back_insertion(&mut self, reserved: Reserved, slot: SlotId) {
         self.slab.free(slot);
         self.pages[reserved.page].deallocate(reserved.alloc_id);
     }
@@ -972,7 +1045,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     ///
     /// The rects are not handed back — the page's allocator is about to go.
     fn forget_entries_on(&mut self, page: usize) {
-        let doomed: Vec<u32> = self
+        let doomed: Vec<SlotId> = self
             .map
             .values()
             .copied()
@@ -1052,7 +1125,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     ///
     /// Freeing a slab slot threads the free chain through the very links
     /// the LRU uses, so the entry must leave the queue first.
-    fn remove_entry(&mut self, slot: u32) -> usize {
+    fn remove_entry(&mut self, slot: SlotId) -> usize {
         let entry = self.slab.get(slot);
         let (key, page, alloc_id) = (entry.key, entry.page, entry.alloc_id);
 
@@ -1065,7 +1138,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         page
     }
 
-    fn quad(&self, slot: u32) -> GlyphQuad<P> {
+    fn quad(&self, slot: SlotId) -> GlyphQuad<P> {
         let entry = self.slab.get(slot);
         quad_at(
             self.pages[entry.page].id,
@@ -1304,12 +1377,12 @@ mod tests {
                 height: index + 4,
             },
             last_used: Generation::from(index_u32),
-            prev: NO_LINK,
-            next: NO_LINK,
+            prev: None,
+            next: None,
         }
     }
 
-    fn push_entries(slab: &mut EntrySlab, lru: &mut LruQueue, count: usize) -> Vec<u32> {
+    fn push_entries(slab: &mut EntrySlab, lru: &mut LruQueue, count: usize) -> Vec<SlotId> {
         (0..count)
             .map(|i| {
                 let idx = slab.alloc(test_entry(i)).expect("BUG: slab full in test");
@@ -1319,24 +1392,24 @@ mod tests {
             .collect()
     }
 
-    fn hot_to_cold(slab: &EntrySlab, lru: &LruQueue) -> Vec<u32> {
+    fn hot_to_cold(slab: &EntrySlab, lru: &LruQueue) -> Vec<SlotId> {
         let mut order = Vec::new();
         let mut cursor = lru.head;
-        while cursor != NO_LINK {
-            order.push(cursor);
-            cursor = slab.get(cursor).next;
+        while let Some(slot) = cursor {
+            order.push(slot);
+            cursor = slab.get(slot).next;
         }
         order
     }
 
     /// The same order read through the `prev` links: a botched unlink leaves
     /// the two directions disagreeing, which the forward walk alone hides.
-    fn cold_to_hot(slab: &EntrySlab, lru: &LruQueue) -> Vec<u32> {
+    fn cold_to_hot(slab: &EntrySlab, lru: &LruQueue) -> Vec<SlotId> {
         let mut order = Vec::new();
         let mut cursor = lru.tail;
-        while cursor != NO_LINK {
-            order.push(cursor);
-            cursor = slab.get(cursor).prev;
+        while let Some(slot) = cursor {
+            order.push(slot);
+            cursor = slab.get(slot).prev;
         }
         order
     }
@@ -1398,7 +1471,7 @@ mod tests {
     fn millions_of_promotions_never_grow_the_queue() {
         let mut slab = EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES);
         let mut lru = LruQueue::new();
-        let idx: Vec<u32> = (0..64)
+        let idx: Vec<SlotId> = (0..64)
             .map(|i| {
                 let e = slab.alloc(test_entry(i)).expect("BUG: slab full in test");
                 lru.push_hot(&mut slab, e);
@@ -1425,7 +1498,7 @@ mod tests {
         assert_eq!(slab.capacity(), cap_before);
         assert_eq!(slab.len(), MAX_RESIDENT_ENTRIES);
 
-        let victim = 7;
+        let victim = SlotId::from_index(7);
         slab.free(victim);
         assert_eq!(slab.len(), MAX_RESIDENT_ENTRIES - 1);
 
@@ -2553,7 +2626,7 @@ mod tests {
         cache: &mut GlyphCache<usize>,
         backend: &mut test_support::MockBackend,
         key: GlyphKey,
-    ) -> (Reserved, u32) {
+    ) -> (Reserved, SlotId) {
         let pending = Pending::new(&solid_glyph(30, 30));
         let Ok(reserved) = cache.allocate(backend, pending.size()) else {
             panic!("BUG: the test cache refused a rect it had room for");
@@ -2568,15 +2641,15 @@ mod tests {
                 content_y: reserved.content_y,
                 placement: pending.placement,
                 last_used: cache.generation,
-                prev: NO_LINK,
-                next: NO_LINK,
+                prev: None,
+                next: None,
             })
             .expect("BUG: slab full in test");
         (reserved, slot)
     }
 
     /// Unlinking the provisional entry would rewrite the queue's ends
-    /// from its sentinel links, cutting every survivor loose —
+    /// from its absent links, cutting every survivor loose —
     /// which only entries on other pages, untouched by the quarantine,
     /// can witness.
     #[test]
@@ -2601,7 +2674,7 @@ mod tests {
             "the provisional rect must land on the page the fault will quarantine"
         );
         let forgotten = cache.map[&test_key(0)];
-        let expected: Vec<u32> = cold_to_hot(&cache.slab, &cache.lru)
+        let expected: Vec<SlotId> = cold_to_hot(&cache.slab, &cache.lru)
             .into_iter()
             .filter(|entry| *entry != forgotten)
             .collect();
@@ -2612,7 +2685,7 @@ mod tests {
         assert_eq!(cold_to_hot(&cache.slab, &cache.lru), expected);
         assert_eq!(
             hot_to_cold(&cache.slab, &cache.lru),
-            expected.iter().rev().copied().collect::<Vec<u32>>()
+            expected.iter().rev().copied().collect::<Vec<SlotId>>()
         );
         assert!(cache.map.contains_key(&test_key(1)));
         assert!(cache.map.contains_key(&test_key(2)));
@@ -2646,5 +2719,190 @@ mod tests {
         let _ = cache.get_or_insert(&mut backend, test_cache_key(MAX_NORMAL_PAGES), |_| {
             Some(page_filling_glyph())
         });
+    }
+
+    const METADATA_CEILING_BYTES: usize = 3 * 1024 * 1024;
+
+    const GLYPH_IDS_PER_SIZE: usize = 1 << 16;
+
+    /// `test_cache_key` runs out of distinct keys at the 16-bit glyph id,
+    /// and a churn outrunning the resident cap many times over needs more,
+    /// so the size moves on whenever the glyph ids wrap.
+    #[expect(
+        clippy::integer_division,
+        reason = "the size advances once per exhausted run of glyph ids"
+    )]
+    fn churn_key(step: usize) -> cosmic_text::CacheKey {
+        let size_step = u16::try_from(step / GLYPH_IDS_PER_SIZE)
+            .expect("BUG: churn step outside the size range");
+        cosmic_text::CacheKey {
+            font_size_bits: (17.0 + f32::from(size_step) / 16.0).to_bits(),
+            ..test_cache_key(step % GLYPH_IDS_PER_SIZE)
+        }
+    }
+
+    /// Every path that could enlarge a container, in one run:
+    /// tiny glyphs past the resident cap with their predecessors cold,
+    /// so eviction churns the slab and the key map;
+    /// the same again with every predecessor drawn this frame,
+    /// so the scratch page and its map fill and then drop;
+    /// and empty keys past the negative cache.
+    /// All 21 page textures exist by the end.
+    fn churn_past_every_cap(
+        cache: &mut GlyphCache<usize>,
+        backend: &mut test_support::MockBackend,
+        cold_steps: usize,
+    ) {
+        fill_cold_pages(cache, backend);
+
+        for step in 0..cold_steps {
+            let _ = cache.get_or_insert(backend, churn_key(step), |_| Some(solid_glyph(2, 2)));
+            cache.end_frame();
+            backend.uploads.clear();
+        }
+
+        let hot_steps = MAX_RESIDENT_ENTRIES + SCRATCH_MAP_CAP + 1;
+        for step in cold_steps..cold_steps + hot_steps {
+            let _ = cache.get_or_insert(backend, churn_key(step), |_| Some(solid_glyph(2, 2)));
+        }
+        cache.end_frame();
+        backend.uploads.clear();
+
+        for step in 0..EMPTY_SIZE_STEPS {
+            let _ = cache.get_or_insert(backend, empty_key_at(step), |_| None);
+        }
+        cache.end_frame();
+    }
+
+    /// Long enough to cross every cap, and short of the eviction count
+    /// at which hashbrown gives up rehashing the key map in place.
+    const BOUNDED_CHURN_STEPS: usize = 2 * MAX_RESIDENT_ENTRIES;
+
+    /// Nothing a frame does may enlarge a container `new()` sized;
+    /// the estimates still fit once all resident and scratch pages exist.
+    #[test]
+    fn metadata_bound_holds_at_allocated_capacity() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let when_new = cache.app_owned_metadata_bytes();
+
+        churn_past_every_cap(&mut cache, &mut backend, BOUNDED_CHURN_STEPS);
+
+        assert!(cache.counters().evictions > 0);
+        assert!(cache.counters().scratch_uses > 0);
+        assert!(cache.counters().glyphs_dropped > 0);
+        assert_eq!(backend.pages_created, MAX_NORMAL_PAGES + 1);
+        assert_eq!(cache.app_owned_metadata_bytes(), when_new);
+        assert!(
+            cache.metadata_capacity_bytes() <= METADATA_CEILING_BYTES,
+            "metadata {} exceeds the ceiling",
+            cache.metadata_capacity_bytes()
+        );
+        assert_eq!(
+            cache.resident_atlas_bytes(),
+            (MAX_NORMAL_PAGES + 1) * PAGE_SIZE_PX * PAGE_SIZE_PX
+        );
+    }
+
+    /// Past this many evictions hashbrown stops rehashing the key map in place
+    /// and doubles its table instead: tombstones exhaust the slack of a table
+    /// held at 8 192 live entries.
+    const SUSTAINED_CHURN_STEPS: usize = 150_000;
+
+    /// So the ceiling covers the table hashbrown ends up with,
+    /// not the one `new()` reserved: a bound that only held before the resize
+    /// is a bound the renderer outgrows in service.
+    #[test]
+    fn the_ceiling_covers_the_key_maps_grown_table() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let when_new = cache.app_owned_metadata_bytes();
+
+        churn_past_every_cap(&mut cache, &mut backend, SUSTAINED_CHURN_STEPS);
+
+        assert!(
+            cache.app_owned_metadata_bytes() > when_new,
+            "the churn no longer reaches the resize, so the ceiling proves nothing here"
+        );
+        assert!(
+            cache.metadata_capacity_bytes() <= METADATA_CEILING_BYTES,
+            "metadata {} exceeds the ceiling",
+            cache.metadata_capacity_bytes()
+        );
+    }
+
+    /// hashbrown's widest control group; a narrower target is over-counted,
+    /// which is the safe direction for a ceiling.
+    const HASHBROWN_GROUP_BYTES: usize = 16;
+
+    /// The spec's accounting table models hashbrown 0.16.1's table
+    /// from a capacity: a power-of-two bucket count at a 7/8 load factor,
+    /// with one control byte per bucket
+    /// and a trailing group the probe reads past the end.
+    #[expect(
+        clippy::integer_division,
+        reason = "hashbrown's own bucket rounding, truncation included"
+    )]
+    fn map_bucket_bytes(capacity: usize, kv_size: usize) -> usize {
+        let buckets = (capacity * 8 / 7).next_power_of_two();
+        buckets * kv_size + buckets + HASHBROWN_GROUP_BYTES
+    }
+
+    /// The ceiling was derived from that model at the two maps' fresh
+    /// capacities. A bump to the load factor, the rounding or the control bytes
+    /// would leave the model under the allocation, and the derivation void.
+    #[test]
+    fn the_spec_model_covers_hashbrowns_own_allocation() {
+        let map = hashbrown::HashMap::<GlyphKey, SlotId>::with_capacity(MAX_RESIDENT_ENTRIES);
+        assert_eq!(map.capacity(), 14_336);
+        assert!(
+            map_bucket_bytes(map.capacity(), size_of::<(GlyphKey, SlotId)>())
+                >= map.allocation_size()
+        );
+
+        let scratch = hashbrown::HashMap::<GlyphKey, ScratchEntry>::with_capacity(SCRATCH_MAP_CAP);
+        assert_eq!(scratch.capacity(), 1_792);
+        assert!(
+            map_bucket_bytes(scratch.capacity(), size_of::<(GlyphKey, ScratchEntry)>())
+                >= scratch.allocation_size()
+        );
+    }
+
+    /// Why the counter asks hashbrown what it allocated
+    /// instead of rebuilding the table from `capacity()`:
+    /// capacity is `len + growth_left`, and removals that leave tombstones
+    /// drain that slack without returning a single bucket.
+    /// Modelled from the drained capacity,
+    /// a grown table prices at half what it holds.
+    #[test]
+    fn a_tombstone_drained_table_is_priced_at_its_real_allocation() {
+        let mut map = hashbrown::HashMap::<GlyphKey, SlotId>::with_capacity(MAX_RESIDENT_ENTRIES);
+        let fresh_allocation = map.allocation_size();
+        let mut inserted = 0;
+        while map.allocation_size() == fresh_allocation {
+            map.insert(test_key(inserted), SlotId::from_index(0));
+            inserted += 1;
+        }
+        while map.len() < map.capacity() {
+            map.insert(test_key(inserted), SlotId::from_index(0));
+            inserted += 1;
+        }
+        let grown_allocation = map.allocation_size();
+
+        for step in 0..inserted {
+            if map.len() == MAX_RESIDENT_ENTRIES {
+                break;
+            }
+            map.remove(&test_key(step));
+        }
+
+        assert_eq!(map.len(), MAX_RESIDENT_ENTRIES);
+        assert!(
+            map_bucket_bytes(map.capacity(), size_of::<(GlyphKey, u32)>()) < grown_allocation,
+            "capacity {} still prices the whole table, so the drain never happened and this \
+             proves nothing",
+            map.capacity()
+        );
+        assert_eq!(map.allocation_size(), grown_allocation);
     }
 }
