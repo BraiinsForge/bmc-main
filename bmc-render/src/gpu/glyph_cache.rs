@@ -25,7 +25,6 @@ pub const PAGE_SIZE_PX: usize = 512;
 pub const MAX_NORMAL_PAGES: usize = 10;
 #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 pub const MAX_RESIDENT_ENTRIES: usize = 8192;
-#[expect(dead_code, reason = "consumed in Task 5 (BDK-696)")]
 pub const NEGATIVE_CACHE_CAP: usize = 256;
 #[expect(dead_code, reason = "consumed in Task 6 (BDK-696)")]
 pub const SCRATCH_MAP_CAP: usize = 1024;
@@ -290,6 +289,106 @@ impl LruQueue {
     }
 }
 
+/// Keys whose rasterization yielded nothing, kept so a space character cannot
+/// re-enter the rasterizer every frame. Storage is inline arrays — an animated
+/// font size mints a fresh exact-size key per frame, so a growable map here
+/// would just relocate the unbounded growth into the heap.
+///
+/// Occupied slots are exactly `0..len`;
+/// eviction reuses the coldest slot in place,
+/// so the arrays are written once and never resized.
+/// `prev`/`next` are slot indices sharing [`NO_LINK`] with the resident queue.
+struct NegativeCache {
+    keys: [Option<GlyphKey>; NEGATIVE_CACHE_CAP],
+    prev: [u32; NEGATIVE_CACHE_CAP],
+    next: [u32; NEGATIVE_CACHE_CAP],
+    head: u32,
+    tail: u32,
+    len: usize,
+}
+
+impl NegativeCache {
+    fn new() -> Self {
+        Self {
+            keys: [None; NEGATIVE_CACHE_CAP],
+            prev: [NO_LINK; NEGATIVE_CACHE_CAP],
+            next: [NO_LINK; NEGATIVE_CACHE_CAP],
+            head: NO_LINK,
+            tail: NO_LINK,
+            len: 0,
+        }
+    }
+
+    /// Promotes what it finds: a glyph still being drawn every frame must not
+    /// age out under the sizes that arrived after it.
+    fn contains(&mut self, key: &GlyphKey) -> bool {
+        let Some(slot) = self.slot_of(key) else {
+            return false;
+        };
+        self.unlink(slot);
+        self.push_hot(slot);
+        true
+    }
+
+    fn insert_absent(&mut self, key: GlyphKey) {
+        debug_assert!(
+            self.slot_of(&key).is_none(),
+            "BUG: inserting a key already present in the negative cache"
+        );
+
+        let slot = if self.len == NEGATIVE_CACHE_CAP {
+            let coldest = self.tail;
+            self.unlink(coldest);
+            coldest
+        } else {
+            let slot = u32::try_from(self.len).expect("BUG: negative cache index outside u32");
+            self.len += 1;
+            slot
+        };
+        self.keys[slot as usize] = Some(key);
+        self.push_hot(slot);
+    }
+
+    fn slot_of(&self, key: &GlyphKey) -> Option<u32> {
+        let found = self.keys[..self.len]
+            .iter()
+            .position(|slot| slot.as_ref() == Some(key))?;
+        Some(u32::try_from(found).expect("BUG: negative cache index outside u32"))
+    }
+
+    fn push_hot(&mut self, slot: u32) {
+        let old_head = self.head;
+        self.prev[slot as usize] = NO_LINK;
+        self.next[slot as usize] = old_head;
+
+        if old_head == NO_LINK {
+            self.tail = slot;
+        } else {
+            self.prev[old_head as usize] = slot;
+        }
+        self.head = slot;
+    }
+
+    fn unlink(&mut self, slot: u32) {
+        let (prev, next) = (self.prev[slot as usize], self.next[slot as usize]);
+        debug_assert!(
+            (prev != NO_LINK || self.head == slot) && (next != NO_LINK || self.tail == slot),
+            "BUG: unlinking a key the negative cache does not hold"
+        );
+
+        if prev == NO_LINK {
+            self.head = next;
+        } else {
+            self.next[prev as usize] = next;
+        }
+        if next == NO_LINK {
+            self.tail = prev;
+        } else {
+            self.prev[next as usize] = prev;
+        }
+    }
+}
+
 /// One atlas page: the backend's image plus the allocator that packs it.
 /// `alloc` is an `Option` so quarantine can drop the allocator's metadata
 /// while the page struct and its image stay retained.
@@ -420,6 +519,7 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     map: hashbrown::HashMap<GlyphKey, u32>,
     slab: EntrySlab,
     lru: LruQueue,
+    negative: NegativeCache,
     generation: Generation,
     counters: Counters,
     counters_at_last_log: Counters,
@@ -434,6 +534,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             map: hashbrown::HashMap::with_capacity(MAX_RESIDENT_ENTRIES),
             slab: EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES),
             lru: LruQueue::new(),
+            negative: NegativeCache::new(),
             generation: 0,
             counters: Counters::default(),
             counters_at_last_log: Counters::default(),
@@ -505,7 +606,11 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         }
         self.counters.misses += 1;
 
+        if self.negative.contains(&key) {
+            return GlyphLookup::Missing;
+        }
         let Some(raster) = rasterize(key) else {
+            self.negative.insert_absent(key);
             return GlyphLookup::Missing;
         };
 
@@ -1499,6 +1604,93 @@ mod tests {
         assert_eq!(live, cache.slab.len());
         assert_eq!(live, cache.map.len());
         assert!(cache.slab.len() <= MAX_RESIDENT_ENTRIES);
+    }
+
+    /// Distinct exact-size keys of the kind an animated font size mints,
+    /// one per frame, for every space character.
+    /// The step divides exactly, so no two steps can collide in `font_size_bits`.
+    fn empty_key_at(step: usize) -> cosmic_text::CacheKey {
+        let step = f32::from(u16::try_from(step).expect("BUG: test step outside the size range"));
+        cosmic_text::CacheKey {
+            font_size_bits: (17.0 + step / 16.0).to_bits(),
+            ..test_cache_key(1)
+        }
+    }
+
+    #[test]
+    fn a_glyph_with_no_coverage_rasterizes_once() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let key = test_cache_key(1);
+
+        assert_eq!(
+            cache.get_or_insert(&mut backend, key, |_| None),
+            GlyphLookup::Missing
+        );
+        assert_eq!(
+            cache.get_or_insert(&mut backend, key, |_| panic!(
+                "BUG: a known-empty glyph must not rasterize"
+            )),
+            GlyphLookup::Missing
+        );
+        assert_eq!(backend.pages_created, 0);
+        assert!(backend.uploads.is_empty());
+    }
+
+    /// Sizes far past the cap, because the negative cache exists to survive
+    /// exactly that: an unbounded `None` map would grow the heap forever.
+    const EMPTY_SIZE_STEPS: usize = 500;
+
+    #[test]
+    fn hundreds_of_empty_sizes_stay_bounded_and_drop_the_oldest() {
+        let mut backend = test_support::MockBackend::default();
+        let mut cache = GlyphCache::new();
+
+        for step in 0..EMPTY_SIZE_STEPS {
+            assert_eq!(
+                cache.get_or_insert(&mut backend, empty_key_at(step), |_| None),
+                GlyphLookup::Missing
+            );
+            assert!(cache.negative.len <= NEGATIVE_CACHE_CAP);
+        }
+        assert_eq!(cache.negative.len, NEGATIVE_CACHE_CAP);
+
+        assert_eq!(
+            cache.get_or_insert(
+                &mut backend,
+                empty_key_at(EMPTY_SIZE_STEPS - 1),
+                |_| panic!("BUG: the newest empty key must still be known")
+            ),
+            GlyphLookup::Missing
+        );
+
+        let mut rasterized = false;
+        assert_eq!(
+            cache.get_or_insert(&mut backend, empty_key_at(0), |_| {
+                rasterized = true;
+                None
+            }),
+            GlyphLookup::Missing
+        );
+        assert!(rasterized, "the oldest empty key must have aged out");
+        assert_eq!(cache.negative.len, NEGATIVE_CACHE_CAP);
+        assert_eq!(backend.pages_created, 0);
+    }
+
+    /// The whole structure is inline arrays, so its footprint is its size —
+    /// nothing behind it can grow, and the spec's 40 bytes per entry holds.
+    #[test]
+    fn the_negative_cache_owns_no_heap_storage() {
+        assert!(
+            size_of::<NegativeCache>() <= NEGATIVE_CACHE_CAP * 40,
+            "negative cache footprint {} exceeds its budget",
+            size_of::<NegativeCache>()
+        );
+        assert!(
+            size_of::<NegativeCache>() >= NEGATIVE_CACHE_CAP * size_of::<Option<GlyphKey>>(),
+            "negative cache footprint {} is below inline storage requirement",
+            size_of::<NegativeCache>()
+        );
     }
 
     /// Counts WARN records without a `tracing-subscriber` dev dependency.
