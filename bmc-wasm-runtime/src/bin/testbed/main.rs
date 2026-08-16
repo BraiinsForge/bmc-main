@@ -1183,7 +1183,7 @@ struct Notice {
 }
 
 impl Notice {
-    /// How long a notice lingers; enough to read a path, short enough
+    /// How long a success notice lingers; enough to read a path, short enough
     /// to never need dismissing by hand.
     const TTL: std::time::Duration = std::time::Duration::from_secs(10);
 
@@ -1509,19 +1509,33 @@ impl TestbedApp {
         self.arrange = Some(device_window::ArrangeMode::Pack);
     }
 
-    /// Save the take: write the fixture first — it drains the live view,
-    /// which the unwind then retires — and put the canvas back after.
-    /// The outcome stays on screen as a notice; the unwound canvas alone
-    /// would say nothing about where the fixture went.
+    /// Save the take: write the fixture, and put the canvas back only if that
+    /// worked. The outcome stays on screen as a notice — a successful unwind
+    /// would otherwise say nothing about where the fixture went, and a failed
+    /// write nothing at all.
     fn save_recording(&mut self, ctx: &egui::Context) {
-        let Some((take, unwind)) = self.recording_mode.finish() else {
+        // Drain first: the runtime and the fetch buffer only give their events
+        // up once, and they need the view still live to do it.
+        self.drain_take_sources();
+        let Some(outcome) = self.recording_mode.write_take() else {
             return;
         };
-        self.notice = Some(match self.write_recording(take) {
-            Ok(text) => Notice::success(text),
-            Err(text) => Notice::error(text),
-        });
-        self.apply_record_unwind(unwind, ctx);
+        match outcome {
+            Ok(text) => {
+                self.notice = Some(Notice::success(text));
+                if let Some(unwind) = self.recording_mode.end() {
+                    self.apply_record_unwind(unwind, ctx);
+                }
+            }
+            // The take stays open with everything it collected, so pressing
+            // Save again after fixing the cause writes the same recording.
+            Err(text) => {
+                self.notice = Some(Notice::error(format!(
+                    "{text}\nThe take is still running — fix the cause and press Save again, \
+                     or Cancel to discard it."
+                )));
+            }
+        }
     }
 
     /// Cancel whichever record phase is on, putting the canvas back.
@@ -2483,7 +2497,9 @@ impl TestbedApp {
         const OK: egui::Color32 = egui::Color32::from_rgb(120, 200, 150);
 
         let Some(notice) = &self.notice else { return };
-        if notice.shown_at.elapsed() > Notice::TTL {
+        // An error names something to go and fix, so it holds until dismissed;
+        // only the success banner is on a timer.
+        if !notice.error && notice.shown_at.elapsed() > Notice::TTL {
             self.notice = None;
             return;
         }

@@ -18,9 +18,9 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Recording-mode state and UI: gesture tracking, the event-log panel,
-//! and the `finish_recording` path that merges user / network / fetch event
-//! sources into a fixture on disk plus updates the widget's capture config.
+//! Recording-mode state and UI: gesture tracking, the event-log panel, and
+//! the write path that merges user / network / fetch event sources into a
+//! fixture on disk plus updates the widget's capture config.
 
 #![expect(
     clippy::cast_possible_truncation,
@@ -123,6 +123,10 @@ pub(super) struct RecordingState {
     dataset: String,
     /// Unified timeline events (user actions + fetch recordings).
     events: Vec<TimelineEvent>,
+    /// Events already pulled out of the view's runtime and the fetch buffer.
+    /// Both hand their contents over once and forget them, so a failed write
+    /// would lose them; held here, every Save attempt merges them afresh.
+    drained: Vec<TimelineEvent>,
     gesture: Option<GestureTracker>,
     /// Widget root directory (for output paths).
     widget_root: Option<PathBuf>,
@@ -169,13 +173,128 @@ impl RecordingState {
 
     /// Whether the take holds anything worth saving yet.
     pub(super) fn has_events(&self) -> bool {
-        !self.events.is_empty()
+        !self.events.is_empty() || !self.drained.is_empty()
+    }
+
+    /// Take custody of events drained from the runtime and the fetch buffer.
+    pub(super) fn absorb(&mut self, events: Vec<TimelineEvent>) {
+        self.drained.extend(events);
+    }
+
+    /// The fixture this take would write: user actions and drained events
+    /// merged, sorted by `at_ms` (stable, so insertion order breaks ties),
+    /// with consecutive scrolls of one element collapsed into a single event.
+    ///
+    /// Built from a borrow rather than consuming the take, so a failed write
+    /// can be retried once the operator has dealt with what failed.
+    fn fixture(&self) -> UnifiedFixture {
+        let mut all_events = self.events.clone();
+        all_events.extend(self.drained.iter().cloned());
+        all_events.sort_by_key(|e| e.at_ms);
+
+        let mut merged: Vec<TimelineEvent> = Vec::with_capacity(all_events.len());
+        for event in all_events {
+            let should_merge = if let UnifiedEvent::Scroll { ref element, .. } = event.event {
+                merged.last().is_some_and(|prev: &TimelineEvent| {
+                    matches!(&prev.event, UnifiedEvent::Scroll { element: prev_el, .. } if prev_el == element)
+                })
+            } else {
+                false
+            };
+            if should_merge {
+                if let UnifiedEvent::Scroll { delta, .. } = event.event
+                    && let Some(prev) = merged.last_mut()
+                    && let UnifiedEvent::Scroll {
+                        delta: ref mut prev_delta,
+                        ..
+                    } = prev.event
+                {
+                    *prev_delta += delta;
+                }
+            } else {
+                merged.push(event);
+            }
+        }
+
+        UnifiedFixture {
+            header: FixtureHeader {
+                time: self.start_time_iso.clone(),
+                kv: self.kv_snapshot.clone(),
+                initial_params: self.params_snapshot.clone(),
+                initial_system: self.system_snapshot.clone(),
+                initial_credentials: self.credentials_snapshot.clone(),
+            },
+            events: merged,
+        }
     }
 
     /// The wiped-and-seeded KV state the fixture header reproduces on replay.
     /// `build_views` reports it once the take's KV dir exists.
     pub(super) fn set_kv_baseline(&mut self, kv: std::collections::HashMap<String, String>) {
         self.kv_snapshot = kv;
+    }
+
+    /// Write the take as `capture/fixtures/<dataset>.jsonl.gz` and point the
+    /// widget's `capture/config.toml` at it. Both outcomes are worded for the
+    /// on-screen notice.
+    ///
+    /// Leaves the take intact either way, so a failure can be answered by
+    /// fixing what failed and pressing Save again.
+    pub(super) fn write(&self) -> Result<String, String> {
+        let fixture = self.fixture();
+
+        let Some(widget_root) = &self.widget_root else {
+            let message = "could not find the widget root — nothing was written".to_owned();
+            eprintln!("error: {message}");
+            return Err(message);
+        };
+        let fixture_path = widget_root
+            .join("capture")
+            .join("fixtures")
+            .join(format!("{}.jsonl.gz", self.dataset));
+
+        if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
+            eprintln!("warning: fixture validation failed: {e:#} (writing anyway)");
+        }
+        if let Err(e) = fixtures::write_jsonl_fixture(&fixture_path, &fixture) {
+            let message = format!("failed to write {}: {e:#}", fixture_path.display());
+            eprintln!("error: {message}");
+            return Err(message);
+        }
+        eprintln!(
+            "wrote: {} event(s) → {}",
+            fixture.events.len(),
+            fixture_path.display()
+        );
+
+        let config_path = widget_root.join("capture").join("config.toml");
+        let fixture_rel = format!("fixtures/{}.jsonl.gz", self.dataset);
+        if let Err(e) = fixtures::update_config_toml_fixtures(
+            &config_path,
+            &self.dataset,
+            &fixture_rel,
+            self.target,
+        ) {
+            eprintln!("warning: failed to update config.toml: {e:#}");
+        } else {
+            eprintln!("updated: {}", config_path.display());
+        }
+
+        let widget_name = widget_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("WIDGET");
+        eprintln!("hint: run `just wasm::update-baselines {widget_name}` to set baselines");
+
+        let bytes = std::fs::metadata(&fixture_path).map_or(0, |m| m.len());
+        Ok(format!(
+            "Saved {} — {} event(s), {:.1} KiB\n{}\nconfig.toml updated; \
+             `just wasm::update-baselines {widget_name}` sets baselines",
+            self.dataset,
+            fixture.events.len(),
+            bytes as f64 / 1024.0,
+            fixture_path.display(),
+        ))
     }
 
     /// A quick click: a zero-distance gesture, classified immediately —
@@ -466,27 +585,10 @@ impl RecordingMode {
         }
     }
 
-    /// Recording → Off, yielding the take to write and the unwind to apply.
-    /// The order matters: the fixture drains the live view, so the caller
-    /// writes first and unwinds after.
-    pub(super) fn finish(&mut self) -> Option<(RecordingState, RecordUnwind)> {
-        match std::mem::replace(&mut self.phase, RecordPhase::Off) {
-            RecordPhase::Recording {
-                take,
-                restore_platforms,
-                kv_stash,
-            } => Some((
-                *take,
-                RecordUnwind::Take {
-                    restore_platforms,
-                    kv_stash,
-                },
-            )),
-            phase @ (RecordPhase::Off | RecordPhase::Choosing { .. }) => {
-                self.phase = phase;
-                None
-            }
-        }
+    /// Write the running take without touching the phase; `None` outside a
+    /// take. Leaving the mode standing is what lets a failed Save be retried.
+    pub(super) fn write_take(&self) -> Option<Result<String, String>> {
+        self.active().map(RecordingState::write)
     }
 
     /// Any phase → Off, discarding a running take. The fetch buffer dies with
@@ -543,6 +645,7 @@ impl RecordingState {
             target,
             dataset,
             events: Vec::new(),
+            drained: Vec::new(),
             gesture: None,
             widget_root,
             recording_start: std::time::Instant::now(),
@@ -911,125 +1014,32 @@ impl TestbedApp {
             });
     }
 
-    /// Merge the take's event sources (user actions, network events from the
-    /// runtime, fetch events from the shared buffer), validate, and write a
-    /// `.jsonl.gz` fixture into the widget's `capture/fixtures/<dataset>.jsonl.gz`.
-    /// Also updates the widget's `capture/config.toml` to point at the new
-    /// fixture. Runs before the unwind: the drain needs the view live.
-    ///
-    /// Returns what happened, worded for the on-screen notice; the exit
-    /// unwind erases every other trace of the take from the UI.
-    pub(super) fn write_recording(&mut self, rec: RecordingState) -> Result<String, String> {
-        // Pull network events out of the active tile's runtime, plus the fetch events the
-        // observer pushed into the shared buffer.
+    /// Move everything the view's runtime and the fetch observer have
+    /// buffered into the take.
+    pub(super) fn drain_take_sources(&mut self) {
+        let Some(active_tile) = self
+            .recording_mode
+            .active()
+            .map(RecordingState::active_tile)
+        else {
+            return;
+        };
         let runtime_events = self
             .tiles
-            .get_mut(rec.active_tile)
+            .get_mut(active_tile)
             .map(DeviceView::take_recorded_events)
             .unwrap_or_default();
-        let network_timeline = fixtures::fixture_events_to_timeline(&runtime_events);
-        let fetch_timeline: Vec<TimelineEvent> = std::mem::take(
+        let mut drained = fixtures::fixture_events_to_timeline(&runtime_events);
+        drained.extend(std::mem::take(
             &mut *self
                 .recording_mode
                 .fetch_events
                 .lock()
                 .expect("BUG: fetch events poisoned"),
-        );
-
-        // Merge: user actions + network + fetch, sorted by at_ms (stable so insertion order
-        // breaks ties), then collapse consecutive scrolls on the same element into one event.
-        let mut all_events = rec.events;
-        all_events.extend(network_timeline);
-        all_events.extend(fetch_timeline);
-        all_events.sort_by_key(|e| e.at_ms);
-        let mut merged: Vec<TimelineEvent> = Vec::with_capacity(all_events.len());
-        for event in all_events {
-            let should_merge = if let UnifiedEvent::Scroll { ref element, .. } = event.event {
-                merged.last().is_some_and(|prev: &TimelineEvent| {
-                    matches!(&prev.event, UnifiedEvent::Scroll { element: prev_el, .. } if prev_el == element)
-                })
-            } else {
-                false
-            };
-            if should_merge {
-                if let UnifiedEvent::Scroll { delta, .. } = event.event
-                    && let Some(prev) = merged.last_mut()
-                    && let UnifiedEvent::Scroll {
-                        delta: ref mut prev_delta,
-                        ..
-                    } = prev.event
-                {
-                    *prev_delta += delta;
-                }
-            } else {
-                merged.push(event);
-            }
+        ));
+        if let Some(rec) = self.recording_mode.active_mut() {
+            rec.absorb(drained);
         }
-
-        let fixture = UnifiedFixture {
-            header: FixtureHeader {
-                time: rec.start_time_iso,
-                kv: rec.kv_snapshot,
-                initial_params: rec.params_snapshot,
-                initial_system: rec.system_snapshot,
-                initial_credentials: rec.credentials_snapshot,
-            },
-            events: merged,
-        };
-
-        let Some(widget_root) = rec.widget_root else {
-            let message = format!(
-                "could not find the widget root — fixture not saved ({} event(s) lost)",
-                fixture.events.len()
-            );
-            eprintln!("error: {message}");
-            return Err(message);
-        };
-        let fixture_dir = widget_root.join("capture").join("fixtures");
-        let fixture_path = fixture_dir.join(format!("{}.jsonl.gz", rec.dataset));
-
-        if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
-            eprintln!("warning: fixture validation failed: {e:#} (writing anyway)");
-        }
-        if let Err(e) = fixtures::write_jsonl_fixture(&fixture_path, &fixture) {
-            let message = format!("failed to write {}: {e:#}", fixture_path.display());
-            eprintln!("error: {message}");
-            return Err(message);
-        }
-        eprintln!(
-            "wrote: {} event(s) → {}",
-            fixture.events.len(),
-            fixture_path.display()
-        );
-
-        let config_path = widget_root.join("capture").join("config.toml");
-        let fixture_rel = format!("fixtures/{}.jsonl.gz", rec.dataset);
-        if let Err(e) = fixtures::update_config_toml_fixtures(
-            &config_path,
-            &rec.dataset,
-            &fixture_rel,
-            rec.target,
-        ) {
-            eprintln!("warning: failed to update config.toml: {e:#}");
-        } else {
-            eprintln!("updated: {}", config_path.display());
-        }
-
-        let widget_name = widget_root
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("WIDGET");
-        eprintln!("hint: run `just wasm::update-baselines {widget_name}` to set baselines");
-
-        let bytes = std::fs::metadata(&fixture_path).map_or(0, |m| m.len());
-        Ok(format!(
-            "Saved {} — {} event(s), {:.1} KiB\n{}\nconfig.toml updated; \
-             `just wasm::update-baselines {widget_name}` sets baselines",
-            rec.dataset,
-            fixture.events.len(),
-            bytes as f64 / 1024.0,
-            fixture_path.display(),
-        ))
     }
 }
 
@@ -1100,5 +1110,41 @@ mod begin_tests {
 
         chrono::DateTime::parse_from_rfc3339(&state.start_time_iso)
             .expect("BUG: the header parser rejects times without a timezone suffix");
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_take_whole_for_a_retry() {
+        use bmc_wasm_runtime::unified_fixture::{TimelineEvent, UnifiedEvent};
+
+        let mut rec = begin("bmc100:full");
+        rec.auto_capture = false;
+        // A regular file as the widget root: `capture/fixtures/` cannot be
+        // created under it, so the write fails on the filesystem itself.
+        rec.widget_root =
+            Some(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml"));
+        rec.record_tap((10.0, 20.0), Some("#start".to_owned()));
+        rec.absorb(vec![TimelineEvent {
+            at_ms: 5,
+            event: UnifiedEvent::Capture {
+                duration_ms: None,
+                fps: None,
+            },
+        }]);
+
+        assert!(
+            rec.write().is_err(),
+            "a fixture written under a regular file must fail"
+        );
+
+        assert!(rec.has_events(), "a failed write must not empty the take");
+        assert_eq!(
+            rec.fixture().events.len(),
+            2,
+            "the tap and the drained event must both survive for the retry",
+        );
+        assert!(
+            rec.write().is_err(),
+            "the retry must reach the same failure, not a different one",
+        );
     }
 }
