@@ -29,9 +29,9 @@ pub const MAX_NORMAL_PAGES: usize = 10;
 pub const MAX_RESIDENT_ENTRIES: usize = 8192;
 pub const NEGATIVE_CACHE_CAP: usize = 256;
 pub const SCRATCH_MAP_CAP: usize = 1024;
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub const MAX_EVICTIONS_PER_MISS: usize = 64;
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub const FULL_RETRY_INTERVAL: usize = 8;
 const PRESSURE_LOG_INTERVAL_GENERATIONS: Generation = 8;
 
@@ -58,14 +58,14 @@ impl GlyphKey {
         })
     }
 
-    #[expect(dead_code, reason = "consumed in Task 11 (BDK-696)")]
+    #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
     pub fn inner(&self) -> cosmic_text::CacheKey {
         self.0
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub enum PageFaultKind {
     Invariant,
     Transient,
@@ -76,7 +76,7 @@ pub enum PageFaultKind {
 /// the caller skips this frame, counts, and retries later.
 /// Only `upload` can fault against a page.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub struct PageCreateFailed;
 
 /// GL abstraction so the cache is unit-testable without a context;
@@ -84,7 +84,7 @@ pub struct PageCreateFailed;
 /// Dimensions are `usize` end-to-end:
 /// femtovg's `create_image_empty`/`update_image` take `usize`,
 /// so matching it here means no conversions at the only real boundary.
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub trait PageBackend {
     type PageId: Copy + Eq + core::fmt::Debug;
     fn create_page(&mut self, size_px: usize) -> Result<Self::PageId, PageCreateFailed>;
@@ -650,7 +650,7 @@ const ETAGERE_SCRATCH_ESTIMATE: usize = 64 * SCRATCH_MAP_CAP;
 /// hinting cache, and outline scratch for the largest glyph we rasterize.
 const SWASH_CONTEXT_ESTIMATE: usize = 512 * 1024;
 
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     pages: Vec<Page<P>>,
     map: hashbrown::HashMap<GlyphKey, SlotId>,
@@ -673,7 +673,7 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     next_log_generation: Generation,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 11 (BDK-696)"))]
+#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
 impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     pub fn new() -> Self {
         Self {

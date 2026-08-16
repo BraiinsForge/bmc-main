@@ -57,8 +57,11 @@ use cosmic_text::{
     Weight,
 };
 use femtovg::{Canvas, FontId, Paint, renderer::OpenGl};
+use rgb::FromSlice as _;
 
-use crate::gpu::glyph_cache::RasterGlyph;
+use crate::gpu::glyph_cache::{
+    GlyphCache, GlyphLookup, GlyphQuad, PageBackend, PageCreateFailed, PageFaultKind, RasterGlyph,
+};
 use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
 
 /// Three weight-variant fonts used to render text spans. The renderer picks
@@ -572,7 +575,6 @@ pub(crate) struct LineGlyphs {
 }
 
 /// One glyph, positioned relative to its line's alphabetic baseline.
-#[expect(dead_code, reason = "consumed in Task 11 (BDK-696)")]
 pub(crate) struct PositionedGlyphInfo {
     pub key: cosmic_text::CacheKey,
     pub x: f32,
@@ -580,13 +582,16 @@ pub(crate) struct PositionedGlyphInfo {
     pub y: f32,
     /// Advance width. Origins alone recover neither the last glyph's advance
     /// nor the extents of an RTL run.
+    #[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
     pub w: f32,
     pub font_id: cosmic_text::fontdb::ID,
+    #[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
     pub font_size: f32,
     pub flags: cosmic_text::CacheKeyFlags,
     pub glyph_id: u16,
     /// Span index, as tagged through `Attrs::metadata`.
     /// Selects the glyph's paint and decorations.
+    #[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 12 (BDK-696)"))]
     pub metadata: usize,
 }
 
@@ -862,6 +867,523 @@ pub(crate) fn rasterize_glyph(
         top: image.placement.top,
         coverage: image.data,
     })
+}
+
+// ── Cached-glyph draw path ──────────────────────────────────────────
+
+/// femtovg's own direct-path check (`lib.rs:1455`).
+/// Above it femtovg path-renders per frame instead of atlasing,
+/// so the cache owns exactly the range femtovg would have atlased.
+pub(crate) const DIRECT_PATH_CUTOFF_PX: f32 = 92.0;
+
+/// The skew cosmic-text synthesizes italic with (`swash.rs:68`);
+/// no shipped face has a true italic.
+const FAKE_ITALIC_SKEW_DEGREES: f32 = 14.0;
+
+/// The embedded faces in load order, as `(post_script_name, weight)`.
+/// [`build_font_table`] zips this order with femtovg's, so a divergence here
+/// would map every glyph to the wrong face.
+const EMBEDDED_FACES: [(&str, u16); 7] = [
+    ("BraiinsSans", 400),
+    ("BraiinsSans-SemiBold", 600),
+    ("BraiinsSans-Bold", 700),
+    ("BraiinsDeckSans-Regular", 400),
+    ("BraiinsDeckSans-SemiBold", 600),
+    ("BraiinsDeckSans-Bold", 700),
+    ("NotoSans-Regular", 400),
+];
+
+/// cosmic-text's per-glyph face choice,
+/// translated into femtovg's handle for the same font binary.
+pub(crate) struct FontTable {
+    pairs: Vec<(cosmic_text::fontdb::ID, FontId)>,
+}
+
+impl FontTable {
+    pub(crate) fn femtovg_font(&self, id: cosmic_text::fontdb::ID) -> FontId {
+        self.pairs
+            .iter()
+            .find_map(|&(face, font)| (face == id).then_some(font))
+            .expect("BUG: a glyph came from a face outside the embedded font set")
+    }
+}
+
+/// Pair each cosmic-text face, positionally,
+/// with the femtovg font registered from the same bytes.
+///
+/// femtovg's [`FontId`] is opaque, so no pair can be *queried* for correctness —
+/// it holds by construction, both libraries being fed the same seven byte arrays
+/// in the same order. The check against [`EMBEDDED_FACES`] is unconditional:
+/// `faces()` iterates fontdb's private slot map, and a release build whose order
+/// had silently diverged would map glyphs to the wrong fonts forever after.
+/// Seven faces once at init cost nothing.
+#[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
+pub(crate) fn build_font_table(
+    font_system: &FontSystem,
+    femtovg_ids: &[FontId; EMBEDDED_FACES.len()],
+) -> FontTable {
+    let faces: Vec<_> = font_system.db().faces().collect();
+    assert_eq!(
+        faces.len(),
+        EMBEDDED_FACES.len(),
+        "BUG: font table order diverged"
+    );
+    for (face, expected) in faces.iter().zip(EMBEDDED_FACES) {
+        assert_eq!(
+            (face.post_script_name.as_str(), face.weight.0),
+            expected,
+            "BUG: font table order diverged"
+        );
+    }
+
+    FontTable {
+        pairs: faces
+            .iter()
+            .map(|face| face.id)
+            .zip(femtovg_ids.iter().copied())
+            .collect(),
+    }
+}
+
+/// Snap a glyph origin the way femtovg does (`text.rs:492-499`):
+/// x truncated, y rounded.
+/// Applied once in layout space, before any canvas transform,
+/// so cached quads and delegated runs land on the same coordinates.
+fn snap(x: f32, y: f32) -> (f32, f32) {
+    (x.trunc(), y.round())
+}
+
+/// cosmic-text's synthetic italic, in canvas space,
+/// about a glyph's baseline origin.
+/// cosmic skews `x' = x + y·tan(14°)` in font space (y-up);
+/// the canvas is y-down, so the conjugation flips the sign
+/// to `x' = x − (y − oy)·tan(14°)`.
+fn italic_about(ox: f32, oy: f32) -> femtovg::Transform2D {
+    let mut transform = femtovg::Transform2D::translation(-ox, -oy);
+    transform.skew_x(-FAKE_ITALIC_SKEW_DEGREES.to_radians());
+    transform.translate(ox, oy);
+    transform
+}
+
+/// One `fill_glyph_run` submission: contiguous glyphs sharing a font,
+/// or a lone `FAKE_ITALIC` glyph the caller draws under its own skew.
+#[derive(Debug)]
+pub(crate) struct OversizedRun {
+    pub font_id: FontId,
+    pub italic: bool,
+    pub glyphs: Vec<femtovg::PositionedGlyph>,
+}
+
+/// What one line's glyphs submit to, in draw order.
+pub(crate) enum GlyphCommand<P> {
+    Quads { page: P, quads: Vec<femtovg::Quad> },
+    Direct(OversizedRun),
+}
+
+/// Split an oversized line into the runs femtovg can take:
+/// one per font, and one per `FAKE_ITALIC` glyph, which femtovg's direct path
+/// would otherwise fill from the unmodified outline and render upright.
+pub(crate) fn chunk_oversized(
+    glyphs: &[PositionedGlyphInfo],
+    font_table: &FontTable,
+    origin_x: f32,
+    alphabetic_y: f32,
+) -> Vec<OversizedRun> {
+    let mut runs: Vec<OversizedRun> = Vec::new();
+    for glyph in glyphs {
+        let (x, y) = snap(origin_x + glyph.x, alphabetic_y + glyph.y);
+        let font_id = font_table.femtovg_font(glyph.font_id);
+        let italic = glyph
+            .flags
+            .contains(cosmic_text::CacheKeyFlags::FAKE_ITALIC);
+        let positioned = femtovg::PositionedGlyph {
+            x,
+            y,
+            glyph_id: glyph.glyph_id,
+        };
+
+        match runs.last_mut() {
+            Some(run) if !italic && !run.italic && run.font_id == font_id => {
+                run.glyphs.push(positioned);
+            }
+            Some(_) | None => runs.push(OversizedRun {
+                font_id,
+                italic,
+                glyphs: vec![positioned],
+            }),
+        }
+    }
+    runs
+}
+
+/// Extend the batch in flight while its page holds; a page change closes it.
+/// Grouping every quad of a page together instead would reorder the line,
+/// letting a later glyph draw under an earlier one.
+fn push_quad<P: Copy + Eq>(commands: &mut Vec<GlyphCommand<P>>, page: P, quad: femtovg::Quad) {
+    match commands.last_mut() {
+        Some(GlyphCommand::Quads { page: open, quads }) if *open == page => quads.push(quad),
+        Some(GlyphCommand::Quads { .. } | GlyphCommand::Direct(_)) | None => {
+            commands.push(GlyphCommand::Quads {
+                page,
+                quads: vec![quad],
+            });
+        }
+    }
+}
+
+/// swash reports `top` as the coverage's height above the baseline,
+/// so the canvas-space top edge is its negation.
+fn glyph_quad<P>(cached: &GlyphQuad<P>, gx: f32, gy: f32) -> femtovg::Quad {
+    let x0 = gx + cached.placement.left as f32;
+    let y0 = gy - cached.placement.top as f32;
+    femtovg::Quad {
+        x0,
+        y0,
+        x1: x0 + cached.placement.width as f32,
+        y1: y0 + cached.placement.height as f32,
+        s0: cached.u0,
+        t0: cached.v0,
+        s1: cached.u1,
+        t1: cached.v1,
+    }
+}
+
+fn cached_glyph_quad<P>(
+    backend: &mut impl PageBackend<PageId = P>,
+    cache: &mut GlyphCache<P>,
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut FontSystem,
+    glyph: &PositionedGlyphInfo,
+    origin_x: f32,
+    alphabetic_y: f32,
+) -> Option<(P, femtovg::Quad)>
+where
+    P: Copy + Eq + core::fmt::Debug,
+{
+    let (gx, gy) = snap(origin_x + glyph.x, alphabetic_y + glyph.y);
+    let lookup = cache.get_or_insert(backend, glyph.key, |key| {
+        rasterize_glyph(swash, font_system, key.inner())
+    });
+    match lookup {
+        GlyphLookup::Resident(cached) => Some((cached.page, glyph_quad(&cached, gx, gy))),
+        GlyphLookup::Missing | GlyphLookup::Oversized | GlyphLookup::Dropped => None,
+    }
+}
+
+/// Build what one line submits, without submitting it.
+///
+/// Split out from [`draw_line_glyphs`] because femtovg's submission calls
+/// return nothing: every placement assertion — snapping, baselines, the cutoff —
+/// is made against this output, which `draw_line_glyphs` submits exactly.
+#[expect(clippy::too_many_arguments, reason = "one line's full draw state")]
+pub(crate) fn build_glyph_commands<P>(
+    backend: &mut impl PageBackend<PageId = P>,
+    cache: &mut GlyphCache<P>,
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut FontSystem,
+    font_table: &FontTable,
+    glyphs: &[PositionedGlyphInfo],
+    origin_x: f32,
+    alphabetic_y: f32,
+    font_size: f32,
+) -> Vec<GlyphCommand<P>>
+where
+    P: Copy + Eq + core::fmt::Debug,
+{
+    if font_size > DIRECT_PATH_CUTOFF_PX {
+        return chunk_oversized(glyphs, font_table, origin_x, alphabetic_y)
+            .into_iter()
+            .map(GlyphCommand::Direct)
+            .collect();
+    }
+
+    let mut commands = Vec::new();
+    for glyph in glyphs {
+        if let Some((page, quad)) = cached_glyph_quad(
+            backend,
+            cache,
+            swash,
+            font_system,
+            glyph,
+            origin_x,
+            alphabetic_y,
+        ) {
+            push_quad(&mut commands, page, quad);
+        }
+    }
+    commands
+}
+
+/// Prepare one cached command per curved glyph before its individual transform.
+/// Missing glyphs retain their slot so commands stay aligned with arc placements.
+pub(crate) fn build_cached_curved_glyph_commands<P>(
+    backend: &mut impl PageBackend<PageId = P>,
+    cache: &mut GlyphCache<P>,
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut FontSystem,
+    glyphs: &[PositionedGlyphInfo],
+    alphabetic_y: f32,
+) -> Vec<Option<GlyphCommand<P>>>
+where
+    P: Copy + Eq + core::fmt::Debug,
+{
+    glyphs
+        .iter()
+        .map(|glyph| {
+            cached_glyph_quad(
+                backend,
+                cache,
+                swash,
+                font_system,
+                glyph,
+                curved_glyph_origin_x(glyph),
+                alphabetic_y,
+            )
+            .map(|(page, quad)| GlyphCommand::Quads {
+                page,
+                quads: vec![quad],
+            })
+        })
+        .collect()
+}
+
+/// Expand cached batches for a solid-colour outline.
+/// All copies share one paint, so grouping offsets within each page batch
+/// preserves the source-over result without allocating one vector per offset.
+pub(crate) fn outline_glyph_commands<P: Copy>(
+    commands: &[GlyphCommand<P>],
+    rings: u32,
+) -> Vec<GlyphCommand<P>> {
+    assert!(rings > 0, "BUG: an outline must contain at least one ring");
+    let repeats = usize::try_from(rings)
+        .expect("BUG: outline ring count exceeds usize")
+        .checked_mul(8)
+        .expect("BUG: outline repeat count overflows usize");
+    let mut outlined = Vec::with_capacity(commands.len());
+
+    for command in commands {
+        let GlyphCommand::Quads { page, quads } = command else {
+            panic!("BUG: direct-path commands cannot be expanded as cached outline quads");
+        };
+        let capacity = quads
+            .len()
+            .checked_mul(repeats)
+            .expect("BUG: outline quad count overflows usize");
+        let mut repeated = Vec::with_capacity(capacity);
+        for ring in 1..=rings {
+            let d = ring as f32;
+            for (dx, dy) in [
+                (d, 0.0),
+                (-d, 0.0),
+                (0.0, d),
+                (0.0, -d),
+                (d, d),
+                (-d, -d),
+                (d, -d),
+                (-d, d),
+            ] {
+                repeated.extend(quads.iter().map(|quad| femtovg::Quad {
+                    x0: quad.x0 + dx,
+                    y0: quad.y0 + dy,
+                    x1: quad.x1 + dx,
+                    y1: quad.y1 + dy,
+                    ..*quad
+                }));
+            }
+        }
+        outlined.push(GlyphCommand::Quads {
+            page: *page,
+            quads: repeated,
+        });
+    }
+
+    outlined
+}
+
+/// The paint femtovg's direct path needs.
+/// The incoming paint carries colour only, and `Paint` defaults to 16 px
+/// (`paint.rs:281-288`) — femtovg chooses path rendering over its own atlas
+/// by the paint's font size alone (`lib.rs:1455`), so the colour-only paint
+/// would populate that atlas instead.
+fn direct_paint(paint: &Paint, font_size: f32) -> Paint {
+    let mut direct = paint.clone();
+    direct.set_font_size(font_size);
+    direct
+}
+
+/// Draw one line's glyphs, cached below the cutoff and delegated above it.
+///
+/// Takes a slice rather than a [`LineGlyphs`] so callers can submit a subgroup
+/// without building a temporary vector on every warm frame.
+#[expect(dead_code, reason = "consumed in Task 12 (BDK-696)")]
+#[expect(clippy::too_many_arguments, reason = "one line's full draw state")]
+pub(crate) fn draw_line_glyphs(
+    canvas: &mut Canvas<OpenGl>,
+    cache: &mut GlyphCache<femtovg::ImageId>,
+    swash: &mut cosmic_text::SwashCache,
+    font_system: &mut FontSystem,
+    font_table: &FontTable,
+    glyphs: &[PositionedGlyphInfo],
+    origin_x: f32,
+    alphabetic_y: f32,
+    paint: &Paint,
+    font_size: f32,
+) {
+    let commands = build_glyph_commands(
+        &mut FemtovgPages { canvas },
+        cache,
+        swash,
+        font_system,
+        font_table,
+        glyphs,
+        origin_x,
+        alphabetic_y,
+        font_size,
+    );
+
+    submit_glyph_commands(canvas, commands, paint, font_size);
+}
+
+/// Submit prepared commands in one cached batch or as direct-path runs.
+pub(crate) fn submit_glyph_commands<I>(
+    canvas: &mut Canvas<OpenGl>,
+    commands: I,
+    paint: &Paint,
+    font_size: f32,
+) where
+    I: IntoIterator<Item = GlyphCommand<femtovg::ImageId>>,
+    I::IntoIter: ExactSizeIterator,
+{
+    let commands = commands.into_iter();
+    if font_size > DIRECT_PATH_CUTOFF_PX {
+        let mut oversized_paint = None;
+        for command in commands {
+            match command {
+                GlyphCommand::Quads { .. } => {
+                    panic!("BUG: direct-path text produced a cached-quad command");
+                }
+                GlyphCommand::Direct(run) => {
+                    let paint =
+                        oversized_paint.get_or_insert_with(|| direct_paint(paint, font_size));
+                    if run.italic {
+                        debug_assert_eq!(
+                            run.glyphs.len(),
+                            1,
+                            "BUG: an italic run's skew pivots on its one glyph"
+                        );
+                        let pivot = run
+                            .glyphs
+                            .first()
+                            .expect("BUG: an oversized run carries no glyph");
+                        let italic = italic_about(pivot.x, pivot.y);
+                        canvas.save();
+                        canvas.set_transform(&italic);
+                        direct_path::fill_oversized_run(canvas, run.font_id, run.glyphs, paint);
+                        canvas.restore();
+                    } else {
+                        direct_path::fill_oversized_run(canvas, run.font_id, run.glyphs, paint);
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    let mut alpha_glyphs = Vec::with_capacity(commands.len());
+    for command in commands {
+        let GlyphCommand::Quads { page, quads } = command else {
+            panic!("BUG: atlas-range text produced a direct-path command");
+        };
+        #[cfg(feature = "atlas-inspect")]
+        cache.record_drawn_page(page);
+        alpha_glyphs.push(femtovg::DrawCommand {
+            image_id: page,
+            quads,
+        });
+    }
+    if !alpha_glyphs.is_empty() {
+        canvas.draw_glyph_commands(
+            femtovg::GlyphDrawCommands {
+                alpha_glyphs,
+                color_glyphs: Vec::new(),
+            },
+            paint,
+        );
+    }
+}
+
+mod direct_path {
+    use femtovg::{Canvas, FontId, Paint, PositionedGlyph, renderer::OpenGl};
+
+    /// The one femtovg direct-path entry point. Everything
+    /// > 92 px nominal routes here; femtovg path-renders it per frame.
+    pub(super) fn fill_oversized_run(
+        canvas: &mut Canvas<OpenGl>,
+        font_id: FontId,
+        glyphs: impl IntoIterator<Item = PositionedGlyph>,
+        paint: &Paint,
+    ) {
+        debug_assert!(
+            paint.font_size() > 92.0,
+            "BUG: direct path for atlas-range size"
+        );
+        let _ = canvas.fill_glyph_run(font_id, glyphs, paint);
+    }
+}
+
+/// The atlas pages, backed by femtovg images.
+/// Dimensions stay `usize` end to end: femtovg's image calls take `usize`,
+/// and so does [`PageBackend`].
+struct FemtovgPages<'a> {
+    canvas: &'a mut Canvas<OpenGl>,
+}
+
+impl PageBackend for FemtovgPages<'_> {
+    type PageId = femtovg::ImageId;
+
+    fn create_page(&mut self, size_px: usize) -> Result<Self::PageId, PageCreateFailed> {
+        self.canvas
+            .create_image_empty(
+                size_px,
+                size_px,
+                femtovg::PixelFormat::Gray8,
+                femtovg::ImageFlags::NEAREST,
+            )
+            .map_err(|_| PageCreateFailed)
+    }
+
+    fn upload(
+        &mut self,
+        page: Self::PageId,
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        pixels: &[u8],
+    ) -> Result<(), PageFaultKind> {
+        // `as_gray` is a slice cast over a transparent wrapper,
+        // so the padded buffer reaches the driver without a copy.
+        let coverage = imgref::ImgRef::new(pixels.as_gray(), width, height);
+        self.canvas
+            .update_image(page, femtovg::ImageSource::Gray(coverage), x, y)
+            .map_err(|error| upload_fault(&error))
+    }
+}
+
+/// A rect that leaves the page, a format mismatch or an unknown image
+/// are all bugs in what we asked for, and quarantining the page is what stops
+/// the cache repeating them; anything else is the driver having a bad frame.
+fn upload_fault(error: &femtovg::ErrorKind) -> PageFaultKind {
+    if matches!(
+        error,
+        femtovg::ErrorKind::ImageUpdateOutOfBounds
+            | femtovg::ErrorKind::ImageUpdateWithDifferentFormat
+            | femtovg::ErrorKind::ImageIdNotFound
+    ) {
+        PageFaultKind::Invariant
+    } else {
+        PageFaultKind::Transient
+    }
 }
 
 // ── Autofit helpers ─────────────────────────────────────────────────
@@ -1812,5 +2334,509 @@ mod rasterize_tests {
             (italic.width, italic.coverage),
             "FAKE_ITALIC is part of the key because it changes the raster"
         );
+    }
+}
+
+/// Placement of cached quads and delegated runs: the snapping rule,
+/// the contiguous batching fold, and the synthetic-italic transform.
+#[cfg(test)]
+mod glyph_draw_tests {
+    use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Style, SwashCache};
+
+    use super::{
+        DIRECT_PATH_CUTOFF_PX, FAKE_ITALIC_SKEW_DEGREES, FontTable, GlyphCommand,
+        build_cached_curved_glyph_commands, build_glyph_commands,
+        chunk_oversized, direct_paint, extract_lines, italic_about, outline_glyph_commands,
+        push_quad, rasterize_glyph, snap,
+    };
+    use crate::gpu::glyph_cache::{GlyphCache, GlyphKey, test_support::MockBackend};
+
+    const SANS: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
+    const DECK_SANS: &[u8] = include_bytes!("../../../assets/fonts/BraiinsDeckSans-Regular.otf");
+
+    /// Fractional on both axes and in both directions,
+    /// so a rule that rounded x or truncated y would show.
+    const ORIGIN_X: f32 = 10.7;
+    const BASELINE_Y: f32 = 20.4;
+
+    fn font_system() -> FontSystem {
+        crate::gpu::renderer::build_font_system()
+    }
+
+    /// Never consulted below the cutoff, which is where the quad path lives.
+    fn no_fonts() -> FontTable {
+        FontTable { pairs: Vec::new() }
+    }
+
+    /// femtovg parity: `x.trunc()` but `y.round()` (`text.rs:492-499`).
+    /// A symmetric rule would drift text by up to a pixel
+    /// against the placement the direct path still takes from femtovg above 92 px.
+    #[test]
+    fn snap_is_trunc_x_round_y() {
+        for ((x, y), expected) in [
+            ((1.7_f32, 1.4_f32), (1.0_f32, 1.0_f32)),
+            ((-1.7, -1.4), (-1.0, -1.0)),
+            ((2.3, 2.5), (2.0, 3.0)),
+        ] {
+            assert_eq!(snap(x, y), expected, "snapping ({x}, {y})");
+        }
+    }
+
+    /// Merging every quad of a page into one batch would reorder the line,
+    /// so a page seen again after another page opens a batch of its own.
+    #[test]
+    fn batches_split_on_page_change_only_contiguously() {
+        let mut commands = Vec::new();
+        for page in [0_usize, 0, 1, 0] {
+            push_quad(&mut commands, page, femtovg::Quad::default());
+        }
+
+        let shape: Vec<(usize, usize)> = commands
+            .iter()
+            .map(|command| match command {
+                GlyphCommand::Quads { page, quads } => (*page, quads.len()),
+                GlyphCommand::Direct(_) => panic!("BUG: the quad fold emitted a direct run"),
+            })
+            .collect();
+        assert_eq!(shape, vec![(0, 2), (1, 1), (0, 1)]);
+    }
+
+    #[test]
+    fn outline_expands_each_batch_without_repeating_page_commands() {
+        let quad = femtovg::Quad {
+            x0: 10.0,
+            y0: 20.0,
+            x1: 14.0,
+            y1: 26.0,
+            s0: 0.1,
+            t0: 0.2,
+            s1: 0.3,
+            t1: 0.4,
+        };
+        let commands = vec![GlyphCommand::Quads {
+            page: 7,
+            quads: vec![quad],
+        }];
+
+        let outlined = outline_glyph_commands(&commands, 2);
+
+        let [GlyphCommand::Quads { page, quads }] = outlined.as_slice() else {
+            panic!("BUG: one cached batch must remain one outlined batch");
+        };
+        assert_eq!(*page, 7);
+        assert_eq!(quads.len(), 16, "two rings must emit eight offsets each");
+        assert_eq!((quads[0].x0, quads[0].y0), (11.0, 20.0));
+        assert_eq!((quads[8].x0, quads[8].y0), (12.0, 20.0));
+        assert_eq!(
+            (quads[15].x0, quads[15].y0),
+            (8.0, 22.0),
+            "the final copy must be the second ring's bottom-left offset"
+        );
+        assert_eq!(
+            (quads[0].s0, quads[0].t0, quads[0].s1, quads[0].t1),
+            (0.1, 0.2, 0.3, 0.4)
+        );
+    }
+
+    /// The skew's sign flips through the y-axis conjugation:
+    /// cosmic skews in font space (y-up), the canvas is y-down.
+    /// A wrong sign slants the text backwards, a wrong pivot shifts it sideways.
+    ///
+    /// The oracle is swash's own skewed coverage.
+    /// 'W' is drawn entirely from straight segments, so its outline points
+    /// *are* its extremes — a curved glyph's control points would inflate
+    /// the bounds past the ink.
+    #[test]
+    fn italic_transform_matches_swash_skew() {
+        let (ox, oy) = (12.0_f32, 34.0_f32);
+        let italic = italic_about(ox, oy);
+        let tan = FAKE_ITALIC_SKEW_DEGREES.to_radians().tan();
+        for (x, y) in [(0.0_f32, 0.0_f32), (20.0, 10.0), (-5.0, 60.0)] {
+            let (tx, ty) = italic.transform_point(x, y);
+            assert!(
+                (tx - (x - (y - oy) * tan)).abs() < 1e-3,
+                "({x}, {y}) skewed to x {tx}"
+            );
+            assert!((ty - y).abs() < 1e-3, "({x}, {y}) moved to y {ty}");
+        }
+
+        let mut font_system = font_system();
+        let mut swash = SwashCache::new();
+        let upright_key = first_glyph_key(&mut font_system, "W", 92.0, false);
+        let outline = swash
+            .get_outline_commands_uncached(&mut font_system, upright_key)
+            .expect("BUG: 'W' has no outline");
+        let skewed_key = first_glyph_key(&mut font_system, "W", 92.0, true);
+        let skewed = rasterize_glyph(&mut swash, &mut font_system, skewed_key)
+            .expect("BUG: skewed 'W' does not rasterize");
+
+        let about_origin = italic_about(0.0, 0.0);
+        let mut bounds: Option<(f32, f32, f32, f32)> = None;
+        for point in outline_points(&outline) {
+            // Font space is y-up about the baseline; the canvas is y-down.
+            let (x, y) = about_origin.transform_point(point.0, -point.1);
+            bounds = Some(bounds.map_or((x, x, y, y), |(x0, x1, y0, y1)| {
+                (x0.min(x), x1.max(x), y0.min(y), y1.max(y))
+            }));
+        }
+        let (min_x, max_x, min_y, max_y) = bounds.expect("BUG: 'W' outlines no points");
+
+        let width = i32::try_from(skewed.width).expect("BUG: width outside i32");
+        let height = i32::try_from(skewed.height).expect("BUG: height outside i32");
+        for (transformed, rasterized, edge) in [
+            (min_x, skewed.left, "left"),
+            (max_x, skewed.left + width, "right"),
+            (min_y, -skewed.top, "top"),
+            (max_y, height - skewed.top, "bottom"),
+        ] {
+            assert!(
+                (transformed - rasterized as f32).abs() <= 1.0,
+                "{edge}: transformed to {transformed}, swash rasterized {rasterized}",
+            );
+        }
+    }
+
+    /// `set_transform` premultiplies, so the italic matrix alone composes
+    /// inside whatever transform curved text already applied.
+    /// Precomposing it with the current transform would apply that one twice.
+    #[test]
+    fn italic_delegation_composes_with_outer_transform() {
+        // The transform stack lives on `Canvas`, above the renderer,
+        // so the void renderer observes the same composition without GL.
+        let mut canvas = femtovg::Canvas::new(femtovg::renderer::Void)
+            .expect("BUG: void canvas creation failed");
+        canvas.translate(30.0, 40.0);
+        canvas.rotate(0.3);
+        let outer = canvas.transform();
+
+        let (gx, gy) = (17.0_f32, 61.0_f32);
+        let italic = italic_about(gx, gy);
+        canvas.save();
+        canvas.set_transform(&italic);
+        let mid = canvas.transform();
+        assert_eq!(
+            mid,
+            italic * outer,
+            "the italic must apply before the outer"
+        );
+
+        let (px, py) = (25.0_f32, 40.0_f32);
+        let (ix, iy) = italic.transform_point(px, py);
+        let expected = outer.transform_point(ix, iy);
+        let actual = mid.transform_point(px, py);
+        assert!(
+            (actual.0 - expected.0).abs() < 1e-3 && (actual.1 - expected.1).abs() < 1e-3,
+            "point {actual:?} against italic-then-outer {expected:?}",
+        );
+
+        canvas.restore();
+        assert_eq!(canvas.transform(), outer, "restore must undo the italic");
+    }
+
+    /// femtovg fills the unmodified outline, so a `FAKE_ITALIC` glyph batched
+    /// with its neighbours would render upright above the cutoff;
+    /// each one has to be submitted alone under its own skew.
+    /// Fonts break a run for a blunter reason:
+    /// `fill_glyph_run` takes one font for the whole run.
+    #[test]
+    fn oversized_runs_chunk_per_font_and_break_at_fake_italic() {
+        // Fonts live in femtovg's text context, not on the canvas,
+        // so real `FontId`s cost no GL context here.
+        let fonts = femtovg::TextContext::default();
+        let sans = fonts
+            .add_font_mem(SANS)
+            .expect("BUG: font registration failed");
+        let deck = fonts
+            .add_font_mem(DECK_SANS)
+            .expect("BUG: font registration failed");
+
+        let mut font_system = font_system();
+        let font_table = FontTable {
+            pairs: vec![
+                (face_id(&font_system, "BraiinsSans"), sans),
+                (face_id(&font_system, "BraiinsDeckSans-Regular"), deck),
+            ],
+        };
+        let size = DIRECT_PATH_CUTOFF_PX + 1.0;
+        let mut buffer = Buffer::new(&mut font_system, Metrics::new(size, size));
+        buffer.set_rich_text(
+            &mut font_system,
+            [
+                ("AB", named(SANS_FAMILY, false)),
+                ("CD", named(DECK_FAMILY, false)),
+                ("E", named(SANS_FAMILY, true)),
+                ("F", named(SANS_FAMILY, false)),
+            ],
+            &named(SANS_FAMILY, false),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut font_system, false);
+        let lines = extract_lines(&buffer);
+        let [line] = lines.as_slice() else {
+            panic!("BUG: the fixture must shape to one line");
+        };
+
+        let runs = chunk_oversized(&line.glyphs, &font_table, ORIGIN_X, BASELINE_Y);
+        let shape: Vec<(femtovg::FontId, bool, usize)> = runs
+            .iter()
+            .map(|run| (run.font_id, run.italic, run.glyphs.len()))
+            .collect();
+        assert_eq!(
+            shape,
+            vec![
+                (sans, false, 2),
+                (deck, false, 2),
+                (sans, true, 1),
+                (sans, false, 1),
+            ],
+        );
+
+        let submitted: Vec<(f32, f32)> = runs
+            .iter()
+            .flat_map(|run| run.glyphs.iter())
+            .map(|glyph| (glyph.x, glyph.y))
+            .collect();
+        let expected: Vec<(f32, f32)> = line
+            .glyphs
+            .iter()
+            .map(|glyph| snap(ORIGIN_X + glyph.x, BASELINE_Y + glyph.y))
+            .collect();
+        assert_eq!(submitted, expected, "delegated glyphs must be pre-snapped");
+
+        let mut swash = SwashCache::new();
+        let mut cache = GlyphCache::new();
+        let commands = build_glyph_commands(
+            &mut MockBackend::default(),
+            &mut cache,
+            &mut swash,
+            &mut font_system,
+            &font_table,
+            &line.glyphs,
+            ORIGIN_X,
+            BASELINE_Y,
+            size,
+        );
+        let delegated: Vec<(femtovg::FontId, bool, usize)> = commands
+            .iter()
+            .map(|command| match command {
+                GlyphCommand::Direct(run) => (run.font_id, run.italic, run.glyphs.len()),
+                GlyphCommand::Quads { .. } => {
+                    panic!("BUG: above the cutoff no glyph may reach the cache")
+                }
+            })
+            .collect();
+        assert_eq!(
+            delegated, shape,
+            "the draw path must submit the chunker's runs"
+        );
+    }
+
+    /// `Paint` defaults to 16 px and femtovg picks the direct path
+    /// from the paint's size alone,
+    /// so a colour-only paint would quietly atlas a 93 px glyph.
+    #[test]
+    fn direct_paint_carries_the_nominal_size() {
+        let paint = femtovg::Paint::color(femtovg::Color::white());
+        let size = direct_paint(&paint, 93.0).font_size();
+        assert!(
+            (size - 93.0).abs() < f32::EPSILON,
+            "the direct paint carries {size}, not the nominal 93",
+        );
+    }
+
+    /// Curved text places one glyph per arc point, and the origin it submits
+    /// has to cancel the glyph's position within its line —
+    /// [`build_cached_curved_glyph_commands`] adds that position back.
+    /// Without the cancellation every glyph after the first
+    /// drifts by its own line offset, which a single-glyph fixture cannot see.
+    /// Asserted on the pen origin the quad reconstructs to,
+    /// not the quad's centre:
+    /// side bearings put the ink off centre for perfectly placed glyphs.
+    ///
+    #[test]
+    fn curved_glyphs_center_their_advance_on_the_arc() {
+        let mut font_system = font_system();
+        let mut swash = SwashCache::new();
+        let size = 24.0;
+        let mut buffer = Buffer::new(&mut font_system, Metrics::new(size, size));
+        // Kerned pairs: the second glyph's line position is not the first
+        // glyph's advance, so a leaked line position cannot cancel out.
+        buffer.set_text(
+            &mut font_system,
+            "AVATAR",
+            &named(SANS_FAMILY, false),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut font_system, false);
+        let lines = extract_lines(&buffer);
+        let [line] = lines.as_slice() else {
+            panic!("BUG: the fixture must shape to one line");
+        };
+        assert!(
+            line.glyphs.windows(2).any(|pair| {
+                let [left, right] = pair else {
+                    unreachable!("BUG: windows(2) yields pairs")
+                };
+                (right.x - left.x - left.w).abs() > f32::EPSILON
+            }),
+            "the fixture must kern, or a leaked line position cancels out",
+        );
+
+        let mut backend = MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let commands = build_cached_curved_glyph_commands(
+            &mut backend,
+            &mut cache,
+            &mut swash,
+            &mut font_system,
+            &line.glyphs,
+            BASELINE_Y,
+        );
+        assert_eq!(
+            commands.len(),
+            line.glyphs.len(),
+            "each arc placement must retain its command slot"
+        );
+        for (glyph, command) in line.glyphs.iter().zip(commands) {
+            let Some(GlyphCommand::Quads { quads, .. }) = command else {
+                panic!("BUG: one glyph must submit one batch");
+            };
+            let [quad] = quads.as_slice() else {
+                panic!("BUG: one glyph must submit one quad");
+            };
+            // Normalized, as the cache rasterized it: the raw key's subpixel
+            // bins shift the placement by up to a pixel.
+            let raster = rasterize_glyph(
+                &mut swash,
+                &mut font_system,
+                GlyphKey::normalize(glyph.key).inner(),
+            )
+            .expect("BUG: a batched glyph has no coverage");
+            let (expected_pen, _) = snap(-glyph.w / 2.0, BASELINE_Y);
+            assert!(
+                (quad.x0 - raster.left as f32 - expected_pen).abs() < f32::EPSILON,
+                "glyph of advance {} drew from pen {}, not {expected_pen}",
+                glyph.w,
+                quad.x0 - raster.left as f32,
+            );
+        }
+    }
+
+    /// The cached quad has to land on the snapped origin,
+    /// with swash's baseline-relative `top` negated into the canvas's y-down
+    /// space. Getting that sign wrong hangs every glyph below its baseline.
+    #[test]
+    fn cached_quads_sit_at_the_snapped_origin() {
+        let mut font_system = font_system();
+        let mut swash = SwashCache::new();
+        let mut buffer = Buffer::new(&mut font_system, Metrics::new(24.0, 24.0));
+        buffer.set_text(
+            &mut font_system,
+            "Hi",
+            &named(SANS_FAMILY, false),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(&mut font_system, false);
+        let lines = extract_lines(&buffer);
+        let [line] = lines.as_slice() else {
+            panic!("BUG: the fixture must shape to one line");
+        };
+
+        let mut backend = MockBackend::default();
+        let mut cache = GlyphCache::new();
+        let commands = build_glyph_commands(
+            &mut backend,
+            &mut cache,
+            &mut swash,
+            &mut font_system,
+            &no_fonts(),
+            &line.glyphs,
+            ORIGIN_X,
+            BASELINE_Y,
+            24.0,
+        );
+
+        let [GlyphCommand::Quads { quads, .. }] = commands.as_slice() else {
+            panic!("BUG: one page must yield exactly one batch");
+        };
+        assert_eq!(quads.len(), line.glyphs.len());
+
+        for (glyph, quad) in line.glyphs.iter().zip(quads) {
+            let raster = rasterize_glyph(&mut swash, &mut font_system, glyph.key)
+                .expect("BUG: a batched glyph has no coverage");
+            let (gx, gy) = snap(ORIGIN_X + glyph.x, BASELINE_Y + glyph.y);
+            assert_eq!(
+                (quad.x0, quad.y0, quad.x1, quad.y1),
+                (
+                    gx + raster.left as f32,
+                    gy - raster.top as f32,
+                    gx + raster.left as f32 + raster.width as f32,
+                    gy - raster.top as f32 + raster.height as f32,
+                ),
+            );
+        }
+    }
+
+    const SANS_FAMILY: &str = "Braiins Sans";
+    const DECK_FAMILY: &str = "Braiins Deck Sans";
+
+    fn named(family: &'static str, italic: bool) -> Attrs<'static> {
+        let attrs = Attrs::new().family(Family::Name(family));
+        if italic {
+            attrs.style(Style::Italic)
+        } else {
+            attrs
+        }
+    }
+
+    /// Every point an outline names, in canvas space (y-down).
+    fn outline_points(commands: &[cosmic_text::Command]) -> Vec<(f32, f32)> {
+        commands
+            .iter()
+            .flat_map(|command| match *command {
+                cosmic_text::Command::MoveTo(p) | cosmic_text::Command::LineTo(p) => vec![p],
+                cosmic_text::Command::QuadTo(c, p) => vec![c, p],
+                cosmic_text::Command::CurveTo(c0, c1, p) => vec![c0, c1, p],
+                cosmic_text::Command::Close => Vec::new(),
+            })
+            .map(|point| (point.x, point.y))
+            .collect()
+    }
+
+    fn face_id(font_system: &FontSystem, post_script_name: &str) -> cosmic_text::fontdb::ID {
+        font_system
+            .db()
+            .faces()
+            .find(|face| face.post_script_name == post_script_name)
+            .expect("BUG: the embedded set has no such face")
+            .id
+    }
+
+    /// The key of the first glyph a single-word line shapes to,
+    /// so the face, weight and flags are the ones cosmic really produces.
+    fn first_glyph_key(
+        font_system: &mut FontSystem,
+        text: &str,
+        size: f32,
+        italic: bool,
+    ) -> cosmic_text::CacheKey {
+        let mut buffer = Buffer::new(font_system, Metrics::new(size, size));
+        buffer.set_text(
+            font_system,
+            text,
+            &named(SANS_FAMILY, italic),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(font_system, false);
+        let lines = extract_lines(&buffer);
+        lines
+            .first()
+            .and_then(|line| line.glyphs.first())
+            .expect("BUG: the fixture shaped no glyph")
+            .key
     }
 }
