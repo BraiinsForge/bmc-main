@@ -245,6 +245,7 @@ egui_virtual_list = "0.10"
 embedded-hal = { version = "1.0.0" }
 embedded-hal-async = { version = "1.0.0" }
 enum-assoc = "1.2.4"
+etagere = "0.3"
 evdev = "0.13.1"
 fake = "4"
 fdlimit = "0.3.0"
@@ -270,6 +271,7 @@ glutin-winit = "0.5"
 # probe widgets inline rather than rely on a cross-target build of an example crate.
 governor = "0.8.1"
 gpiod = "0.2.3"
+hashbrown = "0.16"
 heck = "0.5"
 hex = "0.4.3"
 hickory-resolver = "0.25.2"

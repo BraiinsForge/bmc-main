@@ -790,9 +790,11 @@ dependencies = [
  "bmc-svg-compiler",
  "bmc-wasm-protocol",
  "cosmic-text",
+ "etagere",
  "femtovg",
  "glam",
  "glow 0.16.0",
+ "hashbrown 0.16.1",
  "ii-stopwatch",
  "image",
  "imgref",
@@ -2006,6 +2008,15 @@ name = "error-code"
 version = "3.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
+
+[[package]]
+name = "etagere"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7ecb5c40d5683a270e077688f53a99eac51c1cb1ae5ba63b55590370cb3536bf"
+dependencies = [
+ "euclid",
+]
 
 [[package]]
 name = "euclid"

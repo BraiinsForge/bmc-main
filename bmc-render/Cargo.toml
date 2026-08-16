@@ -24,9 +24,11 @@ tracing.workspace = true
 
 # Rendering
 cosmic-text.workspace = true
+etagere.workspace = true
 femtovg.workspace = true
 glam.workspace = true
 glow.workspace = true
+hashbrown.workspace = true
 image.workspace = true
 imgref.workspace = true
 jpeg-decoder.workspace = true
