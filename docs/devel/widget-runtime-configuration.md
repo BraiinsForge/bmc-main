@@ -99,7 +99,10 @@ The widget manager owns every widget child process in a dedicated actor task and
 that exits on its own is respawned automatically: the delay starts at 1 second, doubles per crash up to 5 minutes, and
 restarts from 1 second once a process stays up for 60 seconds. The instance's compositor registration and stored
 configuration survive the crash, so the respawned process attaches through the same configure replay as the first spawn;
-its new pid is re-bound via `set_widget_pid`, and a connection racing past that registration is buffered as usual.
+its new pid is re-bound via `bind_respawned_pid`, and a connection racing past that registration is buffered as usual.
+That bind takes effect only while the instance is still unbound — a scene edit or a widget reload can re-register and
+re-bind the instance while the respawn announcement is still queued, and binding then would point the record at a dead
+pid and leave the live process's buffered connection with nothing to resolve it.
 
 The 5-minute delay is a ceiling, not a give-up: supervision retries for as long as the instance exists. A restart budget
 would be unsafe here because widget failures are correlated — a crashed `bmc-wasm-host` drops the control socket of
@@ -112,6 +115,12 @@ An external stop always wins: stopping a widget (scene edit, upgrade preparation
 and a stopped widget is never respawned. A widget whose type has left the registry (uninstalled) is not respawned either
 — the manager emits `Abandoned` so the coordinator ends the registration that a crash deliberately leaves standing, and
 the grid cell stays empty as if it had never spawned.
+
+A registry re-scan resets the ladder. A package upgrade replaces widget files while the processes are still running, so
+affected widgets crash and start climbing delays against binaries that are being swapped out from under them — and the
+reload that follows the install hands every instance that is not running to supervision rather than replacing it. After
+`refresh()` those pending respawns are retried at 1 second instead of whatever rung they had reached, so a widget
+upgrade does not leave a cell blank for tens of seconds after the install reports success.
 
 ### What supervision observes — and what it does not
 

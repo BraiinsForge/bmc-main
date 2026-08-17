@@ -185,12 +185,14 @@ impl WidgetManager {
     }
 
     /// Re-scan the widget discovery paths so newly-installed widgets become
-    /// available without a restart. A no-op if the registry is static.
+    /// available without a restart. The re-scan itself is a no-op for a static
+    /// registry; what follows happens either way.
     ///
-    /// Also brings any pending crash respawn forward to the initial delay, so a
-    /// widget that crash-looped while its package was being replaced comes back
-    /// on the new binary without waiting out a delay it earned against the old
-    /// one. A failed re-scan leaves the delays alone: nothing changed.
+    /// Also brings any pending crash respawn forward to the initial delay,
+    /// so a widget that crash-looped while its package was being replaced
+    /// returns on the new binary instead of waiting out a delay
+    /// it earned against the old one.
+    /// A failed re-scan leaves the delays alone: nothing changed.
     pub async fn refresh(&self) -> Result<(), super::RegistryError> {
         self.registry.refresh().await?;
 
@@ -205,9 +207,9 @@ impl WidgetManager {
         Ok(())
     }
 
-    /// Spawn a widget process and return its OS pid. The compositor needs
-    /// the pid to correlate the eventual Wayland connection back to the
-    /// widget's registered instance id.
+    /// Spawn a widget process and return its OS pid. The compositor needs it
+    /// to correlate the eventual Wayland connection back to the widget's
+    /// registered instance id.
     ///
     /// A crashed widget is respawned automatically with backoff until it is
     /// stopped or its type leaves the registry. Self-exits and respawns are
@@ -257,8 +259,7 @@ impl WidgetManager {
             .expect("BUG: widget child actor dropped a stop-all reply")
     }
 
-    /// Report whether the actor still tracks a live process for the instance,
-    /// so callers that replace a widget can skip the ones it would not replace.
+    /// Report what the actor tracks for the instance.
     pub(crate) async fn observe_child(&self, instance_id: &str) -> ChildObservation {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
@@ -312,10 +313,10 @@ struct RunningWidget {
     /// carries the reply sender acknowledged once the process is gone.
     stop_tx: oneshot::Sender<oneshot::Sender<()>>,
     /// Spawn parameters kept for a crash respawn.
-    /// `env.wayland_display` is the one value a respawn cannot re-derive —
-    /// the manager holds no compositor reference, by design — so it is only
-    /// valid while the compositor outlives every widget it spawned.
-    /// A compositor restart would rebind a fresh socket
+    /// `env.wayland_display` is the one value a respawn cannot re-derive,
+    /// since the manager holds no compositor reference by design,
+    /// so it stays valid only while the compositor outlives every widget
+    /// it spawned. A compositor restart would rebind a fresh socket
     /// (`ListeningSocket::bind_auto`, so not necessarily the same name)
     /// and strand every cached env here.
     widget_uid: Uuid,
@@ -500,12 +501,13 @@ impl Actor {
 
         let (stop_tx, stop_rx) = oneshot::channel();
         let instance_id = env.instance_id.clone();
-        // Re-spawning over a live instance must not leave the old process to
-        // kill_on_drop: SIGKILL skips the destructors that free GEM/DMA-BUF,
-        // leaking CMA. Dropping the acknowledger keeps the actor unblocked
+        // Re-spawning over a live instance must not leave the old process
+        // to kill_on_drop: SIGKILL skips the destructors that free GEM/DMA-BUF,
+        // leaking CMA.
+        // Dropping the acknowledger keeps the actor unblocked
         // while the old run_child task runs the full SIGTERM -> SIGKILL stop.
-        // Replacing a PendingRestart entry needs none of this — orphaning its
-        // token is how an external re-spawn cancels a queued one.
+        // Replacing a PendingRestart entry needs none of this —
+        // orphaning its token is how an external re-spawn cancels a queued one.
         if let Some(WidgetState::Running(previous)) = self.children.remove(&instance_id) {
             warn!(
                 "re-spawning live widget {} (pid={}); stopping it first",
@@ -672,12 +674,11 @@ impl Actor {
 
     /// Bring every pending respawn forward to the initial delay.
     ///
-    /// A registry change means the binaries on disk are not the ones the
-    /// climbed delays were earned against, so continuing to hold a widget off
-    /// punishes it for a version that is gone. This is the same reasoning
-    /// [`RestartPolicy::healthy_uptime`] applies to a process that proved
-    /// itself, and it is what returns the instances a widget reload skips —
-    /// every one that is not `Running` — to the screen promptly.
+    /// A registry change means the binaries on disk are no longer the ones
+    /// the climbed delays were earned against,
+    /// so holding a widget off any longer punishes it for a version that is gone.
+    /// Same reasoning as [`RestartPolicy::healthy_uptime`],
+    /// which resets the ladder for a process that proved itself.
     fn reset_restart_backoff(&mut self, internal_tx: &mpsc::UnboundedSender<Internal>) {
         let pending: Vec<_> = self
             .children
@@ -1113,14 +1114,16 @@ mod tests {
         }
     }
 
-    /// A package replacement leaves affected widgets crash-looping while their
-    /// files are swapped, and the reload that follows skips every instance that
-    /// is not running — handing them to supervision. They must not then serve
-    /// out a delay they earned against a binary that is no longer installed.
+    /// A package replacement leaves affected widgets crash-looping
+    /// while their files are swapped,
+    /// and the reload that follows hands every non-running instance
+    /// to supervision rather than replacing it.
+    /// None of them may then serve out a delay
+    /// earned against a binary that is no longer installed.
     #[tokio::test]
     async fn a_registry_refresh_retries_pending_respawns_promptly() {
-        /// Far enough above the assertion window that a prompt respawn cannot be
-        /// the climbed timer simply elapsing.
+        /// Far enough above the assertion window
+        /// that a prompt respawn cannot be the climbed timer simply elapsing.
         const CLIMBED: Duration = Duration::from_secs(1);
         const PROMPT: Duration = Duration::from_millis(400);
 

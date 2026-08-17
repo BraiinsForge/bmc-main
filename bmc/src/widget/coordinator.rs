@@ -330,18 +330,13 @@ pub fn start_credential_listener(
     });
 }
 
-/// Apply widget lifecycle events from the manager to the compositor:
-/// a self-exited process gets its pid association cleared
-/// (a recycled pid cannot be mistaken for the dead widget),
-/// and a respawned process gets its new pid bound,
-/// so the compositor recognizes it when it reconnects.
-/// `clear_pid` detaches the process but keeps the instance registered,
-/// so the reconnect replays the same configure batch as the first attach
-/// and the respawn only has to re-bind its pid.
-/// Takes the compositor rather than the whole [`Coordinator`]: holding the
-/// coordinator would keep its `WidgetManager`, and so the actor's command
-/// sender, alive for as long as this task runs — while this task only ends
-/// when the actor drops the event sender. Neither could ever finish.
+/// Apply widget lifecycle events from the manager to the compositor.
+///
+/// Takes the compositor rather than the whole [`Coordinator`].
+/// Holding the coordinator would keep its `WidgetManager` alive,
+/// and with it the actor's command sender, for as long as this task runs —
+/// while this task only ends when the actor drops the event sender.
+/// Neither could ever finish.
 pub fn start_widget_event_listener(
     compositor: Arc<dyn Compositor>,
     mut events: mpsc::UnboundedReceiver<WidgetEvent>,
@@ -369,10 +364,10 @@ pub fn start_widget_event_listener(
                         );
                     }
                 }
-                // Unguarded, unlike the two arms above: an instance re-registered
-                // while this was queued cannot be told apart from the one it was
-                // emitted for, and it takes an uninstall plus a reinstall to
-                // construct that.
+                // Unguarded, unlike the two arms above:
+                // an instance re-registered while this sat queued is
+                // indistinguishable from the one it was emitted for,
+                // and constructing that takes an uninstall plus a reinstall.
                 WidgetEvent::Abandoned { instance_id } => {
                     if let Err(e) = compositor.unregister_widget(&instance_id) {
                         warn!(
@@ -715,9 +710,9 @@ impl Coordinator {
             {
                 continue;
             }
-            // A pending respawn is skipped on purpose: supervision re-reads the
-            // registry when its timer fires, so it brings the widget back on the
-            // new binary without this reload replacing anything.
+            // Skipping a pending respawn is deliberate.
+            // Supervision re-reads the registry when its timer fires,
+            // so it brings the widget back on the new binary by itself.
             match self.widget_manager.observe_child(&instance_id).await {
                 ChildObservation::Running => {}
                 ChildObservation::Exited | ChildObservation::Missing => continue,

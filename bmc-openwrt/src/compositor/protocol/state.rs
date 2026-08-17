@@ -259,16 +259,11 @@ impl DeckWidgetProtocolState {
         }
     }
 
-    /// Bind a crash-respawned process, but only while the instance is still
-    /// unbound — which is the state [`Self::clear_pid_for_instance`] leaves it
-    /// in, and the state anything that re-registers the instance undoes.
+    /// Bind a crash-respawned process, returning whether the bind happened.
     ///
-    /// Returns whether the bind happened. A respawn is announced through a
-    /// channel the coordinator drains separately, so a scene edit or a widget
-    /// reload can re-register and re-bind the instance while the announcement
-    /// is still queued. Binding then would replace a live pid with a dead one,
-    /// and the live process's connection — buffered by pid — would never be
-    /// resolved by anything.
+    /// "Still unbound" is the state [`Self::clear_pid_for_instance`] leaves an
+    /// instance in, and the state anything re-registering it undoes; see
+    /// `Compositor::bind_respawned_pid` for why a stale bind must be dropped.
     pub fn bind_respawned_pid(&mut self, instance_id: &InstanceId, pid: u32) -> bool {
         // Warn, unlike the superseded case below: no later call binds this pid,
         // so the respawned process can never reach a surface.

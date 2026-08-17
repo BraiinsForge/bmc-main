@@ -41,8 +41,7 @@ pub enum CompositorCommand {
         pid: u32,
         ack: flume::Sender<()>,
     },
-    /// Pid bind for a crash respawn, dropped unless the instance is still
-    /// unbound; see [`crate::compositor::protocol::state::DeckWidgetProtocolState::bind_respawned_pid`].
+    /// Pid bind for a crash respawn; see `Compositor::bind_respawned_pid`.
     BindRespawnedPid {
         instance_id: InstanceId,
         pid: u32,
