@@ -861,7 +861,7 @@ pub(crate) fn build_font_table(
 /// x truncated, y rounded.
 /// Applied once in layout space, before any canvas transform,
 /// so cached quads and delegated runs land on the same coordinates.
-fn snap(x: f32, y: f32) -> (f32, f32) {
+pub(crate) fn snap(x: f32, y: f32) -> (f32, f32) {
     (x.trunc(), y.round())
 }
 
