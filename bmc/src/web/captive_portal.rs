@@ -92,8 +92,8 @@ where
 impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
     // NOTE: Original list of urls to return redirect is here: https://captivebehavior.wballiance.com/
     // It is not needed to check individual url, it can be decided based on the top level domain
-    fn should_redirect(req: &Request<Body>, state: &BmcState) -> bool {
-        if *state == BmcState::Operational {
+    fn should_redirect(req: &Request<Body>, state: BmcState) -> bool {
+        if state == BmcState::Operational {
             return false;
         }
 
@@ -103,10 +103,10 @@ impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
         match (state, uri_path) {
             (_, HttpServer::<T>::ROOT_URL_ENDPOINT)
             | (
-                &BmcState::FactoryDefault | &BmcState::WifiReconfiguration,
+                BmcState::FactoryDefault | BmcState::WifiReconfiguration,
                 HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT,
             )
-            | (&BmcState::SetupPending, HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT) => {
+            | (BmcState::SetupPending, HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT) => {
                 return true;
             }
             _ => (),
@@ -125,8 +125,8 @@ impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
         false
     }
 
-    fn redirect_path(state: &BmcState) -> &str {
-        match *state {
+    fn redirect_path(state: BmcState) -> &'static str {
+        match state {
             BmcState::FactoryDefault | BmcState::WifiReconfiguration => {
                 HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT
             }
@@ -174,8 +174,8 @@ where
                 .device_state()
                 .await;
 
-            if Self::should_redirect(&req, &state) {
-                let redirect_path = Self::redirect_path(&state);
+            if Self::should_redirect(&req, state) {
+                let redirect_path = Self::redirect_path(state);
 
                 let redirect_host = match manager.network_manager().wifi() {
                     Some(wifi) => wifi.captive_portal_redirect_host().await,

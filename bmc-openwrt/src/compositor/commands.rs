@@ -19,9 +19,10 @@
 // the grant above.
 
 use bmc::compositor::{
-    CompositorEvent, SceneCycling, SceneLayout, UpgradeDisplaySnapshot, WidgetAction,
-    WidgetInstanceKey, WidgetRegistration,
+    AccessPointInfo, CompositorEvent, SceneCycling, SceneLayout, SetupProgress,
+    UpgradeDisplaySnapshot, WidgetAction, WidgetInstanceKey, WidgetRegistration,
 };
+use bmc::manager::BmcState;
 use bmc_widget_protocol::SettingUpdate;
 
 #[derive(Debug)]
@@ -102,6 +103,15 @@ pub enum CompositorCommand {
         snooze_allowed: bool,
     },
     StopAlarm,
+    SetDeviceState {
+        state: BmcState,
+    },
+    SetSetupProgress {
+        progress: SetupProgress,
+    },
+    SetAccessPoint {
+        ap: Option<AccessPointInfo>,
+    },
 }
 
 #[derive(Debug)]

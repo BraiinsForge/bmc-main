@@ -217,7 +217,6 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         _ = manager.reboot().await;
     }
 
-    #[expect(dead_code, reason = "consumed by future display-overlay channel")]
     pub(crate) fn subscribe(&self) -> Receiver<Option<InitSetupState>> {
         self.state_service.subscribe()
     }

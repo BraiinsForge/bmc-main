@@ -29,6 +29,8 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::manager::BmcState;
+
 pub use crate::data::{SceneCycling, SceneCyclingTransition};
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 pub use bmc_widget_protocol::{
@@ -311,6 +313,29 @@ pub enum AlarmCommand {
     Snooze,
 }
 
+/// Setup access point shown on the device-info overlay's setup-start screen.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessPointInfo {
+    pub ssid: String,
+    /// Address the setup wizard is reached at, e.g. `http://192.168.8.1/`.
+    /// bmc owns the AP addressing so the overlay hard-codes nothing.
+    pub setup_url: String,
+}
+
+/// Setup-flow step mirrored to the device-info overlay via `deck_device_info_v1`.
+/// Mirrors `InitSetupState` with an extra `Idle` so the current value
+/// is always well-defined for the on-bind replay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetupProgress {
+    Idle,
+    ConnectingToWifi { wifi_ssid: String },
+    WifiConnectionSuccess,
+    WifiConnectionFailed,
+    WifiReconfigSuccess,
+    DeviceSetupSuccess,
+    UnexpectedError,
+}
+
 #[derive(Debug, Error)]
 pub enum CompositorError {
     #[error("compositor not started")]
@@ -429,6 +454,25 @@ pub trait Compositor: Send + Sync {
     /// `deck_settings_v1` `wifi_ap` event. `None` means setup mode is inactive.
     /// Default: no-op.
     fn broadcast_wifi_ap(&self, _ssid: Option<String>) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report the device lifecycle state to the device-info overlay
+    /// via the `deck_device_info_v1` `device_state` event. Default: no-op.
+    fn broadcast_device_state(&self, _state: BmcState) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report a setup-flow transition to the device-info overlay
+    /// via the `deck_device_info_v1` `setup_progress` event. Default: no-op.
+    fn broadcast_setup_progress(&self, _progress: SetupProgress) -> Result<(), CompositorError> {
+        Ok(())
+    }
+
+    /// Report the setup access point to the device-info overlay
+    /// via the `deck_device_info_v1` `access_point` event.
+    /// `None` means the AP is down. Default: no-op.
+    fn broadcast_access_point(&self, _ap: Option<AccessPointInfo>) -> Result<(), CompositorError> {
         Ok(())
     }
 

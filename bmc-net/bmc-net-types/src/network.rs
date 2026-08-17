@@ -48,7 +48,7 @@ pub enum WifiEvent {
 /// Deliberately exhaustive (no `#[non_exhaustive]`): the state machine is
 /// matched exhaustively across the codebase, so a new state must force every
 /// handler to be revisited.
-#[derive(Debug, Display, PartialEq)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq)]
 pub enum BmcState {
     #[strum(serialize = "factory default")]
     FactoryDefault,

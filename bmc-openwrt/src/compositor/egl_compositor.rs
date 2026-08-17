@@ -36,10 +36,11 @@ use super::{
     widget_tracker::{LifecycleState, SceneTransitionTarget},
 };
 use bmc::compositor::{
-    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, InstanceId,
-    LedRequestStatusEvent, SceneLayout, SettingsCommand, WidgetAction, WidgetInstanceKey,
-    WidgetRegistration,
+    AccessPointInfo, ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent,
+    InstanceId, LedRequestStatusEvent, SceneLayout, SettingsCommand, SetupProgress, WidgetAction,
+    WidgetInstanceKey, WidgetRegistration,
 };
+use bmc::manager::BmcState;
 use bmc_platform::TouchTransform;
 use bmc_platform::backlight::ScreenVisibility;
 use bmc_platform::linux_input::discover_touch_node;
@@ -2261,6 +2262,15 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.alarm.stop();
             state.cancel_alarm_fallback();
         }
+        CompositorCommand::SetDeviceState { state: device } => {
+            state.compositor.device_info.set_device_state(device);
+        }
+        CompositorCommand::SetSetupProgress { progress } => {
+            state.compositor.device_info.set_setup_progress(progress);
+        }
+        CompositorCommand::SetAccessPoint { ap } => {
+            state.compositor.device_info.set_access_point(ap);
+        }
     }
 }
 
@@ -2685,6 +2695,24 @@ impl Compositor for EglCompositor {
     fn broadcast_alarm_stop(&self) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::StopAlarm)
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_device_state(&self, state: BmcState) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetDeviceState { state })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_setup_progress(&self, progress: SetupProgress) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetSetupProgress { progress })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn broadcast_access_point(&self, ap: Option<AccessPointInfo>) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::SetAccessPoint { ap })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 

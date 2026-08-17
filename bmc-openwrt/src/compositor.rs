@@ -23,6 +23,7 @@
 mod alarm;
 mod commands;
 mod device_access;
+mod device_info;
 mod egl_compositor;
 mod layer_surface;
 mod lifecycle_emitter;

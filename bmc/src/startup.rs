@@ -24,16 +24,17 @@ use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use crate::alarm::{AlarmBus, AlarmController, AlarmEvent};
 use crate::backlight::DisplayBacklightDriver;
 use crate::button_manager::ButtonManager;
 use crate::compositor::{
-    AlarmCommand, Compositor, CompositorEvent, UpgradeDisplaySnapshot, UpgradeKind,
-    run_night_mode_cycling_task, run_screen_blank_reset_task,
+    AccessPointInfo, AlarmCommand, Compositor, CompositorEvent, SetupProgress,
+    UpgradeDisplaySnapshot, UpgradeKind, run_night_mode_cycling_task, run_screen_blank_reset_task,
 };
 use crate::config::ConfigHandle;
-use crate::initial_setup::InitialSetup;
+use crate::initial_setup::{InitSetupState, InitialSetup};
 use crate::led::{LedController, run_led_state_task};
 use crate::led_coordinator::LedCoordinatorHandle;
 use crate::manager::{BmcManager, BmcState, UpgradeMarker};
@@ -146,6 +147,187 @@ fn spawn_alarm_ringing_watch(alarm_bus: &AlarmBus) -> watch::Receiver<bool> {
         }
     });
     rx
+}
+
+/// Polls, and the gap between them, that a `SetupPending` boot spends waiting
+/// for an IP before bmc gives up and factory-resets: 20 s.
+/// Carried over from the stable-26.02 `display_tasks`.
+const SETUP_IP_POLLS: (usize, Duration) = (10, Duration::from_secs(2));
+/// The same, for a setup AP coming up before bmc reboots: 30 s.
+const SETUP_AP_POLLS: (usize, Duration) = (15, Duration::from_secs(2));
+/// How long the unexpected-error screen stays visible before the recovery
+/// reboot; mirrors `initial_setup`'s own reboot delay.
+const SETUP_ERROR_REBOOT_DELAY: Duration = Duration::from_secs(10);
+
+fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
+    match state {
+        None => SetupProgress::Idle,
+        Some(InitSetupState::ConnectingToWifi { wifi_ssid }) => {
+            SetupProgress::ConnectingToWifi { wifi_ssid }
+        }
+        Some(InitSetupState::WifiConnectionSuccess) => SetupProgress::WifiConnectionSuccess,
+        Some(InitSetupState::WifiConnectionFailed) => SetupProgress::WifiConnectionFailed,
+        Some(InitSetupState::WifiReconfigSuccess) => SetupProgress::WifiReconfigSuccess,
+        Some(InitSetupState::DeviceSetupSuccess) => SetupProgress::DeviceSetupSuccess,
+        Some(InitSetupState::UnexpectedError) => SetupProgress::UnexpectedError,
+    }
+}
+
+/// Resolve the setup AP's SSID and wizard URL once the AP is up. The
+/// captive-portal redirect host is the AP's own address while setup mode is
+/// active, so it is the authoritative setup-URL host.
+async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
+    let (attempts, delay) = SETUP_AP_POLLS;
+    let wifi = manager.network_manager().wifi().or_else(|| {
+        warn!("no WiFi on this board, so there is no setup AP to resolve");
+        None
+    })?;
+    // `ap_ssid` never falls back to the joined station network, so the screen
+    // cannot advertise the station SSID while the AP is still coming up.
+    let mut waited = None;
+    for _ in 0..attempts {
+        if let Some(ssid) = wifi.ap_ssid().await {
+            waited = Some(ssid);
+            break;
+        }
+        tokio::time::sleep(delay).await;
+    }
+    let Some(ssid) = waited else {
+        warn!("setup AP did not come up");
+        return None;
+    };
+    for _ in 0..attempts {
+        if let Some(host) = wifi.captive_portal_redirect_host().await {
+            return Some(AccessPointInfo {
+                ssid,
+                setup_url: format!("http://{host}/"),
+            });
+        }
+        tokio::time::sleep(delay).await;
+    }
+    warn!("setup AP is up but holds no address");
+    None
+}
+
+/// The `SetupPending` recovery policy carried over from stable-26.02:
+/// a boot with saved credentials that never obtains an IP is factory-reset,
+/// so the next boot lands back in the setup AP instead of a dead end.
+async fn run_setup_pending_watchdog<T: BmcManager>(
+    compositor: Arc<dyn Compositor>,
+    manager: Arc<T>,
+) {
+    let (attempts, delay) = SETUP_IP_POLLS;
+    for _ in 0..attempts {
+        if manager.network_manager().ip_address().await.is_some() {
+            return;
+        }
+        tokio::time::sleep(delay).await;
+    }
+    warn!("no IP within the setup-pending deadline; factory-resetting");
+    if let Err(err) = compositor.broadcast_setup_progress(SetupProgress::UnexpectedError) {
+        warn!(%err, "failed to signal setup error to overlay");
+    }
+    if let Err(err) = manager.factory_reset(false).await {
+        error!(%err, "factory reset failed");
+    }
+}
+
+/// Broadcast the unrecoverable-setup error and reboot after a visible delay.
+async fn fail_setup_and_reboot<T: BmcManager>(compositor: &dyn Compositor, manager: &T) {
+    if let Err(err) = compositor.broadcast_setup_progress(SetupProgress::UnexpectedError) {
+        warn!(%err, "failed to signal setup error to overlay");
+    }
+    tokio::time::sleep(SETUP_ERROR_REBOOT_DELAY).await;
+    if let Err(err) = manager.reboot().await {
+        error!(%err, "recovery reboot failed");
+    }
+}
+
+/// Mirror bmc's device lifecycle to the device-info overlay
+/// and run the boot-time recovery policies the stable-26.02 `display_tasks` owned.
+///
+/// Outbound only: the current `BmcState`, setup-flow transitions,
+/// and the setup-AP SSID/URL become `deck_device_info_v1` events,
+/// emitted the moment they happen — every screen-hold timer lives in the overlay.
+/// The recovery timers (IP deadline, AP deadline) stay here
+/// because their outcomes are device policy, not display.
+fn spawn_device_info_listener<T: BmcManager + 'static>(
+    compositor: Arc<dyn Compositor>,
+    manager: Arc<T>,
+    mut setup_rx: watch::Receiver<Option<InitSetupState>>,
+    mut setup_ap_rx: watch::Receiver<bool>,
+) {
+    tokio::spawn(async move {
+        if manager
+            .network_manager()
+            .provisioning()
+            .device_state()
+            .await
+            == BmcState::SetupPending
+        {
+            tokio::spawn(run_setup_pending_watchdog(
+                compositor.clone(),
+                manager.clone(),
+            ));
+        }
+
+        // The AP watch is seeded before this subscription, so process the
+        // current value first — it carries the FactoryDefault boot.
+        let mut ap_up = Some(*setup_ap_rx.borrow_and_update());
+        loop {
+            if let Some(ap_up) = ap_up.take() {
+                // The lifecycle state flips together with the AP
+                // (Operational <-> WifiReconfiguration), so re-read both.
+                let state = manager
+                    .network_manager()
+                    .provisioning()
+                    .device_state()
+                    .await;
+                if let Err(err) = compositor.broadcast_device_state(state) {
+                    warn!(%err, "failed to signal device state to overlay");
+                }
+                let ap = if ap_up {
+                    let Some(ap) = resolve_access_point(manager.as_ref()).await else {
+                        fail_setup_and_reboot(compositor.as_ref(), manager.as_ref()).await;
+                        continue;
+                    };
+                    Some(ap)
+                } else {
+                    None
+                };
+                if let Err(err) = compositor.broadcast_access_point(ap) {
+                    warn!(%err, "failed to signal access point to overlay");
+                }
+            }
+            tokio::select! {
+                changed = setup_ap_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    ap_up = Some(*setup_ap_rx.borrow_and_update());
+                }
+                changed = setup_rx.changed() => {
+                    if changed.is_err() {
+                        break;
+                    }
+                    let progress = setup_progress(setup_rx.borrow_and_update().clone());
+                    // Setup completion moves the lifecycle to Operational
+                    // without touching the AP watch; refresh the state
+                    // so the overlay's replay cache does not stay on a setup state.
+                    let completed = matches!(progress, SetupProgress::DeviceSetupSuccess);
+                    if let Err(err) = compositor.broadcast_setup_progress(progress) {
+                        warn!(%err, "failed to signal setup progress to overlay");
+                    }
+                    if completed {
+                        let state = manager.network_manager().provisioning().device_state().await;
+                        if let Err(err) = compositor.broadcast_device_state(state) {
+                            warn!(%err, "failed to signal device state to overlay");
+                        }
+                    }
+                }
+            }
+        }
+    });
 }
 
 fn spawn_upgrade_display_listener(
@@ -361,6 +543,16 @@ where
             Arc::new(AtomicBool::new(false)),
             config_handle.clone(),
             system_upgrade_service.clone(),
+        );
+
+        spawn_device_info_listener(
+            compositor.clone(),
+            manager.clone(),
+            initial_setup.subscribe(),
+            manager
+                .network_manager()
+                .provisioning()
+                .watch_setup_ap_active(),
         );
 
         let alarm_bus = AlarmBus::new();
