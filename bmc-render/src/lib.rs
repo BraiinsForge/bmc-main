@@ -66,16 +66,18 @@ pub const MAX_DECODE_IMAGE_ALLOC_BYTES: u64 = 24 * 1024 * 1024;
 pub use gpu::bitmap::{decode_bitmap_rgba, decode_scaled_to_cover, decode_scaled_to_fit};
 pub use renderer::RendererAssetResolver;
 
-// The allocation gate drives a real renderer, so it needs the same headless GL
-// context the unit tests boot — but as an integration test it links this
-// library without `cfg(test)`. It uses only the context; the rest of the
-// harness stays for the unit tests that do the pixel work.
-#[cfg(all(any(test, feature = "glyph-alloc-gate"), target_os = "linux"))]
+// Integration tests drive a real renderer too,
+// so they need the headless GL context the unit tests boot —
+// but they link this library without `cfg(test)`.
+#[cfg(all(
+    any(test, feature = "glyph-alloc-gate", feature = "atlas-inspect"),
+    target_os = "linux"
+))]
 #[cfg_attr(
     not(test),
-    expect(dead_code, reason = "the alloc gate needs only the GL context (BDK-696)")
+    expect(dead_code, reason = "no one consumer needs the whole harness")
 )]
-mod test_harness;
+pub mod test_harness;
 
 // Re-export colors and color macro from protocol crate
 pub mod colors {

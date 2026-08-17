@@ -61,9 +61,10 @@ default = []
 profiling = ["ii-stopwatch/enabled"]
 # Exposes `renderer::test_support` to downstream crates' tests.
 test-support = []
-# Lets a test count the textures in femtovg's own glyph atlas, which the cache
-# exists to keep empty.
-atlas-inspect = ["femtovg/debug_inspector"]
+# Reads back femtovg's own glyph atlas, which the cache exists to keep empty,
+# and the page order a frame's glyph batches went out in.
+# Carries the headless GL harness because inspecting either needs a renderer.
+atlas-inspect = ["femtovg/debug_inspector", "dep:glutin"]
 # Builds the counting-allocator gate's harness into the library.
 glyph-alloc-gate = ["dep:glutin"]
 

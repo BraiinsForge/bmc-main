@@ -1705,6 +1705,11 @@ impl Renderer for FemtoVgRenderer {
         // Paired with the frame's submissions, not with `begin_frame`:
         // the scratch page's allocations are only free once they have been drawn.
         self.glyph_cache.end_frame();
+        // Swapped rather than cleared:
+        // the record describes the pixels this flush has just produced,
+        // so it has to outlive the frame that wrote it.
+        #[cfg(feature = "atlas-inspect")]
+        self.glyph_cache.retire_pages_drawn();
         #[cfg(feature = "profiling")]
         self.report_text_profile();
     }

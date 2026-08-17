@@ -643,6 +643,14 @@ const ETAGERE_SCRATCH_ESTIMATE: usize = 64 * SCRATCH_MAP_CAP;
 /// hinting cache, and outline scratch for the largest glyph we rasterize.
 const SWASH_CONTEXT_ESTIMATE: usize = 512 * 1024;
 
+/// A frame draws one batch per run of glyphs sharing a page, so nothing bounds
+/// the batch count itself. The record is retained cache storage like everything
+/// else here and gets a fixed capacity: twelve batches for each resident page
+/// is more page recurrence than an ordering question can read, and past that
+/// the overflow count says what was left out.
+#[cfg(feature = "atlas-inspect")]
+const MAX_RECORDED_BATCHES: usize = 12 * (MAX_NORMAL_PAGES + 1);
+
 pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     pages: Vec<Page<P>>,
     map: hashbrown::HashMap<GlyphKey, SlotId>,
@@ -663,6 +671,21 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     counters: Counters,
     counters_at_last_log: Counters,
     next_log_generation: Generation,
+    /// The page of this frame's cached-glyph batches,
+    /// in order, up to [`MAX_RECORDED_BATCHES`] of them.
+    #[cfg(feature = "atlas-inspect")]
+    pages_drawn: Vec<P>,
+    /// Batches this frame submitted past that cap,
+    /// so a reader can tell a complete record from a truncated one.
+    #[cfg(feature = "atlas-inspect")]
+    batches_over_cap: usize,
+    /// The same pair for the frame the renderer last flushed.
+    /// Kept apart from `pages_drawn` because the record is only worth reading
+    /// once the pixels it describes exist — one flush after the batches went out.
+    #[cfg(feature = "atlas-inspect")]
+    pages_drawn_last_frame: Vec<P>,
+    #[cfg(feature = "atlas-inspect")]
+    batches_over_cap_last_frame: usize,
 }
 
 impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
@@ -685,11 +708,46 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             counters: Counters::default(),
             counters_at_last_log: Counters::default(),
             next_log_generation: 0,
+            #[cfg(feature = "atlas-inspect")]
+            pages_drawn: Vec::with_capacity(MAX_RECORDED_BATCHES),
+            #[cfg(feature = "atlas-inspect")]
+            batches_over_cap: 0,
+            #[cfg(feature = "atlas-inspect")]
+            pages_drawn_last_frame: Vec::with_capacity(MAX_RECORDED_BATCHES),
+            #[cfg(feature = "atlas-inspect")]
+            batches_over_cap_last_frame: 0,
         }
     }
 
     pub fn counters(&self) -> &Counters {
         &self.counters
+    }
+
+    #[cfg(feature = "atlas-inspect")]
+    pub fn record_drawn_page(&mut self, page: P) {
+        if self.pages_drawn.len() == MAX_RECORDED_BATCHES {
+            self.batches_over_cap += 1;
+            return;
+        }
+        self.pages_drawn.push(page);
+    }
+
+    /// Retire the frame's page record; it stays readable until the next flush.
+    #[cfg(feature = "atlas-inspect")]
+    pub fn retire_pages_drawn(&mut self) {
+        self.pages_drawn_last_frame.clear();
+        std::mem::swap(&mut self.pages_drawn_last_frame, &mut self.pages_drawn);
+        self.batches_over_cap_last_frame = std::mem::take(&mut self.batches_over_cap);
+    }
+
+    #[cfg(feature = "atlas-inspect")]
+    pub fn pages_drawn_last_frame(&self) -> &[P] {
+        &self.pages_drawn_last_frame
+    }
+
+    #[cfg(feature = "atlas-inspect")]
+    pub fn batches_over_cap_last_frame(&self) -> usize {
+        self.batches_over_cap_last_frame
     }
 
     /// Live resident entries. The allocation gate refuses to trust its numbers
@@ -721,11 +779,18 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     /// which is `len + growth_left` and so falls back toward the live count
     /// as tombstones drain the slack of a table that keeps its buckets.
     fn app_owned_metadata_bytes(&self) -> usize {
+        #[cfg(feature = "atlas-inspect")]
+        let inspection_record_bytes =
+            (self.pages_drawn.capacity() + self.pages_drawn_last_frame.capacity()) * size_of::<P>();
+        #[cfg(not(feature = "atlas-inspect"))]
+        let inspection_record_bytes = 0;
+
         self.pages.capacity() * size_of::<Page<P>>()
             + self.slab.capacity() * size_of::<Entry>()
             + self.map.allocation_size()
             + size_of::<NegativeCache>()
             + self.scratch_map.allocation_size()
+            + inspection_record_bytes
     }
 
     /// The scratch page counts: it is retained for the renderer's lifetime
@@ -2846,6 +2911,29 @@ mod tests {
             cache.metadata_capacity_bytes() <= METADATA_CEILING_BYTES,
             "metadata {} exceeds the ceiling",
             cache.metadata_capacity_bytes()
+        );
+    }
+
+    /// A frame can submit arbitrarily many batches, so the inspection record
+    /// drops what it cannot hold rather than growing to fit — otherwise one
+    /// long frame would leave its capacity resident for the renderer's life.
+    #[cfg(feature = "atlas-inspect")]
+    #[test]
+    fn batches_past_the_record_cap_are_counted_not_stored() {
+        let mut cache = GlyphCache::<usize>::new();
+        let over_cap = 3 * MAX_RECORDED_BATCHES;
+
+        for batch in 0..MAX_RECORDED_BATCHES + over_cap {
+            cache.record_drawn_page(batch);
+        }
+        cache.retire_pages_drawn();
+
+        assert_eq!(cache.pages_drawn_last_frame().len(), MAX_RECORDED_BATCHES);
+        assert_eq!(cache.batches_over_cap_last_frame(), over_cap);
+        assert_eq!(
+            cache.app_owned_metadata_bytes(),
+            GlyphCache::<usize>::new().app_owned_metadata_bytes(),
+            "the record grew past the capacity it was built with"
         );
     }
 

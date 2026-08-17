@@ -58,3 +58,22 @@ Blur = 8
 name = "auto-sized-stage"
 scene = "bmc_gallery::fleet::Status Tags"
 frames = 4
+
+# The two shots straddle the 92 px cutoff:
+# below it the headline comes from the cache,
+# above it femtovg path-renders the run instead.
+[[shot]]
+name = "glyph-cache-text"
+scene = "bmc_gallery::canvas_text::Glyph Cache"
+frames = 4
+
+[shot.knobs]
+"Headline size" = 40
+
+[[shot]]
+name = "glyph-cache-text-oversized"
+scene = "bmc_gallery::canvas_text::Glyph Cache"
+frames = 4
+
+[shot.knobs]
+"Headline size" = 100

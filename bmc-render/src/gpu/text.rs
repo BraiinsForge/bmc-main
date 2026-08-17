@@ -1152,12 +1152,15 @@ pub(crate) fn draw_line_glyphs(
         font_size,
     );
 
-    submit_glyph_commands(canvas, commands, paint, font_size);
+    submit_glyph_commands(canvas, cache, commands, paint, font_size);
 }
 
 /// Submit prepared commands in one cached batch or as direct-path runs.
 pub(crate) fn submit_glyph_commands<I>(
     canvas: &mut Canvas<OpenGl>,
+    #[cfg_attr(not(feature = "atlas-inspect"), expect(unused_variables))] cache: &mut GlyphCache<
+        femtovg::ImageId,
+    >,
     commands: I,
     paint: &Paint,
     font_size: f32,

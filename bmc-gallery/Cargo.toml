@@ -109,6 +109,12 @@ taffy = "0.9"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 
+[dev-dependencies]
+# The batch-order test needs `atlas-inspect` for the page readback
+# and for the headless GL context that gets it a renderer at all.
+# A dev-dependency because the launcher and the scenes dylib resolve without it.
+bmc-render = { path = "../bmc-render", features = ["atlas-inspect"] }
+
 [build-dependencies]
 gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", rev = "8fa0a90a4dfad1c999db352233ff57e60e3f7d7e" }
 

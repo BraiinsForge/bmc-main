@@ -56,6 +56,104 @@ fn styles(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
+/// Every text path the glyph cache has to serve, in one stage:
+/// a wrapped paragraph of decorated and coloured spans, an outlined headline,
+/// three overlapping translucent draws, a run the canvas scissor cuts,
+/// and a curved run.
+///
+/// The headline size is a knob because 92 px is where text stops coming
+/// from the cache and femtovg path-renders it instead;
+/// a capture either side of that covers both.
+#[scene]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "the slider is a whole-pixel font size"
+)]
+fn glyph_cache(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let headline = ctx.slider("Headline size", 40.0, 8.0, 120.0, 1.0) as u32;
+
+    ui.heading("Glyph Cache Text");
+    ui.label("Paragraph, decorations, outline, scissor, overlap and curve");
+
+    ctx.node_stage(ui, (460_u32, 500_u32), || {
+        col(
+            props!(gap: 10, padding: 10),
+            [
+                paragraph(
+                    style!(size: 16, color: GRAY_10, line_height: 1.4, max_width: 440),
+                    [
+                        span("Cached glyphs wrap across lines, ", ()),
+                        span("bold", style!(weight: FontWeight::BOLD)),
+                        span(" and ", ()),
+                        span("italic", style!(italic: true)),
+                        span(" and ", ()),
+                        span("underlined", style!(underline: true, color: GREEN_50)),
+                        span(" and ", ()),
+                        span("struck", style!(strikethrough: true, color: RED_50)),
+                        span(" share one line.", ()),
+                    ],
+                ),
+                canvas(
+                    props!(width: 440, height: 420, background: Color::from_hex(0x0B1016)),
+                    [
+                        Draw::text(
+                            8.0,
+                            4.0,
+                            "Outlined",
+                            style!(
+                                size: headline,
+                                weight: FontWeight::BOLD,
+                                color: WHITE,
+                                outline_color: BLUE_50,
+                                outline_width: 3.0,
+                            ),
+                        ),
+                        // Translucent and overlapping, so these pixels record
+                        // the batch order.
+                        Draw::text(
+                            8.0,
+                            140.0,
+                            "OVER",
+                            style!(size: 56, color: Color::from_rgba(0xF0, 0x40, 0x40, 0xC0)),
+                        ),
+                        Draw::text(
+                            60.0,
+                            156.0,
+                            "LAP",
+                            style!(size: 56, color: Color::from_rgba(0x40, 0xF0, 0x60, 0xC0)),
+                        ),
+                        Draw::text(
+                            112.0,
+                            172.0,
+                            "PING",
+                            style!(size: 56, color: Color::from_rgba(0x50, 0x90, 0xFF, 0xC0)),
+                        ),
+                        // Runs off the right edge, where the canvas scissor
+                        // cuts it mid-glyph.
+                        Draw::text(
+                            300.0,
+                            240.0,
+                            "scissored at the edge",
+                            style!(size: 20, color: ORANGE_50, underline: true),
+                        ),
+                        Draw::curved_text(
+                            220.0,
+                            330.0,
+                            76.0,
+                            0.0,
+                            ArcAnchor::Center,
+                            ArcTextFacing::Outward,
+                            "CURVED GLYPH RUN",
+                            style!(size: 20, color: VIOLET_50),
+                        ),
+                    ],
+                ),
+            ],
+        )
+    });
+}
+
 #[scene]
 fn alignment(ctx: &mut SceneCtx, ui: &mut Ui) {
     ui.heading("Text Alignment");

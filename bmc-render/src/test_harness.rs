@@ -43,7 +43,7 @@ use glutin::surface::{PbufferSurface, SurfaceAttributesBuilder};
 /// releases the EGL surface / context after any femtovg `Canvas` built on
 /// top has already been dropped (canvases store no owning reference to the
 /// underlying GL state, so caller ordering matters).
-pub(crate) struct GlHarness {
+pub struct GlHarness {
     pub gl: glow::Context,
     /// Boxed (surface, context) — opaque to keep this type small and
     /// platform-neutral at the use site.
@@ -55,11 +55,17 @@ pub(crate) struct GlHarness {
 
 type ProcAddrFn = Box<dyn Fn(&str) -> *const std::ffi::c_void>;
 
+impl std::fmt::Debug for GlHarness {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GlHarness").finish_non_exhaustive()
+    }
+}
+
 impl GlHarness {
     /// Boot a fresh headless GLES 2.0 context via EGL surfaceless + Mesa
     /// llvmpipe. Each test gets its own context; tests run on separate
     /// threads under nextest by default and EGL state is per-thread.
-    pub(crate) fn new() -> Result<Self> {
+    pub fn new() -> Result<Self> {
         let devices: Vec<_> = glutin::api::egl::device::Device::query_devices()
             .context("EGL device enumeration not supported")?
             .collect();
@@ -131,7 +137,7 @@ impl GlHarness {
     /// (`FemtoVgRenderer`) on top of this harness's GL context. Function
     /// pointers are baked into the renderer during its `new()`, so the
     /// returned closure only needs to outlive that call.
-    pub(crate) fn load_fn(&self) -> impl FnMut(&str) -> *const std::ffi::c_void + use<'_> {
+    pub fn load_fn(&self) -> impl FnMut(&str) -> *const std::ffi::c_void + use<'_> {
         |s: &str| (self.proc_addr)(s)
     }
 }
@@ -169,7 +175,7 @@ pub(crate) fn create_real_texture(gl: &glow::Context) -> glow::Texture {
 /// anything — the texture and renderbuffer live until the harness's context goes
 /// away with the test. Nothing here is meant to outlive one `GlHarness`.
 #[expect(clippy::cast_possible_wrap)]
-pub(crate) fn create_readback_fbo(
+pub fn create_readback_fbo(
     gl: &glow::Context,
     width: u32,
     height: u32,
@@ -247,7 +253,7 @@ pub(crate) fn create_readback_fbo(
 /// off `READ_FRAMEBUFFER` — and `READ_FRAMEBUFFER` is core only from GLES 3.0,
 /// which is more than [`GlHarness::new`] asks the driver for.
 #[expect(clippy::cast_possible_wrap)]
-pub(crate) fn read_pixels_top_down(
+pub fn read_pixels_top_down(
     gl: &glow::Context,
     fbo: glow::Framebuffer,
     width: u32,
