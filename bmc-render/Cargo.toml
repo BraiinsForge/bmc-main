@@ -50,11 +50,26 @@ tracing = { workspace = true, features = ["std"] }
 [target.'cfg(target_os = "linux")'.dev-dependencies]
 glutin.workspace = true
 
+# The allocation gate is an integration test, which links this library *without*
+# `cfg(test)` — so the GL harness it drives cannot come from a dev-dependency.
+# The dev-dependency above stays for plain `cargo test`.
+[target.'cfg(target_os = "linux")'.dependencies]
+glutin = { workspace = true, optional = true }
+
 [features]
 default = []
 profiling = ["ii-stopwatch/enabled"]
 # Exposes `renderer::test_support` to downstream crates' tests.
 test-support = []
+# Lets a test count the textures in femtovg's own glyph atlas, which the cache
+# exists to keep empty.
+atlas-inspect = ["femtovg/debug_inspector"]
+# Builds the counting-allocator gate's harness into the library.
+glyph-alloc-gate = ["dep:glutin"]
+
+[[test]]
+name = "glyph_cache_alloc_gate"
+required-features = ["glyph-alloc-gate"]
 
 [lints]
 workspace = true

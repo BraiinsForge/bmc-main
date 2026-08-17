@@ -43,6 +43,8 @@ similar_names = "allow"
 unreadable_literal = "allow"
 # additional useful lints not coveded by clippy::pedantic
 allow_attributes = "warn"
+# Configured in the repo-root `clippy.toml`; allow-by-default without this.
+disallowed_methods = "warn"
 get_unwrap = "warn"
 implicit_clone = "warn"
 integer_division = "warn"

@@ -158,6 +158,96 @@ impl std::fmt::Debug for FemtoVgRenderer {
 pub type FemtovgImageId = femtovg::ImageId;
 
 impl FemtoVgRenderer {
+    /// How many textures femtovg's own glyph atlas holds.
+    ///
+    /// The glyph cache exists so this stays zero: every entry point that could
+    /// populate that atlas is either unreachable or above the direct-path
+    /// cutoff, where femtovg path-renders instead of atlasing.
+    #[cfg(feature = "atlas-inspect")]
+    #[must_use]
+    pub fn font_atlas_texture_count(&self) -> usize {
+        self.canvas.debug_inspector_get_font_textures().len()
+    }
+
+    /// The atlas page behind every cached-glyph batch of the last flushed frame,
+    /// in submission order.
+    ///
+    /// One entry per batch, not per page: a page that reappears after another
+    /// is a genuine second visit, and under an order-sensitive composite
+    /// the pixels depend on that order surviving.
+    #[cfg(feature = "atlas-inspect")]
+    #[must_use]
+    pub fn pages_touched_last_frame(&self) -> &[femtovg::ImageId] {
+        self.glyph_cache.pages_drawn_last_frame()
+    }
+
+    /// Batches the frame submitted beyond what the record holds.
+    /// Anything but zero means the list above stops partway through the frame.
+    #[cfg(feature = "atlas-inspect")]
+    #[must_use]
+    pub fn batches_past_record_last_frame(&self) -> usize {
+        self.glyph_cache.batches_over_cap_last_frame()
+    }
+
+    /// Rasterize every glyph of every loaded face at `size_px`
+    /// into this renderer's own cache.
+    ///
+    /// Shaped text can never reach an unencoded or alternate glyph,
+    /// and the draw entry points pin one family and weight,
+    /// so the allocation gate cannot build its pressure through them.
+    /// It enumerates the corpus here, inside the renderer,
+    /// because a `fontdb::ID` only resolves against the database it came from —
+    /// keys built from a second `FontSystem` would name faces
+    /// this cache never sees.
+    #[cfg(feature = "glyph-alloc-gate")]
+    pub fn cache_full_glyph_corpus_for_gate(&mut self, size_px: f32) {
+        // Two snapshots: `FaceInfo` carries no glyph count, and asking for one
+        // needs `&mut FontSystem` while `db().faces()` still borrows it.
+        let faces: Vec<(cosmic_text::fontdb::ID, cosmic_text::fontdb::Weight)> = self
+            .font_system
+            .db()
+            .faces()
+            .map(|face| (face.id, face.weight))
+            .collect();
+        let counted: Vec<(cosmic_text::fontdb::ID, cosmic_text::fontdb::Weight, u16)> = faces
+            .into_iter()
+            .filter_map(|(id, weight)| {
+                let font = self.font_system.get_font(id, weight)?;
+                Some((id, weight, font.as_swash().glyph_metrics(&[]).glyph_count()))
+            })
+            .collect();
+
+        let mut pages = super::text::FemtovgPages {
+            canvas: &mut self.canvas,
+        };
+        for (id, weight, glyph_count) in counted {
+            for glyph_id in 0..glyph_count {
+                let key = cosmic_text::CacheKey {
+                    font_id: id,
+                    glyph_id,
+                    font_size_bits: size_px.to_bits(),
+                    x_bin: cosmic_text::SubpixelBin::Zero,
+                    y_bin: cosmic_text::SubpixelBin::Zero,
+                    font_weight: weight,
+                    flags: cosmic_text::CacheKeyFlags::empty(),
+                };
+                let _ = self.glyph_cache.get_or_insert(&mut pages, key, |key| {
+                    super::text::rasterize_glyph(
+                        &mut self.swash,
+                        &mut self.font_system,
+                        key.inner(),
+                    )
+                });
+            }
+        }
+    }
+
+    /// The cache the allocation gate inspects after driving a workload.
+    #[cfg(feature = "glyph-alloc-gate")]
+    pub(crate) fn glyph_cache_for_gate(&self) -> &super::glyph_cache::GlyphCache<femtovg::ImageId> {
+        &self.glyph_cache
+    }
+
     /// Release a femtovg image this renderer handed out
     /// through [`Self::create_render_target`].
     pub fn delete_image(&mut self, id: femtovg::ImageId) {
@@ -2733,5 +2823,151 @@ mod arc_geometry_tests {
         let right = arc_point(center.0, center.1, radius, std::f32::consts::FRAC_PI_2);
         approx(right.0, 15.0);
         approx(right.1, 20.0);
+    }
+}
+
+/// Every text entry point must leave femtovg's own glyph atlas empty.
+///
+/// Needs [`FemtoVgRenderer::font_atlas_texture_count`], which femtovg only
+/// exposes under its `debug_inspector` feature — hence the extra gate. CI
+/// builds with `--all-features`, so this runs there.
+#[cfg(test)]
+#[cfg(all(target_os = "linux", feature = "atlas-inspect"))]
+mod atlas_containment_tests {
+    use super::FemtoVgRenderer;
+    use crate::renderer::Renderer;
+    use crate::test_harness::{GlHarness, create_readback_fbo};
+    use crate::tree::{SpanData, TextStyle};
+    use bmc_wasm_protocol::text::{ArcAnchor, ArcTextFacing};
+    use bmc_wasm_protocol::{AutoFit, Color};
+
+    const W: u32 = 320;
+    const H: u32 = 320;
+    const WHITE: Color = Color::from_rgb(255, 255, 255);
+
+    /// Straddles the direct-path cutoff on both sides and one size either way,
+    /// so an off-by-one in the comparison shows up as a populated atlas.
+    /// 17 and 91 are odd, which is what puts odd-width rasters
+    /// — the ones whose rows need padding — through the same draw.
+    const SIZES: [u32; 4] = [17, 91, 92, 93];
+
+    /// Greek variant letters no Braiins face carries, so they can only shape
+    /// through the fallback. Plain Greek would prove nothing: the Braiins faces
+    /// cover it and the primary face would answer.
+    const GREEK_FALLBACK: &str = "ϖϑϰϱϵ";
+
+    fn styled(size: u32, italic: bool) -> TextStyle {
+        TextStyle {
+            size,
+            color: WHITE,
+            italic,
+            ..TextStyle::default()
+        }
+    }
+
+    fn span(text: &str) -> SpanData {
+        SpanData {
+            text: text.to_owned(),
+            weight: None,
+            color: Some(WHITE),
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }
+    }
+
+    /// The fallback string must actually reach the fallback face;
+    /// otherwise the atlas assertion below covers only the primary font's glyphs
+    /// and the fallback path — where the font id comes from the shaper
+    /// rather than the caller's style — stays untested.
+    fn assert_shapes_through_fallback(renderer: &mut FemtoVgRenderer, size: u32) {
+        #[expect(clippy::cast_precision_loss, reason = "test sizes are small")]
+        let (lines, _) = renderer.layout_line(super::sans_line_style(size as f32), GREEK_FALLBACK);
+        let glyphs = &lines
+            .first()
+            .expect("BUG: fallback string shaped no line")
+            .glyphs;
+        assert_eq!(
+            glyphs.len(),
+            GREEK_FALLBACK.chars().count(),
+            "BUG: fallback fixture did not shape one glyph per character",
+        );
+        for glyph in glyphs {
+            let face = renderer
+                .font_system
+                .db()
+                .face(glyph.font_id)
+                .expect("BUG: shaped glyph names a face the database does not have");
+            let family = &face
+                .families
+                .first()
+                .expect("BUG: face carries no family name")
+                .0;
+            assert!(
+                family.contains("Noto"),
+                "BUG: fallback fixture stayed on {family}; it no longer exercises fallback",
+            );
+        }
+    }
+
+    #[test]
+    fn no_text_entry_point_populates_the_femtovg_atlas() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_, fbo_id) = create_readback_fbo(&harness.gl, W, H);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+
+        for size in SIZES {
+            assert_shapes_through_fallback(&mut renderer, size);
+            for italic in [false, true] {
+                #[expect(clippy::cast_precision_loss, reason = "test sizes are small")]
+                let px_size = size as f32;
+                let style = styled(size, italic);
+                let outlined = TextStyle {
+                    outline_color: Color::from_rgb(10, 10, 10),
+                    outline_width: 2.0,
+                    ..style
+                };
+                renderer.begin_frame(W, H, 1.0);
+                for text in ["Wij. AV", GREEK_FALLBACK] {
+                    renderer.draw_paragraph(
+                        &style,
+                        &[span(text), span("gq")],
+                        4.0,
+                        4.0,
+                        f32::from(u16::try_from(W).expect("BUG: canvas width exceeds u16")),
+                    );
+                    renderer.draw_text(text, 4.0, 100.0, px_size, WHITE);
+                    renderer.draw_canvas_text(text, 4.0, 160.0, &outlined);
+                    renderer.draw_curved_text(
+                        160.0,
+                        160.0,
+                        140.0,
+                        0.0,
+                        ArcAnchor::Center,
+                        ArcTextFacing::Outward,
+                        text,
+                        &style,
+                    );
+                    renderer.draw_autofit_text(
+                        4.0,
+                        240.0,
+                        300.0,
+                        70.0,
+                        text,
+                        &style,
+                        AutoFit::ShrinkAndGrow,
+                        size.try_into().unwrap_or(u16::MAX),
+                        size.try_into().unwrap_or(u16::MAX),
+                    );
+                }
+                renderer.flush();
+                assert_eq!(
+                    renderer.font_atlas_texture_count(),
+                    0,
+                    "BUG: femtovg atlased text at {size} px (italic: {italic})",
+                );
+            }
+        }
     }
 }

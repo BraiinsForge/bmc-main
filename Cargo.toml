@@ -69,7 +69,11 @@ members = [
 ]
 
 [workspace.metadata.nix]
+# `clippy.toml` configures `disallowed_methods`; without it in the sandbox
+# the lint has nothing to forbid
+# and the CI gate passes on code the local one rejects.
 include = [
+    "clippy.toml",
     "tooling/**",
 ]
 
@@ -137,6 +141,8 @@ similar_names = "allow"
 unreadable_literal = "allow"
 # additional useful lints not coveded by clippy::pedantic
 allow_attributes = "warn"
+# Configured in the repo-root `clippy.toml`; allow-by-default without this.
+disallowed_methods = "warn"
 get_unwrap = "warn"
 implicit_clone = "warn"
 integer_division = "warn"

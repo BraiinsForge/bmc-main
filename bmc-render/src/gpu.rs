@@ -34,3 +34,8 @@ pub mod builtin_icons {
 }
 
 pub use renderer::{FemtoVgRenderer, FemtovgImageId};
+
+// `glyph_cache` is crate-private,
+// so the gate's own test crate cannot name the harness without this.
+#[cfg(all(feature = "glyph-alloc-gate", target_os = "linux"))]
+pub use glyph_cache::alloc_gate_support;

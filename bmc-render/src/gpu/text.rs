@@ -1239,6 +1239,10 @@ mod direct_path {
             paint.font_size() > 92.0,
             "BUG: direct path for atlas-range size"
         );
+        #[expect(
+            clippy::disallowed_methods,
+            reason = "sole >92px direct-path delegation"
+        )]
         let _ = canvas.fill_glyph_run(font_id, glyphs, paint);
     }
 }
@@ -1246,8 +1250,8 @@ mod direct_path {
 /// The atlas pages, backed by femtovg images.
 /// Dimensions stay `usize` end to end: femtovg's image calls take `usize`,
 /// and so does [`PageBackend`].
-struct FemtovgPages<'a> {
-    canvas: &'a mut Canvas<OpenGl>,
+pub(crate) struct FemtovgPages<'a> {
+    pub(crate) canvas: &'a mut Canvas<OpenGl>,
 }
 
 impl PageBackend for FemtovgPages<'_> {
@@ -1421,6 +1425,51 @@ fn draw_decorations_for_segment(
         path.rect(x, sy, w, sh);
         canvas.fill_path(&path, &Paint::color(to_femtovg_color(style.color.to_u32())));
     }
+}
+
+/// A pair the two shapers demonstrably kern apart at `size`,
+/// from a fixed candidate list.
+/// The module header records that cosmic-text and femtovg kern differently
+/// without naming a pair, so the pair is discovered rather than pinned —
+/// a font swap that made every candidate agree has to fail loudly
+/// instead of leaving the tests built on it comparing nothing.
+#[cfg(test)]
+pub(crate) fn divergent_kerning_pair(font_system: &mut FontSystem, size: f32) -> &'static str {
+    const CANDIDATES: [&str; 7] = ["AV", "To", "Ta", "LT", "AW", "Yo", "P,"];
+    /// Below this the two agree to within their own rounding.
+    const MIN_DIVERGENCE_PX: f32 = 0.5;
+
+    let fonts = femtovg::TextContext::default();
+    let mut paint = Paint::color(femtovg::Color::white());
+    paint.set_font(&[fonts
+        .add_font_mem(include_bytes!(
+            "../../../assets/fonts/BraiinsSans-Regular.otf"
+        ))
+        .expect("BUG: font registration failed")]);
+    paint.set_font_size(size);
+
+    let mut layout = ParagraphLayoutCache::new();
+    CANDIDATES
+        .into_iter()
+        .find(|pair| {
+            let cosmic = layout
+                .layout_single_line(
+                    font_system,
+                    crate::gpu::renderer::sans_line_style(size),
+                    pair,
+                )
+                .width;
+            #[expect(
+                clippy::disallowed_methods,
+                reason = "test compares shapers on purpose"
+            )]
+            let femtovg = fonts
+                .measure_text(0.0, 0.0, pair, &paint)
+                .expect("BUG: femtovg cannot measure the fixture")
+                .width();
+            (cosmic - femtovg).abs() > MIN_DIVERGENCE_PX
+        })
+        .expect("BUG: no candidate separates the shapers; the list needs a new pair")
 }
 
 /// Every glyph must be attributed to the span its characters actually came from,
@@ -2358,7 +2407,7 @@ mod glyph_draw_tests {
 
     use super::{
         DIRECT_PATH_CUTOFF_PX, FAKE_ITALIC_SKEW_DEGREES, FontTable, GlyphCommand,
-        build_cached_curved_glyph_commands, build_glyph_commands,
+        baseline_to_alphabetic, build_cached_curved_glyph_commands, build_glyph_commands,
         chunk_oversized, direct_paint, extract_lines, italic_about, outline_glyph_commands,
         push_quad, rasterize_glyph, snap,
     };
@@ -2791,6 +2840,353 @@ mod glyph_draw_tests {
                 ),
             );
         }
+    }
+
+    // ── Boundary goldens ────────────────────────────────────────────
+
+    /// The seven faces `build_font_system` loads, in its order.
+    /// [`build_font_table`] pairs the two libraries positionally,
+    /// so a fallback glyph resolves only when the whole set is registered.
+    ///
+    /// [`build_font_table`]: super::build_font_table
+    const EMBEDDED_FONTS: [&[u8]; 7] = [
+        SANS,
+        include_bytes!("../../../assets/fonts/BraiinsSans-SemiBold.otf"),
+        include_bytes!("../../../assets/fonts/BraiinsSans-Bold.otf"),
+        DECK_SANS,
+        include_bytes!("../../../assets/fonts/BraiinsDeckSans-SemiBold.otf"),
+        include_bytes!("../../../assets/fonts/BraiinsDeckSans-Bold.otf"),
+        include_bytes!("../../../assets/fonts/NotoSans-Regular.ttf"),
+    ];
+
+    /// Greek variant letters no Braiins face carries —
+    /// verified against the embedded cmaps, every one of them shapes to Noto.
+    /// Plain Greek would not do: the Braiins faces cover it,
+    /// and a string that never leaves the primary face
+    /// proves nothing about the fallback.
+    const GREEK_FALLBACK: &str = "ϖϑϰϱϵ";
+
+    /// The cosmic-to-femtovg font pairing `FemtoVgRenderer::new` builds,
+    /// without its canvas: fonts live in the text context, so real `FontId`s
+    /// cost no GL context here. The context is returned because the ids index
+    /// into it.
+    fn embedded_font_table(font_system: &FontSystem) -> (femtovg::TextContext, FontTable) {
+        let fonts = femtovg::TextContext::default();
+        let ids = EMBEDDED_FONTS.map(|data| {
+            fonts
+                .add_font_mem(data)
+                .expect("BUG: font registration failed")
+        });
+        let table = super::build_font_table(font_system, &ids);
+        (fonts, table)
+    }
+
+    /// The one visual line `text` shapes to through the embedded faces.
+    fn shape_line(
+        font_system: &mut FontSystem,
+        text: &str,
+        size: f32,
+        italic: bool,
+    ) -> super::LineGlyphs {
+        let mut buffer = Buffer::new(font_system, Metrics::new(size, size));
+        buffer.set_text(
+            font_system,
+            text,
+            &named(SANS_FAMILY, italic),
+            Shaping::Advanced,
+            None,
+        );
+        buffer.shape_until_scroll(font_system, false);
+        let mut lines = extract_lines(&buffer);
+        assert_eq!(
+            lines.len(),
+            1,
+            "the fixture {text:?} must shape to one line"
+        );
+        lines.pop().expect("BUG: a one-line fixture has a line")
+    }
+
+    /// Every quad one line submits, through a cache of its own so no raster
+    /// carries over between the variants under comparison.
+    fn quads_at(
+        font_system: &mut FontSystem,
+        swash: &mut SwashCache,
+        glyphs: &[super::PositionedGlyphInfo],
+        origin_x: f32,
+        alphabetic_y: f32,
+        size: f32,
+    ) -> Vec<femtovg::Quad> {
+        build_glyph_commands(
+            &mut MockBackend::default(),
+            &mut GlyphCache::new(),
+            swash,
+            font_system,
+            &no_fonts(),
+            glyphs,
+            origin_x,
+            alphabetic_y,
+            size,
+        )
+        .into_iter()
+        .flat_map(|command| match command {
+            GlyphCommand::Quads { quads, .. } => quads,
+            GlyphCommand::Direct(_) => panic!("BUG: below the cutoff nothing may delegate"),
+        })
+        .collect()
+    }
+
+    /// The coverage the cache stores for a glyph — keyed with the subpixel bins
+    /// normalized away, which is what makes one raster serve every origin.
+    fn normalized_raster(
+        swash: &mut SwashCache,
+        font_system: &mut FontSystem,
+        glyph: &super::PositionedGlyphInfo,
+    ) -> crate::gpu::glyph_cache::RasterGlyph {
+        rasterize_glyph(swash, font_system, GlyphKey::normalize(glyph.key).inner())
+            .expect("BUG: a cached glyph has no coverage")
+    }
+
+    /// A fractional origin may move a glyph only by the whole pixels it snaps
+    /// to: the quad stays on the integer grid, within a pixel of the exact
+    /// position, off a raster the origin never reaches. Sub-pixel drift is what
+    /// makes a string shimmer as an animation slides it across the screen.
+    #[test]
+    fn fractional_origins_snap_consistently() {
+        let mut font_system = font_system();
+        let mut swash = SwashCache::new();
+        let size = 24.0;
+        // No spaces: an empty box submits no quad, and this compares per glyph.
+        let line = shape_line(&mut font_system, "Wij.", size, false);
+        let rasters: Vec<_> = line
+            .glyphs
+            .iter()
+            .map(|glyph| normalized_raster(&mut swash, &mut font_system, glyph))
+            .collect();
+
+        let mut reference: Option<Vec<femtovg::Quad>> = None;
+        let mut snapped_apart = false;
+        for (origin_x, baseline_y) in [
+            (10.0_f32, 20.0_f32),
+            (10.4, 20.4),
+            (10.9, 20.9),
+            (-10.6, -20.6),
+        ] {
+            let quads = quads_at(
+                &mut font_system,
+                &mut swash,
+                &line.glyphs,
+                origin_x,
+                baseline_y,
+                size,
+            );
+            assert_eq!(
+                quads.len(),
+                line.glyphs.len(),
+                "every fixture glyph must cache a quad"
+            );
+
+            for ((glyph, raster), quad) in line.glyphs.iter().zip(&rasters).zip(&quads) {
+                assert_eq!(
+                    (quad.x0.fract(), quad.y0.fract()),
+                    (0.0, 0.0),
+                    "quad ({}, {}) left the integer grid",
+                    quad.x0,
+                    quad.y0,
+                );
+                let exact_x = origin_x + glyph.x + raster.left as f32;
+                let exact_y = baseline_y + glyph.y - raster.top as f32;
+                assert!(
+                    (quad.x0 - exact_x).abs() < 1.0,
+                    "x snapped to {} from {exact_x}",
+                    quad.x0,
+                );
+                assert!(
+                    (quad.y0 - exact_y).abs() <= 0.5,
+                    "y snapped to {} from {exact_y}",
+                    quad.y0,
+                );
+            }
+
+            match &reference {
+                None => reference = Some(quads),
+                Some(first) => {
+                    for (quad, base) in quads.iter().zip(first) {
+                        assert_eq!(
+                            (
+                                quad.x1 - quad.x0,
+                                quad.y1 - quad.y0,
+                                quad.s0,
+                                quad.t0,
+                                quad.s1,
+                                quad.t1
+                            ),
+                            (
+                                base.x1 - base.x0,
+                                base.y1 - base.y0,
+                                base.s0,
+                                base.t0,
+                                base.s1,
+                                base.t1
+                            ),
+                            "the origin reached the raster",
+                        );
+                        snapped_apart |= (quad.x0 - base.x0).abs() > 0.5;
+                    }
+                }
+            }
+        }
+        assert!(
+            snapped_apart,
+            "the origins must snap apart, or nothing is being compared"
+        );
+    }
+
+    /// The four femtovg anchors must move a line by the offsets the layout's
+    /// own ascent and descent describe. Deriving them from `line_y − line_top`
+    /// instead folds in half the leading, which only a non-alphabetic anchor
+    /// ever shows.
+    #[test]
+    fn all_baselines_place_against_cosmic_metrics() {
+        let mut font_system = font_system();
+        let mut swash = SwashCache::new();
+        let size = 24.0;
+        let line = shape_line(&mut font_system, "Hxg", size, false);
+        assert!(
+            line.max_ascent > 1.0 && line.max_descent > 1.0,
+            "the metrics must separate the four anchors"
+        );
+        let anchor_y = 40.0_f32;
+
+        let mut quads_for = |font_system: &mut FontSystem, baseline| {
+            let alphabetic_y =
+                baseline_to_alphabetic(anchor_y, baseline, line.max_ascent, line.max_descent);
+            quads_at(
+                font_system,
+                &mut swash,
+                &line.glyphs,
+                ORIGIN_X,
+                alphabetic_y,
+                size,
+            )
+        };
+
+        let alphabetic = quads_for(&mut font_system, femtovg::Baseline::Alphabetic);
+        for (baseline, expected) in [
+            (femtovg::Baseline::Top, line.max_ascent),
+            (femtovg::Baseline::Bottom, -line.max_descent),
+            (
+                femtovg::Baseline::Middle,
+                (line.max_ascent - line.max_descent) / 2.0,
+            ),
+        ] {
+            for (quad, base) in quads_for(&mut font_system, baseline)
+                .iter()
+                .zip(&alphabetic)
+            {
+                let moved = quad.y0 - base.y0;
+                assert!(
+                    (moved - expected).abs() <= 1.0,
+                    "{baseline:?} moved the line by {moved}, not the metric-derived {expected}",
+                );
+            }
+        }
+    }
+
+    /// Where the cache hands over to femtovg's direct path the pen has to keep
+    /// walking: a glyph at 93 px must sit where its 92 px twin sits, scaled.
+    /// The two sizes are separate layouts, so what is compared is each glyph's
+    /// displacement from the pen origin per pixel of nominal size.
+    #[test]
+    fn cutoff_is_continuous() {
+        let mut font_system = font_system();
+        let mut swash = SwashCache::new();
+        let (_fonts, font_table) = embedded_font_table(&font_system);
+        let cached_size = DIRECT_PATH_CUTOFF_PX;
+        let direct_size = DIRECT_PATH_CUTOFF_PX + 1.0;
+
+        for (text, italic) in [("AVAWij", false), ("AVAWij", true), (GREEK_FALLBACK, false)] {
+            let cached = shape_line(&mut font_system, text, cached_size, italic);
+            let direct = shape_line(&mut font_system, text, direct_size, italic);
+            assert_eq!(
+                cached.glyphs.len(),
+                direct.glyphs.len(),
+                "the two sizes must shape {text:?} to the same glyphs"
+            );
+
+            let quads = quads_at(
+                &mut font_system,
+                &mut swash,
+                &cached.glyphs,
+                ORIGIN_X,
+                BASELINE_Y,
+                cached_size,
+            );
+            assert_eq!(
+                quads.len(),
+                cached.glyphs.len(),
+                "every fixture glyph must cache a quad"
+            );
+            let submitted: Vec<femtovg::PositionedGlyph> =
+                chunk_oversized(&direct.glyphs, &font_table, ORIGIN_X, BASELINE_Y)
+                    .into_iter()
+                    .flat_map(|run| run.glyphs)
+                    .collect();
+            assert_eq!(submitted.len(), direct.glyphs.len());
+
+            for ((glyph, quad), placed) in cached.glyphs.iter().zip(&quads).zip(&submitted) {
+                let raster = normalized_raster(&mut swash, &mut font_system, glyph);
+                for (axis, below, above) in [
+                    (
+                        "x",
+                        quad.x0 - raster.left as f32 - ORIGIN_X,
+                        placed.x - ORIGIN_X,
+                    ),
+                    (
+                        "y",
+                        quad.y0 + raster.top as f32 - BASELINE_Y,
+                        placed.y - BASELINE_Y,
+                    ),
+                ] {
+                    let jump = (below / cached_size - above / direct_size) * cached_size;
+                    assert!(
+                        jump.abs() < 1.0,
+                        "{text:?} italic={italic}: {axis} jumps {jump} px across the cutoff",
+                    );
+                }
+            }
+        }
+    }
+
+    /// The delegated path must submit cosmic's positions, not femtovg's.
+    /// `gpu::text`'s header documents that the two shapers kern differently
+    /// but names no pair, so the pair is discovered here:
+    /// the first candidate the two disagree on at 93 px
+    /// is the only one whose placement can tell the shapers apart.
+    /// A font swap that made every candidate agree
+    /// fails the assertion rather than quietly testing nothing.
+    #[test]
+    fn delegated_runs_carry_cosmic_kerning() {
+        let size = DIRECT_PATH_CUTOFF_PX + 1.0;
+        let mut font_system = font_system();
+        let (_, font_table) = embedded_font_table(&font_system);
+        let divergent = super::divergent_kerning_pair(&mut font_system, size);
+
+        let line = shape_line(&mut font_system, divergent, size, false);
+        let submitted: Vec<(f32, f32)> =
+            chunk_oversized(&line.glyphs, &font_table, ORIGIN_X, BASELINE_Y)
+                .into_iter()
+                .flat_map(|run| run.glyphs)
+                .map(|glyph| (glyph.x, glyph.y))
+                .collect();
+        let expected: Vec<(f32, f32)> = line
+            .glyphs
+            .iter()
+            .map(|glyph| snap(ORIGIN_X + glyph.x, BASELINE_Y + glyph.y))
+            .collect();
+        assert_eq!(
+            submitted, expected,
+            "{divergent:?} was delegated on femtovg's own advances",
+        );
     }
 
     const SANS_FAMILY: &str = "Braiins Sans";

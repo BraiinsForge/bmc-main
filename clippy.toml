@@ -1,0 +1,16 @@
+disallowed-methods = [
+    # Complete set of femtovg persistent-atlas entry points.
+    { path = "femtovg::Canvas::fill_text", reason = "populates femtovg's unbounded atlas; use gpu::text::draw_line_glyphs" },
+    { path = "femtovg::Canvas::stroke_text", reason = "same atlas; no stroke-text path exists" },
+    { path = "femtovg::Canvas::fill_glyph_run", reason = "only gpu::text::direct_path::fill_oversized_run may call this" },
+    { path = "femtovg::Canvas::stroke_glyph_run", reason = "reaches the persistent atlas at <=92px" },
+    # femtovg shaping must not feed measurement (split-brain vs cosmic-drawn text).
+    { path = "femtovg::Canvas::measure_text", reason = "measure with ParagraphLayoutCache::layout so measure and draw share one shaper" },
+    { path = "femtovg::Canvas::measure_font", reason = "line metrics come from cosmic LayoutLine max_ascent/max_descent" },
+    { path = "femtovg::Canvas::break_text", reason = "wrapping comes from the cosmic Buffer" },
+    { path = "femtovg::Canvas::break_text_vec", reason = "wrapping comes from the cosmic Buffer" },
+    { path = "femtovg::TextContext::measure_text", reason = "same shaper split-brain as Canvas::measure_text" },
+    { path = "femtovg::TextContext::measure_font", reason = "same shaper split-brain as Canvas::measure_font" },
+    { path = "femtovg::TextContext::break_text", reason = "same shaper split-brain as Canvas::break_text" },
+    { path = "femtovg::TextContext::break_text_vec", reason = "same shaper split-brain as Canvas::break_text_vec" },
+]
