@@ -4,7 +4,12 @@ version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 authors = ["Braiins Systems s.r.o."]
-description = "Startup overlay showing device connection status and IP address"
+description = "Device-info overlay: first-boot setup, WiFi reconfiguration, and boot connect info"
+
+# Icon SVGs are compiled in via include_svg!; the nix source filter keeps
+# only rust/toml/lock otherwise.
+[package.metadata.nix]
+include = ["assets/*"]
 
 [lib]
 path = "src/lib.rs"
@@ -16,7 +21,11 @@ path = "src/main.rs"
 [dependencies]
 anyhow.workspace = true
 bmc-render.workspace = true
+bmc-render-macros = { path = "../../bmc-render/macros" }
 bmc-system-overlay.workspace = true
+bmc-wasm-protocol.workspace = true
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+tracing.workspace = true
 
 [lints]
 workspace = true

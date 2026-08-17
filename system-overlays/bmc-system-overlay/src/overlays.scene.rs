@@ -33,7 +33,7 @@ use std::time::Instant;
 use bmc_gallery::prelude::*;
 
 use bmc_overlay_alarm::{AlarmRenderState, AlarmView, render_alarm};
-use bmc_overlay_device_info::{DeviceInfoView, render_device_info};
+use bmc_overlay_device_info::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
 use bmc_overlay_offline::{OfflineView, render_offline};
 use bmc_overlay_settings_tray::{
     NightModeView, SettingsTrayProduct, SettingsTrayRenderState, SettingsTrayView,
@@ -155,14 +155,46 @@ fn offline_cell(flat: bool) -> CustomRenderFn {
     clippy::cast_sign_loss,
     reason = "a stage hands its cell a size in whole positive logical pixels"
 )]
-fn device_info_cell(view: DeviceInfoView, flat: bool) -> CustomRenderFn {
+fn device_info_cell(
+    view: DeviceInfoView,
+    state_key: &'static LocalKey<RefCell<DeviceInfoRenderState>>,
+    flat: bool,
+) -> CustomRenderFn {
     Box::new(move |r, _interaction, w, h, _delta| {
         draw_backdrop(r, w, h, flat);
-        render_device_info(r, (w as u32, h as u32), &view);
+        state_key.with_borrow_mut(|state| {
+            render_device_info(r, (w as u32, h as u32), state, &view);
+        });
         // Still, for the same reason as the offline card: a view and nothing else.
         false
     })
 }
+
+/// One retained state per stage, mirroring the upgrade cards:
+/// every screen is drawn each frame and holds its own tree/icon caches.
+macro_rules! device_info_render_states {
+    ($($state:ident),+ $(,)?) => {
+        thread_local! {
+            $(static $state: RefCell<DeviceInfoRenderState> =
+                RefCell::new(DeviceInfoRenderState::new(Instant::now()));)+
+        }
+    };
+}
+
+device_info_render_states!(
+    DI_SETUP_START,
+    DI_SETUP_START_PENDING,
+    DI_SETUP_CONNECTING,
+    DI_SETUP_CONNECTED,
+    DI_SETUP_CONNECT_INFO,
+    DI_SETUP_CONNECT_INFO_PENDING,
+    DI_SETUP_COMPLETED,
+    DI_SETUP_ERROR,
+    DI_SETUP_FATAL,
+    DI_CONNECTING,
+    DI_SUCCESS,
+    DI_FAILED,
+);
 
 thread_local! {
     static ALARM_LABEL_RENDER_STATE: RefCell<AlarmRenderState> =
@@ -352,47 +384,157 @@ fn offline(ctx: &mut SceneCtx, ui: &mut Ui) {
     ctx.custom_stage(ui, (160_u32, 48_u32), offline_cell(flat));
 }
 
+fn device_info_stage(
+    ctx: &mut SceneCtx,
+    ui: &mut Ui,
+    heading: &str,
+    caption: &str,
+    view: DeviceInfoView,
+    state: &'static LocalKey<RefCell<DeviceInfoRenderState>>,
+    flat: bool,
+) {
+    ui.heading(heading);
+    ui.label(caption);
+    ctx.custom_stage(
+        ui,
+        (DISPLAY_W, DISPLAY_H),
+        device_info_cell(view, state, flat),
+    );
+}
+
+/// One card per screen of the device-info flows: the first-boot setup sequence,
+/// its error states, and the operational connect-info sequence.
 #[scene]
 fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
     let flat = ctx.toggle("Flat backdrop", false);
+    let ap = Some((
+        "Braiins Deck AP".to_owned(),
+        "http://192.168.8.1/".to_owned(),
+    ));
 
-    ui.heading("Connecting");
-    ui.label("waiting for IP");
-    ctx.custom_stage(
+    device_info_stage(
+        ctx,
         ui,
-        (DISPLAY_W, DISPLAY_H),
-        device_info_cell(
-            DeviceInfoView::Connecting {
-                ssid: Some("Braiins-WiFi".to_owned()),
-            },
-            flat,
-        ),
+        "SetupStart",
+        "first boot: AP SSID",
+        DeviceInfoView::SetupStart { ap },
+        &DI_SETUP_START,
+        flat,
     );
-
-    ui.heading("Success");
-    ui.label("IP acquired");
-    ctx.custom_stage(
+    device_info_stage(
+        ctx,
         ui,
-        (DISPLAY_W, DISPLAY_H),
-        device_info_cell(
-            DeviceInfoView::Success {
-                ip: Ipv4Addr::new(192, 168, 1, 42),
-            },
-            flat,
-        ),
+        "SetupStart (AP pending)",
+        "AP still coming up",
+        DeviceInfoView::SetupStart { ap: None },
+        &DI_SETUP_START_PENDING,
+        flat,
     );
-
-    ui.heading("Failed");
-    ui.label("no IP before timeout");
-    ctx.custom_stage(
+    device_info_stage(
+        ctx,
         ui,
-        (DISPLAY_W, DISPLAY_H),
-        device_info_cell(
-            DeviceInfoView::Failed {
-                ssid: Some("Braiins-WiFi".to_owned()),
-            },
-            flat,
-        ),
+        "SetupConnecting",
+        "joining the chosen network",
+        DeviceInfoView::SetupConnecting {
+            ssid: Some("Braiins-WiFi".to_owned()),
+        },
+        &DI_SETUP_CONNECTING,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupConnected",
+        "network joined",
+        DeviceInfoView::SetupConnected {
+            ssid: Some("Braiins-WiFi".to_owned()),
+        },
+        &DI_SETUP_CONNECTED,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupConnectInfo",
+        "device-setup URL + IP QR",
+        DeviceInfoView::SetupConnectInfo {
+            ip: Some(Ipv4Addr::new(192, 168, 1, 42)),
+            ssid: Some("Braiins-WiFi".to_owned()),
+        },
+        &DI_SETUP_CONNECT_INFO,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupConnectInfo (IP pending)",
+        "no station address yet",
+        DeviceInfoView::SetupConnectInfo {
+            ip: None,
+            ssid: Some("Braiins-WiFi".to_owned()),
+        },
+        &DI_SETUP_CONNECT_INFO_PENDING,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupCompleted",
+        "wizard finished",
+        DeviceInfoView::SetupCompleted,
+        &DI_SETUP_COMPLETED,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupError",
+        "join failed; the AP screen returns",
+        DeviceInfoView::SetupError,
+        &DI_SETUP_ERROR,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupFatal",
+        "sticky; bmc recovers on its own",
+        DeviceInfoView::SetupFatal,
+        &DI_SETUP_FATAL,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "Connecting",
+        "operational boot, waiting for IP",
+        DeviceInfoView::Connecting {
+            ssid: Some("Braiins-WiFi".to_owned()),
+        },
+        &DI_CONNECTING,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "Success",
+        "IP acquired",
+        DeviceInfoView::Success {
+            ip: Ipv4Addr::new(192, 168, 1, 42),
+        },
+        &DI_SUCCESS,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "Failed",
+        "no IP before timeout",
+        DeviceInfoView::Failed {
+            ssid: Some("Braiins-WiFi".to_owned()),
+        },
+        &DI_FAILED,
+        flat,
     );
 }
 

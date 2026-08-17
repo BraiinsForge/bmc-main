@@ -1124,7 +1124,11 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "bmc-render",
+ "bmc-render-macros",
  "bmc-system-overlay",
+ "bmc-wasm-protocol",
+ "bmc-wasm-sdk",
+ "tracing",
 ]
 
 [[package]]

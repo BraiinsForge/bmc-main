@@ -18,26 +18,41 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Fullscreen operational-startup overlay: show WiFi/IP connection progress,
-//! then success or failure, then unmap for the rest of the session.
+//! Fullscreen device-info overlay: the first-boot setup flow, WiFi
+//! reconfiguration, and operational-boot connect info.
+//!
+//! bmc owns the lifecycle and drives this overlay over `deck_device_info_v1`
+//! (`device_state`, `setup_progress`, `access_point`); the displayed address
+//! comes from the connectivity prober's station IP. Every screen-hold timer
+//! lives here; bmc emits transitions the moment they happen.
+
+mod icons;
+mod ui;
+
+pub use ui::{DeviceInfoRenderState, DeviceInfoView, render_device_info};
 
 use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
-use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Layer, LayerConfig, SnapshotVersion, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind,
-    UpgradeSnapshot, UpgradeState, VersionedSnapshot,
+    AccessPoint, DeviceState, Layer, LayerConfig, SetupStep, SnapshotVersion, SystemOverlay,
+    TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState, VersionedSnapshot,
 };
 
-/// How long to wait for an IPv4 before showing the connection-failure state.
-const WAIT_FOR_IP: Duration = Duration::from_secs(20);
-/// How long the success state (connected + IP) stays up before auto-dismiss.
+/// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed, and
+/// setup-error screens.
+const HOLD: Duration = Duration::from_secs(5);
+/// How long the operational connect-info stays up before auto-dismiss.
 const SUCCESS_VISIBLE_FOR: Duration = Duration::from_secs(10);
-/// How long the failure state stays up before auto-dismiss.
+/// How long the operational failure screen stays up before auto-dismiss.
 const FAILURE_VISIBLE_FOR: Duration = Duration::from_secs(5);
-/// Snapshot re-read (wake) cadence while waiting for an address.
+/// How long an operational boot waits for an IP before showing failure.
+const WAIT_FOR_IP: Duration = Duration::from_secs(20);
+/// Reconfiguration AP screen auto-hide; the AP stays up (legacy
+/// `WIFI_RECONFIG_TIMEOUT`). A later setup event revives the flow.
+const RECONFIG_SCREEN_TIMEOUT: Duration = Duration::from_mins(8);
+/// Snapshot re-read (wake) cadence while a screen depends on prober state.
 const POLL: Duration = Duration::from_secs(1);
 
 /// Injected connectivity source so the state machine is unit-testable.
@@ -54,104 +69,221 @@ impl Env for OsEnv {
     }
 }
 
+/// Which flow the device lifecycle selects. Mirrors `DeviceState`, plus
+/// `Unknown` for before the first `device_state` event (nothing is shown
+/// until then).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Phase {
-    /// Mapped immediately at operational startup; polling for an IPv4.
-    Connecting { since: Instant },
-    /// A firmware-upgrade success screen owns the display; stay unmapped
-    /// and start connecting once it is due to hide.
-    Postponed { until: Instant },
-    /// IPv4 appeared before timeout; show the last-known IP for a fixed duration.
-    Success { since: Instant, ip: Ipv4Addr },
-    /// Timeout expired without IPv4; show failure briefly.
-    Failed { since: Instant },
-    /// Touch/timeout dismissed; unmapped permanently.
+enum Mode {
+    Unknown,
+    FactoryDefault,
+    WifiReconfiguration,
+    /// Configured but setup unfinished: bmc joins WiFi on its own.
+    SetupPending,
+    Operational,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Screen {
+    /// Lifecycle unknown yet — stay unmapped rather than guess a flow.
+    Hidden,
+    SetupStart {
+        since: Instant,
+    },
+    SetupConnecting,
+    /// `to_scenes` distinguishes the reconfiguration success (straight back to scenes)
+    /// from first-boot success (on to the setup connect-info).
+    SetupConnected {
+        since: Instant,
+        to_scenes: bool,
+    },
+    SetupConnectInfo,
+    SetupCompleted {
+        since: Instant,
+    },
+    SetupError {
+        since: Instant,
+    },
+    /// Sticky general error; bmc recovers on its own (reset or reboot).
+    SetupFatal,
+    OpConnecting {
+        since: Instant,
+    },
+    /// A firmware-upgrade success screen owns the display; stay unmapped and
+    /// start connecting once it is due to hide.
+    OpPostponed {
+        until: Instant,
+    },
+    OpSuccess {
+        since: Instant,
+        ip: Ipv4Addr,
+    },
+    OpFailed {
+        since: Instant,
+    },
+    /// Handed off to scenes (unmapped). Setup events revive the flow.
     Done,
 }
 
-#[must_use]
-fn phase_visible(phase: Phase) -> bool {
-    !matches!(phase, Phase::Done | Phase::Postponed { .. })
+impl Screen {
+    fn in_setup_flow(self) -> bool {
+        matches!(
+            self,
+            Screen::SetupStart { .. }
+                | Screen::SetupConnecting
+                | Screen::SetupConnected { .. }
+                | Screen::SetupConnectInfo
+                | Screen::SetupCompleted { .. }
+                | Screen::SetupError { .. }
+                | Screen::SetupFatal
+        )
+    }
+
+    fn visible(self) -> bool {
+        !matches!(
+            self,
+            Screen::Hidden | Screen::Done | Screen::OpPostponed { .. }
+        )
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum DeviceInfoView {
-    Connecting { ssid: Option<String> },
-    Success { ip: Ipv4Addr },
-    Failed { ssid: Option<String> },
-    Done,
-}
-
-/// Pure transition for one tick. Returns the next phase and whether the status
-/// text changed so a redraw is warranted.
-fn step(phase: Phase, now: Instant, ip: Option<Ipv4Addr>) -> (Phase, bool) {
-    match phase {
-        Phase::Connecting { since } => {
-            if let Some(ip) = ip {
-                (Phase::Success { since: now, ip }, true)
+/// Advance the screen's own timers for one tick. Pure; returns the next
+/// screen and whether it changed.
+fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) -> (Screen, bool) {
+    let next = match screen {
+        Screen::SetupStart { since } => {
+            // Only the reconfiguration entry times out;
+            // a first boot has no scenes worth returning to.
+            if mode == Mode::WifiReconfiguration
+                && now.duration_since(since) >= RECONFIG_SCREEN_TIMEOUT
+            {
+                Screen::Done
+            } else {
+                screen
+            }
+        }
+        Screen::SetupConnecting => {
+            // Only a SetupPending boot self-advances on the address: in AP
+            // mode the join outcome arrives as an explicit setup event.
+            if mode == Mode::SetupPending && station_ip.is_some() {
+                Screen::SetupConnectInfo
+            } else {
+                screen
+            }
+        }
+        Screen::SetupConnected { since, to_scenes } => {
+            if now.duration_since(since) >= HOLD {
+                if to_scenes {
+                    Screen::Done
+                } else {
+                    Screen::SetupConnectInfo
+                }
+            } else {
+                screen
+            }
+        }
+        Screen::SetupCompleted { since } => {
+            if now.duration_since(since) >= HOLD {
+                Screen::Done
+            } else {
+                screen
+            }
+        }
+        Screen::SetupError { since } => {
+            if now.duration_since(since) >= HOLD {
+                Screen::SetupStart { since: now }
+            } else {
+                screen
+            }
+        }
+        Screen::OpConnecting { since } => {
+            if let Some(ip) = station_ip {
+                Screen::OpSuccess { since: now, ip }
             } else if now.duration_since(since) >= WAIT_FOR_IP {
-                (Phase::Failed { since: now }, true)
+                Screen::OpFailed { since: now }
             } else {
-                (Phase::Connecting { since }, false)
+                screen
             }
         }
-        Phase::Postponed { until } => {
+        Screen::OpPostponed { until } => {
             if now >= until {
-                (Phase::Connecting { since: now }, true)
+                Screen::OpConnecting { since: now }
             } else {
-                (Phase::Postponed { until }, false)
+                screen
             }
         }
-        Phase::Success {
-            since,
-            ip: shown_ip,
-        } => {
+        Screen::OpSuccess { since, ip: shown } => {
             if now.duration_since(since) >= SUCCESS_VISIBLE_FOR {
-                (Phase::Done, false)
-            } else if let Some(ip) = ip.filter(|ip| *ip != shown_ip) {
-                (Phase::Success { since, ip }, true)
+                Screen::Done
             } else {
-                // Deliberate: keep the last-known IP through transient
-                // DHCP/interface loss. A short acquire-then-lose can therefore
-                // show a stale IP for up to SUCCESS_VISIBLE_FOR; that is
-                // accepted to avoid flicker. Dismissal is only touch-down or
-                // the success/failure timeout.
-                (
-                    Phase::Success {
-                        since,
-                        ip: shown_ip,
-                    },
-                    false,
-                )
+                // Track an address change, but keep the last-known IP
+                // through a transient DHCP loss so the screen does not flicker.
+                // A short acquire-then-lose can therefore show a stale IP
+                // for up to SUCCESS_VISIBLE_FOR; accepted.
+                let ip = station_ip.unwrap_or(shown);
+                Screen::OpSuccess { since, ip }
             }
         }
-        Phase::Failed { since } => {
+        Screen::OpFailed { since } => {
             if now.duration_since(since) >= FAILURE_VISIBLE_FOR {
-                (Phase::Done, false)
+                Screen::Done
             } else {
-                (Phase::Failed { since }, false)
+                screen
             }
         }
-        Phase::Done => (Phase::Done, false),
+        Screen::Hidden | Screen::SetupConnectInfo | Screen::SetupFatal | Screen::Done => screen,
+    };
+    let changed = next != screen;
+    (next, changed)
+}
+
+enum NextWake {
+    At(Instant),
+    Poll,
+}
+
+/// The earliest instant `step` could produce a different screen,
+/// `None` when only external events can move it.
+fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
+    match screen {
+        Screen::SetupStart { since } => (mode == Mode::WifiReconfiguration)
+            .then_some(NextWake::At(since + RECONFIG_SCREEN_TIMEOUT)),
+        Screen::SetupConnecting => (mode == Mode::SetupPending).then_some(NextWake::Poll),
+        Screen::SetupConnected { since, .. }
+        | Screen::SetupCompleted { since }
+        | Screen::SetupError { since } => Some(NextWake::At(since + HOLD)),
+        // The shown address may still change (late DHCP), so keep polling.
+        Screen::SetupConnectInfo | Screen::OpConnecting { .. } | Screen::OpSuccess { .. } => {
+            Some(NextWake::Poll)
+        }
+        Screen::OpPostponed { until } => Some(NextWake::At(until)),
+        Screen::OpFailed { since } => Some(NextWake::At(since + FAILURE_VISIBLE_FOR)),
+        Screen::Hidden | Screen::SetupFatal | Screen::Done => None,
     }
 }
 
 pub struct DeviceInfoOverlay {
-    phase: Phase,
-    ip: Option<Ipv4Addr>,
-    ssid: Option<String>,
-    /// Version of the snapshot `ip`/`ssid` were read from (`None` = none
-    /// yet); lets `refresh_from_snapshot` skip unchanged reads.
+    screen: Screen,
+    mode: Mode,
+    ap: Option<AccessPoint>,
+    /// Target SSID from the `connecting_to_wifi` event;
+    /// preferred over the prober's saved-network SSID while set.
+    target_ssid: Option<String>,
+    station_ip: Option<Ipv4Addr>,
+    station_ssid: Option<String>,
     snapshot_version: Option<SnapshotVersion>,
+    /// Latched "content changed" from events between ticks.
+    dirty: bool,
+    render_state: DeviceInfoRenderState,
     env: Box<dyn Env>,
 }
 
 impl std::fmt::Debug for DeviceInfoOverlay {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("DeviceInfoOverlay")
-            .field("phase", &self.phase)
-            .field("ip", &self.ip)
-            .field("ssid", &self.ssid)
+            .field("screen", &self.screen)
+            .field("mode", &self.mode)
+            .field("ap", &self.ap)
+            .field("station_ip", &self.station_ip)
             .finish_non_exhaustive()
     }
 }
@@ -159,37 +291,51 @@ impl std::fmt::Debug for DeviceInfoOverlay {
 impl Default for DeviceInfoOverlay {
     fn default() -> Self {
         Self {
-            phase: Phase::Connecting {
-                since: Instant::now(),
-            },
-            ip: None,
-            ssid: None,
+            screen: Screen::Hidden,
+            mode: Mode::Unknown,
+            ap: None,
+            target_ssid: None,
+            station_ip: None,
+            station_ssid: None,
             snapshot_version: None,
+            dirty: false,
+            render_state: DeviceInfoRenderState::new(Instant::now()),
             env: Box::new(OsEnv),
         }
     }
 }
 
 impl DeviceInfoOverlay {
+    fn ssid(&self) -> Option<String> {
+        self.target_ssid
+            .clone()
+            .or_else(|| self.station_ssid.clone())
+    }
+
     #[must_use]
     fn view(&self) -> DeviceInfoView {
-        match self.phase {
-            Phase::Connecting { .. } => DeviceInfoView::Connecting {
-                ssid: self.ssid.clone(),
+        match self.screen {
+            Screen::Hidden | Screen::Done | Screen::OpPostponed { .. } => DeviceInfoView::Done,
+            Screen::SetupStart { .. } => DeviceInfoView::SetupStart {
+                ap: self.ap.clone(),
             },
-            Phase::Success { ip, .. } => DeviceInfoView::Success { ip },
-            Phase::Failed { .. } => DeviceInfoView::Failed {
-                ssid: self.ssid.clone(),
+            Screen::SetupConnecting => DeviceInfoView::SetupConnecting { ssid: self.ssid() },
+            Screen::SetupConnected { .. } => DeviceInfoView::SetupConnected { ssid: self.ssid() },
+            Screen::SetupConnectInfo => DeviceInfoView::SetupConnectInfo {
+                ip: self.station_ip,
+                ssid: self.ssid(),
             },
-            Phase::Postponed { .. } | Phase::Done => DeviceInfoView::Done,
+            Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
+            Screen::SetupError { .. } => DeviceInfoView::SetupError,
+            Screen::SetupFatal => DeviceInfoView::SetupFatal,
+            Screen::OpConnecting { .. } => DeviceInfoView::Connecting { ssid: self.ssid() },
+            Screen::OpSuccess { ip, .. } => DeviceInfoView::Success { ip },
+            Screen::OpFailed { .. } => DeviceInfoView::Failed { ssid: self.ssid() },
         }
     }
 
-    /// Fold a changed snapshot into the displayed IP/SSID; returns whether
-    /// either changed. No change yet (prober has not published) keeps the
-    /// current values — unknown renders the same as "no IP yet". The inner
-    /// comparison stays because a signal-strength-only change bumps the
-    /// version without touching the fields shown here.
+    /// Fold a changed snapshot into the displayed address/SSID; returns
+    /// whether either changed.
     fn refresh_from_snapshot(&mut self) -> bool {
         let Some(VersionedSnapshot { version, snapshot }) =
             self.env.snapshot_if_changed(self.snapshot_version)
@@ -197,138 +343,161 @@ impl DeviceInfoOverlay {
             return false;
         };
         self.snapshot_version = Some(version);
-        let changed = self.ip != snapshot.ipv4 || self.ssid != snapshot.station_ssid;
-        self.ip = snapshot.ipv4;
-        self.ssid = snapshot.station_ssid;
+        let changed =
+            self.station_ip != snapshot.station_ipv4 || self.station_ssid != snapshot.station_ssid;
+        self.station_ip = snapshot.station_ipv4;
+        self.station_ssid = snapshot.station_ssid;
         changed
     }
 }
 
-#[must_use]
-fn ssid_text(ssid: Option<&str>, fallback: &str) -> String {
-    ssid.map_or_else(|| fallback.to_owned(), |ssid| format!("WiFi SSID: {ssid}"))
-}
-
 impl SystemOverlay for DeviceInfoOverlay {
     fn layer_config(&self) -> LayerConfig {
-        // Bottom, not the fullscreen default of Top: the startup screen must
-        // sit below a firing alarm (Top) and the settings tray (Overlay) if
-        // either maps during boot, while still occluding the scene.
+        // Bottom, not the fullscreen default of Top: the device-info screens
+        // must sit below a firing alarm (Top), the upgrade splash (Top),
+        // and the settings tray (Overlay), while still occluding the scene.
         LayerConfig {
             layer: Layer::Bottom,
             ..LayerConfig::fullscreen("bmc-overlay-device-info")
         }
     }
 
-    fn tick(&mut self, now: Instant) -> TickOutcome {
-        if matches!(self.phase, Phase::Done) {
-            return TickOutcome {
-                visible: false,
-                wants_render: false,
-                next_wake: None,
-            };
-        }
+    fn uses_device_info(&self) -> bool {
+        true
+    }
 
-        let probe_changed = self.refresh_from_snapshot();
-        let (next, phase_changed) = step(self.phase, now, self.ip);
-        self.phase = next;
-        let visible = phase_visible(self.phase);
-        let next_wake = match self.phase {
-            Phase::Connecting { since } => {
-                let poll = now + POLL;
-                let deadline = since + WAIT_FOR_IP;
-                Some(if poll < deadline { poll } else { deadline })
-            }
-            Phase::Success { since, .. } => Some(since + SUCCESS_VISIBLE_FOR),
-            Phase::Failed { since } => Some(since + FAILURE_VISIBLE_FOR),
-            Phase::Postponed { until } => Some(until),
-            Phase::Done => None,
+    fn prewarm(&mut self, renderer: &mut dyn Renderer) {
+        let _ = self.render_state.ensure_icons(renderer);
+    }
+
+    fn on_device_state(&mut self, state: DeviceState) {
+        self.mode = match state {
+            DeviceState::FactoryDefault => Mode::FactoryDefault,
+            DeviceState::WifiReconfiguration => Mode::WifiReconfiguration,
+            DeviceState::SetupPending => Mode::SetupPending,
+            DeviceState::Operational => Mode::Operational,
         };
-        TickOutcome {
-            visible,
-            wants_render: visible && (phase_changed || probe_changed),
-            next_wake,
+        self.dirty = true;
+        match self.mode {
+            Mode::FactoryDefault | Mode::WifiReconfiguration => {
+                if !self.screen.in_setup_flow() {
+                    self.screen = Screen::SetupStart {
+                        since: Instant::now(),
+                    };
+                }
+            }
+            Mode::SetupPending => {
+                if !self.screen.in_setup_flow() {
+                    self.screen = Screen::SetupConnecting;
+                }
+            }
+            // Mid-setup the lifecycle flips to Operational before the final
+            // setup event (reconfiguration exits AP mode first); the setup
+            // flow finishes via those events, so only a cold start enters
+            // the operational connect flow here.
+            Mode::Operational => {
+                if self.screen == Screen::Hidden {
+                    self.screen = Screen::OpConnecting {
+                        since: Instant::now(),
+                    };
+                }
+            }
+            Mode::Unknown => {}
         }
     }
 
-    fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
-        render_device_info(r, size, &self.view());
+    fn on_setup_progress(&mut self, step: SetupStep, wifi_ssid: &str) {
+        let now = Instant::now();
+        // Any real step (re)enters the setup flow,
+        // including from a dismissed reconfiguration screen (`Done`).
+        // Mirrors the legacy listener, which set the screen unconditionally.
+        self.screen = match step {
+            SetupStep::Idle => return,
+            SetupStep::ConnectingToWifi => {
+                self.target_ssid = Some(wifi_ssid.to_owned());
+                Screen::SetupConnecting
+            }
+            SetupStep::WifiConnectionSuccess => Screen::SetupConnected {
+                since: now,
+                to_scenes: false,
+            },
+            SetupStep::WifiReconfigSuccess => Screen::SetupConnected {
+                since: now,
+                to_scenes: true,
+            },
+            SetupStep::WifiConnectionFailed => Screen::SetupError { since: now },
+            SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
+            SetupStep::UnexpectedError => Screen::SetupFatal,
+        };
+        self.dirty = true;
     }
 
-    fn on_touch(&mut self, event: TouchEvent) {
-        if matches!(event, TouchEvent::Down { .. }) {
-            self.phase = Phase::Done;
-        }
+    fn on_access_point(&mut self, ap: Option<&AccessPoint>) {
+        self.ap = ap.cloned();
+        self.dirty = true;
     }
 
     fn uses_upgrade(&self) -> bool {
         true
     }
 
-    /// A success snapshot while still `Connecting` marks this startup
-    /// as post-upgrade. A package restart never dropped the network:
-    /// skip the connection screen. A firmware success keeps its overlay
-    /// in front: wait out that dwell before connecting.
+    /// A success snapshot while still `OpConnecting` marks this startup as
+    /// post-upgrade. A package restart never dropped the network: skip the
+    /// connection screen. A firmware success keeps its overlay in front: wait
+    /// out that dwell before connecting. Gated on the operational flow only —
+    /// the setup screens must still run after a package restart.
     fn on_upgrade_state(&mut self, snapshot: UpgradeSnapshot) {
-        if !matches!(self.phase, Phase::Connecting { .. }) {
+        if !matches!(self.screen, Screen::OpConnecting { .. }) {
             return;
         }
         let UpgradeState::Succeeded { remaining } = snapshot.state else {
             return;
         };
         if snapshot.kind == UpgradeKind::Packages {
-            // TODO(BDK-450): only the regular show-the-IP screen is safe to skip here.
-            // Factory-default or config-init screens, once added,
-            // must still run after a package restart.
-            self.phase = Phase::Done;
+            self.screen = Screen::Done;
         } else if snapshot.kind == UpgradeKind::Firmware {
-            self.phase = Phase::Postponed {
+            self.screen = Screen::OpPostponed {
                 until: Instant::now() + remaining,
             };
         }
+        self.dirty = true;
     }
-}
 
-pub fn render_device_info(r: &mut dyn Renderer, size: (u32, u32), view: &DeviceInfoView) {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "display dimensions fit comfortably in f32 mantissa"
-    )]
-    let (w, h) = (size.0 as f32, size.1 as f32);
-
-    r.fill_rect(0.0, 0.0, w, h, Color::from_rgba(0, 0, 0, 255));
-
-    let (title, detail, footer) = match view {
-        DeviceInfoView::Connecting { ssid } => (
-            "Connecting...",
-            ssid_text(ssid.as_deref(), "Waiting for WiFi connection"),
-            Some("Waiting for IP address"),
-        ),
-        DeviceInfoView::Success { ip } => ("You're connected", format!("http://{ip}/"), None),
-        DeviceInfoView::Failed { ssid } => (
-            "Problem with connection.",
-            ssid_text(ssid.as_deref(), "No WiFi SSID configured"),
-            Some("No IP address assigned"),
-        ),
-        DeviceInfoView::Done => return,
-    };
-
-    draw_centered(r, title, w, h / 2.0 - 52.0, 44.0);
-    draw_centered(r, &detail, w, h / 2.0, 32.0);
-    if let Some(footer) = footer {
-        draw_centered(r, footer, w, h / 2.0 + 44.0, 26.0);
+    fn tick(&mut self, now: Instant) -> TickOutcome {
+        let probe_changed = self.refresh_from_snapshot();
+        let (next, screen_changed) = step(self.screen, self.mode, now, self.station_ip);
+        self.screen = next;
+        let visible = self.screen.visible();
+        let next_wake = match next_deadline(self.screen, self.mode) {
+            Some(NextWake::At(deadline)) => Some(deadline),
+            Some(NextWake::Poll) => Some(now + POLL),
+            None => None,
+        };
+        let dirty = std::mem::take(&mut self.dirty);
+        TickOutcome {
+            visible,
+            wants_render: visible && (screen_changed || probe_changed || dirty),
+            next_wake,
+        }
     }
-}
 
-fn draw_centered(r: &mut dyn Renderer, text: &str, width: f32, y: f32, font: f32) {
-    let text_width = r.measure_text(text, font);
-    r.draw_text(
-        text,
-        (width - text_width) / 2.0,
-        y,
-        font,
-        Color::from_rgba(255, 255, 255, 255),
-    );
+    fn render(&mut self, r: &mut dyn Renderer, size: (u32, u32)) {
+        let view = self.view();
+        render_device_info(r, size, &mut self.render_state, &view);
+    }
+
+    fn on_touch(&mut self, event: TouchEvent) {
+        // Touch dismisses only the operational connect flow. The setup screens
+        // stay: dismissing SetupStart would leave a blank screen with the AP
+        // up and the user mid-wizard.
+        let dismissable = matches!(
+            self.screen,
+            Screen::OpConnecting { .. } | Screen::OpSuccess { .. } | Screen::OpFailed { .. }
+        );
+        if dismissable && matches!(event, TouchEvent::Down { .. }) {
+            self.screen = Screen::Done;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -339,6 +508,13 @@ mod tests {
 
     fn t0() -> Instant {
         Instant::now()
+    }
+
+    fn setup_ap() -> AccessPoint {
+        AccessPoint {
+            ssid: "Deck setup".to_owned(),
+            setup_url: "http://192.168.8.1/".to_owned(),
+        }
     }
 
     struct StaticEnv {
@@ -359,258 +535,249 @@ mod tests {
         }
     }
 
-    fn env_with_ip(ip: Option<Ipv4Addr>) -> Box<dyn Env> {
-        Box::new(StaticEnv {
-            snapshot: Some(Snapshot {
-                ipv4: ip,
-                station_ipv4: ip,
-                station_ssid: None,
-                wifi_signal_dbm: None,
-            }),
-        })
-    }
-
-    #[test]
-    fn connecting_is_visible_without_ip() {
-        let start = t0();
-        let (next, changed) = step(Phase::Connecting { since: start }, start + POLL, None);
-
-        assert_eq!(next, Phase::Connecting { since: start });
-        assert!(phase_visible(next));
-        assert!(!changed);
-    }
-
-    #[test]
-    fn connecting_succeeds_when_ip_appears() {
-        let now = t0();
-        let ip = Ipv4Addr::new(10, 0, 0, 5);
-        let (next, changed) = step(Phase::Connecting { since: now }, now + POLL, Some(ip));
-
-        assert_eq!(
-            next,
-            Phase::Success {
-                since: now + POLL,
-                ip
-            }
-        );
-        assert!(changed);
-    }
-
-    #[test]
-    fn connecting_fails_after_ip_timeout() {
-        let start = t0();
-        let later = start + WAIT_FOR_IP;
-        let (next, changed) = step(Phase::Connecting { since: start }, later, None);
-
-        assert_eq!(next, Phase::Failed { since: later });
-        assert!(changed);
-    }
-
-    #[test]
-    fn success_auto_dismisses_after_display_duration() {
-        let start = t0();
-        let (next, _) = step(
-            Phase::Success {
-                since: start,
-                ip: Ipv4Addr::new(10, 0, 0, 5),
-            },
-            start + SUCCESS_VISIBLE_FOR,
-            Some(Ipv4Addr::new(10, 0, 0, 5)),
-        );
-
-        assert_eq!(next, Phase::Done);
-    }
-
-    #[test]
-    fn success_keeps_last_ip_through_transient_probe_loss() {
-        let start = t0();
-        let shown_ip = Ipv4Addr::new(10, 0, 0, 5);
-        let (next, changed) = step(
-            Phase::Success {
-                since: start,
-                ip: shown_ip,
-            },
-            start + POLL,
-            None,
-        );
-
-        assert_eq!(
-            next,
-            Phase::Success {
-                since: start,
-                ip: shown_ip,
-            }
-        );
-        assert!(!changed);
-    }
-
-    #[test]
-    fn unknown_snapshot_stays_connecting_before_deadline() {
-        let start = t0();
-        let mut overlay = DeviceInfoOverlay {
-            phase: Phase::Connecting { since: start },
-            ip: None,
-            ssid: None,
-            snapshot_version: None,
-            env: Box::new(StaticEnv { snapshot: None }),
-        };
-
-        let tick = overlay.tick(start + POLL);
-
-        assert_eq!(overlay.phase, Phase::Connecting { since: start });
-        assert!(tick.visible);
-    }
-
-    #[test]
-    fn offline_snapshot_fails_after_deadline() {
-        let start = t0();
-        let mut overlay = DeviceInfoOverlay {
-            phase: Phase::Connecting { since: start },
-            ip: None,
-            ssid: None,
-            snapshot_version: None,
-            env: env_with_ip(None),
-        };
-
-        let _ = overlay.tick(start + WAIT_FOR_IP);
-
-        assert!(matches!(overlay.phase, Phase::Failed { .. }));
-    }
-
-    #[test]
-    fn view_for_connecting_includes_configured_ssid() {
-        let start = t0();
-        let overlay = DeviceInfoOverlay {
-            phase: Phase::Connecting { since: start },
-            ip: None,
-            ssid: Some("Braiins-WiFi".to_owned()),
-            snapshot_version: None,
-            env: Box::new(StaticEnv { snapshot: None }),
-        };
-
-        assert_eq!(
-            overlay.view(),
-            DeviceInfoView::Connecting {
-                ssid: Some("Braiins-WiFi".to_owned())
-            }
-        );
-    }
-
-    #[test]
-    fn view_for_success_includes_displayed_ip() {
-        let start = t0();
-        let ip = Ipv4Addr::new(192, 168, 1, 42);
-        let overlay = DeviceInfoOverlay {
-            phase: Phase::Success { since: start, ip },
-            ip: Some(ip),
-            ssid: None,
-            snapshot_version: None,
-            env: env_with_ip(Some(ip)),
-        };
-
-        assert_eq!(overlay.view(), DeviceInfoView::Success { ip });
-    }
-
-    fn connecting_overlay(start: Instant) -> DeviceInfoOverlay {
+    fn overlay_with_ip(ip: Option<Ipv4Addr>) -> DeviceInfoOverlay {
         DeviceInfoOverlay {
-            phase: Phase::Connecting { since: start },
-            ip: None,
-            ssid: None,
-            snapshot_version: None,
-            env: Box::new(StaticEnv { snapshot: None }),
+            env: Box::new(StaticEnv {
+                snapshot: Some(Snapshot {
+                    ipv4: ip,
+                    station_ipv4: ip,
+                    station_ssid: None,
+                    wifi_signal_dbm: None,
+                }),
+            }),
+            ..DeviceInfoOverlay::default()
         }
     }
 
-    fn succeeded(kind: UpgradeKind) -> UpgradeSnapshot {
+    fn succeeded(kind: UpgradeKind, remaining: Duration) -> UpgradeSnapshot {
         UpgradeSnapshot {
             kind,
-            state: UpgradeState::Succeeded {
-                remaining: Duration::from_secs(10),
-            },
+            state: UpgradeState::Succeeded { remaining },
         }
     }
 
     #[test]
-    fn a_package_activation_restart_skips_the_startup_screen() {
-        let start = t0();
-        let mut overlay = connecting_overlay(start);
-
-        overlay.on_upgrade_state(succeeded(UpgradeKind::Packages));
-
-        assert_eq!(overlay.phase, Phase::Done);
-        assert!(!overlay.tick(start).visible);
+    fn hidden_until_the_first_device_state() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        let tick = overlay.tick(t0());
+        assert!(!tick.visible);
+        assert_eq!(tick.next_wake, None);
     }
 
     #[test]
-    fn a_firmware_success_postpones_connecting_past_its_dwell() {
+    fn operational_runs_the_connect_flow() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational);
         let start = t0();
-        let mut overlay = connecting_overlay(start);
-
-        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware));
-
-        let Phase::Postponed { until } = overlay.phase else {
-            panic!("firmware success must postpone, got {:?}", overlay.phase);
-        };
         let tick = overlay.tick(start);
-        assert!(!tick.visible, "stay unmapped under the success screen");
-        assert_eq!(tick.next_wake, Some(until));
+        assert!(tick.visible);
+        assert!(matches!(overlay.screen, Screen::OpSuccess { .. }));
 
-        let (next, changed) = step(Phase::Postponed { until }, until, None);
+        let tick2 = overlay.tick(start + SUCCESS_VISIBLE_FOR + POLL);
+        assert!(!tick2.visible);
+        assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn operational_without_ip_fails_after_deadline() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::Operational);
+        let start = t0();
+        let _ = overlay.tick(start);
+        let _ = overlay.tick(start + WAIT_FOR_IP);
+        assert!(matches!(overlay.screen, Screen::OpFailed { .. }));
+    }
+
+    #[test]
+    fn factory_default_shows_setup_start_and_ignores_touch() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_access_point(Some(&setup_ap()));
+        let tick = overlay.tick(t0());
+        assert!(tick.visible);
         assert_eq!(
-            next,
-            Phase::Connecting { since: until },
-            "the full connect window must start after the dwell"
+            overlay.view(),
+            DeviceInfoView::SetupStart {
+                ap: Some(setup_ap())
+            }
         );
-        assert!(changed);
-    }
-
-    #[test]
-    fn a_running_package_upgrade_keeps_the_startup_screen() {
-        let start = t0();
-        let mut overlay = connecting_overlay(start);
-
-        overlay.on_upgrade_state(UpgradeSnapshot {
-            kind: UpgradeKind::Packages,
-            state: UpgradeState::Running {
-                phase: None,
-                progress: None,
-            },
-        });
-
-        assert_eq!(overlay.phase, Phase::Connecting { since: start });
-    }
-
-    #[test]
-    fn a_live_upgrade_success_does_not_restart_a_shown_screen() {
-        let start = t0();
-        let ip = Ipv4Addr::new(10, 0, 0, 5);
-        let mut overlay = connecting_overlay(start);
-        overlay.phase = Phase::Success { since: start, ip };
-
-        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware));
-
-        assert_eq!(overlay.phase, Phase::Success { since: start, ip });
-    }
-
-    #[test]
-    fn touch_down_hides_immediately() {
-        let start = t0();
-        let mut overlay = DeviceInfoOverlay {
-            phase: Phase::Connecting { since: start },
-            ip: None,
-            ssid: None,
-            snapshot_version: None,
-            env: Box::new(StaticEnv { snapshot: None }),
-        };
 
         overlay.on_touch(TouchEvent::Down {
             id: 0,
             x: 0.0,
             y: 0.0,
         });
-        let tick = overlay.tick(start);
+        assert!(overlay.tick(t0()).visible, "setup screens ignore touch");
+    }
 
-        assert_eq!(overlay.phase, Phase::Done);
+    #[test]
+    fn first_boot_success_walks_to_connect_info() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(overlay.screen, Screen::SetupConnecting);
+
+        overlay.on_setup_progress(SetupStep::WifiConnectionSuccess, "");
+        let start = t0();
+        let _ = overlay.tick(start + HOLD);
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo);
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnectInfo {
+                ip: Some(Ipv4Addr::new(10, 0, 0, 5)),
+                ssid: Some("HomeNet".to_owned()),
+            }
+        );
+
+        overlay.on_setup_progress(SetupStep::DeviceSetupSuccess, "");
+        let _ = overlay.tick(start + HOLD + HOLD);
+        assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn ap_mode_connecting_does_not_self_advance_on_ip() {
+        // In AP mode the join outcome must come from bmc's setup event;
+        // a station address appearing early must not skip ahead.
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.screen, Screen::SetupConnecting);
+    }
+
+    #[test]
+    fn setup_pending_advances_to_connect_info_on_ip() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::SetupPending);
+        let _ = overlay.tick(t0());
+        assert_eq!(overlay.screen, Screen::SetupConnectInfo);
+    }
+
+    #[test]
+    fn connection_failure_returns_to_setup_start() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
+        let start = t0();
+        let _ = overlay.tick(start + HOLD);
+        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+    }
+
+    #[test]
+    fn reconfig_success_returns_to_scenes_without_connect_info() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::WifiReconfiguration);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        // Reconfiguration exits AP mode before the success event arrives.
+        overlay.on_device_state(DeviceState::Operational);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnecting,
+            "flow survives the lifecycle flip"
+        );
+
+        overlay.on_setup_progress(SetupStep::WifiReconfigSuccess, "");
+        let tick = overlay.tick(t0() + HOLD);
+        assert_eq!(overlay.screen, Screen::Done);
+        assert!(!tick.visible);
+    }
+
+    #[test]
+    fn reconfig_setup_start_times_out_but_events_revive_it() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration);
+        let _ = overlay.tick(t0() + RECONFIG_SCREEN_TIMEOUT);
+        assert_eq!(overlay.screen, Screen::Done, "AP screen auto-hides");
+
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(overlay.screen, Screen::SetupConnecting, "late join revives");
+    }
+
+    #[test]
+    fn first_boot_setup_start_never_times_out() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault);
+        let _ = overlay.tick(t0() + RECONFIG_SCREEN_TIMEOUT + HOLD);
+        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+    }
+
+    #[test]
+    fn unexpected_error_is_sticky() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::SetupPending);
+        overlay.on_setup_progress(SetupStep::UnexpectedError, "");
+        let tick = overlay.tick(t0() + HOLD + HOLD);
+        assert_eq!(overlay.screen, Screen::SetupFatal);
+        assert!(tick.visible);
+        assert_eq!(tick.next_wake, None);
+    }
+
+    #[test]
+    fn package_upgrade_success_skips_the_connect_screen() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
+        assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn firmware_upgrade_success_postpones_the_connect_flow() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        assert!(matches!(overlay.screen, Screen::OpPostponed { .. }));
+        let tick = overlay.tick(t0());
+        assert!(!tick.visible, "unmapped while the splash owns the display");
+
+        let _ = overlay.tick(t0() + Duration::from_secs(4));
+        assert!(matches!(overlay.screen, Screen::OpConnecting { .. }));
+    }
+
+    #[test]
+    fn upgrade_snapshots_leave_the_setup_flow_alone() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
+        assert!(
+            matches!(overlay.screen, Screen::SetupStart { .. }),
+            "a package restart must not skip the setup screens"
+        );
+    }
+
+    #[test]
+    fn op_success_keeps_last_ip_through_transient_probe_loss() {
+        let start = t0();
+        let shown = Ipv4Addr::new(10, 0, 0, 5);
+        let (next, changed) = step(
+            Screen::OpSuccess {
+                since: start,
+                ip: shown,
+            },
+            Mode::Operational,
+            start + POLL,
+            None,
+        );
+        assert_eq!(
+            next,
+            Screen::OpSuccess {
+                since: start,
+                ip: shown
+            }
+        );
+        assert!(!changed);
+    }
+
+    #[test]
+    fn op_touch_dismisses_immediately() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::Operational);
+        let _ = overlay.tick(t0());
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 0.0,
+            y: 0.0,
+        });
+        let tick = overlay.tick(t0());
         assert!(!tick.visible);
         assert_eq!(tick.next_wake, None);
     }
