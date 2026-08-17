@@ -36,6 +36,9 @@ pub use bmc_widget_protocol::{
     WidgetInitialConfig,
 };
 
+#[cfg(test)]
+pub(crate) mod testing;
+
 pub type InstanceId = String;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

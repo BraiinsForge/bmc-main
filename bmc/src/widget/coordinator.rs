@@ -339,47 +339,52 @@ pub fn start_credential_listener(
 /// Neither could ever finish.
 pub fn start_widget_event_listener(
     compositor: Arc<dyn Compositor>,
+    events: mpsc::UnboundedReceiver<WidgetEvent>,
+) {
+    tokio::spawn(apply_widget_events(compositor, events));
+}
+
+async fn apply_widget_events(
+    compositor: Arc<dyn Compositor>,
     mut events: mpsc::UnboundedReceiver<WidgetEvent>,
 ) {
-    tokio::spawn(async move {
-        while let Some(event) = events.recv().await {
-            match event {
-                WidgetEvent::Exited { instance_id, pid } => {
-                    if let Err(e) = compositor.clear_pid(&instance_id, pid) {
-                        warn!(
-                            widget_id = %instance_id,
-                            pid,
-                            error = %e,
-                            "failed to detach the pid of an exited widget"
-                        );
-                    }
+    while let Some(event) = events.recv().await {
+        match event {
+            WidgetEvent::Exited { instance_id, pid } => {
+                if let Err(e) = compositor.clear_pid(&instance_id, pid) {
+                    warn!(
+                        widget_id = %instance_id,
+                        pid,
+                        error = %e,
+                        "failed to detach the pid of an exited widget"
+                    );
                 }
-                WidgetEvent::Respawned { instance_id, pid } => {
-                    if let Err(e) = compositor.bind_respawned_pid(&instance_id, pid) {
-                        warn!(
-                            widget_id = %instance_id,
-                            pid,
-                            error = %e,
-                            "failed to bind the new pid after a widget respawn"
-                        );
-                    }
+            }
+            WidgetEvent::Respawned { instance_id, pid } => {
+                if let Err(e) = compositor.bind_respawned_pid(&instance_id, pid) {
+                    warn!(
+                        widget_id = %instance_id,
+                        pid,
+                        error = %e,
+                        "failed to bind the new pid after a widget respawn"
+                    );
                 }
-                // Unguarded, unlike the two arms above:
-                // an instance re-registered while this sat queued is
-                // indistinguishable from the one it was emitted for,
-                // and constructing that takes an uninstall plus a reinstall.
-                WidgetEvent::Abandoned { instance_id } => {
-                    if let Err(e) = compositor.unregister_widget(&instance_id) {
-                        warn!(
-                            widget_id = %instance_id,
-                            error = %e,
-                            "failed to end the registration of an abandoned widget"
-                        );
-                    }
+            }
+            // Unguarded, unlike the two arms above:
+            // an instance re-registered while this sat queued is
+            // indistinguishable from the one it was emitted for,
+            // and constructing that takes an uninstall plus a reinstall.
+            WidgetEvent::Abandoned { instance_id } => {
+                if let Err(e) = compositor.unregister_widget(&instance_id) {
+                    warn!(
+                        widget_id = %instance_id,
+                        error = %e,
+                        "failed to end the registration of an abandoned widget"
+                    );
                 }
             }
         }
-    });
+    }
 }
 
 /// Broadcast the effective display brightness to the settings-tray overlay
@@ -1211,6 +1216,44 @@ mod tests {
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
     use crate::widget::{ViewportDescriptor, WidgetIdentity, WidgetInfo};
     use bmc_widget_manifest::ViewportShape;
+
+    /// A swapped arm or a dropped pid here is a crash respawn that never comes back,
+    /// and neither side can notice: the manager's tests end at the event,
+    /// the compositor's begin at the call.
+    #[tokio::test]
+    async fn each_lifecycle_event_applies_its_own_compositor_call() {
+        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let compositor = Arc::new(crate::compositor::testing::RecordingCompositor::default());
+
+        for event in [
+            WidgetEvent::Exited {
+                instance_id: "alpha".to_owned(),
+                pid: 100,
+            },
+            WidgetEvent::Respawned {
+                instance_id: "alpha".to_owned(),
+                pid: 200,
+            },
+            WidgetEvent::Abandoned {
+                instance_id: "beta".to_owned(),
+            },
+        ] {
+            events_tx.send(event).expect("BUG: queue a widget event");
+        }
+        // Closing the stream is what ends the listener, so awaiting it drains
+        // the queue without a timeout.
+        drop(events_tx);
+        apply_widget_events(Arc::clone(&compositor) as Arc<dyn Compositor>, events_rx).await;
+
+        assert_eq!(
+            compositor.widget_calls(),
+            [
+                "clear_pid alpha 100",
+                "bind_respawned alpha 200",
+                "unregister beta"
+            ]
+        );
+    }
 
     fn bmc100_capabilities() -> HardwareCapabilities {
         HardwareCapabilities {

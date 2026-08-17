@@ -1735,201 +1735,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 mod tests {
     use super::*;
 
-    type CredentialPush = (
-        crate::compositor::InstanceId,
-        serde_json::Map<String, serde_json::Value>,
-        bmc_widget_protocol::CredentialSecrets,
-    );
-
-    #[derive(Default)]
-    struct RecordingCompositor {
-        scene_cycling_configs: std::sync::Mutex<Vec<SceneCycling>>,
-        scene_cycling_lists: std::sync::Mutex<Vec<Vec<crate::compositor::SceneLayout>>>,
-        credential_pushes: std::sync::Mutex<Vec<CredentialPush>>,
-        connected: std::sync::Mutex<std::collections::BTreeSet<crate::compositor::InstanceId>>,
-    }
-
-    impl crate::compositor::Compositor for RecordingCompositor {
-        fn start(&self) -> Result<String, crate::compositor::CompositorError> {
-            Ok("test-display".to_owned())
-        }
-
-        fn wayland_display(&self) -> Option<String> {
-            Some("test-display".to_owned())
-        }
-
-        fn hardware_capabilities(&self) -> HardwareCapabilities {
-            bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100).capabilities()
-        }
-
-        fn register_widget(
-            &self,
-            _instance_id: crate::compositor::InstanceId,
-            _position: crate::compositor::Position,
-            _size: crate::compositor::Size,
-            _initial_config: bmc_widget_protocol::WidgetInitialConfig,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn set_widget_pid(
-            &self,
-            _instance_id: &crate::compositor::InstanceId,
-            _pid: u32,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn bind_respawned_pid(
-            &self,
-            _instance_id: &crate::compositor::InstanceId,
-            _pid: u32,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn unregister_widget(
-            &self,
-            _instance_id: &crate::compositor::InstanceId,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn clear_pid(
-            &self,
-            _instance_id: &crate::compositor::InstanceId,
-            _pid: u32,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn set_active_scene(
-            &self,
-            _layout: crate::compositor::SceneLayout,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn set_scene_cycling(
-            &self,
-            scenes: Vec<crate::compositor::SceneLayout>,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            self.scene_cycling_lists
-                .lock()
-                .expect("BUG: recording compositor lock must not be poisoned")
-                .push(scenes);
-            Ok(())
-        }
-
-        fn set_scene_cycling_config(
-            &self,
-            config: SceneCycling,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            self.scene_cycling_configs
-                .lock()
-                .expect("BUG: recording compositor lock must not be poisoned")
-                .push(config);
-            Ok(())
-        }
-
-        fn set_scene_cycling_suspended(
-            &self,
-            _suspended: bool,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn reset_to_first_scene(&self) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn broadcast_setting(
-            &self,
-            _setting: bmc_widget_protocol::SettingUpdate,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn update_widget_params(
-            &self,
-            _instance_id: &crate::compositor::InstanceId,
-            _params: serde_json::Map<String, serde_json::Value>,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-
-        fn update_widget_credentials(
-            &self,
-            instance_id: &crate::compositor::InstanceId,
-            credentials: serde_json::Map<String, serde_json::Value>,
-            secrets: bmc_widget_protocol::CredentialSecrets,
-        ) -> Result<(), crate::compositor::CompositorError> {
-            self.credential_pushes
-                .lock()
-                .expect("BUG: recording compositor lock must not be poisoned")
-                .push((instance_id.clone(), credentials, secrets));
-            Ok(())
-        }
-
-        fn action_receiver(
-            &self,
-        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::WidgetAction> {
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            rx
-        }
-
-        fn settings_receiver(
-            &self,
-        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::SettingsCommand> {
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            rx
-        }
-
-        fn alarm_receiver(
-            &self,
-        ) -> tokio::sync::mpsc::UnboundedReceiver<crate::compositor::AlarmCommand> {
-            let (_tx, rx) = tokio::sync::mpsc::unbounded_channel();
-            rx
-        }
-
-        fn request_status_sender(
-            &self,
-        ) -> tokio::sync::mpsc::UnboundedSender<crate::compositor::LedRequestStatusEvent> {
-            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
-            tx
-        }
-
-        fn subscribe_events(
-            &self,
-        ) -> tokio::sync::broadcast::Receiver<crate::compositor::CompositorEvent> {
-            let (_tx, rx) = tokio::sync::broadcast::channel(16);
-            rx
-        }
-
-        fn active_scene_watch(
-            &self,
-        ) -> tokio::sync::watch::Receiver<Option<crate::compositor::ActiveScene>> {
-            let (_tx, rx) = tokio::sync::watch::channel(None);
-            rx
-        }
-
-        fn connected_widgets_watch(
-            &self,
-        ) -> tokio::sync::watch::Receiver<std::collections::BTreeSet<crate::compositor::InstanceId>>
-        {
-            let connected = self
-                .connected
-                .lock()
-                .expect("BUG: recording compositor lock must not be poisoned")
-                .clone();
-            let (_tx, rx) = tokio::sync::watch::channel(connected);
-            rx
-        }
-
-        fn shutdown(&self) -> Result<(), crate::compositor::CompositorError> {
-            Ok(())
-        }
-    }
+    use crate::compositor::testing::RecordingCompositor;
 
     #[test]
     fn reject_remove_widget_in_fullscreen_passes_for_combined() {
@@ -2324,10 +2130,10 @@ mod tests {
         ]));
         let compositor: Arc<dyn crate::compositor::Compositor> =
             Arc::new(RecordingCompositor::default());
+        let (widget_manager, _widget_events) =
+            crate::widget::WidgetManager::init(Vec::new(), false).await;
         Coordinator::new(
-            crate::widget::WidgetManager::init(Vec::new(), false)
-                .await
-                .0,
+            widget_manager,
             compositor,
             registry,
             bmc100_caps(None),
@@ -2464,10 +2270,10 @@ mod tests {
                 .insert(instance_id.clone());
         }
         let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
+        let (widget_manager, _widget_events) =
+            crate::widget::WidgetManager::init(Vec::new(), false).await;
         let coordinator = Arc::new(Coordinator::new(
-            crate::widget::WidgetManager::init(Vec::new(), false)
-                .await
-                .0,
+            widget_manager,
             compositor_for_coordinator,
             registry,
             bmc100_caps(None),
