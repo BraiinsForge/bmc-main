@@ -100,7 +100,8 @@ bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk" }
 braiins-pool = { path = "../widgets-wasm/braiins-pool" }
 fleet-management = { path = "../widgets-wasm/fleet-management" }
 
-femtovg = "0.20.4"
+# Keep in step with the root manifest; see it for why the fork exists.
+femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
 # Matches the workspace pin; the default features carry the output backends
 # the sink opens, which bmc-render-keyboard's own dependency does not need.
 rodio = "0.20"

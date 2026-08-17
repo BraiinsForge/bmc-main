@@ -255,7 +255,11 @@ etagere = "0.3"
 evdev = "0.13.1"
 fake = "4"
 fdlimit = "0.3.0"
-femtovg = "0.20.4"
+# femtovg 0.20.4 passes GL_R8 as the Gray8 sub-upload format
+# on GLES3 and desktop GL; the gallery's desktop context needs GL_RED instead.
+# Pinned to the fork revision carrying that one-token fix, now merged upstream;
+# drop this and the gallery's copy once a fixed release ships.
+femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
 file-rotate = "0.7.6"
 flate2 = { version = "1.0.30", default-features = false }
 flume = { version = "0.11.1", default-features = false }

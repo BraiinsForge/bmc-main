@@ -140,6 +140,8 @@ allow-git = [
     # - smithay: pulled by bmc-widget (compositor) and bmc-openwrt
     # - tokio-cron-scheduler: pulled by bmc-scheduler
     # - rs-gallery: the gallery framework, in bmc-gallery's own lockfile only
+    # - femtovg: carries the Gray8 glTexSubImage2D format fix; see Cargo.toml
+    "https://github.com/BraiinsForge/femtovg.git",
     "https://github.com/BraiinsForge/tokio-cron-scheduler.git",
     "https://github.com/kubijo/rs-gallery.git",
     "https://github.com/yvind/egui_autocomplete.git",
