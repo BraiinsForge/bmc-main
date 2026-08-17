@@ -21,17 +21,6 @@
 //! Rectangular analog dial — per-resolution dial SVGs stretched to fill
 //! the widget viewport, with numerals and timezone label overlaid.
 
-// ── Drop shadows disabled ──────────────────────────────────────────────
-//
-// The minute-hand and centre-disc drop shadows are suppressed via the
-// `with_shadows = false` flag passed to `push_hands_and_centre`. Each
-// shadow renders through an offscreen FBO + Gaussian blur; on the Deck's
-// Vivante GC400 that costs ~400 ms/frame (device-measured 2026-05-22),
-// which on its own pushes the clock past its 1 s second-hand budget.
-//
-// Re-enable by passing `true` — but only once the blur is precomputed or
-// otherwise cheap on GC400-class hardware.
-
 #[expect(
     clippy::wildcard_imports,
     reason = "widget render code uses many SDK exports and macros in one file"
@@ -339,7 +328,7 @@ pub(crate) fn render(
     let hand_scale = viewport_h / HAND_SCALE_REF_HEIGHT;
     let mut hands: Vec<Draw> = Vec::with_capacity(8);
     super::push_hands_and_centre(
-        centre_x, centre_y, hand_scale, h_ang, m_ang, s_ang, palette, false, &mut hands,
+        centre_x, centre_y, hand_scale, h_ang, m_ang, s_ang, palette, &mut hands,
     );
 
     super::dial_and_hands(viewport_w, viewport_h, draws, hands)

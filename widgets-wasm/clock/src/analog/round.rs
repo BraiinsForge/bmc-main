@@ -210,7 +210,7 @@ pub(crate) fn render(
     let s_ang = params.show_seconds.then(|| second_angle(second));
     let mut hands: Vec<Draw> = Vec::with_capacity(8);
     super::push_hands_and_centre(
-        centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, true, &mut hands,
+        centre_x, centre_y, scale, h_ang, m_ang, s_ang, palette, &mut hands,
     );
 
     super::dial_and_hands(viewport_w, viewport_h, draws, hands)

@@ -191,27 +191,6 @@ pub(crate) fn place_hand_at_pivot(
     Draw::svg(top_left_x, top_left_y, w, h, icon, tint).with_anti_alias()
 }
 
-/// Hand drop shadow — ~6 px Gaussian, 50 % black, scaled with the dial.
-pub(crate) fn hand_shadow(scale: f32) -> DropShadow {
-    DropShadow {
-        dx: 0.0,
-        dy: 0.0,
-        blur: 6.0 * scale,
-        color: Color::from_rgba(0, 0, 0, 0x80),
-    }
-}
-
-/// Shadow the centre disc casts onto the hands beneath it — dark and slightly
-/// offset, reading cleanly because it lands on the white hand surfaces.
-pub(crate) fn centre_shadow(scale: f32) -> DropShadow {
-    DropShadow {
-        dx: 0.0,
-        dy: 3.0 * scale,
-        blur: 5.0 * scale,
-        color: Color::from_rgba(0, 0, 0, 0xA0),
-    }
-}
-
 pub(crate) fn centre_icon(
     centre_x: f32,
     centre_y: f32,
@@ -233,9 +212,13 @@ pub(crate) fn centre_icon(
 ///   hour-hand → minute-hand → centre_white → second-hand + centre_orange
 ///   (gated on `second_angle`) → centre_black → centre_stroke.
 ///
-/// `with_shadows`: when `true`, the minute hand and the centre_white disc each
-/// get a drop shadow (round mode). When `false` those shadows are suppressed as
-/// an FBO-blur perf workaround (rect mode).
+/// **No drop shadows.** The minute hand and centre disc used to cast them, and
+/// each one renders through a canvas-sized offscreen FBO and a Gaussian blur:
+/// on the Deck's Vivante GC400 that measured ~400 ms/frame in the rect dial
+/// (2026-05-22) and 470 ms in the round one (2026-08-17), against 6.6 ms
+/// without. At ~2 fps the second hand cannot even show its 200 ms transition,
+/// so it appeared to snap between positions. Restoring them needs a shadow that
+/// does not blur a full canvas per draw.
 #[expect(
     clippy::too_many_arguments,
     reason = "flat geometry helper that must forward all hand/centre parameters without bundling unrelated concerns"
@@ -248,7 +231,6 @@ pub(crate) fn push_hands_and_centre(
     m_ang: f32,
     second_angle: Option<f32>,
     palette: &ClockPalette,
-    with_shadows: bool,
     draws: &mut Vec<Draw>,
 ) {
     draws.push(
@@ -268,7 +250,7 @@ pub(crate) fn push_hands_and_centre(
         .transition("hour-hand", 500, Easing::EaseOut),
     );
 
-    let mut minute = Draw::rotated(
+    let minute = Draw::rotated(
         m_ang,
         place_hand_at_pivot(
             cx,
@@ -281,16 +263,16 @@ pub(crate) fn push_hands_and_centre(
             palette.primary,
         ),
     );
-    if with_shadows {
-        minute = minute.with_drop_shadow(hand_shadow(scale));
-    }
     draws.push(minute.transition("minute-hand", 500, Easing::EaseOut));
 
-    let mut white = centre_icon(cx, cy, scale, 54.0, &CENTER_WHITE, palette.centre_white);
-    if with_shadows {
-        white = white.with_drop_shadow(centre_shadow(scale));
-    }
-    draws.push(white);
+    draws.push(centre_icon(
+        cx,
+        cy,
+        scale,
+        54.0,
+        &CENTER_WHITE,
+        palette.centre_white,
+    ));
 
     if let Some(angle) = second_angle {
         draws.push(
