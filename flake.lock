@@ -119,11 +119,11 @@
         "nixpkgs-do-not-override": "nixpkgs-do-not-override"
       },
       "locked": {
-        "lastModified": 1784107415,
-        "narHash": "sha256-AboR0IesDmNtok5b765cGI51SqbIK5cf562AdqiRGuw=",
+        "lastModified": 1786821855,
+        "narHash": "sha256-CfnQWQ8Es4OedzhiXOceCi2APb9oGdgdw0HWasLhVAA=",
         "owner": "BraiinsForge",
         "repo": "nix-lib",
-        "rev": "d8bc512e37e441f2e0b34c7948452ea691b482c0",
+        "rev": "1ebec4049fbee145d42aa324fd97be706fe52fd7",
         "type": "github"
       },
       "original": {

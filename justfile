@@ -47,6 +47,7 @@ validate: format clippy python
     # Dependency policy, host and wasm.
     nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny"
     nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm"
+    nix build -L ".#checks.{{ NIX_SYSTEM }}.cargo-deny-wasm-examples"
 
     # No allocating fmt machinery in widget code.
     nix build -L ".#checks.{{ NIX_SYSTEM }}.no-fmt-in-wasm"

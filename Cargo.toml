@@ -71,8 +71,6 @@ members = [
 
 [workspace.metadata.nix]
 include = [
-    "deny-wasm.toml",
-    "deny.toml",
     "tooling/**",
 ]
 

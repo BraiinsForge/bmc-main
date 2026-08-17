@@ -222,15 +222,17 @@ in
     '';
 
   cargo-deny = profiles.fast.mkCargoDeny {
-    config = "deny.toml";
+    config = ../deny.toml;
     checks = [ "bans" "sources" ];
   };
 
-  # Wasm-side cargo-deny — blocks bloat crates (serde, tokio, hyper, …)
-  # from the wasm32 dep graph so they can't creep into widget binaries.
-  # Target restriction lives in `deny-wasm.toml`'s `[graph].targets`.
-  cargo-deny-wasm = profiles.fast.mkCargoDeny {
-    config = "deny-wasm.toml";
+  cargo-deny-wasm = profiles.wasm-widgets-debug.mkCargoDeny {
+    config = ../deny-wasm.toml;
+    checks = [ "bans" "sources" ];
+  };
+
+  cargo-deny-wasm-examples = profiles.wasm-examples-debug.mkCargoDeny {
+    config = ../deny-wasm.toml;
     checks = [ "bans" "sources" ];
   };
 
