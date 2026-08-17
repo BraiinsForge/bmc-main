@@ -271,6 +271,17 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn unregister_abandoned(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
+        tracing::info!(
+            "MockCompositor: unregister abandoned widget '{}'",
+            instance_id
+        );
+        self.connected_widgets_tx.send_modify(|set| {
+            set.remove(instance_id);
+        });
+        Ok(())
+    }
+
     fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError> {
         tracing::info!(
             "MockCompositor: clear_pid instance='{}' pid={}",

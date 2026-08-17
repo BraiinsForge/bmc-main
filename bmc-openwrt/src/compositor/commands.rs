@@ -41,13 +41,15 @@ pub enum CompositorCommand {
         pid: u32,
         ack: flume::Sender<()>,
     },
-    /// Pid bind for a crash respawn; see `Compositor::bind_respawned_pid`.
     BindRespawnedPid {
         instance_id: InstanceId,
         pid: u32,
         ack: flume::Sender<()>,
     },
     UnregisterWidget {
+        instance_id: InstanceId,
+    },
+    UnregisterAbandoned {
         instance_id: InstanceId,
     },
     ClearPid {

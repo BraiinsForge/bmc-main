@@ -100,6 +100,11 @@ impl Compositor for RecordingCompositor {
         Ok(())
     }
 
+    fn unregister_abandoned(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
+        self.record(format!("unregister_abandoned {instance_id}"));
+        Ok(())
+    }
+
     fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError> {
         self.record(format!("clear_pid {instance_id} {pid}"));
         Ok(())

@@ -2193,6 +2193,12 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.unregister_widget(&instance_id);
             state.compositor.lifecycle.forget(&instance_id);
         }
+        CompositorCommand::UnregisterAbandoned { instance_id } => {
+            tracing::debug!("Unregistering abandoned widget {}", instance_id);
+            if state.compositor.unregister_abandoned(&instance_id) {
+                state.compositor.lifecycle.forget(&instance_id);
+            }
+        }
         CompositorCommand::ClearPid {
             instance_id,
             expected_pid,
@@ -2386,6 +2392,10 @@ fn process_protocol_events(state: &mut AppState) {
         flush_lifecycle_clients(&mut sink, &connect_clients);
     }
 
+    // Drained after the connects: a detach and a re-attach in the same pass
+    // must leave the instance marked disconnected.
+    // The reverse order strands a dead widget in the set,
+    // its LED effects never swept.
     for instance_id in state.compositor.deck_widget_state.drain_disconnected() {
         tracing::info!("Widget disconnected: {}", instance_id);
         if state.connected_widgets.remove(&instance_id) {
@@ -2632,6 +2642,14 @@ impl Compositor for EglCompositor {
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::UnregisterWidget {
+                instance_id: instance_id.clone(),
+            })
+            .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn unregister_abandoned(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
+        self.command_tx
+            .send(CompositorCommand::UnregisterAbandoned {
                 instance_id: instance_id.clone(),
             })
             .map_err(|e| CompositorError::SendError(e.to_string()))

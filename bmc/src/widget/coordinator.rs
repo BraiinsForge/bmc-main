@@ -43,7 +43,7 @@ use crate::secret_store::SecretStoreHandle;
 use bmc_net::NetworkManager;
 
 use super::manager::ChildObservation;
-use super::{WidgetEvent, WidgetIdentity, WidgetManager, WidgetRegistry};
+use super::{WidgetEvent, WidgetManager, WidgetRegistry};
 
 #[must_use]
 pub(crate) fn fullscreen_descriptor_for_widget(
@@ -253,13 +253,6 @@ pub struct Coordinator {
 struct SpawnRecord {
     scene_id: SceneId,
     widget_uid: uuid::Uuid,
-    identity: WidgetIdentity,
-}
-
-fn record_needs_reload(registry: &WidgetRegistry, record: &SpawnRecord) -> bool {
-    registry
-        .get(&record.widget_uid)
-        .is_some_and(|installed| installed.identity != record.identity)
 }
 
 fn current_widget_for_record(
@@ -370,12 +363,8 @@ async fn apply_widget_events(
                     );
                 }
             }
-            // Unguarded, unlike the two arms above:
-            // an instance re-registered while this sat queued is
-            // indistinguishable from the one it was emitted for,
-            // and constructing that takes an uninstall plus a reinstall.
             WidgetEvent::Abandoned { instance_id } => {
-                if let Err(e) = compositor.unregister_widget(&instance_id) {
+                if let Err(e) = compositor.unregister_abandoned(&instance_id) {
                     warn!(
                         widget_id = %instance_id,
                         error = %e,
@@ -703,9 +692,9 @@ impl Coordinator {
             .collect();
 
         for (instance_id, record) in records {
-            if !record_needs_reload(&self.widget_registry, &record) {
+            let Some(installed) = self.widget_registry.get(&record.widget_uid) else {
                 continue;
-            }
+            };
             if self
                 .spawn_records
                 .read()
@@ -715,12 +704,17 @@ impl Coordinator {
             {
                 continue;
             }
-            // Skipping a pending respawn is deliberate.
-            // Supervision re-reads the registry when its timer fires,
-            // so it brings the widget back on the new binary by itself.
+            // What the process is actually running decides, not what this spawn asked for:
+            // a crash respawn re-reads the registry, so supervision may have already
+            // brought the instance back on the new build.
+            //
+            // Skipping a pending respawn is deliberate for the same reason —
+            // its own timer brings the widget back.
             match self.widget_manager.observe_child(&instance_id).await {
-                ChildObservation::Running => {}
-                ChildObservation::Exited | ChildObservation::Missing => continue,
+                ChildObservation::Running(running) if running != installed.identity => {}
+                ChildObservation::Running(_)
+                | ChildObservation::Exited
+                | ChildObservation::Missing => continue,
             }
 
             let current = {
@@ -751,13 +745,7 @@ impl Coordinator {
         info!("finished handling widget reload");
     }
 
-    fn record_spawn(
-        &self,
-        instance_id: String,
-        scene_id: SceneId,
-        widget_uid: uuid::Uuid,
-        identity: WidgetIdentity,
-    ) {
+    fn record_spawn(&self, instance_id: String, scene_id: SceneId, widget_uid: uuid::Uuid) {
         self.spawn_records
             .write()
             .expect("BUG: widget spawn record lock poisoned")
@@ -766,7 +754,6 @@ impl Coordinator {
                 SpawnRecord {
                     scene_id,
                     widget_uid,
-                    identity,
                 },
             );
     }
@@ -954,12 +941,12 @@ impl Coordinator {
             "spawning widget"
         );
 
-        let spawned = match self
+        let pid = match self
             .widget_manager
             .spawn_widget(widget.widget_type_id, widget_env)
             .await
         {
-            Ok(spawned) => spawned,
+            Ok(pid) => pid,
             Err(e) => {
                 warn!(
                     scene_id = %scene_id,
@@ -973,7 +960,6 @@ impl Coordinator {
             }
         };
 
-        let pid = spawned.pid;
         if let Err(e) = self.compositor.set_widget_pid(&instance_id, pid) {
             warn!(
                 scene_id = %scene_id,
@@ -984,12 +970,7 @@ impl Coordinator {
             );
         }
 
-        self.record_spawn(
-            instance_id,
-            *scene_id,
-            widget.widget_type_id,
-            spawned.identity,
-        );
+        self.record_spawn(instance_id, *scene_id, widget.widget_type_id);
     }
 
     pub async fn stop_widget(&self, instance_id: &str) {
@@ -1214,7 +1195,7 @@ fn params_to_json_map(
 mod tests {
     use super::*;
     use crate::compositor::{DisplayInfo, DisplayShape as CompositorDisplayShape, SlotGrid};
-    use crate::widget::{ViewportDescriptor, WidgetIdentity, WidgetInfo};
+    use crate::widget::ViewportDescriptor;
     use bmc_widget_manifest::ViewportShape;
 
     /// A swapped arm or a dropped pid here is a crash respawn that never comes back,
@@ -1250,7 +1231,7 @@ mod tests {
             [
                 "clear_pid alpha 100",
                 "bind_respawned alpha 200",
-                "unregister beta"
+                "unregister_abandoned beta"
             ]
         );
     }
@@ -1381,63 +1362,11 @@ mod tests {
         );
     }
 
-    fn reload_registry(uid: uuid::Uuid, path: &str, version: u64) -> WidgetRegistry {
-        let manifest = bmc_widget_manifest::Manifest {
-            uid,
-            version: semver::Version::new(version, 0, 0),
-            name: "reload-test".to_owned(),
-            subname: None,
-            description: "reload test".to_owned(),
-            config_help: None,
-            author: None,
-            binary: std::path::PathBuf::from("widget"),
-            icon: None,
-            category: bmc_widget_manifest::WidgetCategory::Misc,
-            settings: vec![],
-            supported_viewports: vec![],
-            params: indexmap::IndexMap::new(),
-            credentials: indexmap::IndexMap::new(),
-        };
-        WidgetRegistry::new(vec![WidgetInfo::for_test(
-            manifest,
-            std::path::PathBuf::from(path),
-            std::path::PathBuf::from(path).join("widget"),
-            None,
-        )])
-    }
-
-    fn reload_record(scene_id: SceneId, uid: uuid::Uuid, path: &str, version: u64) -> SpawnRecord {
+    fn reload_record(scene_id: SceneId, uid: uuid::Uuid) -> SpawnRecord {
         SpawnRecord {
             scene_id,
             widget_uid: uid,
-            identity: WidgetIdentity {
-                canonical_dir: std::path::PathBuf::from(path),
-                version: semver::Version::new(version, 0, 0),
-            },
         }
-    }
-
-    #[test]
-    fn only_a_present_changed_identity_requests_reload() {
-        let uid = uuid::Uuid::new_v4();
-        let scene_id = SceneId::generate();
-        let unchanged = reload_record(scene_id, uid, "/widgets/current", 1);
-        assert!(!record_needs_reload(
-            &reload_registry(uid, "/widgets/current", 1),
-            &unchanged
-        ));
-        assert!(record_needs_reload(
-            &reload_registry(uid, "/widgets/replaced", 1),
-            &unchanged
-        ));
-        assert!(record_needs_reload(
-            &reload_registry(uid, "/widgets/current", 2),
-            &unchanged
-        ));
-        assert!(!record_needs_reload(
-            &WidgetRegistry::new(vec![]),
-            &unchanged
-        ));
     }
 
     #[test]
@@ -1446,7 +1375,7 @@ mod tests {
         let mut scene = Scene::fullscreen(uid, BTreeMap::new());
         let widget = scene.widgets.values().next().expect("BUG: widget").clone();
         let instance_id = widget.id.to_string();
-        let record = reload_record(scene.id, uid, "/widgets/old", 1);
+        let record = reload_record(scene.id, uid);
         let scenes = IndexMap::from([(scene.id, scene.clone())]);
 
         assert_eq!(

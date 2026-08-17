@@ -257,6 +257,17 @@ impl WidgetRegistry {
             .remove(uid);
     }
 
+    /// Re-point a widget type at another build, standing in for the package swap
+    /// that `refresh` picks up on a real registry.
+    /// Overwrites, unlike [`Self::new`]'s first-wins handling of duplicate uids.
+    #[cfg(test)]
+    pub(crate) fn replace(&self, info: WidgetInfo) {
+        self.widgets
+            .write()
+            .expect("BUG: widget registry lock poisoned")
+            .insert(info.manifest.uid, info);
+    }
+
     /// Get a widget by its UID.
     #[must_use]
     pub fn get(&self, uid: &Uuid) -> Option<WidgetInfo> {

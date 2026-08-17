@@ -288,6 +288,25 @@ impl DeckWidgetProtocolState {
         true
     }
 
+    /// Drop an instance supervision gave up on, returning whether it went.
+    ///
+    /// Guarded like [`Self::bind_respawned_pid`]: only an instance still
+    /// unbound can be the one this was emitted for.
+    pub fn unregister_abandoned(&mut self, instance_id: &InstanceId) -> bool {
+        let Some(widget) = self.widgets.get(instance_id) else {
+            tracing::debug!("unregister_abandoned: instance {instance_id} is already gone");
+            return false;
+        };
+        if let Some(pid) = widget.pid {
+            tracing::debug!(
+                "unregister_abandoned: instance {instance_id} is bound to pid={pid}; dropping the superseded abandon"
+            );
+            return false;
+        }
+        self.unregister_widget(instance_id);
+        true
+    }
+
     /// Buffer a widget connection whose pid hasn't been registered yet.
     ///
     /// Callers must supply a valid (non-sentinel) kernel pid; dispatch
@@ -1109,6 +1128,41 @@ mod tests {
             "there is no instance left to bind to"
         );
         assert!(!state.widgets.contains_key("alpha"));
+    }
+
+    /// Supervision gives up only on an instance it left unbound,
+    /// so the abandon must find that instance and end it.
+    #[test]
+    fn an_abandoned_instance_is_unregistered() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        let _ = state.drain_disconnected();
+
+        assert!(state.unregister_abandoned(&"alpha".to_owned()));
+        assert!(
+            !state.widgets.contains_key("alpha"),
+            "the instance a widget type outlived must not stay registered"
+        );
+    }
+
+    /// The abandon is drained separately from the scene edits that re-spawn an
+    /// instance, so it can arrive after one has bound a live process. Ending
+    /// the instance then would blank a cell nothing is going to bring back.
+    #[test]
+    fn a_superseded_abandon_leaves_the_live_instance_alone() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+
+        register_with_pid(&mut state, "alpha", 300);
+
+        assert!(!state.unregister_abandoned(&"alpha".to_owned()));
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(300),
+            "the live process must survive the stale abandon"
+        );
     }
 
     #[test]

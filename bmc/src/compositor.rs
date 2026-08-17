@@ -310,6 +310,13 @@ pub trait Compositor: Send + Sync {
     /// `unregister_widget` is what ends an instance.
     fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
 
+    /// End an instance supervision gave up on: its widget type has left
+    /// the registry.
+    ///
+    /// Guarded like `bind_respawned_pid` — an abandon that arrives after a
+    /// scene edit rebound the id must not tear down the live process.
+    fn unregister_abandoned(&self, instance_id: &InstanceId) -> Result<(), CompositorError>;
+
     /// Bind a crash-respawned process to the instance `clear_pid` detached.
     ///
     /// Unlike `set_widget_pid`, this must take effect only while the instance

@@ -77,6 +77,13 @@ pub trait DeckWidgetHandler {
         }
     }
 
+    /// Bind-guarded unregister for supervision's abandon path. Needs no
+    /// render-state cleanup: the instance is unbound by construction, so
+    /// `clear_pid_for_instance` dropped that when the process exited.
+    fn unregister_abandoned(&mut self, instance_id: &InstanceId) -> bool {
+        self.deck_widget_state().unregister_abandoned(instance_id)
+    }
+
     /// Pid-guarded unregister for the coordinator's child-exit path.
     /// Bundled with render-state cleanup for the same reason
     /// `unregister_widget` is: the two protocol-state unregister
