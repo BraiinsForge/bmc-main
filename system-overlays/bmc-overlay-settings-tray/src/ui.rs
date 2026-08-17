@@ -26,7 +26,7 @@ use bmc_platform::DisplayShape;
 use bmc_render::tree::{
     DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
 };
-use bmc_wasm_protocol::colors::{GRAY_50, GREEN_50, TRANSPARENT, WHITE};
+use bmc_wasm_protocol::colors::{BLACK, GRAY_50, GREEN_50, TRANSPARENT, WHITE};
 use bmc_wasm_protocol::{
     ArcCap, ArcFill, ArcSegments, Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign,
 };
@@ -123,6 +123,31 @@ const INFO_HEADER_GAP: f32 = 4.0;
 /// Fit budgets for the runtime strings in the Large tier's info blocks.
 const WIDE_HOSTNAME_WIDTH: f32 = 320.0;
 const WIDE_SSID_WIDTH: f32 = 400.0;
+
+/// Edge length of the IP QR code, and of the canvas it is drawn on.
+/// An `http://<ipv4>` payload fits the 26 bytes a version-2 symbol holds
+/// at the renderer's ECC level, so the grid is always 25 modules
+/// plus the quiet zone. That puts a module at ~4.4px — 0.51mm
+/// at the panel's 217 DPI, well clear of what a phone camera resolves.
+const WIDE_QR_SIZE: f32 = 144.0;
+
+/// Modules of blank margin around the IP QR code; ISO/IEC 18004 asks four.
+/// Finder-pattern detection measures the light run just outside the pattern,
+/// so a thin margin costs detection outright rather than just contrast.
+const WIDE_QR_QUIET_ZONE: u8 = 4;
+
+/// Gap between the IP address and hostname blocks stacked beside the QR code.
+/// The stack stays shorter than the code, so the code sets the header height.
+const WIDE_INFO_STACK_GAP: f32 = 20.0;
+
+/// Gap between the QR code and the address stack beside it.
+const WIDE_INFO_GAP: f32 = 32.0;
+
+/// Gap between the WiFi signal icon and the SSID beside it.
+const WIDE_WIFI_GAP: f32 = 16.0;
+
+/// Size of the SETUP badge in the Large tier's WiFi block.
+const WIDE_SETUP_BADGE_SIZE: u32 = 14;
 
 /// Line-height factor the renderer applies to text nodes.
 const LINE_H: f32 = 1.4;
@@ -934,14 +959,38 @@ fn info_block(header: &'static str, value: TreeNode) -> TreeNode {
     )
 }
 
-/// The Large tier's top info section: hostname and IP address grouped in the
-/// left corner, the WiFi connection block in the right corner, nothing in
-/// between — each a gray header over a 24px value. In setup mode the WiFi
-/// block carries the SETUP badge, the AP SSID, and the join hint instead of
-/// the station info.
+/// The QR code for the Deck's web UI, so scanning it opens the address
+/// printed beside it. Omitted while the IP is unknown: a placeholder
+/// would scan as a dead link.
+fn ip_qr(ip: &str) -> TreeNode {
+    TreeNode::Canvas {
+        props: PropsData {
+            width: WIDE_QR_SIZE,
+            height: WIDE_QR_SIZE,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: vec![DrawCommand::Qr {
+            x: 0.0,
+            y: 0.0,
+            size: WIDE_QR_SIZE,
+            dark: BLACK,
+            light: WHITE,
+            quiet_zone: WIDE_QR_QUIET_ZONE,
+            text: format!("http://{ip}"),
+        }],
+    }
+}
+
+/// The Large tier's top info section: the QR code in the left corner,
+/// the IP address and hostname stacked beside it,
+/// the WiFi connection block in the right corner, nothing in between —
+/// each text pair a gray header over a 24px value.
+/// In setup mode the WiFi block carries the SETUP badge, the AP SSID,
+/// and the join hint instead of the station info.
 fn wide_header(
     hostname: &str,
-    ip: &str,
+    ip: Option<&str>,
     icons: WifiIcons,
     wifi_signal: Option<i32>,
     ssid: &str,
@@ -955,7 +1004,7 @@ fn wide_header(
             row(
                 PropsData {
                     cross_align: CrossAlign::Center,
-                    gap: 16.0,
+                    gap: WIDE_WIFI_GAP,
                     ..PropsData::default()
                 },
                 vec![
@@ -986,7 +1035,7 @@ fn wide_header(
                             text(
                                 "SETUP",
                                 TextStyle {
-                                    size: 14,
+                                    size: WIDE_SETUP_BADGE_SIZE,
                                     weight: FontWeight::BOLD,
                                     color: GREEN_50,
                                     ..TextStyle::default()
@@ -1006,25 +1055,41 @@ fn wide_header(
             ),
         ),
     };
+
+    let addresses = col(
+        PropsData {
+            gap: WIDE_INFO_STACK_GAP,
+            ..PropsData::default()
+        },
+        vec![
+            info_block(
+                "IP Address",
+                text(ip.unwrap_or("---"), text_style(value_size, WHITE)),
+            ),
+            info_block(
+                "Hostname",
+                text(
+                    fit_line(hostname, WIDE_HOSTNAME_WIDTH, value_size),
+                    text_style(value_size, WHITE),
+                ),
+            ),
+        ],
+    );
+    let left_info = match ip {
+        Some(ip) => vec![ip_qr(ip), addresses],
+        None => vec![addresses],
+    };
+
     row(
         PropsData::default(),
         vec![
             fixed_width(WIDE_INFO_LEFT_PAD),
             row(
                 PropsData {
-                    gap: 48.0,
+                    gap: WIDE_INFO_GAP,
                     ..PropsData::default()
                 },
-                vec![
-                    info_block(
-                        "Hostname",
-                        text(
-                            fit_line(hostname, WIDE_HOSTNAME_WIDTH, value_size),
-                            text_style(value_size, WHITE),
-                        ),
-                    ),
-                    info_block("IP Address", text(ip, text_style(value_size, WHITE))),
-                ],
+                left_info,
             ),
             spacer(1.0),
             wifi_block,
@@ -1201,7 +1266,7 @@ pub fn build_tree(
         DisplayShape::Rectangular if tier.large_text => {
             let header = wide_header(
                 hostname.unwrap_or("N/A"),
-                ip.unwrap_or("---"),
+                ip,
                 icons,
                 wifi_signal,
                 ssid_str,
@@ -1404,6 +1469,24 @@ mod tests {
             return true;
         }
         children(node).into_iter().flatten().any(has_unkeyed_canvas)
+    }
+
+    /// Recursively collect the payload of every QR draw in the tree.
+    fn qr_texts(node: &TreeNode, out: &mut Vec<String>) {
+        if let TreeNode::Canvas { draws, .. } = node {
+            out.extend(draws.iter().filter_map(|draw| {
+                if let DrawCommand::Qr { text, .. } = draw {
+                    Some(text.clone())
+                } else {
+                    None
+                }
+            }));
+        }
+        if let Some(kids) = children(node) {
+            for k in kids {
+                qr_texts(k, out);
+            }
+        }
     }
 
     /// Recursively collect every span text in the tree.
@@ -1927,13 +2010,17 @@ mod tests {
     /// silently.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
     fn wide_info_height(tier: Tier, setup: bool) -> f32 {
-        let value = (tier.hostname_size as f32 * LINE_H).max(tier.wifi_icon_size);
-        let value = if setup {
-            value + 6.0 + INFO_HEADER_SIZE as f32 * LINE_H
+        let header = INFO_HEADER_SIZE as f32 * LINE_H + INFO_HEADER_GAP;
+        let wifi_value = (tier.hostname_size as f32 * LINE_H).max(tier.wifi_icon_size);
+        let wifi = if setup {
+            header + wifi_value + 6.0 + INFO_HEADER_SIZE as f32 * LINE_H
         } else {
-            value
+            header + wifi_value
         };
-        INFO_HEADER_SIZE as f32 * LINE_H + INFO_HEADER_GAP + value
+        let addresses = 2.0 * (header + tier.hostname_size as f32 * LINE_H) + WIDE_INFO_STACK_GAP;
+        // The QR is the tallest child but renders only with a known IP,
+        // so folding it in unconditionally bounds the worst case.
+        wifi.max(addresses).max(WIDE_QR_SIZE)
     }
 
     /// Expected height of one flow child of the root column, derived from the
@@ -2051,6 +2138,69 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn qr_encodes_the_ip_url_only_on_the_wide_tier() {
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            for ip in [Some("10.0.0.2"), None] {
+                let tree = build_tree(
+                    Some("braiins-deck"),
+                    ip,
+                    Some(-55),
+                    Some("MyWifi"),
+                    WifiIcons::default(),
+                    panel,
+                    WifiView::Idle,
+                    ControlIcons::default(),
+                    all_controls(),
+                );
+                let mut qrs = Vec::new();
+                qr_texts(&tree, &mut qrs);
+                let wide =
+                    matches!(panel.shape, DisplayShape::Rectangular) && tier_for(&panel).large_text;
+                let expected: Vec<String> = if wide {
+                    ip.map(|ip| format!("http://{ip}")).into_iter().collect()
+                } else {
+                    Vec::new()
+                };
+                assert_eq!(qrs, expected, "{panel:?} ip={ip:?}");
+            }
+        }
+    }
+
+    /// Conservative width of a single-line string,
+    /// on the same per-glyph budget [`fit_line`] truncates against.
+    #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
+    fn line_width(s: &str, size: u32) -> f32 {
+        s.chars().count() as f32 * HOSTNAME_CHAR_W * (size as f32) / 24.0
+    }
+
+    /// Conservative min-content width of [`wide_header`] at its fit budgets.
+    /// Including the SETUP badge bounds both WiFi views, leaving idle mode —
+    /// which has no badge — some slack. The setup hint is left out: it wraps,
+    /// so a single-line glyph budget does not describe it.
+    fn wide_info_width(tier: Tier) -> f32 {
+        let addresses = line_width("255.255.255.255", tier.hostname_size).max(WIDE_HOSTNAME_WIDTH);
+        let wifi = tier.wifi_icon_size
+            + WIDE_WIFI_GAP
+            + line_width("SETUP", WIDE_SETUP_BADGE_SIZE)
+            + WIDE_WIFI_GAP
+            + WIDE_SSID_WIDTH;
+        WIDE_INFO_LEFT_PAD + WIDE_QR_SIZE + WIDE_INFO_GAP + addresses + wifi + WIDE_INFO_RIGHT_PAD
+    }
+
+    #[test]
+    fn wide_header_fits_the_panel_width() {
+        let panel = wide_panel();
+        #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
+        let panel_w = panel.width as f32;
+        let width = wide_info_width(tier_for(&panel));
+        assert!(
+            width <= panel_w,
+            "header content {width} overflows {panel_w} — the flex spacer \
+             collapses and the WiFi block runs off the right edge"
+        );
     }
 
     #[test]
