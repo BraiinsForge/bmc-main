@@ -329,18 +329,8 @@ impl DeckWidgetProtocolState {
     pub fn unregister_widget(&mut self, instance_id: &InstanceId) -> Option<u32> {
         let widget = self.widgets.remove(instance_id)?;
 
-        // Purge any buffered connection for the disconnecting pid
-        // before its widget record is gone; the natural-exit window
-        // for already-registered widgets is handled by `clear_pid`.
         if let Some(pid) = widget.pid {
-            let before = self.pending_connections.len();
-            self.pending_connections.retain(|pc| pc.pid != pid);
-            let purged = before - self.pending_connections.len();
-            if purged > 0 {
-                tracing::info!(
-                    "unregister_widget({instance_id}): purged {purged} pending connection(s) with pid={pid}"
-                );
-            }
+            self.purge_pending_connections(instance_id, pid);
         }
 
         let pid = widget.pid;
@@ -348,35 +338,56 @@ impl DeckWidgetProtocolState {
         pid
     }
 
-    /// Synthesize a disconnect for an exited widget process.
+    /// Synthesize a disconnect for an exited widget process,
+    /// keeping the instance registered.
     ///
     /// A crashed or SIGTERM'd widget can exit without sending protocol
     /// `Destroy`, so the coordinator emits this call from its child-exit
     /// watcher. To avoid PID-reuse races, disconnection is guarded by both
     /// instance id and expected pid: stale exit notifications for a prior
     /// spawn of the same instance are ignored.
+    ///
+    /// The pid and both surfaces go, so nothing resolves to the dead process.
+    /// `config` stays, so the respawn replays the same configure batch
+    /// as the first attach and only has to re-run `set_widget_pid`.
+    /// Dropping the whole record here would leave it nothing to bind to.
     pub fn clear_pid_for_instance(
         &mut self,
         instance_id: &InstanceId,
         expected_pid: u32,
     ) -> Option<u32> {
-        let Some(current_pid) = self.widgets.get(instance_id).and_then(|w| w.pid) else {
+        let Some(widget) = self.widgets.get_mut(instance_id) else {
             tracing::debug!(
                 "clear_pid_for_instance: ignoring stale clear for unknown instance {instance_id} (expected_pid={expected_pid})"
             );
             return None;
         };
-
-        if current_pid != expected_pid {
+        if widget.pid != Some(expected_pid) {
             tracing::debug!(
-                "clear_pid_for_instance: ignoring stale clear for instance {instance_id}: expected pid {}, current pid {}",
-                expected_pid,
-                current_pid
+                "clear_pid_for_instance: ignoring stale clear for instance {instance_id}: expected pid {expected_pid}, current pid {:?}",
+                widget.pid
             );
             return None;
         }
 
-        self.unregister_widget(instance_id)
+        widget.pid = None;
+        widget.wl_surface = None;
+        widget.protocol_surface = None;
+
+        self.purge_pending_connections(instance_id, expected_pid);
+        self.newly_disconnected.push(instance_id.clone());
+        Some(expected_pid)
+    }
+
+    /// Drop buffered connections of a pid whose instance is about to stop
+    /// resolving it — whether the instance ends or only its process does.
+    fn purge_pending_connections(&mut self, instance_id: &InstanceId, pid: u32) {
+        let before = self.pending_connections.len();
+        self.pending_connections.retain(|pc| pc.pid != pid);
+        let purged = before - self.pending_connections.len();
+        if purged > 0 {
+            tracing::info!("{instance_id}: purged {purged} pending connection(s) with pid={pid}");
+        }
     }
 
     pub fn add_action(&mut self, instance_id: InstanceId, payload: ActionPayload) {
@@ -917,7 +928,7 @@ mod tests {
     }
 
     #[test]
-    fn clear_pid_for_instance_unregisters_only_matching_instance_and_pid() {
+    fn clear_pid_for_instance_detaches_only_matching_instance_and_pid() {
         let mut state = DeckWidgetProtocolState::new();
         register_with_pid(&mut state, "alpha", 100);
         register_with_pid(&mut state, "beta", 200);
@@ -929,8 +940,60 @@ mod tests {
         let disconnected = state.drain_disconnected();
         assert_eq!(disconnected, vec!["alpha".to_owned()]);
 
-        assert!(state.widgets.contains_key("beta"));
-        assert!(!state.widgets.contains_key("alpha"));
+        assert_eq!(
+            state.widgets["beta"].pid,
+            Some(200),
+            "clearing alpha must leave beta attached"
+        );
+        assert_eq!(
+            state.widgets["alpha"].pid, None,
+            "the exited process must be detached from its instance"
+        );
+    }
+
+    /// The crash-respawn path: the instance survives its process,
+    /// so the respawn has a record to bind its new pid to.
+    #[test]
+    fn cleared_instance_stays_registered_and_rebinds_on_respawn() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        let _ = state.drain_connected();
+
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        let _ = state.drain_disconnected();
+
+        assert!(
+            state.widget_config("alpha").is_some(),
+            "the stored config must outlive the crashed process"
+        );
+
+        state.set_widget_pid(&"alpha".to_owned(), 200);
+
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(200),
+            "the respawn must bind through set_widget_pid alone"
+        );
+        assert_eq!(
+            state.instance_id_for_surface_by_pid(Some(200)),
+            Some(&"alpha".to_owned()),
+            "the respawned process must resolve to its instance"
+        );
+    }
+
+    #[test]
+    fn unregister_widget_after_a_clear_removes_the_instance() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        let _ = state.drain_connected();
+
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.unregister_widget(&"alpha".to_owned());
+
+        assert!(
+            !state.widgets.contains_key("alpha"),
+            "stopping a crashed instance must still end it"
+        );
     }
 
     #[test]

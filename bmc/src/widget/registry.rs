@@ -247,6 +247,16 @@ impl WidgetRegistry {
         map
     }
 
+    /// Drop a widget type from a static registry,
+    /// standing in for the package uninstall that `refresh` picks up on a real one.
+    #[cfg(test)]
+    pub(crate) fn remove(&self, uid: &Uuid) {
+        self.widgets
+            .write()
+            .expect("BUG: widget registry lock poisoned")
+            .remove(uid);
+    }
+
     /// Get a widget by its UID.
     #[must_use]
     pub fn get(&self, uid: &Uuid) -> Option<WidgetInfo> {

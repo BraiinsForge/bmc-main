@@ -335,8 +335,9 @@ pub fn start_credential_listener(
 /// (a recycled pid cannot be mistaken for the dead widget),
 /// and a respawned process gets its new pid bound,
 /// so the compositor recognizes it when it reconnects.
-/// The instance's registration and stored config survive the crash,
-/// so the reconnect replays the same configure batch as the first attach.
+/// `clear_pid` detaches the process but keeps the instance registered,
+/// so the reconnect replays the same configure batch as the first attach
+/// and the respawn only has to re-bind its pid.
 pub fn start_widget_event_listener(
     coordinator: Arc<Coordinator>,
     mut events: mpsc::UnboundedReceiver<WidgetEvent>,
@@ -345,7 +346,14 @@ pub fn start_widget_event_listener(
         while let Some(event) = events.recv().await {
             match event {
                 WidgetEvent::Exited { instance_id, pid } => {
-                    let _ = coordinator.compositor.clear_pid(&instance_id, pid);
+                    if let Err(e) = coordinator.compositor.clear_pid(&instance_id, pid) {
+                        warn!(
+                            widget_id = %instance_id,
+                            pid,
+                            error = %e,
+                            "failed to detach the pid of an exited widget"
+                        );
+                    }
                 }
                 WidgetEvent::Respawned { instance_id, pid } => {
                     if let Err(e) = coordinator.compositor.set_widget_pid(&instance_id, pid) {
@@ -356,6 +364,9 @@ pub fn start_widget_event_listener(
                             "failed to bind the new pid after a widget respawn"
                         );
                     }
+                }
+                WidgetEvent::Abandoned { instance_id } => {
+                    let _ = coordinator.compositor.unregister_widget(&instance_id);
                 }
             }
         }

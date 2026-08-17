@@ -301,6 +301,10 @@ pub trait Compositor: Send + Sync {
     /// Implementations must only disconnect when the instance currently maps
     /// to `pid`; stale exit notifications for a prior spawn of the same
     /// instance must be ignored.
+    ///
+    /// The instance stays registered — only the process is detached,
+    /// so a respawn re-binds through `set_widget_pid` alone.
+    /// `unregister_widget` is what ends an instance.
     fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
 
     /// Set the active scene layout (visible widgets and positions).
@@ -385,6 +389,10 @@ pub trait Compositor: Send + Sync {
     /// callers route through `unregister_widget` + `register_widget`
     /// for size changes since the widget's EGL surface and Slint scene
     /// are sized at the initial configure.
+    ///
+    /// Implementations must also refresh the instance's stored initial config.
+    /// A crash respawn re-execs the binary without re-reading any configuration,
+    /// so whatever is stored here is what the widget comes back with.
     fn update_widget_params(
         &self,
         instance_id: &InstanceId,
@@ -396,6 +404,9 @@ pub trait Compositor: Send + Sync {
     /// The compositor drops the push when the values match
     /// what it already holds, since callers here react to
     /// a change hint and have no old value to compare against.
+    ///
+    /// Refreshes the stored initial config for the same reason
+    /// [`Compositor::update_widget_params`] does.
     fn update_widget_credentials(
         &self,
         instance_id: &InstanceId,
