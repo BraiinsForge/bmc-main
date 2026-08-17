@@ -1,16 +1,16 @@
 # Overlay Protocols
 
-System overlays use four small Wayland protocols beyond `wlr-layer-shell`, each its own crate at the workspace root
-(`deck-screen-edge-v1/`, `deck-settings-v1/`, `deck-alarm-v1/`, `deck-upgrade-v1/`) beside `bmc-widget-protocol`. They
-are shared between the compositor and the overlay framework, so they do not live under `system-overlays/`. Each crate
-carries the `.xml` and generates both server and client bindings with `wayland_scanner` (`generate_server_code!` /
-`generate_client_code!`), matching the `bmc-widget-protocol` convention.
+System overlays use five small Wayland protocols beyond `wlr-layer-shell`, each its own crate at the workspace root
+(`deck-screen-edge-v1/`, `deck-settings-v1/`, `deck-device-info-v1/`, `deck-alarm-v1/`, `deck-upgrade-v1/`) beside
+`bmc-widget-protocol`. They are shared between the compositor and the overlay framework, so they do not live under
+`system-overlays/`. Each crate carries the `.xml` and generates both server and client bindings with `wayland_scanner`
+(`generate_server_code!` / `generate_client_code!`), matching the `bmc-widget-protocol` convention.
 
-The first two are forks with deliberately renamed interfaces; the alarm and upgrade protocols are Deck-owned. The
-`deck_` prefix follows the `deck_widget` precedent of not impersonating someone else's protocol: the contracts differ
-from their upstreams, so keeping the upstream interface names would mislead the next reader into assuming upstream
-semantics. The compositor-side dispatch for all four is in [`compositor-integration.md`](compositor-integration.md); the
-client-side binding is in [`framework.md`](framework.md).
+The first two are forks with deliberately renamed interfaces; the device-info, alarm and upgrade protocols are
+Deck-owned. The `deck_` prefix follows the `deck_widget` precedent of not impersonating someone else's protocol: the
+contracts differ from their upstreams, so keeping the upstream interface names would mislead the next reader into
+assuming upstream semantics. The compositor-side dispatch for all five is in
+[`compositor-integration.md`](compositor-integration.md); the client-side binding is in [`framework.md`](framework.md).
 
 ## `deck_screen_edge_v1`
 
@@ -90,6 +90,40 @@ it is *generic* — any full-screen modal overlay drives it, so the tray learns 
 binding that overlay's protocol. Only the settings-tray binds `deck_settings_v1`, so this compositor→tray signal rides
 its existing channel rather than a new protocol. The modal-preemption policy (which surfaces count, and the
 edge-triggered emit) is in [`compositor-integration.md`](compositor-integration.md).
+
+## `deck_device_info_v1`
+
+New for the device-info overlay. A one-way, event-only state feed: bmc owns the device lifecycle (setup mode, WiFi
+provisioning) and its recovery policies, and this interface mirrors that state to the overlay for display. There is
+deliberately no control path — everything the user can trigger from these screens is either overlay-local (touch dismiss
+of the operational flow) or owned by bmc's own policy timers, so the compositor dispatch is pure fan-out with a replay
+cache and needs no command channel back to bmc.
+
+### `deck_device_info_v1` (version 1)
+
+| Member                             | Kind    | Args                                     | Notes                                                                                               |
+| ---------------------------------- | ------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `destroy`                          | request | —                                        | Destructor.                                                                                         |
+| `device_state(state)`              | event   | `state: uint(enum)`                      | bmc's `BmcState`; selects the flow. Emitted on bind and on change.                                  |
+| `setup_progress(state, wifi_ssid)` | event   | `state: uint(enum)`, `wifi_ssid: string` | Setup-flow transition (`InitSetupState` + an `idle` entry). SSID set only for `connecting_to_wifi`. |
+| `access_point(ssid, setup_url)`    | event   | `ssid: string`, `setup_url: string`      | Setup-AP SSID and wizard URL, e.g. `http://192.168.8.1/`. Both empty while the AP is down.          |
+
+**Replay-on-bind.** Every event's last value is cached compositor-side and replayed on bind, so a late-binding overlay
+starts from the complete picture. `device_state` is replayed only once known — an overlay bound before bmc is up keeps
+waiting instead of acting on a guessed lifecycle state. `setup_progress` always has a replayable value because of the
+`idle` entry; `access_point` replays empty strings while the AP is down (mirroring `wifi_ap`).
+
+**Responsibility split.** bmc broadcasts through the `Compositor` trait (`broadcast_device_state` /
+`broadcast_setup_progress` / `broadcast_access_point`), fed by the device-info listener in `bmc/src/startup.rs`; the
+screen-hold timing lives entirely in the overlay — for the transitions it sees. The client slots are latest-wins, one
+per event kind (`surface.rs`), so two `setup_progress` transitions landing in a single dispatch round collapse to the
+second and the first never gets a screen. That is a real gap in "the overlay owns the hold", not a rounding error, but
+it costs a screen only where two steps are microseconds apart: a join that fails on the spot rather than after trying. A
+queue would fix it and has not been needed. The `access_point` event deliberately duplicates the settings protocol's
+`wifi_ap` (bmc broadcasts once, the compositor fans out to both) so the device-info overlay does not bind
+`deck_settings_v1`, which carries tray semantics (preemption, brightness). A retry/reconfigure control on the failure
+screens was considered and dropped — recovery lives in the settings tray — and would be a v2 version bump adding a
+request plus the inbound command plumbing.
 
 ## `deck_alarm_v1`
 

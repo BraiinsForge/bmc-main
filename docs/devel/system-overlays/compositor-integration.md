@@ -3,7 +3,7 @@
 This document describes the compositor-side support for system overlays: advertising `wlr-layer-shell`, compositing
 layer surfaces above the active scene, tracking and reclaiming their buffers, hit-testing touch, suppressing scene
 navigation while an overlay is up, preempting the settings tray for a modal overlay, recognizing the edge-reveal
-gesture, and relaying the alarm and upgrade progress. The four protocols are covered in [`protocols.md`](protocols.md);
+gesture, and relaying the alarm and upgrade progress. The five protocols are covered in [`protocols.md`](protocols.md);
 the client side is in [`framework.md`](framework.md).
 
 All of this lives under `bmc-openwrt/src/compositor/`.
@@ -185,6 +185,20 @@ touch dismisses it immediately (and is consumed, not routed into gestures). `sto
 This is why only the alarm overlay binds `deck_alarm_v1`: `has_live_overlay()` counts bound resources, so a passive
 listener binding the protocol would mask a real crash — the settings tray instead learns about a firing alarm through
 the generic `deck_settings_v1` preemption above, not by binding `deck_alarm_v1`.
+
+## `deck_device_info_v1` dispatch
+
+The compositor creates the `deck_device_info_v1` global and fans bmc's device lifecycle out to every bound client
+(`device_info.rs`). It carries no incoming requests: bmc owns the lifecycle and its recovery policies, and the overlay
+only renders.
+
+bmc pushes state through three `Compositor` trait methods — `broadcast_device_state`, `broadcast_setup_progress`, and
+`broadcast_access_point` — which arrive as `CompositorCommand`s and land in `DeviceInfoState`. The last value of each
+event is cached and replayed on bind (the `device_state` only once bmc has reported one, so an early-bound overlay waits
+instead of guessing). The events are fed by the device-info listener in `bmc/src/startup.rs`, which mirrors the
+`BmcState`, forwards `InitialSetup` transitions the moment they happen, resolves the setup-AP SSID/URL when the AP watch
+flips, and carries the stable-26.02 recovery policies (no-IP factory reset, no-AP reboot) — broadcasting
+`unexpected_error` before acting.
 
 ## `deck_upgrade_v1` dispatch
 

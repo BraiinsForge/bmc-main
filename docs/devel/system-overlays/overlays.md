@@ -6,26 +6,47 @@ from, and its platform gating.
 
 ## Device info (`bmc-overlay-device-info`)
 
-A full-screen startup overlay that mirrors the legacy boot-status screen: it maps immediately at operational startup,
-shows WiFi/IP connection progress, then a success or failure result, then unmaps for the rest of the session. It is
-purely observational — it watches saved WiFi config and IP state and never drives a connect flow.
+The full-screen transient boot and setup screens: the first-boot setup flow (AP SSID + QR, connecting, connected,
+device-setup IP QR, completed, errors), WiFi reconfiguration, and the operational-boot connect-info sequence. It is a
+port of the stable-26.02 `display_tasks` screens onto the overlay framework.
 
 `LayerConfig::fullscreen` with the layer lowered to `Layer::Bottom`, full input region. It blocks scene touch while
-shown, but sits below a firing alarm (`Top`) and the settings tray (`Overlay`) if either maps during boot.
+shown, but sits below a firing alarm (`Top`), the firmware-upgrade splash (`Top`), and the settings tray (`Overlay`).
+Because it is a full-screen surface above `Background`, the compositor's `is_fullscreen_blocker` predicate suppresses
+scene swipes for as long as any screen is up — the scenes handoff is purely the unmap (see
+[`compositor-integration.md`](compositor-integration.md)).
 
-Its state is a four-phase machine driven by `tick`, with the IP and SSID read from the connectivity prober's
-`snapshot_if_changed` (see [`framework.md`](framework.md)); ticks wake at `POLL = 1s`. Until the first snapshot is
-published the overlay treats the state as "no IP yet", so the `WAIT_FOR_IP` deadline keeps running:
+### Inputs
 
-| Phase        | Shown                                 | Exit                                                                           |
-| ------------ | ------------------------------------- | ------------------------------------------------------------------------------ |
-| `Connecting` | the station SSID, "waiting for IP"    | a routable IPv4 appears → `Success`; else after `WAIT_FOR_IP` (20s) → `Failed` |
-| `Success`    | "you're connected" and `http://<ip>/` | after `SUCCESS_VISIBLE_FOR` (10s) → `Done`                                     |
-| `Failed`     | a connection-problem message          | after `FAILURE_VISIBLE_FOR` (5s) → `Done`                                      |
-| `Done`       | nothing (unmapped, no further wake)   | terminal                                                                       |
+bmc owns the lifecycle and drives the overlay over `deck_device_info_v1` (see [`protocols.md`](protocols.md)):
+`device_state` selects the flow, `setup_progress` steps the setup flow, and `access_point` carries the setup-AP SSID and
+wizard URL (so the overlay hard-codes no AP addressing). All three are replayed on bind. The displayed device address
+comes from the connectivity prober's `station_ipv4` — the pick that excludes AP-mode interfaces, so the setup AP's own
+address never counts as an uplink. Until the first `device_state` event the overlay stays unmapped rather than guess a
+flow.
 
-In `Success` the last-known IP is held even through a transient DHCP loss, so the screen does not flicker. A touch
-anywhere dismisses immediately (jumps to `Done`).
+Every screen-hold timer lives in the overlay; bmc emits transitions the moment they happen (recovery policies — the
+no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts `unexpected_error` before acting).
+
+### Flows
+
+- **Operational boot**: connecting (SSID, "waiting for IP") → connect-info (IP + QR, 10 s) on an address, or failure (5
+  s) after 20 s without one → unmap. A touch dismisses this flow immediately; a post-upgrade boot skips or postpones it
+  (see "Yielding to an upgrade" below — the gating applies to this flow only, never the setup screens).
+- **First boot** (`factory_default`): setup-start (AP SSID + QR of the wizard URL; a placeholder until `access_point`
+  arrives) → `connecting_to_wifi` → connected (5 s) → setup connect-info (device-setup IP QR) → `device_setup_success` →
+  completed (5 s) → unmap. A `wifi_connection_failed` shows the error for 5 s and returns to setup-start (the AP is
+  still up). Setup screens ignore touch — dismissing them would leave a blank screen mid-wizard.
+- **SetupPending boot** (configured but unfinished): connecting, self-advancing to the setup connect-info when the
+  station address appears; bmc's watchdog factory-resets if none comes.
+- **WiFi reconfiguration**: the same setup flow, entered when `device_state` flips to `wifi_reconfiguration`; on
+  `wifi_reconfig_success` the connected screen shows 5 s and unmaps straight to scenes (no connect-info). The
+  setup-start screen auto-hides after 8 minutes with the AP left up; a later setup event revives the flow.
+- **Unexpected error**: sticky full-screen error; bmc recovers on its own (factory reset or reboot).
+
+In the operational connect-info the last-known IP is held through a transient DHCP loss, so the screen does not flicker.
+The screens render through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build
+time; every screen has a storybook cell (`overlays.stories.rs`).
 
 ### Yielding to an upgrade
 
