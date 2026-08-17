@@ -112,3 +112,10 @@ inject_fixture_events(fixture_ms)  →  deliver_all_io()  →  render()  →  ad
 
 Baselines are 7z archives per widget (`capture/baselines.7z`), compressed natively via `sevenz-rust2` with solid LZMA2.
 One archive per widget; frames inside are keyed `<platform>/<viewport>/<dataset>/frame_NNNN.png`.
+
+**Check the frame count after a bulk `set-baseline`.** One such loop silently wrote incomplete archives for six widgets
+— one held 5 frames of 29 — and nothing downstream notices: `verify` compares a truncated archive against a capture that
+matches it and passes. Count the archive's frames against the captured frames yourself.
+
+Round captures stay unmasked, so the corner pixels outside the display remain regression surface. Masking is
+presentation; do it in `diff.rs` at report time if prettier round reports are ever wanted.
