@@ -25,7 +25,6 @@ pub const BOS_MAJOR: &str = "/etc/bos_major";
 pub const BOS_MODE: &str = "/etc/bos_mode";
 pub const BOS_PLATFORM: &str = "/etc/bos_platform";
 pub const BOARD: &str = "/etc/board.json";
-pub const BMC_CONFIG: &str = "/etc/bmc/config.json";
 /// Account secrets, deliberately **never** collected — see `filters::is_excluded`.
 pub const BMC_SECRETS: &str = "/etc/bmc/secrets.json";
 /// Pre-migration config path, deliberately kept on disk for downgrade
