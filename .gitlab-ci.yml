@@ -185,6 +185,13 @@ gallery-build:
   script:
     - nix build -L .#checks.x86_64-linux.gallery-build
 
+gallery-test:
+  stage: check
+  needs:
+    - gallery-deps
+  script:
+    - nix build -L .#checks.x86_64-linux.gallery-test
+
 # Separate from the build: clippy stops at check, so it never links the dylib.
 gallery-clippy:
   stage: check

@@ -65,6 +65,11 @@ check:
 build:
     cargo build --locked --manifest-path bmc-gallery/Cargo.toml
 
+# Run the gallery's tests, on the same headless GL `capture` renders through.
+test:
+    @just --justfile {{ source_file() }} gl \
+        cargo test --locked --manifest-path bmc-gallery/Cargo.toml
+
 # Check the gallery's separate lockfile against the workspace's source policy.
 deny:
     # Keep this direct command aligned with `gallery-deny` in `nix/checks.nix`.
@@ -95,7 +100,8 @@ ci:
         ".#checks.{{ NIX_SYSTEM }}.gallery-build" \
         ".#checks.{{ NIX_SYSTEM }}.gallery-clippy" \
         ".#checks.{{ NIX_SYSTEM }}.gallery-lints" \
-        ".#checks.{{ NIX_SYSTEM }}.gallery-deny"
+        ".#checks.{{ NIX_SYSTEM }}.gallery-deny" \
+        ".#checks.{{ NIX_SYSTEM }}.gallery-test"
 
 # Look at one scene as it declares itself, to `.tmp/gallery-preview/NAME.png`.
 preview SCENE NAME SIZE="1280x720" FRAMES="4":

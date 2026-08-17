@@ -681,6 +681,7 @@ in
       });
     gallery-build = bmc.profiles.gallery.build;
     gallery-clippy = bmc.profiles.gallery.clippy;
+    gallery-test = bmc.profiles.gallery.test;
 
     # Native widgets joined with wasm widgets whose host is built natively,
     # so bmc-mock sees the full catalog under lib/bmc-widgets/<name>/.

@@ -74,11 +74,33 @@ in
   };
   # Cargo profiles do not cross workspace boundaries; the gallery defines `dev`
   # locally and cannot use the root workspace's `fast` profile.
+  #
+  # Carries the `ci` profile's headless EGL stack, documented there,
+  # because the gallery's tests render.
+  # Only the flake's own checks build through it,
+  # so nothing local pays the Mesa rebuild that keeps `fast` and `ci` apart.
   gallery = workspaces.gallery.mkBuildProfile {
-    inherit pkgs;
-    targetDeps = x86NativeTargetDeps;
+    pkgs = ciPkgs;
+    targetDeps = pkgs: with pkgs; [ mesa ];
     minimalDeps = false;
     rustProfile = "dev";
+    env = {
+      EGL_PLATFORM = "surfaceless";
+      MESA_LOADER_DRIVER_OVERRIDE = "llvmpipe";
+      LIBGL_ALWAYS_SOFTWARE = "1";
+    } // rustflags.makeRustflagsEnv {
+      # The scenes dylib reaches bmc-system-overlay,
+      # so the compositor libraries have to be on the rpath.
+      runtimePackages = with ciPkgs; [
+        mesa
+        wayland
+        libxkbcommon
+        libdrm
+        libinput
+        libGL
+      ];
+      rustCrossTarget = ciPkgs.stdenv.hostPlatform.rust.rustcTarget;
+    };
   };
   # CI profile: `fast` plus a working headless EGL stack
   # so some tests can boot a real surfaceless context inside the Nix sandbox.
