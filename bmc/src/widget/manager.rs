@@ -1075,6 +1075,24 @@ mod tests {
         manager.stop_widget("no-such-instance").await;
     }
 
+    /// The event stream closing is the only signal a listener has to stop, so
+    /// anything holding the handle for as long as it consumes events would
+    /// keep both alive forever.
+    #[tokio::test]
+    async fn dropping_the_handle_ends_the_actor_and_closes_the_stream() {
+        let (manager, mut events) = WidgetManager::init(Vec::new(), false).await;
+
+        drop(manager);
+
+        assert!(
+            timeout(EVENT_TIMEOUT, events.recv())
+                .await
+                .expect("timed out waiting for the event stream to close")
+                .is_none(),
+            "dropping the last handle must end the actor and close the stream"
+        );
+    }
+
     #[tokio::test]
     async fn stop_all_without_widgets_returns_no_ids() {
         let (manager, _events) = WidgetManager::init(Vec::new(), false).await;

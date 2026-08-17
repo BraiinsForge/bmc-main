@@ -338,15 +338,19 @@ pub fn start_credential_listener(
 /// `clear_pid` detaches the process but keeps the instance registered,
 /// so the reconnect replays the same configure batch as the first attach
 /// and the respawn only has to re-bind its pid.
+/// Takes the compositor rather than the whole [`Coordinator`]: holding the
+/// coordinator would keep its `WidgetManager`, and so the actor's command
+/// sender, alive for as long as this task runs — while this task only ends
+/// when the actor drops the event sender. Neither could ever finish.
 pub fn start_widget_event_listener(
-    coordinator: Arc<Coordinator>,
+    compositor: Arc<dyn Compositor>,
     mut events: mpsc::UnboundedReceiver<WidgetEvent>,
 ) {
     tokio::spawn(async move {
         while let Some(event) = events.recv().await {
             match event {
                 WidgetEvent::Exited { instance_id, pid } => {
-                    if let Err(e) = coordinator.compositor.clear_pid(&instance_id, pid) {
+                    if let Err(e) = compositor.clear_pid(&instance_id, pid) {
                         warn!(
                             widget_id = %instance_id,
                             pid,
@@ -356,7 +360,7 @@ pub fn start_widget_event_listener(
                     }
                 }
                 WidgetEvent::Respawned { instance_id, pid } => {
-                    if let Err(e) = coordinator.compositor.set_widget_pid(&instance_id, pid) {
+                    if let Err(e) = compositor.set_widget_pid(&instance_id, pid) {
                         warn!(
                             widget_id = %instance_id,
                             pid,
@@ -366,7 +370,7 @@ pub fn start_widget_event_listener(
                     }
                 }
                 WidgetEvent::Abandoned { instance_id } => {
-                    let _ = coordinator.compositor.unregister_widget(&instance_id);
+                    let _ = compositor.unregister_widget(&instance_id);
                 }
             }
         }

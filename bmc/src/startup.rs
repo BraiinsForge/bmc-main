@@ -499,10 +499,7 @@ where
             );
         }
 
-        crate::widget::coordinator::start_widget_event_listener(
-            widget_coordinator.clone(),
-            widget_events,
-        );
+        crate::widget::coordinator::start_widget_event_listener(compositor.clone(), widget_events);
 
         {
             let config_guard = config_handle.read().await;
