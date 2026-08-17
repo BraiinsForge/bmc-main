@@ -23,6 +23,8 @@ pub mod constants;
 mod filters;
 mod format;
 
+pub use filters::bmc::{BmcConfigCensor, SecretsExclusion, UciWirelessCensor};
+pub use filters::{SupportFilter, censor};
 pub use format::{ArchiveFormat, FinishWrite, PasswordProtectedZip, PlainZip};
 
 use crate::constants::{
@@ -118,7 +120,7 @@ pub const PING_HOSTS: &[&str] = &[
 ];
 
 pub fn collect(writer: impl Write, format: &dyn ArchiveFormat, compress: bool) -> Result<()> {
-    let mut archive = SupportArchive::new(writer, format, compress);
+    let mut archive = SupportArchive::new(writer, format, compress, filters::bmc::BMC_FILTERS);
 
     // include outputs of commands
     // These run before the log capture below since some of them emit syslog (e.g. dnsmasq).
@@ -193,6 +195,7 @@ pub fn collect(writer: impl Write, format: &dyn ArchiveFormat, compress: bool) -
 pub struct SupportArchive<'a> {
     zip: ZipWriter<StreamWriter<Box<dyn FinishWrite + 'a>>>,
     options: SimpleFileOptions,
+    filters: &'a [&'a dyn SupportFilter],
 }
 
 impl std::fmt::Debug for SupportArchive<'_> {
@@ -202,7 +205,12 @@ impl std::fmt::Debug for SupportArchive<'_> {
 }
 
 impl<'a> SupportArchive<'a> {
-    pub fn new(writer: impl Write + 'a, format: &dyn ArchiveFormat, compress: bool) -> Self {
+    pub fn new(
+        writer: impl Write + 'a,
+        format: &dyn ArchiveFormat,
+        compress: bool,
+        filters: &'a [&'a dyn SupportFilter],
+    ) -> Self {
         let options = format.file_options(SimpleFileOptions::default().compression_method(
             if compress {
                 CompressionMethod::Deflated
@@ -214,6 +222,7 @@ impl<'a> SupportArchive<'a> {
         Self {
             zip: ZipWriter::new_stream(format.wrap(Box::new(writer))),
             options,
+            filters,
         }
     }
 
@@ -225,7 +234,7 @@ impl<'a> SupportArchive<'a> {
     pub fn add_fs_file(&mut self, path: impl AsRef<Path>) -> Result<()> {
         let path = path.as_ref();
 
-        if filters::is_excluded(path) {
+        if filters::is_excluded(self.filters, path) {
             info!("Skipped excluded file {}", path.display());
             return Ok(());
         }
@@ -237,10 +246,10 @@ impl<'a> SupportArchive<'a> {
 
         let mut file = File::open(path)?;
 
-        if filters::is_filtered(path) {
+        if filters::is_censored(self.filters, path) {
             let mut buf = vec![];
             file.read_to_end(&mut buf)?;
-            let buf = filters::apply(path, buf);
+            let buf = filters::censor(self.filters, path, buf);
             self.write_file(&name, &buf)?;
         } else {
             self.zip.start_file(&name, self.options)?;
@@ -450,7 +459,7 @@ mod tests {
 
     fn nix_profile_archive(profile_dir: &Path) -> BTreeMap<String, Vec<u8>> {
         let mut buf = Vec::new();
-        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false);
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
         archive
             .add_nix_profile(profile_dir)
             .expect("BUG: add nix profile");

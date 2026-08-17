@@ -281,7 +281,7 @@ impl bmc::BmcManager for Manager {
     async fn support_archive(&self) -> Result<Vec<u8>, Error> {
         info!("Support archive");
         let mut buf = Vec::new();
-        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false);
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
         archive.add_builtin(
             Self::DUMMY_SUPPORT_FILE_NAME,
             Self::DUMMY_SUPPORT_FILE_CONTENT,
