@@ -36,12 +36,9 @@ clean:
 
 # === Dev / run ===
 
-# Hot-reload dev: build testbed + widget + run in an mprocs split.
+# Hot-reload dev: the testbed watches the widget's source and rebuilds it.
 dev WIDGET ARGS="": (prebuild WIDGET)
-    mprocs \
-        --names "watch,testbed" \
-        "just --justfile {{ source_file() }} watch {{ WIDGET }}" \
-        "just --justfile {{ source_file() }} testbed {{ WIDGET }} '{{ ARGS }}'"
+    just --justfile {{ source_file() }} testbed {{ WIDGET }} '{{ ARGS }}'
 
 # The testbed loads the widget's wasm at startup, so both exist up front.
 [private]
@@ -53,7 +50,8 @@ prebuild WIDGET:
     cargo build {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml
     cargo build --manifest-path "$root/$name/Cargo.toml" --target {{ wasm_target }}
 
-# Rebuild WIDGET's wasm on source change.
+# Rebuild WIDGET's wasm on source change, for a split that pairs it with
+# something else; the testbed rebuilds on its own.
 watch WIDGET:
     #!/usr/bin/env bash
     set -euo pipefail

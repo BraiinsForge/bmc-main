@@ -86,6 +86,9 @@ impl TestbedApp {
                     self.paint_readouts(row, palette);
                     // Beside the numbers it annotates, not across the bar.
                     self.paint_sparkline(row);
+                    row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
+                        self.paint_hot_chip(end);
+                    });
                 });
             });
     }

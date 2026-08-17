@@ -43,6 +43,8 @@
 mod canvas;
 mod credentials_ui;
 mod device_window;
+mod hot;
+mod hot_ui;
 mod icon;
 mod paint;
 mod params_ui;
@@ -1099,17 +1101,30 @@ struct Clock {
     monotonic_offset_ms: u64,
 }
 
-/// Filesystem watcher + manual-reload signal. Drains as a single "rebuild every runtime"
-/// signal each frame inside `poll_hot_reload`.
+/// The rebuild cycle end to end: the source watcher that starts a build, the
+/// wasm watcher that notices its result, and the phase both report into.
+///
+/// Two watchers rather than one, because they answer different questions. The
+/// source watcher knows an edit landed and what cargo made of it; the wasm
+/// watcher knows a file arrived, whoever wrote it — a build run from a
+/// terminal reloads the same way an edit does.
 struct HotReload {
-    /// Live `notify` watcher. Held to keep the watch thread alive — when dropped, file
-    /// events stop arriving. Never read after construction.
+    /// Live `notify` watcher on the widget's wasm. Held to keep the watch
+    /// thread alive — when dropped, file events stop arriving.
     _watcher: RecommendedWatcher,
     /// Channel fed by `setup_watcher` whenever the wasm file on disk changes.
     watcher_rx: std::sync::mpsc::Receiver<()>,
-    /// Set by the toolbar's "Reload WASM" button; consumed as a synthetic
+    /// Set by the toolbar's "Reload" button; consumed as a synthetic
     /// watcher event on the next `poll_hot_reload` tick.
     manual_reload: bool,
+    /// Where the cycle has got to, as the chip and the failure bar read it.
+    status: hot::HotStatus,
+    /// Whether the failed build's report is open, kept across the frame the
+    /// bar was clicked in.
+    report_open: bool,
+    /// The thread building the widget, and the build it has in flight.
+    /// `None` when there is no widget root to watch, so nothing to build.
+    source: Option<hot::SourceWatcher>,
 }
 
 /// What the view pass hands to the paint pass that follows it.
@@ -1192,6 +1207,15 @@ impl TestbedApp {
             setup_watcher(&cli.wasm_path).map_err(|e| format!("watcher: {e}"))?;
         let prepared_widget = PreparedWidget::new(&cli.wasm_path, cli.asset_root.as_deref())?;
 
+        // The build runs from the widget's workspace, where its lock file and
+        // `target/` live; without a widget root there is no source to watch
+        // and the testbed only ever reloads what someone else builds.
+        let hot_status = hot::HotStatus::new();
+        let source_watcher = cli.resolved_widget_root().and_then(|root| {
+            let workspace = root.parent()?.to_owned();
+            Some(hot::spawn(root.clone(), workspace, &hot_status))
+        });
+
         // Starting system snapshot for the testbed.
         // The real-device path populates this from the wayland `SettingUpdate` stream;
         // the testbed bootstraps with defaults plus a sensible non-empty timezone
@@ -1251,6 +1275,9 @@ impl TestbedApp {
                 _watcher: watcher,
                 watcher_rx,
                 manual_reload: false,
+                status: hot_status,
+                report_open: false,
+                source: source_watcher,
             },
             perf: PerfState {
                 frame_count: 0,
@@ -1366,6 +1393,8 @@ impl TestbedApp {
             }
         }
         self.prepared_widget = prepared_widget;
+        // Whoever built it, what the views run is now what is on disk.
+        self.hot_reload.status.swapped();
     }
 
     /// Open or close a device on the canvas, leaving params and system state
@@ -2324,6 +2353,11 @@ impl winit::application::ApplicationHandler<UserEvent> for TestbedHandler {
     /// so leaving this to `Drop` frees them against a dead context.
     fn exiting(&mut self, _event_loop: &winit::event_loop::ActiveEventLoop) {
         if let (Some(app), Some(egui_glow)) = (self.app.as_mut(), self.egui_glow.as_mut()) {
+            // Before the views: a build outliving the window would go on
+            // writing into a target directory nothing is watching any more.
+            if let Some(source) = &app.hot_reload.source {
+                source.stop();
+            }
             let gl = Arc::clone(&app.gl);
             app.stage.shutdown(&gl, &mut egui_glow.painter);
         }
@@ -2364,6 +2398,19 @@ impl TestbedApp {
         let palette = self.theme.palette(root_ui.ctx());
         theme::apply(root_ui.ctx(), palette);
 
+        // Debug layout means the whole layout, not only the widget's: egui's
+        // own inspector shows the chrome's rects, which is where a mock that
+        // paints itself is otherwise unfalsifiable.
+        let debugging = bmc_render::tree::debug_layout_enabled();
+        root_ui.ctx().style_mut(|style| {
+            style.debug.debug_on_hover = debugging;
+            style.debug.hover_shows_next = debugging;
+            style.debug.show_widget_hits = debugging;
+            style.debug.show_expand_width = debugging;
+            style.debug.show_expand_height = debugging;
+            style.debug.show_resize = debugging;
+        });
+
         let ctx = root_ui.ctx().clone();
         // The views already ran for this frame, outside the pass; this paints
         // what they produced.
@@ -2374,7 +2421,14 @@ impl TestbedApp {
         // toolbar first, then the sidebar's 320 px slice off the right.
         // Sidebar changes propagate to all tile runtimes and (when recording)
         // append `ParamDelivery` / `SystemDelivery` events to the timeline.
+        // The watcher's thread has no window of its own to wake.
+        self.hot_reload.status.wake_with(&ctx);
+        self.hot_reload.status.settle();
+
         self.paint_toolbar(root_ui);
+        // Under the toolbar and above everything else: a failing build is the
+        // first thing to know about what is on the canvas.
+        self.paint_build_failure(&ctx);
         self.paint_status_bar(root_ui);
         self.paint_right_panel(root_ui);
         self.paint_recording_sidebar(root_ui);
@@ -2409,7 +2463,8 @@ impl TestbedApp {
             ctx.request_repaint();
         }
 
-        // Earliest tile deadline, capped at the drain tick for deliveries + chrome.
+        // Earliest tile deadline, capped at the drain tick that deliveries
+        // and chrome need. The hot-reload chip counts up with no widget render.
         let repaint_ms = next_wake_ms.map_or(DRAIN_TICK_MS, |w| w.min(DRAIN_TICK_MS));
         ctx.request_repaint_after(std::time::Duration::from_millis(repaint_ms));
     }

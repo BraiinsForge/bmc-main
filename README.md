@@ -66,7 +66,8 @@ Install the following host tools:
 
 - Git and Git LFS
 - Nix with flakes enabled
-- `mprocs` for the hot-reloading WASM testbed workflow (`cargo install mprocs` from the development shell)
+- `mprocs` for widget workflows that run a simulator beside the testbed (`cargo install mprocs` from the development
+  shell)
 
 The `nix develop` shell provides the Rust toolchain, Protobuf compiler, `pkg-config`, Node.js, and Yarn. GPU libraries
 from Nix are currently not supported, so running the widget testbed requires the native development libraries from your
