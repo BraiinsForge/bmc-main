@@ -96,14 +96,47 @@ fetches or other expensive operations that are caused by parameter changes.
 ### Crash supervision
 
 The widget manager owns every widget child process in a dedicated actor task and awaits its exit directly. A process
-that exits on its own is respawned automatically: the delay starts at 1 second, doubles per crash up to 30 seconds, and
-resets after the process stays up for 60 seconds. The instance's compositor registration and stored configuration
-survive the crash, so the respawned process attaches through the same configure replay as the first spawn; its new pid
-is re-bound via `set_widget_pid`, and a connection racing past that registration is buffered as usual.
+that exits on its own is respawned automatically: the delay starts at 1 second, doubles per crash up to 5 minutes, and
+restarts from 1 second once a process stays up for 60 seconds. The instance's compositor registration and stored
+configuration survive the crash, so the respawned process attaches through the same configure replay as the first spawn;
+its new pid is re-bound via `set_widget_pid`, and a connection racing past that registration is buffered as usual.
+
+The 5-minute delay is a ceiling, not a give-up: supervision retries for as long as the instance exists. A restart budget
+would be unsafe here because widget failures are correlated — a crashed `bmc-wasm-host` drops the control socket of
+every thin at once, so one host fault exits the whole wasm fleet together, and a per-widget budget would be spent by a
+fault no individual widget caused. The 60-second healthy threshold sits above the thin's own startup budget
+(`DEFAULT_HOST_WAIT` + `DEFAULT_ACK_WAIT`), so a widget that never once reached its host cannot be mistaken for a
+healthy one and keep resetting the ladder.
 
 An external stop always wins: stopping a widget (scene edit, upgrade preparation, shutdown) cancels a pending respawn,
 and a stopped widget is never respawned. A widget whose type has left the registry (uninstalled) is not respawned either
-— its grid cell stays empty, exactly as if it had never spawned.
+— the manager emits `Abandoned` so the coordinator ends the registration that a crash deliberately leaves standing, and
+the grid cell stays empty as if it had never spawned.
+
+### What supervision observes — and what it does not
+
+Detection is a chain of four edge-triggered hops, with no polling at any layer:
+
+1. A wasm guest trap, a host-side panic, or `max_fuel_strikes` consecutive fuel-outs makes `slot.render` return an error
+   or `RenderStatus::Dead`. The host sees this as an ordinary return value — it *is* the interpreter running the guest,
+   so there is no boundary to poll across.
+2. The host tears the slot down. `WidgetSlot` owns the thin's control socket, so dropping the slot closes that fd.
+3. The thin, parked in `poll(2)` on the control socket and a signal pipe, wakes on `POLLHUP` and exits 0.
+4. The kernel raises `SIGCHLD` in bmc, the thin's direct parent; `child.wait()` returns and the actor treats the exit as
+   a crash if the instance is still `Running` under the same pid.
+
+"Crash" is therefore never detected, only inferred: it means *the process died and we never asked it to*. An external
+stop removes the map entry before signalling, so the later exit matches nothing.
+
+Two consequences worth knowing:
+
+- **Exit status carries no policy signal.** A thin exits 0 when its slot goes away — including when the host dies, which
+  is the normal fleet-wide failure — and non-zero for a bad manifest path *and* for a transient Wayland connect failure.
+  Supervision therefore ignores exit status entirely.
+- **Only process death is observed.** Fuel metering does catch a compute-wedged widget (it escalates to `Dead`, which
+  tears the slot down), but a widget that returns promptly while being logically stuck — waiting on a fetch that never
+  resolves, re-rendering a stale frame — is indistinguishable from a healthy one. Neither the Wayland connection state
+  nor any heartbeat feeds supervision.
 
 ## Constraints
 
