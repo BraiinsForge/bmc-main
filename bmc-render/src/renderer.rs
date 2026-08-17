@@ -36,6 +36,19 @@ use crate::tree::{AutoFit, SpanData, TextStyle};
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
 
+/// Renamed on re-export: `Counters` alone says nothing at this surface,
+/// where a second set of text counters lives beside it.
+pub use crate::gpu::glyph_cache::Counters as GlyphCacheCounters;
+
+/// Paragraph layout cache tallies, monotonic over the renderer's lifetime.
+/// Kept apart from [`GlyphCacheCounters`]: shaping and rasterization are
+/// separate caches, and a warm frame must reshape nothing.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct TextLayoutCounters {
+    pub layout_cache_hits: u64,
+    pub layout_cache_shapes: u64,
+}
+
 /// State of an asset tag's registry reservation.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AssetTagState<Id> {
@@ -462,6 +475,33 @@ pub trait Renderer {
     /// Nominal bytes held by resident mesh buffers and textures.
     fn mesh_resident_bytes(&self) -> u64 {
         0
+    }
+
+    // -- Text profiling --
+    //
+    // Defaulted, not required: the trait has implementors with no glyph cache
+    // at all, for which zero is the honest answer.
+
+    /// Nominal bytes held by the application-owned glyph atlas pages.
+    fn text_atlas_resident_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Lifetime glyph cache tallies: hits, misses, evictions,
+    /// and the pressure paths the memory bound is argued from.
+    fn glyph_cache_counters(&self) -> GlyphCacheCounters {
+        GlyphCacheCounters::default()
+    }
+
+    /// Bytes the glyph cache's metadata occupies at its allocated capacity —
+    /// the ceiling the spec bounds, not the live footprint.
+    fn glyph_cache_metadata_capacity_bytes(&self) -> u64 {
+        0
+    }
+
+    /// Lifetime paragraph layout cache tallies.
+    fn text_layout_counters(&self) -> TextLayoutCounters {
+        TextLayoutCounters::default()
     }
 }
 
@@ -935,5 +975,21 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn mesh_resident_bytes(&self) -> u64 {
         self.renderer.mesh_resident_bytes()
+    }
+
+    fn text_atlas_resident_bytes(&self) -> u64 {
+        self.renderer.text_atlas_resident_bytes()
+    }
+
+    fn glyph_cache_counters(&self) -> GlyphCacheCounters {
+        self.renderer.glyph_cache_counters()
+    }
+
+    fn glyph_cache_metadata_capacity_bytes(&self) -> u64 {
+        self.renderer.glyph_cache_metadata_capacity_bytes()
+    }
+
+    fn text_layout_counters(&self) -> TextLayoutCounters {
+        self.renderer.text_layout_counters()
     }
 }

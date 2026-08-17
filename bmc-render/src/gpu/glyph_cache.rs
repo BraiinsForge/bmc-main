@@ -157,7 +157,6 @@ pub struct EntrySlab {
     live: usize,
 }
 
-#[cfg_attr(not(test), expect(dead_code, reason = "consumed in Task 3 (BDK-696)"))]
 impl EntrySlab {
     pub fn with_capacity(capacity: usize) -> Self {
         assert!(
@@ -224,6 +223,7 @@ impl EntrySlab {
 
     /// Live entries. `entries.len()` is the high-water mark and counts freed
     /// slots too, so it cannot answer this.
+    #[cfg(any(test, feature = "glyph-alloc-gate"))]
     pub fn len(&self) -> usize {
         self.live
     }
@@ -539,12 +539,17 @@ struct ScratchEntry {
     placement: RasterPlacement,
 }
 
-/// Lifetime tallies. `u64` because they are monotonic over the renderer's
-/// lifetime and the target is 32-bit.
+/// Lifetime tallies. `negative_cache_hits` is a subset of `misses`,
+/// `rasterizations` counts calls that reach the rasterizer including empty glyphs,
+/// and `uploads` counts successful normal and scratch page uploads.
+/// `u64` because the counters are monotonic and the target is 32-bit.
 #[derive(Debug, Default, Clone, Copy)]
 pub struct Counters {
     pub hits: u64,
     pub misses: u64,
+    pub negative_cache_hits: u64,
+    pub rasterizations: u64,
+    pub uploads: u64,
     pub evictions: u64,
     pub max_evictions_per_miss: u64,
     pub scratch_uses: u64,
@@ -660,13 +665,6 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     next_log_generation: Generation,
 }
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "reporting accessors consumed in Task 14 (BDK-696)"
-    )
-)]
 impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
     pub fn new() -> Self {
         Self {
@@ -820,8 +818,10 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
         }
 
         if let Some(reason) = self.negative.get(&key) {
+            self.counters.negative_cache_hits += 1;
             return reason.into_lookup();
         }
+        self.counters.rasterizations += 1;
         let Some(raster) = rasterize(key) else {
             self.negative.insert_absent(key, NegativeReason::Missing);
             return GlyphLookup::Missing;
@@ -899,6 +899,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             }
             return GlyphLookup::Missing;
         }
+        self.counters.uploads += 1;
 
         self.map.insert(key, slot);
         self.lru.push_hot(&mut self.slab, slot);
@@ -989,6 +990,7 @@ impl<P: Copy + Eq + core::fmt::Debug> GlyphCache<P> {
             }
             return GlyphLookup::Missing;
         }
+        self.counters.uploads += 1;
         self.scratch_map.insert(
             key,
             ScratchEntry {
@@ -1564,6 +1566,9 @@ mod tests {
             assert_eq!(normalized, GlyphKey::normalize(key));
             Some(solid_glyph(3, 5))
         }));
+        assert_eq!(cache.counters().rasterizations, 1);
+        assert_eq!(cache.counters().uploads, 1);
+        assert_eq!(cache.counters().negative_cache_hits, 0);
 
         let &[(page, x, y, width, height)] = backend.uploads.as_slice() else {
             panic!(
@@ -1638,6 +1643,8 @@ mod tests {
             GlyphLookup::Missing
         );
         assert_eq!(cache.counters().upload_transient_failures, 1);
+        assert_eq!(cache.counters().rasterizations, 1);
+        assert_eq!(cache.counters().uploads, 0);
         assert!(!cache.map.contains_key(&GlyphKey::normalize(key)));
         assert_eq!(cache.slab.len(), 0);
         assert!(backend.uploads.is_empty());
@@ -1710,6 +1717,10 @@ mod tests {
         }
         assert_eq!(backend.pages_created, 0);
         assert!(backend.uploads.is_empty());
+        assert_eq!(cache.counters().rasterizations, 2);
+        assert_eq!(cache.counters().uploads, 0);
+        assert_eq!(cache.counters().negative_cache_hits, 2);
+        assert_eq!(cache.counters().glyphs_oversized, 2);
     }
 
     /// Padded to 402 px, which leaves no shelf a second one could share.
@@ -2006,6 +2017,9 @@ mod tests {
         );
         assert_eq!(backend.pages_created, 0);
         assert!(backend.uploads.is_empty());
+        assert_eq!(cache.counters().rasterizations, 1);
+        assert_eq!(cache.counters().uploads, 0);
+        assert_eq!(cache.counters().negative_cache_hits, 1);
     }
 
     /// Sizes far past the cap, because the negative cache exists to survive
@@ -2101,6 +2115,8 @@ mod tests {
         let mut cache = GlyphCache::new();
         let inserted = fill_with_small_glyphs(&mut cache, &mut backend);
         let evictions_before = cache.counters().evictions;
+        let rasterizations_before = cache.counters().rasterizations;
+        let counted_uploads_before = cache.counters().uploads;
         let uploads_before = backend.uploads.len();
 
         let key = test_cache_key(inserted);
@@ -2115,9 +2131,11 @@ mod tests {
             .collect();
 
         assert_eq!(rasterizations.get(), 1);
+        assert_eq!(cache.counters().rasterizations, rasterizations_before + 1);
         assert!(quads.iter().all(|quad| *quad == quads[0]));
         assert_eq!(quads[0].page, scratch_page_of(&cache));
         assert_eq!(backend.uploads.len(), uploads_before + 1);
+        assert_eq!(cache.counters().uploads, counted_uploads_before + 1);
         assert_eq!(cache.counters().scratch_uses, 3);
         assert_eq!(
             cache.counters().evictions - evictions_before,

@@ -58,6 +58,7 @@ use rgb::FromSlice as _;
 use crate::gpu::glyph_cache::{
     GlyphCache, GlyphLookup, GlyphQuad, PageBackend, PageCreateFailed, PageFaultKind, RasterGlyph,
 };
+use crate::renderer::TextLayoutCounters;
 use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
 
 // ── Paragraph layout cache ──────────────────────────────────────────
@@ -74,22 +75,18 @@ pub(crate) struct ParagraphLayoutEntry {
 pub struct ParagraphLayoutCache {
     entries: HashMap<u64, ParagraphLayoutEntry>,
     frame_counter: u64,
-    /// Shaping runs taken by the single-line miss path.
     /// Distinguishes a cache hit from a reshape that replaces the same entry,
     /// which entry count and width stability both survive.
-    #[cfg(test)]
-    single_line_shapes: usize,
+    counters: TextLayoutCounters,
 }
 
 impl std::fmt::Debug for ParagraphLayoutCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut fields = f.debug_struct("ParagraphLayoutCache");
-        fields
+        f.debug_struct("ParagraphLayoutCache")
             .field("entries", &self.entries.len())
-            .field("frame_counter", &self.frame_counter);
-        #[cfg(test)]
-        fields.field("single_line_shapes", &self.single_line_shapes);
-        fields.finish()
+            .field("frame_counter", &self.frame_counter)
+            .field("counters", &self.counters)
+            .finish()
     }
 }
 
@@ -99,8 +96,22 @@ impl ParagraphLayoutCache {
         Self {
             entries: HashMap::new(),
             frame_counter: 0,
-            #[cfg(test)]
-            single_line_shapes: 0,
+            counters: TextLayoutCounters::default(),
+        }
+    }
+
+    #[must_use]
+    pub fn counters(&self) -> TextLayoutCounters {
+        self.counters
+    }
+
+    /// Must run before the lookup that inserts: `or_insert_with` cannot say
+    /// afterwards whether it shaped.
+    fn count_lookup(&mut self, key: u64) {
+        if self.entries.contains_key(&key) {
+            self.counters.layout_cache_hits += 1;
+        } else {
+            self.counters.layout_cache_shapes += 1;
         }
     }
 
@@ -152,6 +163,7 @@ impl ParagraphLayoutCache {
         let key = cache_key(base_style, spans, max_width);
         let frame = self.frame_counter;
         self.evict_for(key);
+        self.count_lookup(key);
 
         let entry = self.entries.entry(key).or_insert_with(|| {
             // Styles still come from `spans` — normalizing only edits text, never
@@ -183,11 +195,7 @@ impl ParagraphLayoutCache {
         let key = single_line_cache_key(style, text);
         let frame = self.frame_counter;
         self.evict_for(key);
-
-        #[cfg(test)]
-        if !self.entries.contains_key(&key) {
-            self.single_line_shapes += 1;
-        }
+        self.count_lookup(key);
 
         let entry = self.entries.entry(key).or_insert_with(|| {
             let (buffer, width, height) = shape_single_line(font_system, style, text);
@@ -2003,13 +2011,23 @@ mod line_layout_tests {
         let mut cache = ParagraphLayoutCache::new();
         let style = line_style(24.0, false);
 
-        assert_eq!(cache.single_line_shapes, 0);
-        cache.layout_single_line(&mut font_system, style, "12:34");
-        assert_eq!(cache.single_line_shapes, 1, "the first call must shape");
+        assert_eq!(cache.counters().layout_cache_shapes, 0);
         cache.layout_single_line(&mut font_system, style, "12:34");
         assert_eq!(
-            cache.single_line_shapes, 1,
+            cache.counters().layout_cache_shapes,
+            1,
+            "the first call must shape"
+        );
+        cache.layout_single_line(&mut font_system, style, "12:34");
+        assert_eq!(
+            cache.counters().layout_cache_shapes,
+            1,
             "the second call must not shape"
+        );
+        assert_eq!(
+            cache.counters().layout_cache_hits,
+            1,
+            "the second call must count as a hit"
         );
     }
 
