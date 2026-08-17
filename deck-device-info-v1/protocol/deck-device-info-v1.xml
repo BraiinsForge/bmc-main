@@ -1,0 +1,87 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="deck_device_info_v1">
+  <copyright>
+    Copyright (C) 2026  Braiins Forge s.r.o.
+    SPDX-License-Identifier: MIT
+
+    New protocol carrying bmc-owned device lifecycle and setup-progress
+    state for the boot-time device-info overlay
+  </copyright>
+
+  <interface name="deck_device_info_v1" version="1">
+    <description summary="Deck device-info state feed">
+      Lightweight compositor-relayed IPC for the device-info overlay. bmc owns
+      the device lifecycle (setup mode, WiFi provisioning) and its recovery
+      policies; this interface mirrors that state to the overlay for display.
+      It carries no control path: everything the user can trigger from these
+      screens is either overlay-local (touch dismiss) or owned by bmc's own
+      policy timers.
+
+      Every event is emitted on bind with the current value and again on each
+      change, so a late-binding overlay always starts from a complete picture.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the device-info interface"/>
+    </request>
+
+    <enum name="device_state">
+      <description summary="coarse device lifecycle state">
+        Mirrors bmc's BmcState and selects which flow the overlay runs.
+      </description>
+      <entry name="factory_default" value="0" summary="unconfigured; setup AP active"/>
+      <entry name="setup_pending" value="1" summary="configured but setup not finished"/>
+      <entry name="operational" value="2" summary="normal operation"/>
+      <entry name="wifi_reconfiguration" value="3" summary="setup AP re-opened to change WiFi"/>
+    </enum>
+
+    <enum name="setup_state">
+      <description summary="progress within the setup flow">
+        Mirrors bmc's InitSetupState, with an extra idle entry so the current
+        value is always well-defined for the on-bind replay.
+      </description>
+      <entry name="idle" value="0" summary="no setup step in progress"/>
+      <entry name="connecting_to_wifi" value="1" summary="joining the configured network"/>
+      <entry name="wifi_connection_success" value="2" summary="network joined"/>
+      <entry name="wifi_connection_failed" value="3" summary="join failed; the AP screen returns"/>
+      <entry name="wifi_reconfig_success" value="4" summary="reconfiguration done; return to scenes"/>
+      <entry name="device_setup_success" value="5" summary="setup wizard completed"/>
+      <entry name="unexpected_error" value="6" summary="unrecoverable; bmc will recover on its own (reset or reboot)"/>
+    </enum>
+
+    <event name="device_state">
+      <description summary="the device lifecycle state changed">
+        Sent on bind with the current state, then on every change (for example
+        entering or leaving WiFi reconfiguration).
+      </description>
+      <arg name="state" type="uint" enum="device_state" summary="current lifecycle state"/>
+    </event>
+
+    <event name="setup_progress">
+      <description summary="a setup-flow transition occurred">
+        Sent on bind with the latest value, then on every transition. The
+        overlay owns how long each resulting screen stays up; bmc emits
+        transitions the moment they happen.
+
+        A screen is owed its time only once the overlay has seen the transition.
+        Clients hold the latest value rather than a queue,
+        so two transitions delivered in one dispatch round leave only the second
+        and the first never gets a screen. Real steps are seconds apart,
+        so this costs a screen only where a step fails on the spot.
+      </description>
+      <arg name="state" type="uint" enum="setup_state" summary="current setup step"/>
+      <arg name="wifi_ssid" type="string" summary="target SSID, empty unless connecting_to_wifi"/>
+    </event>
+
+    <event name="access_point">
+      <description summary="the setup access point changed">
+        Sent on bind and on change. A non-empty ssid means the setup AP is up;
+        setup_url is the address the overlay shows and encodes as the QR code
+        on the setup-start screen (bmc owns the AP addressing). Both arguments
+        are empty while the AP is down.
+      </description>
+      <arg name="ssid" type="string" summary="setup-AP SSID, empty when inactive"/>
+      <arg name="setup_url" type="string" summary="setup URL, e.g. http://192.168.8.1/, empty when inactive"/>
+    </event>
+  </interface>
+</protocol>

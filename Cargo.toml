@@ -57,6 +57,7 @@ members = [
     "bmc-widget-manifest-tests",
     "bmc-widget-protocol",
     "deck-alarm-v1",
+    "deck-device-info-v1",
     "deck-screen-edge-v1",
     "deck-settings-v1",
     "deck-upgrade-v1",
@@ -234,6 +235,7 @@ cosmic-text = { version = "0.18", default-features = false, features = ["std", "
 croner = "3.0.0"
 data-encoding = "2.6.0"
 deck-alarm-v1 = { path = "deck-alarm-v1" }
+deck-device-info-v1 = { path = "deck-device-info-v1" }
 deck-screen-edge-v1 = { path = "deck-screen-edge-v1" }
 deck-settings-v1 = { path = "deck-settings-v1" }
 deck-upgrade-v1 = { path = "deck-upgrade-v1" }

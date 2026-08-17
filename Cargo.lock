@@ -2436,6 +2436,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "deck-device-info-v1"
+version = "0.1.0"
+dependencies = [
+ "wayland-backend",
+ "wayland-client",
+ "wayland-scanner",
+ "wayland-server",
+]
+
+[[package]]
 name = "deck-screen-edge-v1"
 version = "0.1.0"
 dependencies = [
