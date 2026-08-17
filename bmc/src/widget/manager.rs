@@ -119,6 +119,11 @@ enum Command {
         instance_id: String,
         reply: oneshot::Sender<ChildObservation>,
     },
+    /// The registry was re-scanned, so pending respawns should stop waiting
+    /// out delays they earned against binaries that may no longer be installed.
+    RegistryRefreshed {
+        reply: oneshot::Sender<()>,
+    },
 }
 
 type SpawnReply = Result<SpawnedWidget, SpawnError>;
@@ -181,8 +186,23 @@ impl WidgetManager {
 
     /// Re-scan the widget discovery paths so newly-installed widgets become
     /// available without a restart. A no-op if the registry is static.
+    ///
+    /// Also brings any pending crash respawn forward to the initial delay, so a
+    /// widget that crash-looped while its package was being replaced comes back
+    /// on the new binary without waiting out a delay it earned against the old
+    /// one. A failed re-scan leaves the delays alone: nothing changed.
     pub async fn refresh(&self) -> Result<(), super::RegistryError> {
-        self.registry.refresh().await
+        self.registry.refresh().await?;
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::RegistryRefreshed { reply: reply_tx })
+            .await
+            .expect("BUG: widget child actor terminated");
+        reply_rx
+            .await
+            .expect("BUG: widget child actor dropped a registry-refresh reply");
+        Ok(())
     }
 
     /// Spawn a widget process and return its OS pid. The compositor needs
@@ -416,6 +436,10 @@ impl Actor {
             Command::Observe { instance_id, reply } => {
                 let _ = reply.send(self.observe(&instance_id));
             }
+            Command::RegistryRefreshed { reply } => {
+                self.reset_restart_backoff(internal_tx);
+                let _ = reply.send(());
+            }
         }
     }
 
@@ -566,15 +590,10 @@ impl Actor {
     /// A stopped instance, a pending restart, or an already-replaced spawn
     /// leaves the map untouched — which is what makes a stale exit a no-op.
     fn take_running(&mut self, instance_id: &str, pid: u32) -> Option<RunningWidget> {
-        match self.children.get(instance_id) {
-            Some(WidgetState::Running(widget)) if widget.pid == pid => {}
-            _ => return None,
-        }
-        match self.children.remove(instance_id) {
-            Some(WidgetState::Running(widget)) => Some(widget),
-            other => {
-                debug_assert!(false, "BUG: entry changed between check and removal");
-                other.map(|state| self.children.insert(instance_id.to_owned(), state));
+        match self.children.remove(instance_id)? {
+            WidgetState::Running(widget) if widget.pid == pid => Some(widget),
+            other @ (WidgetState::Running(_) | WidgetState::PendingRestart(_)) => {
+                self.children.insert(instance_id.to_owned(), other);
                 None
             }
         }
@@ -584,15 +603,10 @@ impl Actor {
     /// A stop or an external re-spawn replaces the entry and orphans the token,
     /// so a mismatch means the timer lost its race and must do nothing.
     fn take_pending_restart(&mut self, instance_id: &str, token: u64) -> Option<PendingRestart> {
-        match self.children.get(instance_id) {
-            Some(WidgetState::PendingRestart(pending)) if pending.token == token => {}
-            _ => return None,
-        }
-        match self.children.remove(instance_id) {
-            Some(WidgetState::PendingRestart(pending)) => Some(pending),
-            other => {
-                debug_assert!(false, "BUG: entry changed between check and removal");
-                other.map(|state| self.children.insert(instance_id.to_owned(), state));
+        match self.children.remove(instance_id)? {
+            WidgetState::PendingRestart(pending) if pending.token == token => Some(pending),
+            other @ (WidgetState::Running(_) | WidgetState::PendingRestart(_)) => {
+                self.children.insert(instance_id.to_owned(), other);
                 None
             }
         }
@@ -654,6 +668,45 @@ impl Actor {
             tokio::time::sleep(delay).await;
             let _ = internal_tx.send(Internal::RestartDue { instance_id, token });
         });
+    }
+
+    /// Bring every pending respawn forward to the initial delay.
+    ///
+    /// A registry change means the binaries on disk are not the ones the
+    /// climbed delays were earned against, so continuing to hold a widget off
+    /// punishes it for a version that is gone. This is the same reasoning
+    /// [`RestartPolicy::healthy_uptime`] applies to a process that proved
+    /// itself, and it is what returns the instances a widget reload skips —
+    /// every one that is not `Running` — to the screen promptly.
+    fn reset_restart_backoff(&mut self, internal_tx: &mpsc::UnboundedSender<Internal>) {
+        let pending: Vec<_> = self
+            .children
+            .iter()
+            .filter_map(|(instance_id, state)| match state {
+                WidgetState::PendingRestart(pending) => {
+                    Some((instance_id.clone(), pending.widget_uid, pending.env.clone()))
+                }
+                WidgetState::Running(_) => None,
+            })
+            .collect();
+
+        if pending.is_empty() {
+            return;
+        }
+        info!(
+            "widget registry changed; retrying {} pending respawn(s) in {:?}",
+            pending.len(),
+            self.policy.initial
+        );
+        for (instance_id, widget_uid, env) in pending {
+            self.schedule_restart(
+                instance_id,
+                widget_uid,
+                env,
+                self.policy.initial,
+                internal_tx,
+            );
+        }
     }
 
     fn handle_restart_due(
@@ -1058,6 +1111,59 @@ mod tests {
                 "cycle {cycle} must respawn — the ladder caps the delay, it never gives up"
             );
         }
+    }
+
+    /// A package replacement leaves affected widgets crash-looping while their
+    /// files are swapped, and the reload that follows skips every instance that
+    /// is not running — handing them to supervision. They must not then serve
+    /// out a delay they earned against a binary that is no longer installed.
+    #[tokio::test]
+    async fn a_registry_refresh_retries_pending_respawns_promptly() {
+        /// Far enough above the assertion window that a prompt respawn cannot be
+        /// the climbed timer simply elapsing.
+        const CLIMBED: Duration = Duration::from_secs(1);
+        const PROMPT: Duration = Duration::from_millis(400);
+
+        let uid = Uuid::new_v4();
+        let policy = RestartPolicy {
+            initial: Duration::from_millis(1),
+            max: Duration::from_secs(30),
+            healthy_uptime: Duration::from_hours(1),
+        };
+        let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
+        manager
+            .spawn_widget(uid, env("flapping"))
+            .await
+            .expect("BUG: test spawn failed");
+
+        let mut delay = policy.initial;
+        while delay < CLIMBED {
+            assert!(matches!(
+                next_event(&mut events).await,
+                WidgetEvent::Exited { .. }
+            ));
+            assert!(matches!(
+                next_event(&mut events).await,
+                WidgetEvent::Respawned { .. }
+            ));
+            delay = next_backoff(delay, policy.max);
+        }
+        // This crash leaves a wait of at least CLIMBED pending.
+        assert!(matches!(
+            next_event(&mut events).await,
+            WidgetEvent::Exited { .. }
+        ));
+
+        manager
+            .refresh()
+            .await
+            .expect("BUG: static registry refresh failed");
+
+        let respawn = timeout(PROMPT, events.recv()).await;
+        assert!(
+            matches!(respawn, Ok(Some(WidgetEvent::Respawned { .. }))),
+            "a refresh must retry the pending respawn well inside its climbed delay, got {respawn:?}"
+        );
     }
 
     #[tokio::test]
