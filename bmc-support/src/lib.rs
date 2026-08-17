@@ -119,75 +119,151 @@ pub const PING_HOSTS: &[&str] = &[
     "public-api.braiins.com",
 ];
 
-pub fn collect(writer: impl Write, format: &dyn ArchiveFormat, compress: bool) -> Result<()> {
-    let mut archive = SupportArchive::new(writer, format, compress, filters::bmc::BMC_FILTERS);
+pub struct SupportConfig<'a> {
+    commands: &'a [&'a [&'a str]],
+    fs_paths: &'a [&'a str],
+    ping_hosts: &'a [&'a str],
+    filters: &'a [&'a dyn SupportFilter],
+}
 
-    // include outputs of commands
-    // These run before the log capture below since some of them emit syslog (e.g. dnsmasq).
-    for &cmdline in COMMANDS {
-        match archive.add_cmd_output(cmdline) {
-            Ok(()) => info!("Added output of '{}'", cmdline.join(" ")),
-            Err(err) => error!("{}: '{}'", err, cmdline.join(" ")),
+impl std::fmt::Debug for SupportConfig<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SupportConfig")
+            .field("commands", &self.commands)
+            .field("fs_paths", &self.fs_paths)
+            .field("ping_hosts", &self.ping_hosts)
+            .field("filters", &self.filters.len())
+            .finish()
+    }
+}
+
+impl Default for SupportConfig<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> SupportConfig<'a> {
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            commands: &[],
+            fs_paths: &[],
+            ping_hosts: &[],
+            filters: &[],
         }
     }
 
-    // include output of builtin routines
-    // Again these commands may produce some logs so log collection must be done after this.
-    #[expect(clippy::type_complexity)]
-    let builtin_items: &[(&str, fn() -> Option<String>)] = &[
-        ("ifconfig", || Some(bmc_net_diag::ifconfig())),
-        ("public_ip", || bmc_net_diag::public_ip().ok()),
-        ("ping_report", || bmc_net_diag::ping_report(PING_HOSTS).ok()),
-        ("timestamp", || {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .ok()?
-                .as_secs()
-                .to_string()
-                .into()
-        }),
-    ];
-    for (name, function) in builtin_items {
-        if let (name, Some(content)) = (name, function()) {
-            match archive.add_builtin(name, &content) {
-                Ok(()) => info!("Added output of <{}>", name),
-                Err(err) => error!("{}: <{}>", err, name),
+    /// Commands whose stdout is captured. They run before the fs walk so any
+    /// syslog they emit lands in the log file the walk collects.
+    #[must_use]
+    pub const fn commands(mut self, commands: &'a [&'a [&'a str]]) -> Self {
+        self.commands = commands;
+        self
+    }
+
+    /// Filesystem paths collected wholesale (files and directories).
+    #[must_use]
+    pub const fn fs_paths(mut self, fs_paths: &'a [&'a str]) -> Self {
+        self.fs_paths = fs_paths;
+        self
+    }
+
+    /// Hosts pinged for the reachability report.
+    #[must_use]
+    pub const fn ping_hosts(mut self, ping_hosts: &'a [&'a str]) -> Self {
+        self.ping_hosts = ping_hosts;
+        self
+    }
+
+    /// Credential filters applied to every collected file.
+    #[must_use]
+    pub const fn filters(mut self, filters: &'a [&'a dyn SupportFilter]) -> Self {
+        self.filters = filters;
+        self
+    }
+
+    /// Collect the support archive into `writer`, encoded per `format`.
+    pub fn collect(
+        &self,
+        writer: impl Write,
+        format: &dyn ArchiveFormat,
+        compress: bool,
+    ) -> Result<()> {
+        let mut archive = SupportArchive::new(writer, format, compress, self.filters);
+
+        // include outputs of commands
+        // These run before the log capture below since some of them emit syslog (e.g. dnsmasq).
+        for &cmdline in self.commands {
+            match archive.add_cmd_output(cmdline) {
+                Ok(()) => info!("Added output of '{}'", cmdline.join(" ")),
+                Err(err) => error!("{}: '{}'", err, cmdline.join(" ")),
             }
         }
-    }
 
-    match archive.add_nix_profile(Path::new(NIX_PROFILE_DIR)) {
-        Ok(()) => info!("Added Nix profile diagnostics"),
-        Err(err) => error!("{}: Nix profile diagnostics", err),
-    }
-
-    // include files from the filesystem
-    for path in FS_PATHS.iter().map(Path::new) {
-        assert!(path.is_absolute());
-
-        let entries = WalkDir::new(path)
-            .into_iter()
-            .filter_map(|res| res.map_err(|err| warn!("{}", err)).ok())
-            .filter(|entry| entry.path().is_file());
-
-        for entry in entries {
-            match archive.add_fs_file(entry.path()) {
-                Ok(()) => info!("Added file {}", entry.path().display()),
-                Err(err) => error!("{}: {}", err, entry.path().display()),
+        // include output of builtin routines
+        // Again these commands may produce some logs so log collection must be done after this.
+        let ping_hosts = self.ping_hosts;
+        let builtin_items: &[(&str, &dyn Fn() -> Option<String>)] = &[
+            ("ifconfig", &|| Some(bmc_net_diag::ifconfig())),
+            ("public_ip", &|| bmc_net_diag::public_ip().ok()),
+            ("ping_report", &|| {
+                bmc_net_diag::ping_report(ping_hosts).ok()
+            }),
+            ("timestamp", &|| {
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .ok()?
+                    .as_secs()
+                    .to_string()
+                    .into()
+            }),
+        ];
+        for (name, function) in builtin_items {
+            if let (name, Some(content)) = (name, function()) {
+                match archive.add_builtin(name, &content) {
+                    Ok(()) => info!("Added output of <{}>", name),
+                    Err(err) => error!("{}: <{}>", err, name),
+                }
             }
         }
+
+        match archive.add_nix_profile(Path::new(NIX_PROFILE_DIR)) {
+            Ok(()) => info!("Added Nix profile diagnostics"),
+            Err(err) => error!("{}: Nix profile diagnostics", err),
+        }
+
+        // include files from the filesystem
+        for path in self.fs_paths.iter().map(Path::new) {
+            if !path.is_absolute() {
+                error!("Skipping non-absolute fs path: {}", path.display());
+                continue;
+            }
+
+            let entries = WalkDir::new(path)
+                .into_iter()
+                .filter_map(|res| res.map_err(|err| warn!("{}", err)).ok())
+                .filter(|entry| entry.path().is_file());
+
+            for entry in entries {
+                match archive.add_fs_file(entry.path()) {
+                    Ok(()) => info!("Added file {}", entry.path().display()),
+                    Err(err) => error!("{}: {}", err, entry.path().display()),
+                }
+            }
+        }
+
+        // Capture the system log last, so syslog emitted by every diagnostic above
+        // (e.g. a DNS error during the reachability probe) is present in the dump.
+        match archive.add_cmd_output(LOGREAD_COMMAND) {
+            Ok(()) => info!("Added output of '{}'", LOGREAD_COMMAND.join(" ")),
+            Err(err) => error!("{}: '{}'", err, LOGREAD_COMMAND.join(" ")),
+        }
+
+        archive.finish()?;
+
+        Ok(())
     }
-
-    // Capture the system log last, so syslog emitted by every diagnostic above
-    // (e.g. a DNS error during the reachability probe) is present in the dump.
-    match archive.add_cmd_output(LOGREAD_COMMAND) {
-        Ok(()) => info!("Added output of '{}'", LOGREAD_COMMAND.join(" ")),
-        Err(err) => error!("{}: '{}'", err, LOGREAD_COMMAND.join(" ")),
-    }
-
-    archive.finish()?;
-
-    Ok(())
 }
 
 /// Streaming writer for the support archive: entries are written to the
@@ -465,6 +541,55 @@ mod tests {
             .expect("BUG: add nix profile");
         archive.finish().expect("BUG: finish archive");
         archive_entries(&buf)
+    }
+
+    #[test]
+    fn config_builder_records_each_set_field() {
+        struct DummyFilter;
+        impl SupportFilter for DummyFilter {}
+
+        const COMMANDS: &[&[&str]] = &[&["echo", "hi"]];
+        const FS_PATHS: &[&str] = &["/etc/hosts"];
+        const HOSTS: &[&str] = &["127.0.0.1"];
+        let filters: &[&dyn SupportFilter] = &[&DummyFilter];
+
+        let config = SupportConfig::new()
+            .commands(COMMANDS)
+            .fs_paths(FS_PATHS)
+            .ping_hosts(HOSTS)
+            .filters(filters);
+
+        assert_eq!(config.commands, COMMANDS);
+        assert_eq!(config.fs_paths, FS_PATHS);
+        assert_eq!(config.ping_hosts, HOSTS);
+        assert_eq!(config.filters.len(), 1);
+        // An untouched field stays empty.
+        assert!(SupportConfig::new().commands(COMMANDS).fs_paths.is_empty());
+    }
+
+    #[test]
+    fn add_cmd_output_captures_stdout_and_stderr() {
+        let mut buf = Vec::new();
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
+        archive
+            .add_cmd_output(&["sh", "-c", "echo out; echo err >&2"])
+            .expect("BUG: add_cmd_output");
+        archive.finish().expect("BUG: finish archive");
+
+        let entries = archive_entries(&buf);
+        let stdout = entries
+            .iter()
+            .find(|(name, _)| name.starts_with("command/") && !name.ends_with(".stderr"))
+            .map(|(_, content)| String::from_utf8_lossy(content).into_owned())
+            .expect("BUG: stdout entry present");
+        let stderr = entries
+            .iter()
+            .find(|(name, _)| name.ends_with(".stderr"))
+            .map(|(_, content)| String::from_utf8_lossy(content).into_owned())
+            .expect("BUG: stderr entry present");
+
+        assert!(stdout.contains("out"), "stdout entry: {stdout:?}");
+        assert!(stderr.contains("err"), "stderr entry: {stderr:?}");
     }
 
     #[test]
