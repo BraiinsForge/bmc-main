@@ -32,6 +32,9 @@
 use std::time::{Duration, Instant};
 
 use ::deck_alarm_v1::client::deck_alarm_v1::{self, DeckAlarmV1, Snooze};
+use ::deck_device_info_v1::client::deck_device_info_v1::{
+    self, DeckDeviceInfoV1, DeviceState as WireDeviceState, SetupState as WireSetupState,
+};
 use ::deck_upgrade_v1::UpgradeDecoder;
 use ::deck_upgrade_v1::client::deck_upgrade_v1::{self, DeckUpgradeV1};
 use anyhow::Context;
@@ -128,6 +131,21 @@ struct State {
     /// before its next tick.
     pending_upgrade_snapshot: Option<crate::overlay::UpgradeSnapshot>,
 
+    /// Whether this overlay opted into `deck_device_info_v1` (its
+    /// `SystemOverlay::uses_device_info`).
+    wants_device_info: bool,
+    device_info: Option<DeckDeviceInfoV1>,
+    /// Latest `deck_device_info_v1` events, one latest-wins slot per event
+    /// kind: the on-bind replay delivers all three back-to-back in a single
+    /// dispatch round, so a shared slot would drop two of them.
+    pending_device_lifecycle: Option<crate::overlay::DeviceState>,
+    pending_setup_progress: Option<(crate::overlay::SetupStep, String)>,
+    #[expect(
+        clippy::option_option,
+        reason = "outer Option latches event-arrived; inner Option carries AP up/down"
+    )]
+    pending_access_point: Option<Option<crate::overlay::AccessPoint>>,
+
     /// Set true on the first layer-surface Configure (after which we may map).
     configured: bool,
     /// Compositor-suggested size from the latest Configure.
@@ -186,6 +204,11 @@ impl Default for State {
             upgrade: None,
             upgrade_decoder: UpgradeDecoder::default(),
             pending_upgrade_snapshot: None,
+            wants_device_info: false,
+            device_info: None,
+            pending_device_lifecycle: None,
+            pending_setup_progress: None,
+            pending_access_point: None,
             configured: false,
             configured_size: (0, 0),
             pending_touch: Vec::new(),
@@ -337,14 +360,37 @@ impl std::fmt::Debug for LayerSurfaceClient {
     }
 }
 
+/// Which optional control protocols the overlay opted into (its `uses_*()`
+/// answers), gating the registry binds.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one independent opt-in flag per control protocol"
+)]
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ProtocolOptIns {
+    pub settings: bool,
+    pub alarm: bool,
+    pub upgrade: bool,
+    pub device_info: bool,
+}
+
+impl ProtocolOptIns {
+    pub(crate) fn from_overlay(overlay: &dyn crate::overlay::SystemOverlay) -> Self {
+        Self {
+            settings: overlay.uses_settings(),
+            alarm: overlay.uses_alarm(),
+            upgrade: overlay.uses_upgrade(),
+            device_info: overlay.uses_device_info(),
+        }
+    }
+}
+
 impl LayerSurfaceClient {
     /// Connect to the Wayland display, create a layer surface from `config`,
     /// and block until the compositor emits its first Configure.
     pub fn connect(
         config: &crate::overlay::LayerConfig,
-        wants_settings: bool,
-        wants_alarm: bool,
-        wants_upgrade: bool,
+        opt_ins: ProtocolOptIns,
     ) -> anyhow::Result<Self> {
         let conn =
             Connection::connect_to_env().map_err(|e| anyhow::anyhow!("wayland connect: {e}"))?;
@@ -353,9 +399,10 @@ impl LayerSurfaceClient {
         conn.display().get_registry(&qh, ());
 
         let mut state = State {
-            wants_settings,
-            wants_alarm,
-            wants_upgrade,
+            wants_settings: opt_ins.settings,
+            wants_alarm: opt_ins.alarm,
+            wants_upgrade: opt_ins.upgrade,
+            wants_device_info: opt_ins.device_info,
             ..State::default()
         };
         queue
@@ -631,6 +678,20 @@ impl LayerSurfaceClient {
         self.state.pending_upgrade_snapshot.take()
     }
 
+    pub fn take_device_state(&mut self) -> Option<crate::overlay::DeviceState> {
+        self.state.pending_device_lifecycle.take()
+    }
+
+    pub fn take_setup_progress(&mut self) -> Option<(crate::overlay::SetupStep, String)> {
+        self.state.pending_setup_progress.take()
+    }
+
+    /// Outer `Some` means an `access_point` event arrived;
+    /// the inner value is the AP while it is up, `None` when it is down.
+    pub fn take_access_point(&mut self) -> Option<Option<crate::overlay::AccessPoint>> {
+        self.state.pending_access_point.take()
+    }
+
     pub fn send_settings_request(
         &self,
         req: crate::overlay::SettingsRequest,
@@ -797,6 +858,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                         registry.bind::<DeckUpgradeV1, _, _>(name, version.min(1), qh, ());
                     state.upgrade = Some(upgrade);
                 }
+                "deck_device_info_v1" if state.wants_device_info => {
+                    let device_info =
+                        registry.bind::<DeckDeviceInfoV1, _, _>(name, version.min(1), qh, ());
+                    state.device_info = Some(device_info);
+                }
                 _ => {}
             }
         }
@@ -955,6 +1021,80 @@ impl Dispatch<DeckUpgradeV1, ()> for State {
         _: &QueueHandle<Self>,
     ) {
         state.on_upgrade_event(&event);
+    }
+}
+
+fn device_state_from_wire(state: WireDeviceState) -> Option<crate::overlay::DeviceState> {
+    match state {
+        WireDeviceState::FactoryDefault => Some(crate::overlay::DeviceState::FactoryDefault),
+        WireDeviceState::SetupPending => Some(crate::overlay::DeviceState::SetupPending),
+        WireDeviceState::Operational => Some(crate::overlay::DeviceState::Operational),
+        WireDeviceState::WifiReconfiguration => {
+            Some(crate::overlay::DeviceState::WifiReconfiguration)
+        }
+        other => {
+            tracing::warn!(?other, "unknown device_state");
+            None
+        }
+    }
+}
+
+fn setup_step_from_wire(state: WireSetupState) -> Option<crate::overlay::SetupStep> {
+    match state {
+        WireSetupState::Idle => Some(crate::overlay::SetupStep::Idle),
+        WireSetupState::ConnectingToWifi => Some(crate::overlay::SetupStep::ConnectingToWifi),
+        WireSetupState::WifiConnectionSuccess => {
+            Some(crate::overlay::SetupStep::WifiConnectionSuccess)
+        }
+        WireSetupState::WifiConnectionFailed => {
+            Some(crate::overlay::SetupStep::WifiConnectionFailed)
+        }
+        WireSetupState::WifiReconfigSuccess => Some(crate::overlay::SetupStep::WifiReconfigSuccess),
+        WireSetupState::DeviceSetupSuccess => Some(crate::overlay::SetupStep::DeviceSetupSuccess),
+        WireSetupState::UnexpectedError => Some(crate::overlay::SetupStep::UnexpectedError),
+        other => {
+            tracing::warn!(?other, "unknown setup_progress state");
+            None
+        }
+    }
+}
+
+impl Dispatch<DeckDeviceInfoV1, ()> for State {
+    fn event(
+        state: &mut Self,
+        _: &DeckDeviceInfoV1,
+        event: deck_device_info_v1::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+        // Unknown enum values are dropped, keeping the last coherent value —
+        // a newer compositor must not push this client into a guessed state.
+        match event {
+            deck_device_info_v1::Event::DeviceState { state: wire } => {
+                if let WEnum::Value(v) = wire
+                    && let Some(v) = device_state_from_wire(v)
+                {
+                    state.pending_device_lifecycle = Some(v);
+                }
+            }
+            deck_device_info_v1::Event::SetupProgress {
+                state: wire,
+                wifi_ssid,
+            } => {
+                if let WEnum::Value(v) = wire
+                    && let Some(step) = setup_step_from_wire(v)
+                {
+                    state.pending_setup_progress = Some((step, wifi_ssid));
+                }
+            }
+            deck_device_info_v1::Event::AccessPoint { ssid, setup_url } => {
+                let ap =
+                    (!ssid.is_empty()).then_some(crate::overlay::AccessPoint { ssid, setup_url });
+                state.pending_access_point = Some(ap);
+            }
+            other => tracing::debug!(?other, "unhandled deck_device_info_v1 event"),
+        }
     }
 }
 

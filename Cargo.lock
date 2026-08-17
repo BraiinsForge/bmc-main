@@ -1324,6 +1324,7 @@ dependencies = [
  "bmc-wasm-protocol",
  "bmc-widget",
  "deck-alarm-v1",
+ "deck-device-info-v1",
  "deck-screen-edge-v1",
  "deck-settings-v1",
  "deck-upgrade-v1",

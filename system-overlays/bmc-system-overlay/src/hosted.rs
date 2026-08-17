@@ -81,9 +81,7 @@ impl HostedOverlay {
         let config_size = config.size;
         let mut client = LayerSurfaceClient::connect(
             &config,
-            overlay.uses_settings(),
-            overlay.uses_alarm(),
-            overlay.uses_upgrade(),
+            crate::surface::ProtocolOptIns::from_overlay(overlay.as_ref()),
         )?;
         let size = resolved_configured_size(config_size, client.size());
         let target = OverlayRenderTarget::new(egl, size.0, size.1)?;
@@ -197,6 +195,17 @@ impl HostedOverlay {
                     .on_alarm_ring(&time, &period, &label, snooze_allowed),
                 Some(AlarmEvent::Stop) => self.overlay.on_alarm_stop(),
                 None => {}
+            }
+        }
+        if self.overlay.uses_device_info() {
+            if let Some(state) = self.client.take_device_state() {
+                self.overlay.on_device_state(state);
+            }
+            if let Some((step, ssid)) = self.client.take_setup_progress() {
+                self.overlay.on_setup_progress(step, &ssid);
+            }
+            if let Some(ap) = self.client.take_access_point() {
+                self.overlay.on_access_point(ap.as_ref());
             }
         }
         for released in self.client.drain_released_buffers() {

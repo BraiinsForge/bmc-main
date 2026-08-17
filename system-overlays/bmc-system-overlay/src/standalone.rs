@@ -45,9 +45,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
 
     let mut client = LayerSurfaceClient::connect(
         &config,
-        overlay.uses_settings(),
-        overlay.uses_alarm(),
-        overlay.uses_upgrade(),
+        crate::surface::ProtocolOptIns::from_overlay(overlay.as_ref()),
     )?;
     let mut size = resolved_configured_size(config.size, client.size());
 
@@ -105,6 +103,7 @@ pub fn run_standalone(mut overlay: Box<dyn SystemOverlay>) -> anyhow::Result<()>
 
         deliver_settings_events(&mut client, &mut *overlay);
         deliver_alarm_events(&mut client, &mut *overlay);
+        deliver_device_info_events(&mut client, &mut *overlay);
 
         let now = Instant::now();
         let tick =
@@ -243,6 +242,21 @@ fn deliver_alarm_events(client: &mut LayerSurfaceClient, overlay: &mut dyn Syste
         }) => overlay.on_alarm_ring(&time, &period, &label, snooze_allowed),
         Some(AlarmEvent::Stop) => overlay.on_alarm_stop(),
         None => {}
+    }
+}
+
+fn deliver_device_info_events(client: &mut LayerSurfaceClient, overlay: &mut dyn SystemOverlay) {
+    if !overlay.uses_device_info() {
+        return;
+    }
+    if let Some(state) = client.take_device_state() {
+        overlay.on_device_state(state);
+    }
+    if let Some((step, ssid)) = client.take_setup_progress() {
+        overlay.on_setup_progress(step, &ssid);
+    }
+    if let Some(ap) = client.take_access_point() {
+        overlay.on_access_point(ap.as_ref());
     }
 }
 

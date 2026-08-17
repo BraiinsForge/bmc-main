@@ -243,6 +243,36 @@ pub enum AlarmEvent {
     Stop,
 }
 
+/// Device lifecycle state reported over `deck_device_info_v1`; mirrors bmc's
+/// `BmcState`. Plain enum so overlays never touch the wire type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeviceState {
+    FactoryDefault,
+    SetupPending,
+    Operational,
+    WifiReconfiguration,
+}
+
+/// Setup-flow step reported over `deck_device_info_v1`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SetupStep {
+    Idle,
+    ConnectingToWifi,
+    WifiConnectionSuccess,
+    WifiConnectionFailed,
+    WifiReconfigSuccess,
+    DeviceSetupSuccess,
+    UnexpectedError,
+}
+
+/// Setup access point reported over `deck_device_info_v1`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccessPoint {
+    pub ssid: String,
+    /// Address the setup wizard is reached at, e.g. `http://10.0.0.21/`.
+    pub setup_url: String,
+}
+
 /// Static layer-surface configuration, applied once at map time.
 #[derive(Debug, Clone)]
 pub struct LayerConfig {
@@ -376,6 +406,26 @@ pub trait SystemOverlay {
     }
     /// Receive one coherent compositor upgrade snapshot before `tick`.
     fn on_upgrade_state(&mut self, _snapshot: UpgradeSnapshot) {}
+
+    /// Whether this overlay binds the `deck_device_info_v1` state feed.
+    /// `false` (default) means the framework neither binds it nor delivers
+    /// device-info events to this overlay.
+    fn uses_device_info(&self) -> bool {
+        false
+    }
+
+    /// Device lifecycle state reported by the compositor, delivered before
+    /// `tick`. Replayed on bind, so the current state arrives even when bmc
+    /// broadcast it before this overlay connected.
+    fn on_device_state(&mut self, _state: DeviceState) {}
+
+    /// Setup-flow transition reported by the compositor, delivered before
+    /// `tick`. `wifi_ssid` is empty unless the step is `ConnectingToWifi`.
+    fn on_setup_progress(&mut self, _step: SetupStep, _wifi_ssid: &str) {}
+
+    /// Setup access point reported by the compositor, delivered before `tick`.
+    /// `None` means the AP is down.
+    fn on_access_point(&mut self, _ap: Option<&AccessPoint>) {}
 
     /// Opt in to screen-edge reveal. `None` (default) means a normal overlay
     /// whose visibility is driven by [`TickOutcome::visible`]. `Some(edge)` arms

@@ -36,9 +36,9 @@ pub use gpu::{OverlayRenderTarget, wait_for_gpu};
 pub use hosted::HostedOverlay;
 pub use icon::register_icon;
 pub use overlay::{
-    AlarmEvent, AlarmRequest, DownloadProgress, InputRegion, LayerConfig, ScreenEdge, SettingsCaps,
-    SettingsRequest, SystemOverlay, TickOutcome, TouchEvent, UpgradeKind, UpgradePhase,
-    UpgradeSnapshot, UpgradeState,
+    AccessPoint, AlarmEvent, AlarmRequest, DeviceState, DownloadProgress, InputRegion, LayerConfig,
+    ScreenEdge, SettingsCaps, SettingsRequest, SetupStep, SystemOverlay, TickOutcome, TouchEvent,
+    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
 };
 pub use standalone::run_standalone;
 pub use surface::LayerSurfaceClient;
