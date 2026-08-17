@@ -250,6 +250,19 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    fn bind_respawned_pid(
+        &self,
+        instance_id: &InstanceId,
+        pid: u32,
+    ) -> Result<(), CompositorError> {
+        tracing::info!(
+            "MockCompositor: bind_respawned_pid '{}' pid={}",
+            instance_id,
+            pid
+        );
+        Ok(())
+    }
+
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
         tracing::info!("MockCompositor: unregister widget '{}'", instance_id);
         self.connected_widgets_tx.send_modify(|set| {

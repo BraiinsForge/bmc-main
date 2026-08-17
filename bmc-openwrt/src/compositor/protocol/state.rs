@@ -50,6 +50,9 @@ pub struct WidgetData {
     /// `get_widget_surface` time, and (2) match Slint render surfaces from
     /// the rendering connection sharing the same process.
     pub pid: Option<u32>,
+    /// A pid whose exit was reported before anything bound it,
+    /// so that a later bind cannot take it.
+    exited_before_bind: Option<u32>,
 }
 
 /// A widget connection that arrived before `set_widget_pid` registered
@@ -196,6 +199,7 @@ impl DeckWidgetProtocolState {
                 protocol_surface: None,
                 wl_surface: None,
                 pid: None,
+                exited_before_bind: None,
             },
         );
     }
@@ -217,6 +221,13 @@ impl DeckWidgetProtocolState {
             );
             return;
         };
+        if widget.exited_before_bind == Some(pid) {
+            widget.exited_before_bind = None;
+            tracing::warn!(
+                "set_widget_pid for {instance_id}: pid={pid} exited before this bind; leaving the instance unbound for its respawn"
+            );
+            return;
+        }
         widget.pid = Some(pid);
 
         // Check if this widget already connected before its pid was registered.
@@ -246,6 +257,40 @@ impl DeckWidgetProtocolState {
                 .clone();
             self.emit_initial_state(instance_id, &surface);
         }
+    }
+
+    /// Bind a crash-respawned process, but only while the instance is still
+    /// unbound — which is the state [`Self::clear_pid_for_instance`] leaves it
+    /// in, and the state anything that re-registers the instance undoes.
+    ///
+    /// Returns whether the bind happened. A respawn is announced through a
+    /// channel the coordinator drains separately, so a scene edit or a widget
+    /// reload can re-register and re-bind the instance while the announcement
+    /// is still queued. Binding then would replace a live pid with a dead one,
+    /// and the live process's connection — buffered by pid — would never be
+    /// resolved by anything.
+    pub fn bind_respawned_pid(&mut self, instance_id: &InstanceId, pid: u32) -> bool {
+        // Warn, unlike the superseded case below: no later call binds this pid,
+        // so the respawned process can never reach a surface.
+        let Some(widget) = self.widgets.get_mut(instance_id) else {
+            tracing::warn!(
+                "bind_respawned_pid: instance {instance_id} is gone; pid={pid} is left with nothing to resolve it"
+            );
+            self.purge_pending_connections(instance_id, pid);
+            return false;
+        };
+        if let Some(bound) = widget.pid {
+            tracing::debug!(
+                "bind_respawned_pid: instance {instance_id} is already bound to pid={bound}; dropping the superseded bind of pid={pid}"
+            );
+            self.purge_pending_connections(instance_id, pid);
+            return false;
+        }
+        // The respawn postdates the exit that recorded any dead pid,
+        // so a recycled pid belongs to the live process it announces.
+        widget.exited_before_bind = None;
+        self.set_widget_pid(instance_id, pid);
+        true
     }
 
     /// Buffer a widget connection whose pid hasn't been registered yet.
@@ -362,6 +407,14 @@ impl DeckWidgetProtocolState {
             );
             return None;
         };
+        if widget.pid.is_none() {
+            widget.exited_before_bind = Some(expected_pid);
+            tracing::debug!(
+                "clear_pid_for_instance: {instance_id} is unbound; recording pid={expected_pid} as dead"
+            );
+            self.purge_pending_connections(instance_id, expected_pid);
+            return None;
+        }
         if widget.pid != Some(expected_pid) {
             tracing::debug!(
                 "clear_pid_for_instance: ignoring stale clear for instance {instance_id}: expected pid {expected_pid}, current pid {:?}",
@@ -379,8 +432,9 @@ impl DeckWidgetProtocolState {
         Some(expected_pid)
     }
 
-    /// Drop buffered connections of a pid whose instance is about to stop
-    /// resolving it — whether the instance ends or only its process does.
+    /// Drop buffered connections of a pid nothing will resolve: the instance
+    /// ends, only its process does, or the bind that would have claimed the
+    /// pid is refused.
     fn purge_pending_connections(&mut self, instance_id: &InstanceId, pid: u32) {
         let before = self.pending_connections.len();
         self.pending_connections.retain(|pc| pc.pid != pid);
@@ -967,18 +1021,99 @@ mod tests {
             "the stored config must outlive the crashed process"
         );
 
-        state.set_widget_pid(&"alpha".to_owned(), 200);
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), 200));
 
         assert_eq!(
             state.widgets["alpha"].pid,
             Some(200),
-            "the respawn must bind through set_widget_pid alone"
+            "the respawn must bind through bind_respawned_pid alone"
         );
         assert_eq!(
             state.instance_id_for_surface_by_pid(Some(200)),
             Some(&"alpha".to_owned()),
             "the respawned process must resolve to its instance"
         );
+    }
+
+    /// The respawn announcement is drained separately from the scene edits and
+    /// reload signals that also re-spawn an instance, so it can arrive after one
+    /// of them has already bound a newer process. Binding then would point the
+    /// record at a dead pid and leave the live process's buffered connection
+    /// with nothing left to resolve it.
+    #[test]
+    fn a_superseded_respawn_bind_is_ignored() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+
+        register_with_pid(&mut state, "alpha", 300);
+
+        assert!(
+            !state.bind_respawned_pid(&"alpha".to_owned(), 200),
+            "a respawn must not bind over an instance that is already bound"
+        );
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(300),
+            "the live pid must survive the stale respawn"
+        );
+    }
+
+    /// The coordinator binds the pid only once `spawn_widget` has returned it,
+    /// so a process that exits inside that window is reported against a record
+    /// nothing has bound yet. Binding the dead pid afterwards would leave every
+    /// respawn dropped as superseded, and the cell blank for good.
+    #[test]
+    fn an_exit_racing_the_initial_bind_leaves_the_instance_respawnable() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.set_widget_pid(&"alpha".to_owned(), 100);
+
+        assert_eq!(
+            state.widgets["alpha"].pid, None,
+            "a pid already reported dead must not bind"
+        );
+
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), 200));
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(200),
+            "supervision's respawn must still find the instance bindable"
+        );
+    }
+
+    /// The kernel is free to hand the respawn the pid
+    /// the exited process just released.
+    #[test]
+    fn a_respawn_supersedes_a_recorded_premature_exit() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), 100));
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(100),
+            "a recycled pid belongs to the live process the respawn announced"
+        );
+    }
+
+    /// A stop between the respawn and its announcement ends the instance. The
+    /// bind must then be a no-op rather than the `set_widget_pid` assert firing.
+    #[test]
+    fn a_respawn_bind_for_a_stopped_instance_is_ignored() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.unregister_widget(&"alpha".to_owned());
+
+        assert!(
+            !state.bind_respawned_pid(&"alpha".to_owned(), 200),
+            "there is no instance left to bind to"
+        );
+        assert!(!state.widgets.contains_key("alpha"));
     }
 
     #[test]

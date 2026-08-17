@@ -303,9 +303,20 @@ pub trait Compositor: Send + Sync {
     /// instance must be ignored.
     ///
     /// The instance stays registered — only the process is detached,
-    /// so a respawn re-binds through `set_widget_pid` alone.
+    /// so a respawn re-binds through [`Compositor::bind_respawned_pid`].
     /// `unregister_widget` is what ends an instance.
     fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
+
+    /// Bind a crash-respawned process to the instance `clear_pid` detached.
+    ///
+    /// Unlike `set_widget_pid`, this must take effect only while the instance
+    /// is still unbound. The respawn is announced asynchronously, so by the
+    /// time it arrives a scene edit or a widget reload may already have
+    /// re-registered the instance and bound a newer process; binding then
+    /// would point the record at a dead pid and strand the live one's
+    /// connection in the pending-connection buffer forever.
+    fn bind_respawned_pid(&self, instance_id: &InstanceId, pid: u32)
+    -> Result<(), CompositorError>;
 
     /// Set the active scene layout (visible widgets and positions).
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError>;

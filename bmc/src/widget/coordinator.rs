@@ -360,7 +360,7 @@ pub fn start_widget_event_listener(
                     }
                 }
                 WidgetEvent::Respawned { instance_id, pid } => {
-                    if let Err(e) = compositor.set_widget_pid(&instance_id, pid) {
+                    if let Err(e) = compositor.bind_respawned_pid(&instance_id, pid) {
                         warn!(
                             widget_id = %instance_id,
                             pid,
@@ -369,8 +369,18 @@ pub fn start_widget_event_listener(
                         );
                     }
                 }
+                // Unguarded, unlike the two arms above: an instance re-registered
+                // while this was queued cannot be told apart from the one it was
+                // emitted for, and it takes an uninstall plus a reinstall to
+                // construct that.
                 WidgetEvent::Abandoned { instance_id } => {
-                    let _ = compositor.unregister_widget(&instance_id);
+                    if let Err(e) = compositor.unregister_widget(&instance_id) {
+                        warn!(
+                            widget_id = %instance_id,
+                            error = %e,
+                            "failed to end the registration of an abandoned widget"
+                        );
+                    }
                 }
             }
         }

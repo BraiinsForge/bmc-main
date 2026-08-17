@@ -2176,6 +2176,18 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
                 .set_widget_pid(&instance_id, pid);
             let _ = ack.send(());
         }
+        CompositorCommand::BindRespawnedPid {
+            instance_id,
+            pid,
+            ack,
+        } => {
+            tracing::debug!("Binding respawned pid {} to widget {}", pid, instance_id);
+            state
+                .compositor
+                .deck_widget_state
+                .bind_respawned_pid(&instance_id, pid);
+            let _ = ack.send(());
+        }
         CompositorCommand::UnregisterWidget { instance_id } => {
             tracing::debug!("Unregistering widget {}", instance_id);
             state.compositor.unregister_widget(&instance_id);
@@ -2597,6 +2609,24 @@ impl Compositor for EglCompositor {
         ack_rx
             .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
             .map_err(|e| CompositorError::ThreadError(format!("set_widget_pid ack: {e}")))
+    }
+
+    fn bind_respawned_pid(
+        &self,
+        instance_id: &InstanceId,
+        pid: u32,
+    ) -> Result<(), CompositorError> {
+        let (ack_tx, ack_rx) = flume::bounded(1);
+        self.command_tx
+            .send(CompositorCommand::BindRespawnedPid {
+                instance_id: instance_id.clone(),
+                pid,
+                ack: ack_tx,
+            })
+            .map_err(|e| CompositorError::SendError(e.to_string()))?;
+        ack_rx
+            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
+            .map_err(|e| CompositorError::ThreadError(format!("bind_respawned_pid ack: {e}")))
     }
 
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {

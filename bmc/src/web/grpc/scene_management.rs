@@ -1780,6 +1780,14 @@ mod tests {
             Ok(())
         }
 
+        fn bind_respawned_pid(
+            &self,
+            _instance_id: &crate::compositor::InstanceId,
+            _pid: u32,
+        ) -> Result<(), crate::compositor::CompositorError> {
+            Ok(())
+        }
+
         fn unregister_widget(
             &self,
             _instance_id: &crate::compositor::InstanceId,
