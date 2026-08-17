@@ -317,6 +317,7 @@ fn test_slot_with_factory(
 fn online_snapshot(ssid: &str, last_octet: u8, signal_dbm: i32) -> Snapshot {
     Snapshot {
         ipv4: Some(Ipv4Addr::new(10, 0, 0, last_octet)),
+        station_ipv4: Some(Ipv4Addr::new(10, 0, 0, last_octet)),
         station_ssid: Some(ssid.to_owned()),
         wifi_signal_dbm: Some(signal_dbm),
     }

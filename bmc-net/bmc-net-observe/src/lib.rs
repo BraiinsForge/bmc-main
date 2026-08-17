@@ -26,7 +26,8 @@
 //! reconfigures networking, and it pulls no async runtime.
 //!
 //! [`probe`] does one pass (a `getifaddrs(3)` walk, one `uci -q show wireless`
-//! spawn, one `/proc/net/wireless` read) and returns a [`Snapshot`]; callers
+//! spawn, one `ubus call network.wireless status` spawn for the netdev-to-mode
+//! mapping, one `/proc/net/wireless` read) and returns a [`Snapshot`]; callers
 //! that want a single field can use [`hostname`], [`primary_ipv4`],
 //! [`configured_station_ssid`], or [`wifi_signal_dbm`].
 
@@ -39,7 +40,7 @@ const HOSTNAME_PATH: &str = "/proc/sys/kernel/hostname";
 const PROC_NET_WIRELESS_PATH: &str = "/proc/net/wireless";
 
 /// WiFi operating mode for a network interface.
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum WifiMode {
     Ap,
     Station,
@@ -85,10 +86,10 @@ fn interface_ipv4(iface: &Interface) -> Option<Ipv4Addr> {
 /// order so the result is deterministic and does not depend on raw
 /// `getifaddrs(3)` enumeration order.
 #[must_use]
-fn pick_interface<'a>(
+fn ranked_candidates<'a>(
     interfaces: &'a [Interface],
     modes: &HashMap<String, WifiMode>,
-) -> Option<&'a str> {
+) -> Vec<(&'a str, WifiMode)> {
     let mut candidates: Vec<(&str, WifiMode)> = interfaces
         .iter()
         .filter_map(|iface| {
@@ -99,22 +100,61 @@ fn pick_interface<'a>(
         .collect();
     // Station, then unknown, then AP; wlan* before others, then lexicographic.
     candidates.sort_by_key(|(name, mode)| (mode.rank(), !name.starts_with("wlan"), *name));
-    candidates.first().map(|(name, _)| *name)
+    candidates
 }
 
-/// Address of the interface [`pick_interface`] selects. Pure, for testing.
 #[must_use]
-fn pick_ipv4(interfaces: &[Interface], modes: &HashMap<String, WifiMode>) -> Option<Ipv4Addr> {
-    let name = pick_interface(interfaces, modes)?;
+fn pick_interface<'a>(
+    interfaces: &'a [Interface],
+    modes: &HashMap<String, WifiMode>,
+) -> Option<&'a str> {
+    ranked_candidates(interfaces, modes)
+        .first()
+        .map(|(name, _)| *name)
+}
+
+/// Like [`pick_interface`] but never an AP-mode interface: the setup AP's own
+/// address is not an uplink, and a setup flow watching for "the device got an
+/// IP" must not trigger on it. Unknown-mode interfaces stay eligible, since the
+/// wireless status cannot classify a non-WiFi uplink and it still counts.
+#[must_use]
+fn pick_station_interface<'a>(
+    interfaces: &'a [Interface],
+    modes: &HashMap<String, WifiMode>,
+) -> Option<&'a str> {
+    ranked_candidates(interfaces, modes)
+        .into_iter()
+        .find(|(_, mode)| *mode != WifiMode::Ap)
+        .map(|(name, _)| name)
+}
+
+/// Routable address of a named interface, if it has one.
+#[must_use]
+fn ipv4_of(interfaces: &[Interface], name: &str) -> Option<Ipv4Addr> {
     interfaces
         .iter()
         .find(|iface| iface.name == name)
         .and_then(interface_ipv4)
 }
 
+/// Address of the interface [`pick_interface`] selects. Pure, for testing.
+#[must_use]
+fn pick_ipv4(interfaces: &[Interface], modes: &HashMap<String, WifiMode>) -> Option<Ipv4Addr> {
+    ipv4_of(interfaces, pick_interface(interfaces, modes)?)
+}
+
+/// Address of the interface [`pick_station_interface`] selects. Pure, for
+/// testing.
+#[must_use]
+fn pick_station_ipv4(
+    interfaces: &[Interface],
+    modes: &HashMap<String, WifiMode>,
+) -> Option<Ipv4Addr> {
+    ipv4_of(interfaces, pick_station_interface(interfaces, modes)?)
+}
+
 /// One `wifi-iface` section parsed from `uci show wireless` output.
 struct WifiIfaceSection {
-    ifname: Option<String>,
     mode: WifiMode,
     ssid: Option<String>,
     disabled: bool,
@@ -144,7 +184,6 @@ fn wifi_iface_sections_from_uci_show(output: &str) -> Vec<WifiIfaceSection> {
             None if value == "wifi-iface" => sections.push(RawSection {
                 id: id.to_owned(),
                 section: WifiIfaceSection {
-                    ifname: None,
                     mode: WifiMode::Unknown,
                     ssid: None,
                     disabled: false,
@@ -156,7 +195,6 @@ fn wifi_iface_sections_from_uci_show(output: &str) -> Vec<WifiIfaceSection> {
                     continue;
                 };
                 match option {
-                    "ifname" => raw.section.ifname = Some(value.to_owned()),
                     "mode" => {
                         raw.section.mode = match value {
                             "ap" => WifiMode::Ap,
@@ -190,13 +228,60 @@ fn station_ssid_from_sections(sections: &[WifiIfaceSection]) -> Option<String> {
         })
 }
 
-/// Map each WiFi interface name to its UCI-configured mode from parsed sections.
+/// Map each WiFi netdev to its mode, from `ubus call network.wireless status`.
+///
+/// The uci sections cannot answer this: `wifi-iface.ifname` is optional and
+/// nothing writes it, so netifd names the netdev and only its runtime status
+/// reports which name went with which mode.
+///
+/// Parsed as a `Value` rather than into a struct because the real output
+/// repeats keys — a station interface carries `"mode"` twice — which a derived
+/// `Deserialize` rejects outright. The same output carries the WiFi PSK, so it
+/// is never logged, nor quoted into an error.
 #[must_use]
-fn modes_map_from_sections(sections: &[WifiIfaceSection]) -> HashMap<String, WifiMode> {
-    sections
-        .iter()
-        .filter_map(|s| s.ifname.as_ref().map(|name| (name.clone(), s.mode)))
-        .collect()
+fn modes_map_from_ubus(output: &str) -> HashMap<String, WifiMode> {
+    let Ok(radios) = serde_json::from_str::<serde_json::Value>(output) else {
+        tracing::warn!("wireless status is not valid JSON");
+        return HashMap::new();
+    };
+    let mut modes = HashMap::new();
+    for radio in radios.as_object().into_iter().flatten().map(|(_, v)| v) {
+        let interfaces = radio
+            .get("interfaces")
+            .and_then(serde_json::Value::as_array);
+        for iface in interfaces.into_iter().flatten() {
+            let Some(name) = iface.get("ifname").and_then(serde_json::Value::as_str) else {
+                continue;
+            };
+            let mode = iface
+                .get("config")
+                .and_then(|config| config.get("mode"))
+                .and_then(serde_json::Value::as_str);
+            modes.insert(
+                name.to_owned(),
+                match mode {
+                    Some("ap") => WifiMode::Ap,
+                    Some("sta") => WifiMode::Station,
+                    _ => WifiMode::Unknown,
+                },
+            );
+        }
+    }
+    modes
+}
+
+/// Raw `ubus call network.wireless status` output, or `None` where there is no
+/// ubus to ask — a host build, or a device whose wireless stack is not up.
+/// Callers then see an empty mode map, which ranks every interface `Unknown`.
+fn ubus_wireless_status() -> Option<String> {
+    let output = std::process::Command::new("ubus")
+        .args(["call", "network.wireless", "status"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    String::from_utf8(output.stdout).ok()
 }
 
 /// Run `uci -q show wireless` once and return the parsed sections, or an empty
@@ -238,6 +323,9 @@ fn wifi_signal_from_proc_net_wireless(content: &str) -> Option<i32> {
 pub struct Snapshot {
     /// Primary routable IPv4, or `None` when offline (see `pick_ipv4`).
     pub ipv4: Option<Ipv4Addr>,
+    /// Like `ipv4` but never the setup AP's own address, so a setup flow can
+    /// watch for a real uplink (see `pick_station_ipv4`).
+    pub station_ipv4: Option<Ipv4Addr>,
     /// First enabled station-mode SSID from the saved UCI wireless config.
     pub station_ssid: Option<String>,
     /// Signal level of the first interface in `/proc/net/wireless`.
@@ -249,11 +337,13 @@ pub struct Snapshot {
 fn snapshot_from(
     interfaces: &[Interface],
     sections: &[WifiIfaceSection],
+    wireless_status: Option<&str>,
     proc_net_wireless: Option<&str>,
 ) -> Snapshot {
-    let modes = modes_map_from_sections(sections);
+    let modes = wireless_status.map(modes_map_from_ubus).unwrap_or_default();
     Snapshot {
         ipv4: pick_ipv4(interfaces, &modes),
+        station_ipv4: pick_station_ipv4(interfaces, &modes),
         station_ssid: station_ssid_from_sections(sections),
         wifi_signal_dbm: proc_net_wireless.and_then(wifi_signal_from_proc_net_wireless),
     }
@@ -268,10 +358,12 @@ fn snapshot_from(
 pub fn probe() -> Option<Snapshot> {
     let interfaces = get_if_addrs::get_if_addrs().ok()?;
     let sections = uci_show_wireless_sections();
+    let wireless_status = ubus_wireless_status();
     let proc_net_wireless = std::fs::read_to_string(PROC_NET_WIRELESS_PATH).ok();
     Some(snapshot_from(
         &interfaces,
         &sections,
+        wireless_status.as_deref(),
         proc_net_wireless.as_deref(),
     ))
 }
@@ -289,7 +381,9 @@ pub fn hostname() -> Option<String> {
 #[must_use]
 pub fn primary_interface() -> Option<String> {
     let interfaces = get_if_addrs::get_if_addrs().ok()?;
-    let modes = modes_map_from_sections(&uci_show_wireless_sections());
+    let modes = ubus_wireless_status()
+        .map(|status| modes_map_from_ubus(&status))
+        .unwrap_or_default();
     pick_interface(&interfaces, &modes).map(ToOwned::to_owned)
 }
 
@@ -297,7 +391,9 @@ pub fn primary_interface() -> Option<String> {
 #[must_use]
 pub fn primary_ipv4() -> Option<Ipv4Addr> {
     let interfaces = get_if_addrs::get_if_addrs().ok()?;
-    let modes = modes_map_from_sections(&uci_show_wireless_sections());
+    let modes = ubus_wireless_status()
+        .map(|status| modes_map_from_ubus(&status))
+        .unwrap_or_default();
     pick_ipv4(&interfaces, &modes)
 }
 
@@ -318,6 +414,33 @@ pub fn wifi_signal_dbm() -> Option<i32> {
 mod tests {
     use super::*;
     use get_if_addrs::Ifv4Addr;
+
+    /// A real `ubus call network.wireless status` reply, secrets replaced.
+    /// `mode` is repeated because the device repeats it; a derived
+    /// `Deserialize` would reject that, so the parser must not use one.
+    const UBUS_STATION: &str = r#"{
+        "radio0": {
+            "up": true,
+            "config": { "channel": "1", "band": "2g" },
+            "interfaces": [
+                {
+                    "section": "@wifi-iface[2]",
+                    "ifname": "wlan0",
+                    "config": {
+                        "encryption": "psk2",
+                        "key": "redacted",
+                        "mode": "sta",
+                        "ssid": "Office WiFi",
+                        "disabled": false,
+                        "mode": "sta",
+                        "network": [ "wifi_sta" ]
+                    },
+                    "vlans": [],
+                    "stations": []
+                }
+            ]
+        }
+    }"#;
 
     fn v4(name: &str, ip: Ipv4Addr) -> Interface {
         Interface {
@@ -514,7 +637,6 @@ Inter-| sta-|   Quality        |   Discarded packets               | Missed | WE
         let interfaces = vec![v4("wlan0", Ipv4Addr::new(10, 0, 0, 5))];
         let uci = "\
 wireless.sta=wifi-iface
-wireless.sta.ifname='wlan0'
 wireless.sta.mode='sta'
 wireless.sta.ssid='Office WiFi'
 ";
@@ -525,9 +647,10 @@ header
  wlan0: 0000   70.  -52.  -256        0      0      0      0      0        0
 ";
         assert_eq!(
-            snapshot_from(&interfaces, &sections, Some(wireless)),
+            snapshot_from(&interfaces, &sections, Some(UBUS_STATION), Some(wireless)),
             Snapshot {
                 ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+                station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
                 station_ssid: Some("Office WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
             }
@@ -537,12 +660,72 @@ header
     #[test]
     fn snapshot_from_is_all_none_when_offline_and_unconfigured() {
         assert_eq!(
-            snapshot_from(&[], &[], None),
+            snapshot_from(&[], &[], None, None),
             Snapshot {
                 ipv4: None,
+                station_ipv4: None,
                 station_ssid: None,
                 wifi_signal_dbm: None,
             }
         );
+    }
+
+    #[test]
+    fn ubus_status_maps_the_netdev_to_its_mode() {
+        // The uci sections cannot: nothing writes `wifi-iface.ifname`, so a
+        // map keyed on it comes back empty and every mode reads Unknown.
+        let modes = modes_map_from_ubus(UBUS_STATION);
+        assert_eq!(modes.get("wlan0"), Some(&WifiMode::Station));
+    }
+
+    #[test]
+    fn a_station_address_is_none_while_only_the_setup_ap_holds_one() {
+        // `ipv4` still reports it, so the offline chip stays hidden while the
+        // AP serves clients; the AP's own address is simply not an uplink.
+        let ubus = r#"{"radio0":{"interfaces":[{"ifname":"wlan0","config":{"mode":"ap"}}]}}"#;
+        let modes = modes_map_from_ubus(ubus);
+        let interfaces = vec![v4("wlan0", Ipv4Addr::new(192, 168, 8, 1))];
+        assert_eq!(
+            pick_ipv4(&interfaces, &modes),
+            Some(Ipv4Addr::new(192, 168, 8, 1))
+        );
+        assert_eq!(pick_station_ipv4(&interfaces, &modes), None);
+    }
+
+    #[test]
+    fn an_ap_interface_is_kept_out_of_the_station_address() {
+        let ubus = r#"{"radio0":{"interfaces":[
+            {"ifname":"wlan0","config":{"mode":"ap"}},
+            {"ifname":"wlan1","config":{"mode":"sta"}}
+        ]}}"#;
+        let modes = modes_map_from_ubus(ubus);
+        let interfaces = vec![
+            v4("wlan0", Ipv4Addr::new(10, 0, 0, 21)),
+            v4("wlan1", Ipv4Addr::new(192, 168, 1, 5)),
+        ];
+        assert_eq!(
+            pick_station_ipv4(&interfaces, &modes),
+            Some(Ipv4Addr::new(192, 168, 1, 5))
+        );
+    }
+
+    #[test]
+    fn an_unknown_mode_interface_still_counts_as_a_station_address() {
+        // `uci`/`ubus` cannot classify a non-WiFi uplink, and it is still one.
+        let ubus = r#"{"radio0":{"interfaces":[{"ifname":"wlan0","config":{"mode":"ap"}}]}}"#;
+        let modes = modes_map_from_ubus(ubus);
+        let interfaces = vec![
+            v4("wlan0", Ipv4Addr::new(192, 168, 8, 1)),
+            v4("eth0", Ipv4Addr::new(10, 0, 0, 7)),
+        ];
+        assert_eq!(
+            pick_station_ipv4(&interfaces, &modes),
+            Some(Ipv4Addr::new(10, 0, 0, 7))
+        );
+    }
+
+    #[test]
+    fn unparsable_wireless_status_leaves_every_mode_unknown() {
+        assert!(modes_map_from_ubus("not json").is_empty());
     }
 }

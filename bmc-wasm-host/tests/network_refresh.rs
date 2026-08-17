@@ -26,6 +26,7 @@ use bmc_wasm_host::slot::widget_network_info;
 fn online_snapshot(signal_dbm: i32) -> Snapshot {
     Snapshot {
         ipv4: Some(Ipv4Addr::new(10, 0, 0, 7)),
+        station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 7)),
         station_ssid: Some("deck-net".to_owned()),
         wifi_signal_dbm: Some(signal_dbm),
     }
@@ -69,6 +70,7 @@ fn ssid_or_ip_change_projects_differently() {
 fn offline_projects_empty_strings() {
     let offline = Snapshot {
         ipv4: None,
+        station_ipv4: None,
         station_ssid: None,
         wifi_signal_dbm: None,
     };

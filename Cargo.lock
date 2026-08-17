@@ -985,6 +985,8 @@ name = "bmc-net-observe"
 version = "0.1.0"
 dependencies = [
  "get_if_addrs",
+ "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -1330,6 +1332,7 @@ dependencies = [
  "deck-upgrade-v1",
  "glow 0.16.0",
  "libc",
+ "serde_json",
  "taffy",
  "tracing",
  "wayland-backend",

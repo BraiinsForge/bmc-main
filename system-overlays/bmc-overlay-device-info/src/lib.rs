@@ -363,6 +363,7 @@ mod tests {
         Box::new(StaticEnv {
             snapshot: Some(Snapshot {
                 ipv4: ip,
+                station_ipv4: ip,
                 station_ssid: None,
                 wifi_signal_dbm: None,
             }),

@@ -179,11 +179,13 @@ mod tests {
         let state = ProbeState::default();
         state.publish(Snapshot {
             ipv4: None,
+            station_ipv4: None,
             station_ssid: None,
             wifi_signal_dbm: None,
         });
         state.publish(Snapshot {
             ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+            station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ssid: Some("Office WiFi".to_owned()),
             wifi_signal_dbm: Some(-52),
         });
@@ -191,6 +193,7 @@ mod tests {
             state.read_if_changed(None).map(|update| update.snapshot),
             Some(Snapshot {
                 ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+                station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
                 station_ssid: Some("Office WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
             })
@@ -211,6 +214,7 @@ mod tests {
         let state = ProbeState::default();
         let snapshot = Snapshot {
             ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+            station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ssid: Some("Office WiFi".to_owned()),
             wifi_signal_dbm: Some(-52),
         };
@@ -229,11 +233,13 @@ mod tests {
         let state = ProbeState::default();
         let offline = Snapshot {
             ipv4: None,
+            station_ipv4: None,
             station_ssid: None,
             wifi_signal_dbm: None,
         };
         let online = Snapshot {
             ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
+            station_ipv4: Some(Ipv4Addr::new(10, 0, 0, 5)),
             station_ssid: Some("Office WiFi".to_owned()),
             wifi_signal_dbm: Some(-52),
         };

@@ -295,6 +295,7 @@ mod tests {
             env: Box::new(StaticEnv {
                 snapshot: Some(Snapshot {
                     ipv4: None,
+                    station_ipv4: None,
                     station_ssid: None,
                     wifi_signal_dbm: None,
                 }),
@@ -317,6 +318,7 @@ mod tests {
             env: Box::new(StaticEnv {
                 snapshot: Some(Snapshot {
                     ipv4: None,
+                    station_ipv4: None,
                     station_ssid: None,
                     wifi_signal_dbm: None,
                 }),

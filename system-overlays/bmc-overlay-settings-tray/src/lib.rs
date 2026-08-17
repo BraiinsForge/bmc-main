@@ -1196,6 +1196,7 @@ mod view_tests {
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
                 ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
+                station_ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
                 station_ssid: Some("Braiins-WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
             }),
@@ -1225,6 +1226,7 @@ mod view_tests {
                         version: SnapshotVersion::FIRST,
                         snapshot: Snapshot {
                             ipv4: None,
+                            station_ipv4: None,
                             station_ssid: Some("Braiins-WiFi".to_owned()),
                             wifi_signal_dbm: None,
                         },
@@ -1271,6 +1273,7 @@ mod view_tests {
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
                 ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
+                station_ipv4: Some(Ipv4Addr::new(192, 168, 1, 42)),
                 station_ssid: Some("Braiins-WiFi".to_owned()),
                 wifi_signal_dbm: Some(-57),
             }),
@@ -1296,6 +1299,7 @@ mod view_tests {
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
                 ipv4: Some(Ipv4Addr::new(192, 168, 1, 43)),
+                station_ipv4: Some(Ipv4Addr::new(192, 168, 1, 43)),
                 station_ssid: Some("Braiins-WiFi".to_owned()),
                 wifi_signal_dbm: Some(-52),
             }),
@@ -1319,6 +1323,7 @@ mod view_tests {
         overlay.env = Box::new(StaticEnv {
             snapshot: Some(Snapshot {
                 ipv4: None,
+                station_ipv4: None,
                 station_ssid: None,
                 wifi_signal_dbm: Some(-76),
             }),
