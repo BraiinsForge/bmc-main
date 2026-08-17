@@ -93,6 +93,18 @@ widget cannot distinguish them today.
 The user might be changing multiple parameters subsequently. It is therefore advisable to the widget to debounce web
 fetches or other expensive operations that are caused by parameter changes.
 
+### Crash supervision
+
+The widget manager owns every widget child process in a dedicated actor task and awaits its exit directly. A process
+that exits on its own is respawned automatically: the delay starts at 1 second, doubles per crash up to 30 seconds, and
+resets after the process stays up for 60 seconds. The instance's compositor registration and stored configuration
+survive the crash, so the respawned process attaches through the same configure replay as the first spawn; its new pid
+is re-bound via `set_widget_pid`, and a connection racing past that registration is buffered as usual.
+
+An external stop always wins: stopping a widget (scene edit, upgrade preparation, shutdown) cancels a pending respawn,
+and a stopped widget is never respawned. A widget whose type has left the registry (uninstalled) is not respawned either
+— its grid cell stays empty, exactly as if it had never spawned.
+
 ## Constraints
 
 - The widget process must block on `configure_done` before rendering; without `configure`, `width` and `height` are
