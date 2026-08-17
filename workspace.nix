@@ -454,6 +454,7 @@ let
   }));
 
   specialPackages = {
+    gallery-deps = bmc.profiles.gallery.deps;
     workspace-deps = bmc.profiles.fast.deps;
     workspace-deps-wasm-widgets = bmc.profiles.wasm-widgets-debug.deps;
     inherit (bmc.profiles.ci) build clippy test nextest;
