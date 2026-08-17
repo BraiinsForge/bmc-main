@@ -8,7 +8,8 @@ so the framework's egui version stays clear of the workspace's.
 just gallery::run                                        # the window
 just gallery::hot                                        # the window, reloading scenes as you edit
 just gallery::check                                      # type-check scenes + launcher, no GL
-just gallery::build                                      # the above, plus the codegen CI runs
+just gallery::build                                      # the above, plus scene codegen and linking
+just gallery::ci                                         # the build, lints and policy checks CI runs
 
 just gallery::preview 'animation::Easing Curves' easing  # one scene at its declared knobs
 just gallery::knobs 'overlays::Settings Tray'            # what a recipe can set

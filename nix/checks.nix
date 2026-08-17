@@ -236,6 +236,29 @@ in
     checks = [ "bans" "sources" ];
   };
 
+  gallery-lints = pkgs.runCommand "gallery-lints"
+    {
+      nativeBuildInputs = [ pkgs.python3 ];
+      src = lib.fileset.toSource {
+        root = ../.;
+        fileset = lib.fileset.unions (
+          map (path: ../. + "/${path}") profiles.gallery.clippy.srcFiles
+          ++ [ ../scripts/check_gallery_lints.py ]
+        );
+      };
+    } ''
+    cd $src
+    python3 scripts/check_gallery_lints.py
+    touch $out
+  '';
+
+  # The gallery never ships to the device and has its own dependency graph,
+  # so the device workspace's multiple-version bans and skip list do not apply.
+  gallery-deny = profiles.gallery.mkCargoDeny {
+    config = ../deny.toml;
+    checks = [ "sources" ];
+  };
+
   # Block allocating fmt macros (format!, println!, dbg!, …)
   # in widget code via ast-grep. cargo-deny is crate-level
   # — this is macro-level.

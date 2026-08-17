@@ -5,6 +5,11 @@ set working-directory := '..'
 # re-splits a scene name that contains a space back into two arguments.
 set positional-arguments
 
+# The flake's checks build the compositor stack, so they exist for Linux only.
+# A darwin host has no local system to ask for; nix routes these checks
+# to the configured `linux-builder`, which serves aarch64 natively under apple-virt.
+NIX_SYSTEM := if os() == "macos" { "aarch64-linux" } else { "$(nix eval --impure --raw --expr builtins.currentSystem)" }
+
 [private]
 default:
     @just --justfile {{ source_file() }} --list
@@ -62,9 +67,7 @@ build:
 
 # Check the gallery's separate lockfile against the workspace's source policy.
 deny:
-    # `bans` is left out on purpose: its `multiple-versions = "deny"` and skip list
-    # are tuned to the workspace's graph while this crate resolves its own,
-    # and the duplicates it prevents cost size on a device the gallery never reaches.
+    # Keep this direct command aligned with `gallery-deny` in `nix/checks.nix`.
     #
     # cargo-deny would be dead weight in the dev shell — nothing else uses it,
     # so it comes from this flake's own pkgs at the one place that runs it.
@@ -84,7 +87,15 @@ clippy:
     # leaves the widget crates failing to resolve their own dependencies with E0463:
     # they are path deps outside this crate's workspace, so they get no clippy wrapper.
     env CARGO_TARGET_DIR=bmc-gallery/target/clippy \
-        cargo clippy --locked --manifest-path bmc-gallery/Cargo.toml -- -D warnings
+        cargo clippy --locked --manifest-path bmc-gallery/Cargo.toml --all-targets -- -D warnings
+
+# Build the same gallery outputs and checks as CI.
+ci:
+    nix build -L \
+        ".#checks.{{ NIX_SYSTEM }}.gallery-build" \
+        ".#checks.{{ NIX_SYSTEM }}.gallery-clippy" \
+        ".#checks.{{ NIX_SYSTEM }}.gallery-lints" \
+        ".#checks.{{ NIX_SYSTEM }}.gallery-deny"
 
 # Look at one scene as it declares itself, to `.tmp/gallery-preview/NAME.png`.
 preview SCENE NAME SIZE="1280x720" FRAMES="4":

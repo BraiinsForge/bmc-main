@@ -2,6 +2,11 @@
 # the root manifest's `exclude` only covers this crate at its usual path.
 [workspace]
 
+# `build.rs` reads the scene glob from `gallery.toml`, which Cargo metadata
+# does not discover as a source input for the Nix filter.
+[workspace.metadata.nix]
+include = ["gallery.toml"]
+
 # Mirrors the root manifest's set, verbatim. Being its own workspace root,
 # this crate has nothing to inherit — but the scenes are the same code held to
 # the same bar, so the set is restated rather than dropped. Keep the two in step.

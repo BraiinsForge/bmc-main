@@ -1,9 +1,8 @@
 [workspace]
 resolver = "3"
 exclude = [
-    # The gallery deps the external rs-gallery framework.
-    # Joining the workspace would drag that git dep into the hermetic nix build.
-    # Making it its own crate helps with both.
+    # The gallery pins its own framework and lockfile so its egui
+    # version stays clear of ours.
     "bmc-gallery",
     "tooling",
     "widgets-wasm-examples",

@@ -72,6 +72,14 @@ in
       util-linux
     ];
   };
+  # Cargo profiles do not cross workspace boundaries; the gallery defines `dev`
+  # locally and cannot use the root workspace's `fast` profile.
+  gallery = workspaces.gallery.mkBuildProfile {
+    inherit pkgs;
+    targetDeps = x86NativeTargetDeps;
+    minimalDeps = false;
+    rustProfile = "dev";
+  };
   # CI profile: `fast` plus a working headless EGL stack
   # so some tests can boot a real surfaceless context inside the Nix sandbox.
   # Used by the `test` and `nextest` checks.

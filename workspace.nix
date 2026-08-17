@@ -222,14 +222,20 @@ let
     ];
   };
 
-  # Full workspace config for glibc profiles (widgets, compositor)
-  workspace = pkgs.ii.rust.mkWorkspaceConfig {
+  mkNativeWorkspace = attrs: pkgs.ii.rust.mkWorkspaceConfig ({
     src = ./.;
     timings = false;
     nativeDeps = _pkgs: (commonDeps.buildDeps _pkgs) ++ (commonDeps.guiBuildDeps _pkgs);
     # packages that will be cross-compiled for target arch
     targetDeps = commonDeps.guiTargetDeps;
     env = commonDeps.env;
+  } // attrs);
+
+  # Full workspace config for glibc profiles (widgets, compositor)
+  workspace = mkNativeWorkspace { };
+
+  workspaceGallery = mkNativeWorkspace {
+    workspacePath = "bmc-gallery";
   };
 
   # Build a --remap-path-prefix flag for a ${storeDir}/<hash>-<name>
@@ -331,6 +337,7 @@ let
     };
     workspaces = {
       full = workspace;
+      gallery = workspaceGallery;
       minimal = workspaceMinimal;
       wasmExamples = workspaceWasmExamples;
       wasmWidgets = workspaceWasmWidgets;
@@ -649,6 +656,8 @@ in
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     bmc-nix-cli-armv7-release =
       bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { };
+    gallery-build = bmc.profiles.gallery.build;
+    gallery-clippy = bmc.profiles.gallery.clippy;
 
     # Native widgets joined with wasm widgets whose host is built natively,
     # so bmc-mock sees the full catalog under lib/bmc-widgets/<name>/.

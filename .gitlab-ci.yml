@@ -162,30 +162,26 @@ workspace-deps-armv7:
 ########### Check Stage ###########
 ###################################
 
-# The gallery deps a git rev of its framework,
-# so it resolves in the dev shell rather than a nix build.
 # Built rather than checked: nothing else in CI codegens the scenes dylib.
 gallery-build:
   stage: check
   needs: []
   script:
-    - nix develop --command just gallery::build
+    - nix build -L .#checks.x86_64-linux.gallery-build
 
-# Separate from the build: clippy stops at check, so it never links the dylib,
-# and the two cannot share a target dir.
+# Separate from the build: clippy stops at check, so it never links the dylib.
 gallery-clippy:
   stage: lint
   needs: []
   script:
-    - nix develop --command just gallery::lints
-    - nix develop --command just gallery::clippy
+    - nix build -L .#checks.x86_64-linux.gallery-lints .#checks.x86_64-linux.gallery-clippy
 
 # The gallery's lockfile is its own, so the workspace's cargo-deny never sees it.
 gallery-deny:
   stage: lint
   needs: []
   script:
-    - nix develop --command just gallery::deny
+    - nix build -L .#checks.x86_64-linux.gallery-deny
 
 python-check:
   stage: check
