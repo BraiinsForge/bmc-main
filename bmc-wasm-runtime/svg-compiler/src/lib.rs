@@ -111,7 +111,7 @@ fn collect_paths(group: &usvg::Group, out: &mut Vec<PathInfo>) {
 
                 // Skip paths with no visible paint
                 if fill_color.is_none() && stroke_color.is_none() {
-                    return;
+                    continue;
                 }
 
                 let is_evenodd = fill.is_some_and(|f| f.rule() == usvg::FillRule::EvenOdd);
