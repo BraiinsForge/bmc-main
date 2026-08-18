@@ -112,15 +112,21 @@ fault no individual widget caused. The 60-second healthy threshold sits above th
 healthy one and keep resetting the ladder.
 
 An external stop always wins: stopping a widget (scene edit, upgrade preparation, shutdown) cancels a pending respawn,
-and a stopped widget is never respawned. A widget whose type has left the registry (uninstalled) is not respawned either
-— the manager emits `Abandoned` so the coordinator ends the registration that a crash deliberately leaves standing, and
-the grid cell stays empty as if it had never spawned.
+and a stopped widget is never respawned. A widget whose type has left the registry is not respawned either — the manager
+emits `Abandoned` so the coordinator ends the registration that a crash deliberately leaves standing, and the grid cell
+stays empty as if it had never spawned. Nothing on the device uninstalls a package, so the way a type leaves is
+discovery skipping it on the next re-scan: an apply can install a widget whose manifest this firmware cannot accept (an
+unknown credential slot type, a missing or non-executable binary), and the same apply is what makes widgets crash-loop
+in the first place. Ending the instance is guarded on the compositor side — an abandon that arrives after a scene edit
+has re-registered the id and bound a live process is dropped rather than blanking that cell.
 
-A registry re-scan resets the ladder. A package upgrade replaces widget files while the processes are still running, so
-affected widgets crash and start climbing delays against binaries that are being swapped out from under them — and the
-reload that follows the install hands every instance that is not running to supervision rather than replacing it. After
-`refresh()` those pending respawns are retried at 1 second instead of whatever rung they had reached, so a widget
-upgrade does not leave a cell blank for tens of seconds after the install reports success. The reload then restarts an
+A registry re-scan buys one prompt attempt. A package upgrade replaces widget files while the processes are still
+running, so affected widgets crash and start climbing delays against binaries that are being swapped out from under them
+— and the reload that follows the install hands every instance that is not running to supervision rather than replacing
+it. After `refresh()` those pending respawns are retried at 1 second instead of whatever rung they had reached, so a
+widget upgrade does not leave a cell blank for tens of seconds after the install reports success. The ladder itself is
+not forgiven: a widget the upgrade did not fix crashes again and waits out the rung it had already earned, so repeated
+unrelated installs cannot grind a genuine crash-looper back down to a 1-second tempo. The reload then restarts an
 instance only where the build it is *running* differs from the installed one, so a widget that supervision has already
 brought back on the new files is left alone rather than blinking a second time.
 
@@ -148,6 +154,22 @@ Two consequences worth knowing:
   tears the slot down), but a widget that returns promptly while being logically stuck — waiting on a fetch that never
   resolves, re-rendering a stale frame — is indistinguishable from a healthy one. Neither the Wayland connection state
   nor any heartbeat feeds supervision.
+
+### Where recovery stops
+
+Two gaps sit on the recovery side rather than the detection side. Both are known and deliberate, and both need an
+unusual sequence to reach.
+
+- **A widget abandoned when its type left the registry does not return when the type does.** A discovery skip while one
+  of its instances is waiting out a respawn ends supervision for that instance, which is right — there is no build left
+  to run. A later apply that makes the manifest acceptable again does not undo it: the reload that follows an install
+  skips every instance that is not running, which is correct for one waiting on a respawn and wrong for one nothing
+  supervises any more. The cell stays empty until the scene is edited or bmc restarts.
+- **A respawn checks that the widget type is in the registry, not that it still fits the slot.** A widget whose upgraded
+  manifest no longer supports its current viewport is deliberately left alone by the reload path, which logs and moves
+  on. Supervision knows nothing about viewports, so the next crash brings that widget back on the new build, into the
+  slot the reload declined. A viewport-narrowing upgrade is therefore caught on the reload path and not on the crash
+  path.
 
 ## Constraints
 
