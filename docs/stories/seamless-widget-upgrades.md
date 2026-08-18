@@ -15,7 +15,8 @@ activated package.
 - Unchanged widget instances keep running.
 - Each running widget instance whose package changed is stopped and spawned from the activated profile; newly added
   widgets become available in the picker.
-- Removing a widget package removes it from the picker; running instances keep running until their scene next changes.
+- Removing a widget package removes it from the picker; running instances keep running until their scene next changes,
+  and one that crashes after the removal is not brought back — its cell stays empty.
 
 ### Upgrade the widget runtime safely
 
@@ -40,7 +41,8 @@ activated package.
 
 - A missing widget root empties the registry; an unreadable root or failed scan keeps the last valid registry. An
   invalid manifest is logged and that one widget skipped.
-- A widget that cannot be restarted stays stopped and reports its failure without taking down other widget instances.
+- A widget that fails to come back is retried with a widening delay, and never takes down other widget instances. It
+  stays stopped only when its type is no longer in the registry, and then its grid cell stays empty.
 - Deployment fails loudly when the compositor is down, the service reconciliation does not settle, or the active core
   predates targeted widget reload; it reports the observed service state and leaves widget load verification to the
   device validation procedure.

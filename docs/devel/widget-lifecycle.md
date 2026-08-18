@@ -222,6 +222,13 @@ When a widget process exits, the coordinator sends `ClearPid` with the expected 
 PID association and forgets its lifecycle-emitter state. This avoids keeping stale lifecycle history across process
 restarts and prevents PID reuse from being attributed to the old widget.
 
+`ClearPid` detaches the process, not the instance: the PID and both surfaces go, while the protocol record and its
+stored initial config stay. A crash respawn therefore has something to come back to — the coordinator binds the new
+process with `BindRespawnedPid` (not `SetWidgetPid`, which registers a fresh spawn), and the reconnect replays the same
+configure batch as the first attach, followed by an initial lifecycle event derived from the scene as it stands now. The
+bind is dropped if the instance is no longer unbound, since a scene edit or a widget reload may have re-registered and
+re-bound it while the respawn announcement was still queued.
+
 When a widget is unregistered, the compositor removes its protocol record and forgets lifecycle state for that instance.
 If a widget disappears from the derived lifecycle map during a scene step, `LifecycleEmitter` treats it as transitioning
 to `Dormant` and then forgets it.

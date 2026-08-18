@@ -120,7 +120,9 @@ A registry re-scan resets the ladder. A package upgrade replaces widget files wh
 affected widgets crash and start climbing delays against binaries that are being swapped out from under them — and the
 reload that follows the install hands every instance that is not running to supervision rather than replacing it. After
 `refresh()` those pending respawns are retried at 1 second instead of whatever rung they had reached, so a widget
-upgrade does not leave a cell blank for tens of seconds after the install reports success.
+upgrade does not leave a cell blank for tens of seconds after the install reports success. The reload then restarts an
+instance only where the build it is *running* differs from the installed one, so a widget that supervision has already
+brought back on the new files is left alone rather than blinking a second time.
 
 ### What supervision observes — and what it does not
 

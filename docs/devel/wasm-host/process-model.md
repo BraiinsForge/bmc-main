@@ -146,7 +146,9 @@ thin, not the host, the existing coordinator/compositor registration path still 
 
 The intended lifetime rules are:
 
-- Each widget instance has one thin process for its whole lifetime.
+- A widget instance has one thin process at a time. The instance outlives it: bmc supervises the thin as an ordinary
+  widget child, so an exit it did not ask for is followed by a respawn on a backoff ladder — see "Crash supervision" in
+  [`widget-runtime-configuration.md`](../widget-runtime-configuration.md).
 - If the thin exits or is killed, the host sees the control socket close and tears down that slot.
 - Slot teardown drops the runtime, releases its compiled-module lease (evicting the cache entry for its final user),
   destroys any render target, drops Wayland objects, and closes the control socket.
@@ -169,6 +171,11 @@ Common rejection paths:
 - Wayland configure timeout: slot load fails and the thin exits non-zero after `Ack::Err`;
 - WASM load/runtime initialization failure: slot load fails and the thin exits non-zero after `Ack::Err`;
 - host readiness timeout: the thin exits non-zero without loading the widget.
+
+None of these end the instance. Supervision reads any exit it did not request as a crash and retries, so a thin that
+fails this way reappears rather than leaving the cell empty — and a fault that keeps recurring shows up as a widget
+returning on a lengthening delay, not as one that never comes back. Exit status carries no policy signal either way: a
+thin exits 0 when its host dies, which is the ordinary fleet-wide failure.
 
 ## Code Map
 
