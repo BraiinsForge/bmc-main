@@ -1097,6 +1097,7 @@ dependencies = [
  "thiserror 1.0.69",
  "time",
  "tokio",
+ "tokio-util",
  "tracing",
  "wayland-client",
  "wayland-protocols-wlr",

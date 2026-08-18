@@ -30,9 +30,11 @@ use bmc_platform::{BosPlatform, BosVersion};
 use bmc_shared_time::time::Timezone;
 use bmc_support::{PlainZip, SupportArchive};
 use std::{
+    io::Cursor,
     path::Path,
     sync::{Arc, Mutex},
 };
+use tokio::io::AsyncRead;
 use tokio::signal;
 use tracing::info;
 
@@ -278,16 +280,21 @@ impl bmc::BmcManager for Manager {
         }
     }
 
-    async fn support_archive(&self) -> Result<Vec<u8>, Error> {
+    fn support_archive(&self) -> impl AsyncRead + Send + Unpin + 'static {
         info!("Support archive");
         let mut buf = Vec::new();
         let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
-        archive.add_builtin(
-            Self::DUMMY_SUPPORT_FILE_NAME,
-            Self::DUMMY_SUPPORT_FILE_CONTENT,
-        )?;
-        archive.finish()?;
-        Ok(buf)
+        // The mock archive is built in memory, so these writes cannot fail.
+        archive
+            .add_builtin(
+                Self::DUMMY_SUPPORT_FILE_NAME,
+                Self::DUMMY_SUPPORT_FILE_CONTENT,
+            )
+            .expect("BUG: writing the mock archive to a Vec cannot fail");
+        archive
+            .finish()
+            .expect("BUG: finishing the mock archive in memory cannot fail");
+        Cursor::new(buf)
     }
 
     async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {

@@ -19,12 +19,18 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+use std::io;
+use std::pin::Pin;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 
 use bmc::shutdown::UPGRADE_HOLD;
 use bmc_support::ArchiveFormat;
+use tokio::io::{AsyncRead, DuplexStream, ReadBuf};
+use tokio::sync::oneshot::{self, Receiver, error::TryRecvError};
 use tokio::task;
-use tracing::info;
+use tokio_util::io::SyncIoBridge;
+use tracing::{error, info};
 
 use crate::{signal, sys};
 
@@ -36,8 +42,6 @@ pub enum Error {
     Sys(#[from] sys::Error),
     #[error(transparent)]
     Io(#[from] std::io::Error),
-    #[error("Support archive error: `{0}`")]
-    SupportArchive(String),
 }
 
 pub async fn call_command<T>(command_name: T, args: &[T]) -> Result<(), Error>
@@ -75,19 +79,85 @@ pub async fn handle_graceful_shutdown(upgrade_in_progress: &AtomicBool) {
     info!("Timeout reached. Forcefully shutting down...");
 }
 
-pub async fn get_support_archive(format: &'static dyn ArchiveFormat) -> Result<Vec<u8>, Error> {
-    let result = task::spawn_blocking(move || {
-        let mut buf = Vec::new();
-        crate::support::SUPPORT_CONFIG.collect(&mut buf, format, false)?;
-        Ok::<_, anyhow::Error>(buf)
-    })
-    .await;
+/// Buffer size for the duplex channel between the blocking archive writer
+/// and the async reader; also bounds the archive's peak memory footprint.
+const SUPPORT_ARCHIVE_BUF_SIZE: usize = 8 * 1024;
 
-    match result {
-        Ok(Ok(buf)) => Ok(buf),
-        // JoinError
-        Err(err) => Err(Error::SupportArchive(err.to_string())),
-        // anyhow::Error
-        Ok(Err(err)) => Err(Error::SupportArchive(err.to_string())),
+/// Async reader over the duplex stream fed by the blocking collector.
+///
+/// On EOF it checks the producer's result and turns a collection failure into
+/// an [`io::Error`], so a mid-collection failure aborts the download instead
+/// of silently truncating it.
+struct SupportArchiveReader {
+    inner: DuplexStream,
+    result_rx: Receiver<anyhow::Result<()>>,
+    finished: bool,
+}
+
+impl AsyncRead for SupportArchiveReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        // NOTE: EOF resolution is one-shot: try_recv consumes the producer result, so once it has
+        // been read we report a clean EOF for any further polls. Readers may legally poll past EOF,
+        // and the inner stream's EOF is sticky, so a second try_recv would otherwise observe Closed.
+        if self.finished {
+            return Poll::Ready(Ok(()));
+        }
+        match Pin::new(&mut self.inner).poll_read(cx, buf) {
+            Poll::Ready(Ok(())) if buf.filled().is_empty() => {
+                self.finished = true;
+                match self.result_rx.try_recv() {
+                    Ok(Ok(())) => Poll::Ready(Ok(())),
+                    Ok(Err(err)) => Poll::Ready(Err(io::Error::other(format!(
+                        "support archive collection failed: {err}"
+                    )))),
+                    // NOTE: only reachable if collect() panicked mid-stream; fail
+                    // loud rather than serve a truncated archive as a clean download.
+                    Err(TryRecvError::Empty) => Poll::Ready(Err(io::Error::other(
+                        "support archive collector did not report before end of stream",
+                    ))),
+                    Err(TryRecvError::Closed) => Poll::Ready(Err(io::Error::other(
+                        "support archive collection task terminated unexpectedly",
+                    ))),
+                }
+            }
+            Poll::Ready(Ok(())) => Poll::Ready(Ok(())),
+            Poll::Ready(Err(err)) => Poll::Ready(Err(err)),
+            Poll::Pending => Poll::Pending,
+        }
+    }
+}
+
+pub fn get_support_archive(
+    format: &'static dyn ArchiveFormat,
+) -> impl AsyncRead + Send + Unpin + 'static {
+    let (reader, writer) = tokio::io::duplex(SUPPORT_ARCHIVE_BUF_SIZE);
+    let (tx, rx) = oneshot::channel();
+
+    task::spawn_blocking(move || {
+        let mut sync_writer = SyncIoBridge::new(writer);
+        let result = crate::support::SUPPORT_CONFIG.collect(&mut sync_writer, format, false);
+        if let Err(ref err) = result {
+            let client_gone = err.chain().any(|cause| {
+                cause
+                    .downcast_ref::<io::Error>()
+                    .is_some_and(|e| e.kind() == io::ErrorKind::BrokenPipe)
+            });
+            if client_gone {
+                info!("Support archive download cancelled by client");
+            } else {
+                error!("Support archive collection failed: {err}");
+            }
+        }
+        let _ = tx.send(result);
+    });
+
+    SupportArchiveReader {
+        inner: reader,
+        result_rx: rx,
+        finished: false,
     }
 }

@@ -56,6 +56,7 @@ const SUPPORT_ARCHIVE_FILENAME_PREFIX: &str = "support_archive_";
 // NOTE: the suffix reflects the format the manager implementation produces —
 // a standard zip whose entries are password-protected.
 const SUPPORT_ARCHIVE_FILENAME_SUFFIX: &str = ".zip";
+const SUPPORT_ARCHIVE_STREAM_CAPACITY: usize = 8 * 1024;
 
 /// On-disk icon path for `/widgets/{uid}/icon`, or `None` (→ 404) for a bad uid,
 /// unknown widget, or no icon. A missing file 404s later when the handler opens it.
@@ -279,6 +280,7 @@ impl<T: BmcManager> HttpServer<T> {
         response
     }
 
+    #[expect(clippy::unused_async, reason = "axum handlers must be async")]
     async fn handle_support_archive(State(manager): State<Arc<T>>) -> impl IntoResponse {
         let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%z").to_string();
         let filename = format!(
@@ -288,17 +290,17 @@ impl<T: BmcManager> HttpServer<T> {
             SUPPORT_ARCHIVE_FILENAME_SUFFIX
         );
 
-        match manager.support_archive().await {
-            Ok(data) => {
-                let content_disposition = format!("attachment; filename=\"{filename}\"");
-                let headers = [
-                    (CONTENT_TYPE, "application/octet-stream"),
-                    (CONTENT_DISPOSITION, content_disposition.as_str()),
-                ];
-                (StatusCode::OK, headers, data).into_response()
-            }
-            Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-        }
+        let reader = manager.support_archive();
+        let body = Body::from_stream(ReaderStream::with_capacity(
+            reader,
+            SUPPORT_ARCHIVE_STREAM_CAPACITY,
+        ));
+        let content_disposition = format!("attachment; filename=\"{filename}\"");
+        let headers = [
+            (CONTENT_TYPE, "application/octet-stream"),
+            (CONTENT_DISPOSITION, content_disposition.as_str()),
+        ];
+        (StatusCode::OK, headers, body).into_response()
     }
 }
 

@@ -63,6 +63,7 @@ sysfs_gpio = { workspace = true, features = ["async-tokio"] }
 thiserror.workspace = true
 time.workspace = true
 tokio.workspace = true
+tokio-util = { workspace = true, features = ["io-util"] }
 tracing.workspace = true
 
 [dev-dependencies]

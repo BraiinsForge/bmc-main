@@ -30,6 +30,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+use tokio::io::AsyncRead;
 use tokio::sync::watch;
 use tracing::error;
 
@@ -143,7 +144,10 @@ pub trait BmcManager: Sync + Send + 'static + Debug {
     // Executes the function once bmc is shutting down
     async fn handle_graceful_shutdown(&self);
 
-    async fn support_archive(&self) -> Result<Vec<u8>, Self::Error>;
+    /// Stream the support archive. The reader is fed by a background collector
+    /// so the whole archive is never held in memory; a collection failure
+    /// surfaces as an [`std::io::Error`] once the stream reaches its end.
+    fn support_archive(&self) -> impl AsyncRead + Send + Unpin + 'static;
 
     /// Sync bootloader configuration to persistent storage (e.g., U-Boot environment).
     ///

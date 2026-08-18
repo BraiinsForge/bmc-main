@@ -44,7 +44,7 @@ use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
 use tokio::process::Command;
 use tracing::{debug, error, info, trace, warn};
 
@@ -312,10 +312,8 @@ impl BmcManager for Manager {
         unix::handle_graceful_shutdown(&self.upgrade_in_progress).await;
     }
 
-    async fn support_archive(&self) -> Result<Vec<u8>, Error> {
+    fn support_archive(&self) -> impl AsyncRead + Send + Unpin + 'static {
         unix::get_support_archive(&PasswordProtectedZip)
-            .await
-            .map_err(Into::into)
     }
 
     async fn sync_boot_environment(&self, config: &BootloaderConfig) -> Result<(), Self::Error> {

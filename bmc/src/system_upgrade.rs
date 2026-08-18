@@ -2768,7 +2768,6 @@ mod tests {
         use axum_extra::extract::cookie::Cookie;
         use bmc_platform::{BosPlatform, BosVersion};
         use bmc_shared_time::time::Timezone;
-        use bmc_support::SupportArchiveFormat;
         use bmc_upgrade::firmware::{FirmwareDownloadError, UpgradeMetadata};
         use bmc_upgrade::packages::{
             ApplyError, EstimateMode, InstallableWidget, PackageGcRequest, PackageProbe,
@@ -2941,11 +2940,13 @@ mod tests {
             async fn handle_graceful_shutdown(&self) {
                 unimplemented!("{UNREACHABLE}")
             }
-            async fn support_archive(
-                &self,
-                _format: SupportArchiveFormat,
-            ) -> Result<Vec<u8>, Self::Error> {
-                unimplemented!("{UNREACHABLE}")
+            fn support_archive(&self) -> impl tokio::io::AsyncRead + Send + Unpin + 'static {
+                unimplemented!("{UNREACHABLE}");
+                #[expect(
+                    unreachable_code,
+                    reason = "stub panics on use; the value only pins the RPIT type"
+                )]
+                return tokio::io::empty();
             }
             async fn sync_boot_environment(
                 &self,
