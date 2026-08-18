@@ -27,8 +27,8 @@ use std::time::{Duration, Instant};
 
 use bmc_render::renderer::Renderer;
 use bmc_system_overlay::{
-    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome,
-    TouchEvent, TreeUi, UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
+    Anchor, DownloadProgress, InputRegion, Layer, LayerConfig, SystemOverlay, TickOutcome, TreeUi,
+    UpgradeKind, UpgradePhase, UpgradeSnapshot, UpgradeState,
 };
 
 use crate::icons::UpgradeIcons;
@@ -47,6 +47,7 @@ pub enum UpgradeView {
         phase: Option<UpgradePhase>,
         progress: Option<DownloadProgress>,
     },
+    /// Only ever built for `UpgradeKind::Packages` — see `OverlayState::shows`.
     Succeeded {
         kind: UpgradeKind,
     },
@@ -139,11 +140,25 @@ impl OverlayState {
         }
     }
 
+    fn clear(&mut self) {
+        self.view = None;
+        self.terminal_deadline = None;
+        self.dirty = false;
+    }
+
+    /// Whether this surface presents `snapshot`. The other kind belongs
+    /// to the sibling overlay, and a firmware success to the device-info overlay,
+    /// which shows it and continues into the boot connect flow from there —
+    /// showing it here too would stack two screens over one boot.
+    fn shows(&self, snapshot: UpgradeSnapshot) -> bool {
+        snapshot.kind == self.kind
+            && !(self.kind == UpgradeKind::Firmware
+                && matches!(snapshot.state, UpgradeState::Succeeded { .. }))
+    }
+
     fn receive(&mut self, snapshot: UpgradeSnapshot, now: Instant) {
-        if snapshot.kind != self.kind {
-            self.view = None;
-            self.terminal_deadline = None;
-            self.dirty = false;
+        if !self.shows(snapshot) {
+            self.clear();
             return;
         }
         let deadline = match snapshot.state {
@@ -165,9 +180,7 @@ impl OverlayState {
             .terminal_deadline
             .is_some_and(|deadline| now >= deadline)
         {
-            self.view = None;
-            self.terminal_deadline = None;
-            self.dirty = false;
+            self.clear();
         }
         let visible = self.view.is_some();
         let animating = self.view.is_some_and(ui::has_active_bar);
@@ -179,14 +192,6 @@ impl OverlayState {
             } else {
                 self.terminal_deadline
             },
-        }
-    }
-
-    fn dismiss_finished(&mut self) {
-        if matches!(self.view, Some(UpgradeView::Succeeded { .. })) {
-            self.view = None;
-            self.terminal_deadline = None;
-            self.dirty = false;
         }
     }
 
@@ -255,12 +260,6 @@ impl SystemOverlay for UpgradeOverlay {
         self.state.receive(snapshot, Instant::now());
     }
 
-    fn on_touch(&mut self, event: TouchEvent) {
-        if self.state.kind == UpgradeKind::Firmware && matches!(event, TouchEvent::Down { .. }) {
-            self.state.dismiss_finished();
-        }
-    }
-
     fn tick(&mut self, now: Instant) -> TickOutcome {
         self.state.tick(now)
     }
@@ -327,10 +326,10 @@ mod tests {
     #[test]
     fn terminal_countdown_updates_do_not_redraw_unchanged_content() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Firmware);
+        let mut state = OverlayState::new(UpgradeKind::Packages);
         state.receive(
             UpgradeSnapshot {
-                kind: UpgradeKind::Firmware,
+                kind: UpgradeKind::Packages,
                 state: UpgradeState::Succeeded {
                     remaining: Duration::from_secs(5),
                 },
@@ -341,7 +340,7 @@ mod tests {
 
         state.receive(
             UpgradeSnapshot {
-                kind: UpgradeKind::Firmware,
+                kind: UpgradeKind::Packages,
                 state: UpgradeState::Succeeded {
                     remaining: Duration::from_secs(4),
                 },
@@ -376,10 +375,10 @@ mod tests {
     #[test]
     fn terminal_deadline_hides_the_overlay() {
         let now = Instant::now();
-        let mut state = OverlayState::new(UpgradeKind::Firmware);
+        let mut state = OverlayState::new(UpgradeKind::Packages);
         state.receive(
             UpgradeSnapshot {
-                kind: UpgradeKind::Firmware,
+                kind: UpgradeKind::Packages,
                 state: UpgradeState::Succeeded {
                     remaining: Duration::from_millis(10),
                 },
@@ -416,74 +415,36 @@ mod tests {
         assert!(state.tick(now).wants_render);
     }
 
-    fn touch_down() -> TouchEvent {
-        TouchEvent::Down {
-            id: 0,
-            x: 1.0,
-            y: 1.0,
-        }
-    }
-
     #[test]
-    fn touch_dismisses_the_finished_overlay_immediately() {
+    fn a_firmware_success_maps_nothing_here() {
         let now = Instant::now();
         let mut overlay = UpgradeOverlay::firmware();
+        overlay.on_upgrade_state(running(UpgradeKind::Firmware));
+        assert!(overlay.tick(now).visible);
+
         overlay.on_upgrade_state(UpgradeSnapshot {
             kind: UpgradeKind::Firmware,
             state: UpgradeState::Succeeded {
                 remaining: Duration::from_secs(10),
             },
         });
-        assert!(overlay.tick(now).visible);
-
-        overlay.on_touch(touch_down());
         assert!(
             !overlay.tick(now).visible,
-            "the finished screen must hide on the first touch"
+            "the device-info overlay owns the post-upgrade success screen"
         );
     }
 
     #[test]
-    fn touch_does_not_dismiss_a_running_or_failed_upgrade() {
+    fn a_firmware_failure_still_stays_up_for_its_dwell() {
         let now = Instant::now();
         let mut overlay = UpgradeOverlay::firmware();
-        overlay.on_upgrade_state(running(UpgradeKind::Firmware));
-        overlay.on_touch(touch_down());
-        assert!(
-            overlay.tick(now).visible,
-            "a running upgrade must stay modal"
-        );
-
         overlay.on_upgrade_state(UpgradeSnapshot {
             kind: UpgradeKind::Firmware,
             state: UpgradeState::Failed {
                 remaining: Duration::from_secs(10),
             },
         });
-        overlay.on_touch(touch_down());
-        assert!(
-            overlay.tick(now).visible,
-            "a failure must stay up for its full dwell"
-        );
-    }
-
-    #[test]
-    fn touch_does_not_dismiss_a_finished_package_upgrade() {
-        let now = Instant::now();
-        let mut overlay = UpgradeOverlay::packages();
-        overlay.on_upgrade_state(UpgradeSnapshot {
-            kind: UpgradeKind::Packages,
-            state: UpgradeState::Succeeded {
-                remaining: Duration::from_secs(10),
-            },
-        });
-
-        overlay.on_touch(touch_down());
-
-        assert!(
-            overlay.tick(now).visible,
-            "the package result must remain visible for its full dwell"
-        );
+        assert!(overlay.tick(now).visible);
     }
 
     #[test]

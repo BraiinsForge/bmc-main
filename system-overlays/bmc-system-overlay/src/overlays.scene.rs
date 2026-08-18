@@ -191,6 +191,7 @@ device_info_render_states!(
     DI_SETUP_COMPLETED,
     DI_SETUP_ERROR,
     DI_SETUP_FATAL,
+    DI_UPGRADE_SUCCESS,
     DI_CONNECTING,
     DI_SUCCESS,
     DI_FAILED,
@@ -246,7 +247,6 @@ upgrade_render_states!(
     FIRMWARE_PACKAGES_BUILDING,
     FIRMWARE_PACKAGES_ACTIVATING,
     FIRMWARE_APPLYING,
-    FIRMWARE_SUCCESS,
     FIRMWARE_FAILURE,
     PACKAGE_PREPARING,
     PACKAGE_KNOWN_DOWNLOAD,
@@ -405,6 +405,11 @@ fn device_info_stage(
 /// One card per screen of the device-info flows: the first-boot setup sequence,
 /// its error states, and the operational connect-info sequence.
 #[scene]
+#[expect(
+    clippy::too_many_lines,
+    reason = "a flat catalogue: one stage per screen, which reads worse split \
+              across helpers than listed in flow order"
+)]
 fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
     let flat = ctx.toggle("Flat backdrop", false);
     let ap = Some((
@@ -501,6 +506,15 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         "sticky; bmc recovers on its own",
         DeviceInfoView::SetupFatal,
         &DI_SETUP_FATAL,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "UpgradeSuccess",
+        "first boot after a firmware upgrade",
+        DeviceInfoView::UpgradeSuccess,
+        &DI_UPGRADE_SUCCESS,
         flat,
     );
     device_info_stage(
@@ -865,13 +879,6 @@ fn upgrade_progress(ctx: &mut SceneCtx, ui: &mut Ui) {
             "Applying",
             firmware(Some(UpgradePhase::FirmwareApplying), None),
             &FIRMWARE_APPLYING,
-        ),
-        (
-            "Success",
-            UpgradeView::Succeeded {
-                kind: UpgradeKind::Firmware,
-            },
-            &FIRMWARE_SUCCESS,
         ),
         (
             "Failure",

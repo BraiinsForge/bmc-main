@@ -31,8 +31,9 @@ no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts `unex
 ### Flows
 
 - **Operational boot**: connecting (SSID, "waiting for IP") → connect-info (IP + QR, 10 s) on an address, or failure (5
-  s) after 20 s without one → unmap. A touch dismisses this flow immediately; a post-upgrade boot skips or postpones it
-  (see "Yielding to an upgrade" below — the gating applies to this flow only, never the setup screens).
+  s) after 20 s without one → unmap. A touch dismisses this flow immediately; a post-upgrade boot skips it or opens on
+  the upgrade-success screen (see "Opening after an upgrade" below — that applies to this flow only, never the setup
+  screens).
 - **First boot** (`factory_default`): setup-start (AP SSID + QR of the wizard URL; a placeholder until `access_point`
   arrives) → `connecting_to_wifi` → connected (5 s) → setup connect-info (device-setup IP QR) → `device_setup_success` →
   completed (5 s) → unmap. A `wifi_connection_failed` shows the error for 5 s and returns to setup-start (the AP is
@@ -46,22 +47,30 @@ no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts `unex
 
 In the operational connect-info the last-known IP is held through a transient DHCP loss, so the screen does not flicker.
 The screens render through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build
-time; every screen has a storybook cell (`overlays.stories.rs`).
+time; every screen has a gallery cell (`overlays.scene.rs`).
 
-### Yielding to an upgrade
+### Opening after an upgrade
 
 The overlay also binds `deck_upgrade_v1` (`uses_upgrade()` is `true`) because a boot that follows an upgrade is not an
-ordinary boot. It reacts only to a terminal *success* snapshot arriving while still `Connecting`, which is what marks
-this startup as post-upgrade; a snapshot in any later phase is ignored, so an upgrade finishing minutes later cannot
-resurrect the screen.
+ordinary boot. It reacts only to a terminal *success* snapshot, which is what marks this startup as post-upgrade, and
+that decides how the operational flow opens:
 
-- **After a package activation restart** the overlay goes straight to `Done`. Only the compositor restarted — the
+- **After a firmware upgrade** the flow opens on the "Update Finished" screen for `HOLD` (5 s) and then starts
+  `Connecting`. This overlay owns that screen: `bmc-overlay-upgrade` deliberately shows no firmware success, so the
+  confirmation and the connect window are one uninterrupted sequence rather than two surfaces taking turns. A touch
+  skips ahead to `Connecting` instead of handing off to the scenes — the screen is an interstitial, not the end of a
+  flow.
+- **After a package activation restart** the flow is skipped entirely (`Done`). Only the compositor restarted — the
   network never dropped — so a connection screen would be stale noise.
-- **After a firmware upgrade** it enters `Postponed` for the success overlay's remaining dwell, then starts
-  `Connecting`. The firmware success screen owns the display until it hides, and the connect window should run in full
-  once it does rather than burn its 20 s behind another surface.
 
-`Postponed` is not visible and holds no buffer, so waiting costs nothing; it wakes at the stored deadline.
+The snapshot's `remaining` dwell is ignored: like every other screen here, this one is timed by the overlay.
+
+Which of the two paths runs is decided by the runner, not by the wire: the device-info events are drained before the
+snapshot is applied in `tick`, whichever order the compositor replayed them in. So on a post-upgrade boot the
+`device_state` has already opened the connect screen, and the snapshot switches it to the upgrade screen on the spot,
+gated on `Connecting` so an upgrade finishing minutes later cannot resurrect it. The *latch* covers the other order,
+where the snapshot lands with no connect screen to replace: only the operational entry consumes it, so a success
+arriving mid-setup cannot disturb the setup screens.
 
 ## Offline (`bmc-overlay-offline`)
 
@@ -169,8 +178,10 @@ dies mid-ring), it auto-dismisses after a short grace, and any touch dismisses i
 ## Upgrade progress (`bmc-overlay-upgrade`)
 
 On-device feedback for a running upgrade: the current stage, a progress bar while one is meaningful, and a terminal
-"Update Finished" / "Update Failed" screen. Like the alarm it is a pure relay — bmc owns every upgrade decision and the
-overlay renders the display projection it receives over `deck_upgrade_v1` (see [`protocols.md`](protocols.md)).
+result screen — "Update Failed" for either kind, and "Update Finished" for a package run. The post-reboot firmware
+success screen belongs to the device-info overlay (see above), so this one drops a firmware `Succeeded` snapshot rather
+than mapping for it. Like the alarm it is a pure relay — bmc owns every upgrade decision and the overlay renders the
+display projection it receives over `deck_upgrade_v1` (see [`protocols.md`](protocols.md)).
 
 The crate exports **two** `SystemOverlay` implementations, `UpgradeOverlay::firmware()` and
 `UpgradeOverlay::packages()`, because `LayerConfig` is static and the two presentations differ in every field that
@@ -205,9 +216,10 @@ Visibility is a single `Option<UpgradeView>`, filled from `on_upgrade_state` and
   minutes under CPU and flash load, so 10 fps is enough and deliberately cheap.
 - **Terminal** (`Succeeded` / `Failed`) carries a `remaining` interval from bmc; the overlay stores it as a deadline and
   unmaps when `tick` passes it. Repeated terminal snapshots keep the original deadline, so a coalesced re-send does not
-  extend the screen.
-- A **touch** on the firmware surface dismisses a *finished* screen early. It does nothing mid-run: the screen is a
-  blocker precisely so the device is not driven while it is flashing. The package surface has no input region at all.
+  extend the screen. A firmware `Succeeded` is the one snapshot neither surface shows — the device-info overlay opens on
+  it instead.
+- **Touch** changes nothing on either surface. The firmware surface keeps a full input region because it is a blocker —
+  the device must not be driven while it is flashing — and the package surface has no input region at all.
 
 A new snapshot replaces the view immediately, so a failure overwrites stale progress rather than leaving it on screen.
 

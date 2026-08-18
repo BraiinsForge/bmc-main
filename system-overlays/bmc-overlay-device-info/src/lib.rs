@@ -40,8 +40,8 @@ use bmc_system_overlay::{
     TickOutcome, TouchEvent, UpgradeKind, UpgradeSnapshot, UpgradeState, VersionedSnapshot,
 };
 
-/// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed, and
-/// setup-error screens.
+/// Generic screen hold (legacy `SCREEN_DURATION`): connected, completed,
+/// setup-error, and post-upgrade success screens.
 const HOLD: Duration = Duration::from_secs(5);
 /// How long the operational connect-info stays up before auto-dismiss.
 const SUCCESS_VISIBLE_FOR: Duration = Duration::from_secs(10);
@@ -108,10 +108,9 @@ enum Screen {
     OpConnecting {
         since: Instant,
     },
-    /// A firmware-upgrade success screen owns the display; stay unmapped and
-    /// start connecting once it is due to hide.
-    OpPostponed {
-        until: Instant,
+    /// Post-firmware-upgrade success, the operational flow's opening screen.
+    OpUpgraded {
+        since: Instant,
     },
     OpSuccess {
         since: Instant,
@@ -139,10 +138,7 @@ impl Screen {
     }
 
     fn visible(self) -> bool {
-        !matches!(
-            self,
-            Screen::Hidden | Screen::Done | Screen::OpPostponed { .. }
-        )
+        !matches!(self, Screen::Hidden | Screen::Done)
     }
 }
 
@@ -204,8 +200,8 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
                 screen
             }
         }
-        Screen::OpPostponed { until } => {
-            if now >= until {
+        Screen::OpUpgraded { since } => {
+            if now.duration_since(since) >= HOLD {
                 Screen::OpConnecting { since: now }
             } else {
                 screen
@@ -236,6 +232,17 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
     (next, changed)
 }
 
+/// The operational flow's opening screen for a boot that follows an upgrade.
+fn operational_entry(post_upgrade: Option<UpgradeKind>, now: Instant) -> Screen {
+    match post_upgrade {
+        Some(UpgradeKind::Firmware) => Screen::OpUpgraded { since: now },
+        // A package activation only restarted the compositor — the network
+        // never dropped, so a connection screen would be stale noise.
+        Some(UpgradeKind::Packages) => Screen::Done,
+        Some(_) | None => Screen::OpConnecting { since: now },
+    }
+}
+
 enum NextWake {
     At(Instant),
     Poll,
@@ -250,12 +257,12 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         Screen::SetupConnecting => (mode == Mode::SetupPending).then_some(NextWake::Poll),
         Screen::SetupConnected { since, .. }
         | Screen::SetupCompleted { since }
-        | Screen::SetupError { since } => Some(NextWake::At(since + HOLD)),
+        | Screen::SetupError { since }
+        | Screen::OpUpgraded { since } => Some(NextWake::At(since + HOLD)),
         // The shown address may still change (late DHCP), so keep polling.
         Screen::SetupConnectInfo | Screen::OpConnecting { .. } | Screen::OpSuccess { .. } => {
             Some(NextWake::Poll)
         }
-        Screen::OpPostponed { until } => Some(NextWake::At(until)),
         Screen::OpFailed { since } => Some(NextWake::At(since + FAILURE_VISIBLE_FOR)),
         Screen::Hidden | Screen::SetupFatal | Screen::Done => None,
     }
@@ -270,6 +277,9 @@ pub struct DeviceInfoOverlay {
     target_ssid: Option<String>,
     station_ip: Option<Ipv4Addr>,
     station_ssid: Option<String>,
+    /// Which upgrade this startup follows, from a terminal success snapshot;
+    /// `None` for an ordinary boot.
+    post_upgrade: Option<UpgradeKind>,
     snapshot_version: Option<SnapshotVersion>,
     /// Latched "content changed" from events between ticks.
     dirty: bool,
@@ -284,6 +294,7 @@ impl std::fmt::Debug for DeviceInfoOverlay {
             .field("mode", &self.mode)
             .field("ap", &self.ap)
             .field("station_ip", &self.station_ip)
+            .field("post_upgrade", &self.post_upgrade)
             .finish_non_exhaustive()
     }
 }
@@ -297,6 +308,7 @@ impl Default for DeviceInfoOverlay {
             target_ssid: None,
             station_ip: None,
             station_ssid: None,
+            post_upgrade: None,
             snapshot_version: None,
             dirty: false,
             render_state: DeviceInfoRenderState::new(Instant::now()),
@@ -315,7 +327,7 @@ impl DeviceInfoOverlay {
     #[must_use]
     fn view(&self) -> DeviceInfoView {
         match self.screen {
-            Screen::Hidden | Screen::Done | Screen::OpPostponed { .. } => DeviceInfoView::Done,
+            Screen::Hidden | Screen::Done => DeviceInfoView::Done,
             Screen::SetupStart { .. } => DeviceInfoView::SetupStart {
                 ap: self.ap.clone(),
             },
@@ -328,6 +340,7 @@ impl DeviceInfoOverlay {
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
             Screen::SetupError { .. } => DeviceInfoView::SetupError,
             Screen::SetupFatal => DeviceInfoView::SetupFatal,
+            Screen::OpUpgraded { .. } => DeviceInfoView::UpgradeSuccess,
             Screen::OpConnecting { .. } => DeviceInfoView::Connecting { ssid: self.ssid() },
             Screen::OpSuccess { ip, .. } => DeviceInfoView::Success { ip },
             Screen::OpFailed { .. } => DeviceInfoView::Failed { ssid: self.ssid() },
@@ -397,9 +410,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             // the operational connect flow here.
             Mode::Operational => {
                 if self.screen == Screen::Hidden {
-                    self.screen = Screen::OpConnecting {
-                        since: Instant::now(),
-                    };
+                    self.screen = operational_entry(self.post_upgrade, Instant::now());
                 }
             }
             Mode::Unknown => {}
@@ -441,26 +452,24 @@ impl SystemOverlay for DeviceInfoOverlay {
         true
     }
 
-    /// A success snapshot while still `OpConnecting` marks this startup as
-    /// post-upgrade. A package restart never dropped the network: skip the
-    /// connection screen. A firmware success keeps its overlay in front: wait
-    /// out that dwell before connecting. Gated on the operational flow only —
-    /// the setup screens must still run after a package restart.
+    /// A terminal *success* snapshot marks this startup as post-upgrade.
+    ///
+    /// The runner drains device-info events before applying the snapshot,
+    /// whatever order the wire replayed them in, so a post-upgrade boot
+    /// already sits on `OpConnecting` and the swap below raises the screen.
+    /// The latch is for the other order, where no connect screen exists yet;
+    /// `operational_entry` consumes it.
+    ///
+    /// `remaining` is ignored: this overlay times the screen itself.
     fn on_upgrade_state(&mut self, snapshot: UpgradeSnapshot) {
-        if !matches!(self.screen, Screen::OpConnecting { .. }) {
+        if !matches!(snapshot.state, UpgradeState::Succeeded { .. }) {
             return;
         }
-        let UpgradeState::Succeeded { remaining } = snapshot.state else {
-            return;
-        };
-        if snapshot.kind == UpgradeKind::Packages {
-            self.screen = Screen::Done;
-        } else if snapshot.kind == UpgradeKind::Firmware {
-            self.screen = Screen::OpPostponed {
-                until: Instant::now() + remaining,
-            };
+        self.post_upgrade = Some(snapshot.kind);
+        if matches!(self.screen, Screen::OpConnecting { .. }) {
+            self.screen = operational_entry(self.post_upgrade, Instant::now());
+            self.dirty = true;
         }
-        self.dirty = true;
     }
 
     fn tick(&mut self, now: Instant) -> TickOutcome {
@@ -487,14 +496,23 @@ impl SystemOverlay for DeviceInfoOverlay {
     }
 
     fn on_touch(&mut self, event: TouchEvent) {
-        // Touch dismisses only the operational connect flow. The setup screens
-        // stay: dismissing SetupStart would leave a blank screen with the AP
-        // up and the user mid-wizard.
-        let dismissable = matches!(
+        if !matches!(event, TouchEvent::Down { .. }) {
+            return;
+        }
+        // Touch acts on the operational flow only. The setup screens stay:
+        // dismissing SetupStart would leave a blank screen
+        // with the AP up and the user mid-wizard.
+        if matches!(self.screen, Screen::OpUpgraded { .. }) {
+            // An interstitial rather than the end of the flow,
+            // so skipping it goes on to connect instead of back to the scenes.
+            self.screen = Screen::OpConnecting {
+                since: Instant::now(),
+            };
+            self.dirty = true;
+        } else if matches!(
             self.screen,
             Screen::OpConnecting { .. } | Screen::OpSuccess { .. } | Screen::OpFailed { .. }
-        );
-        if dismissable && matches!(event, TouchEvent::Down { .. }) {
+        ) {
             self.screen = Screen::Done;
         }
     }
@@ -721,16 +739,59 @@ mod tests {
     }
 
     #[test]
-    fn firmware_upgrade_success_postpones_the_connect_flow() {
+    fn firmware_upgrade_success_opens_the_flow_and_hands_over_to_connecting() {
         let mut overlay = overlay_with_ip(None);
         overlay.on_device_state(DeviceState::Operational);
         overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
-        assert!(matches!(overlay.screen, Screen::OpPostponed { .. }));
-        let tick = overlay.tick(t0());
-        assert!(!tick.visible, "unmapped while the splash owns the display");
+        assert!(matches!(overlay.screen, Screen::OpUpgraded { .. }));
+        let start = t0();
+        let tick = overlay.tick(start);
+        assert!(tick.visible);
+        assert_eq!(overlay.view(), DeviceInfoView::UpgradeSuccess);
 
-        let _ = overlay.tick(t0() + Duration::from_secs(4));
+        let _ = overlay.tick(start + HOLD);
         assert!(matches!(overlay.screen, Screen::OpConnecting { .. }));
+    }
+
+    #[test]
+    fn a_success_snapshot_before_the_lifecycle_still_opens_the_flow() {
+        // The compositor replays `deck_upgrade_v1` before `deck_device_info_v1`,
+        // so this is the ordering a post-upgrade boot actually sees.
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        assert_eq!(overlay.screen, Screen::Hidden, "no flow to show it in yet");
+
+        overlay.on_device_state(DeviceState::Operational);
+        assert!(matches!(overlay.screen, Screen::OpUpgraded { .. }));
+    }
+
+    #[test]
+    fn a_package_success_before_the_lifecycle_still_skips_the_flow() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
+        overlay.on_device_state(DeviceState::Operational);
+        assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn touch_skips_the_success_screen_into_the_connect_flow() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        let _ = overlay.tick(t0());
+
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 0.0,
+            y: 0.0,
+        });
+        assert!(matches!(overlay.screen, Screen::OpConnecting { .. }));
+        let tick = overlay.tick(t0());
+        assert!(tick.visible, "the flow continues rather than handing off");
+        assert!(
+            tick.wants_render,
+            "the connect screen must replace the success screen"
+        );
     }
 
     #[test]
@@ -742,6 +803,19 @@ mod tests {
             matches!(overlay.screen, Screen::SetupStart { .. }),
             "a package restart must not skip the setup screens"
         );
+    }
+
+    #[test]
+    fn a_late_upgrade_cannot_resurrect_a_dismissed_flow() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational);
+        let start = t0();
+        let _ = overlay.tick(start);
+        let _ = overlay.tick(start + SUCCESS_VISIBLE_FOR);
+        assert_eq!(overlay.screen, Screen::Done);
+
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        assert_eq!(overlay.screen, Screen::Done);
     }
 
     #[test]

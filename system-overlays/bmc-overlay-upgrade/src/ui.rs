@@ -723,34 +723,56 @@ mod tests {
         ));
     }
 
+    /// Only the package card has both terminal screens: a firmware success
+    /// is the device-info overlay's, so this surface never builds one.
     #[test]
-    fn terminal_states_use_semantic_icons_with_white_stable_titles() {
+    fn compact_terminal_states_use_semantic_icons_with_white_stable_titles() {
         for (view, expected_id, expected_title) in [
             (
                 UpgradeView::Succeeded {
-                    kind: UpgradeKind::Firmware,
+                    kind: UpgradeKind::Packages,
                 },
                 2,
                 "Update Finished",
             ),
             (
                 UpgradeView::Failed {
-                    kind: UpgradeKind::Firmware,
+                    kind: UpgradeKind::Packages,
                 },
                 3,
                 "Update Failed",
             ),
         ] {
-            let draws = tree_draws(&view, (1_280, 480));
+            let draws = compact_content_draws(&view);
             assert!(matches!(
-                &draws[1],
+                &draws[0],
                 DrawCommand::Svg { icon_id: Some(id), .. } if id.to_wire() == expected_id
             ));
             assert!(matches!(
-                &draws[2],
+                &draws[1],
                 DrawCommand::Text { text, style, .. }
                     if text == expected_title && style.color == WHITE
             ));
         }
+    }
+
+    #[test]
+    fn the_fullscreen_failure_keeps_its_icon_and_white_title() {
+        let draws = tree_draws(
+            &UpgradeView::Failed {
+                kind: UpgradeKind::Firmware,
+            },
+            (1_280, 480),
+        );
+
+        assert!(matches!(
+            &draws[1],
+            DrawCommand::Svg { icon_id: Some(id), .. } if id.to_wire() == 3
+        ));
+        assert!(matches!(
+            &draws[2],
+            DrawCommand::Text { text, style, .. }
+                if text == "Update Failed" && style.color == WHITE
+        ));
     }
 }

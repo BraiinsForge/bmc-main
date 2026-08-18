@@ -78,7 +78,8 @@ See [`protocols.md`](protocols.md) for all five.
 | Upgrade (fw)  | `bmc-overlay-upgrade`       | `Top`        | full-screen  | full  | no          | `deck_upgrade_v1`     |
 | Upgrade (pkg) | `bmc-overlay-upgrade`       | `Bottom`     | bottom-right | none  | no          | `deck_upgrade_v1`     |
 
-The startup screen also binds `deck_upgrade_v1`, to skip or postpone itself on a boot that follows an upgrade.
+The startup screen also binds `deck_upgrade_v1`: a boot that follows a package restart skips it, and a boot that follows
+a firmware upgrade opens on the "Update Finished" screen it owns.
 
 Stacking is by layer rank, except between same-rank surfaces, where registration order in `overlay_specs()` decides —
 see [`compositor-integration.md`](compositor-integration.md).

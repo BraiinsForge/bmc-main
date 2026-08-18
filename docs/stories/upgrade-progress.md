@@ -34,19 +34,19 @@ success or failure screen, including after the restart that finishes an upgrade.
 
 - A failure replaces any progress display immediately with a recognizable failure screen; it stays up for ten seconds
   and then returns the device to normal.
-- A successful upgrade shows "Update Finished" for ten seconds in the same placement the upgrade used — full screen for
-  firmware, corner card for packages.
-- Touching the full-screen "Update Finished" screen dismisses it immediately; failure and running states cannot be
-  dismissed by touch.
+- A package upgrade that finishes without a restart shows "Update Finished" in its corner card for ten seconds.
+- A firmware upgrade reports success only after the reboot that applies it, as part of the startup screens (below).
+- Neither the progress nor the failure screen can be dismissed by touch.
 
 ### Learn that the upgrade finished after the device restarts
 
 > As a user, I want the device to confirm the upgrade after it reboots, so that I know the restart I watched was the
 > upgrade completing.
 
-- After the reboot that applies a firmware upgrade, the device shows the full-screen success screen once it is up again.
-- A package upgrade that restarts the display as part of activation reports its success the same way after the restart,
-  in the corner card.
+- After the reboot that applies a firmware upgrade, the device opens its startup screens on a full-screen "Update
+  Finished" confirmation once it is up again.
+- A package upgrade that restarts the display as part of activation reports its success in the corner card, exactly as a
+  package upgrade that needed no restart does.
 - The confirmation appears only on an operational device — a device in setup or factory-default state skips it.
 
 ### No redundant startup screens after an upgrade
@@ -56,8 +56,9 @@ success or failure screen, including after the restart that finishes an upgrade.
 
 - After a package-upgrade restart the startup connection screen is skipped entirely — the network never dropped, so
   there is nothing to report.
-- After a firmware upgrade the startup connection screen waits until the success screen has finished, then runs with its
-  full display time.
+- After a firmware upgrade the confirmation and the connection screen are one sequence: the same startup screens show
+  "Update Finished" for five seconds and then report the connection with its full display time.
+- Touching that confirmation moves straight on to the connection screen rather than clearing the display.
 
 ## Constraints
 

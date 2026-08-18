@@ -62,6 +62,8 @@ pub enum DeviceInfoView {
     SetupError,
     /// Unrecoverable setup error; bmc recovers on its own (reset or reboot).
     SetupFatal,
+    /// Post-firmware-upgrade success, the operational flow's opening screen.
+    UpgradeSuccess,
     /// Operational-boot connect progress.
     Connecting {
         ssid: Option<String>,
@@ -118,6 +120,7 @@ const SETUP_AP_PENDING_TITLE: &str = "Starting setup WiFi...";
 /// Shared by the setup flow's two connect-progress screens and the operational
 /// one, so the wording cannot drift between the flows.
 const CONNECTING_TITLE: &str = "Connecting to WiFi...";
+const UPGRADE_SUCCESS_TITLE: &str = "Update Finished";
 const QR_SIZE: f32 = 336.0;
 /// The QR in a column that carries its own text: small enough that the headline
 /// above it and the address below still fit the panel's height.
@@ -563,6 +566,13 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
             false,
             icons.refresh,
             "Problem Occurred. Restarting Braiins Deck.",
+            Vec::new(),
+        ),
+        DeviceInfoView::UpgradeSuccess => template_tree(
+            Justify::Center,
+            false,
+            icons.success,
+            UPGRADE_SUCCESS_TITLE,
             Vec::new(),
         ),
         DeviceInfoView::Connecting { ssid } => {
