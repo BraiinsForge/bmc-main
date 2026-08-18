@@ -21,4 +21,3 @@ zip = { workspace = true, features = ["deflate-flate2"] }
 [dev-dependencies]
 anyhow.workspace = true
 tempfile.workspace = true
-tracing-subscriber.workspace = true

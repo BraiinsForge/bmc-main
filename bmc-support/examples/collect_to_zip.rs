@@ -1,4 +1,5 @@
 // Copyright (C) 2025  Braiins Systems s.r.o.
+// Copyright (C) 2026  Braiins Forge s.r.o.
 //
 // This program is free software: you can redistribute it and/or modify
 // it under the terms of the GNU General Public License as published by
@@ -18,25 +19,23 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+//! Minimal demonstration of the crate API: assemble a [`SupportConfig`] and
+//! collect an unencrypted archive. Run with:
+//! `cargo run -p bmc-support --example collect_to_zip`.
+
 use anyhow::Result;
-use bmc_support::PasswordProtectedZip;
-use std::env;
+use bmc_support::{PlainZip, SupportConfig};
 use std::fs::File;
 
 fn main() -> Result<()> {
-    // set RUST_LOG to 'info' if unset
-    if env::var_os("RUST_LOG").is_none() {
-        unsafe {
-            env::set_var("RUST_LOG", "info");
-        }
-    }
-
-    tracing_subscriber::fmt::init();
+    // A minimal, platform-agnostic recipe. `collect` also runs the built-in
+    // network probes and a best-effort Nix-profile and log capture.
+    let config = SupportConfig::new().commands(&[&["uname", "-a"], &["date"]]);
 
     let mut file = File::create("support_archive.zip")?;
-    bmc_support::collect(&mut file, &PasswordProtectedZip, false)?;
+    config.collect(&mut file, &PlainZip, false)?;
 
-    println!("{file:?}");
+    println!("wrote {file:?}");
 
     Ok(())
 }

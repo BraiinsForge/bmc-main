@@ -25,12 +25,6 @@ pub const BOS_MAJOR: &str = "/etc/bos_major";
 pub const BOS_MODE: &str = "/etc/bos_mode";
 pub const BOS_PLATFORM: &str = "/etc/bos_platform";
 pub const BOARD: &str = "/etc/board.json";
-/// Account secrets, deliberately **never** collected — see `filters::is_excluded`.
-pub const BMC_SECRETS: &str = "/etc/bmc/secrets.json";
-/// Pre-migration config path, deliberately kept on disk for downgrade
-/// safety (see `bmc::config_migration`). Collected so a bad migration
-/// can still be diagnosed from the original file.
-pub const BMC_CONFIG_LEGACY: &str = "/etc/bmc_config.json";
 pub const FACTORY_DEFAULT: &str = "/etc/factory-default";
 pub const SETUP_PENDING: &str = "/etc/setup-pending";
 pub const PROC_MTD: &str = "/proc/mtd";
@@ -42,7 +36,3 @@ pub const ETC_DNSMASQ_CONF: &str = "/etc/dnsmasq.conf";
 // directories
 pub const SRC_LOGS: &str = "/var/log";
 pub const SRC_ETC_CONF: &str = "/etc/config";
-/// Directory holding the current config and its timestamped backups.
-/// Collected wholesale so `config.json.backup.<ts>` snapshots ride
-/// along in the support archive.
-pub const BMC_CONFIG_DIR: &str = "/etc/bmc";

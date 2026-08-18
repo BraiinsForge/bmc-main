@@ -27,6 +27,7 @@ pub mod manager;
 mod pwd;
 pub mod session;
 mod signal;
+mod support;
 mod sys;
 pub mod uboot_env;
 mod unix;

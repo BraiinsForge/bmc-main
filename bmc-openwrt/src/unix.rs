@@ -78,7 +78,7 @@ pub async fn handle_graceful_shutdown(upgrade_in_progress: &AtomicBool) {
 pub async fn get_support_archive(format: &'static dyn ArchiveFormat) -> Result<Vec<u8>, Error> {
     let result = task::spawn_blocking(move || {
         let mut buf = Vec::new();
-        bmc_support::collect(&mut buf, format, false)?;
+        crate::support::SUPPORT_CONFIG.collect(&mut buf, format, false)?;
         Ok::<_, anyhow::Error>(buf)
     })
     .await;

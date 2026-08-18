@@ -19,19 +19,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-pub mod constants;
 mod filters;
 mod format;
 
-pub use filters::bmc::{BmcConfigCensor, SecretsExclusion, UciWirelessCensor};
+pub use filters::bmc::{
+    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BMC_SECRETS, BmcConfigCensor, SecretsExclusion,
+    UciWirelessCensor,
+};
 pub use filters::{SupportFilter, censor};
 pub use format::{ArchiveFormat, FinishWrite, PasswordProtectedZip, PlainZip};
 
-use crate::constants::{
-    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION,
-    ETC_DNSMASQ_CONF, ETC_HOSTS, ETC_RESOLV_CONF, FACTORY_DEFAULT, PROC_CPUINFO, PROC_MTD,
-    SETUP_PENDING, SRC_ETC_CONF, SRC_LOGS,
-};
 use anyhow::Result;
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -44,53 +41,8 @@ use walkdir::WalkDir;
 use zip::write::{SimpleFileOptions, StreamWriter};
 use zip::{CompressionMethod, ZipWriter};
 
-const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
-
-/// These commands will be executed and their stdout will be included in the support archive.
-const COMMANDS: &[&[&str]] = &[
-    &["dmesg"],
-    &["fw_printenv"],
-    &["env"],
-    &["ifconfig", "-a"],
-    &["ip", "addr"],
-    &["ip", "route"],
-    &["ps", "aux"],
-    &["df"],
-    &["ls", "-l", "/tmp"],
-    &["killall", "-SIGUSR1", "dnsmasq"],
-];
-
-/// Captured after every other diagnostic (see [`collect`]) so syslog that
-/// they trigger — e.g. dnsmasq reacting to the reachability probe — is
-/// included in the snapshot.
-const LOGREAD_COMMAND: &[&str] = &["logread"];
-
-/// All contents of these paths will be included in the support archive.
-const FS_PATHS: &[&str] = &[
-    // files
-    BOS_VERSION,
-    BOS_MAJOR,
-    BOS_MODE,
-    BOS_PLATFORM,
-    ETC_HOSTS,
-    ETC_RESOLV_CONF,
-    ETC_DNSMASQ_CONF,
-    BOARD,
-    // Pre-migration config, kept on disk for downgrade safety. The
-    // current config and its timestamped backups come in via the
-    // BMC_CONFIG_DIR directory below.
-    BMC_CONFIG_LEGACY,
-    FACTORY_DEFAULT,
-    SETUP_PENDING,
-    // directories
-    BMC_CONFIG_DIR,
-    SRC_LOGS,
-    SRC_ETC_CONF,
-    "/etc/nix-upgrade",
-    "/etc/nix/nix.conf",
-    // additional procfs items
-    PROC_MTD,
-    PROC_CPUINFO,
+/// Generic Linux procfs paths worth capturing in a support archive.
+pub const PROC_PATHS: &[&str] = &[
     "/proc/mounts",
     "/proc/loadavg",
     "/proc/cmdline",
@@ -110,14 +62,12 @@ const FS_PATHS: &[&str] = &[
     "/proc/net/arp",
 ];
 
-pub const PING_HOSTS: &[&str] = &[
-    "127.0.0.1",
-    "8.8.8.8",
-    "google.com",
-    "downloads.braiins.com",
-    "downloads.braiinsforge.com",
-    "public-api.braiins.com",
-];
+const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
+
+/// Captured after every other diagnostic (see [`SupportConfig::collect`]) so
+/// syslog that they trigger — e.g. dnsmasq reacting to the reachability
+/// probe — is included in the snapshot.
+const LOGREAD_COMMAND: &[&str] = &["logread"];
 
 pub struct SupportConfig<'a> {
     commands: &'a [&'a [&'a str]],

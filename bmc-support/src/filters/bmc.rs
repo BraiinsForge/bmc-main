@@ -19,20 +19,24 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! BMC-specific credential filters.
-//!
-//! These carry BMC domain knowledge (config layout, secret store, UCI
-//! wireless); other projects supply their own [`SupportFilter`] set.
+//! BMC credential filters — [`SupportFilter`] implementations carrying the
+//! board's config layout, secret store and UCI wireless knowledge.
 
-use crate::constants::{BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BMC_SECRETS};
-use crate::filters::SupportFilter;
+use crate::SupportFilter;
 use regex::Regex;
 use std::path::Path;
 use tracing::warn;
 
-/// The BMC credential filters applied to every archived file.
-pub(crate) const BMC_FILTERS: &[&dyn SupportFilter] =
-    &[&SecretsExclusion, &BmcConfigCensor, &UciWirelessCensor];
+/// Account secrets, deliberately **never** collected — see [`SecretsExclusion`].
+pub const BMC_SECRETS: &str = "/etc/bmc/secrets.json";
+/// Directory holding the current config and its timestamped backups.
+/// Collected wholesale so `config.json.backup.<ts>` snapshots ride
+/// along in the support archive.
+pub const BMC_CONFIG_DIR: &str = "/etc/bmc";
+/// Pre-migration config path, deliberately kept on disk for downgrade
+/// safety (see `bmc::config_migration`). Collected so a bad migration
+/// can still be diagnosed from the original file.
+pub const BMC_CONFIG_LEGACY: &str = "/etc/bmc_config.json";
 
 /// Keeps the secret store out of the archive.
 ///
@@ -116,12 +120,13 @@ impl SupportFilter for UciWirelessCensor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::filters::censor;
-    use std::path::Path;
 
-    /// Run `content` through the BMC filter set the way `add_fs_file` does.
+    /// Run `content` through the whole filter set the way the archive does,
+    /// driving the real `bmc_support::censor` engine.
     fn apply_bmc_filters(path: &Path, content: Vec<u8>) -> Vec<u8> {
-        censor(BMC_FILTERS, path, content)
+        let filters: [&dyn SupportFilter; 3] =
+            [&SecretsExclusion, &BmcConfigCensor, &UciWirelessCensor];
+        crate::censor(&filters, path, content)
     }
 
     #[test]
