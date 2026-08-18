@@ -36,3 +36,4 @@ pub const ETC_DNSMASQ_CONF: &str = "/etc/dnsmasq.conf";
 // directories
 pub const SRC_LOGS: &str = "/var/log";
 pub const SRC_ETC_CONF: &str = "/etc/config";
+pub const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";

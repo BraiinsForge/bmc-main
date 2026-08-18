@@ -19,23 +19,37 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Minimal demonstration of the crate API: assemble a [`SupportConfig`] and
-//! collect an unencrypted archive. Run with:
+//! Minimal demonstration of the crate API: assemble a [`SupportConfig`],
+//! register an extension, and collect an unencrypted archive. Run with:
 //! `cargo run -p bmc-support --example collect_to_zip`.
 
 use anyhow::Result;
-use bmc_support::{PlainZip, SupportConfig};
+use bmc_support::{PlainZip, SupportArchive, SupportConfig, SupportExtension};
 use std::fs::File;
 
+/// Example extension: one archive entry with the machine's hostname.
+#[derive(Debug)]
+struct Hostname;
+
+impl SupportExtension for Hostname {
+    fn name(&self) -> &'static str {
+        "hostname"
+    }
+
+    fn collect(&self, archive: &mut SupportArchive<'_>) -> Result<()> {
+        archive.add_cmd_output(&["hostname"])
+    }
+}
+
 fn main() -> Result<()> {
-    // A minimal, platform-agnostic recipe. `collect` also runs the built-in
-    // network probes and a best-effort Nix-profile and log capture.
-    let config = SupportConfig::new().commands(&[&["uname", "-a"], &["date"]]);
+    let extensions: &[&dyn SupportExtension] = &[&Hostname];
+    let config = SupportConfig::new()
+        .commands(&[&["uname", "-a"], &["date"]])
+        .extensions(extensions);
 
-    let mut file = File::create("support_archive.zip")?;
-    config.collect(&mut file, &PlainZip, false)?;
-
-    println!("wrote {file:?}");
+    let path = std::env::temp_dir().join("support_archive.zip");
+    config.collect(&mut File::create(&path)?, &PlainZip, false)?;
+    println!("wrote {}", path.display());
 
     Ok(())
 }

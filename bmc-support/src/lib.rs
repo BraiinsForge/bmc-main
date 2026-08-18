@@ -21,6 +21,7 @@
 
 mod filters;
 mod format;
+mod nix_profile;
 
 pub use filters::bmc::{
     BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BMC_SECRETS, BmcConfigCensor, SecretsExclusion,
@@ -28,11 +29,12 @@ pub use filters::bmc::{
 };
 pub use filters::{SupportFilter, censor};
 pub use format::{ArchiveFormat, FinishWrite, PasswordProtectedZip, PlainZip};
+pub use nix_profile::NixProfileExtension;
 
 use anyhow::Result;
 use std::fs::File;
 use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -62,18 +64,24 @@ pub const PROC_PATHS: &[&str] = &[
     "/proc/net/arp",
 ];
 
-const NIX_PROFILE_DIR: &str = "/nix/var/nix/gcroots/profiles/bmc";
+/// A binary-specific collector run during archive collection.
+///
+/// Implementations write their diagnostics into the archive; they run after
+/// the built-in collection steps, in registration order.
+pub trait SupportExtension: Sync {
+    /// Short name, used for logging.
+    fn name(&self) -> &'static str;
 
-/// Captured after every other diagnostic (see [`SupportConfig::collect`]) so
-/// syslog that they trigger — e.g. dnsmasq reacting to the reachability
-/// probe — is included in the snapshot.
-const LOGREAD_COMMAND: &[&str] = &["logread"];
+    /// Write this collector's diagnostics into `archive`.
+    fn collect(&self, archive: &mut SupportArchive<'_>) -> Result<()>;
+}
 
 pub struct SupportConfig<'a> {
     commands: &'a [&'a [&'a str]],
     fs_paths: &'a [&'a str],
     ping_hosts: &'a [&'a str],
     filters: &'a [&'a dyn SupportFilter],
+    extensions: &'a [&'a dyn SupportExtension],
 }
 
 impl std::fmt::Debug for SupportConfig<'_> {
@@ -83,6 +91,7 @@ impl std::fmt::Debug for SupportConfig<'_> {
             .field("fs_paths", &self.fs_paths)
             .field("ping_hosts", &self.ping_hosts)
             .field("filters", &self.filters.len())
+            .field("extensions", &self.extensions.len())
             .finish()
     }
 }
@@ -101,6 +110,7 @@ impl<'a> SupportConfig<'a> {
             fs_paths: &[],
             ping_hosts: &[],
             filters: &[],
+            extensions: &[],
         }
     }
 
@@ -133,6 +143,13 @@ impl<'a> SupportConfig<'a> {
         self
     }
 
+    /// Binary-specific collectors, run after the fs walk in registration order
+    #[must_use]
+    pub const fn extensions(mut self, extensions: &'a [&'a dyn SupportExtension]) -> Self {
+        self.extensions = extensions;
+        self
+    }
+
     /// Collect the support archive into `writer`, encoded per `format`.
     pub fn collect(
         &self,
@@ -142,8 +159,8 @@ impl<'a> SupportConfig<'a> {
     ) -> Result<()> {
         let mut archive = SupportArchive::new(writer, format, compress, self.filters);
 
-        // include outputs of commands
-        // These run before the log capture below since some of them emit syslog (e.g. dnsmasq).
+        // Commands run before the fs walk so syslog they emit (e.g. dnsmasq)
+        // lands in the log file the walk collects.
         for &cmdline in self.commands {
             match archive.add_cmd_output(cmdline) {
                 Ok(()) => info!("Added output of '{}'", cmdline.join(" ")),
@@ -151,8 +168,6 @@ impl<'a> SupportConfig<'a> {
             }
         }
 
-        // include output of builtin routines
-        // Again these commands may produce some logs so log collection must be done after this.
         let ping_hosts = self.ping_hosts;
         let builtin_items: &[(&str, &dyn Fn() -> Option<String>)] = &[
             ("ifconfig", &|| Some(bmc_net_diag::ifconfig())),
@@ -178,11 +193,6 @@ impl<'a> SupportConfig<'a> {
             }
         }
 
-        match archive.add_nix_profile(Path::new(NIX_PROFILE_DIR)) {
-            Ok(()) => info!("Added Nix profile diagnostics"),
-            Err(err) => error!("{}: Nix profile diagnostics", err),
-        }
-
         // include files from the filesystem
         for path in self.fs_paths.iter().map(Path::new) {
             if !path.is_absolute() {
@@ -203,11 +213,13 @@ impl<'a> SupportConfig<'a> {
             }
         }
 
-        // Capture the system log last, so syslog emitted by every diagnostic above
-        // (e.g. a DNS error during the reachability probe) is present in the dump.
-        match archive.add_cmd_output(LOGREAD_COMMAND) {
-            Ok(()) => info!("Added output of '{}'", LOGREAD_COMMAND.join(" ")),
-            Err(err) => error!("{}: '{}'", err, LOGREAD_COMMAND.join(" ")),
+        // Extensions run last so a log-capturing extension sees syslog emitted
+        // by every earlier step (e.g. a DNS error during the reachability probe).
+        for extension in self.extensions {
+            match extension.collect(&mut archive) {
+                Ok(()) => info!("Ran extension <{}>", extension.name()),
+                Err(err) => error!("{}: extension <{}>", err, extension.name()),
+            }
         }
 
         archive.finish()?;
@@ -285,30 +297,6 @@ impl<'a> SupportArchive<'a> {
         Ok(())
     }
 
-    /// Add the Nix profile state summary and every generation manifest.
-    ///
-    /// The profile directory is read without holding the profile lock: a
-    /// support archive is typically requested when the device is already
-    /// misbehaving, and a stuck upgrade holding that lock is one of the
-    /// failure modes we must still be able to diagnose. Blocking on the
-    /// lock (or contending with a live upgrade) is the greater risk, so we
-    /// accept a possibly-inconsistent snapshot instead — the same reasoning
-    /// applies to the Nix database read. Collection stays best-effort: a
-    /// concurrently removed generation is skipped, not fatal.
-    pub fn add_nix_profile(&mut self, profile_dir: &Path) -> Result<()> {
-        let state = read_nix_profile_state(profile_dir);
-        self.add_builtin("nix_profile_state", &state.summary)?;
-
-        for manifest_path in state.manifests {
-            match self.add_fs_file(&manifest_path) {
-                Ok(()) => info!("Added Nix profile manifest {}", manifest_path.display()),
-                Err(err) => error!("{}: {}", err, manifest_path.display()),
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn add_cmd_output(&mut self, cmdline: &[&str]) -> Result<()> {
         let (&program, args) = cmdline.split_first().expect("BUG: empty command");
 
@@ -356,6 +344,12 @@ impl<'a> SupportArchive<'a> {
         Ok(())
     }
 
+    /// Add a raw archive entry at `name` with `content`, for extensions that
+    /// place files under their own path prefix.
+    pub fn add_entry(&mut self, name: &str, content: &[u8]) -> Result<()> {
+        self.write_file(name, content)
+    }
+
     fn write_file(&mut self, name: &str, buf: &[u8]) -> Result<()> {
         self.zip.start_file(name, self.options)?;
         self.zip.write_all(buf)?;
@@ -363,108 +357,10 @@ impl<'a> SupportArchive<'a> {
     }
 }
 
-/// Parse the generation number out of a `<N>-link` profile entry name.
-///
-/// Returns the numeric value so callers can order generations correctly;
-/// `10-link` must sort after `2-link`, not before it.
-fn parse_generation_name(name: &str) -> Option<usize> {
-    let generation = name.strip_suffix("-link")?;
-    if generation.is_empty() || !generation.chars().all(|ch| ch.is_ascii_digit()) {
-        return None;
-    }
-    generation.parse().ok()
-}
-
-fn symlink_target(path: &Path) -> String {
-    match std::fs::read_link(path) {
-        Ok(target) => target.display().to_string(),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => "missing".to_owned(),
-        Err(err) => format!("error: {err}"),
-    }
-}
-
-/// One read of the profile directory, feeding both the state summary and
-/// the list of generation manifests to archive.
-struct NixProfileState {
-    summary: String,
-    manifests: Vec<PathBuf>,
-}
-
-/// Read the profile directory once, producing the human-readable state
-/// summary and the ordered set of present generation manifest paths.
-#[expect(
-    clippy::case_sensitive_file_extension_comparisons,
-    reason = "`.tmp` profile entries follow an exact lowercase naming convention"
-)]
-fn read_nix_profile_state(profile_dir: &Path) -> NixProfileState {
-    let mut lines = vec![format!("profile_dir: {}", profile_dir.display())];
-
-    let Ok(entries) = std::fs::read_dir(profile_dir) else {
-        lines.push("status: missing".to_owned());
-        return NixProfileState {
-            summary: format!("{}\n", lines.join("\n")),
-            manifests: Vec::new(),
-        };
-    };
-
-    lines.push("status: present".to_owned());
-
-    let mut current = None;
-    let mut generations: Vec<(usize, String)> = Vec::new();
-    let mut manifests: Vec<(usize, PathBuf)> = Vec::new();
-    let mut next_links = Vec::new();
-    let mut temporaries = Vec::new();
-    let mut others = Vec::new();
-
-    for entry in entries {
-        let Ok(entry) = entry else {
-            continue;
-        };
-        let name = entry.file_name().to_string_lossy().into_owned();
-        let path = entry.path();
-
-        if name == "current" {
-            current = Some(format!("current: {}", symlink_target(&path)));
-        } else if name == "next" || name.starts_with("next.") {
-            next_links.push(format!("{name}: {}", symlink_target(&path)));
-        } else if let Some(number) = parse_generation_name(&name) {
-            let manifest_path = path.join("manifest");
-            let present = manifest_path.is_file();
-            let state = if present { "present" } else { "missing" };
-            generations.push((number, format!("{name}: manifest={state}")));
-            if present {
-                manifests.push((number, manifest_path));
-            }
-        } else if name.ends_with(".tmp") {
-            temporaries.push(format!("temporary: {name}"));
-        } else {
-            others.push(format!("other: {name}"));
-        }
-    }
-
-    generations.sort_by_key(|(number, _)| *number);
-    manifests.sort_by_key(|(number, _)| *number);
-    next_links.sort();
-    temporaries.sort();
-    others.sort();
-
-    lines.push(current.unwrap_or_else(|| "current: missing".to_owned()));
-    lines.extend(next_links);
-    lines.extend(generations.into_iter().map(|(_, line)| line));
-    lines.extend(temporaries);
-    lines.extend(others);
-
-    NixProfileState {
-        summary: format!("{}\n", lines.join("\n")),
-        manifests: manifests.into_iter().map(|(_, path)| path).collect(),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
     use std::io::{Cursor, Read as _};
-    use std::path::Path;
 
     use zip::ZipArchive;
 
@@ -481,16 +377,6 @@ mod tests {
             entries.insert(file.name().to_owned(), buf);
         }
         entries
-    }
-
-    fn nix_profile_archive(profile_dir: &Path) -> BTreeMap<String, Vec<u8>> {
-        let mut buf = Vec::new();
-        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
-        archive
-            .add_nix_profile(profile_dir)
-            .expect("BUG: add nix profile");
-        archive.finish().expect("BUG: finish archive");
-        archive_entries(&buf)
     }
 
     #[test]
@@ -543,120 +429,66 @@ mod tests {
     }
 
     #[test]
-    fn archive_includes_nix_profile_manifests_without_recursing_into_generations() {
-        let td = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = td.path().join("profiles/bmc");
-        std::fs::create_dir_all(profile_dir.join("1-link/bin")).expect("BUG: create profile");
-        std::fs::write(profile_dir.join("1-link/manifest"), "one").expect("BUG: write manifest");
-        std::fs::write(profile_dir.join("1-link/bin/not-archived"), "payload")
-            .expect("BUG: write payload");
-        std::fs::create_dir_all(profile_dir.join("2-link")).expect("BUG: create second generation");
-        std::fs::write(profile_dir.join("2-link/manifest"), "two")
-            .expect("BUG: write second manifest");
-        std::fs::create_dir_all(profile_dir.join("not-a-generation"))
-            .expect("BUG: create non-generation");
-        std::fs::write(profile_dir.join("not-a-generation/manifest"), "ignore")
-            .expect("BUG: write ignored manifest");
-
-        let entries = nix_profile_archive(&profile_dir);
-
-        assert_eq!(
-            entries
-                .iter()
-                .find(|(name, _)| name.ends_with("/1-link/manifest"))
-                .map(|(_, content)| content.as_slice()),
-            Some(&b"one"[..])
-        );
-        assert_eq!(
-            entries
-                .iter()
-                .find(|(name, _)| name.ends_with("/2-link/manifest"))
-                .map(|(_, content)| content.as_slice()),
-            Some(&b"two"[..])
-        );
-        assert!(
-            !entries
-                .keys()
-                .any(|name| name.ends_with("/bin/not-archived"))
-        );
-        assert!(
-            !entries
-                .keys()
-                .any(|name| name.ends_with("/not-a-generation/manifest"))
-        );
-    }
-
-    #[test]
-    fn profile_state_summary_reports_symlinks_missing_manifests_and_temp_entries() {
-        let td = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = td.path().join("profiles/bmc");
-        std::fs::create_dir_all(profile_dir.join("1-link")).expect("BUG: create first generation");
-        std::fs::write(profile_dir.join("1-link/manifest"), "one").expect("BUG: write manifest");
-        std::fs::create_dir_all(profile_dir.join("2-link")).expect("BUG: create second generation");
-        std::fs::create_dir_all(profile_dir.join("3-link.tmp"))
-            .expect("BUG: create temp generation");
-        std::fs::write(profile_dir.join("unrelated"), "x").expect("BUG: create unrelated entry");
-        std::os::unix::fs::symlink("1-link", profile_dir.join("current"))
-            .expect("BUG: create current symlink");
-        std::os::unix::fs::symlink("2-link", profile_dir.join("next"))
-            .expect("BUG: create next symlink");
-        std::os::unix::fs::symlink("3-link", profile_dir.join("next.boot"))
-            .expect("BUG: create named next symlink");
-
-        let summary = read_nix_profile_state(&profile_dir).summary;
-
-        assert!(summary.contains("status: present"));
-        assert!(summary.contains("current: 1-link"));
-        assert!(summary.contains("next: 2-link"));
-        assert!(summary.contains("next.boot: 3-link"));
-        assert!(summary.contains("1-link: manifest=present"));
-        assert!(summary.contains("2-link: manifest=missing"));
-        assert!(summary.contains("temporary: 3-link.tmp"));
-        assert!(summary.contains("other: unrelated"));
-    }
-
-    #[test]
-    fn profile_state_summary_orders_generations_numerically() {
-        let td = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = td.path().join("profiles/bmc");
-        // Create out of order and past ten, where a lexicographic sort would
-        // place `10-link` between `1-link` and `2-link`.
-        for generation in [2_usize, 10, 1] {
-            let dir = profile_dir.join(format!("{generation}-link"));
-            std::fs::create_dir_all(&dir).expect("BUG: create generation");
-            std::fs::write(dir.join("manifest"), generation.to_string())
-                .expect("BUG: write manifest");
+    fn extension_writes_through_the_archive() {
+        struct DummyExtension;
+        impl SupportExtension for DummyExtension {
+            fn name(&self) -> &'static str {
+                "dummy"
+            }
+            fn collect(&self, archive: &mut SupportArchive<'_>) -> Result<()> {
+                archive.add_builtin("x", "hello")?;
+                archive.add_entry("custom/y", b"world")?;
+                Ok(())
+            }
         }
 
-        let summary = read_nix_profile_state(&profile_dir).summary;
+        let mut buf = Vec::new();
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
+        DummyExtension
+            .collect(&mut archive)
+            .expect("BUG: extension collect");
+        archive.finish().expect("BUG: finish archive");
 
-        let position = |needle: &str| {
-            summary
-                .find(needle)
-                .expect("BUG: generation line present in summary")
-        };
-        assert!(
-            position("1-link: manifest=present") < position("2-link: manifest=present")
-                && position("2-link: manifest=present") < position("10-link: manifest=present"),
-            "generations must be ordered numerically, not lexicographically:\n{summary}"
+        let entries = archive_entries(&buf);
+        assert_eq!(
+            entries.get("builtin/x").map(Vec::as_slice),
+            Some(&b"hello"[..])
+        );
+        assert_eq!(
+            entries.get("custom/y").map(Vec::as_slice),
+            Some(&b"world"[..])
         );
     }
 
     #[test]
-    fn archive_records_missing_profile_dir_in_summary_without_failing() {
-        let td = tempfile::tempdir().expect("BUG: tempdir");
-        let profile_dir = td.path().join("missing/bmc");
+    fn archive_entry_names_keep_prefix_and_insertion_order() {
+        let dir = tempfile::tempdir().expect("BUG: tempdir");
+        let file = dir.path().join("a.txt");
+        std::fs::write(&file, b"aaa").expect("BUG: write temp file");
 
-        let entries = nix_profile_archive(&profile_dir);
+        let mut buf = Vec::new();
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false, &[]);
+        archive
+            .add_cmd_output(&["echo", "hi"])
+            .expect("BUG: add_cmd_output");
+        archive
+            .add_builtin("timestamp", "123")
+            .expect("BUG: add_builtin");
+        archive.add_fs_file(&file).expect("BUG: add_fs_file");
+        archive.finish().expect("BUG: finish archive");
 
-        let summary = String::from_utf8(
-            entries
-                .get("builtin/nix_profile_state")
-                .expect("BUG: profile summary exists")
-                .clone(),
-        )
-        .expect("BUG: summary is utf8");
+        let mut zip = ZipArchive::new(Cursor::new(&buf)).expect("BUG: open archive");
+        let names: Vec<String> = (0..zip.len())
+            .map(|i| zip.by_index(i).expect("BUG: entry").name().to_owned())
+            .collect();
 
-        assert!(summary.contains("status: missing"));
+        assert_eq!(names.len(), 3, "entries: {names:?}");
+        assert_eq!(names[0], "command/echo_hi");
+        assert_eq!(names[1], "builtin/timestamp");
+        assert!(
+            names[2].starts_with("filesystem/") && names[2].ends_with("a.txt"),
+            "fs entry: {}",
+            names[2]
+        );
     }
 }

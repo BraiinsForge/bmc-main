@@ -19,20 +19,21 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! The OpenWrt board's support-archive recipe: the board-specific constants,
+//! The OpenWrt board's support-archive recipe: the BMC-specific constants,
 //! command/path/host sets, credential filters and extensions, assembled into
 //! the [`SupportConfig`] the manager collects through.
 
 mod consts;
 
+use anyhow::Result;
 use bmc_support::{
-    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BmcConfigCensor, SecretsExclusion, SupportConfig,
-    SupportFilter, UciWirelessCensor,
+    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BmcConfigCensor, NixProfileExtension, SecretsExclusion,
+    SupportArchive, SupportConfig, SupportExtension, SupportFilter, UciWirelessCensor,
 };
 use consts::{
     BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION, ETC_DNSMASQ_CONF, ETC_HOSTS,
-    ETC_RESOLV_CONF, FACTORY_DEFAULT, PROC_CPUINFO, PROC_MTD, SETUP_PENDING, SRC_ETC_CONF,
-    SRC_LOGS,
+    ETC_RESOLV_CONF, FACTORY_DEFAULT, NIX_PROFILE_DIR, PROC_CPUINFO, PROC_MTD, SETUP_PENDING,
+    SRC_ETC_CONF, SRC_LOGS,
 };
 use std::sync::LazyLock;
 
@@ -95,6 +96,27 @@ const FILTERS: &[&dyn SupportFilter] = &[&SecretsExclusion, &BmcConfigCensor, &U
 static FS_PATHS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| [DEVICE_FS_PATHS, bmc_support::PROC_PATHS].concat());
 
+/// Captures the in-memory system log. Registered last so it sees syslog
+/// every other collector emits during collection.
+#[derive(Debug)]
+struct LogReadExtension;
+
+impl SupportExtension for LogReadExtension {
+    fn name(&self) -> &'static str {
+        "logread"
+    }
+
+    fn collect(&self, archive: &mut SupportArchive<'_>) -> Result<()> {
+        archive.add_cmd_output(&["logread"])
+    }
+}
+
+/// Extensions run after the fs walk; `logread` stays last.
+const EXTENSIONS: &[&dyn SupportExtension] = &[
+    &NixProfileExtension::new(NIX_PROFILE_DIR),
+    &LogReadExtension,
+];
+
 /// The OpenWrt board's support-archive recipe.
 pub static SUPPORT_CONFIG: LazyLock<SupportConfig<'static>> = LazyLock::new(|| {
     SupportConfig::new()
@@ -102,4 +124,52 @@ pub static SUPPORT_CONFIG: LazyLock<SupportConfig<'static>> = LazyLock::new(|| {
         .fs_paths(&FS_PATHS)
         .ping_hosts(PING_HOSTS)
         .filters(FILTERS)
+        .extensions(EXTENSIONS)
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn support_config_pins_the_include_set() {
+        let commands: Vec<Vec<&str>> = COMMANDS.iter().map(|cmd| cmd.to_vec()).collect();
+        assert_eq!(
+            commands,
+            vec![
+                vec!["dmesg"],
+                vec!["fw_printenv"],
+                vec!["env"],
+                vec!["ifconfig", "-a"],
+                vec!["ip", "addr"],
+                vec!["ip", "route"],
+                vec!["ps", "aux"],
+                vec!["df"],
+                vec!["ls", "-l", "/tmp"],
+                vec!["killall", "-SIGUSR1", "dnsmasq"],
+            ]
+        );
+
+        assert_eq!(
+            PING_HOSTS.to_vec(),
+            vec![
+                "127.0.0.1",
+                "8.8.8.8",
+                "google.com",
+                "downloads.braiins.com",
+                "downloads.braiinsforge.com",
+                "public-api.braiins.com",
+            ]
+        );
+
+        assert_eq!(
+            FS_PATHS.as_slice(),
+            [DEVICE_FS_PATHS, bmc_support::PROC_PATHS]
+                .concat()
+                .as_slice()
+        );
+
+        let extensions: Vec<_> = EXTENSIONS.iter().map(|ext| ext.name()).collect();
+        assert_eq!(extensions, ["nix_profile", "logread"]);
+    }
+}
