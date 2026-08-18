@@ -279,22 +279,44 @@ impl EglContext {
 
         tracing::debug!("Allocating {width}x{height} {format:?} GBM export buffer");
 
-        // Create GBM buffer object
+        // Prefer a Vivante-tiled buffer: the GC400 texture unit cannot sample
+        // linear, so a linear export forces the compositor's driver to keep
+        // a full-size tiled shadow copy per imported buffer.
         let bo = self
             .gbm
-            .create_buffer_object::<()>(
+            .create_buffer_object_with_modifiers2::<()>(
                 width,
                 height,
                 format.gbm_format(),
-                BufferObjectFlags::RENDERING | BufferObjectFlags::LINEAR,
+                [DrmModifier::Vivante_tiled].into_iter(),
+                BufferObjectFlags::RENDERING,
             )
+            .or_else(|err| {
+                tracing::debug!("Tiled allocation unavailable ({err}); using linear");
+                self.gbm.create_buffer_object::<()>(
+                    width,
+                    height,
+                    format.gbm_format(),
+                    BufferObjectFlags::RENDERING | BufferObjectFlags::LINEAR,
+                )
+            })
             .context("Failed to create GBM buffer object")?;
 
+        // Legacy (non-modifier) allocations may report Invalid; they are
+        // linear by construction.
+        let modifier = bo.modifier();
+        let modifier = if modifier == DrmModifier::Invalid {
+            DrmModifier::Linear
+        } else {
+            modifier
+        };
+
         tracing::debug!(
-            "GBM BO created: {}x{}, stride={}",
+            "GBM BO created: {}x{}, stride={}, modifier={:?}",
             bo.width(),
             bo.height(),
-            bo.stride()
+            bo.stride(),
+            modifier
         );
 
         // Create EGLImage from GBM BO
@@ -405,6 +427,7 @@ impl EglContext {
             cached_fd: None,
             cached_stride,
             format,
+            modifier,
         })
     }
 
@@ -648,7 +671,7 @@ impl EglContext {
             height: buf.height,
             stride: buf.cached_stride,
             format: buf.format.drm_fourcc(),
-            modifier: DrmModifier::Linear,
+            modifier: buf.modifier,
         })
     }
 
@@ -703,6 +726,8 @@ pub struct ExportBuffer {
     cached_stride: u32,
     /// Pixel format used when this buffer is advertised as DMA-BUF.
     format: ExportFormat,
+    /// Layout the BO was actually allocated with (tiled or linear fallback).
+    modifier: DrmModifier,
 }
 
 impl fmt::Debug for ExportBuffer {

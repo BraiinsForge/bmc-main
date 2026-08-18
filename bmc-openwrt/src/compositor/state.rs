@@ -327,7 +327,17 @@ impl CompositorState {
         let compositor_state = SmithayCompositorState::new::<Self>(&display_handle);
         let shm_state = ShmState::new::<Self>(&display_handle, vec![]);
 
+        // Vivante-tiled lets the GC400 sample client buffers directly instead
+        // of allocating a full-size tiled shadow copy per linear import.
         let dmabuf_formats = [
+            Format {
+                code: Fourcc::Xrgb8888,
+                modifier: Modifier::Vivante_tiled,
+            },
+            Format {
+                code: Fourcc::Argb8888,
+                modifier: Modifier::Vivante_tiled,
+            },
             Format {
                 code: Fourcc::Xrgb8888,
                 modifier: Modifier::Linear,
