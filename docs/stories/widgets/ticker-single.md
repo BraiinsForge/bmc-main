@@ -12,8 +12,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 > As a user, I want to pick one symbol and see its current price so I can keep an eye on the thing I care about.
 
 - The *Symbol* parameter is a free-form financial symbol; it defaults to `BTC-USD`.
-- A `BASE-QUOTE` value is read as a pair, so `BTC-USD` follows Bitcoin against the US dollar. A plain code such as
-  `AAPL`, an index such as `^GSPC`, or a symbol that merely contains a dash such as `BRK-B` is sent as-is.
+- Supported examples include the stock `AAPL`, the S&P 500 index `^GSPC`, the currency pair `EUR-USD`, and the
+  cryptocurrency pair `BTC-USD`. Availability varies by instrument; other symbol forms may not be supported.
 - The header shows the base symbol in full brightness and the quote currency dimmed next to it. For a plain code the
   quote currency comes from the data itself.
 - While no price has arrived yet the widget reads `Loading…`.
@@ -21,15 +21,14 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 
 ### Choose the time period
 
-> As a user, I want to choose how far back the chart reaches so I can look at the last hour or the last decade.
+> As a user, I want to choose how far back the chart reaches so I can inspect short- and medium-term changes.
 
-- The *Time Period* parameter offers nineteen windows from *1 Hour* through *All Time*, defaulting to *7d*.
+- The *Time Period* parameter offers *1 Hour*, *1 Day*, *7 Days*, and *1 Month*, defaulting to *7 Days*.
 - The period sets both the chart window and the percentage change, which is measured from the first bar's opening price
   to the latest price.
 - The period is printed in the header at the `medium`, `large`, and `full` sizes. The `small` size omits it to keep room
   for the price.
-- The chart resolution follows the period automatically — minutes for the short windows, days, weeks, or months for the
-  long ones — so the chart stays readable at every window.
+- The chart resolution follows the period automatically: 1 minute, 15 minutes, 1 hour, and 1 day respectively.
 
 ### Read the price change at a glance
 
@@ -62,8 +61,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 
 - Time labels run under the candlestick chart at the `large` and `full` sizes. The `medium` and `small` sizes omit them
   because there is no room.
-- The label granularity follows the period: clock times for windows up to a day, day and month up to a year, month and
-  year up to five years, and bare years beyond that.
+- The label granularity follows the period: clock times for *1 Hour* and *1 Day*, and day plus month for *7 Days* and *1
+  Month*.
 - Labels sit on day, month, or year boundaries and thin themselves out so they never collide or run off the left edge.
 - Times follow the device timezone, and the clock and date formats follow the device settings.
 
@@ -93,7 +92,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 - Price data comes from `https://nexus.braiinsforge.com/api/v1/data/prices/`; the widget polls every 60 seconds with a
   15 second per-request timeout, sized above the Nexus cold long-poll. A response that arrives but cannot be parsed is
   retried after 10 seconds; a 400, 404, or 503 uses the normal 60-second cadence.
-- The candlestick view requests coarser bars than the sparkline for the same period, and merges adjacent bars when the
-  plot is too narrow to draw them at least four pixels apart. Roughly 45 bars fit at `small` and 286 at `full`.
+- Market state comes from `https://nexus.braiinsforge.com/api/v1/data/reference/` and refreshes every 30 minutes.
+- Both views use the period's supported resolution and merge adjacent bars when the plot is too narrow to draw them at
+  least four pixels apart. Roughly 45 bars fit at `small` and 286 at `full`.
 - Changing the symbol, period, or view clears the chart to `Loading…` and restarts the fetch.
 - The widget has a fixed dark palette and does not recolour for night mode.

@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "name": "Ticker - Single",
   "description": "Visualize stock, asset, and crypto prices on a sparkline or candlestick chart",
+  "config_help": "Enter a stock symbol, index, or pair.\n\n**Currency pairs:** write pairs as `BASE-QUOTE`; `-` separates the base and quote currencies.\n\n- `EUR-USD` (Euro to US Dollar)\n- `USD-CZK` (US Dollar to Czech Koruna)\n- `EUR-CZK` (Euro to Czech Koruna)\n- `USD-JPY` (US Dollar to Japanese Yen)\n- `BTC-USD` (Bitcoin to US Dollar)\n\n**Indexes:** prefix index symbols with `^`.\n\n- `^GSPC` (S&P 500)\n- `^DJI` (Dow Jones Industrial Average)\n- `^IXIC` (Nasdaq Composite)\n- `^RUT` (Russell 2000)\n- `^VIX` (CBOE Volatility Index)\n\n**Stocks:** prices use the stock market's base currency.\n\n- `AAPL` (Apple)\n- `MSFT` (Microsoft)\n- `NVDA` (Nvidia)\n- `TSLA` (Tesla)\n- `AMZN` (Amazon)\n\n**Gold:**\n\n- `XAU-USD` (Gold to US Dollar)\n\nAvailability varies by instrument; other symbol forms may not be supported.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
@@ -27,7 +28,7 @@
   "params": {
     "pair": {
       "name": "Symbol",
-      "description": "Examples: stock symbol AAPL, index ^GSPC, or pair BTC-USD",
+      "description": "Financial symbol, index, currency pair, or cryptocurrency pair",
       "type": "string",
       "optional": true,
       "default_value": "BTC-USD"
@@ -43,76 +44,16 @@
           "label": "1 Hour"
         },
         {
-          "value": "3h",
-          "label": "3 Hours"
-        },
-        {
-          "value": "6h",
-          "label": "6 Hours"
-        },
-        {
-          "value": "12h",
-          "label": "12 Hours"
-        },
-        {
           "value": "1d",
           "label": "1 Day"
-        },
-        {
-          "value": "3d",
-          "label": "3 Days"
         },
         {
           "value": "7d",
           "label": "7 Days"
         },
         {
-          "value": "14d",
-          "label": "14 Days"
-        },
-        {
           "value": "1mo",
           "label": "1 Month"
-        },
-        {
-          "value": "3mo",
-          "label": "3 Months"
-        },
-        {
-          "value": "6mo",
-          "label": "6 Months"
-        },
-        {
-          "value": "9mo",
-          "label": "9 Months"
-        },
-        {
-          "value": "1Y",
-          "label": "1 Year"
-        },
-        {
-          "value": "2Y",
-          "label": "2 Years"
-        },
-        {
-          "value": "3Y",
-          "label": "3 Years"
-        },
-        {
-          "value": "5Y",
-          "label": "5 Years"
-        },
-        {
-          "value": "10Y",
-          "label": "10 Years"
-        },
-        {
-          "value": "25Y",
-          "label": "25 Years"
-        },
-        {
-          "value": "full",
-          "label": "All Time"
         }
       ]
     },

@@ -34,9 +34,9 @@ typed credential instances. Every later schema bump adds one more step to the sa
 - The legacy ticker widgets all land on the two native ticker widgets. The built-in BTC ticker, the remote exchange-rate
   widget, and the remote sparkline and candlestick single tickers become the single ticker widget — the base and quote
   currencies collapse into its symbol parameter and the chart style carries over as its view. The remote ticker list
-  becomes the native ticker list, with its usable symbols compacted into the leading symbol slots. The legacy period
-  vocabulary is translated (`24h` becomes `1d`, `30d` becomes `1mo`). An unusable period, or a symbol list with no
-  usable entry at all, falls back to the shipped manifest default rather than dropping the widget.
+  becomes the native ticker list, with its usable symbols compacted into the leading symbol slots. Every legacy period
+  maps to the closest supported window (`24h` becomes `1d`, longer windows clamp to `1mo`). An unusable period, or a
+  symbol list with no usable entry at all, falls back to the shipped manifest default rather than dropping the widget.
 - Any widget the step has no mapping for is dropped, with a `warn!` line naming the unsupported kind or URL. For v0 → v1
   this includes the blockchain-data widget and the remote Formula 1, NASA picture of the day, and debug widgets, none of
   which have a WASM counterpart. Dropped widgets are not preserved as empty placeholders.

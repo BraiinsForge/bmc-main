@@ -112,8 +112,8 @@ mod tests {
             "https://nexus/api/v1/data/prices/7d/1h/BTC/USD"
         );
         assert_eq!(
-            prices_url("b/", "BTC-USD", Period::D7, Candle::H4),
-            "b/prices/7d/4h/BTC/USD"
+            prices_url("b/", "BTC-USD", Period::D7, Candle::H1),
+            "b/prices/7d/1h/BTC/USD"
         );
     }
 

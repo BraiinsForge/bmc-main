@@ -11,72 +11,22 @@ use bmc_wasm_sdk::params::typed::ParamRead;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Period {
     _1h,
-    _3h,
-    _6h,
-    _12h,
     _1d,
-    _3d,
     _7d,
-    _14d,
     _1mo,
-    _3mo,
-    _6mo,
-    _9mo,
-    _1y,
-    _2y,
-    _3y,
-    _5y,
-    _10y,
-    _25y,
-    Full,
 }
 impl Period {
     /// Every variant, in manifest-declaration order. Useful when a widget
     /// wants to render a "pick one" UI or audit the enum exhaustively.
-    pub const ALL: &'static [Self] = &[
-        Self::_1h,
-        Self::_3h,
-        Self::_6h,
-        Self::_12h,
-        Self::_1d,
-        Self::_3d,
-        Self::_7d,
-        Self::_14d,
-        Self::_1mo,
-        Self::_3mo,
-        Self::_6mo,
-        Self::_9mo,
-        Self::_1y,
-        Self::_2y,
-        Self::_3y,
-        Self::_5y,
-        Self::_10y,
-        Self::_25y,
-        Self::Full,
-    ];
+    pub const ALL: &'static [Self] = &[Self::_1h, Self::_1d, Self::_7d, Self::_1mo];
     /// Manifest wire value for this variant.
     #[must_use]
     pub fn as_manifest_value(self) -> &'static str {
         match self {
             Self::_1h => "1h",
-            Self::_3h => "3h",
-            Self::_6h => "6h",
-            Self::_12h => "12h",
             Self::_1d => "1d",
-            Self::_3d => "3d",
             Self::_7d => "7d",
-            Self::_14d => "14d",
             Self::_1mo => "1mo",
-            Self::_3mo => "3mo",
-            Self::_6mo => "6mo",
-            Self::_9mo => "9mo",
-            Self::_1y => "1Y",
-            Self::_2y => "2Y",
-            Self::_3y => "3Y",
-            Self::_5y => "5Y",
-            Self::_10y => "10Y",
-            Self::_25y => "25Y",
-            Self::Full => "full",
         }
     }
     /// Human-readable label declared in the manifest's `enum_values`.
@@ -84,48 +34,18 @@ impl Period {
     pub fn as_manifest_label(self) -> &'static str {
         match self {
             Self::_1h => "1 Hour",
-            Self::_3h => "3 Hours",
-            Self::_6h => "6 Hours",
-            Self::_12h => "12 Hours",
             Self::_1d => "1 Day",
-            Self::_3d => "3 Days",
             Self::_7d => "7 Days",
-            Self::_14d => "14 Days",
             Self::_1mo => "1 Month",
-            Self::_3mo => "3 Months",
-            Self::_6mo => "6 Months",
-            Self::_9mo => "9 Months",
-            Self::_1y => "1 Year",
-            Self::_2y => "2 Years",
-            Self::_3y => "3 Years",
-            Self::_5y => "5 Years",
-            Self::_10y => "10 Years",
-            Self::_25y => "25 Years",
-            Self::Full => "All Time",
         }
     }
     #[must_use]
     pub fn from_manifest_value(s: &str) -> Option<Self> {
         match s {
             "1h" => Some(Self::_1h),
-            "3h" => Some(Self::_3h),
-            "6h" => Some(Self::_6h),
-            "12h" => Some(Self::_12h),
             "1d" => Some(Self::_1d),
-            "3d" => Some(Self::_3d),
             "7d" => Some(Self::_7d),
-            "14d" => Some(Self::_14d),
             "1mo" => Some(Self::_1mo),
-            "3mo" => Some(Self::_3mo),
-            "6mo" => Some(Self::_6mo),
-            "9mo" => Some(Self::_9mo),
-            "1Y" => Some(Self::_1y),
-            "2Y" => Some(Self::_2y),
-            "3Y" => Some(Self::_3y),
-            "5Y" => Some(Self::_5y),
-            "10Y" => Some(Self::_10y),
-            "25Y" => Some(Self::_25y),
-            "full" => Some(Self::Full),
             _ => None,
         }
     }

@@ -16,8 +16,8 @@ fetched independently so one bad symbol never blanks the others.
 - Each row shows the symbol, the instrument's name beneath it, the current price, and a signed percentage change.
 - Leaving a slot empty skips it and the remaining symbols move up, so a blank slot never leaves a gap in the list.
 - Clearing every slot shows `No symbols provided`.
-- A `BASE-QUOTE` value is read as a pair, so `BTC-USD` follows Bitcoin against the US dollar. A plain code such as
-  `AAPL`, an index such as `^GSPC`, or a symbol that merely contains a dash such as `BRK-B` is sent as-is.
+- Supported examples include the stock `AAPL`, the S&P 500 index `^GSPC`, the currency pair `EUR-USD`, and the
+  cryptocurrency pair `BTC-USD`. Availability varies by instrument; other symbol forms may not be supported.
 
 ### See as many rows as the tile can hold
 
@@ -47,7 +47,7 @@ fetched independently so one bad symbol never blanks the others.
 
 > As a user, I want to choose how far back the rows reach so the list reflects the horizon I care about.
 
-- The *Time Period* parameter offers nineteen windows from *1 Hour* through *All Time*, defaulting to *7d*.
+- The *Time Period* parameter offers *1 Hour*, *1 Day*, *7 Days*, and *1 Month*, defaulting to *7 Days*.
 - The period applies to every row at once and sets both the sparkline window and the percentage change.
 - The chart resolution follows the period automatically, so the sparkline stays meaningful at every window.
 - Changing the period reloads the prices but keeps the instrument names already fetched.
@@ -89,7 +89,7 @@ fetched independently so one bad symbol never blanks the others.
 - Price data comes from `https://nexus.braiinsforge.com/api/v1/data/prices/`; each row polls every 300 seconds with a 15
   second per-request timeout, sized above the Nexus cold long-poll. A response that cannot be parsed is retried after 10
   seconds; a 400, 404, or 503 uses the normal 300-second cadence.
-- Instrument names come from `https://nexus.braiinsforge.com/api/v1/data/reference/` and are fetched best-effort. A row
-  with no name available simply shows none and tries again after its next successful price refresh.
+- Instrument names and market state come from `https://nexus.braiinsforge.com/api/v1/data/reference/` and are fetched
+  best-effort. A row with no name available simply shows none and tries again after its next successful price refresh.
 - Configuring fewer symbols than the current size can hold leaves the remaining rows blank.
 - The widget has a fixed dark palette and does not recolour for night mode.

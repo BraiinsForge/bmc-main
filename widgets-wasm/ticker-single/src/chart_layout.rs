@@ -332,17 +332,8 @@ pub enum LabelKind {
 #[must_use]
 pub fn label_kind(period: Period) -> LabelKind {
     match period {
-        Period::H1 | Period::H3 | Period::H6 | Period::H12 | Period::D1 => LabelKind::Time,
-        Period::D3
-        | Period::D7
-        | Period::D14
-        | Period::Mo1
-        | Period::Mo3
-        | Period::Mo6
-        | Period::Mo9
-        | Period::Y1 => LabelKind::DayMonth,
-        Period::Y2 | Period::Y3 | Period::Y5 => LabelKind::MonthYear,
-        Period::Y10 | Period::Y25 | Period::Full => LabelKind::Year,
+        Period::H1 | Period::D1 => LabelKind::Time,
+        Period::D7 | Period::Mo1 => LabelKind::DayMonth,
     }
 }
 
@@ -700,12 +691,8 @@ mod tests {
     fn label_kinds_follow_the_period_tiers() {
         assert_eq!(label_kind(Period::H1), LabelKind::Time);
         assert_eq!(label_kind(Period::D1), LabelKind::Time);
-        assert_eq!(label_kind(Period::D3), LabelKind::DayMonth);
-        assert_eq!(label_kind(Period::Y1), LabelKind::DayMonth);
-        assert_eq!(label_kind(Period::Y2), LabelKind::MonthYear);
-        assert_eq!(label_kind(Period::Y5), LabelKind::MonthYear);
-        assert_eq!(label_kind(Period::Y10), LabelKind::Year);
-        assert_eq!(label_kind(Period::Full), LabelKind::Year);
+        assert_eq!(label_kind(Period::D7), LabelKind::DayMonth);
+        assert_eq!(label_kind(Period::Mo1), LabelKind::DayMonth);
     }
 
     #[test]

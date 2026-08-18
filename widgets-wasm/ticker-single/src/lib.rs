@@ -354,7 +354,7 @@ mod wasm_glue {
     use bmc_wasm_sdk::*;
     use prices::candle;
     use prices::fetch::{self, FetchClass};
-    use prices::period::{Candle, Period};
+    use prices::period::Period;
     use prices::reference::{self, ReferenceOutcome};
     use prices::transition;
 
@@ -382,14 +382,6 @@ mod wasm_glue {
             .expect("BUG: every manifest period token is a Nexus window")
     }
 
-    fn candle_of(params: &manifest_params::Params) -> Candle {
-        let period = period_of(params);
-        match params.view {
-            manifest_params::View::Sparkline => period.candle(),
-            manifest_params::View::Candlestick => period.candlestick_candle(),
-        }
-    }
-
     #[unsafe(no_mangle)]
     pub extern "C" fn init() {
         let handle = register_poll(
@@ -400,7 +392,7 @@ mod wasm_glue {
                 ..PollConfig::default()
             },
         );
-        PRICE_POLL.with(|poll| poll.set(Some(handle)));
+        PRICE_POLL.with(|p| p.set(Some(handle)));
         let reference_handle = register_poll(
             build_reference_request,
             on_reference_reply,
@@ -455,12 +447,13 @@ mod wasm_glue {
         if pair.is_empty() {
             return None;
         }
+        let period = period_of(&params);
         Some(
             FetchSpec::get(fetch::prices_url(
                 prices::NEXUS_BASE,
                 pair,
-                period_of(&params),
-                candle_of(&params),
+                period,
+                period.candle(),
             ))
             .timeout(prices::FETCH_TIMEOUT),
         )
@@ -533,8 +526,8 @@ mod wasm_glue {
             });
         }
         STATE.with(|s| *s.borrow_mut() = State::Loading);
-        PRICE_POLL.with(|poll| {
-            if let Some(handle) = poll.get() {
+        PRICE_POLL.with(|p| {
+            if let Some(handle) = p.get() {
                 // Blanked data drops its staleness — the new instrument
                 // must not inherit the old one's refresh anchor.
                 handle.reset_staleness();

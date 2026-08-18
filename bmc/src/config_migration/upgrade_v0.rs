@@ -540,21 +540,14 @@ fn dispatch_ticker_btc(widget: &v0::Widget) -> (Uuid, Value) {
     )
 }
 
-/// Map a v0 `time_frame` token to the ticker manifests' period enum.
-/// `None` for a token outside the v0 set, so the caller can fall back
-/// to the manifest default.
+/// Map every v0 BTC window to the closest supported ticker period.
+/// Nexus serves only the four windows the manifest exposes, so windows
+/// longer than one month clamp to the longest available period.
 fn translate_btc_time_frame(time_frame: &str) -> Option<&'static str> {
     match time_frame {
         "day1" => Some("1d"),
-        "week1" => Some("7d"),
-        "week2" => Some("14d"),
-        "month1" => Some("1mo"),
-        "month3" => Some("3mo"),
-        "month6" => Some("6mo"),
-        "year1" => Some("1Y"),
-        "year2" => Some("2Y"),
-        "year5" => Some("5Y"),
-        "all" => Some("full"),
+        "week1" | "week2" => Some("7d"),
+        "month1" | "month3" | "month6" | "year1" | "year2" | "year5" | "all" => Some("1mo"),
         _ => None,
     }
 }
@@ -705,10 +698,13 @@ fn dispatch_nameday_widget_params(params: &Value) -> Value {
 
 fn translate_ticker_period(period: Option<&str>) -> &'static str {
     match period {
-        Some("1h") => "1h",
-        Some("24h" | "1d") => "1d",
-        Some("7d") => "7d",
-        Some("30d") => "1mo",
+        Some("1h" | "3h" | "6h" | "12h") => "1h",
+        Some("24h" | "1d" | "3d") => "1d",
+        Some("7d" | "14d") => "7d",
+        Some(
+            "30d" | "1mo" | "3mo" | "6mo" | "9mo" | "1Y" | "2Y" | "3Y" | "5Y" | "10Y" | "25Y"
+            | "full",
+        ) => "1mo",
         Some(_) | None => DEFAULT_TICKER_PERIOD,
     }
 }
@@ -1235,6 +1231,25 @@ mod tests {
     }
 
     #[test]
+    fn ticker_btc_windows_map_to_the_closest_supported_period() {
+        for (legacy, current) in [
+            ("day1", "1d"),
+            ("week1", "7d"),
+            ("week2", "7d"),
+            ("month1", "1mo"),
+            ("month3", "1mo"),
+            ("month6", "1mo"),
+            ("year1", "1mo"),
+            ("year2", "1mo"),
+            ("year5", "1mo"),
+            ("all", "1mo"),
+        ] {
+            let upgraded = upgrade("ticker_btc", json!({ "time_frame": legacy }));
+            assert_eq!(upgraded.params["period"], str_param(current));
+        }
+    }
+
+    #[test]
     fn ticker_btc_defaults_the_period_for_unknown_time_frames() {
         for inner in [json!(null), json!({ "time_frame": "fortnight" })] {
             let upgraded = upgrade("ticker_btc", inner);
@@ -1614,13 +1629,17 @@ mod tests {
     }
 
     #[test]
-    fn legacy_ticker_periods_preserve_their_windows() {
+    fn legacy_ticker_periods_map_to_the_closest_supported_period() {
         for (legacy, current) in [
             ("1h", "1h"),
+            ("12h", "1h"),
             ("24h", "1d"),
             ("1d", "1d"),
+            ("3d", "1d"),
             ("7d", "7d"),
+            ("14d", "7d"),
             ("30d", "1mo"),
+            ("full", "1mo"),
         ] {
             assert_eq!(translate_ticker_period(Some(legacy)), current);
         }

@@ -4,6 +4,7 @@
   "version": "0.1.0",
   "name": "Financial Ticker List",
   "description": "Display multiple financial symbols with prices, changes, and sparkline charts",
+  "config_help": "Enter a stock symbol, index, or pair.\n\n**Currency pairs:** write pairs as `BASE-QUOTE`; `-` separates the base and quote currencies.\n\n- `EUR-USD` (Euro to US Dollar)\n- `USD-CZK` (US Dollar to Czech Koruna)\n- `EUR-CZK` (Euro to Czech Koruna)\n- `USD-JPY` (US Dollar to Japanese Yen)\n- `BTC-USD` (Bitcoin to US Dollar)\n\n**Indexes:** prefix index symbols with `^`.\n\n- `^GSPC` (S&P 500)\n- `^DJI` (Dow Jones Industrial Average)\n- `^IXIC` (Nasdaq Composite)\n- `^RUT` (Russell 2000)\n- `^VIX` (CBOE Volatility Index)\n\n**Stocks:** prices use the stock market's base currency.\n\n- `AAPL` (Apple)\n- `MSFT` (Microsoft)\n- `NVDA` (Nvidia)\n- `TSLA` (Tesla)\n- `AMZN` (Amazon)\n\n**Gold:**\n\n- `XAU-USD` (Gold to US Dollar)\n\nAvailability varies by instrument; other symbol forms may not be supported.",
   "author": {
     "name": "Braiins Forge",
     "url": "https://braiinsforge.com"
@@ -26,56 +27,56 @@
   "params": {
     "symbol_1": {
       "name": "Symbol 1",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "NVDA"
     },
     "symbol_2": {
       "name": "Symbol 2",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "AAPL"
     },
     "symbol_3": {
       "name": "Symbol 3",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "TSLA"
     },
     "symbol_4": {
       "name": "Symbol 4",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "MSTR"
     },
     "symbol_5": {
       "name": "Symbol 5",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "JPM"
     },
     "symbol_6": {
       "name": "Symbol 6",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "META"
     },
     "symbol_7": {
       "name": "Symbol 7",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "SPY"
     },
     "symbol_8": {
       "name": "Symbol 8",
-      "description": "Financial symbol, stock ticker, or cryptocurrency pair for this row; leave empty to skip it",
+      "description": "Financial symbol; leave empty to skip this row",
       "type": "string",
       "optional": true,
       "default_value": "NFLX"
@@ -91,76 +92,16 @@
           "label": "1 Hour"
         },
         {
-          "value": "3h",
-          "label": "3 Hours"
-        },
-        {
-          "value": "6h",
-          "label": "6 Hours"
-        },
-        {
-          "value": "12h",
-          "label": "12 Hours"
-        },
-        {
           "value": "1d",
           "label": "1 Day"
-        },
-        {
-          "value": "3d",
-          "label": "3 Days"
         },
         {
           "value": "7d",
           "label": "7 Days"
         },
         {
-          "value": "14d",
-          "label": "14 Days"
-        },
-        {
           "value": "1mo",
           "label": "1 Month"
-        },
-        {
-          "value": "3mo",
-          "label": "3 Months"
-        },
-        {
-          "value": "6mo",
-          "label": "6 Months"
-        },
-        {
-          "value": "9mo",
-          "label": "9 Months"
-        },
-        {
-          "value": "1Y",
-          "label": "1 Year"
-        },
-        {
-          "value": "2Y",
-          "label": "2 Years"
-        },
-        {
-          "value": "3Y",
-          "label": "3 Years"
-        },
-        {
-          "value": "5Y",
-          "label": "5 Years"
-        },
-        {
-          "value": "10Y",
-          "label": "10 Years"
-        },
-        {
-          "value": "25Y",
-          "label": "25 Years"
-        },
-        {
-          "value": "full",
-          "label": "All Time"
         }
       ]
     }
