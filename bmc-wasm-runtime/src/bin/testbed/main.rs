@@ -126,11 +126,13 @@ impl RuntimeTileGeometry {
     }
 }
 
-/// What `--record` asks for: the viewport to pin and the dataset to write.
+/// What `--record` asks for: the viewport to pin, and the dataset to write
+/// when `--record-name` named one. Without a name the GUI asks for it, since
+/// defaulting would overwrite whatever that target already replays.
 #[derive(Debug, Clone)]
 struct RecordRequest {
     target: platform_catalog::Target,
-    dataset: String,
+    dataset: Option<String>,
 }
 
 /// Resolve `--record`, if given.
@@ -152,23 +154,16 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
         );
     }
 
-    let dataset = cli
-        .record_name
-        .clone()
-        .unwrap_or_else(|| default_dataset(target));
-    if !bmc_wasm_runtime::capture_config::is_valid_dataset_name(&dataset) {
+    let dataset = cli.record_name.clone();
+    if let Some(dataset) = &dataset
+        && !bmc_wasm_runtime::capture_config::is_valid_dataset_name(dataset)
+    {
         anyhow::bail!(
             "--record-name={dataset} must be non-empty and use only letters, digits, '-', '_' or '.'"
         );
     }
 
     Ok(Some(RecordRequest { target, dataset }))
-}
-
-/// The dataset a take writes when the operator names none — the target,
-/// which identifies a recording unless a sim scenario distinguishes takes.
-fn default_dataset(target: platform_catalog::Target) -> String {
-    format!("{}-{}", target.platform.id, target.viewport.id)
 }
 
 /// Width of the right-side sidebar housing both the per-widget Params
@@ -206,7 +201,8 @@ struct CliArgs {
     /// Record a capture fixture for this target (e.g. `bmc100:small`).
     #[arg(long = "record")]
     record_target: Option<String>,
-    /// Dataset name for the recording; defaults to `<platform>-<viewport>`.
+    /// Dataset name for the recording. Omit it and the dialog asks,
+    /// offering `<platform>-<viewport>` on a button.
     #[arg(long = "record-name", requires = "record_target")]
     record_name: Option<String>,
     /// Platform id to select from the catalog.
@@ -467,15 +463,14 @@ mod platforms_startup_tests {
     }
 
     #[test]
-    fn the_default_dataset_matches_the_cli_default() {
+    fn a_record_target_without_a_name_carries_none() {
         let cli = parse_test_args(&["testbed", "widget.wasm", "--record=bmc100:small"])
             .expect("BUG: record args must parse");
         let request = resolve_record_request(&cli)
             .expect("BUG: record request must resolve")
             .expect("BUG: a record target was given");
 
-        assert_eq!(request.dataset, default_dataset(request.target));
-        assert_eq!(request.dataset, "bmc100-small");
+        assert_eq!(request.dataset, None);
     }
 
     #[test]
@@ -863,10 +858,16 @@ fn main() -> Result<()> {
         );
     }
     if let Some(ref request) = record_request {
-        println!(
-            "Recording mode: target={} dataset={}",
-            request.target, request.dataset
-        );
+        match &request.dataset {
+            Some(dataset) => println!(
+                "Recording mode: target={} dataset={dataset}",
+                request.target
+            ),
+            None => println!(
+                "Recording mode: target={}, naming its dataset in the GUI",
+                request.target
+            ),
+        }
     }
 
     let rss_before_gl = current_rss_kb();
@@ -1141,32 +1142,48 @@ struct FramePass {
     next_wake_ms: Option<u64>,
 }
 
-/// A transient chrome banner: the outcome of an action whose other traces
-/// left the screen — a saved take, mostly. Expires on its own or on click.
+/// A chrome banner: the outcome of an action whose other traces left the
+/// screen — a saved take, mostly. Holds until dismissed.
 struct Notice {
     text: String,
-    error: bool,
-    shown_at: std::time::Instant,
+    kind: NoticeKind,
 }
 
 impl Notice {
-    /// How long a success notice lingers; enough to read a path, short enough
-    /// to never need dismissing by hand.
-    const TTL: std::time::Duration = std::time::Duration::from_secs(10);
-
-    fn success(text: String) -> Self {
+    fn saved(text: String) -> Self {
         Self {
             text,
-            error: false,
-            shown_at: std::time::Instant::now(),
+            kind: NoticeKind::Saved,
         }
     }
 
-    fn error(text: String) -> Self {
+    fn failed(text: String) -> Self {
         Self {
             text,
-            error: true,
-            shown_at: std::time::Instant::now(),
+            kind: NoticeKind::Failed,
+        }
+    }
+}
+
+/// Which outcome a banner reports.
+#[derive(Clone, Copy)]
+enum NoticeKind {
+    Saved,
+    Failed,
+}
+
+impl NoticeKind {
+    fn accent(self, palette: &theme::Palette) -> egui::Color32 {
+        match self {
+            Self::Saved => palette.support_success,
+            Self::Failed => palette.support_error,
+        }
+    }
+
+    fn heading(self) -> &'static str {
+        match self {
+            Self::Saved => "Recording saved",
+            Self::Failed => "Recording failed",
         }
     }
 }
@@ -1292,8 +1309,16 @@ impl TestbedApp {
         // Arranged from the first frame that has views to arrange: every
         // device is worth seeing at once.
         app.stage.request_arrange();
-        if let Some(RecordRequest { target, dataset }) = record_request {
-            app.enter_recording(target, dataset);
+        match record_request {
+            Some(RecordRequest {
+                target,
+                dataset: Some(dataset),
+            }) => app.enter_recording(target, dataset),
+            Some(RecordRequest {
+                target,
+                dataset: None,
+            }) => app.enter_choosing(Some(target)),
+            None => {}
         }
         Ok(app)
     }
@@ -1334,6 +1359,12 @@ impl TestbedApp {
                 return;
             }
         };
+        // Installed before the seeds are built, because `view_runtime_config`
+        // reads the asset root from here. After the loop, the seeds carry the
+        // *previous* extraction directory, which this assignment then deletes
+        // with its `TempDir` — and the first asset restore fails on a path
+        // that existed when the seed was made.
+        self.prepared_widget = prepared_widget;
         // Shared, because every view's seed carries a handle to the same bytes.
         let wasm_bytes: Arc<[u8]> = wasm_bytes.into();
         tracing::info!(
@@ -1392,7 +1423,6 @@ impl TestbedApp {
                 tracing::warn!("hot reload: {}: {e:#}", view.label());
             }
         }
-        self.prepared_widget = prepared_widget;
         // Whoever built it, what the views run is now what is on disk.
         self.hot_reload.status.swapped();
     }
@@ -1414,9 +1444,15 @@ impl TestbedApp {
     }
 
     /// Open the choosing phase: every supported platform on the canvas,
-    /// packed to fit, each viewport wearing its choose overlay. The take
-    /// starts when one of them is clicked; Cancel puts the canvas back.
-    fn start_choosing(&mut self, ctx: &egui::Context) {
+    /// packed to fit, each viewport wearing its choose overlay. Clicking one
+    /// opens its naming dialog; Cancel puts the canvas back.
+    ///
+    /// `at` opens that target's dialog straight away — `--record` named a
+    /// viewport but no dataset, so the GUI is what asks for the name.
+    ///
+    /// Ctx-free, so startup can call it before the first frame; UI callers
+    /// follow it with `request_repaint`.
+    fn enter_choosing(&mut self, at: Option<platform_catalog::Target>) {
         if !self
             .recording_mode
             .open_choosing(self.recorded_targets(), self.stage.open().to_vec())
@@ -1432,29 +1468,49 @@ impl TestbedApp {
         // Pack chooses the zoom that fits everything, so every candidate is
         // in view when the overlays appear.
         self.stage.request_arrange();
+        if let Some(target) = at {
+            self.recording_mode.choose(target);
+        }
+    }
+
+    fn start_choosing(&mut self, ctx: &egui::Context) {
+        self.enter_choosing(None);
         ctx.request_repaint();
     }
 
-    /// The datasets each target already carries in the widget's capture
-    /// config — the overlays badge them, since choosing one again overwrites
-    /// its fixture on Save.
-    fn recorded_targets(&self) -> std::collections::HashMap<String, Vec<String>> {
-        let mut recorded = std::collections::HashMap::<String, Vec<String>>::new();
+    /// The datasets each target already carries in the widget's capture config.
+    fn recorded_targets(&self) -> recording::RecordedFixtures {
+        let mut recorded =
+            std::collections::HashMap::<String, Vec<recording::RecordedDataset>>::new();
         let Some(widget_root) = self.cli.resolved_widget_root() else {
-            return recorded;
+            return recording::RecordedFixtures::new(recorded);
         };
         let capture_dir = widget_root.join("capture");
         let Ok(config) = bmc_wasm_runtime::capture_config::load_from_capture_dir(&capture_dir)
         else {
-            return recorded;
+            return recording::RecordedFixtures::new(recorded);
         };
-        for (dataset, target) in config.capture_matrix() {
-            recorded
-                .entry(target.to_string())
-                .or_default()
-                .push(dataset.to_owned());
+        for (dataset, entry) in &config.fixtures {
+            for target in &entry.targets {
+                let key = target.to_string();
+                let also_drives = entry
+                    .targets
+                    .iter()
+                    .map(ToString::to_string)
+                    .filter(|other| *other != key)
+                    .collect();
+                recorded
+                    .entry(key)
+                    .or_default()
+                    .push(recording::RecordedDataset {
+                        name: dataset.clone(),
+                        also_drives,
+                        settle_delay: entry.settle_delay,
+                        kv_keys: entry.kv.len(),
+                    });
+            }
         }
-        recorded
+        recording::RecordedFixtures::new(recorded)
     }
 
     /// Enter recording mode: pin the canvas to the take's platform and retire
@@ -1500,8 +1556,14 @@ impl TestbedApp {
             return;
         };
         match outcome {
-            Ok(text) => {
-                self.notice = Some(Notice::success(text));
+            Ok(saved) => {
+                let text = match saved.warning {
+                    Some(warning) => indoc::formatdoc! {"
+                        {summary}
+                        {warning}", summary = saved.summary},
+                    None => saved.summary,
+                };
+                self.notice = Some(Notice::saved(text));
                 if let Some(unwind) = self.recording_mode.end() {
                     self.apply_record_unwind(unwind, ctx);
                 }
@@ -1509,10 +1571,11 @@ impl TestbedApp {
             // The take stays open with everything it collected, so pressing
             // Save again after fixing the cause writes the same recording.
             Err(text) => {
-                self.notice = Some(Notice::error(format!(
-                    "{text}\nThe take is still running — fix the cause and press Save again, \
-                     or Cancel to discard it."
-                )));
+                self.notice = Some(Notice::failed(indoc::formatdoc! {"
+                    {text}
+                    The take is still running — fix the cause and press Save
+                    again, or Cancel to discard it."
+                }));
             }
         }
     }
@@ -1977,16 +2040,16 @@ fn paint_placeholder(
     label: &str,
     palette: &theme::Palette,
 ) {
-    painter.rect_filled(rect, 0.0, palette.placeholder_fill);
+    painter.rect_filled(rect, 0.0, palette.device_placeholder);
     painter.rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0_f32, palette.placeholder_outline),
+        egui::Stroke::new(1.0_f32, palette.device_placeholder_border),
         egui::StrokeKind::Inside,
     );
     let icon = rect.center() - egui::vec2(0.0, 16.0);
     let radius = 13.0;
-    let stroke = egui::Stroke::new(2.0_f32, palette.placeholder_glyph);
+    let stroke = egui::Stroke::new(2.0_f32, palette.device_placeholder_text);
     painter.circle_stroke(icon, radius, stroke);
     let slash = radius * 0.72;
     painter.line_segment(
@@ -2455,11 +2518,12 @@ impl TestbedApp {
             });
 
         self.paint_device_windows(&ctx, time_s);
+        self.paint_record_dialog(&ctx);
         self.paint_notice(&ctx);
-        // The overlay's click, deferred here: it lands inside a borrow of the
+        // The dialog's submit, deferred here: it lands inside a borrow of the
         // choosing state, and entering the take swaps the whole canvas.
-        if let Some(target) = self.recording_mode.take_choice() {
-            self.enter_recording(target, default_dataset(target));
+        if let Some((target, dataset)) = self.recording_mode.take_choice() {
+            self.enter_recording(target, dataset);
             ctx.request_repaint();
         }
 
@@ -2475,24 +2539,19 @@ impl TestbedApp {
     /// the log all go with the unwind — so the write's result is stated here:
     /// where the fixture landed, how much it holds, and what to run next.
     fn paint_notice(&mut self, ctx: &egui::Context) {
-        const OK: egui::Color32 = egui::Color32::from_rgb(120, 200, 150);
-
+        // Held until dismissed either way: a fixture's path and the command
+        // that baselines it are worth copying out, and a banner that expires
+        // while being read is worse than one more click.
         let Some(notice) = &self.notice else { return };
-        // An error names something to go and fix, so it holds until dismissed;
-        // only the success banner is on a timer.
-        if !notice.error && notice.shown_at.elapsed() > Notice::TTL {
-            self.notice = None;
-            return;
-        }
-        let error = notice.error;
+        let kind = notice.kind;
         let text = notice.text.clone();
 
         let palette = self.theme.palette(ctx);
-        let accent = if error { palette.record_accent } else { OK };
-        let (icon, heading) = if error {
-            (&mut self.icons.warning, "Recording failed")
-        } else {
-            (&mut self.icons.saved, "Recording saved")
+        let accent = kind.accent(palette);
+        let heading = kind.heading();
+        let icon = match kind {
+            NoticeKind::Saved => &mut self.icons.saved,
+            NoticeKind::Failed => &mut self.icons.warning,
         };
 
         let mut dismissed = false;
@@ -2504,9 +2563,10 @@ impl TestbedApp {
             ))
             .show(ctx, |ui| {
                 egui::Frame::NONE
-                    .fill(palette.panel_fill)
+                    .fill(palette.layer)
                     .stroke(egui::Stroke::new(1.0_f32, accent))
                     .corner_radius(4.0)
+                    .shadow(theme::OVERLAY_SHADOW)
                     .inner_margin(10.0)
                     .show(ui, |ui| {
                         ui.set_width(NOTICE_W);
@@ -2517,14 +2577,17 @@ impl TestbedApp {
                                 .0;
                             icon.paint(row, icon_rect, accent);
                             row.label(egui::RichText::new(heading).color(accent).strong());
+                            // The close is a control of its own, so reading
+                            // the banner cannot dismiss it by a stray click.
+                            let centre = egui::pos2(
+                                row.max_rect().right() - ui_helpers::CLOSE_SIZE / 2.0,
+                                row.max_rect().center().y,
+                            );
+                            dismissed = ui_helpers::close_button(row, centre, "dismiss");
                         });
                         ui.add_space(4.0);
                         ui.label(egui::RichText::new(text).font(egui::FontId::monospace(11.0)));
                     });
-                dismissed = ui
-                    .interact(ui.min_rect(), ui.id().with("dismiss"), egui::Sense::click())
-                    .on_hover_text("dismiss")
-                    .clicked();
             });
         if dismissed {
             self.notice = None;
@@ -2563,7 +2626,6 @@ mod app_tests {
                 .unwrap_or_else(|e| panic!("BUG: '{spec}' must resolve: {e:#}"))
                 .expect("BUG: a --record target must be Some");
             assert_eq!(request.target.viewport.id, v.id);
-            assert_eq!(request.dataset, format!("bmc100-{}", v.id));
         }
     }
 
@@ -2593,12 +2655,12 @@ mod app_tests {
     }
 
     #[test]
-    fn an_explicit_dataset_name_overrides_the_default() {
+    fn an_explicit_dataset_name_is_carried_to_the_take() {
         let request = resolve_record_request(&record_args("bfm100:full", Some("night-shift")))
             .expect("BUG: a named recording must resolve")
             .expect("BUG: a --record target must be Some");
 
-        assert_eq!(request.dataset, "night-shift");
+        assert_eq!(request.dataset.as_deref(), Some("night-shift"));
     }
 
     #[test]

@@ -1436,6 +1436,7 @@ dependencies = [
  "iana-time-zone",
  "ii-stopwatch",
  "image",
+ "indoc",
  "khronos-egl",
  "libc",
  "mdns-sd",

@@ -228,10 +228,8 @@ fn paint_enum_row<T: Copy + PartialEq>(
         combo_cell(slot, key, w, label(*value), |menu| {
             let mut changed = false;
             for &variant in variants {
-                if menu
-                    .selectable_label(*value == variant, label(variant))
-                    .clicked()
-                {
+                let option = menu.selectable_label(*value == variant, label(variant));
+                if super::ui_helpers::with_pointer(option).clicked() {
                     *value = variant;
                     changed = true;
                 }

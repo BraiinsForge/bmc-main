@@ -96,6 +96,7 @@ pub(crate) struct Icons {
     pub(crate) timer: Icon,
     pub(crate) scale_in: Icon,
     pub(crate) scale_out: Icon,
+    pub(crate) automatic: Icon,
     // The notice banner's two outcomes.
     pub(crate) saved: Icon,
     pub(crate) warning: Icon,
@@ -122,6 +123,7 @@ impl Icons {
             timer: Icon::new(include_bytes!("assets/icons/timer.svg")),
             scale_in: Icon::new(include_bytes!("assets/icons/scale-in.svg")),
             scale_out: Icon::new(include_bytes!("assets/icons/scale-out.svg")),
+            automatic: Icon::new(include_bytes!("assets/icons/automatic.svg")),
             saved: Icon::new(include_bytes!("assets/icons/saved.svg")),
             warning: Icon::new(include_bytes!("assets/icons/warning.svg")),
             touch: Icon::new(include_bytes!("assets/icons/touch.svg")),
@@ -173,7 +175,7 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 19] = [
+        let named: [(&str, &Icon); 20] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
@@ -193,6 +195,7 @@ mod tests {
             ("output", &icons.output),
             ("scale-in", &icons.scale_in),
             ("scale-out", &icons.scale_out),
+            ("automatic", &icons.automatic),
         ];
         for (name, icon) in named {
             let image = mask(icon.svg, 32);

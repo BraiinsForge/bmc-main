@@ -22,12 +22,6 @@
 //! the write path that merges user / network / fetch event sources into a
 //! fixture on disk plus updates the widget's capture config.
 
-#![expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    reason = "wall-clock ms / pixel deltas on positive bounded ranges"
-)]
-
 use std::path::PathBuf;
 
 use bmc_wasm_runtime::fixtures;
@@ -36,6 +30,11 @@ use bmc_wasm_runtime::unified_fixture::{
 };
 
 use super::TestbedApp;
+use super::theme::spacing;
+use super::ui_helpers::{
+    DIALOG_BACKDROP_ALPHA, DialogPrimary, FooterClick, dialog_body, dialog_footer, dialog_header,
+    dialog_surface, target_name, text_field,
+};
 use super::view::DeviceView;
 
 // ── Recording state ─────────────────────────────────────────────────
@@ -235,12 +234,12 @@ impl RecordingState {
     }
 
     /// Write the take as `capture/fixtures/<dataset>.jsonl.gz` and point the
-    /// widget's `capture/config.toml` at it. Both outcomes are worded for the
+    /// widget's `capture/config.toml` at it. Every outcome is worded for the
     /// on-screen notice.
     ///
     /// Leaves the take intact either way, so a failure can be answered by
     /// fixing what failed and pressing Save again.
-    pub(super) fn write(&self) -> Result<String, String> {
+    pub(super) fn write(&self) -> Result<Saved, String> {
         let fixture = self.fixture();
 
         let Some(widget_root) = &self.widget_root else {
@@ -253,9 +252,12 @@ impl RecordingState {
             .join("fixtures")
             .join(format!("{}.jsonl.gz", self.dataset));
 
-        if let Err(e) = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture) {
-            eprintln!("warning: fixture validation failed: {e:#} (writing anyway)");
-        }
+        // Reported rather than refused: validation judges what was recorded.
+        // A second Save fails identically, so an `Err` would leave the operator
+        // a take they can only discard.
+        let warning = bmc_wasm_runtime::unified_fixture::validate_fixture(&fixture)
+            .err()
+            .map(|e| format!("the fixture did not validate: {e:#}"));
         if let Err(e) = fixtures::write_jsonl_fixture(&fixture_path, &fixture) {
             let message = format!("failed to write {}: {e:#}", fixture_path.display());
             eprintln!("error: {message}");
@@ -269,16 +271,18 @@ impl RecordingState {
 
         let config_path = widget_root.join("capture").join("config.toml");
         let fixture_rel = format!("fixtures/{}.jsonl.gz", self.dataset);
+        // A fixture nothing points at is not a saved take.
         if let Err(e) = fixtures::update_config_toml_fixtures(
             &config_path,
             &self.dataset,
             &fixture_rel,
             self.target,
         ) {
-            eprintln!("warning: failed to update config.toml: {e:#}");
-        } else {
-            eprintln!("updated: {}", config_path.display());
+            let message = format!("failed to update {}: {e:#}", config_path.display());
+            eprintln!("error: {message}");
+            return Err(message);
         }
+        eprintln!("updated: {}", config_path.display());
 
         let widget_name = widget_root
             .file_name()
@@ -287,14 +291,24 @@ impl RecordingState {
         eprintln!("hint: run `just wasm::update-baselines {widget_name}` to set baselines");
 
         let bytes = std::fs::metadata(&fixture_path).map_or(0, |m| m.len());
-        Ok(format!(
-            "Saved {} — {} event(s), {:.1} KiB\n{}\nconfig.toml updated; \
-             `just wasm::update-baselines {widget_name}` sets baselines",
-            self.dataset,
-            fixture.events.len(),
-            bytes as f64 / 1024.0,
-            fixture_path.display(),
-        ))
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "a fixture that reached 2^53 bytes has a bigger problem than its rounding"
+        )]
+        let kib = bytes as f64 / 1024.0;
+        // Widget-relative, since the absolute path is mostly the operator's
+        // own home directory and pushes the part that identifies the take
+        // off the readable width.
+        Ok(Saved {
+            summary: indoc::formatdoc! {"
+                {dataset} — {events} events, {kib:.1} KiB
+                {fixture_rel}
+                baselines: just wasm::update-baselines {widget_name}",
+                dataset = self.dataset,
+                events = fixture.events.len(),
+            },
+            warning,
+        })
     }
 
     /// A quick click: a zero-distance gesture, classified immediately —
@@ -357,20 +371,161 @@ pub(crate) struct RecordingMode {
     fetch_events: std::sync::Arc<std::sync::Mutex<Vec<TimelineEvent>>>,
 }
 
+/// A written take: the notice's body, plus any complaint about its contents.
+///
+/// The complaint is a value rather than a stderr line, so the GUI can say it.
+pub(super) struct Saved {
+    pub(super) summary: String,
+    /// The fixture is on disk and bound; its contents failed validation.
+    pub(super) warning: Option<String>,
+}
+
+/// One dataset a target already replays, as the naming dialog lists it.
+pub(super) struct RecordedDataset {
+    pub(super) name: String,
+    /// The other targets this dataset drives.
+    pub(super) also_drives: Vec<String>,
+    pub(super) settle_delay: Option<u32>,
+    pub(super) kv_keys: usize,
+}
+
+impl RecordedDataset {
+    /// The row's attributes on one line, empty when it carries none.
+    fn notes(&self) -> String {
+        let mut notes = Vec::new();
+        if !self.also_drives.is_empty() {
+            notes.push(format!("also drives {}", self.also_drives.join(", ")));
+        }
+        if let Some(settle) = self.settle_delay {
+            notes.push(format!("settle {settle}"));
+        }
+        match self.kv_keys {
+            0 => {}
+            1 => notes.push("1 KV key".to_owned()),
+            keys => notes.push(format!("{keys} KV keys")),
+        }
+        notes.join(" · ")
+    }
+}
+
+/// What the dialog's primary button would do with the name typed into it.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum NameVerdict {
+    /// Nothing typed yet, or characters a dataset name cannot carry.
+    Unusable,
+    /// A name the config does not hold — a scenario alongside the rest.
+    New,
+    /// Re-records the dataset this viewport already carries under that name.
+    Replaces,
+    /// The name belongs to other viewports, listed. Recording it replaces
+    /// their data too, since the config writer keeps their bindings and a
+    /// dataset holds one fixture.
+    Rebinds { drives: Vec<String> },
+}
+
+impl NameVerdict {
+    /// Whether committing would replace data already recorded.
+    fn destructive(&self) -> bool {
+        matches!(self, Self::Replaces | Self::Rebinds { .. })
+    }
+}
+
+/// Every dataset the widget's capture config holds, by the target it drives.
+///
+/// Wrapped rather than passed as the bare map, because a name is unique across
+/// the whole config — one `[fixtures.<name>]` table, one fixture file — so no
+/// single target's rows can judge one.
+pub(super) struct RecordedFixtures {
+    by_target: std::collections::HashMap<String, Vec<RecordedDataset>>,
+}
+
+impl RecordedFixtures {
+    pub(super) fn new(by_target: std::collections::HashMap<String, Vec<RecordedDataset>>) -> Self {
+        Self { by_target }
+    }
+
+    /// What `target` already replays.
+    pub(super) fn of(
+        &self,
+        target: bmc_wasm_runtime::platform_catalog::Target,
+    ) -> &[RecordedDataset] {
+        self.by_target
+            .get(&target.to_string())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// Judge `dataset` for a take on `target`.
+    ///
+    /// A name that is empty or malformed is `Unusable`, which is what forces
+    /// the operator to name the take: `is_valid_dataset_name` rejects the
+    /// empty string.
+    pub(super) fn judge(
+        &self,
+        dataset: &str,
+        target: bmc_wasm_runtime::platform_catalog::Target,
+    ) -> NameVerdict {
+        if !bmc_wasm_runtime::capture_config::is_valid_dataset_name(dataset) {
+            return NameVerdict::Unusable;
+        }
+        if self.of(target).iter().any(|row| row.name == dataset) {
+            return NameVerdict::Replaces;
+        }
+        let mine = target.to_string();
+        // Sorted: the map's order is arbitrary, and this reads as a caption.
+        let mut drives: Vec<String> = self
+            .by_target
+            .iter()
+            .filter(|(id, rows)| **id != mine && rows.iter().any(|row| row.name == dataset))
+            .map(|(id, _)| id.clone())
+            .collect();
+        drives.sort();
+        if drives.is_empty() {
+            NameVerdict::New
+        } else {
+            NameVerdict::Rebinds { drives }
+        }
+    }
+}
+
+/// A target clicked in the choosing phase, and the dialog naming its take.
+///
+/// One value for the whole lifecycle — open, typed into, submitted — so a
+/// submitted name cannot drift from the dialog that produced it, and no state
+/// exists where a choice is pending without the dialog it came from.
+pub(super) struct Naming {
+    pub(super) target: bmc_wasm_runtime::platform_catalog::Target,
+    /// Starts empty: a take cannot be written without a name, so the dialog
+    /// asks for one rather than defaulting into an overwrite.
+    pub(super) dataset: String,
+    submitted: bool,
+}
+
+impl Naming {
+    fn new(target: bmc_wasm_runtime::platform_catalog::Target) -> Self {
+        Self {
+            target,
+            dataset: String::new(),
+            submitted: false,
+        }
+    }
+
+    /// Start the take on the name typed so far. The dialog stops painting from
+    /// here, and the app picks the choice up at the end of the frame.
+    pub(super) fn submit(&mut self) {
+        self.submitted = true;
+    }
+}
+
 enum RecordPhase {
     Off,
     /// Overlays up over every candidate viewport; no take yet.
     Choosing {
-        /// The datasets each already-recorded target carries in the widget's
-        /// capture config, by canonical target string. The overlays badge
-        /// these, since Save overwrites.
-        recorded: std::collections::HashMap<String, Vec<String>>,
-        /// A recorded target clicked once: the overlay asks again before it
-        /// starts a take that will overwrite the fixture.
-        confirming: Option<bmc_wasm_runtime::platform_catalog::Target>,
-        /// The overlay clicked this frame, consumed at the frame's end —
-        /// the click lands inside a borrow of the choosing state.
-        chosen: Option<bmc_wasm_runtime::platform_catalog::Target>,
+        /// The widget's capture config as the dialog reads it: what the clicked
+        /// target replays, and whether the typed name is anyone else's.
+        recorded: RecordedFixtures,
+        /// The open dialog, from the click that opened it to the submit the
+        /// app consumes at the end of that frame.
+        naming: Option<Naming>,
         /// The canvas the mode replaced.
         restore_platforms: Vec<&'static bmc_wasm_runtime::platform_catalog::Platform>,
     },
@@ -434,7 +589,7 @@ impl RecordingMode {
     /// Off → Choosing. Refused while engaged, so a phase cannot be lost.
     pub(super) fn open_choosing(
         &mut self,
-        recorded: std::collections::HashMap<String, Vec<String>>,
+        recorded: RecordedFixtures,
         restore_platforms: Vec<&'static bmc_wasm_runtime::platform_catalog::Platform>,
     ) -> bool {
         if self.engaged() {
@@ -442,64 +597,63 @@ impl RecordingMode {
         }
         self.phase = RecordPhase::Choosing {
             recorded,
-            confirming: None,
-            chosen: None,
+            naming: None,
             restore_platforms,
         };
         true
     }
 
-    /// The datasets already recorded for `target`, for its choose overlay;
-    /// empty when none — or outside the choosing phase, which paints none.
+    /// What `target` already replays; empty outside the choosing phase.
     pub(super) fn recorded_datasets(
         &self,
         target: bmc_wasm_runtime::platform_catalog::Target,
-    ) -> &[String] {
+    ) -> &[RecordedDataset] {
         match &self.phase {
-            RecordPhase::Choosing { recorded, .. } => {
-                recorded.get(&target.to_string()).map_or(&[], Vec::as_slice)
-            }
+            RecordPhase::Choosing { recorded, .. } => recorded.of(target),
             RecordPhase::Off | RecordPhase::Recording { .. } => &[],
         }
     }
 
-    /// Whether `target`'s overlay is waiting for its overwrite confirmation.
-    pub(super) fn is_confirming(&self, target: bmc_wasm_runtime::platform_catalog::Target) -> bool {
-        match &self.phase {
-            RecordPhase::Choosing { confirming, .. } => confirming.is_some_and(|c| {
-                c.platform.id == target.platform.id && c.viewport.id == target.viewport.id
-            }),
-            RecordPhase::Off | RecordPhase::Recording { .. } => false,
-        }
-    }
-
-    /// An overlay was clicked. A first click on a recorded target only arms
-    /// the confirmation; the choice lands on the second, or immediately for a
-    /// target with nothing to overwrite.
-    pub(super) fn choose(&mut self, target: bmc_wasm_runtime::platform_catalog::Target) {
-        let needs_confirmation = !self.recorded_datasets(target).is_empty();
-        if let RecordPhase::Choosing {
-            confirming, chosen, ..
-        } = &mut self.phase
-        {
-            if needs_confirmation
-                && !confirming.is_some_and(|c| {
-                    c.platform.id == target.platform.id && c.viewport.id == target.viewport.id
-                })
-            {
-                *confirming = Some(target);
-            } else {
-                *chosen = Some(target);
-            }
-        }
-    }
-
-    /// The choice an overlay registered this frame, if any.
-    pub(super) fn take_choice(&mut self) -> Option<bmc_wasm_runtime::platform_catalog::Target> {
+    /// The open dialog: the name being typed, and the config it is judged
+    /// against. Both live in the same phase, so one borrow serves.
+    pub(super) fn naming_dialog(&mut self) -> Option<(&mut Naming, &RecordedFixtures)> {
         match &mut self.phase {
-            RecordPhase::Choosing { chosen, .. } => chosen.take(),
+            RecordPhase::Choosing {
+                recorded, naming, ..
+            } => {
+                // A submitted dialog is on its way out: painting it again
+                // would offer a second submit against a take already starting.
+                let naming = naming.as_mut().filter(|n| !n.submitted)?;
+                Some((naming, recorded))
+            }
             RecordPhase::Off | RecordPhase::Recording { .. } => None,
         }
+    }
+
+    /// An overlay was clicked: open its dialog, which asks for the name.
+    pub(super) fn choose(&mut self, target: bmc_wasm_runtime::platform_catalog::Target) {
+        if let RecordPhase::Choosing { naming, .. } = &mut self.phase {
+            *naming = Some(Naming::new(target));
+        }
+    }
+
+    pub(super) fn cancel_naming(&mut self) {
+        if let RecordPhase::Choosing { naming, .. } = &mut self.phase {
+            *naming = None;
+        }
+    }
+
+    /// The target and dataset a submitted dialog carries, taken once.
+    pub(super) fn take_choice(
+        &mut self,
+    ) -> Option<(bmc_wasm_runtime::platform_catalog::Target, String)> {
+        let RecordPhase::Choosing { naming, .. } = &mut self.phase else {
+            return None;
+        };
+        if !naming.as_ref().is_some_and(|n| n.submitted) {
+            return None;
+        }
+        naming.take().map(|n| (n.target, n.dataset))
     }
 
     /// Off or Choosing → Recording, snapshotting the app's live state into
@@ -587,7 +741,7 @@ impl RecordingMode {
 
     /// Write the running take without touching the phase; `None` outside a
     /// take. Leaving the mode standing is what lets a failed Save be retried.
-    pub(super) fn write_take(&self) -> Option<Result<String, String>> {
+    pub(super) fn write_take(&self) -> Option<Result<Saved, String>> {
         self.active().map(RecordingState::write)
     }
 
@@ -805,16 +959,140 @@ impl RecordingState {
 /// lines, and the pinned canvas leaves the room to spare.
 const RECORDING_PANEL_W: f32 = 320.0;
 
-/// The sidebar's content: the take, its dataset, the Capture control, and the
-/// event log filling every remaining pixel. Save and Cancel live in the
-/// toolbar, which the mode owns while it runs.
+/// Wide enough that a dataset row's name and its attributes
+/// share one line in the common cases.
+const DIALOG_W: f32 = 460.0;
+
+/// A dataset row's height, and the column its icon sits in.
+const ROW_H: f32 = 32.0;
+const ROW_ICON: f32 = 18.0;
+
+/// The datasets a viewport already replays: one row each, the whole row
+/// filling the name in — re-recording one should not mean retyping it.
+///
+/// The empty case keeps the icon column and the row's height so the section
+/// holds its shape, but says its own thing rather than posing as a row with
+/// a control that would do nothing.
+fn paint_dataset_rows(
+    ui: &mut egui::Ui,
+    rows: &[RecordedDataset],
+    dataset: &mut String,
+    icons: &mut super::icon::Icons,
+    palette: &super::theme::Palette,
+) {
+    let width = ui.available_width();
+    if rows.is_empty() {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ROW_H), egui::Sense::hover());
+        icons
+            .record
+            .paint(ui, row_icon_rect(rect), palette.text_disabled);
+        ui.painter().text(
+            egui::pos2(rect.left() + row_text_x(), rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            "nothing recorded here yet — this take would be the first",
+            egui::FontId::proportional(13.0),
+            palette.text_disabled,
+        );
+        return;
+    }
+    let strong = ui.visuals().strong_text_color();
+    for (order, row) in rows.iter().enumerate() {
+        let (rect, response) =
+            ui.allocate_exact_size(egui::vec2(width, ROW_H), egui::Sense::click());
+        if response.hovered() {
+            ui.painter().rect_filled(rect, 0.0, palette.field);
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        // Between rows only: a rule under the last one would read as the
+        // section's own border rather than as a separator.
+        if order > 0 {
+            ui.painter().hline(
+                rect.x_range(),
+                rect.top(),
+                egui::Stroke::new(1.0_f32, palette.border_subtle),
+            );
+        }
+        icons
+            .saved
+            .paint(ui, row_icon_rect(rect), palette.accent_record);
+        let name = ui.painter().text(
+            egui::pos2(rect.left() + row_text_x(), rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            &row.name,
+            egui::FontId::proportional(13.0),
+            strong,
+        );
+        let notes = row.notes();
+        if !notes.is_empty() {
+            ui.painter().text(
+                egui::pos2(name.right() + spacing::S05, rect.center().y),
+                egui::Align2::LEFT_CENTER,
+                notes,
+                egui::FontId::proportional(12.0),
+                palette.text_disabled,
+            );
+        }
+        if response.clicked() {
+            dataset.clone_from(&row.name);
+        }
+        response.on_hover_text("Use this name to re-record it");
+    }
+}
+
+/// Smaller than the button's square, so the face reads as a button, not a glyph.
+const NAME_FILL_ICON: f32 = 14.0;
+
+/// Offers the conventional name rather than prefilling it:
+/// no take is written under a name nobody looked at.
+fn paint_name_field(ui: &mut egui::Ui, naming: &mut Naming, icons: &mut super::icon::Icons) {
+    let conventional = bmc_wasm_runtime::capture_config::conventional_dataset_name(naming.target);
+    ui.horizontal(|row| {
+        row.spacing_mut().item_spacing.x = spacing::S02;
+        let side = super::ui_helpers::field_height(row);
+        let width = (row.available_width() - side - spacing::S02).max(0.0);
+        // No hint: a placeholder name reads as one already given.
+        text_field(row, width, &mut naming.dataset, "");
+        let (rect, fill) = row.allocate_exact_size(egui::Vec2::splat(side), egui::Sense::click());
+        let visuals = *row.style().interact(&fill);
+        row.painter()
+            .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+        icons.automatic.paint(
+            row,
+            egui::Rect::from_center_size(rect.center(), egui::Vec2::splat(NAME_FILL_ICON)),
+            visuals.fg_stroke.color,
+        );
+        if super::ui_helpers::with_pointer(fill)
+            .on_hover_text(format!("name it {conventional}"))
+            .clicked()
+        {
+            naming.dataset.clone_from(&conventional);
+        }
+    });
+}
+
+/// The icon's square, centred in the row's leading column.
+fn row_icon_rect(row: egui::Rect) -> egui::Rect {
+    egui::Rect::from_center_size(
+        egui::pos2(row.left() + spacing::S02 + ROW_ICON / 2.0, row.center().y),
+        egui::Vec2::splat(ROW_ICON),
+    )
+}
+
+/// Where a row's text starts, clear of the icon column.
+fn row_text_x() -> f32 {
+    spacing::S02 + ROW_ICON + spacing::S03
+}
+
+/// The sidebar's content: the take, its dataset, the Capture control,
+/// and the event log filling every remaining pixel.
+/// Save and Cancel live in the toolbar, which the mode owns while it runs.
 fn paint_recording_panel(
     ui: &mut egui::Ui,
     rec: &mut RecordingState,
     icons: &mut super::icon::Icons,
     palette: &super::theme::Palette,
 ) {
-    let accent = palette.record_accent;
+    let accent = palette.accent_record;
 
     // The dataset alone: the toolbar chip already names the target. A readout
     // rather than an input, since it follows from the chosen target and a
@@ -830,7 +1108,7 @@ fn paint_recording_panel(
     ui.add_space(6.0);
 
     egui::Frame::NONE
-        .fill(palette.section_fill)
+        .fill(palette.layer_inset)
         .inner_margin(8.0)
         .corner_radius(4.0)
         .show(ui, |group| {
@@ -838,17 +1116,15 @@ fn paint_recording_panel(
             group.add_space(6.0);
             let mut capture = false;
             group.horizontal(|row| {
-                capture = row
-                    .add(
-                        egui::Button::new(
-                            egui::RichText::new("Capture")
-                                .color(egui::Color32::WHITE)
-                                .strong(),
-                        )
-                        .fill(accent),
-                    )
-                    .on_hover_text("commit the current widget state as a baseline frame")
-                    .clicked();
+                capture = super::ui_helpers::accent_button(
+                    row,
+                    "Capture",
+                    super::ui_helpers::Accent::record(palette),
+                    true,
+                    palette,
+                )
+                .on_hover_text("commit the current widget state as a baseline frame")
+                .clicked();
                 row.checkbox(&mut rec.auto_capture, "after every action")
                     .on_hover_text("append a capture automatically after each recorded action");
             });
@@ -961,7 +1237,7 @@ impl EventKind {
 
     fn colour(&self, palette: &super::theme::Palette) -> egui::Color32 {
         match self {
-            Self::Capture => palette.record_accent,
+            Self::Capture => palette.accent_record,
             Self::Touch => egui::Color32::from_rgb(120, 170, 255),
             Self::Delivery => egui::Color32::from_rgb(170, 140, 255),
             Self::Network => egui::Color32::from_rgb(120, 200, 150),
@@ -971,6 +1247,106 @@ impl EventKind {
 }
 
 impl TestbedApp {
+    /// The dialog a chosen target opens: what that viewport already replays,
+    /// and the name this take will write.
+    ///
+    /// The name is required rather than defaulted, because a default is what
+    /// silently re-recorded whatever the viewport already carried.
+    pub(super) fn paint_record_dialog(&mut self, ctx: &egui::Context) {
+        let palette = self.theme.palette(ctx);
+        let icons = &mut self.icons;
+        let Some((naming, recorded)) = self.recording_mode.naming_dialog() else {
+            return;
+        };
+        let target = naming.target;
+        let rows = recorded.of(target);
+        let mut cancel = false;
+
+        let dialog = egui::Modal::new(egui::Id::new("record_dataset"))
+            .frame(dialog_surface(palette))
+            .backdrop_color(egui::Color32::from_black_alpha(DIALOG_BACKDROP_ALPHA))
+            .show(ctx, |ui| {
+                ui.set_width(DIALOG_W);
+                let verdict = recorded.judge(&naming.dataset, target);
+
+                dialog_body(ui, |ui| {
+                    dialog_header(
+                        ui,
+                        &format!("Record {}", target_name(target)),
+                        indoc::indoc! {"
+                            A dataset is one recorded scenario.
+                            A viewport can hold several, each with its own baselines."},
+                    );
+
+                    ui.label(egui::RichText::new("Already recorded").strong());
+                    ui.add_space(spacing::S02);
+                    paint_dataset_rows(ui, rows, &mut naming.dataset, icons, palette);
+
+                    ui.add_space(spacing::S05);
+                    ui.label(egui::RichText::new("Dataset name").strong());
+                    ui.add_space(spacing::S02);
+                    paint_name_field(ui, naming, icons);
+
+                    // The caption keeps its line in every case, so typing
+                    // into an empty field does not shunt the footer down
+                    // under the pointer.
+                    ui.label(match &verdict {
+                        NameVerdict::Unusable if naming.dataset.is_empty() => {
+                            egui::RichText::new("name the scenario this take records").weak()
+                        }
+                        NameVerdict::Unusable => {
+                            egui::RichText::new("letters, digits, '-', '_' and '.' only")
+                                .color(palette.action_danger)
+                        }
+                        NameVerdict::Replaces => {
+                            egui::RichText::new("replaces the recording of that name")
+                                .color(palette.action_danger)
+                        }
+                        NameVerdict::Rebinds { drives } => egui::RichText::new(format!(
+                            "that name is {}'s — recording it replaces theirs too",
+                            drives.join(", ")
+                        ))
+                        .color(palette.action_danger),
+                        NameVerdict::New => {
+                            egui::RichText::new("a new dataset for this viewport").weak()
+                        }
+                    });
+                });
+
+                let primary = if verdict.destructive() {
+                    DialogPrimary {
+                        label: "Re-record",
+                        fill: palette.action_danger,
+                        hover: palette.action_danger_hover,
+                        enabled: true,
+                    }
+                } else {
+                    DialogPrimary {
+                        label: "Record",
+                        fill: palette.action_primary,
+                        hover: palette.action_primary_hover,
+                        enabled: verdict != NameVerdict::Unusable,
+                    }
+                };
+                match dialog_footer(ui, primary, palette) {
+                    FooterClick::Primary => naming.submit(),
+                    FooterClick::Cancel => cancel = true,
+                    FooterClick::None => {}
+                }
+            });
+
+        // Deliberately not `should_close`, which counts a backdrop click:
+        // a stray click beside a half-typed name should not discard the take
+        // it was about to start. Cancel and Escape are the ways out.
+        let escaped = dialog.is_top_modal
+            && !dialog.any_popup_open
+            && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        // Dismissal is the deferred one: it drops the value this closure holds.
+        if cancel || escaped {
+            self.recording_mode.cancel_naming();
+        }
+    }
+
     /// The take's own sidebar, docked on the left while recording runs.
     ///
     /// A panel rather than a window: the event log is the operator's ledger —
@@ -992,8 +1368,8 @@ impl TestbedApp {
             .show_separator_line(false)
             .show_inside(root_ui, |_| {});
         let rect = panel.response.rect;
-        let record_accent = palette.record_accent;
-        let panel_fill = palette.panel_fill;
+        let record_accent = palette.accent_record;
+        let panel_fill = palette.layer;
         egui::Area::new(egui::Id::new("recording_chrome"))
             .order(egui::Order::Foreground)
             .fixed_pos(rect.min)
@@ -1040,6 +1416,140 @@ impl TestbedApp {
         if let Some(rec) = self.recording_mode.active_mut() {
             rec.absorb(drained);
         }
+    }
+}
+
+#[cfg(test)]
+mod naming_tests {
+    use super::{NameVerdict, RecordedDataset, RecordedFixtures, RecordingMode};
+
+    fn row(name: &str) -> RecordedDataset {
+        RecordedDataset {
+            name: name.to_owned(),
+            also_drives: Vec::new(),
+            settle_delay: None,
+            kv_keys: 0,
+        }
+    }
+
+    fn target(spec: &str) -> bmc_wasm_runtime::platform_catalog::Target {
+        spec.parse().expect("BUG: the target must parse")
+    }
+
+    fn fixtures(recorded: Vec<(&str, Vec<RecordedDataset>)>) -> RecordedFixtures {
+        RecordedFixtures::new(
+            recorded
+                .into_iter()
+                .map(|(target, rows)| (target.to_owned(), rows))
+                .collect(),
+        )
+    }
+
+    fn choosing(recorded: Vec<(&str, Vec<RecordedDataset>)>) -> RecordingMode {
+        let mut mode = RecordingMode::new();
+        assert!(
+            mode.open_choosing(fixtures(recorded), Vec::new()),
+            "BUG: an idle mode must open the choosing phase",
+        );
+        mode
+    }
+
+    /// The dialog opens on any target, not only one that would be overwritten.
+    /// It is where the name is entered, so a viewport with nothing recorded
+    /// needs it every bit as much as one with a fixture already.
+    #[test]
+    fn choosing_a_target_with_nothing_recorded_still_opens_the_dialog() {
+        let mut mode = choosing(Vec::new());
+        mode.choose(target("bmc100:small"));
+
+        let (naming, recorded) = mode
+            .naming_dialog()
+            .expect("BUG: choosing a target must open its dialog");
+        assert_eq!(naming.target.viewport.id, "small");
+        assert!(
+            recorded.of(naming.target).is_empty(),
+            "nothing was recorded for that viewport",
+        );
+        assert!(
+            naming.dataset.is_empty(),
+            "the name is asked for, never defaulted",
+        );
+    }
+
+    #[test]
+    fn an_empty_or_malformed_name_cannot_start_a_take() {
+        let recorded = fixtures(vec![("bmc100:small", vec![row("practice")])]);
+        for unusable in ["", "../escape", "a/b", "with space"] {
+            assert_eq!(
+                recorded.judge(unusable, target("bmc100:small")),
+                NameVerdict::Unusable,
+                "'{unusable}' must not start a take",
+            );
+        }
+    }
+
+    /// Re-recording is offered, not blocked: refreshing a scenario's data is
+    /// as ordinary as adding one. The verdict is what turns the button red.
+    #[test]
+    fn a_name_already_recorded_reads_as_a_replacement() {
+        let recorded = fixtures(vec![(
+            "bmc100:small",
+            vec![row("practice"), row("qualifying")],
+        )]);
+        let small = target("bmc100:small");
+
+        assert_eq!(recorded.judge("qualifying", small), NameVerdict::Replaces);
+        assert_eq!(recorded.judge("race", small), NameVerdict::New);
+    }
+
+    /// A dataset name is unique across the whole config, so one belonging to
+    /// another viewport is not a free name: the writer would point it at this
+    /// take's fixture and leave that viewport replaying it.
+    #[test]
+    fn a_name_another_viewport_owns_is_not_a_new_dataset() {
+        let recorded = fixtures(vec![
+            ("bmc100:full", vec![row("qualifying")]),
+            ("bmc100:medium", vec![row("qualifying")]),
+        ]);
+
+        assert_eq!(
+            recorded.judge("qualifying", target("bmc100:small")),
+            NameVerdict::Rebinds {
+                drives: vec!["bmc100:full".to_owned(), "bmc100:medium".to_owned()],
+            },
+        );
+    }
+
+    #[test]
+    fn the_take_starts_on_the_name_the_dialog_carries() {
+        let mut mode = choosing(vec![("bmc100:small", vec![row("practice")])]);
+        mode.choose(target("bmc100:small"));
+
+        let (naming, recorded) = mode.naming_dialog().expect("BUG: the dialog must be open");
+        assert_eq!(
+            recorded.of(naming.target).len(),
+            1,
+            "the dialog lists what that viewport carries",
+        );
+        naming.dataset = "qualifying".to_owned();
+        naming.submit();
+
+        let (chosen, dataset) = mode
+            .take_choice()
+            .expect("BUG: a submitted dialog must yield its choice");
+        assert_eq!(chosen.viewport.id, "small");
+        assert_eq!(dataset, "qualifying");
+    }
+
+    #[test]
+    fn a_cancelled_dialog_leaves_the_phase_choosing() {
+        let mut mode = choosing(Vec::new());
+        mode.choose(target("bmc100:full"));
+        mode.cancel_naming();
+
+        assert!(mode.naming_dialog().is_none(), "the dialog closed");
+        assert!(mode.take_choice().is_none(), "and started no take");
+        assert!(mode.is_choosing(), "the overlays stay up to pick again");
     }
 }
 
@@ -1146,5 +1656,46 @@ mod begin_tests {
             rec.write().is_err(),
             "the retry must reach the same failure, not a different one",
         );
+    }
+
+    /// The config write carries the same contract as the fixture write —
+    /// a failure keeps the take whole to be retried.
+    #[test]
+    fn a_fixture_left_unbound_is_a_failed_save() {
+        use bmc_wasm_runtime::unified_fixture::{TimelineEvent, UnifiedEvent};
+
+        let widget_root = tempfile::tempdir().expect("BUG: tempdir");
+        // A directory where the config file belongs: the fixture still lands,
+        // and only the binding fails.
+        std::fs::create_dir_all(widget_root.path().join("capture").join("config.toml"))
+            .expect("BUG: seed an unwritable config path");
+
+        let mut rec = begin("bmc100:full");
+        rec.auto_capture = false;
+        rec.widget_root = Some(widget_root.path().to_owned());
+        rec.absorb(vec![TimelineEvent {
+            at_ms: 5,
+            event: UnifiedEvent::Capture {
+                duration_ms: None,
+                fps: None,
+            },
+        }]);
+
+        let message = rec
+            .write()
+            .err()
+            .expect("BUG: an unwritable config must fail the save");
+        assert!(
+            message.contains("config.toml"),
+            "the notice must name what failed: {message}",
+        );
+        assert!(
+            widget_root
+                .path()
+                .join("capture/fixtures/take.jsonl.gz")
+                .exists(),
+            "the fixture is written before the binding that failed",
+        );
+        assert!(rec.has_events(), "the take stays whole for the retry");
     }
 }

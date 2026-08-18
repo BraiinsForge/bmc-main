@@ -53,7 +53,7 @@ impl TestbedApp {
             .fixed_pos(rect.min)
             .show(root_ui.ctx(), |area| {
                 area.set_clip_rect(rect);
-                area.painter().rect_filled(rect, 0.0, palette.panel_fill);
+                area.painter().rect_filled(rect, 0.0, palette.layer);
                 let mut bar = area.new_child(
                     egui::UiBuilder::new().max_rect(rect.shrink2(egui::vec2(BAR_INLINE_PAD, 0.0))),
                 );
@@ -63,45 +63,23 @@ impl TestbedApp {
                     if self.paint_record_controls(row, palette) {
                         return;
                     }
-                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
+                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
-                    // A segmented set: independent on/off per device, one flat
-                    // control. The 1 px gaps let the panel show through as
-                    // dividers, so neighbouring inactive buttons read apart.
-                    row.scope(|set| {
-                        set.spacing_mut().item_spacing.x = 1.0;
-                        for p in PLATFORMS {
-                            let open = self.stage.is_open(p);
-                            let supported = platform_supported(p, &self.manifest);
-                            let response = set
-                                .add_enabled_ui(supported, |ui| {
-                                    let icon = &mut self.icons.devices;
-                                    bar_button(ui, Some(icon), &p.id.to_uppercase(), open)
-                                })
-                                .inner
-                                .on_hover_text(p.label)
-                                .on_disabled_hover_text(
-                                    "the manifest admits no viewport of this platform",
-                                );
-                            if response.clicked() {
-                                chosen = Some(p.id);
-                            }
-                        }
-                    });
-                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
+                    chosen = self.paint_platform_toggles(row, palette);
+                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
                     self.paint_view_controls(row);
-                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
+                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
                     // The widget's own build and its rendering.
-                    if bar_button(row, Some(&mut self.icons.reload), "Reload", false)
+                    if bar_button(row, Some(&mut self.icons.reload), "Reload", false, palette)
                         .on_hover_text("re-read the widget's wasm from disk")
                         .clicked()
                     {
                         self.hot_reload.manual_reload = true;
                     }
                     let debug_on = bmc_render::tree::debug_layout_enabled();
-                    if bar_button(row, Some(&mut self.icons.debug), "Debug", debug_on)
+                    if bar_button(row, Some(&mut self.icons.debug), "Debug", debug_on, palette)
                         .on_hover_text(
                             "outline every layout node in the widget render, \
                              and egui's own inspector over the chrome",
@@ -111,20 +89,32 @@ impl TestbedApp {
                         bmc_render::tree::toggle_debug_layout();
                     }
                     let timings_on = self.show_view_timings;
-                    if bar_button(row, Some(&mut self.icons.timer), "Timings", timings_on)
-                        .on_hover_text("show each view's own frame cost over it")
-                        .clicked()
+                    if bar_button(
+                        row,
+                        Some(&mut self.icons.timer),
+                        "Timings",
+                        timings_on,
+                        palette,
+                    )
+                    .on_hover_text("show each view's own frame cost over it")
+                    .clicked()
                     {
                         self.show_view_timings = !self.show_view_timings;
                     }
-                    super::ui_helpers::group_divider(row, palette.divider, TOOLBAR_H);
+                    super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
                     // Simulated conditions: what the device can and cannot
                     // reach, and when it thinks it is.
                     let offline = self.offline;
-                    if bar_button(row, Some(&mut self.icons.offline), "Offline", offline)
-                        .on_hover_text("seal live I/O, mirroring an offline device")
-                        .clicked()
+                    if bar_button(
+                        row,
+                        Some(&mut self.icons.offline),
+                        "Offline",
+                        offline,
+                        palette,
+                    )
+                    .on_hover_text("seal live I/O, mirroring an offline device")
+                    .clicked()
                     {
                         self.offline = !self.offline;
                     }
@@ -142,6 +132,45 @@ impl TestbedApp {
         }
     }
 
+    /// One toggle per device, as a segmented set: independent on/off, read as
+    /// one flat control. The 1 px gaps let the panel show through as dividers,
+    /// so neighbouring inactive buttons read apart.
+    ///
+    /// Returns the platform whose toggle was clicked — acted on after the
+    /// toolbar closes, since opening one retires every view.
+    fn paint_platform_toggles(
+        &mut self,
+        row: &mut egui::Ui,
+        palette: &super::theme::Palette,
+    ) -> Option<&'static str> {
+        let mut chosen = None;
+        row.scope(|set| {
+            set.spacing_mut().item_spacing.x = 1.0;
+            for p in PLATFORMS {
+                let open = self.stage.is_open(p);
+                let supported = platform_supported(p, &self.manifest);
+                let response = set
+                    .add_enabled_ui(supported, |ui| {
+                        let icon = &mut self.icons.devices;
+                        bar_button(
+                            ui,
+                            Some(icon),
+                            &super::ui_helpers::platform_name(p),
+                            open,
+                            palette,
+                        )
+                    })
+                    .inner
+                    .on_hover_text(p.label)
+                    .on_disabled_hover_text("the manifest admits no viewport of this platform");
+                if response.clicked() {
+                    chosen = Some(p.id);
+                }
+            }
+        });
+        chosen
+    }
+
     /// The record mode's toolbar controls, leading the bar.
     ///
     /// Off, this is one red button that opens the choosing phase. Engaged —
@@ -155,7 +184,7 @@ impl TestbedApp {
     ) -> bool {
         let choosing = self.recording_mode.is_choosing();
         let recording = self.recording_mode.active().is_some();
-        let accent = palette.record_accent;
+        let accent = palette.accent_record;
 
         if !choosing && !recording {
             // Red in rest too: this is the one destructive-adjacent control
@@ -177,7 +206,7 @@ impl TestbedApp {
                     };
                     let inner = ui
                         .add_enabled_ui(cause.is_none(), |ui| {
-                            bar_button(ui, Some(&mut self.icons.record), "Record", false)
+                            bar_button(ui, Some(&mut self.icons.record), "Record", false, palette)
                                 .on_hover_text("record a capture fixture from a live take")
                         })
                         .inner;
@@ -200,7 +229,12 @@ impl TestbedApp {
         let status = if recording {
             self.recording_mode
                 .active()
-                .map_or_else(String::new, |rec| format!("RECORDING — {}", rec.target()))
+                .map_or_else(String::new, |rec| {
+                    format!(
+                        "RECORDING — {}",
+                        super::ui_helpers::target_name(rec.target())
+                    )
+                })
         } else {
             "RECORD — choose a viewport".to_owned()
         };
@@ -225,23 +259,21 @@ impl TestbedApp {
         } else {
             None
         };
-        let save_button = egui::Button::new(
-            egui::RichText::new("Save")
-                .color(egui::Color32::WHITE)
-                .strong(),
+        let save = super::ui_helpers::accent_button(
+            row,
+            "Save",
+            super::ui_helpers::Accent::record(palette),
+            save_cause.is_none(),
+            palette,
         )
-        .fill(accent);
-        let save = row
-            .add_enabled(save_cause.is_none(), save_button)
-            .on_hover_text("write the fixture and leave the take");
+        .on_hover_text("write the fixture and leave the take");
         if let Some(cause) = save_cause {
             save.on_disabled_hover_text(cause);
         } else if save.clicked() {
             let ctx = row.ctx().clone();
             self.save_recording(&ctx);
         }
-        if row
-            .button("Cancel")
+        if super::ui_helpers::with_pointer(row.button("Cancel"))
             .on_hover_text("discard the take and put the canvas back")
             .clicked()
         {
@@ -257,9 +289,16 @@ impl TestbedApp {
     /// zoom is the canvas's, not each window's, so the devices stay
     /// comparable at a glance.
     fn paint_view_controls(&mut self, row: &mut egui::Ui) {
-        if bar_button(row, Some(&mut self.icons.arrange_grid), "Tile", false)
-            .on_hover_text("lay the device windows out to use the canvas tightly")
-            .clicked()
+        let palette = self.theme.palette(row.ctx());
+        if bar_button(
+            row,
+            Some(&mut self.icons.arrange_grid),
+            "Tile",
+            false,
+            palette,
+        )
+        .on_hover_text("lay the device windows out to use the canvas tightly")
+        .clicked()
         {
             self.stage.request_arrange();
         }
@@ -270,12 +309,12 @@ impl TestbedApp {
         let mut full_size = false;
         row.scope(|pair| {
             pair.spacing_mut().item_spacing.x = 1.0;
-            fit = bar_button(pair, Some(&mut self.icons.scale_out), "Fit", false)
+            fit = bar_button(pair, Some(&mut self.icons.scale_out), "Fit", false, palette)
                 .on_hover_text("scale the canvas until every device window is in view")
                 .clicked();
             full_size = pair
                 .add_enabled_ui(!at_full_size, |ui| {
-                    bar_button(ui, Some(&mut self.icons.scale_in), "100%", false)
+                    bar_button(ui, Some(&mut self.icons.scale_in), "100%", false, palette)
                         .on_hover_text("show the devices at their own pixel size")
                 })
                 .inner
@@ -294,6 +333,7 @@ impl TestbedApp {
     /// time-gated states like staleness; "reset" zeroes only the display one
     /// so the monotonic clock never rewinds past pending deadlines.
     fn paint_clock_controls(&mut self, row: &mut egui::Ui) {
+        let palette = self.theme.palette(row.ctx());
         let secs = self.clock.offset_ms / 1_000;
         let offset = format!("+{}:{:02}", secs / 60, secs % 60);
         bar_readout(row, Some(&mut self.icons.delay), &offset)
@@ -303,13 +343,13 @@ impl TestbedApp {
         let mut reset = false;
         row.scope(|group| {
             group.spacing_mut().item_spacing.x = 1.0;
-            if bar_button(group, Some(&mut self.icons.delay), "+1m", false).clicked() {
+            if bar_button(group, Some(&mut self.icons.delay), "+1m", false, palette).clicked() {
                 advance_ms = 60_000;
             }
-            if bar_button(group, Some(&mut self.icons.delay), "+5m", false).clicked() {
+            if bar_button(group, Some(&mut self.icons.delay), "+5m", false, palette).clicked() {
                 advance_ms = 300_000;
             }
-            reset = bar_button(group, Some(&mut self.icons.delay), "Reset", false)
+            reset = bar_button(group, Some(&mut self.icons.delay), "Reset", false, palette)
                 .on_hover_text("return the clock to real time")
                 .clicked();
         });
@@ -321,6 +361,7 @@ impl TestbedApp {
     }
 
     fn paint_theme_switch(&mut self, end: &mut egui::Ui) {
+        let palette = self.theme.palette(end.ctx());
         end.scope(|set| {
             set.spacing_mut().item_spacing.x = 1.0;
             // The layout runs right to left, so reversing paints Auto/Dark/Light.
@@ -331,7 +372,7 @@ impl TestbedApp {
                     super::theme::ThemeChoice::Dark => &mut self.icons.theme_dark,
                     super::theme::ThemeChoice::Light => &mut self.icons.theme_light,
                 };
-                if bar_button(set, Some(icon), choice.label(), selected)
+                if bar_button(set, Some(icon), choice.label(), selected, palette)
                     .on_hover_text(choice.describe())
                     .clicked()
                 {
@@ -371,13 +412,21 @@ fn bar_button(
     icon: Option<&mut super::icon::Icon>,
     label: &str,
     selected: bool,
+    palette: &super::theme::Palette,
 ) -> egui::Response {
     let (rect, response) = allocate_bar_slot(ui, label, egui::Sense::click());
     let visuals = ui.style().interact_selectable(&response, selected);
-    ui.painter()
-        .rect_filled(rect, visuals.corner_radius, visuals.weak_bg_fill);
+    // `interact_selectable` pins a selected control to the selection colour
+    // whatever the pointer is doing, so a selected button has to answer hover
+    // itself or it answers not at all.
+    let fill = if selected && response.hovered() {
+        palette.action_primary_hover
+    } else {
+        visuals.weak_bg_fill
+    };
+    ui.painter().rect_filled(rect, visuals.corner_radius, fill);
     paint_bar_slot(ui, rect, icon, label, visuals.fg_stroke.color);
-    response
+    super::ui_helpers::with_pointer(response)
 }
 
 /// A reading on the bar, shaped like the buttons around it but inert.

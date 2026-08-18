@@ -271,8 +271,8 @@ pub(super) fn draw_checkerboard(
     palette: &super::theme::Palette,
 ) {
     let size = 16.0;
-    let color_a = palette.canvas_a;
-    let color_b = palette.canvas_b;
+    let color_a = palette.canvas;
+    let color_b = palette.canvas_alt;
     let cols = (rect.width() / size).ceil() as usize;
     let rows = (rect.height() / size).ceil() as usize;
     for row in 0..rows {

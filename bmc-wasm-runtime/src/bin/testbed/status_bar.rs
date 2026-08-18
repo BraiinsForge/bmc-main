@@ -77,7 +77,7 @@ impl TestbedApp {
             .fixed_pos(rect.min)
             .show(root_ui.ctx(), |area| {
                 area.set_clip_rect(rect);
-                area.painter().rect_filled(rect, 0.0, palette.panel_fill);
+                area.painter().rect_filled(rect, 0.0, palette.layer);
                 let mut bar = area.new_child(
                     egui::UiBuilder::new()
                         .max_rect(rect.shrink2(egui::vec2(super::toolbar::BAR_INLINE_PAD, 0.0))),
@@ -111,7 +111,7 @@ impl TestbedApp {
             "host frame",
             &[format!("{avg_us:>6} µs"), format!("{fps:>5.1} fps")],
         );
-        super::ui_helpers::group_divider(row, palette.divider, STATUS_H);
+        super::ui_helpers::group_divider(row, palette.border_subtle, STATUS_H);
 
         // Summed, not sampled: every open view spends its own wasm time on
         // the same host frame, and one view's figure would speak for none.
@@ -129,7 +129,7 @@ impl TestbedApp {
                 format!("{:>2} views", live.len()),
             ],
         );
-        super::ui_helpers::group_divider(row, palette.divider, STATUS_H);
+        super::ui_helpers::group_divider(row, palette.border_subtle, STATUS_H);
 
         // The worst across the views: one view falling behind is the thing
         // worth surfacing, and an average would bury it.
@@ -139,7 +139,7 @@ impl TestbedApp {
             "slip",
             &[slip.map_or_else(|| "   — ms".to_owned(), |ms| format!("{ms:>4} ms"))],
         );
-        super::ui_helpers::group_divider(row, palette.divider, STATUS_H);
+        super::ui_helpers::group_divider(row, palette.border_subtle, STATUS_H);
     }
 
     fn paint_sparkline(&self, row: &mut egui::Ui) {

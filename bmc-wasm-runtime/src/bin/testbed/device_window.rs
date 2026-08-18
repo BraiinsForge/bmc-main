@@ -145,10 +145,6 @@ const TITLE_H: f32 = 24.0;
 const TITLE_FONT: f32 = 12.0;
 const TITLE_PAD: f32 = 8.0;
 
-/// Hit area of the strip's close cross, and half the length of each arm.
-const CLOSE_SIZE: f32 = 16.0;
-const CLOSE_ARM: f32 = 3.5;
-
 /// Leading between the choose card's two lines.
 const LINE_GAP: f32 = 2.0;
 
@@ -157,9 +153,9 @@ const LINE_GAP: f32 = 2.0;
 /// alternatives of one display are not one tall screen.
 const STATE_GAP: f32 = 4.0;
 
-/// Between a view and whatever borders it: its neighbour's LED strip, the
-/// next column, or the enclosure's own edge. Device pixels, so it scales
-/// with the rest of the mock, and every view's border reads as its own.
+/// Between a view and its neighbour on a shared screen, and under the last
+/// LED strip as the casing below it. Device pixels, so it scales with the
+/// rest of the mock.
 const STATE_ITEM_GAP: f32 = 8.0;
 
 /// How long the title strip takes to reach its hovered tone.
@@ -245,11 +241,9 @@ fn columns(frame: &DeviceFrame) -> Vec<Vec<usize>> {
 /// and a shorter one spreads its slack evenly above, between and below
 /// its views — pooled at the bottom it reads as a misalignment rather than as air.
 fn state_layout(frame: &DeviceFrame, strip: f32) -> (Vec<egui::Pos2>, egui::Vec2) {
-    // Every state of one device shows the same enclosure, so the margin
-    // around its views cannot depend on how many of them it holds.
-    let margin = STATE_ITEM_GAP;
-    // Only a shared screen needs spacing between views:
-    // a lone viewport fills its enclosure the way the display does.
+    // Only a shared screen needs spacing, and only between its views. Nothing
+    // needs it against the enclosure: the device's glass runs to its own edge,
+    // and an inset there just frames the widget in bezel.
     let gap = if frame.views.len() > 1 {
         STATE_ITEM_GAP
     } else {
@@ -282,18 +276,15 @@ fn state_layout(frame: &DeviceFrame, strip: f32) -> (Vec<egui::Pos2>, egui::Vec2
                 y += gap;
             }
             let view = frame.views[idx].1;
-            places[idx] = egui::pos2(margin + view.min.x + gap * order as f32, margin + y);
+            places[idx] = egui::pos2(view.min.x + gap * order as f32, y);
             y += view.height() + strip + lead;
         }
     }
-    // The bottom margin doubles as the casing under the last strip:
-    // flush against the enclosure's edge a strip reads as a cropped bar
-    // rather than as the diffuser it is.
-    let inset = 2.0 * margin;
-    (
-        places,
-        egui::vec2(frame.screen.x + spread + inset, height + inset),
-    )
+    // The one inset that is not decoration: flush against the enclosure's
+    // bottom edge a strip reads as a bar cropped along its length rather than
+    // as the diffuser it is. A state with no strip needs none of it.
+    let casing = if strip > 0.0 { STATE_ITEM_GAP } else { 0.0 };
+    (places, egui::vec2(frame.screen.x + spread, height + casing))
 }
 
 /// A start-aligned title strip, drawn where egui's title bar would sit.
@@ -321,15 +312,10 @@ fn title_strip(
         .animate_bool_with_time(response.id, response.hovered(), HOVER_FADE_SECS);
     ui.painter().rect_filled(
         rect,
-        egui::CornerRadius {
-            nw: super::theme::WINDOW_RADIUS,
-            ne: super::theme::WINDOW_RADIUS,
-            sw: 0,
-            se: 0,
-        },
+        egui::CornerRadius::ZERO,
         palette
-            .title_fill
-            .lerp_to_gamma(palette.title_hover_fill, hover * HOVER_STRENGTH),
+            .layer_accent
+            .lerp_to_gamma(palette.layer_accent_hover, hover * HOVER_STRENGTH),
     );
     ui.painter().text(
         rect.left_center() + egui::vec2(TITLE_PAD, 0.0),
@@ -348,41 +334,14 @@ fn title_strip(
 
 /// The strip's close affordance, at its trailing edge.
 ///
-/// A cross rather than a labelled button: the strip is 24 px tall and the
-/// title already fills it, and the hint says what closing means here — a
-/// device is opened and closed as a whole, so either of BMC100's two frames
-/// closes the device.
+/// The hint says what closing means here — a device is opened and closed as
+/// a whole, so either of BMC100's two frames closes the device.
 fn paint_close(ui: &mut egui::Ui, strip: egui::Rect, hint: &str) -> bool {
     let centre = egui::pos2(
-        strip.right() - TITLE_PAD - CLOSE_SIZE / 2.0,
+        strip.right() - TITLE_PAD - super::ui_helpers::CLOSE_SIZE / 2.0,
         strip.center().y,
     );
-    let hit = egui::Rect::from_center_size(centre, egui::Vec2::splat(CLOSE_SIZE));
-    let response = ui
-        .interact(hit, ui.id().with(("close", hint)), egui::Sense::click())
-        .on_hover_text(hint);
-    if response.hovered() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-    }
-    let colour = if response.hovered() {
-        ui.visuals().strong_text_color()
-    } else {
-        ui.visuals().weak_text_color()
-    };
-    let arm = CLOSE_ARM;
-    let stroke = egui::Stroke::new(1.5_f32, colour);
-    ui.painter().line_segment(
-        [centre - egui::vec2(arm, arm), centre + egui::vec2(arm, arm)],
-        stroke,
-    );
-    ui.painter().line_segment(
-        [
-            centre + egui::vec2(arm, -arm),
-            centre - egui::vec2(arm, -arm),
-        ],
-        stroke,
-    );
-    response.clicked()
+    super::ui_helpers::close_button(ui, centre, hint)
 }
 
 /// Air between windows in a packed arrangement.
@@ -563,7 +522,7 @@ impl TestbedApp {
         let flat = self.stage.tiles_of(platform);
 
         // The platform's label only repeats its id ("BMM100 BMM Narrow").
-        let title = platform.id.to_uppercase();
+        let title = super::ui_helpers::platform_name(platform);
         let palette = self.theme.palette(ctx);
         let zoom = self.canvas.zoom();
         // The widest state sets the window's width, so the strip and the
@@ -592,10 +551,10 @@ impl TestbedApp {
             .frame(
                 egui::Frame::window(&ctx.style())
                     .inner_margin(WINDOW_INSET)
-                    .fill(palette.bezel),
+                    .fill(palette.device_bezel),
             )
             .current_pos(pos);
-        let close_hint = format!("close {}", platform.id.to_uppercase());
+        let close_hint = format!("close {}", super::ui_helpers::platform_name(platform));
         let mut closed = false;
         let response = window.show(ctx, |ui| {
             // The states are spaced by hand below, so the window's own
@@ -639,7 +598,7 @@ impl TestbedApp {
         };
         let (places, size) = state_layout(frame, strip);
         let (outer, _) = ui.allocate_exact_size(size * zoom, egui::Sense::hover());
-        ui.painter().rect_filled(outer, 0.0, palette.bezel);
+        ui.painter().rect_filled(outer, 0.0, palette.device_bezel);
         let screen_origin = outer.min;
 
         for (place, (view_idx, local)) in frame.views.iter().enumerate() {
@@ -661,7 +620,7 @@ impl TestbedApp {
             // they get slabs instead of textures and no touch input,
             // keeping the fixture timeline clean.
             if active_record_idx.is_some_and(|active| active != *view_idx) {
-                ui.painter().rect_filled(rect, 0.0, palette.record_slab);
+                ui.painter().rect_filled(rect, 0.0, palette.device_slab);
                 continue;
             }
             super::paint_tile_texture(ui, view, rect);
@@ -682,7 +641,7 @@ impl TestbedApp {
                 ui.painter().rect_stroke(
                     rect,
                     0.0,
-                    egui::Stroke::new(2.0_f32, palette.record_accent),
+                    egui::Stroke::new(2.0_f32, palette.accent_record),
                     egui::StrokeKind::Inside,
                 );
             }
@@ -719,7 +678,7 @@ impl TestbedApp {
                     egui::vec2(local.width(), crate::LED_STRIP_H as f32) * zoom,
                 );
                 ui.painter()
-                    .rect_filled(strip_rect, STRIP_RADIUS, palette.strip_plate);
+                    .rect_filled(strip_rect, STRIP_RADIUS, palette.device_strip);
                 let view = flat.get(*view_idx).and_then(|i| self.stage.tile(*i));
 
                 // The glow is a plain quad mesh, so at full size it paints
@@ -734,10 +693,8 @@ impl TestbedApp {
         debug_outline(ui, outer, "state", egui::Align2::RIGHT_BOTTOM);
     }
 
-    /// One choosing-phase overlay: the whole view is the button that starts
-    /// the take on its target. A target with a fixture wears a badge saying
-    /// which datasets it carries, and asks a second time before a take
-    /// that will overwrite one.
+    /// One choosing-phase overlay: the whole view is the button that opens
+    /// its target's naming dialog, which is where the take actually starts.
     fn paint_choose_overlay(
         &mut self,
         ui: &mut egui::Ui,
@@ -745,9 +702,8 @@ impl TestbedApp {
         target: platform_catalog::Target,
     ) {
         let palette = self.theme.palette(ui.ctx());
-        let accent = palette.record_accent;
-        let recorded = self.recording_mode.recorded_datasets(target).join(", ");
-        let confirming = self.recording_mode.is_confirming(target);
+        let accent = palette.accent_record;
+        let recorded = self.recording_mode.recorded_datasets(target).len();
 
         let response = ui.interact(
             rect,
@@ -772,35 +728,17 @@ impl TestbedApp {
             );
         }
 
-        // The centre card: what the click does, and what it costs — an
-        // existing fixture is named here rather than off in a corner, where
-        // it went unread. Asking twice only works if the first click visibly
-        // answers, so confirming flips the card to solid accent rather than
-        // just rewording it.
-        let (title, detail) = match (confirming, recorded.is_empty()) {
-            (true, _) => (
-                format!("Overwrite {recorded}?"),
-                "click again to replace it".to_owned(),
-            ),
-            (false, true) => (format!("Record {target}"), String::new()),
-            (false, false) => (
-                format!("Re-record {target}"),
-                format!("replaces {recorded}"),
-            ),
+        // The centre card names the target and how much it already carries,
+        // so the choice is informed before the dialog opens on it.
+        let title = format!("Record {}", super::ui_helpers::target_name(target));
+        let detail = match recorded {
+            0 => String::new(),
+            1 => "1 dataset recorded".to_owned(),
+            n => format!("{n} datasets recorded"),
         };
-        let (fill, title_colour, detail_colour) = if confirming {
-            (
-                accent,
-                egui::Color32::WHITE,
-                egui::Color32::from_white_alpha(200),
-            )
-        } else {
-            (
-                egui::Color32::from_black_alpha(210),
-                ui.visuals().strong_text_color(),
-                accent,
-            )
-        };
+        let fill = egui::Color32::from_black_alpha(210);
+        let title_colour = ui.visuals().strong_text_color();
+        let detail_colour = accent;
 
         let title =
             ui.painter()
@@ -822,7 +760,7 @@ impl TestbedApp {
         ui.painter().rect_stroke(
             card,
             4.0,
-            egui::Stroke::new(if confirming { 2.0_f32 } else { 1.0_f32 }, accent),
+            egui::Stroke::new(1.0_f32, accent),
             egui::StrokeKind::Inside,
         );
         let inner = card.shrink2(pad);
@@ -883,31 +821,35 @@ mod tests {
         }
     }
 
-    /// No state lets a view touch its enclosure, however many views it holds.
-    /// The margin belongs to the device rather than to the state:
-    /// two states that inset differently read as two devices.
+    /// A state with one view spends nothing on spacing: the enclosure is the
+    /// display, so a lone viewport starts at its origin and is as wide as it.
+    /// Only a shared screen pays for the gaps that tell its views apart.
     #[test]
-    fn no_state_lets_a_view_touch_the_enclosure() {
+    fn a_lone_viewport_fills_its_enclosure() {
         for platform in platform_catalog::PLATFORMS {
             let strip = if platform.led_count().is_some() {
                 crate::LED_STRIP_H as f32 + super::STRIP_SEAM
             } else {
                 0.0
             };
-            for frame in device_frames(platform) {
-                let (places, size) = super::state_layout(&frame, strip);
-                for (place, (_, view)) in frame.views.iter().enumerate() {
-                    let at = places[place];
-                    assert!(
-                        at.x >= super::STATE_ITEM_GAP
-                            && at.y >= super::STATE_ITEM_GAP
-                            && at.x + view.width() + super::STATE_ITEM_GAP <= size.x,
-                        "{}: a view at {at:?} touches an enclosure {}×{}",
-                        platform.id,
-                        size.x,
-                        size.y,
-                    );
-                }
+            for frame in device_frames(platform)
+                .iter()
+                .filter(|f| f.views.len() == 1)
+            {
+                let (places, size) = super::state_layout(frame, strip);
+                assert_eq!(
+                    places[0],
+                    egui::Pos2::ZERO,
+                    "{}: a lone viewport is inset from its own enclosure",
+                    platform.id,
+                );
+                assert!(
+                    (size.x - frame.screen.x).abs() < f32::EPSILON,
+                    "{}: a lone viewport's enclosure is {} wide, not the display's {}",
+                    platform.id,
+                    size.x,
+                    frame.screen.x,
+                );
             }
         }
     }

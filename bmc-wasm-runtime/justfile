@@ -123,7 +123,7 @@ docs:
 
 # === Recording ===
 
-# Record a session. TARGET = <platform>:<viewport>; NAME defaults to <platform>-<viewport>; extra args reach the testbed.
+# Record a session. TARGET = <platform>:<viewport>; omit NAME and the dialog asks for it; extra args reach the testbed.
 record WIDGET TARGET="bmc100:full" NAME="" *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail

@@ -29,6 +29,7 @@ chrono.workspace = true
 chrono-tz.workspace = true
 iana-time-zone.workspace = true
 ii-stopwatch.workspace = true
+indoc.workspace = true
 tracing.workspace = true
 
 # WASM runtime

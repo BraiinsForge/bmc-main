@@ -224,7 +224,7 @@ fn paint_report(ui: &mut egui::Ui, failure: &BuildFailure) {
                 .strong(),
         );
         row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
-            if end.button("Close").clicked() {
+            if super::ui_helpers::with_pointer(end.button("Close")).clicked() {
                 end.close();
             }
         });

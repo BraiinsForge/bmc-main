@@ -239,6 +239,15 @@ fn parse_fixtures_table(table: &toml::Table) -> Result<BTreeMap<String, FixtureE
     Ok(map)
 }
 
+/// What a target's dataset is called when nothing else names it.
+///
+/// The convention the corpus follows, so re-recording lands on the dataset
+/// a target already has rather than minting a sibling.
+#[must_use]
+pub fn conventional_dataset_name(target: Target) -> String {
+    format!("{}-{}", target.platform.id, target.viewport.id)
+}
+
 /// Whether a dataset name is safe to use as one.
 ///
 /// The name becomes a file name, a config key and an output directory,
@@ -345,6 +354,22 @@ fn parse_kv_table(t: &toml::Table, ctx: &str) -> Result<HashMap<String, String>>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The dialog offers this name on a button,
+    /// so an id the validator refuses would fill the field with a rejection.
+    #[test]
+    fn every_target_has_a_conventional_name_it_could_be_saved_under() {
+        for platform in crate::platform_catalog::PLATFORMS {
+            for viewport in platform.viewports {
+                let target = Target { platform, viewport };
+                let name = conventional_dataset_name(target);
+                assert!(
+                    is_valid_dataset_name(&name),
+                    "{target} would be offered '{name}', which is not a usable dataset name",
+                );
+            }
+        }
+    }
 
     // ── Config validation ────────────────────────────────────────────
 

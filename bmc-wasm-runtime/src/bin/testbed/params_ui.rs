@@ -81,7 +81,7 @@ impl TestbedApp {
     /// each other's height.
     pub(super) fn paint_right_panel(&mut self, root_ui: &mut egui::Ui) {
         let palette = self.theme.palette(root_ui.ctx());
-        let section_fill = palette.section_fill;
+        let section_fill = palette.layer_inset;
         let has_params = !self.manifest.params.is_empty();
         // Take the current snapshots out so we can mutate while
         // the egui closure borrows `self`, then put them back
@@ -110,18 +110,13 @@ impl TestbedApp {
             .fixed_pos(rect.min)
             .show(root_ui.ctx(), |area| {
                 area.set_clip_rect(rect);
-                area.painter().rect_filled(rect, 0.0, palette.panel_fill);
+                area.painter().rect_filled(rect, 0.0, palette.layer);
                 let mut ui = area.new_child(egui::UiBuilder::new().max_rect(rect));
                 egui::ScrollArea::vertical()
                     .auto_shrink([false, false])
                     .show(&mut ui, |scroll| {
                         if has_params {
-                            section_header_bar(
-                                scroll,
-                                "Params",
-                                palette.params_accent,
-                                section_fill,
-                            );
+                            section_header_bar(scroll, "Params", section_fill);
                             egui::Frame::NONE
                                 .inner_margin(egui::Margin::same(8))
                                 .show(scroll, |inner| {
@@ -146,7 +141,7 @@ impl TestbedApp {
                                 });
                             scroll.add_space(12.0);
                         }
-                        section_header_bar(scroll, "System", palette.system_accent, section_fill);
+                        section_header_bar(scroll, "System", section_fill);
                         egui::Frame::NONE
                             .inner_margin(egui::Margin::same(8))
                             .show(scroll, |inner| {
@@ -182,15 +177,11 @@ impl TestbedApp {
 /// rather than via a nested `Frame` + `Layout`: the latter let the inner
 /// ui's min-size expand into the surrounding ScrollArea's full vertical,
 /// turning the banner into a panel-tall solid block.
-pub(super) fn section_header_bar(
-    ui: &mut egui::Ui,
-    text: &str,
-    accent: egui::Color32,
-    fill: egui::Color32,
-) {
+pub(super) fn section_header_bar(ui: &mut egui::Ui, text: &str, fill: egui::Color32) {
     let width = ui.available_width();
     let bar_height: f32 = 26.0;
     let (rect, _) = ui.allocate_exact_size(egui::vec2(width, bar_height), egui::Sense::hover());
+    let text_colour = ui.visuals().strong_text_color();
     let painter = ui.painter();
     painter.rect_filled(rect, 0.0, fill);
     painter.text(
@@ -198,7 +189,7 @@ pub(super) fn section_header_bar(
         egui::Align2::LEFT_CENTER,
         text,
         egui::FontId::proportional(14.0),
-        accent,
+        text_colour,
     );
 }
 

@@ -106,12 +106,7 @@ impl TestbedApp {
         if slots.is_empty() {
             return false;
         }
-        super::params_ui::section_header_bar(
-            scroll,
-            "Credentials",
-            palette.system_accent,
-            palette.section_fill,
-        );
+        super::params_ui::section_header_bar(scroll, "Credentials", palette.layer_inset);
         let mut changed = false;
         egui::Frame::NONE
             .inner_margin(egui::Margin::same(8))

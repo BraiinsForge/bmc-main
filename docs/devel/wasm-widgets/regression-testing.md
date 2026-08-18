@@ -121,8 +121,9 @@ just wasm::record mining-info bmm101:full info-overload   # explicit dataset nam
 ```
 
 The target decides which platform the testbed opens, so `--platform` naming a different one is rejected rather than
-silently overridden. The dataset name defaults to `<platform>-<viewport>`; pass a third argument when one target holds
-several datasets and the names need to say them apart.
+silently overridden. Omit the dataset name and the testbed asks for it, with a button offering the conventional
+`<platform>-<viewport>`; pass a third argument when one target holds several datasets and the names need to say them
+apart.
 
 A widget whose recordings differ by something the target cannot express should supply that name from its own recipe
 instead of leaving it to the operator. The pool widget records against a sim scenario, so its wrapper appends one —
