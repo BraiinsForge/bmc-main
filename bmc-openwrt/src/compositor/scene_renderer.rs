@@ -85,6 +85,54 @@ pub fn scanout_transform(profile: DisplayTransform) -> Transform {
     }
 }
 
+/// Scanout transform for widget buffers, whose rows run bottom-up because the
+/// wasm host paints straight into the exported buffer instead of blitting
+/// through a staging surface.
+///
+/// `zwp_linux_buffer_params_v1::Flags::YInvert` is the obvious signal and is
+/// deliberately *not* used: smithay negates the texture matrix's Y without the
+/// offset a `y' = 1 - y` flip needs, so coordinates land outside the texture and
+/// the surface samples garbage. Folding the flip into the transform routes it
+/// through `build_texture_mat`, the path display rotation already uses.
+///
+/// The rotation comes from [`scanout_transform`] and [`with_row_flip`] mirrors
+/// it, so the two cannot drift apart. Only `Deg270` (Bmc100) has been seen on
+/// hardware; `Deg0` (Bmm100, Bmm101) and `Deg90` (Bfm100) follow from the same
+/// derivation.
+///
+/// ⚠ Applied to every widget surface, wasm or native, so it assumes all of them
+/// submit bottom-up buffers. That holds for anything painting straight into its
+/// export buffer, which is both the wasm host after this change and
+/// `widgets/flip-clock` (direct FBO, no staging). A widget that blits through a
+/// staging surface instead gets a Y flip from that blit's own UVs and would be
+/// inverted here; none does today, and distinguishing them would need a
+/// per-surface signal that does not exist. **Verified on hardware for the wasm
+/// path only** — put a native widget on screen before trusting this for it.
+fn widget_transform(profile: DisplayTransform) -> Transform {
+    with_row_flip(scanout_transform(profile))
+}
+
+/// `transform` with the source's rows mirrored — the same rotation, sampling
+/// `v' = 1 - v`.
+///
+/// A `Transform` is a rotation plus an optional mirror, and mirroring the rows
+/// is not simply setting that bit: `Transform::Flipped` mirrors `u`, and a
+/// `u`-mirror differs from a `v`-mirror by a 180° rotation. So the rotation half
+/// moves for the un-rotated pair (`Normal` ↔ `Flipped180`) and stays put for the
+/// quarter-turns. The mapping is its own inverse.
+fn with_row_flip(transform: Transform) -> Transform {
+    match transform {
+        Transform::Normal => Transform::Flipped180,
+        Transform::_90 => Transform::Flipped90,
+        Transform::_180 => Transform::Flipped,
+        Transform::_270 => Transform::Flipped270,
+        Transform::Flipped => Transform::_180,
+        Transform::Flipped90 => Transform::_90,
+        Transform::Flipped180 => Transform::Normal,
+        Transform::Flipped270 => Transform::_270,
+    }
+}
+
 /// Controls when an SHM buffer's texture is reimported relative to the dirty set.
 #[derive(Clone, Copy)]
 enum ShmImport {
@@ -892,13 +940,14 @@ impl SceneRenderer {
                 (f64::from(tex_size.w), f64::from(tex_size.h)),
             );
             let damage = texture_damage_rect(*dst);
+            let transform = widget_transform(self.scanout_transform);
             if let Err(e) = frame.render_texture_from_to(
                 texture,
                 src,
                 *dst,
                 &[damage],
                 &[],
-                scanout_transform(self.scanout_transform),
+                transform,
                 *alpha,
                 None,
                 &[],
@@ -1209,7 +1258,9 @@ mod tests {
     use super::{
         merge_damage_rects, rectangle_union, texture_damage_rect, uncovered_output_regions,
     };
-    use crate::compositor::scene_renderer::{place_widget, scanout_transform, touch_to_logical};
+    use crate::compositor::scene_renderer::{
+        place_widget, scanout_transform, touch_to_logical, widget_transform, with_row_flip,
+    };
     use bmc_platform::{DisplayTransform, TouchTransform};
     use smithay::utils::{Physical, Rectangle, Transform};
 
@@ -1218,6 +1269,67 @@ mod tests {
         assert_eq!(scanout_transform(DisplayTransform::Deg0), Transform::Normal);
         assert_eq!(scanout_transform(DisplayTransform::Deg90), Transform::_90);
         assert_eq!(scanout_transform(DisplayTransform::Deg270), Transform::_270);
+    }
+
+    #[test]
+    fn widget_transform_row_flips_each_profile_scanout() {
+        assert_eq!(
+            widget_transform(DisplayTransform::Deg0),
+            Transform::Flipped180,
+        );
+        assert_eq!(
+            widget_transform(DisplayTransform::Deg90),
+            Transform::Flipped90
+        );
+        assert_eq!(
+            widget_transform(DisplayTransform::Deg270),
+            Transform::Flipped270,
+        );
+    }
+
+    /// A row flip mirrors `v` and leaves `u` alone, so applying it twice is the
+    /// identity — the property that pins `Normal` to `Flipped180` rather than to
+    /// `Flipped`, which mirrors `u`.
+    #[test]
+    fn row_flip_is_its_own_inverse() {
+        for transform in [
+            Transform::Normal,
+            Transform::_90,
+            Transform::_180,
+            Transform::_270,
+            Transform::Flipped,
+            Transform::Flipped90,
+            Transform::Flipped180,
+            Transform::Flipped270,
+        ] {
+            assert_eq!(
+                with_row_flip(with_row_flip(transform)),
+                transform,
+                "row-flipping {transform:?} twice must return it unchanged",
+            );
+        }
+    }
+
+    /// The row flip must not disturb the quarter-turn the panel needs: an angle
+    /// off by 90° lands the surface sideways, off by 180° upside down.
+    #[test]
+    fn widget_transform_mirrors_without_changing_the_quarter_turn() {
+        for profile in [
+            DisplayTransform::Deg0,
+            DisplayTransform::Deg90,
+            DisplayTransform::Deg270,
+        ] {
+            let widget = widget_transform(profile);
+            assert!(
+                widget.flipped(),
+                "{profile:?} must submit a mirrored transform, got {widget:?}",
+            );
+            assert_eq!(
+                widget.degrees() % 180,
+                scanout_transform(profile).degrees() % 180,
+                "{profile:?} widget transform must keep the scanout quarter-turn",
+            );
+        }
     }
 
     #[test]

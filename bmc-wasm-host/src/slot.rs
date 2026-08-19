@@ -947,18 +947,18 @@ impl<S: SlotSurface> WidgetSlot<S> {
 
             let status = stage_frame_under_gpu_lock(
                 shared,
+                FrameStaging::Retargeted,
                 "host_widget_render",
                 target_width,
                 target_height,
                 |shared| {
-                    egl_target.buffers.ensure_current(&shared.egl)?;
-
-                    unsafe { ptr.as_ptr().as_mut() }
-                        .expect(
-                            "BUG: renderer pointer was NonNull when stored, \
-                             raw-pointer reborrow must produce a non-null reference",
-                        )
-                        .begin_frame(target_width, target_height, 1.0);
+                    bind_export_target_for_frame(
+                        shared,
+                        &mut egl_target.buffers,
+                        ptr,
+                        target_width,
+                        target_height,
+                    )?;
                     HostRenderProfiling::log_phase(wasm_basename, "frame_setup", frame_setup_phase);
 
                     let phase_start = HostRenderProfiling::start_phase();
@@ -973,14 +973,6 @@ impl<S: SlotSurface> WidgetSlot<S> {
                         )
                         .flush();
                     HostRenderProfiling::log_phase(wasm_basename, "femtovg_flush", phase_start);
-
-                    let current_export = egl_target.buffers.current_ref().expect(
-                        "BUG: ensure_current succeeded above, so DoubleBufferState::current_ref \
-                         must return Some; an internal invariant of DoubleBufferState was violated",
-                    );
-                    let phase_start = HostRenderProfiling::start_phase();
-                    shared.blit_staging_to(current_export.fbo, target_width, target_height);
-                    HostRenderProfiling::log_phase(wasm_basename, "staging_blit", phase_start);
 
                     gl_wait_phase.set(HostRenderProfiling::start_phase());
                     Ok(status)
@@ -1563,6 +1555,57 @@ impl HostRenderProfiling {
     }
 }
 
+/// Point the renderer at the slot's current export buffer and start its frame.
+///
+/// Painting straight into the exported buffer is what removes the staging copy;
+/// the buffer carries a stencil attachment for femtovg's fills. femtovg renders
+/// bottom-up to a framebuffer, so the compositor flips these buffers via its
+/// scanout transform.
+fn bind_export_target_for_frame(
+    shared: &SharedHost,
+    buffers: &mut bmc_widget::egl::DoubleBufferState,
+    ptr: NonNull<dyn Renderer>,
+    width: u32,
+    height: u32,
+) -> anyhow::Result<()> {
+    buffers.ensure_current(&shared.egl)?;
+    let export = buffers
+        .current_ref()
+        .expect("BUG: ensure_current succeeded, so current_ref must return Some");
+
+    anyhow::ensure!(
+        shared.scratch.retarget_to(
+            &shared.egl,
+            export.texture(),
+            export.stencil_rb(),
+            width,
+            height,
+        ),
+        "frame framebuffer incomplete after retargeting to the export buffer"
+    );
+
+    let renderer = unsafe { ptr.as_ptr().as_mut() }.expect(
+        "BUG: renderer pointer was NonNull when stored, \
+         raw-pointer reborrow must produce a non-null reference",
+    );
+    renderer.begin_frame(width, height, 1.0);
+    Ok(())
+}
+
+/// Which framebuffer a staged frame paints into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FrameStaging {
+    /// Paint into the shared scratch, then blit it to the destination. Costs a
+    /// full-screen copy, which on this GPU is not cheap — measured at ~13 ms
+    /// for 480x1280 even through a one-line shader.
+    Shared,
+    /// Paint straight into a buffer `render_fn` retargets the shared frame FBO
+    /// at, skipping the copy. femtovg holds that FBO's id as its screen target
+    /// and rebinds it every flush, so the retarget moves the attachments; the
+    /// destination must carry a stencil, since femtovg's fills use one.
+    Retargeted,
+}
+
 /// Acquire the GPU render lock, prepare the shared scratch FBO, normalise GL
 /// state, execute `render_fn` under the lock, then fence-wait and drop the
 /// lock before returning. `on_after_fence` fires immediately after the fence
@@ -1578,6 +1621,7 @@ impl HostRenderProfiling {
 /// call [`SharedHost::flush_and_wait_gl`] itself — the helper owns that step.
 pub(crate) fn stage_frame_under_gpu_lock<F, T, G>(
     shared: &mut SharedHost,
+    staging: FrameStaging,
     lock_label: &'static str,
     w: u32,
     h: u32,
@@ -1589,7 +1633,9 @@ where
     G: FnOnce(),
 {
     let gpu_render_lock = shared.acquire_gpu_render_lock(lock_label)?;
-    let _ = shared.scratch.begin_frame(&shared.egl, w, h);
+    if staging == FrameStaging::Shared {
+        let _ = shared.scratch.begin_frame(&shared.egl, w, h);
+    }
     normalize_gl_state(&shared.egl, w, h);
     let result = render_fn(shared);
     shared.flush_and_wait_gl();

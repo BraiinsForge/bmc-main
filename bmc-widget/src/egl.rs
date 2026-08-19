@@ -368,7 +368,7 @@ impl EglContext {
 
         // Create FBO with color attachment and optional depth.
         #[expect(clippy::cast_possible_wrap, reason = "dimensions fit in i32")]
-        let (fbo, depth_rb) = unsafe {
+        let (fbo, depth_rb, stencil_rb) = unsafe {
             let fbo = self
                 .gl
                 .create_framebuffer()
@@ -380,6 +380,14 @@ impl EglContext {
                 glow::TEXTURE_2D,
                 Some(texture),
                 0,
+            );
+
+            let stencil_rb = self.make_renderbuffer(glow::STENCIL_INDEX8, width, height)?;
+            self.gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(stencil_rb),
             );
 
             let depth_rb = if depth == Depth::Enabled {
@@ -409,7 +417,7 @@ impl EglContext {
             if status != glow::FRAMEBUFFER_COMPLETE {
                 anyhow::bail!("Export framebuffer incomplete: 0x{status:x}");
             }
-            (fbo, depth_rb)
+            (fbo, depth_rb, stencil_rb)
         };
 
         let cached_stride = bo.stride();
@@ -422,6 +430,7 @@ impl EglContext {
             texture,
             fbo,
             depth_rb,
+            stencil_rb,
             width,
             height,
             cached_fd: None,
@@ -633,6 +642,7 @@ impl EglContext {
             if let Some(depth_rb) = buf.depth_rb {
                 self.gl.delete_renderbuffer(depth_rb);
             }
+            self.gl.delete_renderbuffer(buf.stencil_rb);
             self.gl.delete_texture(buf.texture);
             (self.egl_destroy_image)(self.egl_display_raw, buf.egl_image);
         }
@@ -716,6 +726,9 @@ pub struct ExportBuffer {
     pub fbo: glow::Framebuffer,
     /// GL depth renderbuffer (only allocated when [`Depth::Enabled`]).
     depth_rb: Option<glow::Renderbuffer>,
+    /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated: femtovg
+    /// paints straight into this FBO and its fill algorithms need stencil.
+    stencil_rb: glow::Renderbuffer,
     /// Buffer width in pixels.
     pub width: u32,
     /// Buffer height in pixels.
@@ -744,6 +757,21 @@ impl ExportBuffer {
     #[must_use]
     pub fn fbo_id(&self) -> u32 {
         self.fbo.0.get()
+    }
+
+    /// GL colour texture backing this buffer, for attaching it as another
+    /// framebuffer's colour target.
+    #[must_use]
+    pub fn texture(&self) -> glow::Texture {
+        self.texture
+    }
+
+    /// Stencil renderbuffer, sized to match [`Self::texture`]. GLES 2.0 rejects
+    /// a framebuffer whose attachments disagree on size, so the two travel
+    /// together.
+    #[must_use]
+    pub fn stencil_rb(&self) -> glow::Renderbuffer {
+        self.stencil_rb
     }
 }
 
@@ -796,6 +824,13 @@ impl WidgetExportBuffer {
     #[must_use]
     pub fn fbo_id(&self) -> u32 {
         self.fbo.0.get()
+    }
+
+    /// Stencil renderbuffer backing the staging FBO, for re-attaching it after
+    /// a widget frame borrowed the framebuffer.
+    #[must_use]
+    pub fn stencil_rb(&self) -> glow::Renderbuffer {
+        self.stencil_rbo
     }
 
     /// GL color texture backing the staging FBO.
@@ -1629,6 +1664,9 @@ impl SharedRenderScratch {
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     #[must_use]
     pub fn begin_frame(&self, ctx: &EglContext, w: u32, h: u32) -> u32 {
+        // Reclaim the FBO: a widget frame may have pointed it at its own
+        // export buffer, and femtovg binds this FBO by id on every flush.
+        self.attach(ctx, self.staging.texture(), self.staging.stencil_rb());
         debug_assert_eq!(
             self.staging.fbo_id(),
             self.staging_fbo_id_at_construction,
@@ -1645,6 +1683,57 @@ impl SharedRenderScratch {
             gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
         }
         self.staging.fbo_id()
+    }
+
+    /// Point the shared frame FBO at `texture`/`stencil` instead of the staging
+    /// pair, so femtovg paints straight into a caller's buffer.
+    ///
+    /// femtovg holds this FBO's *id* as its screen target and rebinds it on
+    /// every flush, so retargeting has to move the attachments rather than the
+    /// framebuffer. Returns `false` if the result is not framebuffer-complete,
+    /// which leaves the caller to fall back rather than paint into nothing.
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    pub fn retarget_to(
+        &self,
+        ctx: &EglContext,
+        texture: glow::Texture,
+        stencil: glow::Renderbuffer,
+        w: u32,
+        h: u32,
+    ) -> bool {
+        let gl = ctx.gl();
+        self.attach(ctx, texture, stencil);
+        unsafe {
+            if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
+                self.attach(ctx, self.staging.texture(), self.staging.stencil_rb());
+                return false;
+            }
+            gl.viewport(0, 0, w as i32, h as i32);
+            gl.clear_color(0.0, 0.0, 0.0, 1.0);
+            gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+        }
+        true
+    }
+
+    /// Bind the shared frame FBO and point it at `texture` + `stencil`.
+    fn attach(&self, ctx: &EglContext, texture: glow::Texture, stencil: glow::Renderbuffer) {
+        let gl = ctx.gl();
+        unsafe {
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.staging.fbo()));
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+            gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(stencil),
+            );
+        }
     }
 
     /// Blit the staging color texture into `dest_fbo` with Y-flip, viewport

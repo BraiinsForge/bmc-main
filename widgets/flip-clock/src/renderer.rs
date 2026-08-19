@@ -454,10 +454,17 @@ impl Renderer {
         }
     }
 
-    /// Get projection matrix for current viewport
+    /// Get projection matrix for current viewport.
+    ///
+    /// Orthographic, so a digit looks the same wherever it sits on X.
+    ///
+    /// `bottom` and `top` are swapped, which mirrors Y in clip space so the
+    /// finished frame lands bottom-up in the export buffer. The compositor
+    /// applies one scanout flip to every widget surface — femtovg's output
+    /// needs it, since femtovg draws top-left-origin content into a
+    /// bottom-left-origin framebuffer — and a widget driving its own GL has to
+    /// match that convention or it reaches the panel inverted.
     pub fn projection(&self) -> Mat4 {
-        // Use orthographic projection - no perspective distortion
-        // This ensures all digits look the same regardless of X position
         #[expect(
             clippy::cast_precision_loss,
             reason = "viewport dimensions are small enough"
@@ -469,8 +476,8 @@ impl Renderer {
         Mat4::ortho(
             -half_width,
             half_width,
-            -half_height,
             half_height,
+            -half_height,
             -10.0,
             10.0,
         )

@@ -607,6 +607,11 @@ fn render_3d_digit(
         // wedges at the start of each flip.
         gl.enable(glow::CULL_FACE);
         gl.cull_face(glow::BACK);
+        // The projection mirrors Y so the frame lands bottom-up in the export
+        // buffer, which reverses every triangle's screen-space winding. Culling
+        // reads that winding, so the front face is clockwise here; leaving the
+        // GL default of CCW culls the visible face and shows the hidden one.
+        gl.front_face(glow::CW);
         // Disable blending for opaque 3D geometry — inherited BLEND
         // from render_clock causes back-face fragments to bleed through
         // as lighter rectangles around the digits.
@@ -674,6 +679,9 @@ fn render_3d_colon(
         gl.enable(glow::DEPTH_TEST);
         gl.enable(glow::CULL_FACE);
         gl.cull_face(glow::BACK);
+        // Same reason as the digit pass: the mirrored projection makes the
+        // front face clockwise in screen space.
+        gl.front_face(glow::CW);
         gl.disable(glow::BLEND);
     }
 

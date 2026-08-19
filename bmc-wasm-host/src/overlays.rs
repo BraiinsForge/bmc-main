@@ -151,6 +151,7 @@ pub fn prewarm_hosted_overlay(
     );
     crate::slot::stage_frame_under_gpu_lock(
         shared,
+        crate::slot::FrameStaging::Shared,
         "host_overlay_prewarm",
         w,
         h,
@@ -194,6 +195,7 @@ pub fn refresh_overlay_cache(
     );
     crate::slot::stage_frame_under_gpu_lock(
         shared,
+        crate::slot::FrameStaging::Shared,
         "host_overlay_cache_refresh",
         size.0,
         size.1,
@@ -274,6 +276,7 @@ pub fn render_hosted_overlay(
         // Full-paint branch: stage the frame under the GPU lock, then export.
         crate::slot::stage_frame_under_gpu_lock(
             shared,
+            crate::slot::FrameStaging::Shared,
             "host_system_overlay",
             size.0,
             size.1,
