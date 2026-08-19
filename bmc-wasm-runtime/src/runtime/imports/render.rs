@@ -263,6 +263,7 @@ fn submit_tree(
             emit: bmc_render::tree::EmitMode::All,
             capture_static: !static_unchanged,
             reuse_static_layer: static_unchanged,
+            static_layer_key: &state.instance_id,
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,

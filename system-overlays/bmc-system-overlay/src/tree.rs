@@ -34,6 +34,14 @@ use bmc_render::{
 };
 use taffy::prelude::TaffyTree;
 
+/// Static-layer key for overlays drawn through the host's shared renderer.
+///
+/// A single constant is sound only because every overlay renders with
+/// `capture_static: false`, so no layer is ever stored under it. Enabling
+/// capture for overlays requires a per-overlay key first, or two overlays would
+/// blit each other's content.
+const STATIC_LAYER_KEY: &str = "bmc-system-overlay";
+
 /// Holds the layout/animation/interaction context for rendering a `TreeNode`.
 #[expect(missing_debug_implementations)]
 pub struct TreeUi {
@@ -96,6 +104,7 @@ impl TreeUi {
             emit: bmc_render::tree::EmitMode::All,
             capture_static: false,
             reuse_static_layer: false,
+            static_layer_key: STATIC_LAYER_KEY,
         };
         #[expect(
             clippy::cast_precision_loss,

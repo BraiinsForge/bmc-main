@@ -465,6 +465,7 @@ fn staged_tree(
                 emit: bmc_render::tree::EmitMode::All,
                 capture_static: false,
                 reuse_static_layer: false,
+                static_layer_key: "gallery",
             };
             match bmc_render::process_tree(
                 &bytes,

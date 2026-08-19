@@ -40,6 +40,8 @@ use crate::gpu::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform}
 /// When `DEBUG_LAYOUT=1` env var is set, draw colored outlines around every layout node.
 static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
 
+/// When `BMC_GPU_PASS_TIMING=1` is set, block on the GPU at each render-pass
+/// boundary so a frame's GPU cost can be attributed per pass.
 /// Call once at startup to check the `DEBUG_LAYOUT` env var.
 pub fn init_debug_flags() {
     if std::env::var("DEBUG_LAYOUT").is_ok_and(|v| v == "1") {
@@ -1735,6 +1737,11 @@ pub struct ProcessContext<'a> {
     /// a guest frame whose static half hashed unchanged. Ignored if the blit
     /// fails, which falls back to a full pass.
     pub reuse_static_layer: bool,
+    /// Identifies whose static layer to capture and blit. One renderer serves
+    /// every widget slot, so callers that share a renderer must pass distinct
+    /// keys or they overwrite each other's cached layer. Use the caller's asset
+    /// namespace so slot teardown reclaims the layer with its other assets.
+    pub static_layer_key: &'a str,
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -1892,6 +1899,7 @@ fn layout_and_render_inner(
         ctx.scroll_states,
         ctx.capture_static,
         ctx.reuse_static_layer,
+        ctx.static_layer_key,
         &mut result,
         &mut anim_ctx,
     );
@@ -1913,13 +1921,7 @@ fn layout_and_render_inner(
         );
     }
 
-    // GC: remove animation/transition states not seen this frame
-    anim_ctx
-        .animation_states
-        .retain(|_, s| s.last_seen_frame >= ctx.frame_counter);
-    anim_ctx
-        .transition_states
-        .retain(|_, s| s.last_seen_frame >= ctx.frame_counter);
+    sweep_stale_state(&mut anim_ctx, ctx.frame_counter);
 
     timings.render_us = t2.elapsed().as_micros() as u32;
 
@@ -1972,12 +1974,13 @@ fn render_tree(
     scroll_states: &mut HashMap<String, ScrollState>,
     capture_static: bool,
     reuse_static_layer: bool,
+    static_layer_key: &str,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     let split = anim_ctx.emit == EmitMode::All
         && capture_static
-        && renderer.begin_static_layer(width as u32, height as u32);
+        && renderer.begin_static_layer(static_layer_key, width as u32, height as u32);
 
     // Nothing static changed since the layer was captured, so paint it rather
     // than rasterising the same content again. This is what makes a guest frame
@@ -1985,7 +1988,7 @@ fn render_tree(
     if !split
         && anim_ctx.emit == EmitMode::All
         && reuse_static_layer
-        && renderer.blit_static_layer()
+        && renderer.blit_static_layer(static_layer_key)
     {
         anim_ctx.emit = EmitMode::DynamicOnly;
     }
@@ -2004,8 +2007,8 @@ fn render_tree(
             anim_ctx,
             0,
         );
-        renderer.end_static_layer();
-        renderer.blit_static_layer();
+        renderer.end_static_layer(static_layer_key);
+        renderer.blit_static_layer(static_layer_key);
 
         // Restart the counters so this pass matches a cached frame's exactly —
         // it is the same walk, and animation state keys on `draw_counter`.
@@ -2025,6 +2028,24 @@ fn render_tree(
         anim_ctx,
         0,
     );
+}
+
+/// Drop animation and transition states no walk touched this frame, and record
+/// what survived.
+///
+/// Both are keyed by content, so a node that stopped drawing would otherwise
+/// keep its state alive forever. The counts ride along because this is the only
+/// point where the swept sizes are known.
+fn sweep_stale_state(
+    anim_ctx: &mut AnimationContext<'_>,
+    frame_counter: u64,
+) {
+    anim_ctx
+        .animation_states
+        .retain(|_, s| s.last_seen_frame >= frame_counter);
+    anim_ctx
+        .transition_states
+        .retain(|_, s| s.last_seen_frame >= frame_counter);
 }
 
 /// Build the taffy node for `node` and tag it with its static/dynamic
@@ -3464,5 +3485,410 @@ mod intrinsic_button_width_tests {
             "a label-only button must be as wide as its shaped label plus padding, got {}",
             laid_out.size.width
         );
+    }
+}
+
+#[cfg(test)]
+mod static_layer_key_tests {
+    use std::collections::HashMap;
+
+    use super::{ProcessContext, TreeNode, layout_and_render};
+    use crate::FrameTimings;
+    use crate::interaction::InteractionState;
+    use crate::renderer::Renderer;
+    use bmc_wasm_protocol::colors::Color;
+    use bmc_wasm_protocol::{ArcCap, ArcFill, ArcSegments, BitmapId, Fill, MeshId, SvgId};
+    use taffy::prelude::TaffyTree;
+
+    use super::{MeshDrawArgs, PropsData, SpanData};
+    use crate::tree::{ArcAnchor, ArcTextFacing, AutoFit, TextStyle};
+
+    /// Records which key each static-layer call carried. One renderer serves
+    /// every slot, so the key is the only thing keeping two slots' layers
+    /// apart — a caller passing a constant is the regression this catches.
+    #[derive(Default)]
+    struct KeyRecordingRenderer {
+        calls: Vec<(&'static str, String)>,
+        captured: Vec<String>,
+    }
+
+    impl Renderer for KeyRecordingRenderer {
+        fn begin_static_layer(&mut self, key: &str, _width: u32, _height: u32) -> bool {
+            self.calls.push(("begin", key.to_owned()));
+            true
+        }
+
+        fn end_static_layer(&mut self, key: &str) {
+            self.calls.push(("end", key.to_owned()));
+            self.captured.push(key.to_owned());
+        }
+
+        fn blit_static_layer(&mut self, key: &str) -> bool {
+            self.calls.push(("blit", key.to_owned()));
+            self.captured.iter().any(|k| k == key)
+        }
+
+        fn invalidate_static_layer(&mut self, key: &str) {
+            self.calls.push(("invalidate", key.to_owned()));
+            self.captured.retain(|k| k != key);
+        }
+
+        fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {}
+
+        fn fill_rounded_rect(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _radius: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn fill_circle(&mut self, _cx: f32, _cy: f32, _r: f32, _color: Color) {}
+
+        fn fill_rect_paint(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _fill: &Fill) {}
+
+        fn fill_circle_paint(&mut self, _cx: f32, _cy: f32, _r: f32, _fill: &Fill) {}
+
+        fn stroke_arc(
+            &mut self,
+            _cx: f32,
+            _cy: f32,
+            _radius: f32,
+            _start_angle: f32,
+            _end_angle: f32,
+            _width: f32,
+            _fill: &ArcFill,
+            _segments: &ArcSegments,
+            _cap: ArcCap,
+        ) {
+        }
+
+        fn stroke_rect(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _border_width: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn draw_line(
+            &mut self,
+            _x1: f32,
+            _y1: f32,
+            _x2: f32,
+            _y2: f32,
+            _width: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn save(&mut self) {}
+
+        fn restore(&mut self) {}
+
+        fn translate(&mut self, _x: f32, _y: f32) {}
+
+        fn rotate(&mut self, _angle_radians: f32) {}
+
+        fn push_scissor(&mut self, _x: f32, _y: f32, _w: f32, _h: f32) {}
+
+        fn pop_scissor(&mut self) {}
+
+        fn draw_text(&mut self, _text: &str, _x: f32, _y: f32, _size: f32, _color: Color) {}
+
+        fn measure_text(&mut self, _text: &str, _size: f32) -> f32 {
+            0.0
+        }
+
+        fn measure_paragraph(
+            &mut self,
+            _style: &TextStyle,
+            _spans: &[SpanData],
+            _max_width: Option<f32>,
+        ) -> (f32, f32) {
+            (0.0, 0.0)
+        }
+
+        fn draw_paragraph(
+            &mut self,
+            _style: &TextStyle,
+            _spans: &[SpanData],
+            _x: f32,
+            _y: f32,
+            _max_width: f32,
+        ) {
+        }
+
+        fn draw_paragraph_clipped(
+            &mut self,
+            _style: &TextStyle,
+            _spans: &[SpanData],
+            _x: f32,
+            _y: f32,
+            _max_width: f32,
+            _clip_top: f32,
+            _clip_bottom: f32,
+        ) {
+        }
+
+        fn register_svg(&mut self, _tag: &str, _data: &[u8]) -> Option<SvgId> {
+            None
+        }
+
+        fn draw_svg(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _color: Color,
+            _icon_id: SvgId,
+            _anti_alias: bool,
+            _fills: &[(String, Color)],
+        ) {
+        }
+
+        fn register_bitmap(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
+            None
+        }
+
+        fn register_bitmap_nearest(&mut self, _tag: &str, _data: &[u8]) -> Option<BitmapId> {
+            None
+        }
+
+        fn register_bitmap_rgba(
+            &mut self,
+            _tag: &str,
+            _rgba: &[u8],
+            _width: u32,
+            _height: u32,
+        ) -> Option<BitmapId> {
+            None
+        }
+
+        fn draw_bitmap(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _bitmap_id: BitmapId) {}
+
+        fn draw_nine_patch(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _bitmap_id: BitmapId,
+            _left: u16,
+            _top: u16,
+            _right: u16,
+            _bottom: u16,
+        ) {
+        }
+
+        fn stroke_rounded_rect(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _radius: f32,
+            _border_width: f32,
+            _color: Color,
+        ) {
+        }
+
+        fn register_bitmap_rgba_nearest(
+            &mut self,
+            _tag: &str,
+            _rgba: &[u8],
+            _width: u32,
+            _height: u32,
+        ) -> Option<BitmapId> {
+            None
+        }
+
+        fn register_mesh(&mut self, _tag: &str, _data: &[u8]) -> Option<MeshId> {
+            None
+        }
+
+        fn draw_mesh(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _slot_index: u8,
+            _mesh_id: MeshId,
+            _args: MeshDrawArgs,
+        ) {
+        }
+
+        fn draw_sphere(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _w: f32,
+            _h: f32,
+            _bitmap_id: BitmapId,
+            _center_lat: f32,
+            _center_lon: f32,
+            _zoom: f32,
+            _light_lat: f32,
+            _light_lon: f32,
+            _atmosphere: bool,
+        ) {
+        }
+
+        fn draw_canvas_text(&mut self, _text: &str, _x: f32, _y: f32, _style: &TextStyle) {}
+
+        fn draw_autofit_text(
+            &mut self,
+            _x: f32,
+            _y: f32,
+            _box_width: f32,
+            _box_height: f32,
+            _text: &str,
+            _style: &TextStyle,
+            _mode: AutoFit,
+            _min_size: u16,
+            _max_size: u16,
+        ) {
+        }
+
+        fn draw_curved_text(
+            &mut self,
+            _cx: f32,
+            _cy: f32,
+            _radius: f32,
+            _angle: f32,
+            _anchor: ArcAnchor,
+            _facing: ArcTextFacing,
+            _text: &str,
+            _style: &TextStyle,
+        ) {
+        }
+
+        fn stroke_path(
+            &mut self,
+            _points: &[(f32, f32)],
+            _stroke_width: f32,
+            _color: Color,
+            _closed: bool,
+            _smooth: bool,
+        ) {
+        }
+
+        fn fill_path_paint(&mut self, _points: &[(f32, f32)], _fill: &Fill, _smooth: bool) {}
+
+        fn drop_shadow(
+            &mut self,
+            _cx: f32,
+            _cy: f32,
+            _fbo_w: u32,
+            _fbo_h: u32,
+            _dx: f32,
+            _dy: f32,
+            _blur: f32,
+            _color: Color,
+            _inner: &mut dyn FnMut(&mut dyn Renderer),
+        ) {
+        }
+
+        fn begin_frame(&mut self, _width: u32, _height: u32, _dpi_scale: f32) {}
+
+        fn flush(&mut self) {}
+
+        fn width(&self) -> f32 {
+            0.0
+        }
+
+        fn height(&self) -> f32 {
+            0.0
+        }
+
+        fn evict_prefix(&mut self, _prefix: &str) -> usize {
+            0
+        }
+
+        fn bitmap_resident_bytes(&self) -> u64 {
+            0
+        }
+    }
+
+    struct SlotState {
+        interaction: InteractionState,
+        modal_states: HashMap<String, crate::ModalState>,
+        scroll_states: HashMap<String, crate::ScrollState>,
+        animation_states: HashMap<u64, crate::AnimationState>,
+        transition_states: HashMap<crate::TransitionStateKey, crate::TransitionState>,
+        taffy: TaffyTree<super::NodeContext>,
+    }
+
+    impl Default for SlotState {
+        fn default() -> Self {
+            Self {
+                interaction: InteractionState::new(),
+                modal_states: HashMap::new(),
+                scroll_states: HashMap::new(),
+                animation_states: HashMap::new(),
+                transition_states: HashMap::new(),
+                taffy: TaffyTree::new(),
+            }
+        }
+    }
+
+    fn capture_frame(state: &mut SlotState, renderer: &mut KeyRecordingRenderer, key: &str) {
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: super::EmitMode::All,
+            capture_static: true,
+            reuse_static_layer: false,
+            static_layer_key: key,
+        };
+        let tree = TreeNode::Column(PropsData::default(), vec![TreeNode::Spacer { flex: 1.0 }]);
+        let mut timings = FrameTimings::default();
+        layout_and_render(&tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
+            .expect("BUG: layout_and_render must succeed for a trivial tree");
+    }
+
+    /// Two slots sharing one renderer must address distinct layers. Before the
+    /// layer was keyed, both captured into the same texture and each blitted
+    /// whatever the other had just written.
+    #[test]
+    fn each_slot_captures_under_its_own_key() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let (mut a, mut b) = (SlotState::default(), SlotState::default());
+
+        // A revisits the renderer after B, which is when a shared layer would
+        // hand A whatever B had just captured.
+        for (slot, key) in [(0, "widget-a"), (1, "widget-b"), (0, "widget-a")] {
+            renderer.calls.clear();
+            let state = if slot == 0 { &mut a } else { &mut b };
+            capture_frame(state, &mut renderer, key);
+
+            assert!(
+                !renderer.calls.is_empty(),
+                "slot '{key}' made no static-layer calls, so this asserts nothing"
+            );
+            // Every call this frame, not merely one of them: a call site that
+            // hard-codes the key leaves the others correct and hides itself.
+            for (op, seen) in &renderer.calls {
+                assert_eq!(
+                    seen, key,
+                    "'{op}' addressed layer '{seen}' while rendering slot '{key}'"
+                );
+            }
+        }
     }
 }

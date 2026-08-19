@@ -1378,6 +1378,7 @@ impl WasmWidgetRuntime {
             emit: bmc_render::tree::EmitMode::All,
             capture_static: stale_assets,
             reuse_static_layer: !stale_assets,
+            static_layer_key: &state.instance_id,
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,

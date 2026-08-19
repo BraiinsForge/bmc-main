@@ -25,6 +25,7 @@
 
 #![expect(clippy::cast_precision_loss)]
 
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::num::NonZeroU32;
 
@@ -180,9 +181,9 @@ pub struct FemtoVgRenderer {
     shadow_fbo_pool: Option<ShadowFboPool>,
     #[cfg(feature = "profiling")]
     glyph_report_every: ii_stopwatch::Every,
-    /// Cached rasterisation of the static half of the tree, replayed on
-    /// animation-only frames instead of re-emitting those draws.
-    static_layer: Option<StaticLayer>,
+    /// Cached static layers, keyed by owning widget instance. One renderer
+    /// serves every slot, so these cannot be a single slot-agnostic layer.
+    static_layers: HashMap<String, StaticLayer>,
 }
 
 impl std::fmt::Debug for FemtoVgRenderer {
@@ -635,7 +636,7 @@ impl FemtoVgRenderer {
             shadow_fbo_pool: None,
             #[cfg(feature = "profiling")]
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
-            static_layer: None,
+            static_layers: HashMap::new(),
         })
     }
 
@@ -1841,6 +1842,7 @@ impl Renderer for FemtoVgRenderer {
         self.report_text_profile();
     }
 
+
     fn width(&self) -> f32 {
         self.width
     }
@@ -1863,6 +1865,22 @@ impl Renderer for FemtoVgRenderer {
         {
             self.sphere_bitmap_id = None;
         }
+        // Static layers are keyed by the same namespace, so a departing slot
+        // reclaims its layer through the teardown path that already evicts its
+        // icons, bitmaps and meshes — no separate hook to forget.
+        //
+        // Deliberately not counted: this total is reported to the guest as the
+        // number of assets its own eviction removed, and a layer is renderer
+        // scratch the guest never registered.
+        let canvas = &mut self.canvas;
+        self.static_layers.retain(|key, layer| {
+            if key.starts_with(prefix) {
+                canvas.delete_image(layer.image);
+                false
+            } else {
+                true
+            }
+        });
         n
     }
 
@@ -1872,6 +1890,12 @@ impl Renderer for FemtoVgRenderer {
                 .mesh_renderer
                 .as_ref()
                 .is_some_and(|mesh| mesh.has_resident_prefix(prefix))
+            // Reclaiming a layer deletes a femtovg image, which is GPU work and
+            // has to be declared here or the eviction runs without the lock.
+            || self
+                .static_layers
+                .keys()
+                .any(|key| key.starts_with(prefix))
     }
 
     fn bitmap_resident_bytes(&self) -> u64 {
@@ -1903,16 +1927,16 @@ impl Renderer for FemtoVgRenderer {
     fn text_layout_counters(&self) -> TextLayoutCounters {
         self.paragraph_cache.counters()
     }
-    fn begin_static_layer(&mut self, width: u32, height: u32) -> bool {
+    fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
         let dpi_scale = self.dpi_scale;
-        let fits = self.static_layer.as_ref().is_some_and(|layer| {
+        let fits = self.static_layers.get(key).is_some_and(|layer| {
             layer.width == width
                 && layer.height == height
                 && (layer.dpi_scale - dpi_scale).abs() < f32::EPSILON
         });
         if !fits {
             // A geometry change makes the existing texture the wrong shape.
-            self.invalidate_static_layer();
+            self.invalidate_static_layer(key);
             let (pw, ph) = physical_size(width, height, dpi_scale);
             // FLIP_Y, not a canvas transform: the layer is a GL FBO texture
             // with a bottom-left origin, and the blit needs anti-aliasing off
@@ -1927,25 +1951,26 @@ impl Renderer for FemtoVgRenderer {
             ) else {
                 return false;
             };
-            self.static_layer = Some(StaticLayer {
-                image,
-                width,
-                height,
-                dpi_scale,
-                captured: false,
-            });
+            self.static_layers.insert(
+                key.to_owned(),
+                StaticLayer {
+                    image,
+                    width,
+                    height,
+                    dpi_scale,
+                    captured: false,
+                },
+            );
         }
-        let Some(layer) = self.static_layer.as_ref() else {
+        let Some(layer) = self.static_layers.get(key) else {
             return false;
         };
         let image = layer.image;
-        // Deliberately not `begin_frame_to_image`: that bumps `frame_counter`
-        // and sweeps the paragraph cache, but a capture is a second pass over
-        // the frame already in progress, not a new frame. The double step blew
-        // the cache's one-frame retention window, so every guest frame
-        // re-shaped all ~125 paragraphs — a ~7x `compute_taffy_layout` spike,
-        // visible as a stutter roughly once a second. Canvas size and dpi are
-        // already the frame's, so only the target and clear change here.
+        // Deliberately not `begin_frame_to_image`: that opens a new frame on
+        // the paragraph cache, and a capture is a second pass over the frame
+        // already in progress rather than a new one — the double step would
+        // charge this frame's shaping twice over. Canvas size and dpi are
+        // already the frame's, so only the target and the clear change here.
         self.canvas.set_render_target(RenderTarget::Image(image));
 
         // Re-clear opaque, over the transparent clear `begin_frame_to_image`
@@ -1970,7 +1995,7 @@ impl Renderer for FemtoVgRenderer {
         true
     }
 
-    fn end_static_layer(&mut self) {
+    fn end_static_layer(&mut self, key: &str) {
         self.canvas.set_render_target(RenderTarget::Screen);
         // femtovg's "Screen" is framebuffer 0, which is *not* this renderer's
         // target — it draws into a caller-supplied FBO. `begin_frame_with_clear`
@@ -1979,13 +2004,13 @@ impl Renderer for FemtoVgRenderer {
         unsafe {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
         }
-        if let Some(layer) = self.static_layer.as_mut() {
+        if let Some(layer) = self.static_layers.get_mut(key) {
             layer.captured = true;
         }
     }
 
-    fn blit_static_layer(&mut self) -> bool {
-        let Some(layer) = self.static_layer.as_ref() else {
+    fn blit_static_layer(&mut self, key: &str) -> bool {
+        let Some(layer) = self.static_layers.get(key) else {
             return false;
         };
         if !layer.captured {
@@ -2009,8 +2034,8 @@ impl Renderer for FemtoVgRenderer {
         self.paragraph_cache.stats()
     }
 
-    fn invalidate_static_layer(&mut self) {
-        if let Some(layer) = self.static_layer.take() {
+    fn invalidate_static_layer(&mut self, key: &str) {
+        if let Some(layer) = self.static_layers.remove(key) {
             self.canvas.delete_image(layer.image);
         }
     }

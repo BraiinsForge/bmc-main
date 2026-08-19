@@ -532,26 +532,33 @@ pub trait Renderer {
     // feature inert, so a renderer that cannot render to a texture keeps
     // drawing every frame in full.
 
-    /// Begin capturing draws into a cached static layer of `width` x `height`
-    /// logical pixels, at the renderer's current device-pixel ratio. Returns
-    /// `false` if no layer is available, in which case the caller must fall
-    /// back to a full frame.
-    fn begin_static_layer(&mut self, _width: u32, _height: u32) -> bool {
+    /// Begin capturing draws into `key`'s cached static layer, `width` x
+    /// `height` logical pixels at the renderer's current device-pixel ratio.
+    /// Returns `false` if no layer is available, in which case the caller must
+    /// fall back to a full frame.
+    ///
+    /// `key` identifies the owning widget instance. One renderer is shared by
+    /// every widget slot and system overlay, so a layer keyed by geometry alone
+    /// would let two equally-sized slots capture over each other and blit each
+    /// other's content. Pass the caller's asset namespace, so
+    /// [`Renderer::evict_prefix`] reclaims the layer on slot teardown.
+    fn begin_static_layer(&mut self, _key: &str, _width: u32, _height: u32) -> bool {
         false
     }
 
-    /// Stop capturing and restore the previous render target.
-    fn end_static_layer(&mut self) {}
+    /// Stop capturing `key`'s layer and restore the previous render target.
+    fn end_static_layer(&mut self, _key: &str) {}
 
-    /// Composite the cached layer into the current target. Returns `false` when
-    /// no valid layer exists — the caller must then render a full frame.
-    fn blit_static_layer(&mut self) -> bool {
+    /// Composite `key`'s cached layer into the current target. Returns `false`
+    /// when no valid layer exists — the caller must then render a full frame.
+    fn blit_static_layer(&mut self, _key: &str) -> bool {
         false
     }
 
-    /// Drop the cached layer. Must be called whenever the static half of the
-    /// tree could have changed, i.e. after any frame that ran the guest.
-    fn invalidate_static_layer(&mut self) {}
+    /// Drop `key`'s cached layer. Must be called whenever the static half of
+    /// that widget's tree could have changed, i.e. after any frame that ran the
+    /// guest.
+    fn invalidate_static_layer(&mut self, _key: &str) {}
 
     /// Paragraph-shaping misses this frame, and cache occupancy. Diagnostic
     /// only — `(0, 0)` when a renderer keeps no such cache.
@@ -1052,20 +1059,20 @@ impl Renderer for RenderTarget<'_, '_, '_> {
     // renderer report "no layer available" and caching would silently never
     // happen, which looks exactly like a renderer that cannot render to a
     // texture.
-    fn begin_static_layer(&mut self, width: u32, height: u32) -> bool {
-        self.renderer.begin_static_layer(width, height)
+    fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
+        self.renderer.begin_static_layer(key, width, height)
     }
 
-    fn end_static_layer(&mut self) {
-        self.renderer.end_static_layer();
+    fn end_static_layer(&mut self, key: &str) {
+        self.renderer.end_static_layer(key);
     }
 
-    fn blit_static_layer(&mut self) -> bool {
-        self.renderer.blit_static_layer()
+    fn blit_static_layer(&mut self, key: &str) -> bool {
+        self.renderer.blit_static_layer(key)
     }
 
-    fn invalidate_static_layer(&mut self) {
-        self.renderer.invalidate_static_layer();
+    fn invalidate_static_layer(&mut self, key: &str) {
+        self.renderer.invalidate_static_layer(key);
     }
 
     fn paragraph_cache_stats(&self) -> (u32, usize) {
