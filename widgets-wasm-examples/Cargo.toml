@@ -13,6 +13,7 @@ workspace = true
 [workspace]
 resolver = "3"
 members = [
+    "anim-stress",
     "calendar",
     "hello-widget",
     "home-assistant",
