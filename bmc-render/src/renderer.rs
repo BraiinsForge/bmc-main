@@ -560,6 +560,18 @@ pub trait Renderer {
     /// guest.
     fn invalidate_static_layer(&mut self, _key: &str) {}
 
+    /// Submit everything recorded so far and block until the GPU has finished
+    /// it, returning how long that took in microseconds.
+    ///
+    /// Diagnostic only, for attributing a frame's GPU cost to individual
+    /// passes. Returns `0` for renderers with no GPU behind them. Calling this
+    /// defeats the pipelining between CPU recording and GPU execution, so it
+    /// belongs behind [`crate::tree::gpu_pass_timing_enabled`] rather than on
+    /// any normal path.
+    fn flush_and_fence_us(&mut self) -> u32 {
+        0
+    }
+
     /// Paragraph-shaping misses this frame, and cache occupancy. Diagnostic
     /// only — `(0, 0)` when a renderer keeps no such cache.
     fn paragraph_cache_stats(&self) -> (u32, usize) {
@@ -1077,6 +1089,10 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn paragraph_cache_stats(&self) -> (u32, usize) {
         self.renderer.paragraph_cache_stats()
+    }
+
+    fn flush_and_fence_us(&mut self) -> u32 {
+        self.renderer.flush_and_fence_us()
     }
 }
 

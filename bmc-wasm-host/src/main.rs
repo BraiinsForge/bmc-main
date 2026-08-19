@@ -50,8 +50,13 @@ fn main() -> Result<()> {
     bmc_wasm_host::logging::init(&log_path)
         .with_context(|| format!("initialize host file logging at {}", log_path.display()))?;
 
+    // Reads DEBUG_LAYOUT and BMC_GPU_PASS_TIMING. Without this the host ignores
+    // both, which the testbed and storybook already honour.
+    bmc_render::tree::init_debug_flags();
+
     tracing::info!(
         socket = %socket_path.display(),
+        gpu_pass_timing = bmc_render::tree::gpu_pass_timing_enabled(),
         "starting bmc-wasm-host"
     );
 

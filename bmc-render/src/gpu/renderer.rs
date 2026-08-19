@@ -1842,6 +1842,21 @@ impl Renderer for FemtoVgRenderer {
         self.report_text_profile();
     }
 
+    fn flush_and_fence_us(&mut self) -> u32 {
+        let started = std::time::Instant::now();
+        self.canvas.flush();
+        // `glFinish` rather than a fence object: this path exists to stall, and
+        // it needs no extension probing on a GLES 2.0 driver.
+        unsafe {
+            self.gl.finish();
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a single pass never takes an hour"
+        )]
+        let elapsed = started.elapsed().as_micros() as u32;
+        elapsed
+    }
 
     fn width(&self) -> f32 {
         self.width

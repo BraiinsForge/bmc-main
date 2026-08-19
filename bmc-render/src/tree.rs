@@ -42,11 +42,27 @@ static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
 
 /// When `BMC_GPU_PASS_TIMING=1` is set, block on the GPU at each render-pass
 /// boundary so a frame's GPU cost can be attributed per pass.
+///
+/// Off by default because it is *not* free to observe: the fences serialise
+/// passes that normally pipeline, so the frame gets slower and the totals stop
+/// matching an uninstrumented run. Read the per-pass split as proportions, not
+/// as absolute times.
+static GPU_PASS_TIMING: AtomicBool = AtomicBool::new(false);
+
 /// Call once at startup to check the `DEBUG_LAYOUT` env var.
 pub fn init_debug_flags() {
     if std::env::var("DEBUG_LAYOUT").is_ok_and(|v| v == "1") {
         DEBUG_LAYOUT.store(true, Ordering::Relaxed);
     }
+    if std::env::var("BMC_GPU_PASS_TIMING").is_ok_and(|v| v == "1") {
+        GPU_PASS_TIMING.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether per-pass GPU fences are enabled; see [`GPU_PASS_TIMING`].
+#[must_use]
+pub fn gpu_pass_timing_enabled() -> bool {
+    GPU_PASS_TIMING.load(Ordering::Relaxed)
 }
 
 /// Returns whether debug layout outlines are enabled.
@@ -1901,6 +1917,7 @@ fn layout_and_render_inner(
         ctx.reuse_static_layer,
         ctx.static_layer_key,
         &mut result,
+        timings,
         &mut anim_ctx,
     );
 
@@ -1921,7 +1938,8 @@ fn layout_and_render_inner(
         );
     }
 
-    sweep_stale_state(&mut anim_ctx, ctx.frame_counter);
+    sweep_stale_state(&mut anim_ctx, ctx.frame_counter, timings);
+    timings.hit_region_count = ctx.interaction.hit_region_count();
 
     timings.render_us = t2.elapsed().as_micros() as u32;
 
@@ -1976,8 +1994,16 @@ fn render_tree(
     reuse_static_layer: bool,
     static_layer_key: &str,
     result: &mut TreeResult,
+    timings: &mut FrameTimings,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
+    // Drain whatever is already queued so the first measured pass is not
+    // charged for work recorded before it.
+    let pass_timing = gpu_pass_timing_enabled();
+    if pass_timing {
+        renderer.flush_and_fence_us();
+    }
+
     let split = anim_ctx.emit == EmitMode::All
         && capture_static
         && renderer.begin_static_layer(static_layer_key, width as u32, height as u32);
@@ -1990,6 +2016,9 @@ fn render_tree(
         && reuse_static_layer
         && renderer.blit_static_layer(static_layer_key)
     {
+        if pass_timing {
+            timings.gpu_blit_us = renderer.flush_and_fence_us();
+        }
         anim_ctx.emit = EmitMode::DynamicOnly;
     }
 
@@ -2008,7 +2037,13 @@ fn render_tree(
             0,
         );
         renderer.end_static_layer(static_layer_key);
+        if pass_timing {
+            timings.gpu_capture_us = renderer.flush_and_fence_us();
+        }
         renderer.blit_static_layer(static_layer_key);
+        if pass_timing {
+            timings.gpu_blit_us = renderer.flush_and_fence_us();
+        }
 
         // Restart the counters so this pass matches a cached frame's exactly —
         // it is the same walk, and animation state keys on `draw_counter`.
@@ -2028,6 +2063,10 @@ fn render_tree(
         anim_ctx,
         0,
     );
+
+    if pass_timing {
+        timings.gpu_dynamic_us = renderer.flush_and_fence_us();
+    }
 }
 
 /// Drop animation and transition states no walk touched this frame, and record
@@ -2039,6 +2078,7 @@ fn render_tree(
 fn sweep_stale_state(
     anim_ctx: &mut AnimationContext<'_>,
     frame_counter: u64,
+    timings: &mut FrameTimings,
 ) {
     anim_ctx
         .animation_states
@@ -2046,6 +2086,9 @@ fn sweep_stale_state(
     anim_ctx
         .transition_states
         .retain(|_, s| s.last_seen_frame >= frame_counter);
+
+    timings.animation_state_count = anim_ctx.animation_states.len();
+    timings.transition_state_count = anim_ctx.transition_states.len();
 }
 
 /// Build the taffy node for `node` and tag it with its static/dynamic

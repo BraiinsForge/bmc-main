@@ -79,6 +79,12 @@ impl InteractionState {
         }
     }
 
+    /// How many hit regions the current frame has registered so far.
+    #[must_use]
+    pub fn hit_region_count(&self) -> usize {
+        self.hit_regions.len()
+    }
+
     /// Clear hit regions for new frame.
     pub fn begin_frame(&mut self) {
         // Reset per-frame state

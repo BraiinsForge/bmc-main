@@ -209,6 +209,21 @@ pub struct FrameTimings {
     pub paragraph_misses: u32,
     /// Paragraph cache occupancy after layout (diagnostic).
     pub paragraph_entries: u32,
+    /// Live animation states after this frame's sweep (diagnostic). Sized to
+    /// judge whether the per-frame `retain` walk is worth optimising.
+    pub animation_state_count: usize,
+    /// Live transition states after this frame's sweep (diagnostic).
+    pub transition_state_count: usize,
+    /// Hit regions registered by this frame's walk (diagnostic).
+    pub hit_region_count: usize,
+    /// GPU time rasterising the static half into the cached layer. Only
+    /// populated with `BMC_GPU_PASS_TIMING=1`; see
+    /// [`tree::gpu_pass_timing_enabled`].
+    pub gpu_capture_us: u32,
+    /// GPU time compositing the cached layer into the frame. Same gate.
+    pub gpu_blit_us: u32,
+    /// GPU time drawing the dynamic half over the layer. Same gate.
+    pub gpu_dynamic_us: u32,
     /// render_taffy_node + modal rendering.
     pub render_us: u32,
     /// FemtoVG canvas.flush().
