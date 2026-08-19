@@ -117,6 +117,27 @@ python:
 test crate *FEATURES="--all-features":
     {{ NIX_DEV }} cargo nextest run -p {{ crate }} {{ FEATURES }}
 
+# Run one widget's native tests, FILTER naming a substring of the test names.
+test-widget WIDGET FILTER="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # Bare cargo, as `validate` runs the widget workspaces:
+    # `nix develop` swaps the toolchain and the sccache wrapper,
+    # and one target dir cannot link against two rustc setups.
+    for root in $(bmc-wasm-runtime/tools/widget_root.py); do
+        if [ -d "$root/{{ WIDGET }}" ]; then
+            cd "$root"
+            if [ -n "{{ FILTER }}" ]; then
+                exec cargo nextest run -p {{ WIDGET }} "{{ FILTER }}"
+            fi
+            exec cargo nextest run -p {{ WIDGET }}
+        fi
+    done
+
+    echo "no widget '{{ WIDGET }}' under any widget workspace" >&2
+    exit 1
+
 # Compress images under the given paths (default: cwd).
 fmt-images *PATHS:
     nix run .#fmt-images -- {{ PATHS }}
