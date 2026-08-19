@@ -163,6 +163,15 @@ fn detect_gl_sync_support(
             )
         })?
     };
+    // Logged in full (not just the fence-sync bits consumed below) so the
+    // driver's real capability ceiling can be read off a device log when
+    // evaluating renderer backends.
+    tracing::info!(
+        gl_version = %version,
+        gl_extensions = %gl_extensions,
+        egl_extensions = ?egl_display.extensions(),
+        "GL/EGL capability probe"
+    );
     Ok(detect_gpu_completion_wait_strategy(
         &version,
         &gl_extensions,
