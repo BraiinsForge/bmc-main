@@ -1,12 +1,21 @@
 # Nextest settings for the root workspace.
 
 [profile.default]
-# Show output from tests that passed, not just from ones that failed.
+# One line per test, naming it, so a run shows what ran and not only what broke.
+# Replaying every passing test's stdout doubles the log and buries the failure
+# in the middle of it, which is the one thing the log exists to show.
+status-level = "pass"
+success-output = "never"
+# Last, rather than where it happened: a failure printed mid-run
+# is the first thing a long log loses.
+failure-output = "final"
+
+# Passing output for the runs where a silent skip is the thing being hunted.
+# Several integration tests need a headless EGL stack and return early without
+# one — they print nothing and read as a pass.
 #
-# Most tests print nothing on success, so what surfaces is a skip.
-# Several integration tests need a headless EGL stack; where it is missing
-# they return early, which passes and otherwise looks just like a run.
-#
-# The Nix `ci` profile sets BMC_REQUIRE_HEADLESS_EGL to make that fatal where
-# Mesa is supplied. Here it is only made legible.
+# `BMC_REQUIRE_HEADLESS_EGL=1` makes that fatal instead. The Nix `ci` profile
+# sets it where Mesa is supplied; locally it is worth setting whenever a suite
+# looks suspiciously green.
+[profile.verbose]
 success-output = "final"
