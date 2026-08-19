@@ -31,6 +31,14 @@ NerdQAxe++) miners over mDNS, polls each for live telemetry, and rolls them up i
 breakdown, and a per-device detail view — with hashrate trend charts, OK/degraded/off health against each miner's
 nominal, per-family credentials, and a selectable chart time range.
 
+### [Formula 1 Widget](formula-1.md)
+
+A widget that follows a Grand Prix season — the drivers' championship standings, the next race weekend with its schedule
+and circuit, one driver's career card, and live timing for a race, qualifying or practice session in progress. Left on
+Automatic it picks the view for itself: the live board while a session runs, otherwise the next race, otherwise the
+standings. Reads the Braiins Forge Nexus, follows device localization and timezone, and can show session times on the
+circuit's clock or the deck's. Renders at all four widget sizes on rectangular viewports.
+
 ### [Halving Countdown Widget](halving-countdown.md)
 
 A widget that counts down to the next Bitcoin halving — days, hours, and minutes remaining — and, on the larger sizes,
