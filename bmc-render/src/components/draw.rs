@@ -721,8 +721,17 @@ fn render_draw_inner(
                 });
                 state.last_seen_frame = anim_ctx.frame_counter;
 
-                // Detect target change
-                if state.target != current_values {
+                // A frame that brings a new target does not advance the clock:
+                // `delta_ms` elapsed *before* that target appeared, so it
+                // belongs to the transition that just ended. Charging it to the
+                // one starting here hands a 500 ms transition a 1000 ms first
+                // step on a widget rendering at 1 Hz, finishing it before a
+                // single frame of it is drawn. Starting at 0 leaves it active,
+                // which is what makes the host schedule the animation frames
+                // that interpolate it.
+                if state.target == current_values {
+                    state.elapsed_ms = state.elapsed_ms.saturating_add(anim_ctx.delta_ms);
+                } else {
                     // D3-style: interpolate from current interpolated position
                     let t = if trans_def.duration_ms > 0 {
                         (state.elapsed_ms as f32 / trans_def.duration_ms as f32).min(1.0)
@@ -735,8 +744,6 @@ fn render_draw_inner(
                     state.target = current_values;
                     state.elapsed_ms = 0;
                 }
-
-                state.elapsed_ms = state.elapsed_ms.saturating_add(anim_ctx.delta_ms);
 
                 if state.elapsed_ms < trans_def.duration_ms {
                     anim_ctx.has_active = true;
@@ -2220,6 +2227,42 @@ mod tests {
         }
     }
 
+    /// Draw `transition_arc(end_angle)` as one frame, advancing the context's
+    /// frame counter and clearing prior events so the caller sees this frame's.
+    fn transition_arc_frame(
+        renderer: &mut RecordingRenderer,
+        anim_ctx: &mut AnimationContext<'_>,
+        delta_ms: u32,
+        end_angle: f32,
+    ) {
+        renderer.events.clear();
+        anim_ctx.delta_ms = delta_ms;
+        anim_ctx.frame_counter += 1;
+        render_draw_inner_for_test(
+            renderer,
+            &transition_arc(end_angle),
+            0.0,
+            0.0,
+            100.0,
+            100.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            1.0,
+            0.0,
+            None,
+            anim_ctx,
+        );
+    }
+
+    fn recorded_arc_end_angle(renderer: &RecordingRenderer) -> f32 {
+        let [RenderEvent::Arc { end_angle, .. }] = &renderer.events[..] else {
+            panic!("BUG: expected one arc draw event");
+        };
+        *end_angle
+    }
+
     #[test]
     fn arc_transition_interpolates_sweep() {
         let mut renderer = RecordingRenderer::default();
@@ -2227,43 +2270,9 @@ mod tests {
         let mut transition_states = HashMap::new();
         let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
 
-        render_draw_inner_for_test(
-            &mut renderer,
-            &transition_arc(1.0),
-            0.0,
-            0.0,
-            100.0,
-            100.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            0.0,
-            None,
-            &mut anim_ctx,
-        );
-
-        renderer.events.clear();
-        anim_ctx.delta_ms = 500;
-        anim_ctx.frame_counter = 1;
-
-        render_draw_inner_for_test(
-            &mut renderer,
-            &transition_arc(3.0),
-            0.0,
-            0.0,
-            100.0,
-            100.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            1.0,
-            0.0,
-            None,
-            &mut anim_ctx,
-        );
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 16, 3.0);
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 500, 3.0);
 
         let [
             RenderEvent::Arc {
@@ -2289,6 +2298,29 @@ mod tests {
         assert_eq!(*fill, ArcFill::Solid(Color::from_rgb(1, 2, 3)));
         assert_eq!(*segments, ArcSegments::Continuous);
         assert_eq!(*cap, ArcCap::Round);
+    }
+
+    #[test]
+    fn transition_start_frame_does_not_consume_the_gap_delta() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+
+        // A widget rendering at 1 Hz: the whole 1000 ms gap elapsed before the
+        // new target appeared, so the 1000 ms transition starts here rather
+        // than ending here.
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 1_000, 3.0);
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            1.0_f32.to_bits()
+        );
+        assert!(
+            anim_ctx.has_active,
+            "an unfinished transition must keep asking for frames"
+        );
     }
 
     #[test]

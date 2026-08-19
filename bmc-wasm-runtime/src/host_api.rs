@@ -753,6 +753,9 @@ pub use bmc_render::FrameTimings;
 ///   has running animations or transitions.
 /// * [`Self::interaction_pending`] — whether clicks/drags were delivered this
 ///   frame and the widget has not yet had a chance to render its reaction.
+/// * [`Self::deferred_wasm_render_at_ms`] — the deadline of an outstanding
+///   `request_frame_after`, which outlives the animation frames rendered
+///   before it.
 ///
 /// Whether to render at all ([`Self::wants_next_frame`]), how long to wait
 /// ([`Self::effective_delay_ms`]) and whether the next frame can skip WASM
@@ -784,8 +787,9 @@ pub(crate) struct FrameScheduleState {
     pub animation_frame_delay_ms: u32,
 
     /// Monotonic deadline (ms) for the next forced full WASM render requested
-    /// by `request_frame_after`. Kept separate from the effective host wake,
-    /// which may be clamped earlier while animations are active.
+    /// by `request_frame_after`. Kept separate from [`Self::widget_delay_ms`],
+    /// which a cached frame clears, so the deadline survives the animation
+    /// frames rendered before it.
     ///
     /// Uses monotonic_ms instead of counting down by `delta_ms` because
     /// sub-millisecond frames truncate to 0 and stall countdown timers.
@@ -831,12 +835,27 @@ impl FrameScheduleState {
         self.deferred_wasm_render_at_ms = Some(now + u64::from(delay_ms));
     }
 
-    /// Whether anything wants the host to render a next frame.
-    pub fn wants_next_frame(&self) -> bool {
+    /// Whether anything wants the host to render a next frame, as of monotonic
+    /// `now`.
+    ///
+    /// [`Self::deferred_wasm_render_at_ms`] counts, and must: an animation-only
+    /// frame clears [`Self::widget_delay_ms`] without the guest running to
+    /// re-request it, so once the animations it was rendering settle, the
+    /// widget's own `request_frame_after` deadline is the only thing left
+    /// wanting a frame. Omitting it stalled every widget whose animations
+    /// finish — the clock froze mid-second until an unrelated event woke it.
+    pub fn wants_next_frame(&self, now: u64) -> bool {
         self.widget_delay_ms.is_some()
             || self.has_active_animations
             || self.interaction_pending
             || self.host_frame_delay_ms.is_some()
+            || self.deferred_delay_ms(now).is_some()
+    }
+
+    /// Remaining wait until the deferred full-WASM deadline, if one is pending.
+    fn deferred_delay_ms(&self, now: u64) -> Option<u32> {
+        let deadline = self.deferred_wasm_render_at_ms?;
+        Some(u32::try_from(deadline.saturating_sub(now)).unwrap_or(u32::MAX))
     }
 
     /// Whether the next frame can replay the cached tree without running WASM.
@@ -856,18 +875,23 @@ impl FrameScheduleState {
     }
 
     /// Effective delay before the host should wake for the next render —
-    /// the min of all active constraints.
-    pub fn effective_delay_ms(&self) -> Option<u32> {
+    /// the min of all active constraints, as of monotonic `now`.
+    pub fn effective_delay_ms(&self, now: u64) -> Option<u32> {
         if self.interaction_pending {
             return Some(0);
         }
         let cap = self
             .has_active_animations
             .then_some(self.animation_frame_delay_ms);
-        [self.widget_delay_ms, cap, self.host_frame_delay_ms]
-            .into_iter()
-            .flatten()
-            .min()
+        [
+            self.widget_delay_ms,
+            cap,
+            self.host_frame_delay_ms,
+            self.deferred_delay_ms(now),
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 }
 
@@ -1971,7 +1995,7 @@ mod tests {
         s.widget_delay_ms = Some(1_000);
         s.has_active_animations = false;
         s.interaction_pending = true;
-        assert_eq!(s.effective_delay_ms(), Some(0));
+        assert_eq!(s.effective_delay_ms(0), Some(0));
     }
 
     #[test]
@@ -1979,7 +2003,7 @@ mod tests {
         let mut s = schedule(33);
         s.has_active_animations = true;
         s.interaction_pending = true;
-        assert_eq!(s.effective_delay_ms(), Some(0));
+        assert_eq!(s.effective_delay_ms(0), Some(0));
     }
 
     #[test]
@@ -1987,7 +2011,7 @@ mod tests {
         let mut s = schedule(33);
         s.widget_delay_ms = Some(1_000);
         s.has_active_animations = true;
-        assert_eq!(s.effective_delay_ms(), Some(33));
+        assert_eq!(s.effective_delay_ms(0), Some(33));
     }
 
     #[test]
@@ -1995,7 +2019,7 @@ mod tests {
         let mut s = schedule(33);
         s.widget_delay_ms = Some(16);
         s.has_active_animations = true;
-        assert_eq!(s.effective_delay_ms(), Some(16));
+        assert_eq!(s.effective_delay_ms(0), Some(16));
     }
 
     #[test]
@@ -2022,38 +2046,38 @@ mod tests {
     fn animation_alone_uses_cadence() {
         let mut s = schedule(33);
         s.has_active_animations = true;
-        assert_eq!(s.effective_delay_ms(), Some(33));
+        assert_eq!(s.effective_delay_ms(0), Some(33));
     }
 
     #[test]
     fn idle_widget_request_passes_through() {
         let mut s = schedule(33);
         s.widget_delay_ms = Some(1_000);
-        assert_eq!(s.effective_delay_ms(), Some(1_000));
+        assert_eq!(s.effective_delay_ms(0), Some(1_000));
     }
 
     #[test]
     fn no_constraints_returns_none() {
         let s = schedule(33);
-        assert_eq!(s.effective_delay_ms(), None);
+        assert_eq!(s.effective_delay_ms(0), None);
     }
 
     #[test]
     fn wants_next_frame_reflects_any_input() {
         let s = schedule(33);
-        assert!(!s.wants_next_frame(), "no inputs → no frame wanted");
+        assert!(!s.wants_next_frame(0), "no inputs → no frame wanted");
 
         let mut s = schedule(33);
         s.widget_delay_ms = Some(100);
-        assert!(s.wants_next_frame());
+        assert!(s.wants_next_frame(0));
 
         let mut s = schedule(33);
         s.has_active_animations = true;
-        assert!(s.wants_next_frame());
+        assert!(s.wants_next_frame(0));
 
         let mut s = schedule(33);
         s.interaction_pending = true;
-        assert!(s.wants_next_frame());
+        assert!(s.wants_next_frame(0));
     }
 
     #[test]
@@ -2095,8 +2119,8 @@ mod tests {
     fn host_frame_delay_wakes_at_its_boundary_uncapped() {
         let mut s = schedule(33);
         s.host_frame_delay_ms = Some(1_000);
-        assert_eq!(s.effective_delay_ms(), Some(1_000));
-        assert!(s.wants_next_frame());
+        assert_eq!(s.effective_delay_ms(0), Some(1_000));
+        assert!(s.wants_next_frame(0));
         assert!(
             s.is_animation_only_frame(),
             "a time node replays the cached tree"
@@ -2108,6 +2132,36 @@ mod tests {
         let mut s = schedule(33);
         s.host_frame_delay_ms = Some(1_000);
         s.has_active_animations = true;
-        assert_eq!(s.effective_delay_ms(), Some(33));
+        assert_eq!(s.effective_delay_ms(0), Some(33));
+    }
+
+    #[test]
+    fn deferred_deadline_outlives_the_animation_frames_before_it() {
+        let mut s = schedule(33);
+        s.request_frame_after(1_000, 0);
+
+        // Animation frames while the transition runs: the cached path cleared
+        // the widget's request, so the deadline is the only wake left.
+        s.begin_render_frame();
+        s.has_active_animations = true;
+        assert_eq!(s.effective_delay_ms(200), Some(33));
+
+        // Transition finished. Without the deadline in the scheduler the widget
+        // would stall here instead of rendering its next second.
+        s.begin_render_frame();
+        assert!(s.wants_next_frame(500));
+        assert_eq!(s.effective_delay_ms(500), Some(500), "remaining, not 1000");
+    }
+
+    #[test]
+    fn an_elapsed_deferred_deadline_wakes_immediately() {
+        let mut s = schedule(33);
+        s.request_frame_after(1_000, 0);
+        s.begin_render_frame();
+        assert_eq!(s.effective_delay_ms(1_200), Some(0));
+        assert!(
+            !s.is_animation_only_frame(),
+            "the deadline is what forces the full WASM run"
+        );
     }
 }

@@ -2056,7 +2056,8 @@ impl WasmWidgetRuntime {
     /// the frame should be rendered immediately or after a delay.
     #[must_use]
     pub fn wants_next_frame(&self) -> bool {
-        self.store.data().frame_schedule.wants_next_frame()
+        let state = self.store.data();
+        state.frame_schedule.wants_next_frame(state.monotonic_ms)
     }
 
     /// Delay before the next host wake, if another frame was requested.
@@ -2070,7 +2071,8 @@ impl WasmWidgetRuntime {
     /// busy-wait or render immediately.
     #[must_use]
     pub fn next_frame_delay(&self) -> Option<u32> {
-        self.store.data().frame_schedule.effective_delay_ms()
+        let state = self.store.data();
+        state.frame_schedule.effective_delay_ms(state.monotonic_ms)
     }
 
     /// Push a touch event to be processed next frame.
