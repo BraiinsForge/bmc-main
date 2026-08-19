@@ -13,7 +13,7 @@ allocations, but growing linear memory does not move or enlarge the stack region
 
 ## Measured stack use
 
-Measurements taken on 2026-08-13 used optimized modules. Post-link instrumentation recorded the lowest shadow-stack
+Measurements taken on 2026-08-18 used optimized modules. Post-link instrumentation recorded the lowest shadow-stack
 pointer reached during each regression-capture scenario. Re-run the same measurement with `just wasm::stack-profile`;
 the resulting `stack-usage.md` under `result/` aggregates every configured size and variant after comparing the
 instrumented renders with their regression baselines. This is a developer report, not a CI gate: the build enforces the
@@ -22,7 +22,7 @@ it. The instrumented 64 KiB builds matched all regression baselines across both 
 
 ### Production widgets
 
-The production run covered all 39 configured scenarios across all 13 widgets.
+The production run covered all 49 configured scenarios across all 15 widgets.
 
 | Widget            | Maximum observed stack use |
 | ----------------- | -------------------------: |
@@ -34,10 +34,12 @@ The production run covered all 39 configured scenarios across all 13 widgets.
 | Image             |                2,512 bytes |
 | ISS Position      |                4,128 bytes |
 | Mining Clock      |                1,424 bytes |
-| Mining Info       |                7,936 bytes |
+| Mining Info       |                7,904 bytes |
 | Nameday           |                1,808 bytes |
 | Random Facts      |                  736 bytes |
 | SpaceX Launch     |                4,928 bytes |
+| Ticker List       |                3,952 bytes |
+| Ticker Single     |                3,184 bytes |
 | Weather           |                4,512 bytes |
 
 ### Example widgets
@@ -54,10 +56,10 @@ The example run covered all ten configured scenarios across all nine widgets.
 | Metronome      |                3,984 bytes |
 | Params Demo    |                5,424 bytes |
 | Pomodoro       |                5,648 bytes |
-| Stress Test    |                1,296 bytes |
+| Stress Test    |                1,312 bytes |
 
-Mining Info was the maximum across both catalogs at 7,936 bytes. A 64 KiB reservation is about 8.3 times that
-observation and leaves 57,600 bytes of headroom.
+Mining Info was the maximum across both catalogs at 7,904 bytes. A 64 KiB reservation is about 8.3 times that
+observation and leaves 57,632 bytes of headroom.
 
 These values are exact for the exercised fixture paths, not a proof that every possible execution stays below them.
 Fixtures do not cover arbitrary malformed or maximum-sized responses, every lifecycle sequence, or future compiler and
