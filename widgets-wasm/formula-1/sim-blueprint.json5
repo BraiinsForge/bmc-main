@@ -65,6 +65,14 @@
     },
     {
         device: "formula-1",
+        label: "Warming up — careers-derived resources 503 until a minute in",
+        port: 20108,
+        // Where the cold-start entry stays down, this one comes up mid-run.
+        // Timed from netsim's own start, so start the testbed promptly.
+        params: { careers_warmup_secs: 60, image_dir: "gallery/artwork" },
+    },
+    {
+        device: "formula-1",
         label: "Stale — cache_age_secs past every ttl_secs",
         port: 20106,
         params: { stale_secs: 600, image_dir: "gallery/artwork" },

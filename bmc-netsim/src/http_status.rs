@@ -44,6 +44,7 @@ fn registered_codes() -> impl Iterator<Item = u16> {
 
 impl HttpStatus {
     pub const OK: Self = Self(StatusCode::OK);
+    pub const SERVICE_UNAVAILABLE: Self = Self(StatusCode::SERVICE_UNAVAILABLE);
 
     #[must_use]
     pub fn code(self) -> StatusCode {

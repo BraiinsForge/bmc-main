@@ -173,6 +173,13 @@
           "description": "Status of the careers-derived resources (the statistics table,\nthe driver index, the per-driver cards) — the trio the real deployment\n503s while a fresh instance warms up.",
           "$ref": "#/$defs/HttpStatus"
         },
+        "careers_warmup_secs": {
+          "description": "Seconds those resources 503 for before reaching `careers_status`.\n\nA fresh deployment derives them on first boot and answers nothing\nuntil it has — the widget's first sight of the API, and the state\nit is least likely to handle.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
         "image_dir": {
           "description": "Images the payloads point at, in a directory relative to the blueprint.\nLaid out as the widget's own artwork is: `headshots/<NN>.gif`\n`logos/<NN>.png` and `flags/<country>.png`, beside `circuit.png`.\nOmitted, nothing is served and every image URL 404s onto the widget's placeholders.",
           "type": [

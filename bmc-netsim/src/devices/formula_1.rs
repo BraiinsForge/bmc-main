@@ -491,6 +491,12 @@ pub struct Params {
     /// the driver index, the per-driver cards) — the trio the real deployment
     /// 503s while a fresh instance warms up.
     pub careers_status: HttpStatus,
+    /// Seconds those resources 503 for before reaching `careers_status`.
+    ///
+    /// A fresh deployment derives them on first boot and answers nothing
+    /// until it has — the widget's first sight of the API, and the state
+    /// it is least likely to handle.
+    pub careers_warmup_secs: u32,
     /// Images the payloads point at, in a directory relative to the blueprint.
     /// Laid out as the widget's own artwork is: `headshots/<NN>.gif`
     /// `logos/<NN>.png` and `flags/<country>.png`, beside `circuit.png`.
@@ -498,7 +504,40 @@ pub struct Params {
     pub image_dir: Option<PathBuf>,
 }
 
+/// When a resource comes up, and what it answers with once it has.
+#[derive(Clone, Copy)]
+struct Availability {
+    warmup_s: f64,
+    up: HttpStatus,
+}
+
+impl Availability {
+    fn at(self, t_s: f64) -> HttpStatus {
+        if t_s < self.warmup_s {
+            HttpStatus::SERVICE_UNAVAILABLE
+        } else {
+            self.up
+        }
+    }
+}
+
 impl Params {
+    /// A resource that answers from the first request.
+    fn always(&self) -> Availability {
+        Availability {
+            warmup_s: 0.0,
+            up: self.status,
+        }
+    }
+
+    /// The careers-derived trio, which a deployment must derive before it answers.
+    fn careers(&self) -> Availability {
+        Availability {
+            warmup_s: f64::from(self.careers_warmup_secs),
+            up: self.careers_status,
+        }
+    }
+
     /// A blueprint is committed beside the images it names, so its paths
     /// are relative to itself, not to wherever the simulator runs.
     pub fn resolve_paths(&mut self, base: &Path) {
@@ -518,6 +557,7 @@ impl Default for Params {
             stale_secs: 0,
             status: HttpStatus::OK,
             careers_status: HttpStatus::OK,
+            careers_warmup_secs: 0,
             image_dir: None,
         }
     }
@@ -531,16 +571,16 @@ impl Params {
             self.endpoint(
                 &home,
                 "standings",
-                self.status,
+                self.always(),
                 standings(self.season_underway),
             ),
-            self.endpoint(&home, "driver-stats", self.careers_status, driver_stats()),
-            self.endpoint(&home, "drivers", self.careers_status, drivers_index()),
-            self.endpoint(&home, "teams", self.status, teams()),
+            self.endpoint(&home, "driver-stats", self.careers(), driver_stats()),
+            self.endpoint(&home, "drivers", self.careers(), drivers_index()),
+            self.endpoint(&home, "teams", self.always(), teams()),
             self.endpoint(
                 &home,
                 "next-race",
-                self.status,
+                self.always(),
                 next_race(self.season_underway, self.sprint),
             ),
         ];
@@ -548,7 +588,7 @@ impl Params {
             endpoints.push(self.endpoint(
                 &home,
                 &format!("driver/{}", driver.slug),
-                self.careers_status,
+                self.careers(),
                 driver_card(index),
             ));
         }
@@ -588,9 +628,15 @@ impl Params {
         }
     }
 
-    /// A resource whose payload never varies within a scenario.
-    /// It is computed only so the envelope can name the host that reached us.
-    fn endpoint(&self, home: &str, resource: &str, status: HttpStatus, data: Json) -> EndpointSpec {
+    /// A resource whose payload never varies within a scenario; its status
+    /// and its envelope's host still do.
+    fn endpoint(
+        &self,
+        home: &str,
+        resource: &str,
+        availability: Availability,
+        data: Json,
+    ) -> EndpointSpec {
         let name = resource.to_owned();
         let stale = self.stale_secs;
         let home = home.to_owned();
@@ -599,7 +645,7 @@ impl Params {
             path: format!("/api/v1/data/formula-1/{resource}"),
             response: ResponseSpec::computed(move |ctx| {
                 Response::new(
-                    status,
+                    availability.at(ctx.t_s),
                     envelope(&name, &data, 60, stale, host_of(ctx, &home)),
                 )
             }),
@@ -1916,6 +1962,47 @@ mod tests {
             host: host.map(str::to_owned),
             ..ctx(0.0)
         }))
+    }
+
+    /// The status the endpoint serving `resource` answers with at `t_s`.
+    fn status_at(spec: &ResourceSpec, resource: &str, t_s: f64) -> HttpStatus {
+        let path = format!("/api/v1/data/formula-1/{resource}");
+        let endpoint = spec
+            .endpoints
+            .iter()
+            .find(|e| e.path == path)
+            .expect("BUG: the resource must be served");
+        let ResponseSpec::Computed(responder) = &endpoint.response else {
+            panic!("BUG: a resource answers per request");
+        };
+        responder(&ctx(t_s)).status
+    }
+
+    #[test]
+    fn a_warming_deployment_lifts_its_careers_resources_once_it_has_derived_them() {
+        let spec = Params {
+            careers_warmup_secs: 90,
+            ..Params::default()
+        }
+        .resource("f1", 20_100);
+
+        for resource in ["driver-stats", "drivers", "driver/max_verstappen"] {
+            assert_eq!(
+                status_at(&spec, resource, 89.0),
+                HttpStatus::SERVICE_UNAVAILABLE,
+                "{resource} is still being derived a second before the warm-up ends",
+            );
+            assert_eq!(
+                status_at(&spec, resource, 90.0),
+                HttpStatus::OK,
+                "{resource} answers once the deployment has derived it",
+            );
+        }
+        assert_eq!(
+            status_at(&spec, "standings", 0.0),
+            HttpStatus::OK,
+            "a resource needing no careers is up from the first request",
+        );
     }
 
     /// The JSON a computed endpoint answered with.
