@@ -120,9 +120,7 @@ impl BitmapSlot {
         identity: &[u8],
         on_ready: ImageReadyCallback,
     ) -> Option<ImageJobId> {
-        let job_id = host::register_bitmap_fit(self.name, data, max_w, max_h, cover, identity)?;
-        remember_image_callback(job_id, on_ready);
-        Some(job_id)
+        set_bitmap_fit(self.name, data, max_w, max_h, cover, identity, on_ready)
     }
 
     /// Decode a callback-scoped host fetch body without copying it into WASM.
@@ -145,6 +143,27 @@ impl BitmapSlot {
 fn remember_image_callback(job_id: ImageJobId, on_ready: ImageReadyCallback) {
     let idx = register_image_callback(on_ready);
     IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, idx));
+}
+
+/// [`BitmapSlot::set_fit`] against a tag chosen at runtime, for widgets
+/// holding one image per payload row rather than one per fixed position
+/// in their layout — a slot's name is `&'static str`, which a tag
+/// derived from a fetched URL cannot be. Tags share the host's
+/// segment-delimited namespace, so give them a common prefix to stay
+/// evictable together.
+#[must_use]
+pub fn set_bitmap_fit(
+    tag: &str,
+    data: &[u8],
+    max_w: u32,
+    max_h: u32,
+    cover: bool,
+    identity: &[u8],
+    on_ready: ImageReadyCallback,
+) -> Option<ImageJobId> {
+    let job_id = host::register_bitmap_fit(tag, data, max_w, max_h, cover, identity)?;
+    remember_image_callback(job_id, on_ready);
+    Some(job_id)
 }
 
 /// Async-decode result: the job handle, and `Some(id)` on success / `None` on failure.

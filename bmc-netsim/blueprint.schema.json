@@ -170,13 +170,16 @@
       "type": "object",
       "properties": {
         "careers_status": {
-          "description": "Status of the careers-derived resources (the statistics table,\nthe driver index, the per-driver cards) —\nthe trio the real deployment 503s while a fresh instance warms up.",
+          "description": "Status of the careers-derived resources (the statistics table,\nthe driver index, the per-driver cards) — the trio the real deployment\n503s while a fresh instance warms up.",
           "$ref": "#/$defs/HttpStatus"
         },
-        "rfc3339_sessions": {
-          "description": "Session times as RFC 3339 with offset,\npreviewing the format the real deployment has agreed to move to.\n`false` replays today's naive wall-clock strings,\nwhich the widget refuses to place.",
-          "type": "boolean",
-          "default": false
+        "image_dir": {
+          "description": "Images the payloads point at, in a directory relative to the blueprint.\nLaid out as the widget's own artwork is: `headshots/<NN>.gif`\n`logos/<NN>.png` and `flags/<country>.png`, beside `circuit.png`.\nOmitted, nothing is served and every image URL 404s onto the widget's placeholders.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "season_underway": {
           "description": "`false` scripts the off-season: no next race, empty standings.",
@@ -187,8 +190,20 @@
           "description": "The running session; `idle` scripts a quiet week.",
           "$ref": "#/$defs/Session"
         },
+        "sprint": {
+          "description": "Whether the weekend runs a sprint, which replaces two practices\nwith a sprint and a qualifying of its own.",
+          "type": "boolean",
+          "default": false
+        },
         "stale_secs": {
           "description": "Added to every envelope's `cache_age_secs`;\nlarger than the resource's `ttl_secs` scripts stale-while-revalidate.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        },
+        "start_lap": {
+          "description": "The lap the session is already on when the simulator starts.\n\nGaps, tyre ages, pit stops and retirements accumulate over a race,\nso a session opened at its first lap shows a widget almost nothing.\n\nA scenario names the lap whose state it exists to show. Note that a\nrace board seats only its leading rows, so whatever sorts to the tail\n— a retirement, an exclusion, a car a lap down — is visible on the\nfull-field board alone.",
           "type": "integer",
           "format": "uint32",
           "default": 0,

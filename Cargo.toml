@@ -78,6 +78,10 @@ members = [
 include = [
     "clippy.toml",
     "tooling/**",
+    # `bmc-netsim` serves this artwork and pins the list against what is on disk,
+    # so the files are an input to this workspace's tests even though the crate
+    # that ships them lives in another.
+    "widgets-wasm/formula-1/gallery/artwork/**",
 ]
 
 [profile.release]

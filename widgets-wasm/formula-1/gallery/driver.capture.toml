@@ -1,0 +1,88 @@
+# The driver screen at every design size, one frame per shot.
+# See `standings.capture.toml` for what `size` and `frames` are doing.
+#
+# `Driver Grid` is deliberately absent: it stages all 22 drivers at once,
+# so a shot of it is one image thousands of pixels tall.
+# It is there to be scrolled through in the window, not captured.
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "driver-full"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "driver-large"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "driver-medium"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "driver-small"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+# A rookie the upstream knows least about, so the rows that fall back to
+# `N/A` are the ones on show.
+[[shot]]
+name = "driver-sparse-full"
+scene = "bmc_gallery::f1::Driver Sparse"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "driver-sparse-large"
+scene = "bmc_gallery::f1::Driver Sparse"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "driver-unavailable-full"
+scene = "bmc_gallery::f1::Driver Unavailable"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "driver-unavailable-small"
+scene = "bmc_gallery::f1::Driver Unavailable"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+# Imperial units and a 12-hour clock, which the stat rows format against —
+# the widest values the driver frames have to seat.
+[[shot]]
+name = "driver-large-imperial"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+Units = "Imperial"
+Clock = "12-hour"

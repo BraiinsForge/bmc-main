@@ -33,6 +33,8 @@ pub mod screens;
 mod manifest_params;
 
 #[cfg(target_arch = "wasm32")]
+mod artwork;
+#[cfg(target_arch = "wasm32")]
 mod live;
 #[cfg(target_arch = "wasm32")]
 mod parse;
@@ -48,6 +50,7 @@ mod wasm_glue {
     use crate::live;
     use crate::manifest_params::Params;
     use crate::screens::driver::DriverViewData;
+    use crate::screens::live::LiveViewData;
     use crate::screens::next_race::NextRaceViewData;
     use crate::screens::standings::StandingsViewData;
 
@@ -63,6 +66,20 @@ mod wasm_glue {
         let bucket = crate::model::size_bucket(ws.width, ws.height);
         let view = Params::current().view;
         let root = live::with_data(|data| match crate::api::select_screen(view, data) {
+            crate::api::Screen::LiveRace => crate::screens::live::race_view(&LiveViewData {
+                bucket,
+                board: data.live_race.clone(),
+            }),
+            crate::api::Screen::LiveQuali => crate::screens::live::quali_view(&LiveViewData {
+                bucket,
+                board: data.live_quali.clone(),
+            }),
+            crate::api::Screen::LivePractice => {
+                crate::screens::live::practice_view(&LiveViewData {
+                    bucket,
+                    board: data.live_practice.clone(),
+                })
+            }
             crate::api::Screen::NextRace => {
                 crate::screens::next_race::next_race_view(&NextRaceViewData {
                     bucket,
@@ -75,10 +92,18 @@ mod wasm_glue {
                     rows: data.standings.clone(),
                 })
             }
-            crate::api::Screen::Driver => crate::screens::driver::driver_view(&DriverViewData {
-                bucket,
-                driver: data.selected_driver_stats().cloned(),
-            }),
+            crate::api::Screen::Driver => {
+                let driver = data.selected_driver_stats().cloned();
+                let team_logo_url = driver
+                    .as_ref()
+                    .map(|it| data.team_logo(&it.jolpica_id))
+                    .unwrap_or_default();
+                crate::screens::driver::driver_view(&DriverViewData {
+                    bucket,
+                    driver,
+                    team_logo_url,
+                })
+            }
         });
         let _ = render_ui(ws.width, ws.height, root);
     }
@@ -100,11 +125,14 @@ mod wasm_glue {
         request_frame();
     }
 
-    /// Dormancy invalidates bitmap ids, leaving the image memo dead;
-    /// the next render restores from the cache instead.
+    /// Dormancy invalidates bitmap ids, leaving the image memo dead,
+    /// so the next render restores from the cache instead.
+    /// A decode that finished while dormant never reported back,
+    /// which is why the fetch chain restarts along with it.
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
         crate::images::invalidate_all();
+        crate::artwork::resume();
         request_frame();
     }
 }

@@ -350,6 +350,7 @@ mod tests {
                 .collect(),
             t_s: 0.0,
             seed: 0x51ACE,
+            host: None,
         }
     }
 

@@ -82,6 +82,8 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
             Resource::Standings => data.standings = parse::standings(&json),
             Resource::DriverStats => data.driver_stats = parse::driver_stats(&json),
             Resource::Driver => data.driver = parse::driver(&json),
+            Resource::Teams => data.teams = parse::teams(&json),
+            Resource::Drivers => data.driver_teams = parse::driver_teams(&json),
             Resource::NextRace => {
                 data.next_race = parse::next_race(&json, Params::current().local_time);
             }
@@ -93,6 +95,7 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
     if resource.is_live_board() {
         retune_live_cadence();
     }
+    crate::artwork::sync();
     request_frame();
 }
 

@@ -23,7 +23,7 @@
 
 use std::fmt;
 use std::io::IsTerminal;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::{Context, Result, bail};
@@ -134,13 +134,14 @@ async fn run() -> Result<()> {
         Command::Run { blueprint } => {
             let text = std::fs::read_to_string(&blueprint)
                 .with_context(|| format!("reading {}", blueprint.display()))?;
-            let parsed = match json5::from_str::<Blueprint>(&text) {
+            let mut parsed = match json5::from_str::<Blueprint>(&text) {
                 Ok(parsed) => parsed,
                 Err(err) => {
                     diag::emit_error(&blueprint, &text, &err);
                     bail!("invalid blueprint {}", blueprint.display());
                 }
             };
+            parsed.resolve_paths(blueprint.parent().unwrap_or(Path::new(".")));
             tracing::info!(instances = parsed.instances.len(), "blueprint loaded");
             bmc_netsim::serve(parsed).await?;
         }

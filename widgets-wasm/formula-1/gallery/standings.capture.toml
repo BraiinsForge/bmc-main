@@ -1,0 +1,110 @@
+# The standings screen at every design size, one frame per shot.
+#
+# Whatever `size` says, a shot comes out at its own content's size,
+# so the sheet is a grid of frame-sized tiles rather than one long column.
+#
+# Every shot repeats `frames`, which has no top-level default.
+# Only the smaller frames need that many: they settle later than the wider ones,
+# and a shot still moving when the run ends need not come out the same way twice.
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "standings-full"
+scene = "bmc_gallery::f1::Standings"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "standings-large"
+scene = "bmc_gallery::f1::Standings"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "standings-medium"
+scene = "bmc_gallery::f1::Standings"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "standings-small"
+scene = "bmc_gallery::f1::Standings"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "standings-empty-full"
+scene = "bmc_gallery::f1::Standings Empty"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "standings-empty-small"
+scene = "bmc_gallery::f1::Standings Empty"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "standings-season-start-full"
+scene = "bmc_gallery::f1::Standings Season Start"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "standings-season-start-small"
+scene = "bmc_gallery::f1::Standings Season Start"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+# The longest names and largest scores the columns have to seat, at every
+# size — the shots most likely to catch a column that stopped fitting.
+[[shot]]
+name = "standings-widest-full"
+scene = "bmc_gallery::f1::Standings Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "standings-widest-large"
+scene = "bmc_gallery::f1::Standings Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "standings-widest-medium"
+scene = "bmc_gallery::f1::Standings Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "standings-widest-small"
+scene = "bmc_gallery::f1::Standings Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Small"

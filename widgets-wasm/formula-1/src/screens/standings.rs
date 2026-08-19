@@ -31,7 +31,7 @@ use bmc_wasm_sdk::*;
 
 use crate::images::ImageKind;
 use crate::model::{SizeBucket, StandingsRow};
-use crate::screens::parts::{self, color, font};
+use crate::screens::parts::{self, color, font, truncate};
 
 /// Everything the screen draws.
 #[derive(Clone, Debug)]
@@ -42,6 +42,8 @@ pub struct StandingsViewData {
 
 /// Team logo box, which keeps its size at every frame.
 const LOGO: f32 = 32.0;
+/// A flag's height beside its trigram; its width follows the artwork.
+const FLAG_HEIGHT: f32 = LOGO * 0.7;
 /// Position column, its 28 px plus the 8 px it holds off the name.
 const POSITION: f32 = 36.0;
 
@@ -116,17 +118,6 @@ fn columns(bucket: SizeBucket) -> Columns {
     }
 }
 
-/// Cut a name to what its column seats: one that overflows pushes
-/// every column after it out of line.
-fn truncate(label: &str, max_chars: usize) -> String {
-    if label.chars().count() <= max_chars {
-        return label.to_owned();
-    }
-    let mut out: String = label.chars().take(max_chars.saturating_sub(1)).collect();
-    out.push('\u{2026}');
-    out
-}
-
 /// The one run the row sets in semibold.
 fn name(content: impl Into<String>) -> Node {
     text(
@@ -165,12 +156,11 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
             row(
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
-                    parts::remote_image(
+                    parts::image_at_height(
                         ImageKind::Flag,
                         &entry.country_flag_url,
-                        LOGO,
-                        LOGO * 0.7,
-                        parts::image_placeholder(LOGO, None),
+                        FLAG_HEIGHT,
+                        parts::image_placeholder(FLAG_HEIGHT, None),
                     ),
                     plain(entry.country_code.clone()),
                 ],
@@ -183,12 +173,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
             row(
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
-                    parts::team_mark(
-                        LOGO,
-                        &entry.team_name,
-                        &entry.team_logo_url,
-                        entry.team_color,
-                    ),
+                    parts::team_mark(LOGO, &entry.team_logo_url, entry.team_color),
                     plain(truncate(&entry.team_name, cols.team_chars)),
                 ],
             ),
@@ -248,6 +233,7 @@ pub fn standings_view(view: &StandingsViewData) -> Node {
 #[cfg(test)]
 mod tests {
     use super::{FontWeight, POSITION, columns, truncate};
+
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
     use crate::screens::parts::space;

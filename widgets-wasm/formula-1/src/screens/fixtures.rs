@@ -18,19 +18,21 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Model values the storybook and the tests render.
+//! Model values the gallery and the tests render.
 //!
 //! Typed fixtures rather than recorded payloads: the states worth
 //! reviewing are the ones a live server rarely serves on demand.
 
 use bmc_wasm_sdk::{CalendarDate, Length, LocalDateTime, Mass};
 
-#[cfg(not(target_arch = "wasm32"))]
 use crate::images::ImageKind;
 use crate::model::{
-    CarNumber, DriverStats, ImageUrl, NextRace, Session, SizeBucket, StandingsRow, team_color,
+    CarNumber, DriverStats, DriverStatus, ImageUrl, LiveBoard, NextRace, Sector, SectorColor,
+    Session, SizeBucket, StandingsRow, TimingBoard, TimingRow, TimingText, TireCompound,
+    team_color,
 };
 use crate::screens::driver::DriverViewData;
+use crate::screens::live::LiveViewData;
 use crate::screens::next_race::NextRaceViewData;
 use crate::screens::standings::StandingsViewData;
 
@@ -46,7 +48,7 @@ const GRID: [(&str, &str, &str, &str, u16); 10] = [
     ("Max Verstappen", "NED", "Red Bull Racing", "0600EF", 109),
     ("Oscar Piastri", "AUS", "McLaren", "F47600", 92),
     ("Isack Hadjar", "FRA", "Red Bull Racing", "0600EF", 68),
-    ("Liam Lawson", "AUS", "Racing Bulls", "2B4562", 43),
+    ("Liam Lawson", "NZL", "Racing Bulls", "2B4562", 43),
     ("Pierre Gasly", "FRA", "Alpine", "0090FF", 42),
 ];
 
@@ -74,30 +76,168 @@ fn logo_url(team: &str) -> ImageUrl {
     image_url("logo", team)
 }
 
-/// What the stories seed the image cache with: every headshot and flag
-/// URL the fixtures carry, backed by one generic avatar and one
-/// fictional flag, plus a generated circuit outline. Team logos are
-/// left unseeded so the embedded marks keep drawing.
-#[cfg(not(target_arch = "wasm32"))]
-#[must_use]
-pub fn image_seeds() -> Vec<(ImageKind, ImageUrl, &'static [u8])> {
-    const HEADSHOT: &[u8] = include_bytes!("../../assets/fixtures/headshot-generic.png");
-    const FLAG: &[u8] = include_bytes!("../../assets/fixtures/flag-generic.png");
+/// Names a scene's artwork without carrying any: [`CIRCUIT`], a flag from
+/// [`flag_asset`], a face from [`headshot_asset`], or a constructor's key
+/// from [`team_logo_key`].
+pub type AssetName = &'static str;
 
+pub const CIRCUIT: AssetName = "circuit";
+
+/// The flag a country draws, under either spelling the fixtures name it
+/// by: a board carries the trigram a payload publishes, a driver profile
+/// the country's name.
+///
+/// `None` for a country no scene carries, which then draws as a deck
+/// draws it before a fetch lands.
+#[must_use]
+pub fn flag_asset(country: &str) -> Option<AssetName> {
+    Some(match country {
+        "ARG" | "Argentina" => "flag-arg",
+        "AUS" | "Australia" => "flag-aus",
+        "BRA" | "Brazil" => "flag-bra",
+        "CAN" | "Canada" => "flag-can",
+        "ENG" | "England" => "flag-gbr",
+        "ESP" | "Spain" => "flag-esp",
+        "FIN" | "Finland" => "flag-fin",
+        "FRA" | "France" => "flag-fra",
+        "GER" | "Germany" => "flag-ger",
+        "ITA" | "Italy" => "flag-ita",
+        "MEX" | "Mexico" => "flag-mex",
+        "MON" | "Monaco" => "flag-mon",
+        "NED" | "Netherlands" => "flag-ned",
+        "NZL" | "New Zealand" => "flag-nzl",
+        "THA" | "Thailand" => "flag-tha",
+        _ => return None,
+    })
+}
+
+/// The invented faces, which stand in for portraits we may not publish.
+/// One per seat on the grid — see [`headshot_asset`].
+const HEADSHOTS: [AssetName; 22] = [
+    "headshot-01",
+    "headshot-02",
+    "headshot-03",
+    "headshot-04",
+    "headshot-05",
+    "headshot-06",
+    "headshot-07",
+    "headshot-08",
+    "headshot-09",
+    "headshot-10",
+    "headshot-11",
+    "headshot-12",
+    "headshot-13",
+    "headshot-14",
+    "headshot-15",
+    "headshot-16",
+    "headshot-17",
+    "headshot-18",
+    "headshot-19",
+    "headshot-20",
+    "headshot-21",
+    "headshot-22",
+];
+
+const _: () = assert!(
+    HEADSHOTS.len() == DRIVERS.len(),
+    "a face per driver, so no two share one",
+);
+
+/// A driver's face, chosen by name rather than by position in a list.
+///
+/// The same driver sits in more than one fixture list and every list
+/// derives their headshot URL from the name, so the face has to follow
+/// the name too — otherwise one list seeds a portrait the other wrote a
+/// different one under. A driver no list names still gets a face, since
+/// a scene may invent one.
+#[must_use]
+pub fn headshot_asset(driver_name: &str) -> AssetName {
+    DRIVERS
+        .iter()
+        .position(|driver| driver.name == driver_name)
+        .map_or_else(
+            || {
+                let spread = driver_name.bytes().fold(0_usize, |acc, byte| {
+                    acc.wrapping_mul(31).wrapping_add(usize::from(byte))
+                });
+                HEADSHOTS[spread % HEADSHOTS.len()]
+            },
+            |seat| HEADSHOTS[seat],
+        )
+}
+
+/// A mark per constructor, keyed by a word inside whatever a payload
+/// calls the team. The marks are invented and numbered — like the
+/// headshots, they depict nothing — so which number a team gets is
+/// arbitrary. Order breaks ties: a Haas is often named for its Ferrari
+/// power unit, and Racing Bulls would otherwise answer to Red Bull.
+const LOGO_KEYS: &[(&str, AssetName)] = &[
+    ("haas", "logo-01"),
+    ("racing bulls", "logo-02"),
+    ("red bull", "logo-03"),
+    ("ferrari", "logo-04"),
+    ("mclaren", "logo-05"),
+    ("mercedes", "logo-06"),
+    ("williams", "logo-07"),
+    ("aston martin", "logo-08"),
+    ("alpine", "logo-09"),
+    ("audi", "logo-10"),
+    ("cadillac", "logo-11"),
+];
+
+/// Which constructor's artwork a team name asks for.
+/// `None` for a team no scene carries, which then draws as a deck draws
+/// it before a fetch lands.
+#[must_use]
+pub fn team_logo_key(team_name: &str) -> Option<AssetName> {
+    let name = team_name.to_lowercase();
+    LOGO_KEYS
+        .iter()
+        .find_map(|(key, asset)| name.contains(key).then_some(*asset))
+}
+
+/// Every image the fixtures point at, as its URL and the artwork a scene
+/// should seed under it.
+///
+/// The bytes stay with the scene rather than here. Only the gallery
+/// compiles a scene file, so artwork kept there cannot reach the widget's
+/// own binary however this module is later used.
+#[must_use]
+pub fn image_seeds() -> Vec<(ImageKind, ImageUrl, AssetName)> {
     let mut seeds = Vec::new();
-    for (driver, country, ..) in &GRID {
-        seeds.push((ImageKind::Headshot, headshot_url(driver), HEADSHOT));
-        seeds.push((ImageKind::Flag, flag_url(country), FLAG));
+    for (driver, country, team, ..) in &GRID {
+        seeds.push((
+            ImageKind::Headshot,
+            headshot_url(driver),
+            headshot_asset(driver),
+        ));
+        if let Some(flag) = flag_asset(country) {
+            seeds.push((ImageKind::Flag, flag_url(country), flag));
+        }
+        if let Some(key) = team_logo_key(team) {
+            seeds.push((ImageKind::TeamLogo, logo_url(team), key));
+        }
     }
     for driver in &DRIVERS {
-        seeds.push((ImageKind::Headshot, headshot_url(driver.name), HEADSHOT));
-        seeds.push((ImageKind::Flag, flag_url(driver.nationality), FLAG));
+        seeds.push((
+            ImageKind::Headshot,
+            headshot_url(driver.name),
+            headshot_asset(driver.name),
+        ));
+        if let Some(flag) = flag_asset(driver.nationality) {
+            seeds.push((ImageKind::Flag, flag_url(driver.nationality), flag));
+        }
+        if let Some(key) = team_logo_key(driver.team) {
+            seeds.push((ImageKind::TeamLogo, logo_url(driver.team), key));
+        }
     }
-    seeds.push((ImageKind::Flag, flag_url("Netherlands"), FLAG));
+    if let Some(flag) = flag_asset("Netherlands") {
+        seeds.push((ImageKind::Flag, flag_url("Netherlands"), flag));
+    }
     seeds.push((
         ImageKind::Circuit,
         image_url("circuit", "Circuit Zandvoort"),
-        include_bytes!("../../assets/fixtures/circuit.png"),
+        CIRCUIT,
     ));
     seeds
 }
@@ -455,7 +595,7 @@ const DRIVERS: [Driver; 22] = [
         livery: "2B4562",
         ranking: 9,
         points: 43,
-        nationality: "Australia",
+        nationality: "New Zealand",
         gp_wins: 0,
         world_titles: 0,
         age: 24,
@@ -674,12 +814,20 @@ const DRIVERS: [Driver; 22] = [
     },
 ];
 
+/// A fixture's join key, taken from the surname rather than listed
+/// against every driver: it has to be unique and stable here, not equal
+/// to whatever the upstream registry calls them.
+fn slug_of(name: &str) -> String {
+    name.rsplit(' ').next().unwrap_or(name).to_lowercase()
+}
+
 /// Every driver on the grid, in the order the standings put them.
 #[must_use]
 pub fn drivers() -> Vec<DriverStats> {
     DRIVERS
         .iter()
         .map(|driver| DriverStats {
+            jolpica_id: slug_of(driver.name),
             name: driver.name.to_owned(),
             number: CarNumber::new(driver.number),
             headshot_url: headshot_url(driver.name),
@@ -700,29 +848,266 @@ pub fn drivers() -> Vec<DriverStats> {
         .collect()
 }
 
+/// One driver's card, with the mark the teams table would have supplied.
+#[must_use]
+pub fn driver_card(bucket: SizeBucket, driver: Option<DriverStats>) -> DriverViewData {
+    let team_logo_url = driver
+        .as_ref()
+        .map(|it| logo_url(&it.team))
+        .unwrap_or_default();
+    DriverViewData {
+        bucket,
+        driver,
+        team_logo_url,
+    }
+}
+
 /// The championship leader, whom the design's own frame shows.
 #[must_use]
 pub fn driver(bucket: SizeBucket) -> DriverViewData {
-    DriverViewData {
-        bucket,
-        driver: drivers().into_iter().next(),
-    }
+    driver_card(bucket, drivers().into_iter().next())
 }
 
 /// A rookie: no engineer named yet, no debut season, nothing won.
 #[must_use]
 pub fn driver_sparse(bucket: SizeBucket) -> DriverViewData {
-    DriverViewData {
+    driver_card(
         bucket,
-        driver: drivers().into_iter().find(|it| it.race_engineer.is_none()),
-    }
+        drivers().into_iter().find(|it| it.race_engineer.is_none()),
+    )
 }
 
 /// Between seasons, or before the first reply has landed.
 #[must_use]
 pub fn driver_unavailable(bucket: SizeBucket) -> DriverViewData {
-    DriverViewData {
+    driver_card(bucket, None)
+}
+
+/// Pad `value` to `width` digits.
+///
+/// Hand-rolled because the timing formats need it and nothing here can
+/// supply it: `fmt!` takes no width, and `format!` is banned widget-side.
+fn zero_padded(value: u64, width: usize) -> String {
+    let digits = value.to_string();
+    let mut out = String::with_capacity(width.max(digits.len()));
+    for _ in digits.len()..width {
+        out.push('0');
+    }
+    out.push_str(&digits);
+    out
+}
+
+/// A lap time as the server formats one: `m:ss.mmm`.
+fn lap_time(seconds: f64) -> TimingText {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a lap time is a small positive number of seconds"
+    )]
+    let total_ms = (seconds * 1000.0).round().max(0.0) as u64;
+    let minutes = total_ms.div_euclid(60_000);
+    let rest_ms = total_ms.rem_euclid(60_000);
+    let mut out = minutes.to_string();
+    out.push(':');
+    out.push_str(&zero_padded(rest_ms.div_euclid(1000), 2));
+    out.push('.');
+    out.push_str(&zero_padded(rest_ms.rem_euclid(1000), 3));
+    TimingText::from(out)
+}
+
+/// A gap or interval, as the server formats one: `+s.mmm`.
+fn gap_time(seconds: f64) -> TimingText {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a gap is a small positive number of seconds"
+    )]
+    let total_ms = (seconds * 1000.0).round().max(0.0) as u64;
+    let mut out = String::from("+");
+    out.push_str(&total_ms.div_euclid(1000).to_string());
+    out.push('.');
+    out.push_str(&zero_padded(total_ms.rem_euclid(1000), 3));
+    TimingText::from(out)
+}
+
+/// One timing row, from the field's index and how far back it runs.
+///
+/// Off the whole 22-driver table rather than the standings' top ten:
+/// the widest qualifying frame halves the field into two tables, and
+/// ten rows would not show what that frame is for.
+fn timing_row(index: usize, behind: f64) -> TimingRow {
+    let entry = &DRIVERS[index];
+    let code: String = entry
+        .name
+        .split_whitespace()
+        .next_back()
+        .unwrap_or(entry.name)
+        .to_uppercase()
+        .chars()
+        .take(3)
+        .collect();
+    let lap = 78.4 + behind * 0.05;
+    let sector = |share: f64, color: SectorColor| {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "sector times are read for display only"
+        )]
+        Some(Sector {
+            seconds: (lap * share) as f32,
+            color,
+        })
+    };
+    TimingRow {
+        position: u8::try_from(index + 1).unwrap_or(u8::MAX),
+        driver_code: code,
+        driver_name: entry.name.to_owned(),
+        team_logo_url: logo_url(entry.team),
+        team_color: team_color(entry.livery),
+        // The leaders climb, the midfield holds, the tail slips back.
+        position_change: match index {
+            0..=2 => i8::try_from(3 - index).unwrap_or(0),
+            3..=6 => 0,
+            _ => -i8::try_from(index - 6).unwrap_or(0),
+        },
+        gap_to_leader: if index == 0 {
+            TimingText::from("LEADER".to_owned())
+        } else {
+            gap_time(behind)
+        },
+        interval: if index == 0 {
+            TimingText::default()
+        } else {
+            gap_time(behind / f64::from(u32::try_from(index).unwrap_or(1)))
+        },
+        last_lap_time: lap_time(lap),
+        best_lap_time: lap_time(lap - 0.4),
+        total_time: lap_time(lap * 12.0 + behind),
+        tire_compound: [
+            Some(TireCompound::Soft),
+            Some(TireCompound::Medium),
+            Some(TireCompound::Hard),
+        ][index % 3],
+        tire_age: u8::try_from(index * 4 % 31).unwrap_or(0),
+        sectors: [
+            sector(0.31, SectorColor::Normal),
+            sector(0.36, SectorColor::PersonalBest),
+            sector(0.33, SectorColor::OverallBest),
+        ],
+        in_pit: false,
+        is_out_lap: false,
+        fastest_lap: index == 1,
+        status: Some(DriverStatus::Running),
+    }
+}
+
+/// A session mid-flight: gaps opening down the order, a fastest lap,
+/// one car in the pits and one retired.
+#[must_use]
+pub fn timing_board(label: &str) -> TimingBoard {
+    // Another 1.7 s back for each place down the order,
+    // so the gap column climbs while the interval stays roughly even.
+    let mut rows: Vec<TimingRow> = (0..DRIVERS.len())
+        .map(|index| timing_row(index, f64::from(u32::try_from(index).unwrap_or(0)) * 1.734))
+        .collect();
+    if let Some(pitted) = rows.get_mut(3) {
+        pitted.in_pit = true;
+    }
+    if let Some(out) = rows.get_mut(5) {
+        out.is_out_lap = true;
+    }
+    if let Some(gone) = rows.last_mut() {
+        gone.status = Some(DriverStatus::DidNotFinish);
+        gone.gap_to_leader = TimingText::from("-".to_owned());
+        gone.sectors = [None, None, None];
+    }
+    TimingBoard {
+        session_label: label.to_owned(),
+        gp_name: "Dutch GP".to_owned(),
+        country_flag_url: flag_url("Netherlands"),
+        current_lap: 12,
+        total_laps: 72,
+        rows,
+    }
+}
+
+/// A running session, as each board draws it.
+#[must_use]
+pub fn live(bucket: SizeBucket, label: &str) -> LiveViewData {
+    LiveViewData {
         bucket,
-        driver: None,
+        board: LiveBoard::from_board(timing_board(label)),
+    }
+}
+
+/// The quiet week: no session running, so the board says so.
+#[must_use]
+pub fn live_idle(bucket: SizeBucket) -> LiveViewData {
+    LiveViewData {
+        bucket,
+        board: LiveBoard::Idle,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DRIVERS, GRID, flag_asset, team_logo_key};
+
+    /// An unmapped country seeds no flag at all, and a screen missing one
+    /// draws the empty state rather than failing — so the two tables here
+    /// are the only thing standing between a renamed country and a board
+    /// that quietly stops showing flags.
+    #[test]
+    fn every_country_the_fixtures_name_has_a_flag() {
+        for (_, country, ..) in &GRID {
+            assert!(flag_asset(country).is_some(), "no flag for `{country}`");
+        }
+        for driver in &DRIVERS {
+            let country = driver.nationality;
+            assert!(flag_asset(country).is_some(), "no flag for `{country}`");
+        }
+    }
+
+    #[test]
+    fn a_team_is_found_however_its_sponsors_dress_the_name() {
+        for name in [
+            "Ferrari",
+            "Scuderia Ferrari",
+            "Oracle Red Bull Racing",
+            "Visa Cash App Racing Bulls",
+            "Mercedes-AMG Petronas",
+            "Atlassian Williams",
+        ] {
+            assert!(team_logo_key(name).is_some(), "no artwork for `{name}`");
+        }
+    }
+
+    /// Asserted as identities rather than asset names:
+    /// the marks are numbered arbitrarily, so only who-matches-whom is meaningful.
+    #[test]
+    fn an_engine_supplier_in_the_name_does_not_win_over_the_team() {
+        assert_eq!(team_logo_key("Haas Ferrari"), team_logo_key("Haas"));
+        assert_ne!(team_logo_key("Haas Ferrari"), team_logo_key("Ferrari"));
+        assert_eq!(
+            team_logo_key("Visa Cash App Racing Bulls"),
+            team_logo_key("Racing Bulls")
+        );
+        assert_ne!(
+            team_logo_key("Visa Cash App Racing Bulls"),
+            team_logo_key("Red Bull Racing")
+        );
+    }
+
+    /// One mark per constructor, or two teams on one screen look alike.
+    #[test]
+    fn no_two_teams_share_a_mark() {
+        let mut seen = std::collections::HashSet::new();
+        for (key, asset) in super::LOGO_KEYS {
+            assert!(seen.insert(asset), "{key} shares {asset} with another team");
+        }
+    }
+
+    #[test]
+    fn a_team_no_scene_has_artwork_for_falls_back() {
+        assert!(team_logo_key("Stake F1 Kick Sauber").is_none());
     }
 }

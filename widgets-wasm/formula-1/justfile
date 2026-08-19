@@ -10,7 +10,7 @@ root_justfile := repo / "justfile"
 default:
     @just --justfile {{ source_file() }} --list
 
-# Widget + Nexus sim + rebuild watch in one mprocs. SCENARIO: see sim-args.
+# Widget + sim + watch in mprocs. SCENARIO: race, sprint, quali, practice, idle, off-season, cold-start, stale.
 dev SCENARIO="race":
     @just --justfile {{ root_justfile }} wasm::prebuild formula-1
     mprocs \
@@ -37,10 +37,10 @@ sim-args SCENARIO:
         off-season) port=20104 ;;
         cold-start) port=20105 ;;
         stale)      port=20106 ;;
-        rfc3339)    port=20107 ;;
+        sprint)     port=20107 ;;
         *)
-            echo "unknown scenario '{{ SCENARIO }}' (race | quali | practice | idle |" \
-                 "off-season | cold-start | stale | rfc3339)" >&2
+            echo "unknown scenario '{{ SCENARIO }}' (race | sprint | quali | practice |" \
+                 "idle | off-season | cold-start | stale)" >&2
             exit 1
             ;;
     esac
@@ -56,7 +56,33 @@ run-testbed SCENARIO:
     args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
     exec just --justfile {{ root_justfile }} wasm::testbed formula-1 "$args"
 
-# Record SIZE's capture fixture against SCENARIO; needs `run-netsim` serving.
+# Render the gallery scenes headlessly; NAME picks one recipe, default all.
+capture NAME="*":
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    # A relative `--capture` resolves against the gallery's own directory
+    # rather than this one, so the path goes in absolute.
+    #
+    # Software GL by default, unlike the gallery's window:
+    # llvmpipe and a GPU rasterise differently,
+    # so two machines' shots compare only when both pin the same rasteriser.
+    # Set it to 0 for the machine's own driver.
+    export GALLERY_SOFTWARE_GL="${GALLERY_SOFTWARE_GL:-1}"
+
+    shopt -s nullglob
+    recipes=({{ dir }}/gallery/{{ NAME }}.capture.toml)
+    if [ ${#recipes[@]} -eq 0 ]; then
+        echo "no capture recipe '{{ NAME }}' in {{ dir }}/gallery" >&2
+        exit 1
+    fi
+
+    for recipe in "${recipes[@]}"; do
+        name=$(basename "$recipe" .capture.toml)
+        just --justfile {{ root_justfile }} gallery::capture "$recipe" "f1-$name"
+    done
+
+# Record SIZE's fixture against SCENARIO (see `dev`); needs `run-netsim` serving.
 record SCENARIO SIZE="full":
     #!/usr/bin/env bash
     set -euo pipefail

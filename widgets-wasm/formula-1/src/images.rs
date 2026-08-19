@@ -23,7 +23,7 @@
 //! Every image the payloads point at is cached as decoded RGBA under a
 //! URL-derived tag, with the URL as the entry's identity. [`resolve`]
 //! turns a URL back into a drawable bitmap — the deck restores what its
-//! fetch pipeline cached, the storybook what a story seeded — and the
+//! fetch pipeline cached, the gallery what a scene seeded — and the
 //! screens stay agnostic about which of the two filled the cache.
 
 use std::cell::RefCell;
@@ -109,25 +109,30 @@ thread_local! {
     static RESOLVED: RefCell<HashMap<String, Resolved>> = RefCell::new(HashMap::new());
 }
 
-/// The bitmap for `url`, if its image is in the cache.
-///
-/// `None` while nothing has arrived — the screens hold a placeholder —
-/// and for an entry whose identity is not this URL,
-/// which a hash collision or a stale entry under a reused tag produces.
+/// The pixel size the cache holds this image at.
+/// `None` when it holds no image of this URL: nothing under the tag,
+/// or an entry whose identity is a different URL —
+/// as a hash collision or a reused tag produces.
 #[must_use]
-pub fn resolve(kind: ImageKind, url: &ImageUrl) -> Option<Resolved> {
+pub fn cached_size(kind: ImageKind, url: &ImageUrl) -> Option<(u32, u32)> {
     if !url.is_present() {
         return None;
     }
+    let stat = cache::stat(&tag_for(kind, url))?;
+    let (width, height, identity) = decode_image_meta(&stat.metadata)?;
+    (identity == url.as_str().as_bytes()).then_some((width, height))
+}
+
+/// The bitmap for `url`, if its image is in the cache.
+///
+/// `None` while nothing has arrived — the screens hold a placeholder.
+#[must_use]
+pub fn resolve(kind: ImageKind, url: &ImageUrl) -> Option<Resolved> {
     let tag = tag_for(kind, url);
     if let Some(hit) = RESOLVED.with(|memo| memo.borrow().get(&tag).copied()) {
         return Some(hit);
     }
-    let stat = cache::stat(&tag)?;
-    let (width, height, identity) = decode_image_meta(&stat.metadata)?;
-    if identity != url.as_str().as_bytes() {
-        return None;
-    }
+    let (width, height) = cached_size(kind, url)?;
     let bitmap = assets::register_image(cache::lazy_get(&tag))?;
     let resolved = Resolved {
         bitmap,
@@ -144,11 +149,57 @@ pub fn invalidate_all() {
     RESOLVED.with(|memo| memo.borrow_mut().clear());
 }
 
+#[derive(Debug)]
+pub struct Wanted<'a> {
+    pub kind: ImageKind,
+    pub url: &'a ImageUrl,
+}
+
+/// Every image the held payloads point at, repeats and absent URLs left
+/// in for the caller to collapse.
+#[must_use]
+pub fn wanted(data: &crate::model::Data) -> Vec<Wanted<'_>> {
+    let mut images = Vec::new();
+    let mut want = |kind, url| images.push(Wanted { kind, url });
+    for board in [&data.live_race, &data.live_quali, &data.live_practice] {
+        let Some(board) = board.board() else { continue };
+        want(ImageKind::Flag, &board.country_flag_url);
+        for row in &board.rows {
+            want(ImageKind::TeamLogo, &row.team_logo_url);
+        }
+    }
+    if let Some(race) = data.next_race.as_ref() {
+        want(ImageKind::Flag, &race.country_flag_url);
+        want(ImageKind::Circuit, &race.circuit_image_url);
+    }
+    for driver in data.driver.iter().chain(&data.driver_stats) {
+        want(ImageKind::Headshot, &driver.headshot_url);
+        want(ImageKind::Flag, &driver.nationality_flag_url);
+    }
+    // The statistics screen's constructor mark, which nothing else on that
+    // screen reaches: a driver payload names a team without identifying
+    // one, so the mark lives behind the index and the teams snapshot.
+    // Absent, it draws only where a board or the standings has already
+    // cached that logo — and out of season neither of them holds a row.
+    if let Some(team) = data
+        .selected_driver_stats()
+        .and_then(|driver| data.team_of(&driver.jolpica_id))
+    {
+        want(ImageKind::TeamLogo, &team.logo_url);
+    }
+    for row in &data.standings {
+        want(ImageKind::TeamLogo, &row.team_logo_url);
+        want(ImageKind::Flag, &row.country_flag_url);
+        want(ImageKind::Headshot, &row.headshot_url);
+    }
+    images
+}
+
 #[cfg(test)]
 mod tests {
     use bmc_wasm_sdk::{assets, cache, encode_image_meta};
 
-    use super::{ImageKind, invalidate_all, resolve, tag_for};
+    use super::{ImageKind, invalidate_all, resolve, tag_for, wanted};
     use crate::model::ImageUrl;
 
     fn url(s: &str) -> ImageUrl {
@@ -185,6 +236,114 @@ mod tests {
         let meta = encode_image_meta(2, 2, b"https://x.test/old.png");
         cache::put(&tag_for(ImageKind::Headshot, &wanted), &meta, &[0_u8; 16]);
         assert!(resolve(ImageKind::Headshot, &wanted).is_none());
+    }
+
+    /// A payload field left out of the sweep is artwork that never
+    /// arrives on the one screen showing it.
+    #[test]
+    fn every_payload_that_carries_images_is_swept() {
+        use crate::model::{
+            Data, DriverStats, LiveBoard, NextRace, StandingsRow, TimingBoard, TimingRow,
+        };
+
+        let data = Data {
+            standings: vec![StandingsRow {
+                team_logo_url: url("https://x.test/standings-logo.png"),
+                country_flag_url: url("https://x.test/standings-flag.png"),
+                headshot_url: url("https://x.test/standings-face.png"),
+                ..StandingsRow::default()
+            }],
+            driver_stats: vec![DriverStats {
+                headshot_url: url("https://x.test/stats-face.png"),
+                nationality_flag_url: url("https://x.test/stats-flag.png"),
+                ..DriverStats::default()
+            }],
+            driver: Some(DriverStats {
+                headshot_url: url("https://x.test/driver-face.png"),
+                nationality_flag_url: url("https://x.test/driver-flag.png"),
+                ..DriverStats::default()
+            }),
+            next_race: Some(NextRace {
+                country_flag_url: url("https://x.test/race-flag.png"),
+                circuit_image_url: url("https://x.test/circuit.png"),
+                ..NextRace::default()
+            }),
+            live_race: LiveBoard::from_board(TimingBoard {
+                country_flag_url: url("https://x.test/board-flag.png"),
+                rows: vec![TimingRow {
+                    team_logo_url: url("https://x.test/board-logo.png"),
+                    ..TimingRow::default()
+                }],
+                ..TimingBoard::default()
+            }),
+            ..Data::default()
+        };
+
+        let swept: Vec<&str> = wanted(&data).iter().map(|want| want.url.as_str()).collect();
+        for expected in [
+            "https://x.test/standings-logo.png",
+            "https://x.test/standings-flag.png",
+            "https://x.test/standings-face.png",
+            "https://x.test/stats-face.png",
+            "https://x.test/stats-flag.png",
+            "https://x.test/driver-face.png",
+            "https://x.test/driver-flag.png",
+            "https://x.test/race-flag.png",
+            "https://x.test/circuit.png",
+            "https://x.test/board-flag.png",
+            "https://x.test/board-logo.png",
+        ] {
+            assert!(swept.contains(&expected), "{expected} is never fetched");
+        }
+    }
+
+    /// Out of season the standings are empty and no board is live, so
+    /// nothing else asks for a constructor's logo. The statistics screen
+    /// has to fetch its own mark, or it draws the livery square in the one
+    /// state where no other view can have cached it first.
+    #[test]
+    fn the_statistics_screen_fetches_its_own_constructors_mark() {
+        use crate::model::{Data, DriverStats, DriverTeam, Team};
+
+        let data = Data {
+            driver: Some(DriverStats {
+                jolpica_id: "max_verstappen".to_owned(),
+                ..DriverStats::default()
+            }),
+            teams: vec![Team {
+                id: 276_183,
+                name: "Red Bull Racing".to_owned(),
+                logo_url: url("https://cdn.test/red-bull.png"),
+                ..Team::default()
+            }],
+            driver_teams: vec![DriverTeam {
+                jolpica_id: "max_verstappen".to_owned(),
+                team_id: 276_183,
+            }],
+            ..Data::default()
+        };
+        let marks: Vec<&str> = wanted(&data)
+            .iter()
+            .filter(|want| want.kind == ImageKind::TeamLogo)
+            .map(|want| want.url.as_str())
+            .collect();
+        assert_eq!(marks, ["https://cdn.test/red-bull.png"]);
+    }
+
+    #[test]
+    fn a_headshot_and_a_flag_of_one_driver_are_told_apart() {
+        use crate::model::{Data, DriverStats};
+
+        let data = Data {
+            driver: Some(DriverStats {
+                headshot_url: url("https://x.test/shared.png"),
+                nationality_flag_url: url("https://x.test/shared.png"),
+                ..DriverStats::default()
+            }),
+            ..Data::default()
+        };
+        let kinds: Vec<ImageKind> = wanted(&data).iter().map(|want| want.kind).collect();
+        assert!(kinds.contains(&ImageKind::Headshot) && kinds.contains(&ImageKind::Flag));
     }
 
     #[test]

@@ -26,6 +26,8 @@ use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use axum::extract::Query;
+use axum::http::{HeaderMap, header};
+use axum::response::IntoResponse;
 use axum::{Json, Router, routing};
 
 use crate::blueprint::{Body, EndpointSpec, RequestCtx};
@@ -34,7 +36,8 @@ use crate::render;
 
 /// Build the router: a `Render` endpoint fills its template per request (noise
 /// keyed on `seed`, time from `start`); an `Accumulate` endpoint reads `cache`;
-/// a `Respond` endpoint reads its own query string.
+/// a `Respond` endpoint reads its own query string; a `Bytes` endpoint serves
+/// its payload as it stands.
 pub fn build_router(
     endpoints: Vec<EndpointSpec>,
     seed: u64,
@@ -46,7 +49,7 @@ pub fn build_router(
         let body = endpoint.body.clone();
         let cache = Arc::clone(cache);
         let status = endpoint.status.code();
-        let handler = move |Query(query): Query<BTreeMap<String, String>>| {
+        let handler = move |Query(query): Query<BTreeMap<String, String>>, headers: HeaderMap| {
             let body = body.clone();
             let cache = Arc::clone(&cache);
             async move {
@@ -59,9 +62,14 @@ pub fn build_router(
                         query,
                         t_s: start.elapsed().as_secs_f64(),
                         seed,
+                        host: host_of(&headers),
                     }),
+                    Body::Bytes { content_type, data } => {
+                        let headers = [(header::CONTENT_TYPE, content_type.clone())];
+                        return (status, headers, data.to_vec()).into_response();
+                    }
                 };
-                (status, Json(json))
+                (status, Json(json)).into_response()
             }
         };
         let method_router = match endpoint.method.to_ascii_uppercase().as_str() {
@@ -74,6 +82,13 @@ pub fn build_router(
         router = router.route(&endpoint.path, method_router);
     }
     Ok(router)
+}
+
+fn host_of(headers: &HeaderMap) -> Option<String> {
+    headers
+        .get(header::HOST)
+        .and_then(|host| host.to_str().ok())
+        .map(str::to_owned)
 }
 
 /// A port held open for a resource, with the router that will answer on it.
@@ -227,6 +242,39 @@ mod tests {
                 .all(|r| r.as_array().is_some_and(|c| c.len() == 4))
         );
         assert!(body["currentTimestamp"].is_number());
+    }
+
+    #[tokio::test]
+    async fn a_bytes_endpoint_serves_its_payload_under_its_own_content_type() {
+        let endpoint = crate::blueprint::EndpointSpec {
+            method: "GET".to_owned(),
+            path: "/img/logo/ferrari.png".to_owned(),
+            body: crate::blueprint::Body::Bytes {
+                content_type: "image/png".to_owned(),
+                data: Arc::from(b"\x89PNG\r\n\x1a\n".as_slice()),
+            },
+            status: crate::http_status::HttpStatus::OK,
+        };
+        let cache = Arc::new(Cache::new::<Vec<_>>(Vec::new()));
+        let router =
+            super::build_router(vec![endpoint], 0, Instant::now(), &cache).expect("router builds");
+        let request = Request::get("/img/logo/ferrari.png")
+            .body(AxumBody::empty())
+            .expect("request builds");
+        let response = router.oneshot(request).await.expect("router responds");
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(
+            response
+                .headers()
+                .get(axum::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok()),
+            Some("image/png"),
+            "a binary body must not be labelled as the JSON the other endpoints serve"
+        );
+        let bytes = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body reads");
+        assert_eq!(bytes.as_ref(), b"\x89PNG\r\n\x1a\n");
     }
 
     #[tokio::test]

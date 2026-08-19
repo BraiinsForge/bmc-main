@@ -29,7 +29,7 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::images::{self, ImageKind};
+use crate::images::ImageKind;
 use crate::model::{NextRace, SizeBucket};
 use crate::screens::parts::{self, LabelWeight, color, font, space};
 
@@ -93,7 +93,10 @@ fn layout(bucket: SizeBucket) -> Layout {
             gp_block: true,
             schedule: Schedule::DatedSessions,
             track_map: false,
-            info_font: font::TITLE,
+            // Smaller than the widest frame's, because this one carries the
+            // schedule beside the stats in half the width: at the larger
+            // size a sprint's session names cost more than the column has.
+            info_font: font::ROW,
             labels: LabelWeight::Muted,
         },
         SizeBucket::Medium => Layout {
@@ -147,10 +150,33 @@ fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
         info_row("Circuit Length", distance(race.track_length, 3), layout),
         info_row("Race Distance", distance(race.race_distance, 1), layout),
         info_row("DRS Zones", count(race.drs_zones.map(u16::from)), layout),
+        // Printed as it arrives. The order is the upstream's own;
+        // softest-first belongs to the design rather than to the data.
+        info_row(
+            "S / M / H Tires",
+            race.tire_compounds
+                .clone()
+                .unwrap_or_else(|| UNKNOWN.to_owned()),
+            layout,
+        ),
     ]
 }
 
-fn schedule_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
+/// What a frame's schedule column seats as a session's name.
+///
+/// The column holds a label and a time, and the time is the fixed half —
+/// so what is left over is the label's budget, and nothing in the tree
+/// shrinks text to fit it. A sprint's `Sprint Qualifying` is the longest
+/// name a weekend carries and the one these are cut for.
+fn session_chars(bucket: SizeBucket) -> usize {
+    match bucket {
+        SizeBucket::Full => 20,
+        SizeBucket::Large | SizeBucket::Medium => 18,
+        SizeBucket::Small => 11,
+    }
+}
+
+fn schedule_rows(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Vec<Node> {
     let mut rows = Vec::new();
     if let (Schedule::DatedSessions, Some(start)) = (layout.schedule, race.date_start) {
         rows.push(info_row(
@@ -161,7 +187,7 @@ fn schedule_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
     }
     for session in &race.sessions {
         rows.push(info_row(
-            &session.name,
+            &parts::truncate(&session.name, session_chars(bucket)),
             session_time(session.starts_at),
             layout,
         ));
@@ -180,7 +206,7 @@ fn gp_block(race: &NextRace) -> Node {
                         race.gp_name.as_str(),
                         style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
                     ),
-                    parts::flag(32.0, &race.country_flag_url),
+                    parts::flag(22.4, &race.country_flag_url),
                 ],
             ),
             text(
@@ -197,32 +223,27 @@ fn gp_block(race: &NextRace) -> Node {
 /// wraps: a `center` given no flex is grown to fill instead, which would
 /// take half the frame and squeeze the stats beside it.
 fn track_map(race: &NextRace, bucket: SizeBucket) -> Node {
-    let inner = match images::resolve(ImageKind::Circuit, &race.circuit_image_url) {
-        // Contain-fit to the box's width, so the outline keeps its
-        // aspect whatever the server drew it at.
-        Some(resolved) if resolved.width > 0 => {
-            let width = third(bucket) - space::padding(bucket) * 2.0;
-            #[expect(
-                clippy::cast_precision_loss,
-                reason = "decoded image dims are far below f32 precision limits"
-            )]
-            let height = width * resolved.height as f32 / resolved.width as f32;
-            canvas(
-                props!(width: width, height: height),
-                [Draw::bitmap_id(
-                    0.0,
-                    0.0,
-                    width,
-                    height,
-                    Some(resolved.bitmap),
-                )],
-            )
-        }
-        Some(_) | None => text(
+    let width = third(bucket) - space::padding(bucket) * 2.0;
+    // The box the outline is given, shaped like the one its kind decodes
+    // into. Taken from that constant rather than from the artwork, so a
+    // circuit drawn to other proportions pads inside the panel instead of
+    // resizing it.
+    let (decode_width, decode_height) = ImageKind::Circuit.decode_size();
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a decode box is a small constant, exact in f32"
+    )]
+    let height = width * decode_height as f32 / decode_width as f32;
+    let inner = parts::remote_image(
+        ImageKind::Circuit,
+        &race.circuit_image_url,
+        width,
+        height,
+        text(
             race.circuit_name.as_str(),
             style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center),
         ),
-    };
+    );
     col(
         props!(
             width: third(bucket),
@@ -247,7 +268,7 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
         SizeBucket::Medium => vec![
             parts::title("Next Race"),
             parts::subtitle(&race.gp_name, bucket),
-            parts::flag(24.0, &race.country_flag_url),
+            parts::flag(16.8, &race.country_flag_url),
         ],
         // The smallest frame has room for one name, and prefers the
         // country's: it fits where a Grand Prix's full title would not.
@@ -259,7 +280,7 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
             };
             vec![
                 parts::subtitle(name, bucket),
-                parts::flag(18.0, &race.country_flag_url),
+                parts::flag(12.6, &race.country_flag_url),
             ]
         }
     };
@@ -267,14 +288,17 @@ fn header(race: &NextRace, bucket: SizeBucket, layout: Layout) -> Node {
 }
 
 /// The columns of stats, and the schedule where the frame keeps one.
-fn columns(race: &NextRace, layout: Layout) -> Node {
+fn columns(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Node {
     let circuit = parts::stat_col(circuit_rows(race, layout));
     if layout.schedule == Schedule::Absent {
         return circuit;
     }
     row(
         props!(flex: 1.0, gap: COLUMN_GAP),
-        [circuit, parts::stat_col(schedule_rows(race, layout))],
+        [
+            circuit,
+            parts::stat_col(schedule_rows(race, layout, bucket)),
+        ],
     )
 }
 
@@ -305,11 +329,11 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
                 col(props!(height: GP_BLOCK_LEAD), []),
                 gp_block(race),
                 col(props!(height: GP_BLOCK_GAP), []),
-                columns(race, layout),
+                columns(race, layout, view.bucket),
             ],
         )
     } else {
-        columns(race, layout)
+        columns(race, layout, view.bucket)
     };
     if layout.track_map {
         body = row(
@@ -322,8 +346,33 @@ pub fn next_race_view(view: &NextRaceViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{Schedule, layout};
+    use super::{Schedule, layout, session_chars};
     use crate::model::SizeBucket;
+    use crate::screens::parts::truncate;
+
+    /// The longest name a weekend carries, which a sprint introduced and
+    /// which overran the large frame — carrying the times off the edge,
+    /// since nothing in the tree shrinks text to fit.
+    const LONGEST: &str = "Sprint Qualifying";
+
+    /// Every frame wide enough to read a session name reads the longest
+    /// one whole. Small is the exception: it seats a name in the width a
+    /// phone-sized tile has, so it is the one frame that cuts.
+    #[test]
+    fn only_the_small_frame_cuts_the_longest_session_name() {
+        for bucket in [SizeBucket::Full, SizeBucket::Large, SizeBucket::Medium] {
+            assert_eq!(
+                truncate(LONGEST, session_chars(bucket)),
+                LONGEST,
+                "{bucket:?} seats {} and should read `{LONGEST}` whole",
+                session_chars(bucket),
+            );
+        }
+        assert_eq!(
+            truncate(LONGEST, session_chars(SizeBucket::Small)),
+            "Sprint Qua…"
+        );
+    }
 
     /// The per-frame rules the port keeps.
     #[test]

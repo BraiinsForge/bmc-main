@@ -22,7 +22,7 @@
 //! render, plus the rules that turn wire values into it.
 //!
 //! Everything here is free of host calls so it can be exercised
-//! natively — by tests and by the storybook's fixtures.
+//! natively — by tests and by the gallery's fixtures.
 
 use bmc_wasm_sdk::{CalendarDate, Color, Length, LocalDateTime, Mass};
 
@@ -110,9 +110,12 @@ pub struct ImageUrl(String);
 
 impl ImageUrl {
     /// Whether there is an image to fetch at all.
+    ///
+    /// Nexus sends the flag emoji in `country_flag_url` where it holds
+    /// no image, so emptiness alone does not decide this.
     #[must_use]
     pub fn is_present(&self) -> bool {
-        !self.0.is_empty()
+        self.0.starts_with("https://") || self.0.starts_with("http://")
     }
 
     #[must_use]
@@ -277,6 +280,9 @@ pub struct StandingsRow {
 /// source has no history for.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DriverStats {
+    /// The key every driver-facing resource carries,
+    /// and what the `driver` param holds — so one joins to another.
+    pub jolpica_id: String,
     pub name: String,
     pub number: CarNumber,
     pub headshot_url: ImageUrl,
@@ -401,6 +407,27 @@ impl LiveBoard {
     }
 }
 
+/// A constructor, as the teams table names it.
+///
+/// The mark lives here rather than beside a driver: the per-driver
+/// resources name no logo, and a season has a couple of dozen drivers
+/// to eleven teams.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Team {
+    pub id: u64,
+    pub name: String,
+    pub logo_url: ImageUrl,
+    pub color: Color,
+}
+
+/// Which constructor a driver races for. The driver payloads name a team
+/// without identifying it, so the index is the only tie to a mark.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct DriverTeam {
+    pub jolpica_id: String,
+    pub team_id: u64,
+}
+
 /// Everything fetched so far.
 /// A resource that has never answered — or answered
 /// while the server was still warming its caches — stays empty,
@@ -410,6 +437,8 @@ pub struct Data {
     pub standings: Vec<StandingsRow>,
     pub driver_stats: Vec<DriverStats>,
     pub driver: Option<DriverStats>,
+    pub teams: Vec<Team>,
+    pub driver_teams: Vec<DriverTeam>,
     pub next_race: Option<NextRace>,
     pub live_race: LiveBoard,
     pub live_quali: LiveBoard,
@@ -435,18 +464,40 @@ impl Data {
             || self.live_practice.is_running()
     }
 
-    /// The statistics row for `slug`'s driver.
+    /// The mark for the constructor a driver races for.
     ///
-    /// The per-driver resource carries the slug but not the full
-    /// figures, while the all-drivers table carries the figures
-    /// but no slug. They share the car number,
-    /// which is unique within a season, so it joins the two.
+    /// The index names the team by id and the snapshot carries the mark
+    /// under it; a driver either has yet to answer or simply has no mark,
+    /// which draws as the livery colour.
+    #[must_use]
+    pub fn team_logo(&self, jolpica_id: &str) -> ImageUrl {
+        self.team_of(jolpica_id)
+            .map(|team| team.logo_url.clone())
+            .unwrap_or_default()
+    }
+
+    /// The constructor `jolpica_id` races for, by the same two hops the
+    /// mark takes.
+    #[must_use]
+    pub fn team_of(&self, jolpica_id: &str) -> Option<&Team> {
+        self.driver_teams
+            .iter()
+            .find(|row| row.jolpica_id == jolpica_id)
+            .and_then(|row| self.teams.iter().find(|team| team.id == row.team_id))
+    }
+
+    /// The statistics row for the selected driver.
+    ///
+    /// The per-driver resource carries the fuller card,
+    /// the table the season's figures; both key by `jolpica_id`,
+    /// which joins them without leaning on a car number being unique.
+    /// The card stands alone for a driver the table has no row for.
     #[must_use]
     pub fn selected_driver_stats(&self) -> Option<&DriverStats> {
-        let number = self.driver.as_ref()?.number;
+        let id = self.driver.as_ref()?.jolpica_id.as_str();
         self.driver_stats
             .iter()
-            .find(|row| row.number == number)
+            .find(|row| row.jolpica_id == id)
             .or(self.driver.as_ref())
     }
 }
@@ -454,8 +505,8 @@ impl Data {
 #[cfg(test)]
 mod tests {
     use super::{
-        CarNumber, Color, Data, DriverStats, DriverStatus, FALLBACK_TEAM_COLOR, ImageUrl,
-        LiveBoard, SectorColor, TimingBoard, TimingText, TireCompound, team_color,
+        CarNumber, Color, Data, DriverStats, DriverStatus, DriverTeam, FALLBACK_TEAM_COLOR,
+        ImageUrl, LiveBoard, SectorColor, Team, TimingBoard, TimingText, TireCompound, team_color,
     };
 
     fn board(gp: &str) -> LiveBoard {
@@ -465,8 +516,9 @@ mod tests {
         }))
     }
 
-    fn driver(number: u8, name: &str) -> DriverStats {
+    fn driver(slug: &str, number: u8, name: &str) -> DriverStats {
         DriverStats {
+            jolpica_id: slug.to_owned(),
             number: CarNumber::new(number),
             name: name.to_owned(),
             ..DriverStats::default()
@@ -495,6 +547,40 @@ mod tests {
     fn an_absent_image_is_distinguishable_from_one_we_have() {
         assert!(!ImageUrl::default().is_present());
         assert!(ImageUrl::from("https://example.test/a.png".to_owned()).is_present());
+    }
+
+    /// A country the upstream holds no flag image of arrives as the emoji.
+    #[test]
+    fn a_flag_emoji_is_not_something_to_fetch() {
+        assert!(!ImageUrl::from("🇮🇹".to_owned()).is_present());
+    }
+
+    /// A driver's own payload names a team without identifying it, so
+    /// the mark takes two hops — and matching on the name instead went
+    /// unnoticed here for as long as both sides spelled it alike.
+    #[test]
+    fn a_drivers_mark_comes_from_the_team_its_index_row_names() {
+        let data = Data {
+            teams: vec![Team {
+                id: 276_189,
+                name: "Ferrari".to_owned(),
+                logo_url: ImageUrl::from("https://cdn.test/ferrari.png".to_owned()),
+                color: FALLBACK_TEAM_COLOR,
+            }],
+            driver_teams: vec![DriverTeam {
+                jolpica_id: "leclerc".to_owned(),
+                team_id: 276_189,
+            }],
+            ..Data::default()
+        };
+        assert_eq!(
+            data.team_logo("leclerc").as_str(),
+            "https://cdn.test/ferrari.png"
+        );
+        assert!(
+            !data.team_logo("hamilton").is_present(),
+            "a driver the index has no row for races for no known team"
+        );
     }
 
     #[test]
@@ -593,11 +679,11 @@ mod tests {
     }
 
     #[test]
-    fn the_selected_driver_joins_the_stats_table_by_car_number() {
+    fn the_selected_driver_joins_the_stats_table_by_its_key() {
         let data = Data {
-            driver: Some(driver(44, "Lewis Hamilton")),
-            driver_stats: vec![driver(1, "Max Verstappen"), {
-                let mut row = driver(44, "Lewis Hamilton");
+            driver: Some(driver("hamilton", 44, "Lewis Hamilton")),
+            driver_stats: vec![driver("max_verstappen", 1, "Max Verstappen"), {
+                let mut row = driver("hamilton", 44, "Lewis Hamilton");
                 row.gp_wins = Some(105);
                 row
             }],
@@ -609,13 +695,33 @@ mod tests {
         assert_eq!(selected.gp_wins, Some(105), "the full figures must win");
     }
 
+    /// Car numbers are unique within a season but not across the sources
+    /// the two resources derive from, which is why the join left them.
+    #[test]
+    fn a_number_shared_with_another_driver_joins_neither_to_the_other() {
+        let data = Data {
+            driver: Some(driver("hamilton", 44, "Lewis Hamilton")),
+            driver_stats: vec![{
+                let mut row = driver("hulkenberg", 44, "Nico Hülkenberg");
+                row.gp_wins = Some(0);
+                row
+            }],
+            ..Data::default()
+        };
+        assert_eq!(
+            data.selected_driver_stats().map(|row| row.name.as_str()),
+            Some("Lewis Hamilton"),
+            "the card stands rather than taking another driver's figures"
+        );
+    }
+
     #[test]
     fn a_driver_missing_from_the_stats_table_still_renders_what_we_have() {
         // The tables come from different upstreams, so a driver can
         // appear in one before the other. The thinner row beats nothing.
         let data = Data {
-            driver: Some(driver(87, "Reserve Driver")),
-            driver_stats: vec![driver(1, "Max Verstappen")],
+            driver: Some(driver("bearman_reserve", 87, "Reserve Driver")),
+            driver_stats: vec![driver("max_verstappen", 1, "Max Verstappen")],
             ..Data::default()
         };
         assert_eq!(
@@ -627,7 +733,7 @@ mod tests {
     #[test]
     fn nothing_is_selected_before_the_driver_resource_answers() {
         let data = Data {
-            driver_stats: vec![driver(1, "Max Verstappen")],
+            driver_stats: vec![driver("max_verstappen", 1, "Max Verstappen")],
             ..Data::default()
         };
         assert!(data.selected_driver_stats().is_none());

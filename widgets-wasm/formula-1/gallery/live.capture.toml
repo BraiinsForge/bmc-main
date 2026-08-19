@@ -1,0 +1,123 @@
+# The live timing boards at every design size, one frame per shot.
+# See `standings.capture.toml` for what `size` and `frames` are doing.
+#
+# The idle shots stack all three boards, so they stay at the two extremes
+# rather than every size — the point is the waiting message, not the frame.
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "live-race-full"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "live-race-large"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "live-race-medium"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "live-race-small"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+# Qualifying's widest frame splits the whole field into two columns, which
+# no other board does — so every size earns a shot here.
+[[shot]]
+name = "live-quali-full"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "live-quali-large"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "live-quali-medium"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "live-quali-small"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "live-practice-full"
+scene = "bmc_gallery::f1::Live Practice"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "live-practice-large"
+scene = "bmc_gallery::f1::Live Practice"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "live-practice-medium"
+scene = "bmc_gallery::f1::Live Practice"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "live-practice-small"
+scene = "bmc_gallery::f1::Live Practice"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "live-idle-full"
+scene = "bmc_gallery::f1::Live Idle"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "live-idle-small"
+scene = "bmc_gallery::f1::Live Idle"
+frames = 24
+
+[shot.knobs]
+Size = "Small"

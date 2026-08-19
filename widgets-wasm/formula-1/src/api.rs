@@ -57,17 +57,21 @@ pub enum Resource {
     NextRace,
     DriverStats,
     Driver,
+    Drivers,
+    Teams,
     LiveRace,
     LiveQuali,
     LivePractice,
 }
 
 impl Resource {
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Standings,
         Self::NextRace,
         Self::DriverStats,
         Self::Driver,
+        Self::Drivers,
+        Self::Teams,
         Self::LiveRace,
         Self::LiveQuali,
         Self::LivePractice,
@@ -82,6 +86,8 @@ impl Resource {
             Self::NextRace => "next-race",
             Self::DriverStats => "driver-stats",
             Self::Driver => "driver",
+            Self::Drivers => "drivers",
+            Self::Teams => "teams",
             Self::LiveRace => "live-race",
             Self::LiveQuali => "live-quali",
             Self::LivePractice => "live-practice",
@@ -121,16 +127,22 @@ pub fn resource_needed(resource: Resource, view: View) -> bool {
         }
         View::NextRace => resource == Resource::NextRace,
         View::Standings => resource == Resource::Standings,
-        // The statistics screen joins the per-driver resource
-        // with the all-drivers table, so it reads both.
-        View::Driver => matches!(resource, Resource::Driver | Resource::DriverStats),
+        // The statistics screen joins the per-driver resource with the
+        // all-drivers table. The mark takes two more: neither driver
+        // resource identifies a constructor, so the index supplies the
+        // team id and the teams snapshot the image under it.
+        View::Driver => matches!(
+            resource,
+            Resource::Driver | Resource::DriverStats | Resource::Drivers | Resource::Teams
+        ),
     }
 }
 
-/// Which screen the widget draws. This build has no live screens,
-/// so a running session shows as the race it is part of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Screen {
+    LiveRace,
+    LiveQuali,
+    LivePractice,
     NextRace,
     Standings,
     Driver,
@@ -139,13 +151,18 @@ pub enum Screen {
 /// The screen for `view` over the data at hand.
 ///
 /// An explicit view always wins, shown empty until its data arrives.
-/// `Auto` walks the fallback chain:
-/// the next race while one is announced, else the standings.
+/// `Auto` walks the ported fallback chain:
+/// whichever session is running, preferring the race, then the
+/// announced next race, then the standings — which every season has,
+/// so the chain always ends somewhere.
 #[must_use]
 pub fn select_screen(view: View, data: &crate::model::Data) -> Screen {
     match view {
         View::NextRace => Screen::NextRace,
         View::Driver => Screen::Driver,
+        View::Auto if data.live_race.is_running() => Screen::LiveRace,
+        View::Auto if data.live_quali.is_running() => Screen::LiveQuali,
+        View::Auto if data.live_practice.is_running() => Screen::LivePractice,
         View::Auto if data.next_race.is_some() => Screen::NextRace,
         View::Standings | View::Auto => Screen::Standings,
     }
@@ -185,6 +202,13 @@ pub mod wire {
         fmt!("/data/sessions/{}/{}", index, field)
     }
 
+    /// Field of the `index`-th constructor. This snapshot nests its rows
+    /// under a key, where the other table payloads are the array itself.
+    #[must_use]
+    pub fn team(index: usize, field: &str) -> String {
+        fmt!("/data/teams/{}/{}", index, field)
+    }
+
     /// Field of the `index`-th row of a timing board.
     #[must_use]
     pub fn entry(index: usize, field: &str) -> String {
@@ -201,8 +225,8 @@ pub mod wire {
 
 #[cfg(test)]
 mod tests {
-    use super::{BASE_URL, Resource, Screen, View, resource_needed, select_screen};
-    use crate::model::Data;
+    use super::{BASE_URL, Resource, Screen, View, resource_needed, select_screen, wire};
+    use crate::model::{Data, LiveBoard};
     use crate::screens::fixtures;
 
     #[test]
@@ -220,6 +244,31 @@ mod tests {
             ..Data::default()
         };
         assert_eq!(select_screen(View::Auto, &data), Screen::NextRace);
+    }
+
+    /// The chain the port keeps: a running session outranks
+    /// the weekend it belongs to, and the race outranks the rest.
+    #[test]
+    fn a_running_session_outranks_the_weekend_it_belongs_to() {
+        let announced = || Some(fixtures::next_race_weekend());
+        let running = || LiveBoard::from_board(fixtures::timing_board("Race"));
+        let practice = Data {
+            next_race: announced(),
+            live_practice: running(),
+            ..Data::default()
+        };
+        assert_eq!(select_screen(View::Auto, &practice), Screen::LivePractice);
+        let quali = Data {
+            live_quali: running(),
+            ..practice.clone()
+        };
+        assert_eq!(select_screen(View::Auto, &quali), Screen::LiveQuali);
+        let race = Data {
+            live_race: running(),
+            ..quali.clone()
+        };
+        assert_eq!(select_screen(View::Auto, &race), Screen::LiveRace);
+        assert_eq!(select_screen(View::Standings, &race), Screen::Standings);
     }
 
     #[test]
@@ -248,6 +297,29 @@ mod tests {
         assert_eq!(
             Resource::Standings.url("hamilton"),
             format!("{BASE_URL}/api/v1/data/formula-1/standings"),
+        );
+    }
+
+    /// The parser compiles for wasm alone, so nothing else catches a field
+    /// renamed under it. The names come from Nexus's payload types in
+    /// `nexus-data/formula1`, which is where to check them against.
+    #[test]
+    fn the_payload_pointers_name_the_fields_the_deployment_publishes() {
+        // A session's start is an instant under the key the weekend uses
+        // for a calendar date.
+        assert_eq!(
+            wire::session(2, "date_start"),
+            "/data/sessions/2/date_start"
+        );
+        assert_eq!(wire::field("date_start"), "/data/date_start");
+        assert_eq!(wire::row(0, "jolpica_id"), "/data/0/jolpica_id");
+        assert_eq!(wire::entry(3, "driver_code"), "/data/entries/3/driver_code");
+        // The constructors' rows hang off a key, and name neither their
+        // logo nor their colour the way every other payload does.
+        assert_eq!(wire::team(1, "image_path"), "/data/teams/1/image_path");
+        assert_eq!(
+            wire::team(0, "resolved_color"),
+            "/data/teams/0/resolved_color"
         );
     }
 

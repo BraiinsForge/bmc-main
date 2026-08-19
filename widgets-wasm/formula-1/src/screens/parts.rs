@@ -58,6 +58,17 @@ pub mod font {
     pub const SUBTITLE_SMALL: u32 = 18;
 }
 
+/// How far below its own box's middle a glyph renders, as a share of
+/// the font's size, so artwork set beside text drops by this much to
+/// meet the letters.
+///
+/// Measured by eye against the testbed rather than derived: the
+/// renderer's line box is not symmetric about the letters, and nothing
+/// in the tree reports where a baseline landed. Text drawn onto a
+/// canvas needs none of this — `Draw::text` takes a `valign` the
+/// renderer resolves to the font's own baseline.
+pub const GLYPH_DROP: f32 = 0.04;
+
 pub mod space {
     use crate::model::SizeBucket;
 
@@ -182,14 +193,18 @@ pub enum LabelWeight {
 /// A label and its value, pushed to opposite edges of the row.
 #[must_use]
 pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> Node {
+    // Both halves stay on one line.
+    // A flex item will not shrink below its own content, so either half
+    // wrapping would floor the row at two lines,
+    // and the column it sits in would overrun its frame.
     let label = match weight {
         LabelWeight::Strong => text(
             label,
-            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
         ),
         LabelWeight::Muted => text(
             label,
-            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0),
+            style!(size: size, color: color::TEXT_MUTED, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
         ),
     };
     row(
@@ -203,10 +218,26 @@ pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> N
             label,
             text(
                 value,
-                style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0),
+                style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
             ),
         ],
     )
+}
+
+/// Cut a label to what its column seats.
+///
+/// A text node keeps its content's width whatever box surrounds it.
+/// Nothing shrinks, so an overlong label pushes every column after it
+/// off the frame, and any column holding a string the server chose
+/// needs cutting here first.
+#[must_use]
+pub fn truncate(label: &str, max_chars: usize) -> String {
+    if label.chars().count() <= max_chars {
+        return label.to_owned();
+    }
+    let mut out: String = label.chars().take(max_chars.saturating_sub(1)).collect();
+    out.push('\u{2026}');
+    out
 }
 
 /// Rows sharing the column's height, ruled off from one another.
@@ -271,8 +302,36 @@ pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
     fmt!("{} \u{2013} {}", opening, day_and_month(end, month_first))
 }
 
-/// A cached remote image in a fixed box, or `fallback` while nothing
-/// has arrived — the box never reflows when the image lands.
+/// The largest box of `bitmap`'s own proportions that fits inside
+/// `width`×`height`, and the offset that centres it there.
+#[must_use]
+pub fn contained(bitmap: (u32, u32), width: f32, height: f32) -> (f32, f32, f32, f32) {
+    let (bitmap_width, bitmap_height) = bitmap;
+    if bitmap_width == 0 || bitmap_height == 0 {
+        return (0.0, 0.0, width, height);
+    }
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "bitmap dimensions are bounded by the kind's decode box, far inside f32"
+    )]
+    let (drawn_width, drawn_height) = (bitmap_width as f32, bitmap_height as f32);
+    let scale = (width / drawn_width).min(height / drawn_height);
+    let (fitted_width, fitted_height) = (drawn_width * scale, drawn_height * scale);
+    (
+        (width - fitted_width) / 2.0,
+        (height - fitted_height) / 2.0,
+        fitted_width,
+        fitted_height,
+    )
+}
+
+/// A cached remote image centred in a fixed box, as large as its own
+/// proportions let it sit there, or `fallback` while nothing has arrived.
+///
+/// The box is what the layout reserves, so nothing the deployment sends
+/// can move a row: a mark wider than it is tall pads above and below
+/// rather than pushing its neighbours, and the placeholder holding the
+/// space is the same size the image will occupy.
 #[must_use]
 pub fn remote_image(
     kind: ImageKind,
@@ -283,6 +342,40 @@ pub fn remote_image(
 ) -> Node {
     let Some(resolved) = images::resolve(kind, url) else {
         return fallback;
+    };
+    let (x, y, drawn_width, drawn_height) =
+        contained((resolved.width, resolved.height), width, height);
+    canvas(
+        props!(width: width, height: height),
+        [Draw::bitmap_id(
+            x,
+            y,
+            drawn_width,
+            drawn_height,
+            Some(resolved.bitmap),
+        )],
+    )
+}
+
+/// `url` drawn `height` tall and as wide as its own proportions ask,
+/// or `fallback` while nothing has arrived.
+///
+/// The decode fits the source inside its kind's box without distorting it,
+/// so the bitmap's own dimensions are the ratio to honour. Drawing into a
+/// box we picked instead is what stretches it.
+#[must_use]
+pub fn image_at_height(kind: ImageKind, url: &ImageUrl, height: f32, fallback: Node) -> Node {
+    let Some(resolved) = images::resolve(kind, url) else {
+        return fallback;
+    };
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "bitmap dimensions are bounded by the kind's decode box, far inside f32"
+    )]
+    let width = if resolved.height == 0 {
+        height
+    } else {
+        height * (resolved.width as f32) / (resolved.height as f32)
     };
     canvas(
         props!(width: width, height: height),
@@ -296,43 +389,64 @@ pub fn remote_image(
     )
 }
 
-/// A team's mark: the server's logo once cached, the embedded mark
-/// until then, and the livery colour where this build carries no
-/// artwork for the team — a new constructor, or one renamed since.
+/// A team's mark: the server's logo once cached, the livery colour until
+/// then. No constructor's artwork ships with the widget, so a mark whose
+/// fetch has not answered is a coloured disc.
 #[must_use]
-pub fn team_mark(size: f32, team_name: &str, url: &ImageUrl, livery: Color) -> Node {
-    let embedded = match icons::team_mark(team_name) {
-        Some(mark) => canvas(
-            props!(width: size, height: size),
-            [Draw::bitmap(0.0, 0.0, size, size, mark)],
-        ),
-        None => image_placeholder(size, Some(livery)),
-    };
-    remote_image(ImageKind::TeamLogo, url, size, size, embedded)
+pub fn team_mark(size: f32, url: &ImageUrl, livery: Color) -> Node {
+    remote_image(
+        ImageKind::TeamLogo,
+        url,
+        size,
+        size,
+        image_placeholder(size, Some(livery)),
+    )
 }
 
-/// A country's flag, at the 10:7 box a flag is drawn in.
+/// A country's flag at `height`, as wide as its own proportions make it.
 ///
-/// Text beside a flag needs `line_height: 1.0`: with the default line
-/// height the text box is a fifth taller than its glyphs, and the flag
-/// centers against that slack rather than against the letters.
+/// The one image allowed to size itself. Everything else draws into a box
+/// the layout fixed, so no payload can shift a row; a flag is let off that
+/// because one provider serves one flag set, and a set is internally
+/// consistent. Should that ever fail, the cost is a row of flags whose
+/// widths differ — visible at a glance, not a silent wrong.
+///
+/// Two things put a flag level with that text. The text needs
+/// `line_height: 1.0`, or its box stands a fifth taller than its
+/// glyphs and the flag centres against the slack; and the flag drops
+/// by [`GLYPH_DROP`] to meet letters that sit low in their own box.
 #[must_use]
-pub fn flag(width: f32, url: &ImageUrl) -> Node {
+pub fn flag(height: f32, url: &ImageUrl) -> Node {
+    // Square while nothing has arrived: the shape our own fixtures take,
+    // and no worse a guess than any other for artwork not yet seen.
     let placeholder = col(
-        props!(width: width, height: width * 0.7, background: color::PLACEHOLDER),
+        props!(width: height, height: height, background: color::PLACEHOLDER),
         [],
     );
-    remote_image(ImageKind::Flag, url, width, width * 0.7, placeholder)
+    col(
+        props!(),
+        [
+            // Twice the drop wanted: the box is centred as a whole, so
+            // padding over the flag lowers it by half the padding.
+            col(props!(height: height * GLYPH_DROP * 2.0), []),
+            image_at_height(ImageKind::Flag, url, height, placeholder),
+        ],
+    )
 }
 
 /// Holds an image's box before it arrives, so the row does not reflow
 /// when it lands. A livery fills a team's square; anything else is neutral.
 #[must_use]
 pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
+    // A livery stands in for a constructor's mark, and a saturated square
+    // of it reads as something the screen meant to draw. Rounding says the
+    // slot is waiting; the neutral fill is quiet enough to leave square.
+    let radius = if livery.is_some() { size / 2.0 } else { 0.0 };
     col(
         props!(
             width: size,
             height: size,
+            border_radius: radius,
             background: livery.unwrap_or(color::PLACEHOLDER)
         ),
         [],
@@ -341,8 +455,26 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{clock, date_range};
+    use super::{clock, contained, date_range};
     use crate::screens::fixtures::{weekend_day, weekend_time};
+
+    /// Every image but a flag draws through this, so a box that stretched
+    /// its contents would distort the whole widget at once — which is how
+    /// the flags, the marks and the headshots each went out squashed.
+    #[test]
+    fn a_box_pads_around_its_image_rather_than_stretching_it() {
+        // Wider than its box: bars above and below, full width.
+        assert_eq!(contained((100, 50), 40.0, 40.0), (0.0, 10.0, 40.0, 20.0));
+        // Taller than its box: bars either side, full height.
+        assert_eq!(contained((50, 100), 40.0, 40.0), (10.0, 0.0, 20.0, 40.0));
+        // A square portrait in the frame that used to squash it.
+        assert_eq!(
+            contained((330, 330), 280.0, 300.0),
+            (0.0, 10.0, 280.0, 280.0)
+        );
+        // Nothing decoded yet: the box stands rather than dividing by zero.
+        assert_eq!(contained((0, 0), 40.0, 30.0), (0.0, 0.0, 40.0, 30.0));
+    }
 
     #[test]
     fn a_weekend_spanning_days_names_its_month_once() {

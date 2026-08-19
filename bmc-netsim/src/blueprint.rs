@@ -23,6 +23,7 @@
 //! the exhaustive JSON schema — every device's params — from these types.
 
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use std::fmt;
@@ -42,6 +43,18 @@ use crate::value::Value;
 pub struct Blueprint {
     /// Each entry instantiates one device `count` times.
     pub instances: Vec<Instance>,
+}
+
+impl Blueprint {
+    /// Anchor every path an instance names to `base`,
+    /// the directory the blueprint was read from.
+    pub fn resolve_paths(&mut self, base: &Path) {
+        for instance in &mut self.instances {
+            if let Instance::Formula1 { params, .. } = instance {
+                params.resolve_paths(base);
+            }
+        }
+    }
 }
 
 /// One device instance, discriminated by `device`
@@ -442,6 +455,12 @@ pub enum Body {
     /// A response computed from the request itself — for endpoints keyed
     /// on their query string (windowed history, cursor pagination).
     Respond(RespondFn),
+    /// A fixed non-JSON payload, for the binaries an API hands out
+    /// alongside its JSON — images above all.
+    Bytes {
+        content_type: String,
+        data: Arc<[u8]>,
+    },
 }
 
 /// Reads a device's cache and shapes it into an endpoint response body.
@@ -459,6 +478,15 @@ pub struct RequestCtx {
     pub t_s: f64,
     /// The device's noise seed.
     pub seed: u64,
+    /// The request's `Host`, absent when the client sent none.
+    ///
+    /// A payload pointing at the simulator's own binaries must name an address
+    /// the caller can dial — which the simulator cannot know:
+    /// it is `localhost` to the testbed and a LAN address to a deck.
+    /// Echoing back the host that reached us answers both, with no knob to set.
+    /// It is client-controlled, so a served product could not reflect it back;
+    /// a simulator on a dev LAN has no attacker to hand it one.
+    pub host: Option<String>,
 }
 
 impl Body {
@@ -487,6 +515,11 @@ impl std::fmt::Debug for Body {
             Body::Render(template) => f.debug_tuple("Render").field(template).finish(),
             Body::Accumulate(_) => f.debug_tuple("Accumulate").finish_non_exhaustive(),
             Body::Respond(_) => f.debug_tuple("Respond").finish_non_exhaustive(),
+            Body::Bytes { content_type, data } => f
+                .debug_struct("Bytes")
+                .field("content_type", content_type)
+                .field("len", &data.len())
+                .finish(),
         }
     }
 }

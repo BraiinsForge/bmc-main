@@ -29,8 +29,9 @@ use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, Mass, calendar}
 
 use crate::api::wire;
 use crate::model::{
-    CarNumber, DriverStats, DriverStatus, ImageUrl, LiveBoard, NextRace, Sector, SectorColor,
-    Session, StandingsRow, TimingBoard, TimingRow, TimingText, TireCompound, team_color,
+    CarNumber, DriverStats, DriverStatus, DriverTeam, ImageUrl, LiveBoard, NextRace, Sector,
+    SectorColor, Session, StandingsRow, Team, TimingBoard, TimingRow, TimingText, TireCompound,
+    team_color,
 };
 
 /// Rows are read until a probe field comes back absent, which is how
@@ -56,15 +57,14 @@ fn timing(json: &JsonDoc, path: &str) -> TimingText {
     TimingText::from(text(json, path))
 }
 
-/// A session's start, resolved to an instant and put back into wall clock
-/// for `zone`.
+/// A session's start, in `zone`'s wall clock.
 ///
-/// The instant is what the widget lacks while the server sends no offset:
-/// the host's parser refuses such text rather than guessing a zone, so
-/// these read as absent until Nexus sends one.
-fn session_start(json: &JsonDoc, path: &str, zone: &str) -> Option<LocalDateTime> {
-    let unix_secs = calendar::parse_datetime(&json.str(path)?)?;
-    calendar::tz_convert(unix_secs, zone)
+/// A session carries an instant under `date_start`, where the weekend
+/// carries a calendar date under the same name. The host's parser
+/// refuses text naming no instant rather than guessing a zone.
+fn session_start(json: &JsonDoc, index: usize, zone: &str) -> Option<LocalDateTime> {
+    let text = json.str(&wire::session(index, "date_start"))?;
+    calendar::tz_convert(calendar::parse_datetime(&text)?, zone)
 }
 
 fn weekend_date(json: &JsonDoc, path: &str) -> Option<CalendarDate> {
@@ -134,6 +134,7 @@ pub fn standings(json: &JsonDoc) -> Vec<StandingsRow> {
 /// or the per-driver object.
 fn driver_stats_at(json: &JsonDoc, at: &impl Fn(&str) -> String) -> DriverStats {
     DriverStats {
+        jolpica_id: text(json, &at("jolpica_id")),
         name: text(json, &at("name")),
         number: CarNumber::new(small(json, &at("number"))),
         headshot_url: image(json, &at("headshot_url")),
@@ -166,6 +167,51 @@ pub fn driver_stats(json: &JsonDoc) -> Vec<DriverStats> {
     rows
 }
 
+/// The constructors' table, which is where a mark comes from: no
+/// driver-facing resource names one.
+#[must_use]
+pub fn teams(json: &JsonDoc) -> Vec<Team> {
+    let mut rows = Vec::new();
+    for index in 0.. {
+        let at = |field: &str| wire::team(index, field);
+        // The id both ends the walk and joins a driver to this row. A
+        // team's name is optional upstream and omitted when absent, so
+        // probing that would stop at the first nameless constructor.
+        let Some(id) = json.i64(&at("id")).and_then(|id| u64::try_from(id).ok()) else {
+            break;
+        };
+        rows.push(Team {
+            id,
+            name: text(json, &at("name")),
+            logo_url: image(json, &at("image_path")),
+            color: color(json, &at("resolved_color")),
+        });
+    }
+    rows
+}
+
+/// Which constructor each driver races for.
+#[must_use]
+pub fn driver_teams(json: &JsonDoc) -> Vec<DriverTeam> {
+    let mut rows = Vec::new();
+    each_row(json, "jolpica_id", |index| {
+        let at = |field: &str| wire::row(index, field);
+        // A driver off the championship grid races for no constructor,
+        // and one with no id has no mark to look up.
+        let Some(team_id) = json
+            .i64(&at("team_id"))
+            .and_then(|id| u64::try_from(id).ok())
+        else {
+            return;
+        };
+        rows.push(DriverTeam {
+            jolpica_id: text(json, &at("jolpica_id")),
+            team_id,
+        });
+    });
+    rows
+}
+
 #[must_use]
 pub fn driver(json: &JsonDoc) -> Option<DriverStats> {
     let stats = driver_stats_at(json, &|field| wire::field(field));
@@ -194,7 +240,7 @@ pub fn next_race(json: &JsonDoc, local_time: bool) -> Option<NextRace> {
         };
         sessions.push(Session {
             name,
-            starts_at: session_start(json, &wire::session(index, "date_start"), zone),
+            starts_at: session_start(json, index, zone),
         });
     }
     Some(NextRace {

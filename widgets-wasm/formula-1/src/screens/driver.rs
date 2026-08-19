@@ -30,7 +30,7 @@
 use bmc_wasm_sdk::*;
 
 use crate::images::{self, ImageKind};
-use crate::model::{DriverStats, SizeBucket};
+use crate::model::{DriverStats, ImageUrl, SizeBucket};
 use crate::screens::parts::{self, LabelWeight, color, font, space};
 
 /// Everything the screen draws.
@@ -38,6 +38,8 @@ use crate::screens::parts::{self, LabelWeight, color, font, space};
 pub struct DriverViewData {
     pub bucket: SizeBucket,
     pub driver: Option<DriverStats>,
+    /// From the teams table, which is the only resource naming one.
+    pub team_logo_url: ImageUrl,
 }
 
 /// What the server had nothing for.
@@ -47,14 +49,21 @@ const UNKNOWN: &str = "N/A";
 const NAME_FULL: u32 = 32;
 /// The headshot, square on the widest frame and shorter below it.
 const PHOTO_FULL: f32 = 327.0;
-const PHOTO_LARGE_WIDTH: f32 = 280.0;
-const PHOTO_LARGE_HEIGHT: f32 = 330.0;
+/// Square, like the portraits a provider serves — a box of other
+/// proportions bars the livery down both edges of every face, which reads
+/// as a fault rather than as a frame.
+///
+/// Bounded by the frame as well, not only by the design: the portrait is
+/// the body's tallest child and the stats column stretches to it, so one
+/// taller than 300 takes the last stat out of view with it.
+const PHOTO_LARGE: f32 = 280.0;
 const PHOTO_SMALL: f32 = 160.0;
 const PHOTO_RADIUS: f32 = 4.0;
 /// The constructor mark trailing the header.
 const TEAM_MARK: f32 = 40.0;
-/// The nationality flag, which keeps its size as the stat text shrinks.
-const FLAG: f32 = 24.0;
+/// The nationality flag's height, which holds as the stat text shrinks;
+/// its width follows the artwork the deployment sends.
+const FLAG: f32 = 16.8;
 
 /// Which pieces a frame keeps, across the four ported layouts.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -201,16 +210,20 @@ fn photo(driver: &DriverStats, width: f32, height: f32) -> Node {
         border_radius: PHOTO_RADIUS
     );
     match images::resolve(ImageKind::Headshot, &driver.headshot_url) {
-        Some(resolved) => canvas(
-            frame,
-            [Draw::bitmap_id(
-                0.0,
-                0.0,
-                width,
-                height,
-                Some(resolved.bitmap),
-            )],
-        ),
+        Some(resolved) => {
+            let (x, y, drawn_width, drawn_height) =
+                parts::contained((resolved.width, resolved.height), width, height);
+            canvas(
+                frame,
+                [Draw::bitmap_id(
+                    x,
+                    y,
+                    drawn_width,
+                    drawn_height,
+                    Some(resolved.bitmap),
+                )],
+            )
+        }
         None => col(frame, []),
     }
 }
@@ -225,7 +238,7 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
             let (width, height, name_size) = if layout.split_stats {
                 (PHOTO_FULL, PHOTO_FULL, NAME_FULL)
             } else {
-                (PHOTO_LARGE_WIDTH, PHOTO_LARGE_HEIGHT, font::TITLE)
+                (PHOTO_LARGE, PHOTO_LARGE, font::TITLE)
             };
             let mut named = vec![text(
                 fmt!("{} #{}", driver.name, driver.number.get()),
@@ -250,15 +263,8 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
     }
 }
 
-fn header(driver: &DriverStats, bucket: SizeBucket) -> Node {
-    // The driver payload names no team logo URL, so the mark draws the
-    // embedded artwork or the livery.
-    let mark = parts::team_mark(
-        TEAM_MARK,
-        &driver.team,
-        &crate::model::ImageUrl::default(),
-        driver.team_color,
-    );
+fn header(driver: &DriverStats, logo: &ImageUrl, bucket: SizeBucket) -> Node {
+    let mark = parts::team_mark(TEAM_MARK, logo, driver.team_color);
     let content = match bucket {
         SizeBucket::Full | SizeBucket::Large => {
             vec![parts::title("Driver stats"), spacer(1.0), mark]
@@ -341,13 +347,40 @@ pub fn driver_view(view: &DriverViewData) -> Node {
             )
         }
     };
-    parts::frame(vec![header(driver, view.bucket), body], view.bucket)
+    parts::frame(
+        vec![header(driver, &view.team_logo_url, view.bucket), body],
+        view.bucket,
+    )
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{Portrait, layout};
+    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, parts::space};
     use crate::model::SizeBucket;
+
+    /// What sits under the photo on the frames that name the team there:
+    /// `GAP * 2`, [`super::font::TITLE`], `GAP / 2`, then
+    /// [`super::font::ROW`].
+    const PHOTO_CAPTION: f32 = 64.0;
+
+    /// The stats column stretches to the portrait beside it,
+    /// so a portrait past the frame puts the last stat outside it —
+    /// which is how this frame lost its bottom row once.
+    #[test]
+    fn the_portrait_leaves_the_stats_inside_the_frame() {
+        let bucket = SizeBucket::Large;
+        let (_, frame) = bucket.design_size();
+        let body = frame
+            - space::padding(bucket) * 2.0
+            - TEAM_MARK
+            - space::below_header(bucket)
+            - space::GAP;
+        let portrait = PHOTO_LARGE + PHOTO_CAPTION;
+        assert!(
+            portrait <= body,
+            "the portrait takes {portrait} of the {body} under the header",
+        );
+    }
 
     /// The per-frame rules the port keeps.
     #[test]

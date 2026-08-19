@@ -20,13 +20,14 @@
 
 //! The screens the widget draws.
 //!
-//! Every screen is a pure function of its own view data, so the
-//! storybook and the tests can render it without a host, a network, or
-//! a running session.
+//! Every screen is a pure function of its own view data, so the gallery
+//! and the tests can render it without a host, a network, or a running
+//! session.
 
 pub mod driver;
 pub mod fixtures;
 pub mod icons;
+pub mod live;
 pub mod next_race;
 pub mod parts;
 pub mod standings;

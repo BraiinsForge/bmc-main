@@ -1,0 +1,114 @@
+# The next-race screen at every design size, one frame per shot.
+# See `standings.capture.toml` for what `size` and `frames` are doing.
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "next-race-full"
+scene = "bmc_gallery::f1::Next Race"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "next-race-large"
+scene = "bmc_gallery::f1::Next Race"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "next-race-medium"
+scene = "bmc_gallery::f1::Next Race"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "next-race-small"
+scene = "bmc_gallery::f1::Next Race"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "next-race-unavailable-full"
+scene = "bmc_gallery::f1::Next Race Unavailable"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "next-race-unavailable-small"
+scene = "bmc_gallery::f1::Next Race Unavailable"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+[[shot]]
+name = "next-race-sparse-full"
+scene = "bmc_gallery::f1::Next Race Sparse"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "next-race-sparse-small"
+scene = "bmc_gallery::f1::Next Race Sparse"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+# A sprint weekend's longest names, which seat the most session rows.
+[[shot]]
+name = "next-race-widest-full"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+
+[[shot]]
+name = "next-race-widest-large"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+
+[[shot]]
+name = "next-race-widest-medium"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+
+[[shot]]
+name = "next-race-widest-small"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+
+# The date format that lengthens the header's range — the one layout the
+# other shots never exercise, since they all take the default separator.
+[[shot]]
+name = "next-race-widest-large-us-dates"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+Dates = "12/31/2026"

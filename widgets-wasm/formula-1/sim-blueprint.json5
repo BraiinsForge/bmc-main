@@ -4,53 +4,70 @@
   // Nexus Formula 1 deployments for the formula-1 widget.
   // Cloud APIs: nothing is announced — the testbed reaches a pinned port
   // through `--rewrite-url` (the justfile's scenario map names these same ports).
+  //
+  // `image_dir` publishes this widget's own artwork as the images
+  // the payloads point at; drop it from an entry to script the state
+  // where none of them resolve.
   instances: [
     {
         device: "formula-1",
         label: "Race live — deterministic overtakes, pits, one DNF",
         port: 20100,
-        params: { session: "race" },
+        // Lap 50 of 72: the field has spread, one car is out and another
+        // excluded, some are in the pits, and the stints have separated
+        // enough that the grid is spread across all three compounds.
+        params: { session: "race", start_lap: 50, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
         label: "Qualifying live",
         port: 20101,
-        params: { session: "quali" },
+        // The one board that seats the whole field, so the states that sort
+        // to the tail are only ever visible here: a retirement, an
+        // exclusion, and the damaged car a lap down. Late enough to hold
+        // all three, and on a lap where a pit window is open.
+        params: { session: "quali", start_lap: 55, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
         label: "Practice live",
         port: 20102,
-        params: { session: "practice" },
+        // A lap where someone leaving the pits is quick enough to be seated:
+        // practice ranks on the best lap, so an out lap further down is
+        // generated and never drawn.
+        params: { session: "practice", start_lap: 53, image_dir: "gallery/artwork" },
+    },
+    {
+        device: "formula-1",
+        label: "Sprint weekend, race underway — one car out, none excluded yet",
+        port: 20107,
+        // Lap 35 sits between the retirement and the exclusion, so the board
+        // carries exactly one car out where the `race` scenario carries two.
+        params: { session: "race", sprint: true, start_lap: 35, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
         label: "Quiet mid-season week — next race announced, boards idle",
         port: 20103,
+        params: { image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
         label: "Off-season — no next race, empty standings",
         port: 20104,
-        params: { season_underway: false },
+        params: { season_underway: false, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
         label: "Cold start — careers-derived resources 503 while warming",
         port: 20105,
-        params: { careers_status: 503 },
+        params: { careers_status: 503, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
         label: "Stale — cache_age_secs past every ttl_secs",
         port: 20106,
-        params: { stale_secs: 600 },
-    },
-    {
-        device: "formula-1",
-        label: "RFC 3339 preview — session times with offsets, as agreed",
-        port: 20107,
-        params: { session: "race", rfc3339_sessions: true },
+        params: { stale_secs: 600, image_dir: "gallery/artwork" },
     },
   ],
 }
