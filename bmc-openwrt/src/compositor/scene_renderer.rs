@@ -85,6 +85,19 @@ pub fn scanout_transform(profile: DisplayTransform) -> Transform {
     }
 }
 
+/// Whether the frame's sync point is waited on, folding GPU time into the
+/// `finish` stopwatch.
+///
+/// Diagnostic only: it serialises the compositor against its own GPU work, so
+/// the frame rate drops while it is on. Without it the stopwatch measures
+/// submission — `frame.finish()` drops its sync point without blocking — which
+/// is not comparable to the widget host's glFinish-bounded passes.
+/// `BMC_COMPOSE_FENCE=1` enables it.
+fn compose_fence() -> bool {
+    static FENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FENCE.get_or_init(|| matches!(std::env::var("BMC_COMPOSE_FENCE").as_deref(), Ok("1")))
+}
+
 /// Scanout transform for widget buffers, whose rows run bottom-up because the
 /// wasm host paints straight into the exported buffer instead of blitting
 /// through a staging surface.
@@ -978,7 +991,15 @@ impl SceneRenderer {
         ii_stopwatch::stopwatch_stop!(self.compose_w);
 
         ii_stopwatch::stopwatch_start!(self.finish_w);
-        let _sync = frame.finish().context("Failed to finish frame")?;
+        let sync = frame.finish().context("Failed to finish frame")?;
+        // The stopwatches otherwise cover submission only: compose ends with
+        // work still queued, and this sync point is normally dropped without
+        // being waited on. Waiting folds the GPU time into `finish`, making it
+        // comparable to the widget host's glFinish-bounded passes — without it
+        // the two sides look an order of magnitude apart for the same work.
+        if compose_fence() {
+            sync.wait().ok();
+        }
 
         // Capture readback is only needed when a capture session exists or
         // when frames are already pending. On Deck hardware this path hits

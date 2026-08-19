@@ -117,9 +117,9 @@ struct ShadowFboPool {
 /// same texture, same destination, same pixels, so the difference is the shader
 /// it selects. Worth 14 ms a frame on a static-heavy widget.
 ///
-/// This does not close the whole gap: the compositor draws a comparable quad in
-/// ~512 us, so something beyond the shader remains, most likely that this
-/// texture is also a framebuffer's colour attachment.
+/// The write dominates what remains: a constant-colour quad of the same size,
+/// reading no texture at all, still costs ~5 ms. That is close to this GPU's
+/// fill rate, so the way past it is drawing fewer pixels, not cheaper ones.
 struct RawBlit {
     program: glow::Program,
     vbo: glow::Buffer,
