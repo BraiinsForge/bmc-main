@@ -143,9 +143,10 @@ pub fn resolve(kind: ImageKind, url: &ImageUrl) -> Option<Resolved> {
     Some(resolved)
 }
 
-/// Forget every resolved bitmap. A wake from dormancy invalidates the
-/// deck's bitmap ids, so the glue calls this before its first render.
-pub fn invalidate_all() {
+/// Forget every resolved bitmap, so one test's memo
+/// cannot answer the next one's lookup.
+#[cfg(test)]
+pub(crate) fn invalidate_all() {
     RESOLVED.with(|memo| memo.borrow_mut().clear());
 }
 

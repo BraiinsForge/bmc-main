@@ -1,0 +1,31 @@
+id: no-ambient-host-state
+language: rust
+severity: error
+message: |
+  Ambient host state read directly. A widget's inputs all arrive through the SDK so a run
+  can be driven deterministically — the testbed sets a clock, a timezone and a seed,
+  and capture replays them.
+  Anything read around the SDK makes a run depend on the machine it happens to be on.
+  Use `host::SystemTime::now()` for the clock, `host::random_u32()` for randomness,
+  `system::current()` for deck settings, and the params channel for configuration.
+files:
+  - "widgets-wasm-examples/*/src/**/*.rs"
+  - "widgets-wasm/src/**/*.rs"
+  - "widgets-wasm/*/src/**/*.rs"
+rule:
+  any:
+    # `"Local"` resolves through `chrono::Local` — the host process's own zone,
+    # which no deck setting moves.
+    - pattern: calendar::tz_convert($_, "Local")
+    - pattern: tz_convert($_, "Local")
+    # `bmc_wasm_sdk::SystemTime` shares the name, so only the std path is matched;
+    # the bare form is caught on its import instead.
+    - pattern: std::time::SystemTime::now()
+    - pattern: std::time::Instant::now()
+    - pattern: Instant::now()
+    - pattern: use std::time::SystemTime;
+    - pattern: use std::time::Instant;
+    # `env!` and `option_env!` are compile-time constants, so they are
+    # deterministic already; only the runtime read is a hazard.
+    - pattern: std::env::var($$$)
+    - pattern: env::var($$$)

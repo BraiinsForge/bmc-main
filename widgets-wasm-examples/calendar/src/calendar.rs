@@ -37,6 +37,15 @@ fn system_tz_local(now: &SystemTime) -> LocalDateTime {
         .unwrap_or_else(|| now.utc())
 }
 
+/// The same projection for an event's instant.
+/// `fallback` stands in where the snapshot names no zone.
+fn event_local(unix_secs: i64, fallback: LocalDateTime) -> LocalDateTime {
+    system::current()
+        .timezone()
+        .and_then(|name| calendar::tz_convert(unix_secs, name))
+        .unwrap_or(fallback)
+}
+
 /// A single calendar event after RRULE expansion.
 #[derive(Debug, Clone)]
 pub struct CalendarEvent {
@@ -230,7 +239,7 @@ impl CalendarState {
 
         for (event_idx, event) in self.events.iter().enumerate() {
             // Convert event start to local time for grouping
-            let local = calendar::tz_convert(event.start, "Local").unwrap_or(self.local);
+            let local = event_local(event.start, self.local);
 
             let needs_new_group = self.day_groups.last().is_none_or(|g| {
                 g.year != local.year || g.month != local.month || g.day != local.day
@@ -489,7 +498,7 @@ impl CalendarState {
 
         // Assign events to cells / spans
         for (ei, event) in self.events.iter().enumerate() {
-            let start_local = calendar::tz_convert(event.start, "Local").unwrap_or(self.local);
+            let start_local = event_local(event.start, self.local);
             let sd = (start_local.year, start_local.month, start_local.day);
 
             if event.end - event.start > 86_400 {
@@ -501,8 +510,7 @@ impl CalendarState {
                 } else {
                     event.end
                 };
-                let end_local =
-                    calendar::tz_convert(end_ts.max(event.start), "Local").unwrap_or(self.local);
+                let end_local = event_local(end_ts.max(event.start), self.local);
                 let ed = (end_local.year, end_local.month, end_local.day);
 
                 for week in &mut weeks {

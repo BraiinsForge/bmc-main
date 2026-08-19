@@ -117,21 +117,24 @@ mod wasm_glue {
         if changed.contains(&"driver") {
             live::invalidate_driver();
         }
+        if changed.contains(&"local_time") {
+            live::invalidate_next_race();
+        }
         request_frame();
     }
 
     #[unsafe(no_mangle)]
     pub extern "C" fn on_system_update() {
+        if system::current().timezone() != system::previous().timezone() {
+            live::invalidate_next_race();
+        }
         request_frame();
     }
 
-    /// Dormancy invalidates bitmap ids, leaving the image memo dead,
-    /// so the next render restores from the cache instead.
-    /// A decode that finished while dormant never reported back,
-    /// which is why the fetch chain restarts along with it.
+    /// The host restores the images itself, so only the fetch chain
+    /// needs waking — see [`crate::artwork::resume`].
     #[unsafe(no_mangle)]
     pub extern "C" fn on_wake() {
-        crate::images::invalidate_all();
         crate::artwork::resume();
         request_frame();
     }

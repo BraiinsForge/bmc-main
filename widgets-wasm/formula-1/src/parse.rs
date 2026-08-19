@@ -25,7 +25,7 @@
 //! every rule that plain values can decide lives in `model.rs`,
 //! where it is natively testable.
 
-use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, Mass, calendar};
+use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, Mass, calendar, system};
 
 use crate::api::wire;
 use crate::model::{
@@ -57,14 +57,14 @@ fn timing(json: &JsonDoc, path: &str) -> TimingText {
     TimingText::from(text(json, path))
 }
 
-/// A session's start, in `zone`'s wall clock.
+/// A session's start, in `zone`'s wall clock, and absent without a zone.
 ///
 /// A session carries an instant under `date_start`, where the weekend
 /// carries a calendar date under the same name. The host's parser
 /// refuses text naming no instant rather than guessing a zone.
-fn session_start(json: &JsonDoc, index: usize, zone: &str) -> Option<LocalDateTime> {
+fn session_start(json: &JsonDoc, index: usize, zone: Option<&str>) -> Option<LocalDateTime> {
     let text = json.str(&wire::session(index, "date_start"))?;
-    calendar::tz_convert(calendar::parse_datetime(&text)?, zone)
+    calendar::tz_convert(calendar::parse_datetime(&text)?, zone?)
 }
 
 fn weekend_date(json: &JsonDoc, path: &str) -> Option<CalendarDate> {
@@ -222,15 +222,16 @@ pub fn driver(json: &JsonDoc) -> Option<DriverStats> {
 pub fn next_race(json: &JsonDoc, local_time: bool) -> Option<NextRace> {
     let gp_name = json.str(&wire::field("gp_name"))?;
     let venue_timezone = json.str(&wire::field("venue_timezone"));
-    // The viewer's own zone is the host's `Local`; otherwise the schedule
-    // stays on the circuit's clock, as a race weekend is always quoted.
-    // Without the circuit's zone there is no circuit clock to show, and
-    // the viewer's own is the only one we know — UTC would read as the
-    // circuit's while being neither.
+    // Off the viewer's own clock the schedule stays on the circuit's,
+    // as a race weekend is always quoted. Each stands in for the other
+    // when it is missing, and with neither there is no clock to show:
+    // any zone we picked would read as one of them while being neither.
+    let deck = system::current();
+    let viewer = deck.timezone();
     let zone = if local_time {
-        "Local"
+        viewer.or(venue_timezone.as_deref())
     } else {
-        venue_timezone.as_deref().unwrap_or("Local")
+        venue_timezone.as_deref().or(viewer)
     };
 
     let mut sessions = Vec::new();

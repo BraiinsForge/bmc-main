@@ -159,10 +159,21 @@ pub fn start() {
 /// another driver; its URL carries the slug,
 /// so the held payload is stale the moment the param changes.
 pub fn invalidate_driver() {
+    invalidate(Resource::Driver);
+}
+
+/// Re-fetch the weekend after a zone change. Session starts are converted
+/// as the payload is read, so the held model carries the old zone's clock
+/// until a reply replaces it — a minute away at the static cadence.
+pub fn invalidate_next_race() {
+    invalidate(Resource::NextRace);
+}
+
+fn invalidate(resource: Resource) {
     HANDLES.with(|handles| {
         if let Some(handles) = handles.borrow().as_ref() {
             for handle in handles {
-                if resource_of(*handle) == Resource::Driver {
+                if resource_of(*handle) == resource {
                     handle.invalidate();
                 }
             }
