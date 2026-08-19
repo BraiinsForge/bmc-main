@@ -1365,6 +1365,9 @@ impl WasmWidgetRuntime {
             .last_static_key
             .is_some_and(|(_, generation)| generation != state.renderer_assets.generation());
 
+        // Only an animation-only frame can trust the target's existing pixels:
+        // a guest frame may have changed the static half.
+        let damage = crate::host_api::damage_rects(&state.recent_dynamic_rects, width, height);
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,
@@ -1381,6 +1384,7 @@ impl WasmWidgetRuntime {
             // has no layer to reuse, and blitting the empty one is a wasted
             // full-screen pass.
             reuse_static_layer: state.static_layer_useful && !stale_assets,
+            damage_rects: &damage,
             static_layer_key: &state.instance_id,
         };
         let mut resolver = RendererAssetRestorer::new(
@@ -1409,6 +1413,10 @@ impl WasmWidgetRuntime {
         match render_result {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
+                // Shift the damage history: this walk's regions become the
+                // newest, and the pair spans the buffer rotation.
+                state.recent_dynamic_rects.swap(0, 1);
+                state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
                 let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
                 // No WASM execution, no deserialization on cached frames
                 state.tree_clicks = result.clicks;
@@ -1976,6 +1984,22 @@ impl WasmWidgetRuntime {
     }
 
     /// Per-component timing breakdown from the last rendered frame.
+    /// Whether the next frame will repaint only its damaged regions, leaving
+    /// the rest of the target as it is.
+    ///
+    /// The host has to know before it clears: the clear happens on the way in,
+    /// and it would wipe exactly the pixels a damage-tracked frame reuses. The
+    /// answer depends only on the frame schedule and the recorded damage, both
+    /// settled before the guest runs.
+    #[must_use]
+    pub fn next_frame_preserves_target(&self, width: f32, height: f32) -> bool {
+        let state = self.store.data();
+        state.frame_schedule.is_animation_only_frame()
+            && state.cached_tree.is_some()
+            && state.static_layer_useful
+            && !crate::host_api::damage_rects(&state.recent_dynamic_rects, width, height).is_empty()
+    }
+
     #[must_use]
     pub fn last_timings(&self) -> FrameTimings {
         self.store.data().last_timings

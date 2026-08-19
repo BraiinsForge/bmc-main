@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use bmc_render::FrameTimings;
 use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
@@ -958,6 +959,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
                         ptr,
                         target_width,
                         target_height,
+                        preserves_target(runtime, target_width, target_height),
                     )?;
                     HostRenderProfiling::log_phase(wasm_basename, "frame_setup", frame_setup_phase);
 
@@ -1506,6 +1508,8 @@ impl HostRenderProfiling {
             animation_states = context.timings.animation_state_count,
             transition_states = context.timings.transition_state_count,
             hit_regions = context.timings.hit_region_count,
+            dynamic_area_pct = context.timings.dynamic_area_pct,
+            dynamic_nodes = context.timings.dynamic_node_count,
             render_us = context.timings.render_us,
             target_width = context.target_width,
             target_height = context.target_height,
@@ -1534,6 +1538,8 @@ impl HostRenderProfiling {
                 animation_states = context.timings.animation_state_count,
                 transition_states = context.timings.transition_state_count,
                 hit_regions = context.timings.hit_region_count,
+                dynamic_area_pct = context.timings.dynamic_area_pct,
+                dynamic_nodes = context.timings.dynamic_node_count,
                 render_us = context.timings.render_us,
                 target_width = context.target_width,
                 target_height = context.target_height,
@@ -1561,18 +1567,34 @@ impl HostRenderProfiling {
 /// the buffer carries a stencil attachment for femtovg's fills. femtovg renders
 /// bottom-up to a framebuffer, so the compositor flips these buffers via its
 /// scanout transform.
+/// Whether the upcoming frame reuses the target's existing pixels.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "surface dimensions are well under f32 precision"
+)]
+fn preserves_target(
+    runtime: &bmc_wasm_runtime::WasmWidgetRuntime,
+    width: u32,
+    height: u32,
+) -> bool {
+    runtime.next_frame_preserves_target(width as f32, height as f32)
+}
+
 fn bind_export_target_for_frame(
     shared: &SharedHost,
     buffers: &mut bmc_widget::egl::DoubleBufferState,
     ptr: NonNull<dyn Renderer>,
     width: u32,
     height: u32,
+    preserve: bool,
 ) -> anyhow::Result<()> {
     buffers.ensure_current(&shared.egl)?;
     let export = buffers
         .current_ref()
         .expect("BUG: ensure_current succeeded, so current_ref must return Some");
 
+    // Both clears on the way in have to be skipped for a damage-tracked frame:
+    // they would wipe the regions it deliberately keeps from an earlier frame.
     anyhow::ensure!(
         shared.scratch.retarget_to(
             &shared.egl,
@@ -1580,6 +1602,7 @@ fn bind_export_target_for_frame(
             export.stencil_rb(),
             width,
             height,
+            !preserve,
         ),
         "frame framebuffer incomplete after retargeting to the export buffer"
     );
@@ -1588,7 +1611,12 @@ fn bind_export_target_for_frame(
         "BUG: renderer pointer was NonNull when stored, \
          raw-pointer reborrow must produce a non-null reference",
     );
-    renderer.begin_frame(width, height, 1.0);
+    let clear = if preserve {
+        FrameClear::Keep
+    } else {
+        FrameClear::OpaqueBlack
+    };
+    renderer.begin_frame_with_clear(width, height, 1.0, clear);
     Ok(())
 }
 

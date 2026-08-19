@@ -466,6 +466,7 @@ fn staged_tree(
                 capture_static: false,
                 reuse_static_layer: false,
                 static_layer_key: "gallery",
+                damage_rects: &[],
             };
             match bmc_render::process_tree(
                 &bytes,

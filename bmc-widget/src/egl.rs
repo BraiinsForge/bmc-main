@@ -1700,6 +1700,7 @@ impl SharedRenderScratch {
         stencil: glow::Renderbuffer,
         w: u32,
         h: u32,
+        clear: bool,
     ) -> bool {
         let gl = ctx.gl();
         self.attach(ctx, texture, stencil);
@@ -1709,8 +1710,10 @@ impl SharedRenderScratch {
                 return false;
             }
             gl.viewport(0, 0, w as i32, h as i32);
-            gl.clear_color(0.0, 0.0, 0.0, 1.0);
-            gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+            if clear {
+                gl.clear_color(0.0, 0.0, 0.0, 1.0);
+                gl.clear(glow::COLOR_BUFFER_BIT | glow::STENCIL_BUFFER_BIT);
+            }
         }
         true
     }

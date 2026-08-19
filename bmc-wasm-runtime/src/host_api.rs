@@ -43,7 +43,7 @@ use taffy::prelude::*;
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
-use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey};
+use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, interaction::Rect, TransitionStateKey};
 use bmc_wasm_protocol::{
     AudioId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId,
     MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
@@ -959,6 +959,13 @@ pub(crate) struct HostState {
     /// Monotonic frame counter for GC.
     pub frame_counter: u64,
 
+    /// Dynamic regions from the last two walks, in logical pixels.
+    ///
+    /// Two, because the export buffers rotate: the buffer being drawn into was
+    /// last painted two frames ago, so anything that moved in *either* of the
+    /// intervening frames still has to be repainted or a stale pixel survives.
+    pub recent_dynamic_rects: [Vec<Rect>; 2],
+
     /// Whether the last submitted tree had a static half worth caching. A
     /// fully dynamic widget has none, and blitting the empty layer costs a
     /// full-screen pass per frame for nothing.
@@ -1399,6 +1406,7 @@ impl HostState {
             animation_states: HashMap::new(),
             transition_states: HashMap::new(),
             frame_counter: 0,
+            recent_dynamic_rects: [Vec::new(), Vec::new()],
             static_layer_useful: true,
             last_static_key: None,
             cached_tree: None,
@@ -1575,6 +1583,44 @@ impl HostState {
         self.http_response_txs.clear();
         self.mdns_registrations.clear();
     }
+}
+
+/// Damage covering the last two frames, or empty to repaint everything.
+///
+/// Empty when the regions cover more of the surface than `BMC_DAMAGE_MAX_PCT`
+/// (default 60): past that the bookkeeping and the extra draw calls cost more
+/// than the pixels they save, and a widget that animates its whole surface
+/// should not pay for tracking that can never help it.
+pub fn damage_rects(
+    recent: &[Vec<Rect>; 2],
+    width: f32,
+    height: f32,
+) -> Vec<Rect> {
+    let surface = width * height;
+    if surface <= 0.0 || recent.iter().all(Vec::is_empty) {
+        return Vec::new();
+    }
+    let rects: Vec<_> = recent.iter().flatten().copied().collect();
+    // Overlapping rectangles are counted twice, which overstates the area and
+    // so only ever errs toward a full repaint.
+    let covered: f32 = rects.iter().map(|Rect {w, h, ..}| w * h).sum();
+    if covered / surface > damage_max_fraction() {
+        return Vec::new();
+    }
+    rects
+}
+
+/// Share of the surface above which damage tracking is abandoned.
+fn damage_max_fraction() -> f32 {
+    static MAX: std::sync::OnceLock<f32> = std::sync::OnceLock::new();
+    *MAX.get_or_init(|| {
+        std::env::var("BMC_DAMAGE_MAX_PCT")
+            .ok()
+            .and_then(|v| v.parse::<f32>().ok())
+            .filter(|pct| (0.0..=100.0).contains(pct))
+            .unwrap_or(60.0)
+            / 100.0
+    })
 }
 
 #[cfg(test)]

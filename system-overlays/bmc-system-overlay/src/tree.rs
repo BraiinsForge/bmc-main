@@ -105,6 +105,7 @@ impl TreeUi {
             capture_static: false,
             reuse_static_layer: false,
             static_layer_key: STATIC_LAYER_KEY,
+            damage_rects: &[],
         };
         #[expect(
             clippy::cast_precision_loss,

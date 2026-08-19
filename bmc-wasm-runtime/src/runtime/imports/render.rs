@@ -268,6 +268,7 @@ fn submit_tree(
             capture_static: layered && !static_unchanged,
             reuse_static_layer: layered && static_unchanged,
             static_layer_key: &state.instance_id,
+            damage_rects: &[],
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,
@@ -303,6 +304,10 @@ fn submit_tree(
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
                 state.cached_tree = Some((tree_node, w, h));
                 state.last_static_key = Some(static_key);
+                // Shift the damage history: this walk's regions become the
+                // newest, and the pair spans the buffer rotation.
+                state.recent_dynamic_rects.swap(0, 1);
+                state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
             }
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");

@@ -56,6 +56,8 @@ use crate::renderer::{
 };
 use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle, VerticalAlign};
 
+use crate::interaction::Rect;
+
 // Embed BraiinsSans fonts at compile time from the top-level assets directory.
 const FONT_REGULAR: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-Regular.otf");
 const FONT_SEMIBOLD: &[u8] = include_bytes!("../../../assets/fonts/BraiinsSans-SemiBold.otf");
@@ -2059,11 +2061,19 @@ impl Renderer for FemtoVgRenderer {
             (height as f32 * dpi_scale) as u32,
         );
         self.canvas.set_size(pw, ph, dpi_scale);
-        let clear = match clear {
-            FrameClear::OpaqueBlack => femtovg::Color::rgbf(0.0, 0.0, 0.0),
-            FrameClear::TransparentBlack => femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0),
-        };
-        self.canvas.clear_rect(0, 0, pw, ph, clear);
+        match clear {
+            FrameClear::OpaqueBlack => {
+                self.canvas
+                    .clear_rect(0, 0, pw, ph, femtovg::Color::rgbf(0.0, 0.0, 0.0));
+            }
+            FrameClear::TransparentBlack => {
+                self.canvas
+                    .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
+            }
+            // Keeping the target's pixels is the point of a damage-tracked
+            // frame; clearing would wipe the regions it deliberately reuses.
+            FrameClear::Keep => {}
+        }
         self.scale_to_logical(dpi_scale);
         self.paragraph_cache.begin_frame();
     }
@@ -2285,6 +2295,75 @@ impl Renderer for FemtoVgRenderer {
         path.rect(0.0, 0.0, w, h);
         self.canvas.fill_path(&path, &paint);
         self.canvas.restore();
+        true
+    }
+
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "damage rectangles are small positive values within the surface"
+    )]
+    fn blit_static_layer_rects(&mut self, key: &str, rects: &[Rect]) -> bool {
+        if rects.is_empty() {
+            return false;
+        }
+        let Some(layer) = self.static_layers.get(key) else {
+            return false;
+        };
+        if !layer.captured {
+            return false;
+        }
+        let image = layer.image;
+        let Ok(texture) = self.canvas.get_native_texture(image) else {
+            return false;
+        };
+        self.canvas.flush();
+        if self.raw_blit.is_none() {
+            self.raw_blit = RawBlit::new(&self.gl);
+        }
+        let Some(blit) = self.raw_blit.as_ref() else {
+            return false;
+        };
+
+        let dpi = self.dpi_scale;
+        let height_px = (self.height * dpi) as i32;
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        unsafe {
+            self.gl.disable(glow::BLEND);
+            self.gl.disable(glow::STENCIL_TEST);
+            self.gl.enable(glow::SCISSOR_TEST);
+            self.gl.use_program(Some(blit.program));
+            self.gl.active_texture(glow::TEXTURE0);
+            self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(blit.vbo));
+            let stride = 4 * F32_BYTES;
+            self.gl.enable_vertex_attrib_array(blit.pos_loc);
+            self.gl
+                .vertex_attrib_pointer_f32(blit.pos_loc, 2, glow::FLOAT, false, stride, 0);
+            self.gl.enable_vertex_attrib_array(blit.uv_loc);
+            self.gl.vertex_attrib_pointer_f32(
+                blit.uv_loc,
+                2,
+                glow::FLOAT,
+                false,
+                stride,
+                2 * F32_BYTES,
+            );
+
+            for &Rect{x, y, w, h} in rects {
+                // The quad always covers the whole surface; the scissor is what
+                // restricts the pixels written, so the cost tracks the damage
+                // area rather than the number of rectangles. GL's scissor
+                // origin is bottom-left, the tree's is top-left.
+                let (px, pw, ph) = ((x * dpi) as i32, (w * dpi) as i32, (h * dpi) as i32);
+                let py = height_px - ((y * dpi) as i32) - ph;
+                self.gl.scissor(px, py, pw.max(0), ph.max(0));
+                self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
+            }
+
+            self.gl.disable(glow::SCISSOR_TEST);
+            self.gl.disable_vertex_attrib_array(blit.pos_loc);
+            self.gl.disable_vertex_attrib_array(blit.uv_loc);
+        }
         true
     }
 

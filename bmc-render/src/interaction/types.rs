@@ -87,12 +87,52 @@ impl Rect {
     /// Check if a point is inside the rectangle.
     #[must_use]
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+        px >= self.x
+        && py >= self.y
+        && px < self.x + self.w
+        && py < self.y + self.h
     }
 
     /// Area for hit-test specificity (smaller area = more specific target).
     #[must_use]
     pub fn area(&self) -> f32 {
         self.w * self.h
+    }
+
+    /// Grow `self` to include `rect`
+    pub fn union(&mut self, rect: Rect) {
+        let &Rect { x, y, w, h } = &rect;
+        let (x1, y1) = ((self.x + self.w).max(x + w), (self.y + self.h).max(y + h));
+        self.x = self.x.min(x);
+        self.y = self.y.min(y);
+        self.w = x1 - self.x;
+        self.h = y1 - self.y;
+    }
+
+    /// Grow `bounds` to include `rect`.
+    pub fn union_bounds(bounds: &mut Option<Rect>, rect: Rect) {
+        if let Some(bounds) = bounds {
+            bounds.union(rect);
+        } else {
+            *bounds = Some(rect);
+        }
+    }
+}
+
+impl From<Rect> for (f32, f32, f32, f32) {
+    fn from(value: Rect) -> Self {
+        (value.x, value.y, value.w, value.h)
+    }
+}
+
+impl From<&Rect> for (f32, f32, f32, f32) {
+    fn from(value: &Rect) -> Self {
+        (value.x, value.y, value.w, value.h)
+    }
+}
+
+impl From<(f32, f32, f32, f32)> for Rect {
+    fn from((x, y, w, h): (f32, f32, f32, f32)) -> Self {
+        Self { x, y, w, h }
     }
 }

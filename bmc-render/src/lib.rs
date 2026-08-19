@@ -216,6 +216,12 @@ pub struct FrameTimings {
     pub transition_state_count: usize,
     /// Hit regions registered by this frame's walk (diagnostic).
     pub hit_region_count: usize,
+    /// Share of the surface covered by the union of dynamic node bounds, in
+    /// percent. What a damage-tracked frame would have to repaint, and so the
+    /// ceiling on what damage tracking could save.
+    pub dynamic_area_pct: u32,
+    /// Nodes that painted dynamically this frame.
+    pub dynamic_node_count: usize,
     /// GPU time rasterising the static half into the cached layer. Only
     /// populated with `BMC_GPU_PASS_TIMING=1`; see
     /// [`tree::gpu_pass_timing_enabled`].

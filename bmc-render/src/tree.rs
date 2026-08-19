@@ -36,6 +36,7 @@ use bmc_wasm_protocol::{
 };
 
 use crate::gpu::mesh::{MeshDrawArgs, MeshHighlight, MeshLighting, MeshTransform};
+use crate::interaction::Rect;
 
 /// When `DEBUG_LAYOUT=1` env var is set, draw colored outlines around every layout node.
 static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
@@ -1642,6 +1643,16 @@ pub struct TreeResult {
     pub content_size: (f32, f32),
     /// Soonest ms until a time node's label changes; drives the boundary re-render.
     pub next_frame_delay_ms: Option<u32>,
+    /// Union of the bounds of every node that paints dynamically, in logical
+    /// pixels. This is the region a damage-tracked frame would have to repaint;
+    /// everything outside it is unchanged from the previous frame.
+    pub dynamic_bounds: Option<Rect>,
+    /// The same regions un-merged, so a repaint can scissor to each rather than
+    /// to a bounding box that may cover far more than the parts do.
+    pub dynamic_rects: Vec<Rect>,
+    /// How many nodes contributed to [`Self::dynamic_bounds`]. A union is only
+    /// a good proxy for the repaint cost when the parts are close together.
+    pub dynamic_node_count: usize,
 }
 
 /// Paragraph data for measurement and rendering
@@ -1748,6 +1759,14 @@ pub struct ProcessContext<'a> {
     /// Re-render the static half into the renderer's cached layer. Only
     /// meaningful with [`EmitMode::All`]; the layer is what other frames blit.
     pub capture_static: bool,
+    /// Regions to repaint, in logical pixels, when the frame can reuse what the
+    /// target already holds. Empty means repaint everything.
+    ///
+    /// These come from the *previous* frames' walks: layout is identical on a
+    /// cached frame, so last frame's dynamic rectangles are this frame's, and
+    /// the damage has to be known before the layer is composited rather than
+    /// after the walk that would discover it.
+    pub damage_rects: &'a [Rect],
     /// Permit blitting the existing layer instead of emitting the static half.
     /// Set when the caller knows the layer is still valid — a cached frame, or
     /// a guest frame whose static half hashed unchanged. Ignored if the blit
@@ -1916,6 +1935,7 @@ fn layout_and_render_inner(
         ctx.capture_static,
         ctx.reuse_static_layer,
         ctx.static_layer_key,
+        ctx.damage_rects,
         &mut result,
         timings,
         &mut anim_ctx,
@@ -1940,6 +1960,8 @@ fn layout_and_render_inner(
 
     sweep_stale_state(&mut anim_ctx, ctx.frame_counter, timings);
     timings.hit_region_count = ctx.interaction.hit_region_count();
+    timings.dynamic_node_count = result.dynamic_node_count;
+    timings.dynamic_area_pct = dynamic_area_pct(result.dynamic_bounds, width, height);
 
     timings.render_us = t2.elapsed().as_micros() as u32;
 
@@ -1993,6 +2015,7 @@ fn render_tree(
     capture_static: bool,
     reuse_static_layer: bool,
     static_layer_key: &str,
+    damage_rects: &[Rect],
     result: &mut TreeResult,
     timings: &mut FrameTimings,
     anim_ctx: &mut AnimationContext<'_>,
@@ -2011,15 +2034,20 @@ fn render_tree(
     // Nothing static changed since the layer was captured, so paint it rather
     // than rasterising the same content again. This is what makes a guest frame
     // cost close to a cached one: re-capturing was most of its GPU time.
-    if !split
-        && anim_ctx.emit == EmitMode::All
-        && reuse_static_layer
-        && renderer.blit_static_layer(static_layer_key)
-    {
-        if pass_timing {
-            timings.gpu_blit_us = renderer.flush_and_fence_us();
+    if !split && anim_ctx.emit == EmitMode::All && reuse_static_layer {
+        // Repaint only the damaged regions when the caller supplied them; the
+        // rest of the target still holds a correct earlier frame.
+        let blitted = if damage_rects.is_empty() {
+            renderer.blit_static_layer(static_layer_key)
+        } else {
+            renderer.blit_static_layer_rects(static_layer_key, damage_rects)
+        };
+        if blitted {
+            if pass_timing {
+                timings.gpu_blit_us = renderer.flush_and_fence_us();
+            }
+            anim_ctx.emit = EmitMode::DynamicOnly;
         }
-        anim_ctx.emit = EmitMode::DynamicOnly;
     }
 
     if split {
@@ -2067,6 +2095,20 @@ fn render_tree(
     if pass_timing {
         timings.gpu_dynamic_us = renderer.flush_and_fence_us();
     }
+}
+
+/// Share of a `width` x `height` surface covered by `bounds`, in percent.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a percentage of a surface is a small non-negative value"
+)]
+fn dynamic_area_pct(bounds: Option<Rect>, width: f32, height: f32) -> u32 {
+    let surface = width * height;
+    if surface <= 0.0 {
+        return 0;
+    }
+    bounds.map_or(0, |Rect { w, h, .. }| (100.0 * w * h / surface).round() as u32)
 }
 
 /// Drop animation and transition states no walk touched this frame, and record
@@ -2869,6 +2911,22 @@ pub(crate) fn render_taffy_node(
     let emits = taffy
         .get_node_context(node_id)
         .is_none_or(|ctx| anim_ctx.emit.emits(ctx.self_dynamic));
+
+    // Record what a damage-tracked frame would have to repaint. Leaves only:
+    // `dynamic` on a container merely says a descendant animates, so counting
+    // containers would union the whole subtree and report the root as damaged.
+    // A canvas is the finest granularity available here — its draws animate
+    // individually, but they are not laid out, so the canvas rect is the region
+    // a repaint would have to cover.
+    if taffy.child_count(node_id) == 0
+        && taffy
+            .get_node_context(node_id)
+            .is_some_and(|ctx| ctx.dynamic)
+    {
+        Rect::union_bounds(&mut result.dynamic_bounds, (x, y, w, h).into());
+        result.dynamic_rects.push((x, y, w, h).into());
+        result.dynamic_node_count += 1;
+    }
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
         if !emits {
@@ -3898,6 +3956,7 @@ mod static_layer_key_tests {
             capture_static: true,
             reuse_static_layer: false,
             static_layer_key: key,
+            damage_rects: &[],
         };
         let tree = TreeNode::Column(PropsData::default(), vec![TreeNode::Spacer { flex: 1.0 }]);
         let mut timings = FrameTimings::default();

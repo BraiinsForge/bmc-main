@@ -31,6 +31,7 @@ use bmc_wasm_protocol::{
 };
 
 use crate::gpu::mesh::MeshDrawArgs;
+use crate::interaction::Rect;
 use crate::tree::{AutoFit, SpanData, TextStyle};
 
 #[cfg(any(test, feature = "test-support"))]
@@ -96,6 +97,12 @@ pub enum FrameClear {
     OpaqueBlack,
     /// Transparent black frame base, used by composited overlays.
     TransparentBlack,
+    /// Leave the target's existing pixels alone.
+    ///
+    /// For a damage-tracked frame: everything outside the repainted regions is
+    /// still correct from an earlier frame, and clearing would destroy exactly
+    /// the pixels the damage tracking exists to preserve.
+    Keep,
 }
 
 /// Rendering backend trait.
@@ -553,6 +560,16 @@ pub trait Renderer {
     /// when no valid layer exists — the caller must then render a full frame.
     fn blit_static_layer(&mut self, _key: &str) -> bool {
         false
+    }
+
+    /// Composite only `rects` of `key`'s cached layer, in logical pixels.
+    ///
+    /// The rest of the target keeps whatever it already held, which is only
+    /// sound when the caller knows those pixels are still current. Returns
+    /// `false` if the layer is unusable, as [`Renderer::blit_static_layer`]
+    /// does.
+    fn blit_static_layer_rects(&mut self, key: &str, _rects: &[Rect]) -> bool {
+        self.blit_static_layer(key)
     }
 
     /// Drop `key`'s cached layer. Must be called whenever the static half of
@@ -1081,6 +1098,10 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn blit_static_layer(&mut self, key: &str) -> bool {
         self.renderer.blit_static_layer(key)
+    }
+
+    fn blit_static_layer_rects(&mut self, key: &str, rects: &[Rect]) -> bool {
+        self.renderer.blit_static_layer_rects(key, rects)
     }
 
     fn invalidate_static_layer(&mut self, key: &str) {
