@@ -118,6 +118,11 @@ pub struct ParagraphLayoutCache {
     /// Distinguishes a cache hit from a reshape that replaces the same entry,
     /// which entry count and width stability both survive.
     counters: LayoutCacheCounters,
+    /// Shaping misses this frame. The counters beside it are lifetime totals;
+    /// a frame summary wants what this frame paid, which tells a cold cache
+    /// from a thrashing one. Reset by [`Self::begin_frame`], read by
+    /// [`Self::stats`].
+    misses_this_frame: u32,
     profile: Option<Box<LayoutCacheProfile>>,
 }
 
@@ -191,6 +196,7 @@ impl std::fmt::Debug for ParagraphLayoutCache {
             )
             .field("resident_glyphs", &self.resident_glyphs)
             .field("counters", &self.counters)
+            .field("misses_this_frame", &self.misses_this_frame)
             .field("profiling_enabled", &self.profile.is_some())
             .finish()
     }
@@ -205,6 +211,7 @@ impl ParagraphLayoutCache {
             transient_entry: None,
             resident_glyphs: 0,
             counters: LayoutCacheCounters::default(),
+            misses_this_frame: 0,
             profile: None,
         }
     }
@@ -237,6 +244,7 @@ impl ParagraphLayoutCache {
             self.counters.hits += 1;
         } else {
             self.counters.shapes += 1;
+            self.misses_this_frame += 1;
         }
         self.counters.peak_entries = self.counters.peak_entries.max(self.entries.len());
 
@@ -275,6 +283,7 @@ impl ParagraphLayoutCache {
 
     /// Clear frame-local profiling state.
     pub fn begin_frame(&mut self) {
+        self.misses_this_frame = 0;
         if let Some(profile) = self.profile.as_mut() {
             profile.keys_this_frame.clear();
             profile.shaped_this_frame.clear();
@@ -466,6 +475,12 @@ impl ParagraphLayoutCache {
                 .layout_cache_peak_frame_distinct_glyphs
                 .max(profile.distinct_glyphs_this_frame.len());
         }
+    }
+
+    /// Shaping misses this frame, and current occupancy.
+    #[must_use]
+    pub fn stats(&self) -> (u32, usize) {
+        (self.misses_this_frame, self.entries.len())
     }
 
     /// Measure paragraph dimensions, shaping if not cached.

@@ -2005,6 +2005,10 @@ impl Renderer for FemtoVgRenderer {
         true
     }
 
+    fn paragraph_cache_stats(&self) -> (u32, usize) {
+        self.paragraph_cache.stats()
+    }
+
     fn invalidate_static_layer(&mut self) {
         if let Some(layer) = self.static_layer.take() {
             self.canvas.delete_image(layer.image);

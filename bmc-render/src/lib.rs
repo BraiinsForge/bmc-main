@@ -201,6 +201,14 @@ pub struct FrameTimings {
     pub deserialize_us: u32,
     /// Taffy tree build + layout computation.
     pub layout_us: u32,
+    /// `taffy.clear()` + `build_taffy_node` — tree construction only.
+    pub taffy_build_us: u32,
+    /// `compute_taffy_layout` — flex solve plus text measurement.
+    pub taffy_compute_us: u32,
+    /// Paragraph shaping misses this frame (diagnostic).
+    pub paragraph_misses: u32,
+    /// Paragraph cache occupancy after layout (diagnostic).
+    pub paragraph_entries: u32,
     /// render_taffy_node + modal rendering.
     pub render_us: u32,
     /// FemtoVG canvas.flush().

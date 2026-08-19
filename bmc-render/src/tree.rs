@@ -1832,8 +1832,14 @@ fn layout_and_render_inner(
         }
     }
 
+    timings.taffy_build_us = t1.elapsed().as_micros() as u32;
 
+    let t_compute = Instant::now();
     compute_taffy_layout(ctx.taffy, root_id, renderer)?;
+    timings.taffy_compute_us = t_compute.elapsed().as_micros() as u32;
+    let (misses, entries) = renderer.paragraph_cache_stats();
+    timings.paragraph_misses = misses;
+    timings.paragraph_entries = entries as u32;
 
     // Extract actual content extent from the root's layout.
     if let Ok(root_layout) = ctx.taffy.layout(root_id) {

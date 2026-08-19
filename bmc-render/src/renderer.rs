@@ -552,6 +552,12 @@ pub trait Renderer {
     /// Drop the cached layer. Must be called whenever the static half of the
     /// tree could have changed, i.e. after any frame that ran the guest.
     fn invalidate_static_layer(&mut self) {}
+
+    /// Paragraph-shaping misses this frame, and cache occupancy. Diagnostic
+    /// only — `(0, 0)` when a renderer keeps no such cache.
+    fn paragraph_cache_stats(&self) -> (u32, usize) {
+        (0, 0)
+    }
 }
 
 /// Restores suspended renderer assets at the point where a draw first needs them.
@@ -1060,6 +1066,10 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn invalidate_static_layer(&mut self) {
         self.renderer.invalidate_static_layer();
+    }
+
+    fn paragraph_cache_stats(&self) -> (u32, usize) {
+        self.renderer.paragraph_cache_stats()
     }
 }
 
