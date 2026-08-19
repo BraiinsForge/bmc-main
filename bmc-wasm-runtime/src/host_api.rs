@@ -959,6 +959,16 @@ pub(crate) struct HostState {
     /// Monotonic frame counter for GC.
     pub frame_counter: u64,
 
+    /// Static-half hash of the last submitted tree, paired with the renderer
+    /// asset ledger's generation at that point. When a new tree matches both,
+    /// the cached layer is still valid and the frame blits instead of
+    /// re-rasterising static content — most of a guest frame's GPU cost.
+    ///
+    /// The generation is half the key because a static draw's *pixels* can come
+    /// from an asset rather than from the tree, so an unchanged tree alone does
+    /// not mean an unchanged layer.
+    pub last_static_key: Option<(u64, u64)>,
+
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
 
@@ -1384,6 +1394,7 @@ impl HostState {
             animation_states: HashMap::new(),
             transition_states: HashMap::new(),
             frame_counter: 0,
+            last_static_key: None,
             cached_tree: None,
             system_time,
             monotonic_ms: 0,

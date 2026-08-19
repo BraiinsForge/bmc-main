@@ -118,6 +118,7 @@ pub(crate) struct RendererAssetLedger {
     records: BTreeMap<String, RendererAssetRecord>,
     owned_ids: HashSet<RendererAssetId>,
     warned_unowned_draw: bool,
+    generation: u64,
 }
 
 impl RendererAssetLedger {
@@ -131,6 +132,19 @@ impl RendererAssetLedger {
 
     pub(crate) fn should_warn_unowned(&mut self) -> bool {
         !std::mem::replace(&mut self.warned_unowned_draw, true)
+    }
+
+    /// Bumped by every mutation below.
+    ///
+    /// A cached static layer holds rasterised *pixels* for the draws in the
+    /// static half of a tree, and a bitmap or SVG draw's pixels come from here,
+    /// not from the tree. So an identical tree does not mean an identical
+    /// layer: re-register a tag with different bytes and the tree hashes the
+    /// same while what it should paint has changed. Pairing this with
+    /// `partition::static_hash` is what keeps the layer keyed by everything its
+    /// rasterisation reads.
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation
     }
 
     pub(crate) fn record(
@@ -152,6 +166,7 @@ impl RendererAssetLedger {
             return Err(record);
         }
         self.records.insert(tag, record);
+        self.generation += 1;
         Ok(())
     }
 
@@ -197,8 +212,11 @@ impl RendererAssetLedger {
     }
 
     fn set_demand_restoration(&mut self, tag: &str, state: DemandRestoration) {
-        if let Some(record) = self.records.get_mut(tag) {
+        if let Some(record) = self.records.get_mut(tag)
+            && record.demand_restoration != state
+        {
             record.demand_restoration = state;
+            self.generation += 1;
         }
     }
 
@@ -214,11 +232,13 @@ impl RendererAssetLedger {
             );
             false
         });
+        self.generation += 1;
     }
 
     pub(crate) fn clear(&mut self) {
         self.records.clear();
         self.owned_ids.clear();
+        self.generation += 1;
     }
 }
 

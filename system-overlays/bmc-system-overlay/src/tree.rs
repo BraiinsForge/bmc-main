@@ -95,6 +95,7 @@ impl TreeUi {
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
             capture_static: false,
+            reuse_static_layer: false,
         };
         #[expect(
             clippy::cast_precision_loss,

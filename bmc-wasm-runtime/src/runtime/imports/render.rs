@@ -232,6 +232,15 @@ fn submit_tree(
         };
         let deserialize_us =
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
+        // Hashed before rendering: when the static half matches the previous
+        // guest frame's, the cached layer is still valid and this frame blits
+        // instead of re-rasterising content that did not change. That
+        // re-capture was most of a guest frame's GPU cost.
+        let static_key = (
+            bmc_render::partition::static_hash(&tree_node),
+            state.renderer_assets.generation(),
+        );
+        let static_unchanged = state.last_static_key == Some(static_key);
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
@@ -252,7 +261,8 @@ fn submit_tree(
             delta_ms,
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
-            capture_static: true,
+            capture_static: !static_unchanged,
+            reuse_static_layer: static_unchanged,
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,
@@ -287,6 +297,7 @@ fn submit_tree(
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
                 state.cached_tree = Some((tree_node, w, h));
+                state.last_static_key = Some(static_key);
             }
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");

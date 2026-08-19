@@ -1357,13 +1357,13 @@ impl WasmWidgetRuntime {
         let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
-        // Reuse the rasterised static half when there is one: paint it, then
-        // emit only the dynamic nodes over the top.
-        let emit = if renderer.blit_static_layer() {
-            bmc_render::tree::EmitMode::DynamicOnly
-        } else {
-            bmc_render::tree::EmitMode::All
-        };
+        // An asset mutation since the layer was captured means a static draw's
+        // pixels may have changed while the tree did not, so this frame has to
+        // emit the static half again — which is also what gives a suspended
+        // asset the draw it needs to be restored on.
+        let stale_assets = state
+            .last_static_key
+            .is_some_and(|(_, generation)| generation != state.renderer_assets.generation());
 
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
@@ -1375,8 +1375,9 @@ impl WasmWidgetRuntime {
             frame_counter,
             delta_ms,
             now_unix_secs,
-            emit,
-            capture_static: false,
+            emit: bmc_render::tree::EmitMode::All,
+            capture_static: stale_assets,
+            reuse_static_layer: !stale_assets,
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,
@@ -1411,6 +1412,16 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.has_active_animations = has_active;
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
+                if stale_assets {
+                    // Re-read rather than reuse the value above: restoring an
+                    // asset during the walk bumps the generation again, and
+                    // without this every later cached frame would keep repainting
+                    // in full until the next guest frame refreshed the key.
+                    let generation = state.renderer_assets.generation();
+                    if let Some((hash, _)) = state.last_static_key {
+                        state.last_static_key = Some((hash, generation));
+                    }
+                }
                 true
             }
             Err(e) => {

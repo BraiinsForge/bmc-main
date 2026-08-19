@@ -1727,10 +1727,14 @@ pub struct ProcessContext<'a> {
     /// Which half of the static/dynamic partition to emit; see [`EmitMode`].
     /// [`EmitMode::All`] reproduces a full frame.
     pub emit: EmitMode,
-    /// Re-render the static half into the renderer's cached layer after the
-    /// main pass. Only meaningful with [`EmitMode::All`]; the layer is what a
-    /// later dynamic-only frame blits.
+    /// Re-render the static half into the renderer's cached layer. Only
+    /// meaningful with [`EmitMode::All`]; the layer is what other frames blit.
     pub capture_static: bool,
+    /// Permit blitting the existing layer instead of emitting the static half.
+    /// Set when the caller knows the layer is still valid — a cached frame, or
+    /// a guest frame whose static half hashed unchanged. Ignored if the blit
+    /// fails, which falls back to a full pass.
+    pub reuse_static_layer: bool,
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -1887,6 +1891,7 @@ fn layout_and_render_inner(
         ctx.interaction,
         ctx.scroll_states,
         ctx.capture_static,
+        ctx.reuse_static_layer,
         &mut result,
         &mut anim_ctx,
     );
@@ -1966,12 +1971,24 @@ fn render_tree(
     interaction: &mut InteractionState,
     scroll_states: &mut HashMap<String, ScrollState>,
     capture_static: bool,
+    reuse_static_layer: bool,
     result: &mut TreeResult,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
     let split = anim_ctx.emit == EmitMode::All
         && capture_static
         && renderer.begin_static_layer(width as u32, height as u32);
+
+    // Nothing static changed since the layer was captured, so paint it rather
+    // than rasterising the same content again. This is what makes a guest frame
+    // cost close to a cached one: re-capturing was most of its GPU time.
+    if !split
+        && anim_ctx.emit == EmitMode::All
+        && reuse_static_layer
+        && renderer.blit_static_layer()
+    {
+        anim_ctx.emit = EmitMode::DynamicOnly;
+    }
 
     if split {
         anim_ctx.emit = EmitMode::StaticOnly;

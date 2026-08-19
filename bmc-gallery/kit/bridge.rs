@@ -464,6 +464,7 @@ fn staged_tree(
                 // buffer to preserve and no guest to skip.
                 emit: bmc_render::tree::EmitMode::All,
                 capture_static: false,
+                reuse_static_layer: false,
             };
             match bmc_render::process_tree(
                 &bytes,
