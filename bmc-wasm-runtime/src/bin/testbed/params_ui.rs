@@ -24,11 +24,6 @@
 //! path that drives `WasmWidgetRuntime::deliver_params_update` on every tile
 //! plus appends a `ParamDelivery` event when recording is active.
 
-#![expect(
-    clippy::cast_precision_loss,
-    reason = "PARAM_PANEL_W u32 → f32 cast on a fixed UI constant"
-)]
-
 use bmc_wasm_runtime::unified_fixture::UnifiedEvent;
 
 use super::ui_helpers::{RADIO_GROUP_MAX_VARIANTS, combo_cell, key_label, radio_group_cell};
@@ -73,9 +68,6 @@ impl TestbedApp {
     ///  - per-widget Params (when the manifest declares any) on top,
     ///  - deck-wide System always below.
     ///
-    /// The window's outer width is extended by `PARAM_PANEL_W` at startup
-    /// to host this panel without compressing the central tile area.
-    ///
     /// Both sections share a single vertical [`egui::ScrollArea`]
     /// so long param/system lists scroll together rather than stealing
     /// each other's height.
@@ -100,7 +92,7 @@ impl TestbedApp {
         // go in a foreground area; the panel itself only reserves space.
         let panel = egui::SidePanel::right("right_panel")
             .resizable(false)
-            .exact_width(PARAM_PANEL_W as f32)
+            .exact_width(PARAM_PANEL_W)
             .frame(egui::Frame::NONE)
             .show_separator_line(false)
             .show_inside(root_ui, |_| {});

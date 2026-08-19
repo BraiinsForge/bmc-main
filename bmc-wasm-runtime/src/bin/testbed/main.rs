@@ -168,11 +168,9 @@ fn resolve_record_request(cli: &CliArgs) -> Result<Option<RecordRequest>> {
     Ok(Some(RecordRequest { target, dataset }))
 }
 
-/// Width of the right-side sidebar housing both the per-widget Params
-/// section (when the manifest declares any) and the deck-wide System
-/// section (always shown). Added to the window's outer size so the tile
-/// area stays at native dimensions instead of getting squeezed.
-pub(crate) const PARAM_PANEL_W: u32 = 320;
+/// Width of the right-side sidebar: Params when the manifest declares any,
+/// and the deck-wide System section always.
+pub(crate) const PARAM_PANEL_W: f32 = 320.0;
 
 /// Width of the notice banner: wide enough for a fixture path to fit
 /// on one monospaced line.

@@ -146,7 +146,8 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
         .with_context(|| format!("failed to read {}", candidate.display()))?;
     let mut config = parse_capture_config(&content).map_err(|e| ConfigError {
         path: candidate.clone(),
-        message: format!("{e}"),
+        // `{e:#}`, so the cause under the section name survives.
+        message: format!("{e:#}"),
         hint: Some(format!("valid keys: {}", KNOWN_CONFIG_KEYS.join(", "))),
     })?;
     // Resolve relative fixture paths against the config directory.
