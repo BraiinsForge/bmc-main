@@ -2467,6 +2467,154 @@ mod tests {
             "BUG: registry miss must invalidate the cached binding",
         );
     }
+
+    /// Probes which single-channel ("8-bit indexed / palette") texture
+    /// formats this GL context accepts as a framebuffer color attachment.
+    /// FemtoVG's `PixelFormat::Gray8` maps to `GL_LUMINANCE` on GLES2 —
+    /// GLES2 does *not* guarantee LUMINANCE/ALPHA textures are
+    /// color-renderable (only RGBA4/RGB5_A1/RGB565 renderbuffers are
+    /// required-renderable per spec), so this must be checked per
+    /// driver/GPU rather than assumed.
+    ///
+    /// Run with `cargo test -p bmc-render probe_single_channel -- --nocapture`.
+    /// This only exercises the dev-machine Mesa llvmpipe software path via
+    /// `GlHarness` — llvmpipe is far more permissive than small embedded
+    /// GPUs (e.g. the Vivante GC400 this app targets per comments
+    /// elsewhere in this crate), so a pass here does NOT guarantee the
+    /// same formats work on real target hardware. Treat this as a first
+    /// filter, then re-run the equivalent check on-device.
+    #[test]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "small fixed GL enum values fit i32"
+    )]
+    fn probe_single_channel_color_renderable_formats() {
+        const GL_RED_EXT: u32 = 0x1903;
+
+        // Deliberately does not build a `FemtoVgRenderer`/`Canvas` here:
+        // this probe only needs raw GL framebuffer-completeness answers,
+        // which are independent of femtovg's own `Canvas::new()` init path.
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+
+        unsafe {
+            let version = gl.get_parameter_string(glow::VERSION);
+            let renderer_str = gl.get_parameter_string(glow::RENDERER);
+            let vendor = gl.get_parameter_string(glow::VENDOR);
+            let extensions = gl.get_parameter_string(glow::EXTENSIONS);
+
+            eprintln!("== GL context ==");
+            eprintln!("VERSION:  {version}");
+            eprintln!("RENDERER: {renderer_str}");
+            eprintln!("VENDOR:   {vendor}");
+            eprintln!(
+                "EXT_texture_rg present: {}",
+                extensions.contains("GL_EXT_texture_rg")
+            );
+
+            eprintln!("== Framebuffer completeness (color attachment 0, 4x4) ==");
+
+            // Known-good control: RGBA8 must be color-renderable everywhere,
+            // including GLES2. If this fails, the harness itself is broken.
+            let rgba_ok = probe_format(
+                gl,
+                glow::RGBA as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                "RGBA8 (control)",
+            );
+            assert!(
+                rgba_ok,
+                "control case RGBA8 must be renderable — harness is broken"
+            );
+
+            // Candidates for a 1-byte-per-pixel indexed buffer.
+            probe_format(
+                gl,
+                glow::LUMINANCE as i32,
+                glow::LUMINANCE,
+                glow::UNSIGNED_BYTE,
+                "LUMINANCE (femtovg Gray8)",
+            );
+            probe_format(
+                gl,
+                glow::ALPHA as i32,
+                glow::ALPHA,
+                glow::UNSIGNED_BYTE,
+                "ALPHA",
+            );
+
+            probe_format(
+                gl,
+                GL_RED_EXT as i32,
+                GL_RED_EXT,
+                glow::UNSIGNED_BYTE,
+                "RED_EXT (GL_EXT_texture_rg)",
+            );
+        }
+    }
+
+    /// Create a `4x4` texture with the given format triple, attach it as
+    /// color attachment 0 of a fresh FBO, report + print completeness, then
+    /// clean up the GL objects.
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "small fixed GL enum values fit i32"
+    )]
+    unsafe fn probe_format(
+        gl: &glow::Context,
+        internal_format: i32,
+        format: u32,
+        ty: u32,
+        label: &str,
+    ) -> bool {
+        unsafe {
+            let texture = gl.create_texture().expect("BUG: create_texture failed");
+            gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            gl.tex_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                internal_format,
+                4,
+                4,
+                0,
+                format,
+                ty,
+                glow::PixelUnpackData::Slice(None),
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MIN_FILTER,
+                glow::NEAREST as i32,
+            );
+            gl.tex_parameter_i32(
+                glow::TEXTURE_2D,
+                glow::TEXTURE_MAG_FILTER,
+                glow::NEAREST as i32,
+            );
+            gl.bind_texture(glow::TEXTURE_2D, None);
+
+            let fbo = gl
+                .create_framebuffer()
+                .expect("BUG: create_framebuffer failed");
+            gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+            let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            gl.delete_framebuffer(fbo);
+            gl.delete_texture(texture);
+
+            let complete = status == glow::FRAMEBUFFER_COMPLETE;
+            eprintln!("{label:<32} complete={complete:<5} status=0x{status:04X}");
+            complete
+        }
+    }
 }
 
 /// Regressions for hard-separated multiline text. cosmic-text reports each
