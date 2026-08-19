@@ -48,7 +48,7 @@ use bmc_render::interaction::TouchEvent;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_protocol::{MdnsBrowseId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId};
 use bmc_wasm_runtime::capture_config::CaptureConfig;
-use bmc_wasm_runtime::platform_catalog::{DisplayShape, Target};
+use bmc_wasm_runtime::platform_catalog::{DisplayShape, Target, manifest_viewport_shape};
 use bmc_wasm_runtime::unified_fixture::{
     FixtureHeader, TimelineEvent, UnifiedEvent, UnifiedFixture, load_unified_fixture,
     validate_fixture,
@@ -391,12 +391,8 @@ fn catalog_matrix() -> Vec<(&'static str, Target)> {
 
 /// Whether the widget's manifest admits a target, DPI included.
 fn target_supported(manifest: &bmc_widget_manifest::Manifest, target: Target) -> bool {
-    let shape = match target.viewport.shape {
-        DisplayShape::Round => bmc_widget_manifest::ViewportShape::Round,
-        DisplayShape::Rectangular => bmc_widget_manifest::ViewportShape::Rectangular,
-    };
     manifest.supports_viewport_at_dpi(
-        shape,
+        manifest_viewport_shape(target.viewport.shape),
         target.viewport.width,
         target.viewport.height,
         target.platform.display().dpi,

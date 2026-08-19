@@ -73,6 +73,15 @@ pub fn runtime_viewport_shape(shape: DisplayShape) -> bmc_wasm_protocol::Viewpor
     }
 }
 
+/// The viewport shape a manifest is written in.
+#[must_use]
+pub fn manifest_viewport_shape(shape: DisplayShape) -> bmc_widget_manifest::ViewportShape {
+    match shape {
+        DisplayShape::Rectangular => bmc_widget_manifest::ViewportShape::Rectangular,
+        DisplayShape::Round => bmc_widget_manifest::ViewportShape::Round,
+    }
+}
+
 /// A previewable platform: a product plus the viewports widgets may occupy on it.
 #[derive(Debug, Clone, Copy)]
 pub struct Platform {

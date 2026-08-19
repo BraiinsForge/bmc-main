@@ -70,7 +70,9 @@ use bmc_render::interaction::TouchEvent;
 use bmc_wasm_runtime::fixtures::{
     self, PreparedWidget, find_widget_root, seed_kv_from_widget_root, snapshot_kv_dir,
 };
-use bmc_wasm_runtime::platform_catalog::{self, DisplayShape, Platform, Viewport};
+use bmc_wasm_runtime::platform_catalog::{
+    self, DisplayShape, Platform, Viewport, manifest_viewport_shape,
+};
 use bmc_wasm_runtime::{DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot};
 use clap::Parser;
 
@@ -1712,7 +1714,12 @@ impl TestbedApp {
                 geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed.shape),
                 config: rt_config,
                 label,
-                supported: viewport_supported(placed, &self.manifest.supported_viewports),
+                supported: self.manifest.supports_viewport_at_dpi(
+                    manifest_viewport_shape(placed.shape),
+                    placed.w,
+                    placed.h,
+                    platform.display().dpi,
+                ),
                 get_proc: get_proc.clone(),
             };
             tiles.push(self.build_one_view(placed, platform, seed, led_rx, painter, window)?);
@@ -2012,30 +2019,6 @@ fn startup_platforms(
     } else {
         supported
     }
-}
-
-/// Whether a widget's `supported` viewports admit a tile of this shape and size.
-/// An empty list is unconstrained — every tile qualifies.
-fn viewport_supported(
-    placed: &PlacedTile,
-    supported: &[bmc_widget_manifest::WidgetViewportConstraint],
-) -> bool {
-    use bmc_widget_manifest::ViewportShape;
-    if supported.is_empty() {
-        return true;
-    }
-    supported.iter().any(|c| {
-        let shape_ok = matches!(
-            (placed.shape, c.viewport_shape),
-            (DisplayShape::Rectangular, ViewportShape::Rectangular)
-                | (DisplayShape::Round, ViewportShape::Round)
-        );
-        shape_ok
-            && c.min_width.is_none_or(|lo| placed.w >= lo)
-            && c.max_width.is_none_or(|hi| placed.w <= hi)
-            && c.min_height.is_none_or(|lo| placed.h >= lo)
-            && c.max_height.is_none_or(|hi| placed.h <= hi)
-    })
 }
 
 /// Paint a dim "size not supported" slab where a widget declines a tile.

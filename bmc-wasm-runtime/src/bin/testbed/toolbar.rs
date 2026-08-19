@@ -24,7 +24,7 @@
 //! Everything here acts on the testbed as a whole; per-widget state
 //! stays in the right sidebar.
 
-use bmc_wasm_runtime::platform_catalog::{DisplayShape, PLATFORMS, Platform};
+use bmc_wasm_runtime::platform_catalog::{PLATFORMS, Platform, manifest_viewport_shape};
 
 use super::TestbedApp;
 
@@ -502,28 +502,22 @@ pub(super) fn platform_supported(
 ) -> bool {
     let dpi = platform.display().dpi;
     platform.viewports.iter().any(|vp| {
-        let shape = match vp.shape {
-            DisplayShape::Rectangular => bmc_widget_manifest::ViewportShape::Rectangular,
-            DisplayShape::Round => bmc_widget_manifest::ViewportShape::Round,
-        };
-        manifest.supports_viewport_at_dpi(shape, vp.width, vp.height, dpi)
+        manifest.supports_viewport_at_dpi(
+            manifest_viewport_shape(vp.shape),
+            vp.width,
+            vp.height,
+            dpi,
+        )
     })
 }
 
-/// Whether the manifest admits `target` at its platform's display density —
-/// what the choose overlays offer. Strictly stricter than the live-view gate,
-/// which checks size and shape alone, so an offered target always builds live
-/// rather than as a placeholder.
+/// Whether the manifest admits `target` at its platform's display density.
 pub(super) fn target_recordable(
     manifest: &bmc_widget_manifest::Manifest,
     target: bmc_wasm_runtime::platform_catalog::Target,
 ) -> bool {
-    let shape = match target.viewport.shape {
-        DisplayShape::Rectangular => bmc_widget_manifest::ViewportShape::Rectangular,
-        DisplayShape::Round => bmc_widget_manifest::ViewportShape::Round,
-    };
     manifest.supports_viewport_at_dpi(
-        shape,
+        manifest_viewport_shape(target.viewport.shape),
         target.viewport.width,
         target.viewport.height,
         target.platform.display().dpi,
