@@ -26,11 +26,26 @@
 
 use super::{TestbedApp, paint_timing_chart, paint_timing_legend, view::DeviceView};
 
-/// Tall enough for one row of readouts and the sparkline beside them.
-pub(super) const STATUS_H: f32 = 26.0;
+/// One row of readouts, at an 11 pt figure's own line and no more: stacked,
+/// any slack here reads as a gap between the two rows rather than as air.
+const READOUT_ROW_H: f32 = 16.0;
+
+/// Set by the sparkline, not by the rows: the chart needs height to draw a
+/// widget's few hundred µs against a frame budget, and the rows centre in
+/// whatever that leaves.
+pub(super) const STATUS_H: f32 = 40.0;
 
 /// Width of the sparkline that closes the row.
 const SPARK_W: f32 = 180.0;
+
+/// The most samples the sparkline can draw — one per column. Anything older
+/// scrolls off, so a run that keeps no report has no reason to hold it.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a positive ratio of two literals"
+)]
+pub(super) const SPARK_SAMPLES: usize = (SPARK_W / super::paint::CHART_COL_W) as usize;
 
 /// Vertical air around the sparkline inside the bar.
 const SPARK_INSET: f32 = 4.0;
@@ -42,6 +57,14 @@ const LEGEND_H: f32 = 14.0;
 /// Between a caption and its values — tighter than the row's own spacing,
 /// so a value belongs to the caption on its left and not to the next group.
 const VALUE_GAP: f32 = 6.0;
+
+/// One row of the stacked readouts, its figures centred in it.
+fn readout_row(column: &mut egui::Ui, groups: impl FnOnce(&mut egui::Ui)) {
+    let width = column.available_width();
+    column.allocate_ui(egui::vec2(width, READOUT_ROW_H), |slot| {
+        slot.horizontal_centered(groups);
+    });
+}
 
 /// A caption and the figures it names, kept together.
 fn stat_group(row: &mut egui::Ui, caption: &str, values: &[String]) {
@@ -83,18 +106,32 @@ impl TestbedApp {
                         .max_rect(rect.shrink2(egui::vec2(super::toolbar::BAR_INLINE_PAD, 0.0))),
                 );
                 bar.horizontal_centered(|row| {
-                    self.paint_readouts(row, palette);
-                    // Beside the numbers it annotates, not across the bar.
-                    self.paint_sparkline(row);
-                    row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
-                        self.paint_hot_chip(end);
+                    // The numbers stack; the chart stands beside both rows,
+                    // spanning them, since it annotates the pair.
+                    row.vertical(|column| {
+                        // The two rows are the bar: any spacing between them
+                        // is height they then have to share.
+                        column.spacing_mut().item_spacing.y = 0.0;
+                        // A vertical fills the height it is given and lays out
+                        // from the top, so the pair is centred by hand.
+                        column.add_space((STATUS_H - 2.0 * READOUT_ROW_H) / 2.0);
+                        self.paint_readouts(column, palette);
                     });
+                    self.paint_sparkline(row, palette);
                 });
+                // In the window's corner, the same inset off each edge: it
+                // reports on the run rather than on either row of figures.
+                let mut corner = area.new_child(
+                    egui::UiBuilder::new()
+                        .max_rect(rect.shrink(super::toolbar::BAR_INLINE_PAD))
+                        .layout(egui::Layout::right_to_left(egui::Align::Max)),
+                );
+                self.paint_hot_chip(&mut corner);
             });
     }
 
-    /// Host frame cost, and what the widgets asked of it.
-    fn paint_readouts(&self, row: &mut egui::Ui, palette: &super::theme::Palette) {
+    /// What the host spent, over what the widgets asked of it.
+    fn paint_readouts(&self, column: &mut egui::Ui, palette: &super::theme::Palette) {
         let avg_us = if self.perf.recent_frame_us.is_empty() {
             0
         } else {
@@ -106,13 +143,6 @@ impl TestbedApp {
         } else {
             0.0
         };
-        stat_group(
-            row,
-            "host frame",
-            &[format!("{avg_us:>6} µs"), format!("{fps:>5.1} fps")],
-        );
-        super::ui_helpers::group_divider(row, palette.border_subtle, STATUS_H);
-
         // Summed, not sampled: every open view spends its own wasm time on
         // the same host frame, and one view's figure would speak for none.
         let live: Vec<&DeviceView> = self.stage.tiles().iter().filter(|v| v.is_live()).collect();
@@ -121,28 +151,36 @@ impl TestbedApp {
             .filter_map(|view| view.last_timings())
             .map(|t| t.wasm_us)
             .sum();
-        stat_group(
-            row,
-            "widgets",
-            &[
-                format!("{wasm_us:>6} µs"),
-                format!("{:>2} views", live.len()),
-            ],
-        );
-        super::ui_helpers::group_divider(row, palette.border_subtle, STATUS_H);
-
         // The worst across the views: one view falling behind is the thing
         // worth surfacing, and an average would bury it.
         let slip = live.iter().filter_map(|view| view.last_slip_ms()).max();
-        stat_group(
-            row,
-            "slip",
-            &[slip.map_or_else(|| "   — ms".to_owned(), |ms| format!("{ms:>4} ms"))],
-        );
-        super::ui_helpers::group_divider(row, palette.border_subtle, STATUS_H);
+
+        readout_row(column, |row| {
+            stat_group(
+                row,
+                "host frame",
+                &[format!("{avg_us:>6} µs"), format!("{fps:>5.1} fps")],
+            );
+        });
+        readout_row(column, |row| {
+            stat_group(
+                row,
+                "widgets",
+                &[
+                    format!("{wasm_us:>6} µs"),
+                    format!("{:>2} views", live.len()),
+                ],
+            );
+            super::ui_helpers::group_divider(row, palette.border_subtle, READOUT_ROW_H);
+            stat_group(
+                row,
+                "slip",
+                &[slip.map_or_else(|| "   — ms".to_owned(), |ms| format!("{ms:>4} ms"))],
+            );
+        });
     }
 
-    fn paint_sparkline(&self, row: &mut egui::Ui) {
+    fn paint_sparkline(&self, row: &mut egui::Ui, palette: &super::theme::Palette) {
         if self.perf.samples.is_empty() {
             return;
         }
@@ -151,12 +189,12 @@ impl TestbedApp {
             egui::Sense::hover(),
         );
         // `painter_at` clips the chart so a spike cannot bleed into the row.
-        paint_timing_chart(&row.painter_at(rect), rect, &self.perf.samples);
+        paint_timing_chart(&row.painter_at(rect), rect, &self.perf.samples, palette);
         // The bar has no room for a key, so the chart carries its own.
         response.on_hover_ui(|tip| {
             let (key, _) =
                 tip.allocate_exact_size(egui::vec2(LEGEND_W, LEGEND_H), egui::Sense::hover());
-            paint_timing_legend(tip.painter(), key, tip.visuals().text_color());
+            paint_timing_legend(tip.painter(), key, tip.visuals().text_color(), palette);
         });
     }
 }

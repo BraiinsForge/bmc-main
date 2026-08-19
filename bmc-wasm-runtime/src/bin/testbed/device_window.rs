@@ -551,7 +551,7 @@ impl TestbedApp {
             .frame(
                 egui::Frame::window(&ctx.style())
                     .inner_margin(WINDOW_INSET)
-                    .fill(palette.device_bezel),
+                    .fill(palette.background),
             )
             .current_pos(pos);
         let close_hint = format!("close {}", super::ui_helpers::platform_name(platform));
@@ -598,7 +598,7 @@ impl TestbedApp {
         };
         let (places, size) = state_layout(frame, strip);
         let (outer, _) = ui.allocate_exact_size(size * zoom, egui::Sense::hover());
-        ui.painter().rect_filled(outer, 0.0, palette.device_bezel);
+        ui.painter().rect_filled(outer, 0.0, palette.background);
         let screen_origin = outer.min;
 
         for (place, (view_idx, local)) in frame.views.iter().enumerate() {
@@ -620,7 +620,7 @@ impl TestbedApp {
             // they get slabs instead of textures and no touch input,
             // keeping the fixture timeline clean.
             if active_record_idx.is_some_and(|active| active != *view_idx) {
-                ui.painter().rect_filled(rect, 0.0, palette.device_slab);
+                ui.painter().rect_filled(rect, 0.0, palette.layer_accent);
                 continue;
             }
             super::paint_tile_texture(ui, view, rect);
@@ -678,7 +678,7 @@ impl TestbedApp {
                     egui::vec2(local.width(), crate::LED_STRIP_H as f32) * zoom,
                 );
                 ui.painter()
-                    .rect_filled(strip_rect, STRIP_RADIUS, palette.device_strip);
+                    .rect_filled(strip_rect, STRIP_RADIUS, palette.layer_accent);
                 let view = flat.get(*view_idx).and_then(|i| self.stage.tile(*i));
 
                 // The glow is a plain quad mesh, so at full size it paints

@@ -508,26 +508,24 @@ pub(super) fn paint_led_strip(
 /// Paint a stacked bar chart of the most recent frame timings into `rect`.
 /// One column per sample, stacked top-to-bottom: wasm / deserialize / layout / render / flush.
 /// A horizontal reference line marks the 16.6 ms / 60 fps budget.
+/// Fixed column width — bars stay the same size and newest samples append at
+/// the right edge, older samples scroll off the left. Avoids the "bars resize
+/// as the window fills" effect.
+pub(super) const CHART_COL_W: f32 = 2.0;
+
+/// The frame's components, in the order the bars stack them. Their colours are
+/// `palette.data` at the same index, so the chart and its legend cannot drift.
+const COMPONENT_LABELS: [&str; 5] = ["wasm", "deser", "layout", "render", "flush"];
+
 pub(super) fn paint_timing_chart(
     painter: &egui::Painter,
     rect: egui::Rect,
     samples: &[bmc_render::FrameTimings],
+    palette: &super::theme::Palette,
 ) {
-    // Below this it is a sparkline, and the guides cost more legibility than
-    // they add: seven grid lines and two 9 pt labels in twenty pixels leave
-    // nothing to read but themselves.
-    const DETAIL_H: f32 = 48.0;
-    // Fixed column width — bars stay the same size and newest samples append at the right edge,
-    // older samples scroll off the left. Avoids the "bars resize as the window fills" effect.
-    const COL_W: f32 = 2.0;
-
-    let detailed = rect.height() >= DETAIL_H;
-
-    // Its own backing, like any instrument: the component colours are chosen
-    // against dark, and the bar has a different tone in each theme.
-    painter.rect_filled(rect, 0.0, egui::Color32::from_black_alpha(190));
-    let guide_text = egui::Color32::from_gray(190);
-    let max_cols = (rect.width() / COL_W).floor().max(1.0) as usize;
+    // Sunk into the bar it sits in, like the sidebar's grouped controls.
+    painter.rect_filled(rect, 0.0, palette.layer_inset);
+    let max_cols = (rect.width() / CHART_COL_W).floor().max(1.0) as usize;
     let n = samples.len().min(max_cols);
     if n == 0 {
         return;
@@ -548,36 +546,12 @@ pub(super) fn paint_timing_chart(
         .max()
         .unwrap_or(1)
         .max(1);
-    // y-scale floor is 36,000 µs — slightly above the 30 fps budget (33,333 µs)
-    // so the 30 fps reference line sits a bit below the top of the chart and its label has room
-    // instead of being clipped at the edge. A genuine spike past 36 ms grows the scale.
-    let y_scale_us = peak_us.max(36_000) as f32;
-    let col_w = COL_W;
-
-    // Subtle horizontal grid every 5 ms — drawn first so bars overlay on top.
-    if detailed {
-        let grid_color = egui::Color32::from_rgba_unmultiplied(140, 140, 140, 30);
-        let grid_step_us = 5_000.0_f32;
-        let mut grid_us = grid_step_us;
-        while grid_us < y_scale_us {
-            let y = rect.max.y - (grid_us / y_scale_us) * rect.height();
-            if y > rect.min.y && y < rect.max.y {
-                painter.line_segment(
-                    [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-                    egui::Stroke::new(1.0_f32, grid_color),
-                );
-            }
-            grid_us += grid_step_us;
-        }
-    }
-    // Component colours mirror PerfOverlay's legend ordering.
-    let colours = [
-        (egui::Color32::from_rgb(0x6A, 0x9F, 0xD8), "wasm"),
-        (egui::Color32::from_rgb(0xE0, 0x9A, 0x50), "deser"),
-        (egui::Color32::from_rgb(0xCC, 0xCC, 0x50), "layout"),
-        (egui::Color32::from_rgb(0x50, 0xCC, 0x50), "render"),
-        (egui::Color32::from_rgb(0xCC, 0x50, 0xCC), "flush"),
-    ];
+    // The 60 fps frame budget as a floor, so a bar's height means cost and not
+    // rank: scaled to the window's own peak, a steady frame fills the chart and
+    // the first render flattens every frame after it. A spike past the budget
+    // still grows the scale.
+    let y_scale_us = peak_us.max(16_667) as f32;
+    let col_w = CHART_COL_W;
 
     // Right-anchored: oldest sample drawn at the leftmost slot used, newest at the right edge.
     let bars_left = rect.max.x - n as f32 * col_w;
@@ -591,7 +565,7 @@ pub(super) fn paint_timing_chart(
             sample.render_us,
             sample.flush_us,
         ];
-        for (part_us, (color, _)) in parts.into_iter().zip(colours) {
+        for (part_us, color) in parts.into_iter().zip(palette.data) {
             let h = (part_us as f32 / y_scale_us) * rect.height();
             if h < 0.5 {
                 continue;
@@ -603,31 +577,19 @@ pub(super) fn paint_timing_chart(
         }
     }
 
-    // Reference lines at 60 fps (16.6 ms) and 30 fps (33.3 ms)
-    // — the two budgets the testbed cares about. Each labeled at the right edge.
-    for (us, label) in [(16_666.0_f32, "60 fps"), (33_333.0_f32, "30 fps")] {
+    // The two budgets worth marking. 60 fps is the scale's own floor, so it
+    // rides the top edge until a spike grows past it and pushes it down into
+    // the chart; 30 fps appears only once one has. Unlabelled: at this height
+    // a 9 pt label leaves nothing to read but itself.
+    for us in [16_666.0_f32, 33_333.0_f32] {
         let y = rect.max.y - (us / y_scale_us) * rect.height();
         if y < rect.min.y || y > rect.max.y {
             continue;
         }
         painter.line_segment(
             [egui::pos2(rect.min.x, y), egui::pos2(rect.max.x, y)],
-            egui::Stroke::new(
-                1.0_f32,
-                egui::Color32::from_rgba_unmultiplied(180, 180, 180, 140),
-            ),
+            egui::Stroke::new(1.0_f32, palette.text_disabled.gamma_multiply(0.4)),
         );
-        // Label sits BELOW the line so it doesn't get clipped against `rect.min.y`
-        // when the line itself is near the top of the chart (e.g. 30 fps marker at peak scale).
-        if detailed {
-            painter.text(
-                egui::pos2(rect.max.x - 2.0, y + 1.0),
-                egui::Align2::RIGHT_TOP,
-                label,
-                egui::FontId::monospace(9.0),
-                guide_text,
-            );
-        }
     }
 }
 
@@ -694,27 +656,33 @@ pub(super) fn paint_view_timings(
 /// Paint the chart's component legend in its own strip — the colour swatches and labels
 /// for wasm / deser / layout / render / flush, in stack order.
 /// Lives above the chart so it doesn't overlap the bars.
-pub(super) fn paint_timing_legend(painter: &egui::Painter, rect: egui::Rect, text: egui::Color32) {
-    let colours = [
-        (egui::Color32::from_rgb(0x6A, 0x9F, 0xD8), "wasm"),
-        (egui::Color32::from_rgb(0xE0, 0x9A, 0x50), "deser"),
-        (egui::Color32::from_rgb(0xCC, 0xCC, 0x50), "layout"),
-        (egui::Color32::from_rgb(0x50, 0xCC, 0x50), "render"),
-        (egui::Color32::from_rgb(0xCC, 0x50, 0xCC), "flush"),
-    ];
-    let mut x_cursor = rect.min.x;
+pub(super) fn paint_timing_legend(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    text: egui::Color32,
+    palette: &super::theme::Palette,
+) {
+    /// Side of a series swatch, and the gap between it and the label it names.
+    const SWATCH: f32 = 8.0;
+    const SWATCH_GAP: f32 = 4.0;
+    /// One entry to the next, wide enough for the longest label.
+    const ENTRY_STRIDE: f32 = 56.0;
+
     let cy = rect.center().y;
-    for (color, label) in colours {
-        let sw = egui::Rect::from_center_size(egui::pos2(x_cursor + 4.0, cy), egui::vec2(8.0, 8.0));
-        painter.rect_filled(sw, 0.0, color);
+    for (i, (label, color)) in COMPONENT_LABELS.into_iter().zip(palette.data).enumerate() {
+        let left = rect.min.x + i as f32 * ENTRY_STRIDE;
+        let swatch = egui::Rect::from_center_size(
+            egui::pos2(left + SWATCH / 2.0, cy),
+            egui::Vec2::splat(SWATCH),
+        );
+        painter.rect_filled(swatch, 0.0, color);
         painter.text(
-            egui::pos2(x_cursor + 10.0, cy),
+            egui::pos2(left + SWATCH + SWATCH_GAP, cy),
             egui::Align2::LEFT_CENTER,
             label,
             egui::FontId::monospace(9.0),
             text,
         );
-        x_cursor += 56.0;
     }
 }
 

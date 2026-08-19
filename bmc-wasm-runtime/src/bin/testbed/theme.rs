@@ -22,9 +22,11 @@
 //!
 //! The look is flat — background fills do the contrasting, corner rounding
 //! and widget strokes are off. Colours come from the design system's swatches
-//! wherever the ramp has a step for them; device-mock tones darker than the
-//! ramp's floor stay literal. Device-mock colours are identical across
-//! themes: a bezel is dark hardware, not chrome.
+//! wherever the ramp has a step for them.
+//!
+//! The device mock is themed like the rest: only the widget's own texture is
+//! outside the testbed's control, and everything drawn around it — enclosure,
+//! LED strip, the slab standing in for a view — is chrome.
 
 use bmc_wasm_protocol::colors as swatch;
 use egui::Color32;
@@ -33,6 +35,10 @@ use egui::Color32;
 pub(crate) struct Palette {
     /// Whether egui's dark visuals are the base this palette overrides.
     pub(crate) dark_base: bool,
+
+    /// The ground the `layer_*` surfaces stack on, and each theme's extreme.
+    /// Nothing sits under it, so it is what a device's unlit display shows.
+    pub(crate) background: Color32,
 
     // `canvas_*` — the pannable surface the device windows float over.
     /// The checkerboard's two squares.
@@ -84,20 +90,17 @@ pub(crate) struct Palette {
     /// own text colours have nothing to do with the contrast that matters.
     pub(crate) text_on_color: Color32,
 
-    // `device_*` — the hardware mock, identical in both themes.
-    // A bezel is dark plastic, not chrome, so it does not follow the theme.
-    pub(crate) device_bezel: Color32,
-    /// The LED diffuser's plate.
-    pub(crate) device_strip: Color32,
-    /// A view held inert while another records.
-    pub(crate) device_slab: Color32,
-    pub(crate) device_placeholder: Color32,
-    pub(crate) device_placeholder_border: Color32,
-    pub(crate) device_placeholder_text: Color32,
+    // `data_*` — a categorical series, after Carbon's `$data-N`.
+    // The order tells one series from the next and nothing else,
+    // so what each stands for is the chart's to decide.
+    //
+    // One set for both themes: the scale is built to separate on either.
+    pub(crate) data: [Color32; 5],
 }
 
 pub(crate) const DARK: Palette = Palette {
     dark_base: true,
+    background: swatch::BLACK.to_egui(),
     canvas: swatch::GRAY_100.to_egui(),
     canvas_alt: swatch::GRAY_90.to_egui(),
     layer: swatch::GRAY_100.to_egui(),
@@ -119,16 +122,12 @@ pub(crate) const DARK: Palette = Palette {
     action_disabled: swatch::GRAY_70.to_egui(),
     text_disabled: swatch::GRAY_50.to_egui(),
     text_on_color: swatch::WHITE.to_egui(),
-    device_bezel: BEZEL,
-    device_strip: swatch::GRAY_90.to_egui(),
-    device_slab: RECORD_SLAB,
-    device_placeholder: PLACEHOLDER_FILL,
-    device_placeholder_border: swatch::GRAY_90.to_egui(),
-    device_placeholder_text: swatch::GRAY_70.to_egui(),
+    data: DATA_SERIES,
 };
 
 pub(crate) const LIGHT: Palette = Palette {
     dark_base: false,
+    background: swatch::WHITE.to_egui(),
     canvas: swatch::GRAY_30.to_egui(),
     canvas_alt: swatch::GRAY_20.to_egui(),
     layer: swatch::GRAY_20.to_egui(),
@@ -152,12 +151,7 @@ pub(crate) const LIGHT: Palette = Palette {
     action_disabled: swatch::GRAY_70.to_egui(),
     text_disabled: swatch::GRAY_50.to_egui(),
     text_on_color: swatch::WHITE.to_egui(),
-    device_bezel: BEZEL,
-    device_strip: swatch::GRAY_90.to_egui(),
-    device_slab: RECORD_SLAB,
-    device_placeholder: PLACEHOLDER_FILL,
-    device_placeholder_border: swatch::GRAY_90.to_egui(),
-    device_placeholder_text: swatch::GRAY_70.to_egui(),
+    data: DATA_SERIES,
 };
 
 /// The spacing ladder, named after IBM Carbon's `$spacing-NN` scale so a gap
@@ -191,10 +185,20 @@ pub(crate) const OVERLAY_SHADOW: egui::epaint::Shadow = egui::epaint::Shadow {
     color: Color32::from_black_alpha(120),
 };
 
-// Device tones darker than the swatch ramp's floor (`GRAY_100`).
-const BEZEL: Color32 = Color32::from_gray(8);
-const PLACEHOLDER_FILL: Color32 = Color32::from_gray(14);
-const RECORD_SLAB: Color32 = Color32::from_gray(12);
+/// The first five of d3's `schemeCategory10` (matplotlib's `tab10`), rather
+/// than picks from the swatch: a categorical scale has to separate five hues
+/// at a glance, which the ramp is not built for.
+///
+/// Scale order, with the last two swapped. The chart stacks these five in a
+/// 2 px column, where the scale's green-then-red would touch — the pairing
+/// deuteranopia loses, with no room for shape or spacing to carry it.
+const DATA_SERIES: [Color32; 5] = [
+    Color32::from_rgb(0x1F, 0x77, 0xB4),
+    Color32::from_rgb(0xFF, 0x7F, 0x0E),
+    Color32::from_rgb(0x2C, 0xA0, 0x2C),
+    Color32::from_rgb(0x94, 0x67, 0xBD),
+    Color32::from_rgb(0xD6, 0x27, 0x28),
+];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ThemeChoice {

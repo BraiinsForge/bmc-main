@@ -1948,6 +1948,17 @@ impl TestbedApp {
             self.perf.samples.push(timings);
             self.perf.section_samples.push(sections);
             self.perf.frame_count += 1;
+            // A report reads the whole run; without one the history is only
+            // ever drawn, and the chart shows its tail.
+            if self.cli.perf_report_path.is_none() {
+                let over = self
+                    .perf
+                    .samples
+                    .len()
+                    .saturating_sub(status_bar::SPARK_SAMPLES);
+                self.perf.samples.drain(..over);
+                self.perf.section_samples.drain(..over);
+            }
         }
 
         // Restore framebuffer + viewport so egui draws onto the screen FBO at the right size.
@@ -2022,16 +2033,18 @@ fn paint_placeholder(
     label: &str,
     palette: &theme::Palette,
 ) {
-    painter.rect_filled(rect, 0.0, palette.device_placeholder);
+    painter.rect_filled(rect, 0.0, palette.layer_accent);
+    // Not `border_subtle`, which is the same step as the fill in the dark
+    // theme: a border only one theme draws is worse than none.
     painter.rect_stroke(
         rect,
         0.0,
-        egui::Stroke::new(1.0_f32, palette.device_placeholder_border),
+        egui::Stroke::new(1.0_f32, palette.text_disabled),
         egui::StrokeKind::Inside,
     );
     let icon = rect.center() - egui::vec2(0.0, 16.0);
     let radius = 13.0;
-    let stroke = egui::Stroke::new(2.0_f32, palette.device_placeholder_text);
+    let stroke = egui::Stroke::new(2.0_f32, palette.text_disabled);
     painter.circle_stroke(icon, radius, stroke);
     let slash = radius * 0.72;
     painter.line_segment(
