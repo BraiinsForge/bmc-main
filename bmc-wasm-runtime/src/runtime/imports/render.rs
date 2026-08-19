@@ -241,6 +241,10 @@ fn submit_tree(
             state.renderer_assets.generation(),
         );
         let static_unchanged = state.last_static_key == Some(static_key);
+        // A fully dynamic tree has nothing worth caching, and blitting the
+        // resulting black layer costs a full-screen pass per frame.
+        let layered = bmc_render::partition::has_static_content(&tree_node);
+        state.static_layer_useful = layered;
         state.last_asset_restoration = None;
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
@@ -261,8 +265,8 @@ fn submit_tree(
             delta_ms,
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
-            capture_static: !static_unchanged,
-            reuse_static_layer: static_unchanged,
+            capture_static: layered && !static_unchanged,
+            reuse_static_layer: layered && static_unchanged,
             static_layer_key: &state.instance_id,
         };
         let mut resolver = RendererAssetRestorer::new(

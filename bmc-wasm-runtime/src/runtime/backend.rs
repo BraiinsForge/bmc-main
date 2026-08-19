@@ -1376,8 +1376,11 @@ impl WasmWidgetRuntime {
             delta_ms,
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
-            capture_static: stale_assets,
-            reuse_static_layer: !stale_assets,
+            capture_static: stale_assets && state.static_layer_useful,
+            // Matches the guest frame's decision: a tree with no static half
+            // has no layer to reuse, and blitting the empty one is a wasted
+            // full-screen pass.
+            reuse_static_layer: state.static_layer_useful && !stale_assets,
             static_layer_key: &state.instance_id,
         };
         let mut resolver = RendererAssetRestorer::new(

@@ -42,6 +42,7 @@ use std::hash::{Hash, Hasher};
 use std::mem;
 
 use crate::tree::{DrawCommand, TreeNode};
+use bmc_wasm_protocol::colors::Color;
 
 /// Whether `draw`, or anything it wraps, can change while the guest is idle.
 #[must_use]
@@ -169,6 +170,57 @@ pub fn static_hash(node: &TreeNode) -> u64 {
     hasher.finish()
 }
 
+/// Whether the static half of `node` would paint anything at all.
+///
+/// A fully dynamic widget has an empty static half, and capturing it produces a
+/// layer of plain black that is then composited over every frame — on the Deck
+/// that redundant full-screen blit measured 27 ms, a third of such a widget's
+/// frame. Answering `false` lets the caller skip both the capture and the blit
+/// and simply emit the whole tree, which for an empty static half is the same
+/// picture for less work.
+///
+/// Errs toward `true`: a wrong `true` only keeps today's behaviour, and a wrong
+/// `false` costs a re-rasterised static half but still draws it. Neither
+/// changes what ends up on screen.
+#[must_use]
+pub fn has_static_content(node: &TreeNode) -> bool {
+    // The arms below answer for every host-driven node directly, which is only
+    // right while the two predicates agree on which nodes those are.
+    debug_assert!(
+        !node_self_is_dynamic(node) || node_is_dynamic(node),
+        "a node that repaints itself while the guest is idle must be dynamic as a subtree",
+    );
+    match node {
+        // Painted by the walk whenever the background is set; every other
+        // container field draws nothing on its own.
+        TreeNode::Column(props, children)
+        | TreeNode::Row(props, children)
+        | TreeNode::Center(props, children) => {
+            props.background != Color::default() || children.iter().any(has_static_content)
+        }
+        TreeNode::Scroll {
+            props, children, ..
+        } => props.background != Color::default() || children.iter().any(has_static_content),
+        TreeNode::Canvas { props, draws, .. } => {
+            props.background != Color::default() || draws.iter().any(|draw| !draw_is_dynamic(draw))
+        }
+        TreeNode::Tag { content, .. } => has_static_content(content),
+        // Never in the layer, so they contribute nothing to it; a spacer
+        // paints nothing at all.
+        TreeNode::RelTime { .. }
+        | TreeNode::ProgressBar { .. }
+        | TreeNode::Modal { .. }
+        | TreeNode::Spacer { .. } => false,
+        // Paints unconditionally. A switcher always draws its pill and tabs,
+        // and a skeleton always draws its placeholder bar.
+        TreeNode::Paragraph { .. }
+        | TreeNode::Button { .. }
+        | TreeNode::Switcher { .. }
+        | TreeNode::Skeleton(_)
+        | TreeNode::Notification { .. } => true,
+    }
+}
+
 /// Feeds `Debug` output into a hasher without allocating a `String` per node.
 struct HashWriter<'a, H: Hasher>(&'a mut H);
 
@@ -240,7 +292,7 @@ fn hash_node<H: Hasher>(node: &TreeNode, hasher: &mut H) {
 
 #[cfg(test)]
 mod tests {
-    use super::{draw_is_dynamic, node_is_dynamic, node_self_is_dynamic};
+    use super::{draw_is_dynamic, has_static_content, node_is_dynamic, node_self_is_dynamic};
     use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
     use bmc_wasm_protocol::{
         AnimProperty, ArcCap, ArcFill, ArcSegments, Color, ColorSpace, Easing, LoopMode,
@@ -446,6 +498,65 @@ mod tests {
         assert!(node_is_dynamic(&rel_time));
     }
 
+    /// `node_self_is_dynamic` is the leaf half of `node_is_dynamic`, and
+    /// `has_static_content` leans on that: it answers for the host-driven nodes
+    /// from its own arms. A variant added to one predicate and not the other
+    /// would quietly put a self-repainting node in the cached layer.
+    #[test]
+    fn a_node_that_repaints_itself_is_dynamic_as_a_subtree() {
+        let rel_time = TreeNode::RelTime {
+            anchor: 0,
+            format: RelTimeFormat {
+                length: RelTimeLength::Short,
+                segments: RelTimeSegments::Single,
+            },
+            clamp: RelTimeClamp::default(),
+            style: TextStyle::default(),
+        };
+        let progress = TreeNode::ProgressBar {
+            touch_key: None,
+            track_h: 4.0,
+            mode: ProgressKind::Indeterminate,
+            fraction: 0.0,
+            active: true,
+            fill_color: Color::from_rgb(1, 2, 3),
+            track_color: Color::from_rgb(1, 2, 3),
+            bg_color: Color::from_rgb(1, 2, 3),
+            skin: None,
+        };
+        let modal = TreeNode::Modal {
+            modal_id: "m".to_owned(),
+            is_open: false,
+            padding: 0,
+            backdrop_alpha: 0,
+            title: String::new(),
+            content_height: 0.0,
+            bg_color: Color::default(),
+            header_color: Color::default(),
+            title_color: Color::default(),
+            max_width: 0,
+            body: Vec::new(),
+            footer_primary_key: String::new(),
+            footer_primary_label: String::new(),
+            footer_secondary_key: String::new(),
+            footer_secondary_label: String::new(),
+            footer_danger: false,
+        };
+        for node in [
+            rel_time,
+            progress,
+            modal,
+            spacer(),
+            canvas(vec![leaf()]),
+            canvas(vec![animated(leaf())]),
+        ] {
+            assert!(
+                !node_self_is_dynamic(&node) || node_is_dynamic(&node),
+                "{node:?} repaints itself but is not dynamic as a subtree",
+            );
+        }
+    }
+
     #[test]
     fn leaf_content_nodes_are_static() {
         assert!(!node_is_dynamic(&spacer()));
@@ -454,5 +565,66 @@ mod tests {
             title: "t".to_owned(),
             subtitle: "s".to_owned(),
         }));
+    }
+    // ── has_static_content ──────────────────────────────────────────
+
+    /// The case that motivated it: every draw animates, so the layer would hold
+    /// nothing and blitting it is a wasted full-screen pass.
+    #[test]
+    fn all_animated_canvas_has_no_static_content() {
+        let node = TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![animated(leaf()), animated(leaf())],
+        };
+        assert!(!has_static_content(&node));
+    }
+
+    /// One unanimated draw is enough to make the layer worth keeping.
+    #[test]
+    fn one_static_draw_keeps_the_layer() {
+        let node = TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![animated(leaf()), leaf()],
+        };
+        assert!(has_static_content(&node));
+    }
+
+    /// A container's own background is painted by the walk, so it counts even
+    /// when every child animates.
+    #[test]
+    fn container_background_counts_as_static_content() {
+        let dynamic_child = TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![animated(leaf())],
+        };
+        let bare = TreeNode::Column(PropsData::default(), vec![dynamic_child.clone()]);
+        assert!(!has_static_content(&bare));
+
+        let painted = TreeNode::Column(
+            PropsData {
+                background: Color::from_rgb(10, 20, 30),
+                ..PropsData::default()
+            },
+            vec![dynamic_child],
+        );
+        assert!(has_static_content(&painted));
+    }
+
+    /// Nested static content has to surface through the containers above it.
+    #[test]
+    fn static_content_surfaces_through_nesting() {
+        let leafy = TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![leaf()],
+        };
+        let nested = TreeNode::Column(
+            PropsData::default(),
+            vec![TreeNode::Row(PropsData::default(), vec![leafy])],
+        );
+        assert!(has_static_content(&nested));
     }
 }

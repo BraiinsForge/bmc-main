@@ -959,6 +959,11 @@ pub(crate) struct HostState {
     /// Monotonic frame counter for GC.
     pub frame_counter: u64,
 
+    /// Whether the last submitted tree had a static half worth caching. A
+    /// fully dynamic widget has none, and blitting the empty layer costs a
+    /// full-screen pass per frame for nothing.
+    pub static_layer_useful: bool,
+
     /// Static-half hash of the last submitted tree, paired with the renderer
     /// asset ledger's generation at that point. When a new tree matches both,
     /// the cached layer is still valid and the frame blits instead of
@@ -1394,6 +1399,7 @@ impl HostState {
             animation_states: HashMap::new(),
             transition_states: HashMap::new(),
             frame_counter: 0,
+            static_layer_useful: true,
             last_static_key: None,
             cached_tree: None,
             system_time,
