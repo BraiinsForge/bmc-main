@@ -25,6 +25,8 @@
 //! management. Widgets compose their own rendering pipeline on top — direct
 //! FBO rendering (flip-clock) or two-FBO with staging/blit (wasm).
 
+use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::c_void;
 use std::fmt;
 use std::fs::OpenOptions;
@@ -78,6 +80,19 @@ type GlEglImageTargetTexture2DOes = unsafe extern "C" fn(target: u32, image: *mu
 /// compositor's render size, so widgets that don't need depth opt out.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Depth {
+    Enabled,
+    Disabled,
+}
+
+/// Whether a [`WidgetExportBuffer`]'s FBO gets a stencil attachment.
+///
+/// femtovg's fills need one, so a target it paints into wants [`Self::Enabled`],
+/// which borrows the shared renderbuffer for that size rather than allocating.
+/// A target used only as a blit source or destination wants [`Self::Disabled`]:
+/// a colour-only framebuffer is complete, and an `STENCIL_INDEX8` request costs
+/// ~4 bytes a pixel on this driver rather than the 1 it asks for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Stencil {
     Enabled,
     Disabled,
 }
@@ -151,6 +166,24 @@ pub struct EglContext {
     egl_destroy_image: EglDestroyImageKhr,
     /// `glEGLImageTargetTexture2DOES` extension.
     gl_image_target_texture: GlEglImageTargetTexture2DOes,
+    /// Stencil renderbuffers shared by every export buffer of a given size.
+    ///
+    /// femtovg needs a stencil attachment but keeps nothing in it between
+    /// frames — a damage-preserving frame skips the stencil clear outright and
+    /// still renders correctly — and renders are serialised by the
+    /// cross-process GPU lock, so no two buffers hold it attached at once. One
+    /// per size therefore serves both of a slot's export buffers, every slot
+    /// sharing that viewport, and the shared staging surface.
+    ///
+    /// Keyed by size because GLES 2.0 requires every attachment on a
+    /// framebuffer to have identical dimensions (`FRAMEBUFFER_INCOMPLETE_
+    /// DIMENSIONS`), which makes a mismatch impossible by construction rather
+    /// than a thing to remember.
+    ///
+    /// Entries live as long as the context. A layout that stops using a size
+    /// strands one renderbuffer of it, which is bounded by the handful of
+    /// distinct viewport sizes a scene layout can produce.
+    stencil_pool: RefCell<HashMap<(u32, u32), glow::Renderbuffer>>,
 }
 
 impl fmt::Debug for EglContext {
@@ -224,7 +257,20 @@ impl EglContext {
             egl_create_image,
             egl_destroy_image,
             gl_image_target_texture,
+            stencil_pool: RefCell::new(HashMap::new()),
         })
+    }
+
+    /// The stencil renderbuffer shared by export buffers of `width`x`height`,
+    /// allocating it on first use. See [`Self::stencil_pool`].
+    fn shared_stencil(&self, width: u32, height: u32) -> Result<glow::Renderbuffer> {
+        if let Some(rbo) = self.stencil_pool.borrow().get(&(width, height)) {
+            return Ok(*rbo);
+        }
+        let rbo = self.make_renderbuffer(glow::STENCIL_INDEX8, width, height)?;
+        self.stencil_pool.borrow_mut().insert((width, height), rbo);
+        tracing::debug!("Allocated shared {width}x{height} stencil renderbuffer");
+        Ok(rbo)
     }
 
     /// Get the glow OpenGL ES context.
@@ -448,9 +494,10 @@ impl EglContext {
     /// Allocate a per-widget staging render target.
     ///
     /// Returns a [`WidgetExportBuffer`] usable as a femtovg target: GL color
-    /// texture + stencil RBO (+ optional depth RBO) attached to a complete
-    /// FBO. Caller renders into the FBO, then blits to a separate
+    /// texture + shared stencil RBO (+ optional depth RBO) attached to a
+    /// complete FBO. Caller renders into the FBO, then blits to a separate
     /// [`ExportBuffer`] for DMA-BUF export.
+    /// Pass [`Stencil::Disabled`] for a target femtovg never paints into.
     ///
     /// Must be released via [`Self::destroy_widget_export_buffer`] while this
     /// context is alive and current — GL deletion needs a current context.
@@ -459,6 +506,7 @@ impl EglContext {
         width: u32,
         height: u32,
         depth: Depth,
+        stencil: Stencil,
     ) -> Result<WidgetExportBuffer> {
         anyhow::ensure!(
             width > 0 && height > 0,
@@ -468,21 +516,21 @@ impl EglContext {
         tracing::debug!("Allocating {width}x{height} widget export buffer (depth={depth:?})");
 
         let texture = self.make_staging_texture(width, height)?;
-        let stencil_rbo = match self.make_renderbuffer(glow::STENCIL_INDEX8, width, height) {
-            Ok(rbo) => rbo,
-            Err(e) => {
-                unsafe { self.gl.delete_texture(texture) };
-                return Err(e.context("Failed to create stencil RBO"));
-            }
+        let stencil_rbo = match stencil {
+            Stencil::Enabled => match self.shared_stencil(width, height) {
+                Ok(rbo) => Some(rbo),
+                Err(e) => {
+                    unsafe { self.gl.delete_texture(texture) };
+                    return Err(e.context("Failed to create stencil RBO"));
+                }
+            },
+            Stencil::Disabled => None,
         };
         let depth_rbo = if depth == Depth::Enabled {
             match self.make_renderbuffer(glow::DEPTH_COMPONENT16, width, height) {
                 Ok(rbo) => Some(rbo),
                 Err(e) => {
-                    unsafe {
-                        self.gl.delete_renderbuffer(stencil_rbo);
-                        self.gl.delete_texture(texture);
-                    }
+                    unsafe { self.gl.delete_texture(texture) };
                     return Err(e.context("Failed to create depth RBO"));
                 }
             }
@@ -496,7 +544,6 @@ impl EglContext {
                     if let Some(rbo) = depth_rbo {
                         self.gl.delete_renderbuffer(rbo);
                     }
-                    self.gl.delete_renderbuffer(stencil_rbo);
                     self.gl.delete_texture(texture);
                 }
                 return Err(e);
@@ -564,14 +611,14 @@ impl EglContext {
         }
     }
 
-    /// Build the per-widget staging FBO, attach color + stencil (+ optional
+    /// Build the per-widget staging FBO, attach color (+ optional stencil and
     /// depth), and validate completeness. On failure (incomplete FBO) the
     /// freshly allocated framebuffer is deleted before returning; the
     /// caller still owns the texture and renderbuffers.
     fn make_widget_export_fbo(
         &self,
         texture: glow::Texture,
-        stencil_rbo: glow::Renderbuffer,
+        stencil_rbo: Option<glow::Renderbuffer>,
         depth_rbo: Option<glow::Renderbuffer>,
     ) -> Result<glow::Framebuffer> {
         unsafe {
@@ -587,12 +634,14 @@ impl EglContext {
                 Some(texture),
                 0,
             );
-            self.gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(stencil_rbo),
-            );
+            if let Some(rbo) = stencil_rbo {
+                self.gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::STENCIL_ATTACHMENT,
+                    glow::RENDERBUFFER,
+                    Some(rbo),
+                );
+            }
             if let Some(rbo) = depth_rbo {
                 self.gl.framebuffer_renderbuffer(
                     glow::FRAMEBUFFER,
@@ -623,7 +672,7 @@ impl EglContext {
     pub fn destroy_widget_export_buffer(&self, buf: WidgetExportBuffer) {
         unsafe {
             self.gl.delete_framebuffer(buf.fbo);
-            self.gl.delete_renderbuffer(buf.stencil_rbo);
+            // The stencil attachment belongs to the pool and outlives this buffer.
             if let Some(rbo) = buf.depth_rbo {
                 self.gl.delete_renderbuffer(rbo);
             }
@@ -796,9 +845,11 @@ pub struct WidgetExportBuffer {
     /// GL color texture (regular `glTexImage2D` storage, not EGLImage).
     texture: glow::Texture,
     fbo: glow::Framebuffer,
-    /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated — femtovg
-    /// requires stencil for its painting algorithms.
-    stencil_rbo: glow::Renderbuffer,
+    /// Stencil renderbuffer, present when constructed with [`Stencil::Enabled`].
+    /// Borrowed from the context's pool and shared with every other buffer of
+    /// this size, so destroying this buffer must not free it — but the handle is
+    /// kept because a frame that borrows the framebuffer has to re-attach it.
+    stencil_rbo: Option<glow::Renderbuffer>,
     /// Optional depth renderbuffer (`DEPTH_COMPONENT16`). Allocated only when
     /// constructed with [`Depth::Enabled`].
     depth_rbo: Option<glow::Renderbuffer>,
@@ -832,9 +883,10 @@ impl WidgetExportBuffer {
     }
 
     /// Stencil renderbuffer backing the staging FBO, for re-attaching it after
-    /// a widget frame borrowed the framebuffer.
+    /// a widget frame borrowed the framebuffer. `None` when built with
+    /// [`Stencil::Disabled`].
     #[must_use]
-    pub fn stencil_rb(&self) -> glow::Renderbuffer {
+    pub fn stencil_rb(&self) -> Option<glow::Renderbuffer> {
         self.stencil_rbo
     }
 
@@ -1653,6 +1705,9 @@ fn offset_panel_ndc_rect(dest_h: u32, panel_h: f32, offset_y: f32) -> [f32; 4] {
 /// thread — GL deletion requires a current context.
 pub struct SharedRenderScratch {
     staging: WidgetExportBuffer,
+    /// The staging stencil, resolved once so no retarget path can be written
+    /// against a staging buffer that has none.
+    staging_stencil: glow::Renderbuffer,
     blit: BlitResources,
     offset_blit: OffsetBlitResources,
     staging_fbo_id_at_construction: u32,
@@ -1673,8 +1728,11 @@ impl SharedRenderScratch {
     /// the per-frame size.
     pub fn new(ctx: &EglContext, max_width: u32, max_height: u32) -> Result<Self> {
         let staging = ctx
-            .allocate_widget_export_buffer(max_width, max_height, Depth::Disabled)
+            .allocate_widget_export_buffer(max_width, max_height, Depth::Disabled, Stencil::Enabled)
             .context("Failed to allocate SharedRenderScratch staging")?;
+        let staging_stencil = staging
+            .stencil_rb()
+            .expect("BUG: staging allocated with Stencil::Enabled must carry a stencil");
         let blit = match BlitResources::new(ctx.gl()) {
             Ok(blit) => blit,
             Err(e) => {
@@ -1687,6 +1745,7 @@ impl SharedRenderScratch {
                 let staging_fbo_id_at_construction = staging.fbo_id();
                 Ok(Self {
                     staging,
+                    staging_stencil,
                     blit,
                     offset_blit,
                     staging_fbo_id_at_construction,
@@ -1735,7 +1794,7 @@ impl SharedRenderScratch {
     pub fn begin_frame(&self, ctx: &EglContext, w: u32, h: u32) -> u32 {
         // Reclaim the FBO: a widget frame may have pointed it at its own
         // export buffer, and femtovg binds this FBO by id on every flush.
-        self.attach(ctx, self.staging.texture(), self.staging.stencil_rb());
+        self.attach(ctx, self.staging.texture(), self.staging_stencil);
         debug_assert_eq!(
             self.staging.fbo_id(),
             self.staging_fbo_id_at_construction,
@@ -1775,7 +1834,7 @@ impl SharedRenderScratch {
         self.attach(ctx, texture, stencil);
         unsafe {
             if gl.check_framebuffer_status(glow::FRAMEBUFFER) != glow::FRAMEBUFFER_COMPLETE {
-                self.attach(ctx, self.staging.texture(), self.staging.stencil_rb());
+                self.attach(ctx, self.staging.texture(), self.staging_stencil);
                 return false;
             }
             gl.viewport(0, 0, w as i32, h as i32);
@@ -1969,7 +2028,7 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 mod tests {
     use super::{
         Depth, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, SlotReleaseState,
-        TwoSlotBufferCache, UvSampling, WidgetExportBuffer, offset_panel_ndc_rect,
+        Stencil, TwoSlotBufferCache, UvSampling, WidgetExportBuffer, offset_panel_ndc_rect,
         shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
@@ -2107,10 +2166,10 @@ mod tests {
         let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
 
         let a: WidgetExportBuffer = ctx
-            .allocate_widget_export_buffer(640, 480, Depth::Disabled)
+            .allocate_widget_export_buffer(640, 480, Depth::Disabled, Stencil::Enabled)
             .expect("BUG: first WidgetExportBuffer should allocate");
         let b: WidgetExportBuffer = ctx
-            .allocate_widget_export_buffer(320, 240, Depth::Disabled)
+            .allocate_widget_export_buffer(320, 240, Depth::Disabled, Stencil::Enabled)
             .expect("BUG: second WidgetExportBuffer should allocate");
 
         assert_eq!(a.width, 640);
