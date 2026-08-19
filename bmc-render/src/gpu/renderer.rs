@@ -1939,7 +1939,14 @@ impl Renderer for FemtoVgRenderer {
             return false;
         };
         let image = layer.image;
-        self.begin_frame_to_image(image, width, height, dpi_scale);
+        // Deliberately not `begin_frame_to_image`: that bumps `frame_counter`
+        // and sweeps the paragraph cache, but a capture is a second pass over
+        // the frame already in progress, not a new frame. The double step blew
+        // the cache's one-frame retention window, so every guest frame
+        // re-shaped all ~125 paragraphs — a ~7x `compute_taffy_layout` spike,
+        // visible as a stutter roughly once a second. Canvas size and dpi are
+        // already the frame's, so only the target and clear change here.
+        self.canvas.set_render_target(RenderTarget::Image(image));
 
         // Re-clear opaque, over the transparent clear `begin_frame_to_image`
         // does for its other callers. A frame starts opaque black

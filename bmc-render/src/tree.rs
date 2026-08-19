@@ -1832,6 +1832,7 @@ fn layout_and_render_inner(
         }
     }
 
+
     compute_taffy_layout(ctx.taffy, root_id, renderer)?;
 
     // Extract actual content extent from the root's layout.
@@ -1863,18 +1864,25 @@ fn layout_and_render_inner(
     let resolver = resolver.map(RefCell::new);
     let mut target = RenderTarget::new(renderer, resolver.as_ref());
 
-    // Render main tree
-    render_taffy_node(
-        ctx.taffy,
+    // A frame that refreshes the cached layer renders in the same shape as one
+    // that reuses it: static into the layer, blit, dynamic on top. Emitting the
+    // full tree to the screen and *then* capturing the static half meant
+    // rendering static content twice on every guest frame — about a quarter of
+    // a ~220 ms guest frame against ~54 ms cached ones.
+    //
+    // Falls back to a single full pass whenever the layer is unavailable, which
+    // is also what non-capturing callers (overlay, storybook) always take.
+    render_tree(
         root_id,
-        0.0,
-        0.0,
+        width,
+        height,
         &mut target,
+        ctx.taffy,
         ctx.interaction,
         ctx.scroll_states,
+        ctx.capture_static,
         &mut result,
         &mut anim_ctx,
-        0,
     );
 
     // Render modal overlays
@@ -1910,10 +1918,6 @@ fn layout_and_render_inner(
     let has_active = anim_ctx.has_active;
     let _ = anim_ctx;
 
-    if ctx.capture_static && ctx.emit == EmitMode::All {
-        capture_static_layer(root_id, width, height, renderer, resolver.as_ref(), ctx);
-    }
-
     // A modal is animating whenever its progress hasn't yet caught up to its
     // target state (open=1.0, closed=0.0). Progress alone is ambiguous —
     // e.g. progress==0.0 means "fully closed" only if `is_open` is also false;
@@ -1930,62 +1934,74 @@ fn layout_and_render_inner(
     Ok((result, has_active || modal_animating))
 }
 
-/// Refresh the renderer's cached static layer from a tree that is already laid
-/// out.
+/// Render the tree, splitting into a static and a dynamic pass when this frame
+/// is refreshing the cached layer.
 ///
-/// Deliberately reuses the caller's Taffy tree and `root_id`: doing this as a
-/// second `layout_and_render` cost a full extra layout on every guest frame,
-/// which showed up as a ~1/sec stutter on device.
+/// A refreshing frame renders in the same shape as one reusing the layer:
+/// static into the layer, blit, dynamic on top. Emitting the full tree to the
+/// screen and *then* capturing the static half rendered static content twice on
+/// every guest frame — a sizeable slice of a ~220 ms guest frame against ~54 ms
+/// cached ones.
 ///
-/// The pass gets scratch animation state and `delta_ms = 0` — it must not
-/// advance the real animations, which the main pass already stepped. Modals are
-/// skipped: they are always dynamic, so they never belong in the layer.
+/// Falls back to one full pass whenever the layer is unavailable, which is also
+/// what non-capturing callers (system overlay, storybook) always take.
+#[expect(clippy::too_many_arguments, reason = "render plumbing is irreducible")]
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
     reason = "surface dimensions are small positive values"
 )]
-fn capture_static_layer(
+fn render_tree(
     root_id: taffy::NodeId,
     width: f32,
     height: f32,
-    renderer: &mut dyn Renderer,
-    resolver: Option<&RefCell<&mut dyn RendererAssetResolver>>,
-    ctx: &mut ProcessContext<'_>,
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    taffy: &TaffyTree<NodeContext>,
+    interaction: &mut InteractionState,
+    scroll_states: &mut HashMap<String, ScrollState>,
+    capture_static: bool,
+    result: &mut TreeResult,
+    anim_ctx: &mut AnimationContext<'_>,
 ) {
-    if !renderer.begin_static_layer(width as u32, height as u32) {
-        return;
+    let split = anim_ctx.emit == EmitMode::All
+        && capture_static
+        && renderer.begin_static_layer(width as u32, height as u32);
+
+    if split {
+        anim_ctx.emit = EmitMode::StaticOnly;
+        render_taffy_node(
+            taffy,
+            root_id,
+            0.0,
+            0.0,
+            renderer,
+            interaction,
+            scroll_states,
+            result,
+            anim_ctx,
+            0,
+        );
+        renderer.end_static_layer();
+        renderer.blit_static_layer();
+
+        // Restart the counters so this pass matches a cached frame's exactly —
+        // it is the same walk, and animation state keys on `draw_counter`.
+        anim_ctx.emit = EmitMode::DynamicOnly;
+        anim_ctx.draw_counter = 0;
+        anim_ctx.canvas_index = 0;
     }
-    let mut scratch_animations = HashMap::new();
-    let mut scratch_transitions = HashMap::new();
-    let mut scratch_result = TreeResult::default();
-    let mut capture_target = RenderTarget::new(renderer, resolver);
-    let mut capture_ctx = AnimationContext {
-        emit: EmitMode::StaticOnly,
-        animation_states: &mut scratch_animations,
-        transition_states: &mut scratch_transitions,
-        delta_ms: 0,
-        frame_counter: ctx.frame_counter,
-        draw_counter: 0,
-        canvas_index: 0,
-        draw_in_canvas: 0,
-        mesh_slot_counter: 0,
-        has_active: false,
-        now_unix_secs: ctx.now_unix_secs,
-    };
     render_taffy_node(
-        ctx.taffy,
+        taffy,
         root_id,
         0.0,
         0.0,
-        &mut capture_target,
-        ctx.interaction,
-        ctx.scroll_states,
-        &mut scratch_result,
-        &mut capture_ctx,
+        renderer,
+        interaction,
+        scroll_states,
+        result,
+        anim_ctx,
         0,
     );
-    renderer.end_static_layer();
 }
 
 /// Build the taffy node for `node` and tag it with its static/dynamic
@@ -2752,17 +2768,17 @@ pub(crate) fn render_taffy_node(
         .get_node_context(node_id)
         .and_then(|ctx| ctx.touch_key.clone());
 
-    // Every pass traverses the whole tree and gates only emission. Skipping a
-    // static subtree would also skip the counter advances that positional
-    // animation and transition keys are derived from, so the keys would drift
-    // and every animation past that point re-key; and traversal carries hit
-    // registration, click consumption and frame-delay collection besides
-    // drawing. Emission was always the expensive part.
+    // Traverse everything, always. Skipping static subtrees outright would mean
+    // restoring the positional counters the skipped walk would have advanced,
+    // and replaying hit regions a skipped subtree never registers. Emission is
+    // what costs — a gated traversal already took draw recording from 12.2 ms
+    // to ~0.5 ms — and traversing uniformly means every pass advances the
+    // counters identically, so nothing needs restoring.
     //
-    // Emission gate: a dynamic subtree still contains
-    // static nodes that a dynamic-only pass must not repaint, and vice versa.
-    // An untagged node falls through to `true` — the conservative side, where
-    // it draws in every mode rather than vanishing.
+    // A dynamic subtree still contains static nodes a dynamic-only pass must
+    // not repaint, and vice versa. An untagged node falls through to `true` —
+    // the conservative side, where it draws in every mode rather than
+    // vanishing.
     let emits = taffy
         .get_node_context(node_id)
         .is_none_or(|ctx| anim_ctx.emit.emits(ctx.self_dynamic));
