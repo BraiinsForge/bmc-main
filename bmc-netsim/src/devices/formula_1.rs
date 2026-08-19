@@ -37,7 +37,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::blueprint::{Body, EndpointSpec, RequestCtx, ResourceSpec};
+use crate::blueprint::{
+    EndpointSpec, RequestCtx, ResourceSpec, Response, ResponseData, ResponseSpec,
+};
 use crate::http_status::HttpStatus;
 
 /// One lap of the simulated circuit, seconds.
@@ -558,19 +560,22 @@ impl Params {
             let running = self.session == session;
             let stale = self.stale_secs;
             let start_lap = self.start_lap;
+            let status = self.status;
             let home = home.clone();
             endpoints.push(EndpointSpec {
                 method: "GET".to_owned(),
                 path: format!("/api/v1/data/formula-1/{resource}"),
-                body: Body::respond(move |ctx| {
+                response: ResponseSpec::computed(move |ctx| {
                     let data = if running {
                         board(session, ctx, start_lap)
                     } else {
                         json!({ "live": false })
                     };
-                    envelope(resource, &data, 3, stale, host_of(ctx, &home))
+                    Response::new(
+                        status,
+                        envelope(resource, &data, 3, stale, host_of(ctx, &home)),
+                    )
                 }),
-                status: self.status,
             });
         }
         endpoints.extend(self.image_endpoints());
@@ -583,8 +588,8 @@ impl Params {
         }
     }
 
-    /// A static resource: its payload never varies within a scenario,
-    /// only the envelope's freshness does.
+    /// A resource whose payload never varies within a scenario.
+    /// It is computed only so the envelope can name the host that reached us.
     fn endpoint(&self, home: &str, resource: &str, status: HttpStatus, data: Json) -> EndpointSpec {
         let name = resource.to_owned();
         let stale = self.stale_secs;
@@ -592,8 +597,12 @@ impl Params {
         EndpointSpec {
             method: "GET".to_owned(),
             path: format!("/api/v1/data/formula-1/{resource}"),
-            body: Body::respond(move |ctx| envelope(&name, &data, 60, stale, host_of(ctx, &home))),
-            status,
+            response: ResponseSpec::computed(move |ctx| {
+                Response::new(
+                    status,
+                    envelope(&name, &data, 60, stale, host_of(ctx, &home)),
+                )
+            }),
         }
     }
 
@@ -622,11 +631,10 @@ impl Params {
             endpoints.push(EndpointSpec {
                 method: "GET".to_owned(),
                 path: format!("/{IMAGE_ROUTE}/{kind}/{key}.{ext}"),
-                body: Body::Bytes {
-                    content_type: format!("image/{ext}"),
+                response: ResponseSpec::Static(Response::ok(ResponseData::bytes(
+                    &format!("image/{ext}"),
                     data,
-                },
-                status: HttpStatus::OK,
+                ))),
             });
         }
         endpoints
@@ -1507,6 +1515,7 @@ mod tests {
             t_s,
             seed: 0xF1,
             host: None,
+            cache: Arc::new(crate::cache::Cache::new::<Vec<_>>(Vec::new())),
         }
     }
 
@@ -1541,10 +1550,10 @@ mod tests {
             .iter()
             .find(|e| e.path.ends_with("live-race"))
             .expect("BUG: live-race endpoint");
-        let Body::Respond(responder) = &live.body else {
+        let ResponseSpec::Computed(responder) = &live.response else {
             panic!("BUG: live boards answer per request");
         };
-        let reply = responder(&ctx(100.0));
+        let reply = json_of(responder(&ctx(100.0)));
         assert_eq!(reply["data"]["live"], false);
         assert_eq!(reply["ttl_secs"], 3);
     }
@@ -1900,13 +1909,21 @@ mod tests {
             .iter()
             .find(|e| e.path == path)
             .expect("BUG: the resource must be served");
-        let Body::Respond(responder) = &endpoint.body else {
+        let ResponseSpec::Computed(responder) = &endpoint.response else {
             panic!("BUG: a resource answers per request");
         };
-        responder(&RequestCtx {
+        json_of(responder(&RequestCtx {
             host: host.map(str::to_owned),
             ..ctx(0.0)
-        })
+        }))
+    }
+
+    /// The JSON a computed endpoint answered with.
+    fn json_of(response: Response) -> Json {
+        match response.data {
+            ResponseData::Json(json) => json,
+            ResponseData::Bytes { .. } => panic!("BUG: this endpoint answers JSON"),
+        }
     }
 
     #[test]

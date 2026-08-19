@@ -32,7 +32,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec, Sampler, SeriesSpec};
+use crate::blueprint::{
+    AnnounceSpec, EndpointSpec, ResourceSpec, Response, ResponseSpec, Sampler, SeriesSpec,
+};
 use crate::build::{celsius, drift, leaf, mac, steady};
 use crate::cache::Cache;
 use crate::http_status::HttpStatus;
@@ -136,24 +138,30 @@ impl Params {
                 EndpointSpec {
                     method: "GET".to_owned(),
                     path: "/api/system/info".to_owned(),
-                    body: Body::Render(json!({
-                        "hashRate": leaf(hashrate),
-                        "expectedHashrate": leaf(steady(self.nominal_ths.get() * 1_000.0)),
-                        "power": leaf(power),
-                        "temp": leaf(temp),
-                        "uptimeSeconds": self.uptime_s,
-                        "macAddr": mac(name),
-                        "deviceModel": self.model_name.as_str(),
-                        "ASICModel": "BM1370",
-                        "asicCount": 4,
-                    })),
-                    status: self.status,
+                    response: ResponseSpec::Render {
+                        status: self.status,
+                        template: json!({
+                            "hashRate": leaf(hashrate),
+                            "expectedHashrate": leaf(steady(self.nominal_ths.get() * 1_000.0)),
+                            "power": leaf(power),
+                            "temp": leaf(temp),
+                            "uptimeSeconds": self.uptime_s,
+                            "macAddr": mac(name),
+                            "deviceModel": self.model_name.as_str(),
+                            "ASICModel": "BM1370",
+                            "asicCount": 4,
+                        }),
+                    },
                 },
                 EndpointSpec {
                     method: "GET".to_owned(),
                     path: "/api/system/statistics".to_owned(),
-                    body: Body::accumulate(statistics_body),
-                    status: self.status,
+                    response: {
+                        let status = self.status;
+                        ResponseSpec::computed(move |ctx| {
+                            Response::new(status, statistics_body(&ctx.cache))
+                        })
+                    },
                 },
             ],
             sampler: Some(Sampler {

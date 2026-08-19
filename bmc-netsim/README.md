@@ -87,7 +87,7 @@ appear in the schema under `BosParams` / `UbosParams` / `AxeosParams` / `Braiins
 
 A profile may also simulate a cloud API rather than a LAN device: it announces nothing (`announce: None`) and is reached
 by its port alone — how a consumer routes traffic to that port is the consumer's business. `braiins-pool` is the first
-such profile: its windowed endpoints read their query string (`Body::Respond`), history is generated on demand as a pure
+such profile: its windowed endpoints read their query string (`ResponseSpec::Computed`), history is generated as a pure
 function of each five-minute slot's absolute time — so any window depth paginates deterministically — and payouts land
 on the `payout_period_s` grid.
 

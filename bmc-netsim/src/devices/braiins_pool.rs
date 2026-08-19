@@ -38,7 +38,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::blueprint::{Body, EndpointSpec, RequestCtx, ResourceSpec};
+use crate::blueprint::{EndpointSpec, RequestCtx, ResourceSpec, Response, ResponseSpec};
 use crate::build::{drift, leaf};
 use crate::http_status::HttpStatus;
 use crate::quantity::NonNegative;
@@ -112,60 +112,73 @@ impl Params {
         let amount = self.payout_amount_btc.get();
         let hashrate = self.hashrate_ths.get();
         let workers = f64::from(u32::try_from(self.workers_active).unwrap_or(u32::MAX));
+        let status = self.status;
         let endpoints = vec![
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/hashrate/current".to_owned(),
-                body: Body::Render(json!({ "hashrate_th_per_sec": leaf(drift(hashrate)) })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status,
+                    template: json!({ "hashrate_th_per_sec": leaf(drift(hashrate)) }),
+                },
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/rewards/latest".to_owned(),
-                body: Body::Render(json!({
-                    "todays_reward_estimate_btc": self.reward_btc.get(),
-                    "todays_reward_estimate_usd": self.reward_usd.get(),
-                })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status,
+                    template: json!({
+                        "todays_reward_estimate_btc": self.reward_btc.get(),
+                        "todays_reward_estimate_usd": self.reward_usd.get(),
+                    }),
+                },
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/workers/current".to_owned(),
-                body: Body::Render(json!({
-                    "active_workers": self.workers_active,
-                    "low_workers": self.workers_low,
-                    "offline_workers": self.workers_offline,
-                    "disabled_workers": self.workers_disabled,
-                })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status,
+                    template: json!({
+                        "active_workers": self.workers_active,
+                        "low_workers": self.workers_low,
+                        "offline_workers": self.workers_offline,
+                        "disabled_workers": self.workers_disabled,
+                    }),
+                },
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/hashrate/history".to_owned(),
-                body: Body::respond(move |ctx| {
-                    history(ctx, series_value(hashrate), "hashrate_th_per_sec")
+                response: ResponseSpec::computed(move |ctx| {
+                    Response::new(
+                        status,
+                        history(ctx, series_value(hashrate), "hashrate_th_per_sec"),
+                    )
                 }),
-                status: self.status,
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/workers/history".to_owned(),
-                body: Body::respond(move |ctx| {
-                    history(ctx, series_value(workers), "active_workers")
+                response: ResponseSpec::computed(move |ctx| {
+                    Response::new(
+                        status,
+                        history(ctx, series_value(workers), "active_workers"),
+                    )
                 }),
-                status: self.status,
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/financials".to_owned(),
-                body: Body::respond(move |_| financials(period)),
-                status: self.status,
+                response: ResponseSpec::computed(move |_| {
+                    Response::new(status, financials(period))
+                }),
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/pool/v2/user/payouts/recent".to_owned(),
-                body: Body::respond(move |ctx| payouts(ctx, period, amount)),
-                status: self.status,
+                response: ResponseSpec::computed(move |ctx| {
+                    Response::new(status, payouts(ctx, period, amount))
+                }),
             },
         ];
         ResourceSpec {
@@ -351,6 +364,7 @@ mod tests {
             t_s: 0.0,
             seed: 0x51ACE,
             host: None,
+            cache: std::sync::Arc::new(crate::cache::Cache::new::<Vec<_>>(Vec::new())),
         }
     }
 

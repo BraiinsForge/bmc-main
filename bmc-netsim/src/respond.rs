@@ -30,14 +30,13 @@ use axum::http::{HeaderMap, header};
 use axum::response::IntoResponse;
 use axum::{Json, Router, routing};
 
-use crate::blueprint::{Body, EndpointSpec, RequestCtx};
+use crate::blueprint::{EndpointSpec, RequestCtx, Response, ResponseData, ResponseSpec};
 use crate::cache::Cache;
 use crate::render;
 
-/// Build the router: a `Render` endpoint fills its template per request (noise
-/// keyed on `seed`, time from `start`); an `Accumulate` endpoint reads `cache`;
-/// a `Respond` endpoint reads its own query string; a `Bytes` endpoint serves
-/// its payload as it stands.
+/// Build the router.
+/// `Render` fills its template per request, from `seed` and `start`;
+/// `Static` answers as it stands; `Computed` decides the whole response.
 pub fn build_router(
     endpoints: Vec<EndpointSpec>,
     seed: u64,
@@ -46,30 +45,27 @@ pub fn build_router(
 ) -> Result<Router> {
     let mut router = Router::new();
     for endpoint in endpoints {
-        let body = endpoint.body.clone();
+        let spec = endpoint.response.clone();
         let cache = Arc::clone(cache);
-        let status = endpoint.status.code();
         let handler = move |Query(query): Query<BTreeMap<String, String>>, headers: HeaderMap| {
-            let body = body.clone();
+            let spec = spec.clone();
             let cache = Arc::clone(&cache);
             async move {
-                let json = match &body {
-                    Body::Render(template) => {
-                        render::render(template, start.elapsed().as_secs_f64(), seed)
-                    }
-                    Body::Accumulate(reader) => reader(&cache),
-                    Body::Respond(responder) => responder(&RequestCtx {
+                let response = match &spec {
+                    ResponseSpec::Render { status, template } => Response::new(
+                        *status,
+                        render::render(template, start.elapsed().as_secs_f64(), seed),
+                    ),
+                    ResponseSpec::Static(response) => response.clone(),
+                    ResponseSpec::Computed(responder) => responder(&RequestCtx {
                         query,
                         t_s: start.elapsed().as_secs_f64(),
                         seed,
                         host: host_of(&headers),
+                        cache,
                     }),
-                    Body::Bytes { content_type, data } => {
-                        let headers = [(header::CONTENT_TYPE, content_type.clone())];
-                        return (status, headers, data.to_vec()).into_response();
-                    }
                 };
-                (status, Json(json)).into_response()
+                into_http(response)
             }
         };
         let method_router = match endpoint.method.to_ascii_uppercase().as_str() {
@@ -82,6 +78,18 @@ pub fn build_router(
         router = router.route(&endpoint.path, method_router);
     }
     Ok(router)
+}
+
+/// The one place a described response becomes an HTTP one.
+fn into_http(response: Response) -> axum::response::Response {
+    let status = response.status.code();
+    match response.data {
+        ResponseData::Json(json) => (status, Json(json)).into_response(),
+        ResponseData::Bytes { content_type, data } => {
+            let headers = [(header::CONTENT_TYPE, content_type)];
+            (status, headers, data.to_vec()).into_response()
+        }
+    }
 }
 
 fn host_of(headers: &HeaderMap) -> Option<String> {
@@ -249,11 +257,12 @@ mod tests {
         let endpoint = crate::blueprint::EndpointSpec {
             method: "GET".to_owned(),
             path: "/img/logo/ferrari.png".to_owned(),
-            body: crate::blueprint::Body::Bytes {
-                content_type: "image/png".to_owned(),
-                data: Arc::from(b"\x89PNG\r\n\x1a\n".as_slice()),
-            },
-            status: crate::http_status::HttpStatus::OK,
+            response: crate::blueprint::ResponseSpec::Static(crate::blueprint::Response::ok(
+                crate::blueprint::ResponseData::bytes(
+                    "image/png",
+                    Arc::<[u8]>::from(b"\x89PNG\r\n\x1a\n".as_slice()),
+                ),
+            )),
         };
         let cache = Arc::new(Cache::new::<Vec<_>>(Vec::new()));
         let router =

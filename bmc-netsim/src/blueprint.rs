@@ -435,42 +435,51 @@ impl AnnounceSpec {
     }
 }
 
-/// A served HTTP endpoint: a template rendered per request, or a response
-/// accumulated from the device's cache.
+/// A served HTTP endpoint.
 #[derive(Debug, Clone)]
 pub struct EndpointSpec {
     pub method: String,
     pub path: String,
-    pub body: Body,
-    pub status: HttpStatus,
+    pub response: ResponseSpec,
 }
 
-/// How an endpoint produces its response body.
+/// A whole answer: what a caller receives, in full.
+///
+/// Nothing defers to a value kept elsewhere.
+/// An endpoint's own status did, leaving two places
+/// to look and a rule for which of them won.
+#[derive(Debug, Clone)]
+pub struct Response {
+    pub status: HttpStatus,
+    pub data: ResponseData,
+}
+
 #[derive(Clone)]
-pub enum Body {
-    /// A JSON template whose `$value` leaves are rendered per request.
-    Render(Json),
-    /// A response built from the device's accumulated cache (history).
-    Accumulate(AccumFn),
-    /// A response computed from the request itself — for endpoints keyed
-    /// on their query string (windowed history, cursor pagination).
-    Respond(RespondFn),
-    /// A fixed non-JSON payload, for the binaries an API hands out
-    /// alongside its JSON — images above all.
+pub enum ResponseData {
+    Json(Json),
+    /// The binaries an API hands out alongside its JSON — images above all.
     Bytes {
         content_type: String,
         data: Arc<[u8]>,
     },
 }
 
-/// Reads a device's cache and shapes it into an endpoint response body.
-pub type AccumFn = Arc<dyn Fn(&Cache) -> Json + Send + Sync>;
+/// How an endpoint produces its [`Response`].
+#[derive(Clone)]
+pub enum ResponseSpec {
+    /// A JSON template whose `$value` leaves are rendered per request.
+    Render { status: HttpStatus, template: Json },
+    /// An answer fixed when the scenario is built.
+    Static(Response),
+    /// An answer computed from the request, and the only kind that can vary
+    /// as a scenario runs — a resource that 503s until its instance warms.
+    Computed(ComputedFn),
+}
 
-/// Shapes a request-aware endpoint's response body.
-pub type RespondFn = Arc<dyn Fn(&RequestCtx) -> Json + Send + Sync>;
+pub type ComputedFn = Arc<dyn Fn(&RequestCtx) -> Response + Send + Sync>;
 
-/// What a [`Body::Respond`] endpoint sees of its request and device.
-#[derive(Debug, Clone)]
+/// What a [`ResponseSpec::Computed`] endpoint sees of its request and device.
+#[derive(Clone)]
 pub struct RequestCtx {
     /// The parsed query string, later duplicates winning.
     pub query: BTreeMap<String, String>,
@@ -481,46 +490,103 @@ pub struct RequestCtx {
     /// The request's `Host`, absent when the client sent none.
     ///
     /// A payload pointing at the simulator's own binaries must name an address
-    /// the caller can dial — which the simulator cannot know:
-    /// it is `localhost` to the testbed and a LAN address to a deck.
-    /// Echoing back the host that reached us answers both, with no knob to set.
-    /// It is client-controlled, so a served product could not reflect it back;
-    /// a simulator on a dev LAN has no attacker to hand it one.
+    /// the caller can dial, and only the caller knows which:
+    /// the testbed dials `localhost`, a deck dials a LAN address.
+    ///
+    /// Reflecting a client-controlled header would be a flaw in a served
+    /// product; a simulator on a dev LAN has no attacker to hand it one.
     pub host: Option<String>,
+    /// The device's recorded history, for the endpoints that page over it.
+    pub cache: Arc<Cache>,
 }
 
-impl Body {
-    /// Wrap a cache reader as an accumulating endpoint body.
+impl Response {
     #[must_use]
-    pub fn accumulate<F>(reader: F) -> Self
-    where
-        F: Fn(&Cache) -> Json + Send + Sync + 'static,
-    {
-        Body::Accumulate(Arc::new(reader))
+    pub fn ok(data: impl Into<ResponseData>) -> Self {
+        Self::new(HttpStatus::OK, data)
     }
 
-    /// Wrap a request reader as a query-aware endpoint body.
     #[must_use]
-    pub fn respond<F>(responder: F) -> Self
-    where
-        F: Fn(&RequestCtx) -> Json + Send + Sync + 'static,
-    {
-        Body::Respond(Arc::new(responder))
+    pub fn new(status: HttpStatus, data: impl Into<ResponseData>) -> Self {
+        Self {
+            status,
+            data: data.into(),
+        }
     }
 }
 
-impl std::fmt::Debug for Body {
+impl From<Json> for ResponseData {
+    fn from(json: Json) -> Self {
+        ResponseData::Json(json)
+    }
+}
+
+impl std::fmt::Debug for ResponseData {
+    /// A payload prints its length, never its bytes — a spec holding a PNG
+    /// is printed whole otherwise, image and all.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Body::Render(template) => f.debug_tuple("Render").field(template).finish(),
-            Body::Accumulate(_) => f.debug_tuple("Accumulate").finish_non_exhaustive(),
-            Body::Respond(_) => f.debug_tuple("Respond").finish_non_exhaustive(),
-            Body::Bytes { content_type, data } => f
+            ResponseData::Json(json) => f.debug_tuple("Json").field(json).finish(),
+            ResponseData::Bytes { content_type, data } => f
                 .debug_struct("Bytes")
                 .field("content_type", content_type)
                 .field("len", &data.len())
                 .finish(),
         }
+    }
+}
+
+impl ResponseData {
+    #[must_use]
+    pub fn bytes(content_type: &str, data: impl Into<Arc<[u8]>>) -> Self {
+        ResponseData::Bytes {
+            content_type: content_type.to_owned(),
+            data: data.into(),
+        }
+    }
+}
+
+impl ResponseSpec {
+    /// A JSON template, answering `200` with its rendered leaves.
+    #[must_use]
+    pub fn render(template: Json) -> Self {
+        ResponseSpec::Render {
+            status: HttpStatus::OK,
+            template,
+        }
+    }
+
+    #[must_use]
+    pub fn computed<F>(responder: F) -> Self
+    where
+        F: Fn(&RequestCtx) -> Response + Send + Sync + 'static,
+    {
+        ResponseSpec::Computed(Arc::new(responder))
+    }
+}
+
+impl std::fmt::Debug for ResponseSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResponseSpec::Render { status, template } => f
+                .debug_struct("Render")
+                .field("status", status)
+                .field("template", template)
+                .finish(),
+            ResponseSpec::Static(response) => f.debug_tuple("Static").field(response).finish(),
+            ResponseSpec::Computed(_) => f.debug_tuple("Computed").finish_non_exhaustive(),
+        }
+    }
+}
+
+impl std::fmt::Debug for RequestCtx {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RequestCtx")
+            .field("query", &self.query)
+            .field("t_s", &self.t_s)
+            .field("seed", &self.seed)
+            .field("host", &self.host)
+            .finish_non_exhaustive()
     }
 }
 

@@ -37,7 +37,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec};
+use crate::blueprint::{AnnounceSpec, EndpointSpec, ResourceSpec, ResponseSpec};
 use crate::build::{celsius, drift, leaf};
 use crate::http_status::HttpStatus;
 use crate::quantity::{Celsius, NonNegative};
@@ -90,14 +90,16 @@ impl Params {
             endpoints: vec![EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/info".to_owned(),
-                body: Body::Render(json!({
-                    "name": self.model_name.as_str(),
-                    "hashrate": leaf(drift(self.hashrate_ths.get() * 1e12)),
-                    "power_out_mw": leaf(drift(self.power_w.get() * 1_000.0)),
-                    "temperature": leaf(celsius(self.temp_c.get())),
-                    "uptime": self.uptime_s,
-                })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status: self.status,
+                    template: json!({
+                        "name": self.model_name.as_str(),
+                        "hashrate": leaf(drift(self.hashrate_ths.get() * 1e12)),
+                        "power_out_mw": leaf(drift(self.power_w.get() * 1_000.0)),
+                        "temperature": leaf(celsius(self.temp_c.get())),
+                        "uptime": self.uptime_s,
+                    }),
+                },
             }],
             sampler: None,
         }

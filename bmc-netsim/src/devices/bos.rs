@@ -33,7 +33,7 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
 
-use crate::blueprint::{AnnounceSpec, Body, EndpointSpec, ResourceSpec};
+use crate::blueprint::{AnnounceSpec, EndpointSpec, ResourceSpec, ResponseSpec};
 use crate::build::{celsius, drift, leaf, mac, steady};
 use crate::http_status::HttpStatus;
 use crate::noise::{mix, mix_index, stable01};
@@ -103,43 +103,50 @@ impl Params {
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/v1/version".to_owned(),
-                body: Body::Render(json!({ "major": 1, "minor": 6, "patch": 0 })),
-                status: HttpStatus::OK,
+                response: ResponseSpec::render(json!({ "major": 1, "minor": 6, "patch": 0 })),
             },
             EndpointSpec {
                 method: "POST".to_owned(),
                 path: "/api/v1/auth/login".to_owned(),
-                body: Body::Render(json!({ "token": "sim-token" })),
-                status: self.auth_status,
+                response: ResponseSpec::Render {
+                    status: self.auth_status,
+                    template: json!({ "token": "sim-token" }),
+                },
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/v1/miner/stats".to_owned(),
-                body: Body::Render(json!({
-                    "miner_stats": { "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } } },
-                    "power_stats": { "approximated_consumption": { "watt": watt } },
-                })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status: self.status,
+                    template: json!({
+                        "miner_stats": { "real_hashrate": { "last_1m": { "gigahash_per_second": ghs } } },
+                        "power_stats": { "approximated_consumption": { "watt": watt } },
+                    }),
+                },
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/v1/miner/hw/hashboards".to_owned(),
-                body: Body::Render(json!({
-                    "hashboards": [self.board(board_offset(base, 0)), self.board(board_offset(base, 1))],
-                })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status: self.status,
+                    template: json!({
+                        "hashboards": [self.board(board_offset(base, 0)), self.board(board_offset(base, 1))],
+                    }),
+                },
             },
             EndpointSpec {
                 method: "GET".to_owned(),
                 path: "/api/v1/miner/details".to_owned(),
-                body: Body::Render(json!({
-                    "bosminer_uptime_s": self.uptime_s,
-                    "platform": 8,
-                    "mac_address": mac(name),
-                    "miner_identity": { "miner_model": self.model_name.as_str() },
-                    "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * 1_000.0)) },
-                })),
-                status: self.status,
+                response: ResponseSpec::Render {
+                    status: self.status,
+                    template: json!({
+                        "bosminer_uptime_s": self.uptime_s,
+                        "platform": 8,
+                        "mac_address": mac(name),
+                        "miner_identity": { "miner_model": self.model_name.as_str() },
+                        "sticker_hashrate": { "gigahash_per_second": leaf(steady(self.nominal_ths.get() * 1_000.0)) },
+                    }),
+                },
             },
         ];
         ResourceSpec {
