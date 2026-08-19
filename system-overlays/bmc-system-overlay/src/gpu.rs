@@ -61,7 +61,8 @@ pub struct OverlayRenderTarget {
     /// changes), then each animation frame copies it into the export buffer at
     /// the current slide offset. `None` until first captured; retained across
     /// hides so the next reveal can blit immediately, freed on resize (stale
-    /// size) and destroy.
+    /// size) and destroy. Colour-only — a blit destination and source, never a
+    /// femtovg target, so it needs no stencil.
     panel_cache: Option<WidgetExportBuffer>,
 }
 
@@ -127,7 +128,7 @@ impl OverlayRenderTarget {
                 egl.destroy_widget_export_buffer(old);
             }
             self.panel_cache = Some(
-                egl.allocate_widget_export_buffer(w, panel_h, Depth::Disabled, Stencil::Enabled)
+                egl.allocate_widget_export_buffer(w, panel_h, Depth::Disabled, Stencil::Disabled)
                     .context("allocate overlay panel cache")?,
             );
         }
