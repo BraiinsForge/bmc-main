@@ -54,6 +54,10 @@ pub(crate) struct ViewTick {
     pub(crate) monotonic_ms: u64,
     /// Seal live I/O so refreshes fail, mirroring an offline device.
     pub(crate) offline: bool,
+    /// Drain the guest's profiling sections into this tick's report.
+    /// Asked of one view: draining empties them, so two readers would
+    /// halve what each sees.
+    pub(crate) profile: bool,
 }
 
 /// What one tick did, and when the view wants the next one.
@@ -299,14 +303,26 @@ impl ViewCore {
     }
 
     /// The state the UI mirrors after every tick.
-    pub(crate) fn report(&self) -> ViewReport {
+    ///
+    /// Takes `&mut self` because profiling sections are drained, not read: the
+    /// guest accumulates them until someone collects.
+    pub(crate) fn report(&mut self, profile: bool) -> ViewReport {
+        let timings = self.runtime.as_ref().map(|rt| bmc_render::FrameTimings {
+            flush_us: self.sched.last_flush_us,
+            ..rt.last_timings()
+        });
+        let sections = profile
+            .then(|| {
+                self.runtime
+                    .as_mut()
+                    .map(WasmWidgetRuntime::take_profile_sections)
+            })
+            .flatten();
         ViewReport {
-            timings: self.runtime.as_ref().map(|rt| bmc_render::FrameTimings {
-                flush_us: self.sched.last_flush_us,
-                ..rt.last_timings()
-            }),
+            timings,
             slip_ms: self.sched.last_slip_ms,
             led_scene: self.led.scene.filter(|_| self.led.enabled),
+            sections,
         }
     }
 }
@@ -336,6 +352,9 @@ pub(crate) struct ViewReport {
     pub(crate) timings: Option<bmc_render::FrameTimings>,
     pub(crate) slip_ms: Option<u64>,
     pub(crate) led_scene: Option<bmc_led::data::LedScene>,
+    /// Present only for a tick that asked to profile, so the other views do
+    /// not mint a map apiece every frame.
+    pub(crate) sections: Option<std::collections::BTreeMap<String, u64>>,
 }
 
 pub(crate) struct DeviceView {
@@ -527,15 +546,15 @@ impl DeviceView {
 
     // ── Perf ─────────────────────────────────────────────────────────
 
-    /// Timings and fuel sections from the last render.
+    /// The profiling sample this tick drained, taken once.
     pub(crate) fn take_perf_sample(
         &mut self,
     ) -> Option<(
         bmc_render::FrameTimings,
         std::collections::BTreeMap<String, u64>,
     )> {
-        let rt = self.core_mut()?.runtime.as_mut()?;
-        Some((rt.last_timings(), rt.take_profile_sections()))
+        let timings = self.report.timings?;
+        Some((timings, self.report.sections.take()?))
     }
 
     /// The core, for the queries only an inline view can answer.
@@ -617,7 +636,7 @@ impl DeviceView {
                     core.apply(command);
                 }
                 let ticked = core.tick(tick);
-                self.report = core.report();
+                self.report = core.report(tick.profile && ticked.rendered);
                 ticked
             }
             Render::Threaded(worker) => {

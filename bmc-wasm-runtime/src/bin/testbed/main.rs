@@ -256,21 +256,12 @@ enum ViewPlacement {
     UiThread,
 }
 
-/// Decide where views render, and say so when a mode takes the choice away.
+/// Decide where views render.
 ///
-/// Profiling pins every view to the UI thread: the profiler reads fuel
-/// sections from the render it just drove, an answer that cannot arrive
-/// a frame later. Recording pins the same way but per build,
-/// while the mode is active ([`placement_for_build`]) —
-/// it comes and goes at runtime, which a launch-time decision would outlive.
+/// Recording pins views inline per build ([`placement_for_build`]), not here.
+/// The mode comes and goes at runtime; this decision is made once, at launch.
 fn view_placement(cli: &CliArgs) -> ViewPlacement {
     if cli.inline_views {
-        return ViewPlacement::UiThread;
-    }
-    if cli.perf_report_path.is_some() {
-        tracing::info!(
-            "profiling: views render on the UI thread, where their queries can be answered"
-        );
         return ViewPlacement::UiThread;
     }
     ViewPlacement::OwnThread
@@ -433,6 +424,16 @@ mod platforms_startup_tests {
         assert_eq!(view_placement(&cli), ViewPlacement::OwnThread);
     }
 
+    /// The sample rides the tick's own report, so profiling reads a threaded
+    /// view as well as an inline one — and measures the placement that ships.
+    #[test]
+    fn a_perf_report_leaves_views_on_their_own_threads() {
+        let cli = parse_test_args(&["testbed", "widget.wasm", "--perf-report", "perf.json"])
+            .expect("BUG: perf-report must parse");
+
+        assert_eq!(view_placement(&cli), ViewPlacement::OwnThread);
+    }
+
     #[test]
     fn inline_views_forces_every_view_onto_the_ui_thread() {
         let cli = parse_test_args(&["testbed", "widget.wasm", "--inline-views"])
@@ -473,18 +474,6 @@ mod platforms_startup_tests {
             .expect("BUG: a record target was given");
 
         assert_eq!(request.dataset, None);
-    }
-
-    #[test]
-    fn profiling_pins_views_inline() {
-        let cli = parse_test_args(&["testbed", "widget.wasm", "--perf-report=out.json"])
-            .expect("BUG: perf-report args must parse");
-
-        assert_eq!(
-            view_placement(&cli),
-            ViewPlacement::UiThread,
-            "the profiler reads fuel sections from the render it just drove"
-        );
     }
 
     #[test]
@@ -1921,6 +1910,7 @@ impl TestbedApp {
             system_time,
             monotonic_ms,
             offline: self.offline,
+            profile: false,
         };
         // In recording mode only the active view runs; `App::ui` paints the rest
         // as blank slabs. Skipping their render keeps the visual focus clear,
@@ -1942,6 +1932,10 @@ impl TestbedApp {
             if active_record_idx.is_some_and(|active| active != idx) {
                 continue;
             }
+            let tick = view::ViewTick {
+                profile: Some(idx) == perf_idx,
+                ..tick
+            };
             let ticked = view.tick(&tick, &self.gl);
             if let Some(delay) = ticked.next_wake_ms {
                 next_wake_ms = Some(next_wake_ms.map_or(delay, |w| w.min(delay)));

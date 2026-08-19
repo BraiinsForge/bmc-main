@@ -496,7 +496,7 @@ impl WorkerState {
     /// Run one tick and, if it drew, hand the frame over.
     fn render(&mut self, tick: &ViewTick) -> FromWorker {
         let ticked = self.core.tick(tick);
-        let report = self.core.report();
+        let report = self.core.report(tick.profile && ticked.rendered);
         let handoff = ticked.rendered.then(|| {
             let slot = self.writing;
             self.writing = 1 - slot;
