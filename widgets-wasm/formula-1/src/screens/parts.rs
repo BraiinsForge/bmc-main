@@ -283,10 +283,12 @@ fn day_and_month(at: CalendarDate, month_first: bool) -> String {
     }
 }
 
-/// A race weekend's span, which drops to one day when it is only one:
-/// the opening day carries no month, the closing day does.
+/// A race weekend's span, which drops to one day when it is only one.
+/// The opening day carries no month unless the weekend crosses one.
 #[must_use]
 pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
+    // The sport writes a round day-first; only the US setting reverses that,
+    // and a year-first ordering needs a year this label does not carry.
     let month_first = matches!(
         system::current().date_format().unwrap_or_default(),
         DateFormat::MDYyyySlash
@@ -294,7 +296,7 @@ pub fn date_range(start: CalendarDate, end: Option<CalendarDate>) -> String {
     let Some(end) = end.filter(|end| *end != start) else {
         return day_and_month(start, month_first);
     };
-    let opening = if month_first {
+    let opening = if month_first || start.month != end.month {
         day_and_month(start, month_first)
     } else {
         fmt!("{}", start.day)
@@ -455,7 +457,7 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{clock, contained, date_range};
+    use super::{CalendarDate, DateFormat, clock, contained, date_range, system};
     use crate::screens::fixtures::{weekend_day, weekend_time};
 
     /// Every image but a flag draws through this, so a box that stretched
@@ -476,16 +478,54 @@ mod tests {
         assert_eq!(contained((0, 0), 40.0, 30.0), (0.0, 0.0, 40.0, 30.0));
     }
 
+    /// Put the operator on `format`, since the snapshot is held per thread
+    /// and `cargo test` hands one thread to several tests in turn.
+    fn dates(format: DateFormat) {
+        system::set_current(system::SnapshotBuilder::new().date_format(format).build());
+    }
+
+    /// A day in a month the weekend fixture does not run in.
+    fn day_of(month: u8, day: u8) -> CalendarDate {
+        CalendarDate {
+            year: 2026,
+            month,
+            day,
+            weekday: 0,
+        }
+    }
+
     #[test]
     fn a_weekend_spanning_days_names_its_month_once() {
+        dates(DateFormat::DdMmYyyyDot);
         let range = date_range(weekend_day(21), Some(weekend_day(23)));
         assert_eq!(range, "21 \u{2013} 23 Aug");
     }
 
     #[test]
     fn a_weekend_of_one_day_reads_as_that_day() {
+        dates(DateFormat::DdMmYyyyDot);
         assert_eq!(date_range(weekend_day(23), None), "23 Aug");
         assert_eq!(date_range(weekend_day(23), Some(weekend_day(23))), "23 Aug",);
+    }
+
+    #[test]
+    fn a_weekend_crossing_a_month_names_both_of_them() {
+        let across = (day_of(10, 30), Some(day_of(11, 1)));
+
+        dates(DateFormat::DdMmYyyyDot);
+        assert_eq!(
+            date_range(across.0, across.1),
+            "30 Oct \u{2013} 1 Nov",
+            "dropping the opening month reads as two days of November",
+        );
+
+        dates(DateFormat::MDYyyySlash);
+        assert_eq!(date_range(across.0, across.1), "Oct 30 \u{2013} Nov 1");
+        assert_eq!(
+            date_range(weekend_day(21), Some(weekend_day(23))),
+            "Aug 21 \u{2013} Aug 23",
+            "month-first names the month on both ends within one month too",
+        );
     }
 
     #[test]
