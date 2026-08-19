@@ -85,7 +85,14 @@ enum FromWorker {
         report: ViewReport,
         handoff: Option<Handoff>,
     },
+    /// The rebuild's outcome, carrying the info the new runtime reports —
+    /// the SDK version and export set change with the widget.
+    Reloaded(Result<ViewInfo, String>),
 }
+
+/// What a reload reports when the thread is gone: the rebuild's own failure
+/// is the worker's to describe, and this is what is left when none arrives.
+const NO_ANSWER: &str = "the view thread stopped answering";
 
 /// The compositor's end of a threaded view.
 pub(crate) struct Worker {
@@ -154,9 +161,16 @@ impl Worker {
 
     /// Rebuild the widget on the thread that owns its renderer.
     ///
-    /// Fire-and-forget: the worker applies it before the next tick it is given,
-    /// and a failure to build is reported from there, where it happens.
-    pub(crate) fn reload(&mut self, seed: super::ViewSeed, rebind: super::Rebind) {
+    /// Waits for the answer, because the rebuild can fail and a new widget
+    /// reports a new `ViewInfo` — neither is knowable from this side.
+    ///
+    /// Not per-frame, so the wait costs only a rebuild that has to finish
+    /// anyway.
+    pub(crate) fn reload(
+        &mut self,
+        seed: super::ViewSeed,
+        rebind: super::Rebind,
+    ) -> Result<(), String> {
         if self
             .tx
             .send(ToWorker::Reload {
@@ -166,6 +180,25 @@ impl Worker {
             .is_err()
         {
             let _ = self.lost();
+            return Err(NO_ANSWER.to_owned());
+        }
+        self.take_reload_ack()
+    }
+
+    /// Read the worker's answer to a reload, adopting the `ViewInfo` a rebuilt
+    /// widget reports.
+    fn take_reload_ack(&mut self) -> Result<(), String> {
+        match self.rx.recv() {
+            Ok(FromWorker::Reloaded(Ok(info))) => {
+                self.info = info;
+                Ok(())
+            }
+            Ok(FromWorker::Reloaded(Err(e))) => Err(e),
+            // A `Ticked` here would mean the protocol stopped alternating.
+            Ok(FromWorker::Ticked { .. }) | Err(_) => {
+                let _ = self.lost();
+                Err(NO_ANSWER.to_owned())
+            }
         }
     }
 
@@ -368,7 +401,12 @@ fn run(
     while let Ok(message) = from_ui.recv() {
         match message {
             ToWorker::Apply(command) => state.core.apply(command),
-            ToWorker::Reload { seed, rebind } => state.reload(*seed, *rebind),
+            ToWorker::Reload { seed, rebind } => {
+                let reloaded = state.reload(*seed, *rebind);
+                if to_ui.send(FromWorker::Reloaded(reloaded)).is_err() {
+                    break;
+                }
+            }
             ToWorker::Close => break,
             ToWorker::Tick(tick) => {
                 let ticked = state.render(&tick);
@@ -519,17 +557,17 @@ impl WorkerState {
     /// one: the reload was asked for because the wasm on disk changed, and
     /// carrying on with the previous build would show a widget that no longer
     /// exists.
-    fn reload(&mut self, seed: super::ViewSeed, rebind: super::Rebind) {
-        let label = seed.label.clone();
+    fn reload(&mut self, seed: super::ViewSeed, rebind: super::Rebind) -> Result<ViewInfo, String> {
         match seed.build_runtime() {
             Ok(runtime) => {
                 self.core.install_runtime(runtime, rebind.led_rx);
                 self.core
                     .rebind_credentials(*rebind.credentials, *rebind.secrets);
+                Ok(self.core.info())
             }
             Err(e) => {
                 self.core.install_runtime(None, None);
-                tracing::warn!("hot reload: {label}: {e:#}");
+                Err(format!("{e:#}"))
             }
         }
     }
@@ -542,6 +580,83 @@ impl WorkerState {
         for present in self.present {
             present.destroy_container_objects(&self.gl);
         }
+    }
+}
+
+#[cfg(test)]
+mod reload_ack_tests {
+    use super::{FromWorker, Worker};
+    use crate::view::ViewInfo;
+
+    /// A worker whose thread is the test itself: the sender stands in for it,
+    /// so a reload's answer can be posted, withheld, or refused.
+    fn worker() -> (Worker, std::sync::mpsc::Sender<FromWorker>) {
+        let (tx, _unused) = std::sync::mpsc::channel();
+        let (worker_tx, rx) = std::sync::mpsc::channel();
+        let worker = Worker {
+            tx,
+            rx,
+            join: None,
+            info: ViewInfo::default(),
+            report: crate::view::ViewReport::default(),
+            label: "test".to_owned(),
+            showing: 0,
+            lost: false,
+        };
+        (worker, worker_tx)
+    }
+
+    #[test]
+    fn a_rebuilt_widget_replaces_the_info_the_view_reports() {
+        let (mut worker, answers) = worker();
+        let rebuilt = ViewInfo {
+            live: true,
+            sdk_version: Some((1, 2, 3)),
+            exports_on_touch: true,
+        };
+        answers
+            .send(FromWorker::Reloaded(Ok(rebuilt)))
+            .expect("BUG: the worker holds the receiver");
+
+        worker
+            .take_reload_ack()
+            .expect("a rebuilt widget must report success");
+
+        assert_eq!(
+            worker.info().sdk_version,
+            Some((1, 2, 3)),
+            "the reload's info must replace what was read at construction",
+        );
+    }
+
+    #[test]
+    fn a_failed_rebuild_reports_the_workers_own_reason() {
+        let (mut worker, answers) = worker();
+        answers
+            .send(FromWorker::Reloaded(Err("no such export".to_owned())))
+            .expect("BUG: the worker holds the receiver");
+
+        let reason = worker
+            .take_reload_ack()
+            .expect_err("a failed rebuild must not read as a swap");
+
+        assert_eq!(reason, "no such export");
+        assert!(
+            !worker.info().live,
+            "a view that failed to rebuild is not live",
+        );
+    }
+
+    /// A silent thread is a failed reload, not a successful one: the caller
+    /// reports the swap on `Ok`.
+    #[test]
+    fn a_thread_that_never_answers_fails_the_reload() {
+        let (mut worker, answers) = worker();
+        drop(answers);
+
+        worker
+            .take_reload_ack()
+            .expect_err("a dead channel must fail the reload");
     }
 }
 

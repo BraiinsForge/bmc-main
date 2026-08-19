@@ -1381,6 +1381,7 @@ impl TestbedApp {
             .recording_mode
             .active()
             .map(RecordingState::active_tile);
+        let mut swapped = true;
         for idx in 0..self.stage.tile_count() {
             let Some(view) = self.stage.tile(idx).filter(|view| view.is_live()) else {
                 continue; // placeholder — no runtime to rebuild
@@ -1421,10 +1422,14 @@ impl TestbedApp {
             };
             if let Err(e) = view.reload(seed, rebind) {
                 tracing::warn!("hot reload: {}: {e:#}", view.label());
+                swapped = false;
             }
         }
-        // Whoever built it, what the views run is now what is on disk.
-        self.hot_reload.status.swapped();
+        // A view that refused the rebuild is running what came before the edit,
+        // or nothing at all.
+        if swapped {
+            self.hot_reload.status.swapped();
+        }
     }
 
     /// Open or close a device on the canvas, leaving params and system state

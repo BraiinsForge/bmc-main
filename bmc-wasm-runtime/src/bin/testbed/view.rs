@@ -568,7 +568,10 @@ impl DeviceView {
                 }
                 self.info = core.info();
             }
-            Render::Threaded(worker) => worker.reload(seed, rebind),
+            Render::Threaded(worker) => {
+                worker.reload(seed, rebind).map_err(anyhow::Error::msg)?;
+                self.info = worker.info();
+            }
         }
         Ok(())
     }
