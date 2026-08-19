@@ -46,6 +46,7 @@
 
 pub mod animation;
 pub mod components;
+pub mod dense_map;
 pub mod gpu;
 pub mod gpu_access;
 pub mod interaction;
