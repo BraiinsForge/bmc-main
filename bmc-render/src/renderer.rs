@@ -524,6 +524,34 @@ pub trait Renderer {
     fn text_layout_counters(&self) -> TextLayoutCounters {
         TextLayoutCounters::default()
     }
+
+    // -- Static-layer cache --
+    //
+    // Lets an animation-only frame reuse the rasterised output of the static
+    // half of the tree instead of re-emitting it. Default impls make the whole
+    // feature inert, so a renderer that cannot render to a texture keeps
+    // drawing every frame in full.
+
+    /// Begin capturing draws into a cached static layer of `width` x `height`
+    /// logical pixels, at the renderer's current device-pixel ratio. Returns
+    /// `false` if no layer is available, in which case the caller must fall
+    /// back to a full frame.
+    fn begin_static_layer(&mut self, _width: u32, _height: u32) -> bool {
+        false
+    }
+
+    /// Stop capturing and restore the previous render target.
+    fn end_static_layer(&mut self) {}
+
+    /// Composite the cached layer into the current target. Returns `false` when
+    /// no valid layer exists — the caller must then render a full frame.
+    fn blit_static_layer(&mut self) -> bool {
+        false
+    }
+
+    /// Drop the cached layer. Must be called whenever the static half of the
+    /// tree could have changed, i.e. after any frame that ran the guest.
+    fn invalidate_static_layer(&mut self) {}
 }
 
 /// Restores suspended renderer assets at the point where a draw first needs them.
@@ -1012,5 +1040,84 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 
     fn text_layout_counters(&self) -> TextLayoutCounters {
         self.renderer.text_layout_counters()
+    }
+
+    // Forwarded, not defaulted: the trait's inert defaults would make a wrapped
+    // renderer report "no layer available" and caching would silently never
+    // happen, which looks exactly like a renderer that cannot render to a
+    // texture.
+    fn begin_static_layer(&mut self, width: u32, height: u32) -> bool {
+        self.renderer.begin_static_layer(width, height)
+    }
+
+    fn end_static_layer(&mut self) {
+        self.renderer.end_static_layer();
+    }
+
+    fn blit_static_layer(&mut self) -> bool {
+        self.renderer.blit_static_layer()
+    }
+
+    fn invalidate_static_layer(&mut self) {
+        self.renderer.invalidate_static_layer();
+    }
+}
+
+/// `RenderTarget` wraps a renderer to resolve suspended assets at draw time, so
+/// every [`Renderer`] method has to reach the inner renderer. A method with a
+/// default body that the wrapper forgets to forward does not fail to compile —
+/// it silently answers with the default, and the whole feature behind it goes
+/// quiet. That cost a full-screen blit per frame once: `blit_static_layer_rects`
+/// defaults to the unscissored blit, so damage tracking computed its rects and
+/// then repainted everything, correctly and expensively.
+///
+/// This asserts the source itself: every defaulted trait method must appear in
+/// the wrapper's impl.
+#[cfg(test)]
+mod render_target_forwarding {
+    /// Method names declared with a default body in `trait Renderer`.
+    fn defaulted_trait_methods(src: &str) -> Vec<&str> {
+        let trait_body = src
+            .split_once("pub trait Renderer")
+            .expect("BUG: trait Renderer must be present")
+            .1;
+        let trait_body = trait_body
+            .split_once("pub trait RendererAssetResolver")
+            .expect("BUG: RendererAssetResolver must follow trait Renderer")
+            .0;
+        trait_body
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("fn "))
+            // A default body opens on the signature line; a required method ends `;`.
+            .filter(|rest| rest.trim_end().ends_with('{'))
+            .filter_map(|rest| rest.split('(').next())
+            .collect()
+    }
+
+    fn wrapper_methods(src: &str) -> Vec<&str> {
+        let impl_body = src
+            .split_once("impl Renderer for RenderTarget")
+            .expect("BUG: RenderTarget must implement Renderer")
+            .1;
+        impl_body
+            .lines()
+            .filter_map(|line| line.trim().strip_prefix("fn "))
+            .filter_map(|rest| rest.split('(').next())
+            .collect()
+    }
+
+    #[test]
+    fn render_target_forwards_every_defaulted_method() {
+        let src = include_str!("renderer.rs");
+        let wrapper = wrapper_methods(src);
+        let missing: Vec<&str> = defaulted_trait_methods(src)
+            .into_iter()
+            .filter(|method| !wrapper.contains(method))
+            .collect();
+        assert!(
+            missing.is_empty(),
+            "RenderTarget does not forward {missing:?}; each would silently answer \
+             with the trait default instead of reaching the renderer",
+        );
     }
 }

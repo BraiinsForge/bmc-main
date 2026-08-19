@@ -2147,6 +2147,7 @@ mod tests {
         transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
     ) -> AnimationContext<'a> {
         AnimationContext {
+            emit: crate::tree::EmitMode::default(),
             animation_states,
             transition_states,
             delta_ms: 0,

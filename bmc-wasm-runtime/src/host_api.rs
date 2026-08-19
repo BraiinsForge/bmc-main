@@ -840,10 +840,19 @@ impl FrameScheduleState {
     }
 
     /// Whether the next frame can replay the cached tree without running WASM.
+    ///
+    /// Only an *immediate* widget request (`request_frame()` ≡ `Some(0)`) blocks
+    /// the cached path. A deferred request (`request_frame_after(n)`, `n > 0`)
+    /// must not: the widget asked to run again in `n` ms, not on every frame in
+    /// between, and [`Self::deferred_wasm_render_at_ms`] already forces the full
+    /// WASM run once that deadline elapses. Blocking on any `Some` made the
+    /// cached path unreachable for every widget that calls `request_frame_after`
+    /// from `render` — which is all of them — so animations re-ran the whole
+    /// interpreted guest each frame instead of replaying the tree.
     pub fn is_animation_only_frame(&self) -> bool {
         (self.has_active_animations || self.host_frame_delay_ms.is_some())
             && !self.interaction_pending
-            && self.widget_delay_ms.is_none()
+            && self.widget_delay_ms.is_none_or(|delay_ms| delay_ms > 0)
     }
 
     /// Effective delay before the host should wake for the next render —
@@ -1997,10 +2006,19 @@ mod tests {
 
         let mut s = schedule(33);
         s.has_active_animations = true;
-        s.widget_delay_ms = Some(100);
+        s.widget_delay_ms = Some(0);
         assert!(
             !s.is_animation_only_frame(),
-            "widget request needs full WASM"
+            "request_frame() is an immediate request and needs full WASM"
+        );
+
+        let mut s = schedule(33);
+        s.has_active_animations = true;
+        s.widget_delay_ms = Some(100);
+        assert!(
+            s.is_animation_only_frame(),
+            "request_frame_after(n>0) defers the WASM run to its deadline; \
+             animation frames before it replay the cached tree"
         );
 
         let s = schedule(33);

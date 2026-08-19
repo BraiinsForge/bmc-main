@@ -460,6 +460,10 @@ fn staged_tree(
                 frame_counter: state.frame_counter,
                 delta_ms,
                 now_unix_secs,
+                // The gallery renders every frame in full: it has no export
+                // buffer to preserve and no guest to skip.
+                emit: bmc_render::tree::EmitMode::All,
+                capture_static: false,
             };
             match bmc_render::process_tree(
                 &bytes,

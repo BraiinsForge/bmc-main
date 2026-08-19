@@ -105,6 +105,41 @@ struct ShadowFboPool {
 ///
 /// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
 /// paragraph layout cache. Created once per runtime lifetime.
+/// Cached rasterisation of the static half of a widget tree.
+///
+/// Geometry is recorded so a resize can be detected — the texture is the wrong
+/// shape then and must be reallocated rather than reused.
+struct StaticLayer {
+    image: femtovg::ImageId,
+    width: u32,
+    height: u32,
+    dpi_scale: f32,
+    /// `false` between allocation and the first completed capture. Blitting an
+    /// uncaptured layer would paint a transparent rectangle over the frame.
+    captured: bool,
+}
+
+/// Outcome of [`FemtoVgRenderer::probe_render_to_texture`].
+///
+/// Only [`Self::Working`] means a cached static layer is viable; every other
+/// variant names a distinct failure so a device log says *why* rather than just
+/// "no".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RenderTargetProbe {
+    /// RGBA8 offscreen target allocated and framebuffer-complete.
+    Working,
+    /// femtovg could not allocate the image at all.
+    ImageAllocFailed,
+    /// Image allocated but exposes no GL texture to attach.
+    NoNativeTexture,
+    /// The driver refused to create a framebuffer object.
+    FramebufferAllocFailed,
+    /// Attached, but the driver reports the framebuffer incomplete.
+    FramebufferIncomplete(u32),
+    /// GL raised an error during the probe.
+    GlError(u32),
+}
+
 pub struct FemtoVgRenderer {
     gl: glow::Context,
     canvas: Canvas<OpenGl>,
@@ -145,6 +180,9 @@ pub struct FemtoVgRenderer {
     shadow_fbo_pool: Option<ShadowFboPool>,
     #[cfg(feature = "profiling")]
     glyph_report_every: ii_stopwatch::Every,
+    /// Cached rasterisation of the static half of the tree, replayed on
+    /// animation-only frames instead of re-emitting those draws.
+    static_layer: Option<StaticLayer>,
 }
 
 impl std::fmt::Debug for FemtoVgRenderer {
@@ -382,6 +420,74 @@ impl FemtoVgRenderer {
         self.canvas.scale(dpi_scale, dpi_scale);
     }
 
+    /// Restore rendering to the screen FBO.
+    pub fn set_render_target_screen(&mut self) {
+        self.canvas.set_render_target(RenderTarget::Screen);
+    }
+
+    /// Check whether an offscreen RGBA8 render target is usable on this driver.
+    ///
+    /// Allocates a femtovg image the way a cached static layer would, attaches
+    /// its texture to a framebuffer and reports completeness. Worth probing
+    /// rather than assuming: [`Self::acquire_shadow_fbos`] degrades silently to
+    /// an unblurred draw when allocation fails, so a driver that rejects
+    /// offscreen targets looks like working software with slightly wrong
+    /// shadows. GLES2 only guarantees RGBA4/RGB5_A1/RGB565 *renderbuffers* are
+    /// colour-renderable; RGBA8 textures need `GL_OES_rgb8_rgba8`.
+    pub fn probe_render_to_texture(&mut self) -> RenderTargetProbe {
+        const PROBE_PX: u32 = 16;
+
+        let Ok(image_id) = self.canvas.create_image_empty(
+            PROBE_PX as usize,
+            PROBE_PX as usize,
+            femtovg::PixelFormat::Rgba8,
+            femtovg::ImageFlags::empty(),
+        ) else {
+            return RenderTargetProbe::ImageAllocFailed;
+        };
+
+        let probe = unsafe {
+            // Drain anything an earlier call left queued so `get_error` below
+            // reports only this probe.
+            while self.gl.get_error() != glow::NO_ERROR {}
+
+            match self.canvas.get_native_texture(image_id) {
+                Ok(native) => {
+                    // femtovg hands back the raw GL name; glow wants its newtype.
+                    let texture = glow::NativeTexture(native.0);
+                    match self.gl.create_framebuffer() {
+                        Ok(fbo) => {
+                            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+                            self.gl.framebuffer_texture_2d(
+                                glow::FRAMEBUFFER,
+                                glow::COLOR_ATTACHMENT0,
+                                glow::TEXTURE_2D,
+                                Some(texture),
+                                0,
+                            );
+                            let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
+                            self.gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+                            self.gl.delete_framebuffer(fbo);
+                            let gl_error = self.gl.get_error();
+                            if gl_error != glow::NO_ERROR {
+                                RenderTargetProbe::GlError(gl_error)
+                            } else if status == glow::FRAMEBUFFER_COMPLETE {
+                                RenderTargetProbe::Working
+                            } else {
+                                RenderTargetProbe::FramebufferIncomplete(status)
+                            }
+                        }
+                        Err(_) => RenderTargetProbe::FramebufferAllocFailed,
+                    }
+                }
+                Err(_) => RenderTargetProbe::NoNativeTexture,
+            }
+        };
+
+        self.canvas.delete_image(image_id);
+        probe
+    }
+
     /// Run `inner` translated to the canvas origin `(cx, cy)`.
     /// Used by the `drop_shadow` fallbacks,
     /// since the closure draws at FBO-local `(0, 0)`.
@@ -529,6 +635,7 @@ impl FemtoVgRenderer {
             shadow_fbo_pool: None,
             #[cfg(feature = "profiling")]
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
+            static_layer: None,
         })
     }
 
@@ -1796,6 +1903,106 @@ impl Renderer for FemtoVgRenderer {
     fn text_layout_counters(&self) -> TextLayoutCounters {
         self.paragraph_cache.counters()
     }
+    fn begin_static_layer(&mut self, width: u32, height: u32) -> bool {
+        let dpi_scale = self.dpi_scale;
+        let fits = self.static_layer.as_ref().is_some_and(|layer| {
+            layer.width == width
+                && layer.height == height
+                && (layer.dpi_scale - dpi_scale).abs() < f32::EPSILON
+        });
+        if !fits {
+            // A geometry change makes the existing texture the wrong shape.
+            self.invalidate_static_layer();
+            let (pw, ph) = physical_size(width, height, dpi_scale);
+            // FLIP_Y, not a canvas transform: the layer is a GL FBO texture
+            // with a bottom-left origin, and the blit needs anti-aliasing off
+            // to hit femtovg's cheap `is_straight_tinted_image` path — which
+            // ignores the canvas transform. `FLIP_Y` is folded into the paint's
+            // inverse transform instead, so it survives that fast path.
+            let Ok(image) = self.canvas.create_image_empty(
+                pw,
+                ph,
+                femtovg::PixelFormat::Rgba8,
+                femtovg::ImageFlags::FLIP_Y,
+            ) else {
+                return false;
+            };
+            self.static_layer = Some(StaticLayer {
+                image,
+                width,
+                height,
+                dpi_scale,
+                captured: false,
+            });
+        }
+        let Some(layer) = self.static_layer.as_ref() else {
+            return false;
+        };
+        let image = layer.image;
+        self.begin_frame_to_image(image, width, height, dpi_scale);
+
+        // Re-clear opaque, over the transparent clear `begin_frame_to_image`
+        // does for its other callers. A frame starts opaque black
+        // (`FrameClear::OpaqueBlack`), so rasterising static content against
+        // transparency here and compositing it later would blend those edges
+        // twice — visible as antialiasing drift on thin geometry and text.
+        // Opaque makes the layer exactly the frame's static half, and the blit
+        // a copy rather than a blend.
+        let (pw, ph) = physical_size(width, height, dpi_scale);
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "physical_size returns small positive values"
+        )]
+        self.canvas.clear_rect(
+            0,
+            0,
+            pw as u32,
+            ph as u32,
+            femtovg::Color::rgbf(0.0, 0.0, 0.0),
+        );
+        true
+    }
+
+    fn end_static_layer(&mut self) {
+        self.canvas.set_render_target(RenderTarget::Screen);
+        // femtovg's "Screen" is framebuffer 0, which is *not* this renderer's
+        // target — it draws into a caller-supplied FBO. `begin_frame_with_clear`
+        // binds it explicitly for the same reason; leaving the binding at 0 here
+        // sends everything after the capture to the default framebuffer.
+        unsafe {
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
+        }
+        if let Some(layer) = self.static_layer.as_mut() {
+            layer.captured = true;
+        }
+    }
+
+    fn blit_static_layer(&mut self) -> bool {
+        let Some(layer) = self.static_layer.as_ref() else {
+            return false;
+        };
+        if !layer.captured {
+            return false;
+        }
+        let (image, w, h) = (layer.image, layer.width as f32, layer.height as f32);
+
+        // No canvas transform here on purpose — the fast path below ignores
+        // it. The Y-flip this texture needs comes from `ImageFlags::FLIP_Y`,
+        // set when the layer is allocated.
+        self.canvas.save();
+        let paint = Paint::image(image, 0.0, 0.0, w, h, 0.0, 1.0).with_anti_alias(false);
+        let mut path = Path::new();
+        path.rect(0.0, 0.0, w, h);
+        self.canvas.fill_path(&path, &paint);
+        self.canvas.restore();
+        true
+    }
+
+    fn invalidate_static_layer(&mut self) {
+        if let Some(layer) = self.static_layer.take() {
+            self.canvas.delete_image(layer.image);
+        }
+    }
 }
 
 fn as_u64(bytes: usize) -> u64 {
@@ -1822,6 +2029,19 @@ fn line_style(style: &TextStyle, size: f32) -> LineStyle {
         italic: style.italic,
         size,
     }
+}
+
+/// Logical size scaled to device pixels, saturating rather than wrapping.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "surface dimensions are small positive values"
+)]
+fn physical_size(width: u32, height: u32, dpi_scale: f32) -> (usize, usize) {
+    (
+        (width as f32 * dpi_scale) as usize,
+        (height as f32 * dpi_scale) as usize,
+    )
 }
 
 fn femtovg_baseline(vertical_align: VerticalAlign) -> femtovg::Baseline {

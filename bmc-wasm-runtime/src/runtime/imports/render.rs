@@ -251,6 +251,8 @@ fn submit_tree(
             frame_counter,
             delta_ms,
             now_unix_secs,
+            emit: bmc_render::tree::EmitMode::All,
+            capture_static: true,
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,

@@ -1550,8 +1550,40 @@ use crate::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
 };
 
+/// Which half of the static/dynamic partition the walk should emit.
+///
+/// The walk always *traverses* the whole tree whatever the mode: `draw_counter`
+/// keys animation state and `canvas_index` keys transition state, and both are
+/// positional, so skipping traversal would re-key every animation and reset it
+/// to its first value each frame. Only emission is gated.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum EmitMode {
+    /// Emit everything — full frames, and the fallback whenever no cached
+    /// static layer is available.
+    #[default]
+    All,
+    /// Emit only nodes tagged static, to build the cached layer.
+    StaticOnly,
+    /// Emit only nodes tagged dynamic, to composite over a cached layer.
+    DynamicOnly,
+}
+
+impl EmitMode {
+    /// Whether a node with this classification should draw in this mode.
+    #[must_use]
+    pub fn emits(self, node_is_dynamic: bool) -> bool {
+        match self {
+            Self::All => true,
+            Self::StaticOnly => !node_is_dynamic,
+            Self::DynamicOnly => node_is_dynamic,
+        }
+    }
+}
+
 /// Mutable animation context threaded through the render pipeline.
 pub(crate) struct AnimationContext<'a> {
+    /// Gates emission for static-layer caching; see [`EmitMode`].
+    pub(crate) emit: EmitMode,
     pub(crate) animation_states: &'a mut HashMap<u64, AnimationState>,
     pub(crate) transition_states: &'a mut HashMap<TransitionStateKey, TransitionState>,
     pub(crate) delta_ms: u32,
@@ -1641,6 +1673,18 @@ pub struct SliderSkinData {
 /// Node data attached to taffy nodes
 #[derive(Clone, Default, Debug)]
 pub struct NodeContext {
+    /// Whether this **subtree** can change while the guest is idle — drives
+    /// whether a dynamic-only walk may skip it wholesale. See
+    /// [`crate::partition`].
+    pub(crate) dynamic: bool,
+    /// Whether this node's **own paint** can change. Drives emission, and is
+    /// deliberately not the same question: a container holding an animated
+    /// child is a dynamic *subtree* but paints a static background, which must
+    /// come from the cached layer rather than be repainted over it.
+    ///
+    /// Both are left `false` at every construction site and overwritten by
+    /// [`build_taffy_node`], the only place the whole `TreeNode` is in scope.
+    pub(crate) self_dynamic: bool,
     background: Color,
     /// CSS-modeled box decoration: radius rounds background
     /// and border alike, a zero width paints no border.
@@ -1680,6 +1724,13 @@ pub struct ProcessContext<'a> {
     pub delta_ms: u32,
     /// Injected unix-seconds clock for host-formatted time nodes.
     pub now_unix_secs: i64,
+    /// Which half of the static/dynamic partition to emit; see [`EmitMode`].
+    /// [`EmitMode::All`] reproduces a full frame.
+    pub emit: EmitMode,
+    /// Re-render the static half into the renderer's cached layer after the
+    /// main pass. Only meaningful with [`EmitMode::All`]; the layer is what a
+    /// later dynamic-only frame blits.
+    pub capture_static: bool,
 }
 
 /// Process a tree: deserialize, layout, render.
@@ -1797,6 +1848,7 @@ fn layout_and_render_inner(
     let t2 = Instant::now();
 
     let mut anim_ctx = AnimationContext {
+        emit: ctx.emit,
         animation_states: ctx.animation_states,
         transition_states: ctx.transition_states,
         delta_ms: ctx.delta_ms,
@@ -1852,6 +1904,16 @@ fn layout_and_render_inner(
 
     timings.render_us = t2.elapsed().as_micros() as u32;
 
+    // Rebind rather than `drop`: `AnimationContext` holds no `Drop` impl, so
+    // this is purely about ending its borrows of `ctx` before the capture below
+    // takes `ctx` mutably. Everything it produced is consumed by now.
+    let has_active = anim_ctx.has_active;
+    let _ = anim_ctx;
+
+    if ctx.capture_static && ctx.emit == EmitMode::All {
+        capture_static_layer(root_id, width, height, renderer, resolver.as_ref(), ctx);
+    }
+
     // A modal is animating whenever its progress hasn't yet caught up to its
     // target state (open=1.0, closed=0.0). Progress alone is ambiguous —
     // e.g. progress==0.0 means "fully closed" only if `is_open` is also false;
@@ -1865,11 +1927,101 @@ fn layout_and_render_inner(
         }
     });
 
-    Ok((result, anim_ctx.has_active || modal_animating))
+    Ok((result, has_active || modal_animating))
+}
+
+/// Refresh the renderer's cached static layer from a tree that is already laid
+/// out.
+///
+/// Deliberately reuses the caller's Taffy tree and `root_id`: doing this as a
+/// second `layout_and_render` cost a full extra layout on every guest frame,
+/// which showed up as a ~1/sec stutter on device.
+///
+/// The pass gets scratch animation state and `delta_ms = 0` — it must not
+/// advance the real animations, which the main pass already stepped. Modals are
+/// skipped: they are always dynamic, so they never belong in the layer.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "surface dimensions are small positive values"
+)]
+fn capture_static_layer(
+    root_id: taffy::NodeId,
+    width: f32,
+    height: f32,
+    renderer: &mut dyn Renderer,
+    resolver: Option<&RefCell<&mut dyn RendererAssetResolver>>,
+    ctx: &mut ProcessContext<'_>,
+) {
+    if !renderer.begin_static_layer(width as u32, height as u32) {
+        return;
+    }
+    let mut scratch_animations = HashMap::new();
+    let mut scratch_transitions = HashMap::new();
+    let mut scratch_result = TreeResult::default();
+    let mut capture_target = RenderTarget::new(renderer, resolver);
+    let mut capture_ctx = AnimationContext {
+        emit: EmitMode::StaticOnly,
+        animation_states: &mut scratch_animations,
+        transition_states: &mut scratch_transitions,
+        delta_ms: 0,
+        frame_counter: ctx.frame_counter,
+        draw_counter: 0,
+        canvas_index: 0,
+        draw_in_canvas: 0,
+        mesh_slot_counter: 0,
+        has_active: false,
+        now_unix_secs: ctx.now_unix_secs,
+    };
+    render_taffy_node(
+        ctx.taffy,
+        root_id,
+        0.0,
+        0.0,
+        &mut capture_target,
+        ctx.interaction,
+        ctx.scroll_states,
+        &mut scratch_result,
+        &mut capture_ctx,
+        0,
+    );
+    renderer.end_static_layer();
+}
+
+/// Build the taffy node for `node` and tag it with its static/dynamic
+/// classification.
+///
+/// The classification rides on [`NodeContext`] because the render walk sees
+/// only taffy nodes — the originating [`TreeNode`] is out of scope by then, and
+/// this is the last point where both are available.
+///
+/// Recursion goes through this wrapper rather than
+/// [`build_taffy_node_inner`], so every node that owns a context gets tagged.
+/// Nodes built without a context (e.g. a bare spacer) simply stay untagged and
+/// are treated as dynamic by the consumer — conservative, and they draw
+/// nothing anyway.
+pub(crate) fn build_taffy_node(
+    taffy: &mut TaffyTree<NodeContext>,
+    node: &TreeNode,
+    now_unix_secs: i64,
+    result: &mut TreeResult,
+    modals: &mut Vec<ModalInfo>,
+) -> Result<taffy::NodeId> {
+    let id = build_taffy_node_inner(taffy, node, now_unix_secs, result, modals)?;
+    // O(nodes x depth) boolean work, against ~9.6 ms of Taffy build + layout on
+    // the reference widget — not worth threading a bottom-up accumulator
+    // through every arm below to avoid.
+    let dynamic = crate::partition::node_is_dynamic(node);
+    let self_dynamic = crate::partition::node_self_is_dynamic(node);
+    if let Some(ctx) = taffy.get_node_context_mut(id) {
+        ctx.dynamic = dynamic;
+        ctx.self_dynamic = self_dynamic;
+    }
+    Ok(id)
 }
 
 #[expect(clippy::too_many_lines)]
-pub(crate) fn build_taffy_node(
+fn build_taffy_node_inner(
     taffy: &mut TaffyTree<NodeContext>,
     node: &TreeNode,
     now_unix_secs: i64,
@@ -1961,22 +2113,26 @@ pub(crate) fn build_taffy_node(
             };
 
             let id = taffy.new_with_children(style, &child_ids)?;
-            if props.background != Color::default()
-                || props.bg_np_id.is_some()
-                || props.border_width > 0.0
-            {
-                taffy.set_node_context(
-                    id,
-                    Some(NodeContext {
-                        background: props.background,
-                        border_radius: props.border_radius,
-                        border_width: props.border_width,
-                        border_color: props.border_color,
-                        bg_nine_patch: bg_np_from_props(props),
-                        ..Default::default()
-                    }),
-                )?;
-            }
+            // Attached unconditionally, where this was gated on the node having
+            // a background, border or nine-patch: the context is the only place
+            // the static/dynamic tag can live, and layout containers are
+            // precisely the subtree roots a cached static layer wants to skip.
+            // Pixel-neutral because the render walk guards the background on
+            // `!= Color::default()` and every other field on `Some`/non-empty,
+            // so an otherwise-empty context draws nothing.
+            taffy.set_node_context(
+                id,
+                Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
+                    background: props.background,
+                    border_radius: props.border_radius,
+                    border_width: props.border_width,
+                    border_color: props.border_color,
+                    bg_nine_patch: bg_np_from_props(props),
+                    ..Default::default()
+                }),
+            )?;
             Ok(id)
         }
 
@@ -2009,6 +2165,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     background: props.background,
                     bg_nine_patch: bg_np_from_props(props),
                     paragraph: Some(ParagraphData {
@@ -2038,6 +2196,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     paragraph: Some(ParagraphData {
                         base_style: *style,
                         spans: vec![SpanData {
@@ -2082,6 +2242,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     tag: Some(TagData {
                         kind: *kind,
                         icon: *icon,
@@ -2124,6 +2286,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     button: Some(ButtonContext {
                         id: btn_id.clone(),
                         label: label.clone(),
@@ -2178,6 +2342,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     background: props.background,
                     bg_nine_patch: bg_np_from_props(props),
                     draws: draws.clone(),
@@ -2228,6 +2394,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     background: props.background,
                     bg_nine_patch: bg_np_from_props(props),
                     scroll_key: Some(scroll_key.clone()),
@@ -2247,6 +2415,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     notification: Some(NotificationData {
                         kind: *kind,
                         title: title.clone(),
@@ -2393,6 +2563,8 @@ pub(crate) fn build_taffy_node(
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
+                    dynamic: false,
+                    self_dynamic: false,
                     touch_key: touch_key.clone(),
                     progress_bar: Some(ProgressBarData {
                         track_h: *track_h,
@@ -2580,8 +2752,26 @@ pub(crate) fn render_taffy_node(
         .get_node_context(node_id)
         .and_then(|ctx| ctx.touch_key.clone());
 
+    // Every pass traverses the whole tree and gates only emission. Skipping a
+    // static subtree would also skip the counter advances that positional
+    // animation and transition keys are derived from, so the keys would drift
+    // and every animation past that point re-key; and traversal carries hit
+    // registration, click consumption and frame-delay collection besides
+    // drawing. Emission was always the expensive part.
+    //
+    // Emission gate: a dynamic subtree still contains
+    // static nodes that a dynamic-only pass must not repaint, and vice versa.
+    // An untagged node falls through to `true` — the conservative side, where
+    // it draws in every mode rather than vanishing.
+    let emits = taffy
+        .get_node_context(node_id)
+        .is_none_or(|ctx| anim_ctx.emit.emits(ctx.self_dynamic));
+
     if let Some(ctx) = taffy.get_node_context(node_id) {
-        if let Some(bitmap_id) = ctx.bg_nine_patch.bitmap_id {
+        if !emits {
+            // Fall through to children: a static container can hold a dynamic
+            // descendant, and vice versa.
+        } else if let Some(bitmap_id) = ctx.bg_nine_patch.bitmap_id {
             let np = &ctx.bg_nine_patch;
             renderer.draw_nine_patch(x, y, w, h, bitmap_id, np.left, np.top, np.right, np.bottom);
         } else {
@@ -2609,30 +2799,40 @@ pub(crate) fn render_taffy_node(
         }
 
         // Tag pill + leading icon, painted behind the content child.
-        if let Some(ref tag) = ctx.tag {
+        if emits && let Some(ref tag) = ctx.tag {
             render_tag(tag, x, y, w, h, renderer);
         }
 
-        if let Some(ref para) = ctx.paragraph {
+        if emits && let Some(ref para) = ctx.paragraph {
             renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
+        // Registration is unconditional; only the painting is gated. A pass that
+        // does not emit this button still has to claim its hit region and
+        // consume a pending click, or a button living in the half this pass
+        // skipped becomes dead.
         if let Some(ref btn) = ctx.button {
-            let (clicked, click_pos) = draw_button_with_target(
-                renderer,
-                interaction,
-                &btn.id,
-                &btn.label,
-                x,
-                y,
-                w,
-                h,
-                ButtonStyle::from(btn.style as u32),
-                ButtonSize::from(btn.size),
-                btn.icon_id,
-                btn.disabled,
-                btn.skin.as_ref(),
-            );
+            let (clicked, click_pos) = if emits {
+                draw_button_with_target(
+                    renderer,
+                    interaction,
+                    &btn.id,
+                    &btn.label,
+                    x,
+                    y,
+                    w,
+                    h,
+                    ButtonStyle::from(btn.style as u32),
+                    ButtonSize::from(btn.size),
+                    btn.icon_id,
+                    btn.disabled,
+                    btn.skin.as_ref(),
+                )
+            } else if btn.disabled {
+                (false, None)
+            } else {
+                interaction.button_with_pos(&btn.id, crate::interaction::Rect::new(x, y, w, h))
+            };
             if clicked {
                 result.clicks.insert(
                     btn.id.clone(),
@@ -2651,7 +2851,13 @@ pub(crate) fn render_taffy_node(
             renderer.push_scissor(x, y, w, h);
             anim_ctx.draw_in_canvas = 0;
             for draw in &ctx.draws {
-                render_draw_command(renderer, draw, x, y, w, h, anim_ctx);
+                // Split per draw: a canvas is tagged dynamic when any single
+                // draw is, so the node-level gate is too coarse here. Skipping
+                // a non-`Modified` draw cannot desynchronise `draw_counter` —
+                // that counter only advances inside the `Modified` arm.
+                if anim_ctx.emit.emits(crate::partition::draw_is_dynamic(draw)) {
+                    render_draw_command(renderer, draw, x, y, w, h, anim_ctx);
+                }
                 anim_ctx.draw_in_canvas += 1;
             }
             anim_ctx.canvas_index += 1;
@@ -2659,7 +2865,7 @@ pub(crate) fn render_taffy_node(
         }
 
         // Progress bar: host-rendered track + fill + squiggle + dot
-        if let Some(ref pb) = ctx.progress_bar {
+        if emits && let Some(ref pb) = ctx.progress_bar {
             renderer.push_scissor(x, y, w, h);
             let has_active = render_progress_bar(renderer, pb, x, y, w, h, anim_ctx);
             if has_active {
@@ -2917,6 +3123,82 @@ fn inset_from_props(props: &PropsData) -> taffy::Rect<LengthPercentageAuto> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn emit_mode_partitions_nodes_without_overlap_or_gap() {
+        for dynamic in [false, true] {
+            assert!(
+                EmitMode::All.emits(dynamic),
+                "the default mode must emit everything"
+            );
+            // Every node lands in exactly one of the two halves, so a static
+            // pass plus a dynamic pass reproduces a full frame.
+            assert_ne!(
+                EmitMode::StaticOnly.emits(dynamic),
+                EmitMode::DynamicOnly.emits(dynamic),
+                "static and dynamic passes must not overlap or leave a gap"
+            );
+        }
+        assert!(EmitMode::StaticOnly.emits(false));
+        assert!(EmitMode::DynamicOnly.emits(true));
+    }
+
+    /// The static/dynamic tag must survive the trip into `NodeContext` — the
+    /// render walk reads it from there and never sees the `TreeNode` again.
+    #[test]
+    fn build_taffy_node_tags_context_with_the_partition_classification() {
+        fn build(node: &TreeNode) -> (TaffyTree<NodeContext>, taffy::NodeId) {
+            let mut taffy = TaffyTree::new();
+            let mut result = TreeResult::default();
+            let mut modals = Vec::new();
+            let id = build_taffy_node(&mut taffy, node, 0, &mut result, &mut modals)
+                .expect("BUG: taffy build failed");
+            (taffy, id)
+        }
+
+        let static_canvas = TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![DrawCommand::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 4.0,
+                h: 4.0,
+                fill: Fill::Solid(Color::from_rgb(1, 2, 3)),
+            }],
+        };
+        let (taffy, id) = build(&static_canvas);
+        assert!(
+            !taffy
+                .get_node_context(id)
+                .expect("BUG: canvas must own a context")
+                .dynamic,
+            "a canvas of plain draws must be tagged static"
+        );
+
+        // A relative-time label re-formats on its own cadence, so the tag must
+        // propagate up through an enclosing container.
+        let dynamic_tree = TreeNode::Column(
+            PropsData::default(),
+            vec![TreeNode::RelTime {
+                anchor: 0,
+                format: RelTimeFormat {
+                    length: RelTimeLength::Short,
+                    segments: RelTimeSegments::Single,
+                },
+                clamp: RelTimeClamp::default(),
+                style: TextStyle::default(),
+            }],
+        );
+        let (taffy, id) = build(&dynamic_tree);
+        assert!(
+            taffy
+                .get_node_context(id)
+                .expect("BUG: every container must own a context to carry the tag")
+                .dynamic,
+            "a container holding a host-driven node must be tagged dynamic"
+        );
+    }
 
     fn span(text: &str) -> SpanData {
         SpanData {

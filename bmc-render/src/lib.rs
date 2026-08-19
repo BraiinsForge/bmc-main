@@ -49,6 +49,7 @@ pub mod components;
 pub mod gpu;
 pub mod gpu_access;
 pub mod interaction;
+pub mod partition;
 #[cfg(any(feature = "profiling", test))]
 pub mod proc_mem;
 #[cfg(any(feature = "profiling", test))]
@@ -191,7 +192,7 @@ pub struct ScrollState {
 }
 
 /// Per-frame timing breakdown (microseconds).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameTimings {
     /// Total WASM interpreter time (outer envelope, includes tree processing).
     pub wasm_us: u32,

@@ -27,6 +27,7 @@ use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use bmc_render::FrameTimings;
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
@@ -1002,7 +1003,13 @@ impl<S: SlotSurface> WidgetSlot<S> {
             self.frame_count + 1,
             delta_ms,
             frame_start,
-            HostRenderFrameContext::new(target_width, target_height, wants_immediate, status),
+            HostRenderFrameContext::new(
+                target_width,
+                target_height,
+                wants_immediate,
+                status,
+                self.runtime.last_timings(),
+            ),
         );
         self.schedule_next_runtime_frame(frame_start_instant);
         self.rendered_since_acquire = true;
@@ -1410,6 +1417,11 @@ struct HostRenderFrameContext {
     target_height: u32,
     wants_immediate: bool,
     status: RenderStatus,
+    /// Inner breakdown of the runtime's own render, so a device log separates
+    /// Taffy build+layout from draw-command recording. On a cached-tree frame
+    /// `wasm_us`/`deserialize_us` stay 0 — that is the signal the frame skipped
+    /// the guest, not a measurement gap.
+    timings: FrameTimings,
 }
 
 impl HostRenderFrameContext {
@@ -1418,12 +1430,14 @@ impl HostRenderFrameContext {
         target_height: u32,
         wants_immediate: bool,
         status: RenderStatus,
+        timings: FrameTimings,
     ) -> Self {
         Self {
             target_width,
             target_height,
             wants_immediate,
             status,
+            timings,
         }
     }
 }
@@ -1487,6 +1501,10 @@ impl HostRenderProfiling {
             delta_ms,
             total_us = elapsed_us,
             render_fps,
+            wasm_us = context.timings.wasm_us,
+            deserialize_us = context.timings.deserialize_us,
+            layout_us = context.timings.layout_us,
+            render_us = context.timings.render_us,
             target_width = context.target_width,
             target_height = context.target_height,
             wants_immediate = context.wants_immediate,
@@ -1501,6 +1519,10 @@ impl HostRenderProfiling {
                 delta_ms,
                 total_us = elapsed_us,
                 render_fps,
+                wasm_us = context.timings.wasm_us,
+                deserialize_us = context.timings.deserialize_us,
+                layout_us = context.timings.layout_us,
+                render_us = context.timings.render_us,
                 target_width = context.target_width,
                 target_height = context.target_height,
                 wants_immediate = context.wants_immediate,
@@ -1581,9 +1603,9 @@ pub(crate) fn normalize_gl_state(egl: &bmc_widget::egl::EglContext, w: u32, h: u
 #[cfg(test)]
 mod tests {
     use super::{
-        HostRenderFrameContext, RendererAssetEvictor, SystemSnapshot, apply_setting_update,
-        evict_renderer_assets, instantiate_cached_runtime, led_request_to_action,
-        release_runtime_and_module,
+        FrameTimings, HostRenderFrameContext, RendererAssetEvictor, SystemSnapshot,
+        apply_setting_update, evict_renderer_assets, instantiate_cached_runtime,
+        led_request_to_action, release_runtime_and_module,
     };
     use crate::module_cache::ModuleCache;
     use bmc_wasm_runtime::{
@@ -1822,13 +1844,25 @@ mod tests {
 
     #[test]
     fn host_render_frame_context_carries_summary_dimensions_and_status() {
-        let context =
-            HostRenderFrameContext::new(638, 480, true, bmc_wasm_runtime::RenderStatus::Ok);
+        let timings = FrameTimings {
+            layout_us: 11,
+            render_us: 22,
+            ..FrameTimings::default()
+        };
+        let context = HostRenderFrameContext::new(
+            638,
+            480,
+            true,
+            bmc_wasm_runtime::RenderStatus::Ok,
+            timings,
+        );
 
         assert_eq!(context.target_width, 638);
         assert_eq!(context.target_height, 480);
         assert!(context.wants_immediate);
         assert_eq!(context.status, bmc_wasm_runtime::RenderStatus::Ok);
+        assert_eq!(context.timings.layout_us, 11);
+        assert_eq!(context.timings.render_us, 22);
     }
 
     fn red() -> Rgb {

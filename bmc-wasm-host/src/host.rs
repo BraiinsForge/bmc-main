@@ -86,7 +86,16 @@ impl SharedHost {
             egl.gl().finish();
         }
         drop(init_guard);
-        tracing::info!("shared wasm host renderer initialized");
+        // Probed once at startup rather than assumed: the drop-shadow path
+        // degrades silently when offscreen targets are unavailable, so without
+        // this a driver that rejects them is indistinguishable from one that
+        // works. Gates whether a cached static layer is possible at all.
+        let mut renderer = renderer;
+        let render_to_texture = renderer.probe_render_to_texture();
+        tracing::info!(
+            ?render_to_texture,
+            "shared wasm host renderer initialized; offscreen render-target probe"
+        );
         Ok((
             Self {
                 egl,

@@ -1357,6 +1357,14 @@ impl WasmWidgetRuntime {
         let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
+        // Reuse the rasterised static half when there is one: paint it, then
+        // emit only the dynamic nodes over the top.
+        let emit = if renderer.blit_static_layer() {
+            bmc_render::tree::EmitMode::DynamicOnly
+        } else {
+            bmc_render::tree::EmitMode::All
+        };
+
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,
@@ -1367,6 +1375,8 @@ impl WasmWidgetRuntime {
             frame_counter,
             delta_ms,
             now_unix_secs,
+            emit,
+            capture_static: false,
         };
         let mut resolver = RendererAssetRestorer::new(
             &state.instance_id,
