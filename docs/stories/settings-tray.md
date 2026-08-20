@@ -40,8 +40,8 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 > As a user, I want to restart the device from the tray, with a confirmation gesture, so that a stray tap can never
 > reboot it.
 
-- Restart requires press-and-hold; a progress ring around the button grows and intensifies while holding, and releasing
-  early cancels.
+- Restart requires press-and-hold; a filled circle fades in behind the button and shrinks into it while holding, and
+  releasing early cancels.
 - Completing the hold restarts the device; the tray shows the progress ("Keep holding…", "Restarting…").
 - While a firmware upgrade is being applied the device declines the restart and the tray shows why, so an upgrade can
   never be corrupted by a manual reboot.

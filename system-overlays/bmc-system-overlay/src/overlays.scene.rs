@@ -309,7 +309,9 @@ thread_local! {
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static PRESSED_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
-    static RESTART_HOLDING_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+    static RESTART_HOLDING_ROUND_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
+        RefCell::new(SettingsTrayRenderState::new(Instant::now()));
+    static RESTART_HOLDING_LARGE_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
     static RESTART_DECLINED_TRAY_RENDER_STATE: RefCell<SettingsTrayRenderState> =
         RefCell::new(SettingsTrayRenderState::new(Instant::now()));
@@ -517,15 +519,34 @@ fn settings_tray(ctx: &mut SceneCtx, ui: &mut Ui) {
         settings_tray_cell(pressed, &PRESSED_TRAY_RENDER_STATE, flat),
     );
 
-    let mut restart_holding = bmc100_tray_view();
-    restart_holding.restart_progress = 0.6;
-    restart_holding.restart_caption = Some("Keep holding…".to_owned());
+    let mut restart_holding_round = bfm100_tray_view();
+    restart_holding_round.restart_progress = 0.15;
+    restart_holding_round.restart_caption = Some("Keep holding…".to_owned());
     ui.heading("Settings tray");
-    ui.label("Restart holding, 60% ring");
+    ui.label("Restart holding, round tier at 15%");
     ctx.custom_stage(
         ui,
-        (restart_holding.width, restart_holding.height),
-        settings_tray_cell(restart_holding, &RESTART_HOLDING_TRAY_RENDER_STATE, flat),
+        (restart_holding_round.width, restart_holding_round.height),
+        settings_tray_cell(
+            restart_holding_round,
+            &RESTART_HOLDING_ROUND_TRAY_RENDER_STATE,
+            flat,
+        ),
+    );
+
+    let mut restart_holding_large = bmc100_tray_view();
+    restart_holding_large.restart_progress = 0.15;
+    restart_holding_large.restart_caption = Some("Keep holding…".to_owned());
+    ui.heading("Settings tray");
+    ui.label("Restart holding, Large tier at 15%");
+    ctx.custom_stage(
+        ui,
+        (restart_holding_large.width, restart_holding_large.height),
+        settings_tray_cell(
+            restart_holding_large,
+            &RESTART_HOLDING_LARGE_TRAY_RENDER_STATE,
+            flat,
+        ),
     );
 
     let mut restart_declined = bmm100_tray_view();

@@ -292,7 +292,7 @@ pub struct SettingsTrayView {
     /// surfaces one.
     pub restart_caption: Option<String>,
     pub reconfig_caption: Option<String>,
-    /// 0..=1 hold fractions for the progress rings.
+    /// 0..=1 hold fractions for the progress circles.
     pub restart_progress: f32,
     pub reconfig_progress: f32,
     pub hostname: Option<String>,

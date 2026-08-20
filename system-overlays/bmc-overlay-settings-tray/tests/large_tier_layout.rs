@@ -18,8 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Layout regression for the Large tier: the panel splits into two equal
-//! flex halves and every control ring lives entirely in the bottom one.
+//! Resting-layout regression for the Large tier: the panel splits into two
+//! equal flex halves and every control circle lives entirely in the bottom one.
 //!
 //! The probe renderer wraps paragraphs like a real text backend: constrained
 //! below its natural width, a paragraph breaks into more lines the narrower
@@ -375,7 +375,7 @@ fn large_tier_controls_sit_in_the_bottom_half() {
         "the Large tier must render round control buttons"
     );
     // The probe's coarse text metrics shift the flow by a few pixels, so
-    // assert the ring centers (not edges) against the middle: the collapsed
+    // assert the circle centers (not edges) against the middle: the collapsed
     // layout put them a full hundred pixels above it.
     let middle = view.height as f32 / 2.0;
     for (cx, cy, r) in &renderer.circles {
@@ -389,4 +389,33 @@ fn large_tier_controls_sit_in_the_bottom_half() {
             "control circle at ({cx}, {cy}) r={r} must stay on the panel"
         );
     }
+}
+
+#[test]
+fn large_tier_hold_circle_is_centered_on_its_button() {
+    let mut view = SettingsTrayView::for_product(SettingsTrayProduct::Bmc100);
+    view.restart_progress = 0.5;
+
+    let now = Instant::now();
+    let mut state = SettingsTrayRenderState::new(now);
+    let mut renderer = ProbeRenderer::default();
+    render_settings_tray(
+        &mut renderer,
+        (view.width, view.height),
+        &mut state,
+        &view,
+        now,
+    );
+
+    let &(hold_x, hold_y, _) = renderer
+        .circles
+        .iter()
+        .find(|(_, _, r)| (*r - 84.0).abs() < 1e-3)
+        .expect("BUG: a half-held Large-tier button must draw an 84px circle");
+    assert!(
+        renderer.circles.iter().any(|(x, y, r)| {
+            (*r - 56.0).abs() < 1e-3 && (*x - hold_x).abs() < 1e-3 && (*y - hold_y).abs() < 1e-3
+        }),
+        "the hold circle must share its center with the held button",
+    );
 }

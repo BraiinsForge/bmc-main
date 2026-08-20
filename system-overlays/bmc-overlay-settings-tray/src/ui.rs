@@ -27,9 +27,7 @@ use bmc_render::tree::{
     DrawCommand, PropsData, TextStyle, TreeNode, col, fixed_height, row, spacer, text,
 };
 use bmc_wasm_protocol::colors::{BLACK, GRAY_50, GREEN_50, TRANSPARENT, WHITE};
-use bmc_wasm_protocol::{
-    ArcCap, ArcFill, ArcSegments, Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign,
-};
+use bmc_wasm_protocol::{Color, CrossAlign, Fill, FontWeight, SvgId, TextAlign};
 
 /// Stable touch key for the WiFi reconfiguration hold button.
 pub const WIFI_RECONFIG_KEY: &str = "wifi_reconfig";
@@ -78,17 +76,14 @@ const ICON_PRESSED_TINT: Color = Color::from_rgba(0, 0, 0, 255);
 /// deliberately suppressed so active night mode always reads as blue.
 const NIGHT_ACTIVE: Color = Color::from_rgba(0x10, 0x43, 0xCD, 255);
 
-/// Hold-progress ring color; its alpha grows with the hold fraction.
-const HOLD_RING: Color = Color::from_rgba(0x8B, 0x7C, 0xFF, 255);
+/// Hold-progress circle color.
+const HOLD_FILL: Color = Color::from_rgba(0x8B, 0x7C, 0xFF, 255);
 
-/// Stroke width of the hold-progress ring at full hold.
-const RING_W: f32 = 12.0;
-
-/// Stroke width of the hold-progress ring while idle.
-const RING_MIN_W: f32 = 3.0;
-
-/// Ring alpha while idle; grows to fully opaque at full hold.
-const RING_MIN_ALPHA: f32 = 0.3;
+/// Hold fraction by which the circle is fully opaque.
+/// It appears as soon as the button is touched either way; finishing the fade
+/// this late means it reaches full strength while the shrink is under way,
+/// not before the shrink starts — 1.75 s into the longest (5 s) hold.
+const HOLD_ALPHA_FULL_AT: f32 = 0.35;
 
 /// Edge length of the square close touch target.
 const CLOSE_TARGET: f32 = 48.0;
@@ -275,7 +270,7 @@ impl Default for ControlIcons {
 }
 
 /// Dynamic state of one hold-to-confirm control: its shared-caption text (the
-/// FSM caption, `None` when resting) and the 0..=1 hold fraction for the ring.
+/// FSM caption, `None` when resting) and the 0..=1 hold fraction.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct HoldControl<'a> {
     pub caption: Option<&'a str>,
@@ -494,11 +489,12 @@ impl ButtonIcon {
     }
 }
 
-/// One round icon button: a filled circle, an optional full-circle hold ring
-/// whose width and alpha grow with the hold progress, and a centered icon.
+/// One round icon button with a centered icon. While held, a larger circle
+/// fades in behind it and shrinks to the button radius; the button becomes
+/// opaque with a black icon so the progress circle cannot show through it.
 /// `icon_tint`
 /// `TRANSPARENT` keeps the SVG's native fill (white for controls); an opaque
-/// tint colorizes the whole icon.
+/// tint colorizes the whole icon while the button is not held.
 fn round_button(
     key: &str,
     icon: ButtonIcon,
@@ -506,61 +502,86 @@ fn round_button(
     icon_size: f32,
     fill: Color,
     icon_tint: Color,
-    ring_progress: Option<f32>,
+    hold_progress: Option<f32>,
 ) -> TreeNode {
     let c = diameter / 2.0;
-    // Hold buttons keep the stable inner-circle-inside-the-ring geometry
-    // (88px fill inside the 112px ring, leaving room for the full-hold ring
-    // width); ringless buttons fill the whole tier diameter.
-    let fill_r = if ring_progress.is_some() {
-        c - RING_W
-    } else {
-        c
-    };
-    let mut draws = vec![DrawCommand::Circle {
-        cx: c,
-        cy: c,
-        r: fill_r,
-        fill: Fill::Solid(fill),
-    }];
-    if let Some(p) = ring_progress {
-        // The ring starts on the fill radius and grows outward; at full hold
-        // its outer edge reaches the button rim.
-        let ring_w = RING_MIN_W + (RING_W - RING_MIN_W) * p;
-        let ring_r = fill_r + (RING_W / 2.0) * p;
-        let alpha = RING_MIN_ALPHA + (1.0 - RING_MIN_ALPHA) * p;
-        draws.push(DrawCommand::Arc {
-            cx: c,
-            cy: c,
-            radius: ring_r,
-            start_angle: 0.0,
-            end_angle: std::f32::consts::TAU,
-            width: ring_w,
-            fill: ArcFill::Solid(HOLD_RING.scale_alpha(alpha)),
-            segments: ArcSegments::Continuous,
-            cap: ArcCap::Butt,
+    debug_assert!(
+        hold_progress.is_none_or(|p| (0.0..=1.0).contains(&p)),
+        "BUG: hold progress must be a 0..=1 fraction, got {hold_progress:?}",
+    );
+    let hold_progress = hold_progress.filter(|p| *p > 0.0);
+    let held = hold_progress.is_some();
+    let canvas_size = if held { diameter * 2.0 } else { diameter };
+    let center = canvas_size / 2.0;
+    let mut draws = Vec::with_capacity(if held { 3 } else { 2 });
+    if let Some(p) = hold_progress {
+        let hold_radius = c * (2.0 - p);
+        let hold_alpha = (p / HOLD_ALPHA_FULL_AT).min(1.0);
+        draws.push(DrawCommand::Circle {
+            cx: center,
+            cy: center,
+            r: hold_radius,
+            fill: Fill::Solid(HOLD_FILL.scale_alpha(hold_alpha)),
         });
     }
+    draws.push(DrawCommand::Circle {
+        cx: center,
+        cy: center,
+        r: c,
+        fill: Fill::Solid(if held { fill.with_alpha(1.0) } else { fill }),
+    });
     let (icon_w, icon_h) = (icon_size * icon.aspect, icon_size);
     draws.push(DrawCommand::Svg {
-        x: c - icon_w / 2.0,
-        y: c - icon_h / 2.0,
+        x: center - icon_w / 2.0,
+        y: center - icon_h / 2.0,
         w: icon_w,
         h: icon_h,
-        color: icon_tint,
+        color: if held { ICON_PRESSED_TINT } else { icon_tint },
         icon_id: icon.id,
         anti_alias: true,
         fills: Vec::new(),
     });
-    TreeNode::Canvas {
+    let visual_props = PropsData {
+        width: canvas_size,
+        height: canvas_size,
+        ..PropsData::default()
+    };
+    if !held {
+        return TreeNode::Canvas {
+            props: visual_props,
+            touch_key: Some(key.to_owned()),
+            draws,
+        };
+    }
+
+    let visual = TreeNode::Canvas {
+        props: PropsData {
+            inset_top: -c,
+            inset_left: -c,
+            ..visual_props
+        },
+        touch_key: None,
+        draws,
+    };
+    // Keep the touch key on the button-sized canvas; putting it on the
+    // oversized visual canvas would expand the interactive area.
+    let touch_target = TreeNode::Canvas {
         props: PropsData {
             width: diameter,
             height: diameter,
             ..PropsData::default()
         },
         touch_key: Some(key.to_owned()),
-        draws,
-    }
+        draws: Vec::new(),
+    };
+    col(
+        PropsData {
+            width: diameter,
+            height: diameter,
+            ..PropsData::default()
+        },
+        vec![visual, touch_target],
+    )
 }
 
 fn press_fill(pressed: bool) -> Color {
@@ -667,11 +688,11 @@ fn single_group(
     icon: ButtonIcon,
     fill: Color,
     tint: Color,
-    ring: Option<f32>,
+    hold_progress: Option<f32>,
     label: &str,
     sublabel: &str,
 ) -> TreeNode {
-    let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, ring);
+    let btn = round_button(key, icon, tier.circle, tier.icon, fill, tint, hold_progress);
     if !tier.large_text {
         return btn;
     }
@@ -694,7 +715,11 @@ fn single_group(
             sublabel,
             TextStyle {
                 size: tier.caption_size,
-                color: GRAY_50,
+                color: if hold_progress.is_some_and(|p| p > 0.0) {
+                    WHITE
+                } else {
+                    GRAY_50
+                },
                 align: TextAlign::Center,
                 ..TextStyle::default()
             },
@@ -1426,6 +1451,38 @@ mod tests {
         children(node)?.iter().find_map(|k| find_canvas(k, key))
     }
 
+    fn find_hold_circle_for_key(node: &TreeNode, key: &str) -> Option<(f32, Color)> {
+        if let TreeNode::Column(_, children) = node
+            && let [
+                TreeNode::Canvas {
+                    touch_key: None,
+                    draws,
+                    ..
+                },
+                TreeNode::Canvas {
+                    touch_key: Some(canvas_key),
+                    ..
+                },
+            ] = children.as_slice()
+            && canvas_key == key
+        {
+            return draws.iter().find_map(|draw| {
+                let DrawCommand::Circle {
+                    r,
+                    fill: Fill::Solid(color),
+                    ..
+                } = draw
+                else {
+                    return None;
+                };
+                Some((*r, *color))
+            });
+        }
+        children(node)?
+            .iter()
+            .find_map(|child| find_hold_circle_for_key(child, key))
+    }
+
     /// Recursively collect every keyed Canvas touch key in the tree.
     fn canvas_keys(node: &TreeNode, out: &mut Vec<String>) {
         if let TreeNode::Canvas {
@@ -1441,7 +1498,7 @@ mod tests {
         }
     }
 
-    /// Whether the subtree contains an unkeyed Canvas (the WiFi status icon).
+    /// Whether the subtree contains the unkeyed WiFi status-icon canvas.
     fn has_unkeyed_canvas(node: &TreeNode) -> bool {
         if let TreeNode::Canvas {
             touch_key: None, ..
@@ -1484,6 +1541,19 @@ mod tests {
         }
     }
 
+    fn text_color(node: &TreeNode, needle: &str) -> Option<Color> {
+        if let TreeNode::Paragraph {
+            base_style, spans, ..
+        } = node
+            && spans.iter().any(|span| span.text == needle)
+        {
+            return Some(base_style.color);
+        }
+        children(node)?
+            .iter()
+            .find_map(|child| text_color(child, needle))
+    }
+
     /// Largest text size in the subtree — the line height driver of a text
     /// band (hostname, caption).
     fn max_text_size(node: &TreeNode) -> u32 {
@@ -1520,7 +1590,7 @@ mod tests {
     }
 
     #[test]
-    fn hold_ring_is_readable_and_grows_with_progress() {
+    fn hold_circle_is_drawn_behind_the_button() {
         let btn = round_button(
             "k",
             ButtonIcon::square(None),
@@ -1530,46 +1600,57 @@ mod tests {
             TRANSPARENT,
             Some(0.5),
         );
-        let TreeNode::Canvas {
-            draws, touch_key, ..
-        } = btn
+        let TreeNode::Column(_, children) = btn else {
+            panic!("expected layered hold button")
+        };
+        let [
+            TreeNode::Canvas { draws, .. },
+            TreeNode::Canvas {
+                draws: touch_draws,
+                touch_key,
+                ..
+            },
+        ] = children.as_slice()
         else {
-            panic!("expected Canvas")
+            panic!("expected visual and touch canvases")
         };
         assert_eq!(touch_key.as_deref(), Some("k"));
+        assert!(touch_draws.is_empty());
+        let DrawCommand::Circle {
+            fill: Fill::Solid(hold_fill),
+            r: hold_radius,
+            ..
+        } = &draws[0]
+        else {
+            panic!("expected hold Circle")
+        };
         let DrawCommand::Circle {
             fill: Fill::Solid(circle),
             r,
             ..
-        } = &draws[0]
-        else {
-            panic!("expected Circle")
-        };
-        assert_eq!(*circle, CIRCLE_FILL);
-        assert_close(
-            *r,
-            56.0 - RING_W,
-            "a hold button's fill sits inside the ring",
-        );
-        let DrawCommand::Arc {
-            fill: ArcFill::Solid(ring),
-            width,
-            ..
         } = &draws[1]
         else {
-            panic!("expected ring Arc")
+            panic!("expected button Circle")
         };
-        assert_close(*width, 7.5, "half hold grows the ring from 3px to 12px");
+        assert_close(*hold_radius, 84.0, "half hold shrinks the circle halfway");
+        assert_eq!(*hold_fill, HOLD_FILL, "half hold is fully opaque");
         assert_eq!(
-            *ring,
-            HOLD_RING.scale_alpha(0.65),
-            "half hold grows opacity from 30% to 100%",
+            *circle,
+            CIRCLE_FILL.with_alpha(1.0),
+            "the held button masks the progress circle underneath",
         );
-        assert!(matches!(draws[2], DrawCommand::Svg { .. }));
+        assert_close(*r, 56.0, "a hold button keeps the full fill radius");
+        let DrawCommand::Svg { color, .. } = draws[2] else {
+            panic!("expected icon after both circles")
+        };
+        assert_eq!(
+            color, ICON_PRESSED_TINT,
+            "the held-button icon remains visible above both circles",
+        );
     }
 
     #[test]
-    fn hold_ring_radius_starts_at_button_and_grows_outward() {
+    fn hold_circle_shrinks_to_the_button_over_the_hold() {
         let radii = |progress| {
             let btn = round_button(
                 "k",
@@ -1580,32 +1661,44 @@ mod tests {
                 TRANSPARENT,
                 Some(progress),
             );
-            let TreeNode::Canvas { draws, .. } = btn else {
-                panic!("expected Canvas")
+            let TreeNode::Column(_, children) = btn else {
+                panic!("expected layered hold button")
             };
-            let DrawCommand::Circle { r: button, .. } = &draws[0] else {
-                panic!("expected Circle")
+            let [TreeNode::Canvas { draws, .. }, TreeNode::Canvas { .. }] = children.as_slice()
+            else {
+                panic!("expected visual and touch canvases")
             };
-            let DrawCommand::Arc { radius: ring, .. } = &draws[1] else {
-                panic!("expected ring Arc")
+            let DrawCommand::Circle { r: hold, .. } = &draws[0] else {
+                panic!("expected hold Circle")
             };
-            (*button, *ring)
+            let DrawCommand::Circle { r: button, .. } = &draws[1] else {
+                panic!("expected button Circle")
+            };
+            (*button, *hold)
         };
 
-        let (button, idle) = radii(0.0);
+        let (button, started) = radii(f32::MIN_POSITIVE);
         let (_, half) = radii(0.5);
         let (_, full) = radii(1.0);
-        assert_close(idle, button, "the idle ring rests on the button radius");
-        assert_close(half, 47.0, "the half-hold ring grows outward");
-        assert_close(full, 50.0, "the full-hold ring reaches the outer rim");
+        assert_close(
+            started,
+            button * 2.0,
+            "the circle starts at twice the button radius",
+        );
+        assert_close(
+            half,
+            button * 1.5,
+            "the circle is halfway shrunk at half hold",
+        );
+        assert_close(full, button, "the circle meets the button at full hold");
         assert!(
-            idle < half && half < full,
-            "the ring radius grows monotonically with hold progress"
+            started > half && half > full,
+            "the circle radius shrinks monotonically with hold progress"
         );
     }
 
     #[test]
-    fn ringless_button_fills_the_whole_diameter() {
+    fn unheld_button_fills_the_whole_diameter() {
         let btn = round_button(
             "k",
             ButtonIcon::square(None),
@@ -1621,11 +1714,56 @@ mod tests {
         let DrawCommand::Circle { r, .. } = &draws[0] else {
             panic!("expected Circle")
         };
-        assert_close(*r, 56.0, "no ring: the fill spans the tier diameter");
-        assert!(
-            !draws.iter().any(|d| matches!(d, DrawCommand::Arc { .. })),
-            "no ring arc without hold progress"
+        assert_close(*r, 56.0, "the fill spans the tier diameter");
+    }
+
+    #[test]
+    fn hold_circle_canvas_is_centered_behind_the_button() {
+        let btn = round_button(
+            "k",
+            ButtonIcon::square(None),
+            64.0,
+            32.0,
+            CIRCLE_FILL,
+            TRANSPARENT,
+            Some(0.5),
         );
+        let TreeNode::Column(props, children) = btn else {
+            panic!("expected a fixed-size layered hold button")
+        };
+        assert_close(props.width, 64.0, "hold button keeps its layout width");
+        assert_close(props.height, 64.0, "hold button keeps its layout height");
+        let [
+            TreeNode::Canvas {
+                props: visual_props,
+                touch_key: None,
+                draws,
+            },
+            TreeNode::Canvas {
+                props: touch_props,
+                touch_key: Some(touch_key),
+                draws: touch_draws,
+            },
+        ] = children.as_slice()
+        else {
+            panic!("expected a visual canvas behind the touch target")
+        };
+        assert_close(visual_props.width, 128.0, "visual canvas width");
+        assert_close(visual_props.height, 128.0, "visual canvas height");
+        assert_close(visual_props.inset_top, -32.0, "visual canvas top inset");
+        assert_close(visual_props.inset_left, -32.0, "visual canvas left inset");
+        assert_eq!(touch_key, "k");
+        assert_close(touch_props.width, 64.0, "touch target width");
+        assert_close(touch_props.height, 64.0, "touch target height");
+        assert!(touch_draws.is_empty());
+        let DrawCommand::Circle { r, .. } = &draws[0] else {
+            panic!("expected hold circle")
+        };
+        assert_close(*r, 48.0, "half-hold circle radius");
+        let DrawCommand::Circle { r, .. } = &draws[1] else {
+            panic!("expected full-size button fill")
+        };
+        assert_close(*r, 32.0, "hold button fill radius");
     }
 
     #[test]
@@ -1783,8 +1921,8 @@ mod tests {
     }
 
     #[test]
-    fn hold_progress_renders_ring_alpha() {
-        let ring_of = |progress| {
+    fn hold_circle_fades_in_over_the_start_of_the_hold() {
+        let hold_circle_of = |progress| {
             let controls = Controls {
                 restart: Some(HoldControl {
                     caption: None,
@@ -1793,31 +1931,66 @@ mod tests {
                 ..Controls::default()
             };
             let tree = build_with_controls(wide_panel(), controls);
-            let draws = find_canvas(&tree, RESTART_KEY).expect("BUG: restart canvas must exist");
-            draws
-                .iter()
-                .find_map(|d| {
-                    if let DrawCommand::Arc {
-                        fill: ArcFill::Solid(c),
-                        ..
-                    } = d
-                    {
-                        Some(*c)
-                    } else {
-                        None
-                    }
-                })
-                .expect("BUG: restart canvas must carry the hold ring")
+            assert!(
+                find_canvas(&tree, RESTART_KEY).is_some(),
+                "the restart button remains present at every hold progress",
+            );
+            find_hold_circle_for_key(&tree, RESTART_KEY)
         };
         assert_eq!(
-            ring_of(0.5),
-            HOLD_RING.scale_alpha(0.65),
-            "half hold sits halfway between the 30% floor and opaque",
+            hold_circle_of(0.0),
+            None,
+            "an unheld button carries no hold circle"
         );
         assert_eq!(
-            ring_of(0.0),
-            HOLD_RING.scale_alpha(RING_MIN_ALPHA),
-            "an idle hold button keeps a faint 30% ring",
+            hold_circle_of(f32::MIN_POSITIVE).map(|(_, color)| color),
+            Some(HOLD_FILL.scale_alpha(0.0)),
+            "the circle starts transparent",
+        );
+        assert_eq!(
+            hold_circle_of(HOLD_ALPHA_FULL_AT / 2.0).map(|(_, color)| color),
+            Some(HOLD_FILL.scale_alpha(0.5)),
+            "the circle reaches half opacity midway through its fade",
+        );
+        assert_eq!(
+            hold_circle_of(HOLD_ALPHA_FULL_AT).map(|(_, color)| color),
+            Some(HOLD_FILL),
+            "the circle reaches full opacity partway in, while it is still shrinking",
+        );
+        assert_eq!(
+            hold_circle_of(1.0).map(|(_, color)| color),
+            Some(HOLD_FILL),
+            "the circle stays opaque for the rest of the hold",
+        );
+    }
+
+    #[test]
+    fn large_tier_hold_hint_stays_legible_over_the_progress_circle() {
+        let controls = Controls {
+            restart: Some(HoldControl {
+                caption: None,
+                progress: 0.15,
+            }),
+            ..Controls::default()
+        };
+        assert_eq!(
+            text_color(
+                &build_with_controls(wide_panel(), controls),
+                "hold 5 seconds",
+            ),
+            Some(WHITE),
+        );
+
+        let resting = Controls {
+            restart: Some(HoldControl::default()),
+            ..Controls::default()
+        };
+        assert_eq!(
+            text_color(
+                &build_with_controls(wide_panel(), resting),
+                "hold 5 seconds",
+            ),
+            Some(GRAY_50),
         );
     }
 
@@ -2157,7 +2330,7 @@ mod tests {
     }
 
     #[test]
-    fn close_is_the_only_absolutely_positioned_canvas() {
+    fn close_and_hold_circles_are_the_only_out_of_flow_canvases() {
         fn absolute_canvases<'t>(
             node: &'t TreeNode,
             out: &mut Vec<(&'t PropsData, Option<&'t str>)>,
@@ -2165,7 +2338,7 @@ mod tests {
             if let TreeNode::Canvas {
                 props, touch_key, ..
             } = node
-                && (props.inset_top.is_finite() || props.inset_left.is_finite())
+                && props.is_absolute()
             {
                 out.push((props, touch_key.as_deref()));
             }
@@ -2175,16 +2348,68 @@ mod tests {
                 }
             }
         }
+        fn hold_circle_columns(node: &TreeNode) -> usize {
+            let own = usize::from(matches!(
+                node,
+                TreeNode::Column(_, kids) if matches!(
+                    kids.as_slice(),
+                    [
+                        TreeNode::Canvas { props, touch_key: None, .. },
+                        TreeNode::Canvas { touch_key: Some(_), .. },
+                    ] if props.is_absolute()
+                )
+            ));
+            own + children(node)
+                .into_iter()
+                .flatten()
+                .map(hold_circle_columns)
+                .sum::<usize>()
+        }
+        let held = HoldControl {
+            caption: None,
+            progress: 0.5,
+        };
+        let controls = Controls {
+            restart: Some(held),
+            wifi_reconfig: held,
+            ..all_controls()
+        };
         for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
-            let tree = build_with_controls(panel, all_controls());
+            let tree = build_with_controls(panel, controls);
             let mut absolute = Vec::new();
             absolute_canvases(&tree, &mut absolute);
+            let (keyed, hold_circles) = absolute
+                .into_iter()
+                .partition::<Vec<_>, _>(|(_, key)| key.is_some());
             assert_eq!(
-                absolute.len(),
+                keyed.len(),
                 1,
                 "{panel:?}: the close target is the only out-of-flow touchable"
             );
-            assert_eq!(absolute[0].1, Some(CLOSE_KEY));
+            assert_eq!(keyed[0].1, Some(CLOSE_KEY));
+            assert!(
+                !hold_circles.is_empty(),
+                "{panel:?}: held buttons must carry progress circles"
+            );
+            for (props, _) in &hold_circles {
+                let expected_outset = tier_for(&panel).circle / 2.0;
+                assert_close(
+                    props.inset_top,
+                    -expected_outset,
+                    "hold canvas outset above its button",
+                );
+                assert_close(
+                    props.inset_left,
+                    -expected_outset,
+                    "hold canvas outset left of its button",
+                );
+            }
+            assert_eq!(
+                hold_circles.len(),
+                hold_circle_columns(&tree),
+                "{panel:?}: every keyless out-of-flow canvas is a hold circle \
+                 layered behind its keyed button"
+            );
 
             let kids = children(&tree).expect("BUG: root must be a container");
             let last = kids.last().expect("BUG: root must have children");

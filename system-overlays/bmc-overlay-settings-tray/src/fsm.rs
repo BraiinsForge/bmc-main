@@ -142,7 +142,7 @@ impl ButtonState {
         }
     }
 
-    /// Hold fraction for the progress ring; nonzero only while holding.
+    /// Hold fraction for the progress circle; nonzero only while holding.
     #[must_use]
     pub fn progress(self, now: Instant) -> f32 {
         match self {
@@ -312,7 +312,7 @@ impl RestartState {
         }
     }
 
-    /// Hold fraction for the progress ring; nonzero only while holding.
+    /// Hold fraction for the progress circle; nonzero only while holding.
     #[must_use]
     pub fn progress(self, now: Instant) -> f32 {
         match self {
