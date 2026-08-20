@@ -237,7 +237,13 @@ fn submit_tree(
         // instead of re-rasterising content that did not change. That
         // re-capture was most of a guest frame's GPU cost.
         let static_key = (
-            bmc_render::partition::static_hash(&tree_node),
+            bmc_render::partition::static_hash(
+                &tree_node,
+                &bmc_render::partition::HostPaintState {
+                    pressed_key: state.interaction.pressed_key(),
+                    scroll_offsets: &state.scroll_states,
+                },
+            ),
             state.renderer_assets.generation(),
         );
         let static_unchanged = state.last_static_key == Some(static_key);
@@ -304,6 +310,10 @@ fn submit_tree(
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
                 state.cached_tree = Some((tree_node, w, h));
                 state.last_static_key = Some(static_key);
+                // This frame painted the change into the buffer it holds; the
+                // other one is a frame behind and keeps showing the old static
+                // half until it repaints in full.
+                state.stale_export_buffer = !static_unchanged;
                 // Shift the damage history: this walk's regions become the
                 // newest, and the pair spans the buffer rotation.
                 state.recent_dynamic_rects.swap(0, 1);

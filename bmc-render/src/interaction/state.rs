@@ -210,6 +210,15 @@ impl InteractionState {
         self.touch_down_key.as_deref() == Some(key)
     }
 
+    /// The element currently held down, if any.
+    ///
+    /// A pressed element paints differently while it is held, so this is part of
+    /// the cached layer's key — see `partition::HostPaintState`.
+    #[must_use]
+    pub fn pressed_key(&self) -> Option<&str> {
+        self.touch_down_key.as_deref()
+    }
+
     /// Check if any touch is currently down (processed state).
     #[must_use]
     pub fn any_touch_down(&self) -> bool {

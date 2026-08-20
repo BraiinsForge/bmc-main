@@ -1367,7 +1367,7 @@ impl WasmWidgetRuntime {
 
         // Only an animation-only frame can trust the target's existing pixels:
         // a guest frame may have changed the static half.
-        let damage = crate::host_api::damage_rects(&state.recent_dynamic_rects, width, height);
+        let damage = state.frame_damage(width, height);
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,
@@ -1413,6 +1413,9 @@ impl WasmWidgetRuntime {
         match render_result {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
+                // This frame repainted in full where it was armed to, so both
+                // export buffers now hold the change.
+                state.stale_export_buffer = false;
                 // Shift the damage history: this walk's regions become the
                 // newest, and the pair spans the buffer rotation.
                 state.recent_dynamic_rects.swap(0, 1);
@@ -1997,7 +2000,7 @@ impl WasmWidgetRuntime {
         state.frame_schedule.is_animation_only_frame()
             && state.cached_tree.is_some()
             && state.static_layer_useful
-            && !crate::host_api::damage_rects(&state.recent_dynamic_rects, width, height).is_empty()
+            && !state.frame_damage(width, height).is_empty()
     }
 
     #[must_use]

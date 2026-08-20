@@ -945,6 +945,10 @@ impl StagedGuestDeliveries {
 }
 
 /// Host-side state accessible to WASM via host functions.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent one-shot host flags, each consumed by a different path"
+)]
 pub(crate) struct HostState {
     /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
     /// render scope. `None` outside a render scope; host imports that read this must
@@ -1008,6 +1012,17 @@ pub(crate) struct HostState {
     /// from an asset rather than from the tree, so an unchanged tree alone does
     /// not mean an unchanged layer.
     pub last_static_key: Option<(u64, u64)>,
+
+    /// Whether the export buffer *not* painted last still holds pre-change
+    /// static pixels, so the next frame has to repaint in full.
+    ///
+    /// A frame paints one of the host's two export buffers. Changed static
+    /// content therefore reaches only that one, and the next frame — drawing
+    /// into the other and scissored to damage, which covers dynamic regions
+    /// only — leaves the change unpainted there. The two alternate on screen, so
+    /// a clicked button flickers between its pressed and unpressed shading and a
+    /// counter alternates between its old and new value at the display rate.
+    pub stale_export_buffer: bool,
 
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
@@ -1437,6 +1452,7 @@ impl HostState {
             recent_dynamic_rects: [Vec::new(), Vec::new()],
             static_layer_useful: true,
             last_static_key: None,
+            stale_export_buffer: false,
             cached_tree: None,
             system_time,
             monotonic_ms: 0,
@@ -1610,6 +1626,20 @@ impl HostState {
         self.sockets.clear();
         self.http_response_txs.clear();
         self.mdns_registrations.clear();
+    }
+}
+
+impl HostState {
+    /// Damage for the frame about to render, or empty to repaint everything.
+    ///
+    /// Reads [`Self::stale_export_buffer`] first: a frame catching the other
+    /// export buffer up on a static change cannot scissor to the dynamic
+    /// regions, since the change it is there to paint is not one of them.
+    pub(crate) fn frame_damage(&self, width: f32, height: f32) -> Vec<Rect> {
+        if self.stale_export_buffer {
+            return Vec::new();
+        }
+        damage_rects(&self.recent_dynamic_rects, width, height)
     }
 }
 

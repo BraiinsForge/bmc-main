@@ -36,11 +36,13 @@
 //! Classification is deliberately conservative — a node wrongly called dynamic
 //! costs a redraw, one wrongly called static renders a stale frame.
 
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fmt::{self, Write as _};
 use std::hash::{Hash, Hasher};
 use std::mem;
 
+use crate::ScrollState;
 use crate::tree::{DrawCommand, TreeNode};
 use bmc_wasm_protocol::colors::Color;
 
@@ -214,10 +216,37 @@ pub fn node_self_is_dynamic(node: &TreeNode) -> bool {
 /// failing test. If this becomes the target, derive the hash with a float
 /// newtype rather than hand-rolling the arms: same saving, same safety.
 #[must_use]
-pub fn static_hash(node: &TreeNode) -> u64 {
+pub fn static_hash(node: &TreeNode, host: &HostPaintState<'_>) -> u64 {
     let mut hasher = DefaultHasher::new();
     hash_node(node, &mut hasher);
-    hasher.finish()
+    hash_debug(&host.pressed_key, &mut hasher);
+    // Scroll offsets come out of a `HashMap`, whose iteration order varies
+    // between runs, so they are folded with XOR rather than hashed in sequence.
+    let scroll = host.scroll_offsets.iter().fold(0, |acc, (key, state)| {
+        let mut entry = DefaultHasher::new();
+        hash_debug(key, &mut entry);
+        hash_debug(state, &mut entry);
+        acc ^ entry.finish()
+    });
+    hasher.finish() ^ scroll
+}
+
+/// The host-side state the static pass paints from, which the tree does not
+/// carry.
+///
+/// Static content is rasterised into the cached layer once and blitted until
+/// [`static_hash`] changes, so anything that alters how it rasterises has to be
+/// part of that hash. These two are not in the tree: a pressed button paints a
+/// darker variant, the scrollbar widens while held, and a scroll offset shifts
+/// the content it wraps. Left out, a press repaints nothing and the layer keeps
+/// serving the unpressed button until an unrelated tree change happens to
+/// invalidate it.
+#[derive(Debug)]
+pub struct HostPaintState<'a> {
+    /// The element currently held down, if any — `InteractionState::pressed_key`.
+    pub pressed_key: Option<&'a str>,
+    /// Scroll offsets by scroll key.
+    pub scroll_offsets: &'a HashMap<String, ScrollState>,
 }
 
 /// Whether the static half of `node` would paint anything at all.
@@ -347,8 +376,8 @@ fn hash_node<H: Hasher>(node: &TreeNode, hasher: &mut H) {
 #[cfg(test)]
 mod tests {
     use super::{
-        Band, canvas_bands, draw_is_dynamic, has_static_content, node_is_dynamic,
-        node_self_is_dynamic, static_hash,
+        Band, HashMap, HostPaintState, ScrollState, canvas_bands, draw_is_dynamic,
+        has_static_content, node_is_dynamic, node_self_is_dynamic, static_hash,
     };
     use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
     use bmc_wasm_protocol::{
@@ -689,11 +718,22 @@ mod tests {
         }
     }
 
+    /// The hash with nothing held down and nothing scrolled.
+    fn hash_idle(node: &TreeNode) -> u64 {
+        static_hash(
+            node,
+            &HostPaintState {
+                pressed_key: None,
+                scroll_offsets: &HashMap::new(),
+            },
+        )
+    }
+
     #[test]
     fn changing_a_draw_in_the_layer_invalidates_it() {
         assert_ne!(
-            static_hash(&canvas(vec![leaf_with_radius(1.0)])),
-            static_hash(&canvas(vec![leaf_with_radius(2.0)]))
+            hash_idle(&canvas(vec![leaf_with_radius(1.0)])),
+            hash_idle(&canvas(vec![leaf_with_radius(2.0)]))
         );
     }
 
@@ -702,9 +742,72 @@ mod tests {
         // It is not in the layer, so re-capturing on its account would rewrite
         // an identical texture.
         assert_eq!(
-            static_hash(&canvas(vec![transitioned(leaf()), leaf_with_radius(1.0)])),
-            static_hash(&canvas(vec![transitioned(leaf()), leaf_with_radius(2.0)]))
+            hash_idle(&canvas(vec![transitioned(leaf()), leaf_with_radius(1.0)])),
+            hash_idle(&canvas(vec![transitioned(leaf()), leaf_with_radius(2.0)]))
         );
+    }
+
+    #[test]
+    fn pressing_an_element_invalidates_the_layer() {
+        // A button paints a darker variant while held, and the press lives in
+        // interaction state rather than in the tree.
+        let node = canvas(vec![leaf()]);
+        assert_ne!(
+            hash_idle(&node),
+            static_hash(
+                &node,
+                &HostPaintState {
+                    pressed_key: Some("open_modal"),
+                    scroll_offsets: &HashMap::new(),
+                },
+            ),
+            "an unpressed layer must not survive the press"
+        );
+    }
+
+    #[test]
+    fn scrolling_invalidates_the_layer() {
+        let node = canvas(vec![leaf()]);
+        let scrolled = HashMap::from([(
+            "list".to_owned(),
+            ScrollState {
+                scroll_offset: 40.0,
+            },
+        )]);
+        assert_ne!(
+            hash_idle(&node),
+            static_hash(
+                &node,
+                &HostPaintState {
+                    pressed_key: None,
+                    scroll_offsets: &scrolled,
+                },
+            ),
+            "the offset moves static content without changing it"
+        );
+    }
+
+    #[test]
+    fn scroll_offsets_hash_independently_of_map_order() {
+        let one = HashMap::from([
+            ("a".to_owned(), ScrollState { scroll_offset: 1.0 }),
+            ("b".to_owned(), ScrollState { scroll_offset: 2.0 }),
+        ]);
+        let other = HashMap::from([
+            ("b".to_owned(), ScrollState { scroll_offset: 2.0 }),
+            ("a".to_owned(), ScrollState { scroll_offset: 1.0 }),
+        ]);
+        let node = canvas(vec![leaf()]);
+        let hash_with = |scroll_offsets| {
+            static_hash(
+                &node,
+                &HostPaintState {
+                    pressed_key: None,
+                    scroll_offsets,
+                },
+            )
+        };
+        assert_eq!(hash_with(&one), hash_with(&other));
     }
 
     // ── has_static_content ──────────────────────────────────────────
