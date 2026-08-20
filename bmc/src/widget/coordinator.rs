@@ -26,6 +26,7 @@ use bmc_widget_protocol::{
 };
 use indexmap::IndexMap;
 use std::collections::{BTreeMap, HashMap};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Duration;
 use tokio::sync::{RwLock, broadcast, mpsc, watch};
@@ -33,7 +34,8 @@ use tracing::{debug, info, warn};
 
 use crate::BmcManager;
 use crate::compositor::{
-    Compositor, CompositorError, HardwareCapabilities, Position, SceneLayout, Size, WidgetPlacement,
+    Compositor, CompositorError, HardwareCapabilities, Position, SceneLayout, Size,
+    WidgetGeneration, WidgetPlacement,
 };
 use crate::config::ConfigHandle;
 use crate::config::LocalizationConfig;
@@ -247,6 +249,10 @@ pub struct Coordinator {
     /// first or not at all, and never takes it while holding this one.
     secret_store: Arc<RwLock<SecretStoreHandle>>,
     spawn_records: StdRwLock<HashMap<String, SpawnRecord>>,
+    /// Source of the [`WidgetGeneration`] stamped on each registration.
+    /// Coordinator-owned: it is the only place that reaches the compositor
+    /// and the manager, which have to agree on the value.
+    next_generation: AtomicU64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -346,8 +352,12 @@ async fn apply_widget_events(
 ) {
     while let Some(event) = events.recv().await {
         match event {
-            WidgetEvent::Exited { instance_id, pid } => {
-                if let Err(e) = compositor.clear_pid(&instance_id, pid) {
+            WidgetEvent::Exited {
+                instance_id,
+                generation,
+                pid,
+            } => {
+                if let Err(e) = compositor.clear_pid(&instance_id, generation, pid) {
                     warn!(
                         widget_id = %instance_id,
                         pid,
@@ -356,8 +366,12 @@ async fn apply_widget_events(
                     );
                 }
             }
-            WidgetEvent::Respawned { instance_id, pid } => {
-                if let Err(e) = compositor.bind_respawned_pid(&instance_id, pid) {
+            WidgetEvent::Respawned {
+                instance_id,
+                generation,
+                pid,
+            } => {
+                if let Err(e) = compositor.bind_respawned_pid(&instance_id, generation, pid) {
                     warn!(
                         widget_id = %instance_id,
                         pid,
@@ -366,8 +380,11 @@ async fn apply_widget_events(
                     );
                 }
             }
-            WidgetEvent::Abandoned { instance_id } => {
-                if let Err(e) = compositor.unregister_abandoned(&instance_id) {
+            WidgetEvent::Abandoned {
+                instance_id,
+                generation,
+            } => {
+                if let Err(e) = compositor.unregister_abandoned(&instance_id, generation) {
                     warn!(
                         widget_id = %instance_id,
                         error = %e,
@@ -579,7 +596,12 @@ impl Coordinator {
             hardware_capabilities,
             secret_store,
             spawn_records: StdRwLock::new(HashMap::new()),
+            next_generation: AtomicU64::new(0),
         }
+    }
+
+    fn next_generation(&self) -> WidgetGeneration {
+        WidgetGeneration(self.next_generation.fetch_add(1, Ordering::Relaxed))
     }
 
     /// Subscribe the coordinator to runtime setting changes and forward
@@ -908,10 +930,14 @@ impl Coordinator {
         // This call blocks until the compositor has stored the initial config
         // — otherwise a fast-starting widget could reach `get_widget_surface`
         // before the compositor knows what to emit.
-        if let Err(e) =
-            self.compositor
-                .register_widget(instance_id.clone(), position, viewport, initial_config)
-        {
+        let generation = self.next_generation();
+        if let Err(e) = self.compositor.register_widget(
+            instance_id.clone(),
+            generation,
+            position,
+            viewport,
+            initial_config,
+        ) {
             warn!(
                 scene_id = %scene_id,
                 widget_id = %instance_id,
@@ -946,7 +972,7 @@ impl Coordinator {
 
         let pid = match self
             .widget_manager
-            .spawn_widget(widget.widget_type_id, widget_env)
+            .spawn_widget(widget.widget_type_id, generation, widget_env)
             .await
         {
             Ok(pid) => pid,
@@ -963,7 +989,10 @@ impl Coordinator {
             }
         };
 
-        if let Err(e) = self.compositor.set_widget_pid(&instance_id, pid) {
+        if let Err(e) = self
+            .compositor
+            .set_widget_pid(&instance_id, generation, pid)
+        {
             warn!(
                 scene_id = %scene_id,
                 widget_id = %instance_id,
@@ -1223,14 +1252,17 @@ mod tests {
         for event in [
             WidgetEvent::Exited {
                 instance_id: "alpha".to_owned(),
+                generation: WidgetGeneration(1),
                 pid: 100,
             },
             WidgetEvent::Respawned {
                 instance_id: "alpha".to_owned(),
+                generation: WidgetGeneration(1),
                 pid: 200,
             },
             WidgetEvent::Abandoned {
                 instance_id: "beta".to_owned(),
+                generation: WidgetGeneration(4),
             },
         ] {
             events_tx.send(event).expect("BUG: queue a widget event");
@@ -1243,9 +1275,9 @@ mod tests {
         assert_eq!(
             compositor.widget_calls(),
             [
-                "clear_pid alpha 100",
-                "bind_respawned alpha 200",
-                "unregister_abandoned beta"
+                "clear_pid alpha g1 100",
+                "bind_respawned alpha g1 200",
+                "unregister_abandoned beta g4"
             ]
         );
     }

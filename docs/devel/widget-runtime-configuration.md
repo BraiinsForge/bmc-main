@@ -100,9 +100,19 @@ that exits on its own is respawned automatically: the delay starts at 1 second, 
 restarts from 1 second once a process stays up for 60 seconds. The instance's compositor registration and stored
 configuration survive the crash, so the respawned process attaches through the same configure replay as the first spawn;
 its new pid is re-bound via `bind_respawned_pid`, and a connection racing past that registration is buffered as usual.
-That bind takes effect only while the instance is still unbound — a scene edit or a widget reload can re-register and
-re-bind the instance while the respawn announcement is still queued, and binding then would point the record at a dead
-pid and leave the live process's buffered connection with nothing to resolve it.
+That bind takes effect only while the instance is still unbound *and* still on the registration the respawn belongs to —
+a scene edit or a widget reload can re-register and re-bind the instance while the respawn announcement is still queued,
+and binding then would point the record at a dead pid and leave the live process's buffered connection with nothing to
+resolve it.
+
+Both halves of that condition are needed, because unbound on its own is ambiguous. Widget commands reach the compositor
+over one channel fed by two independent senders — the synchronous scene-edit path, and the listener draining the
+manager's event stream — so their relative order is not guaranteed, and an instance id outlives the process behind it.
+"Registered but unbound" is the state a crash leaves behind *and* the state every fresh registration passes through
+between `register_widget` and `set_widget_pid`. Every registration therefore carries a generation, stamped by the
+coordinator and echoed on each lifecycle event, and `set_widget_pid`, `clear_pid`, `bind_respawned_pid` and
+`unregister_abandoned` refuse a command whose stamp names a registration that is gone. `unregister_widget` needs no
+stamp: one task both ends an instance and re-registers it, so it cannot overtake a later registration.
 
 The 5-minute delay is a ceiling, not a give-up: supervision retries for as long as the instance exists. A restart budget
 would be unsafe here because widget failures are correlated — a crashed `bmc-wasm-host` drops the control socket of
@@ -117,8 +127,9 @@ emits `Abandoned` so the coordinator ends the registration that a crash delibera
 stays empty as if it had never spawned. Nothing on the device uninstalls a package, so the way a type leaves is
 discovery skipping it on the next re-scan: an apply can install a widget whose manifest this firmware cannot accept (an
 unknown credential slot type, a missing or non-executable binary), and the same apply is what makes widgets crash-loop
-in the first place. Ending the instance is guarded on the compositor side — an abandon that arrives after a scene edit
-has re-registered the id and bound a live process is dropped rather than blanking that cell.
+in the first place. Ending the instance is guarded on the compositor side by the same stamp — an abandon that arrives
+after a scene edit has re-registered the id is dropped rather than blanking that cell, whether or not the new
+registration has bound its process yet.
 
 A registry re-scan buys one prompt attempt. A package upgrade replaces widget files while the processes are still
 running, so affected widgets crash and start climbing delays against binaries that are being swapped out from under them
@@ -134,9 +145,15 @@ A configuration push buys the same prompt attempt. Changing a widget's params, o
 scene or account edit, updates the stored configuration even while the instance is between processes — the compositor
 keeps the registration a crash deliberately leaves standing, so the change is cached for the respawn to replay. Left
 alone, a crash-looping widget would sit out the rest of its climbed delay before trying the very change that may fix it,
-so both pushes ask supervision to retry now. It is the same operation the re-scan performs, scoped to one instance: the
-rung survives, so a stream of edits cannot forgive the ladder either, and an instance that is running or has been
-stopped is left exactly as it is.
+so a push that carries a real change asks supervision to retry now. It is the same operation the re-scan performs,
+scoped to one instance: the rung survives, so a stream of edits cannot forgive the ladder either, and an instance that
+is running or has been stopped is left exactly as it is.
+
+A real change is what counts, not the edit that prompted the push. The credential listener wakes on a bare hint — any
+scene save, any account save — and re-resolves every widget, so an unrelated edit would otherwise re-arm every
+crash-looping widget at the initial delay. The compositor already holds the previous resolution, so it reports whether
+the push changed anything and only a genuine change brings the respawn forward. The ladder bounds the attempt tempo, and
+an unrelated edit must not reset it.
 
 ### What supervision observes — and what it does not
 

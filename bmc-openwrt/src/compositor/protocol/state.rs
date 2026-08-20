@@ -22,7 +22,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use bmc::compositor::InstanceId;
+use bmc::compositor::{InstanceId, WidgetGeneration};
 use bmc_widget_protocol::server::deck_widget_surface_v1::DeckWidgetSurfaceV1;
 use bmc_widget_protocol::{
     ActionPayload, LedRequestId, LedRequestStatus, SettingUpdate, WidgetInitialConfig,
@@ -42,6 +42,8 @@ use crate::compositor::widget_tracker::LifecycleState;
 #[derive(Debug, Clone)]
 pub struct WidgetData {
     pub instance_id: InstanceId,
+    /// Which registration of `instance_id` this record is.
+    generation: WidgetGeneration,
     pub config: WidgetInitialConfig,
     pub protocol_surface: Option<DeckWidgetSurfaceV1>,
     pub wl_surface: Option<WlSurface>,
@@ -183,10 +185,16 @@ impl DeckWidgetProtocolState {
         }
     }
 
-    pub fn register_widget(&mut self, instance_id: InstanceId, config: WidgetInitialConfig) {
+    pub fn register_widget(
+        &mut self,
+        instance_id: InstanceId,
+        generation: WidgetGeneration,
+        config: WidgetInitialConfig,
+    ) {
         tracing::info!(
-            "Registering widget {}: {}x{} viewport_shape={:?}",
+            "Registering widget {} (generation {}): {}x{} viewport_shape={:?}",
             instance_id,
+            generation,
             config.width,
             config.height,
             config.viewport_shape
@@ -195,6 +203,7 @@ impl DeckWidgetProtocolState {
             instance_id.clone(),
             WidgetData {
                 instance_id,
+                generation,
                 config,
                 protocol_surface: None,
                 wl_surface: None,
@@ -210,7 +219,23 @@ impl DeckWidgetProtocolState {
     ///
     /// Also resolves any connection that arrived before this call (the
     /// race between process spawn and pid registration).
-    pub fn set_widget_pid(&mut self, instance_id: &InstanceId, pid: u32) {
+    pub fn set_widget_pid(
+        &mut self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+        pid: u32,
+    ) {
+        if self
+            .widgets
+            .get(instance_id)
+            .is_some_and(|widget| widget.generation != generation)
+        {
+            tracing::debug!(
+                "set_widget_pid for {instance_id}: generation {generation} has been re-registered; dropping the bind of pid={pid}"
+            );
+            self.purge_pending_connections(instance_id, pid);
+            return;
+        }
         let Some(widget) = self.widgets.get_mut(instance_id) else {
             tracing::error!(
                 "set_widget_pid for {instance_id}: no widget record; register_widget was not called first"
@@ -261,19 +286,32 @@ impl DeckWidgetProtocolState {
 
     /// Bind a crash-respawned process, returning whether the bind happened.
     ///
-    /// "Still unbound" is the state [`Self::clear_pid_for_instance`] leaves an
-    /// instance in, and the state anything re-registering it undoes; see
+    /// Takes effect only on the registration the respawn belongs to,
+    /// and only while that registration is still unbound; see
     /// `Compositor::bind_respawned_pid` for why a stale bind must be dropped.
-    pub fn bind_respawned_pid(&mut self, instance_id: &InstanceId, pid: u32) -> bool {
+    pub fn bind_respawned_pid(
+        &mut self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+        pid: u32,
+    ) -> bool {
         // Warn, unlike the superseded case below: no later call binds this pid,
         // so the respawned process can never reach a surface.
-        let Some(widget) = self.widgets.get_mut(instance_id) else {
+        let current = self
+            .widgets
+            .get(instance_id)
+            .map(|widget| widget.generation);
+        if current != Some(generation) {
             tracing::warn!(
-                "bind_respawned_pid: instance {instance_id} is gone; pid={pid} is left with nothing to resolve it"
+                "bind_respawned_pid: generation {generation} of {instance_id} is gone (now {current:?}); pid={pid} is left with nothing to resolve it"
             );
             self.purge_pending_connections(instance_id, pid);
             return false;
-        };
+        }
+        let widget = self
+            .widgets
+            .get_mut(instance_id)
+            .expect("BUG: the generation check proved the record is there");
         if let Some(bound) = widget.pid {
             tracing::debug!(
                 "bind_respawned_pid: instance {instance_id} is already bound to pid={bound}; dropping the superseded bind of pid={pid}"
@@ -284,19 +322,33 @@ impl DeckWidgetProtocolState {
         // The respawn postdates the exit that recorded any dead pid,
         // so a recycled pid belongs to the live process it announces.
         widget.exited_before_bind = None;
-        self.set_widget_pid(instance_id, pid);
+        self.set_widget_pid(instance_id, generation, pid);
         true
     }
 
     /// Drop an instance supervision gave up on, returning whether it went.
     ///
-    /// Guarded like [`Self::bind_respawned_pid`]: only an instance still
-    /// unbound can be the one this was emitted for.
-    pub fn unregister_abandoned(&mut self, instance_id: &InstanceId) -> bool {
-        let Some(widget) = self.widgets.get(instance_id) else {
-            tracing::debug!("unregister_abandoned: instance {instance_id} is already gone");
+    /// Guarded like [`Self::bind_respawned_pid`]:
+    /// only the registration this names can be the one it tears down.
+    pub fn unregister_abandoned(
+        &mut self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+    ) -> bool {
+        let current = self
+            .widgets
+            .get(instance_id)
+            .map(|widget| widget.generation);
+        if current != Some(generation) {
+            tracing::debug!(
+                "unregister_abandoned: generation {generation} of {instance_id} is already gone (now {current:?})"
+            );
             return false;
-        };
+        }
+        let widget = self
+            .widgets
+            .get(instance_id)
+            .expect("BUG: the generation check proved the record is there");
         if let Some(pid) = widget.pid {
             tracing::debug!(
                 "unregister_abandoned: instance {instance_id} is bound to pid={pid}; dropping the superseded abandon"
@@ -413,14 +465,23 @@ impl DeckWidgetProtocolState {
     pub fn clear_pid_for_instance(
         &mut self,
         instance_id: &InstanceId,
+        generation: WidgetGeneration,
         expected_pid: u32,
     ) -> Option<u32> {
-        let Some(widget) = self.widgets.get_mut(instance_id) else {
+        let current = self
+            .widgets
+            .get(instance_id)
+            .map(|widget| widget.generation);
+        if current != Some(generation) {
             tracing::debug!(
-                "clear_pid_for_instance: ignoring stale clear for unknown instance {instance_id} (expected_pid={expected_pid})"
+                "clear_pid_for_instance: ignoring stale clear for generation {generation} of {instance_id} (now {current:?}, expected_pid={expected_pid})"
             );
             return None;
-        };
+        }
+        let widget = self
+            .widgets
+            .get_mut(instance_id)
+            .expect("BUG: the generation check proved the record is there");
         if widget.pid.is_none() {
             widget.exited_before_bind = Some(expected_pid);
             tracing::debug!(
@@ -981,6 +1042,9 @@ mod tests {
     use super::*;
     use bmc_widget_protocol::CredentialSecrets;
 
+    const GEN: WidgetGeneration = WidgetGeneration(1);
+    const NEXT_GEN: WidgetGeneration = WidgetGeneration(2);
+
     fn make_config() -> WidgetInitialConfig {
         WidgetInitialConfig {
             width: 100,
@@ -995,8 +1059,8 @@ mod tests {
     }
 
     fn register_with_pid(state: &mut DeckWidgetProtocolState, instance_id: &str, pid: u32) {
-        state.register_widget(instance_id.to_owned(), make_config());
-        state.set_widget_pid(&instance_id.to_owned(), pid);
+        state.register_widget(instance_id.to_owned(), GEN, make_config());
+        state.set_widget_pid(&instance_id.to_owned(), GEN, pid);
     }
 
     #[test]
@@ -1006,7 +1070,7 @@ mod tests {
         register_with_pid(&mut state, "beta", 200);
         let _ = state.drain_connected();
 
-        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
 
         assert_eq!(pid, Some(100));
         let disconnected = state.drain_disconnected();
@@ -1031,7 +1095,7 @@ mod tests {
         register_with_pid(&mut state, "alpha", 100);
         let _ = state.drain_connected();
 
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
         let _ = state.drain_disconnected();
 
         assert!(
@@ -1039,7 +1103,7 @@ mod tests {
             "the stored config must outlive the crashed process"
         );
 
-        assert!(state.bind_respawned_pid(&"alpha".to_owned(), 200));
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), GEN, 200));
 
         assert_eq!(
             state.widgets["alpha"].pid,
@@ -1062,12 +1126,12 @@ mod tests {
     fn a_superseded_respawn_bind_is_ignored() {
         let mut state = DeckWidgetProtocolState::new();
         register_with_pid(&mut state, "alpha", 100);
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
 
         register_with_pid(&mut state, "alpha", 300);
 
         assert!(
-            !state.bind_respawned_pid(&"alpha".to_owned(), 200),
+            !state.bind_respawned_pid(&"alpha".to_owned(), GEN, 200),
             "a respawn must not bind over an instance that is already bound"
         );
         assert_eq!(
@@ -1084,17 +1148,17 @@ mod tests {
     #[test]
     fn an_exit_racing_the_initial_bind_leaves_the_instance_respawnable() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
 
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
-        state.set_widget_pid(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
+        state.set_widget_pid(&"alpha".to_owned(), GEN, 100);
 
         assert_eq!(
             state.widgets["alpha"].pid, None,
             "a pid already reported dead must not bind"
         );
 
-        assert!(state.bind_respawned_pid(&"alpha".to_owned(), 200));
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), GEN, 200));
         assert_eq!(
             state.widgets["alpha"].pid,
             Some(200),
@@ -1107,10 +1171,10 @@ mod tests {
     #[test]
     fn a_respawn_supersedes_a_recorded_premature_exit() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.register_widget("alpha".to_owned(), GEN, make_config());
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
 
-        assert!(state.bind_respawned_pid(&"alpha".to_owned(), 100));
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), GEN, 100));
         assert_eq!(
             state.widgets["alpha"].pid,
             Some(100),
@@ -1124,11 +1188,11 @@ mod tests {
     fn a_respawn_bind_for_a_stopped_instance_is_ignored() {
         let mut state = DeckWidgetProtocolState::new();
         register_with_pid(&mut state, "alpha", 100);
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
         state.unregister_widget(&"alpha".to_owned());
 
         assert!(
-            !state.bind_respawned_pid(&"alpha".to_owned(), 200),
+            !state.bind_respawned_pid(&"alpha".to_owned(), GEN, 200),
             "there is no instance left to bind to"
         );
         assert!(!state.widgets.contains_key("alpha"));
@@ -1140,10 +1204,10 @@ mod tests {
     fn an_abandoned_instance_is_unregistered() {
         let mut state = DeckWidgetProtocolState::new();
         register_with_pid(&mut state, "alpha", 100);
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
         let _ = state.drain_disconnected();
 
-        assert!(state.unregister_abandoned(&"alpha".to_owned()));
+        assert!(state.unregister_abandoned(&"alpha".to_owned(), GEN));
         assert!(
             !state.widgets.contains_key("alpha"),
             "the instance a widget type outlived must not stay registered"
@@ -1157,15 +1221,85 @@ mod tests {
     fn a_superseded_abandon_leaves_the_live_instance_alone() {
         let mut state = DeckWidgetProtocolState::new();
         register_with_pid(&mut state, "alpha", 100);
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
 
         register_with_pid(&mut state, "alpha", 300);
 
-        assert!(!state.unregister_abandoned(&"alpha".to_owned()));
+        assert!(!state.unregister_abandoned(&"alpha".to_owned(), GEN));
         assert_eq!(
             state.widgets["alpha"].pid,
             Some(300),
             "the live process must survive the stale abandon"
+        );
+    }
+
+    /// A fresh registration is unbound until its `set_widget_pid` lands,
+    /// exactly like the state a crash leaves behind.
+    #[test]
+    fn a_respawn_bind_from_a_previous_registration_is_refused() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 200);
+        state.unregister_widget(&"alpha".to_owned());
+        state.register_widget("alpha".to_owned(), NEXT_GEN, make_config());
+
+        assert!(
+            !state.bind_respawned_pid(&"alpha".to_owned(), GEN, 200),
+            "a bind stamped for a registration that is gone must not land"
+        );
+        assert_eq!(
+            state.widgets["alpha"].pid, None,
+            "the fresh registration must stay unbound for its own set_widget_pid"
+        );
+    }
+
+    /// A stale clear taking the unbound arm records a tombstone
+    /// the new registration never asked for.
+    /// Pid recycling is what makes that tombstone refuse the live bind.
+    #[test]
+    fn a_clear_from_a_previous_registration_leaves_no_tombstone() {
+        let mut state = DeckWidgetProtocolState::new();
+        register_with_pid(&mut state, "alpha", 100);
+        state.unregister_widget(&"alpha".to_owned());
+        state.register_widget("alpha".to_owned(), NEXT_GEN, make_config());
+
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
+        state.set_widget_pid(&"alpha".to_owned(), NEXT_GEN, 100);
+
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(100),
+            "the new registration must still be able to bind its own process"
+        );
+    }
+
+    /// The abandon is drained separately from the scene edit that re-spawns
+    /// the instance, so it can arrive while the new registration is unbound.
+    #[test]
+    fn an_abandon_from_a_previous_registration_is_refused() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), GEN, make_config());
+        state.unregister_widget(&"alpha".to_owned());
+        state.register_widget("alpha".to_owned(), NEXT_GEN, make_config());
+
+        assert!(!state.unregister_abandoned(&"alpha".to_owned(), GEN));
+        assert!(
+            state.widgets.contains_key("alpha"),
+            "a registration still mid-spawn must survive a stale abandon"
+        );
+    }
+
+    #[test]
+    fn a_pid_bind_from_a_previous_registration_is_refused() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), GEN, make_config());
+        state.unregister_widget(&"alpha".to_owned());
+        state.register_widget("alpha".to_owned(), NEXT_GEN, make_config());
+
+        state.set_widget_pid(&"alpha".to_owned(), GEN, 100);
+
+        assert_eq!(
+            state.widgets["alpha"].pid, None,
+            "the record must stay unbound for the pid of its own registration"
         );
     }
 
@@ -1175,7 +1309,7 @@ mod tests {
         register_with_pid(&mut state, "alpha", 100);
         let _ = state.drain_connected();
 
-        state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
         state.unregister_widget(&"alpha".to_owned());
 
         assert!(
@@ -1190,7 +1324,7 @@ mod tests {
         register_with_pid(&mut state, "alpha", 100);
         let _ = state.drain_connected();
 
-        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), 999);
+        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 999);
 
         assert_eq!(pid, None);
         assert!(state.drain_disconnected().is_empty());
@@ -1203,7 +1337,7 @@ mod tests {
         register_with_pid(&mut state, "alpha", 100);
         let _ = state.drain_connected();
 
-        let pid = state.clear_pid_for_instance(&"missing".to_owned(), 100);
+        let pid = state.clear_pid_for_instance(&"missing".to_owned(), GEN, 100);
 
         assert_eq!(pid, None);
         assert!(state.drain_disconnected().is_empty());
@@ -1228,9 +1362,9 @@ mod tests {
         register_with_pid(&mut state, "alpha", 100);
         let _ = state.drain_connected();
 
-        state.set_widget_pid(&"alpha".to_owned(), 200);
+        state.set_widget_pid(&"alpha".to_owned(), GEN, 200);
 
-        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        let pid = state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
 
         assert_eq!(pid, None);
         assert!(state.drain_disconnected().is_empty());
@@ -1284,7 +1418,7 @@ mod tests {
     #[test]
     fn register_widget_stores_display_info_from_config() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
         let stored = state
             .widget_config("alpha")
             .expect("BUG: widget alpha should be registered");
@@ -1294,7 +1428,7 @@ mod tests {
     #[test]
     fn emit_initial_state_sends_display_info_between_configure_and_params() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
 
         let events = state
             .test_emit_initial_state_events("alpha")
@@ -1329,7 +1463,7 @@ mod tests {
     #[test]
     fn a_version_1_peer_gets_the_batch_without_credential_events() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
 
         let events = state
             .test_emit_initial_state_events_into("alpha", RecordingSurface::at_version(1))
@@ -1363,7 +1497,7 @@ mod tests {
     fn a_bound_widget_replays_both_credential_events_on_reconnect() {
         let mut state = DeckWidgetProtocolState::new();
         let (view, secrets) = bound_pool();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
         state.update_widget_credentials(&"alpha".to_owned(), view, secrets);
 
         let events = state
@@ -1426,7 +1560,7 @@ mod tests {
     #[test]
     fn unbinding_clears_the_stored_resolution() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
         let (view, secrets) = bound_pool();
         state.update_widget_credentials(&"alpha".to_owned(), view, secrets);
 
@@ -1445,7 +1579,7 @@ mod tests {
     #[test]
     fn a_surfaceless_record_still_reports_a_credential_change() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
         let (view, secrets) = bound_pool();
 
         assert!(state.update_widget_credentials(&"alpha".to_owned(), view, secrets));
@@ -1454,7 +1588,7 @@ mod tests {
     #[test]
     fn a_repeated_credential_push_reports_no_change() {
         let mut state = DeckWidgetProtocolState::new();
-        state.register_widget("alpha".to_owned(), make_config());
+        state.register_widget("alpha".to_owned(), GEN, make_config());
         let (view, secrets) = bound_pool();
         state.update_widget_credentials(&"alpha".to_owned(), view.clone(), secrets.clone());
 

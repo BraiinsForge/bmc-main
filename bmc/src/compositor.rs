@@ -41,6 +41,24 @@ pub(crate) mod testing;
 
 pub type InstanceId = String;
 
+/// Which registration of an instance id a widget command is addressed to.
+///
+/// An instance id outlives the process behind it: a crash, a scene edit
+/// or a reload re-registers the same id. The compositor then cannot separate
+/// a command left over from the previous registration
+/// from one meant for the current one — both find the record unbound.
+/// The coordinator therefore stamps each registration, and every command
+/// derived from it, so one that outlived its registration is refused
+/// instead of landing on its successor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct WidgetGeneration(pub u64);
+
+impl std::fmt::Display for WidgetGeneration {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub x: u32,
@@ -282,6 +300,7 @@ pub trait Compositor: Send + Sync {
     fn register_widget(
         &self,
         instance_id: InstanceId,
+        generation: WidgetGeneration,
         position: Position,
         size: Size,
         initial_config: WidgetInitialConfig,
@@ -292,7 +311,14 @@ pub trait Compositor: Send + Sync {
     /// Called after `register_widget` and process spawn. The compositor
     /// uses `SO_PEERCRED` at `get_widget_surface` time to map the Wayland
     /// connection back to the registered instance.
-    fn set_widget_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
+    ///
+    /// `generation` is the one `register_widget` was given.
+    fn set_widget_pid(
+        &self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+        pid: u32,
+    ) -> Result<(), CompositorError>;
 
     /// Unregister a widget when its process stops.
     fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError>;
@@ -308,25 +334,42 @@ pub trait Compositor: Send + Sync {
     /// The instance stays registered — only the process is detached,
     /// so a respawn re-binds through [`Compositor::bind_respawned_pid`].
     /// `unregister_widget` is what ends an instance.
-    fn clear_pid(&self, instance_id: &InstanceId, pid: u32) -> Result<(), CompositorError>;
+    ///
+    /// `generation` is the registration the exited process belonged to.
+    fn clear_pid(
+        &self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+        pid: u32,
+    ) -> Result<(), CompositorError>;
 
     /// End an instance supervision gave up on: its widget type has left
     /// the registry.
     ///
     /// Guarded like `bind_respawned_pid` — an abandon that arrives after a
     /// scene edit rebound the id must not tear down the live process.
-    fn unregister_abandoned(&self, instance_id: &InstanceId) -> Result<(), CompositorError>;
+    fn unregister_abandoned(
+        &self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+    ) -> Result<(), CompositorError>;
 
     /// Bind a crash-respawned process to the instance `clear_pid` detached.
     ///
     /// Unlike `set_widget_pid`, this must take effect only while the instance
-    /// is still unbound. The respawn is announced asynchronously, so by the
-    /// time it arrives a scene edit or a widget reload may already have
-    /// re-registered the instance and bound a newer process; binding then
-    /// would point the record at a dead pid and strand the live one's
-    /// connection in the pending-connection buffer forever.
-    fn bind_respawned_pid(&self, instance_id: &InstanceId, pid: u32)
-    -> Result<(), CompositorError>;
+    /// is still unbound *and* still on `generation`.
+    /// The respawn is announced asynchronously, so by the time it arrives
+    /// a scene edit or a reload may already have re-registered the instance.
+    /// Binding then points the record at a dead pid and strands
+    /// the live process's connection in the pending-connection buffer forever.
+    /// Unbound alone does not rule that out:
+    /// a fresh registration is unbound until its `set_widget_pid` lands.
+    fn bind_respawned_pid(
+        &self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+        pid: u32,
+    ) -> Result<(), CompositorError>;
 
     /// Set the active scene layout (visible widgets and positions).
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError>;

@@ -22,7 +22,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use bmc::compositor::InstanceId;
+use bmc::compositor::{InstanceId, WidgetGeneration};
 use bmc_widget_protocol::server::{
     deck_widget_manager_v1::{self, DeckWidgetManagerV1},
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
@@ -80,8 +80,13 @@ pub trait DeckWidgetHandler {
     /// Bind-guarded unregister for supervision's abandon path. Needs no
     /// render-state cleanup: the instance is unbound by construction, so
     /// `clear_pid_for_instance` dropped that when the process exited.
-    fn unregister_abandoned(&mut self, instance_id: &InstanceId) -> bool {
-        self.deck_widget_state().unregister_abandoned(instance_id)
+    fn unregister_abandoned(
+        &mut self,
+        instance_id: &InstanceId,
+        generation: WidgetGeneration,
+    ) -> bool {
+        self.deck_widget_state()
+            .unregister_abandoned(instance_id, generation)
     }
 
     /// Pid-guarded unregister for the coordinator's child-exit path.
@@ -91,11 +96,12 @@ pub trait DeckWidgetHandler {
     fn clear_pid_for_instance(
         &mut self,
         instance_id: &InstanceId,
+        generation: WidgetGeneration,
         expected_pid: u32,
     ) -> Option<u32> {
-        let pid = self
-            .deck_widget_state()
-            .clear_pid_for_instance(instance_id, expected_pid);
+        let pid =
+            self.deck_widget_state()
+                .clear_pid_for_instance(instance_id, generation, expected_pid);
         if pid.is_some() {
             self.drop_widget_render_state(instance_id, pid);
         }
@@ -379,11 +385,13 @@ where
 
 #[cfg(test)]
 mod tests {
-    use bmc::compositor::InstanceId;
+    use bmc::compositor::{InstanceId, WidgetGeneration};
     use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
 
     use super::super::state::DeckWidgetProtocolState;
     use super::DeckWidgetHandler;
+
+    const GEN: WidgetGeneration = WidgetGeneration(1);
 
     struct MockHandler {
         state: DeckWidgetProtocolState,
@@ -421,8 +429,8 @@ mod tests {
         };
         handler
             .state
-            .register_widget("alpha".to_owned(), make_config());
-        handler.state.set_widget_pid(&"alpha".to_owned(), 100);
+            .register_widget("alpha".to_owned(), GEN, make_config());
+        handler.state.set_widget_pid(&"alpha".to_owned(), GEN, 100);
         let _ = handler.state.drain_connected();
 
         handler.unregister_widget(&"alpha".to_owned());
@@ -435,8 +443,8 @@ mod tests {
 
         handler
             .state
-            .register_widget("alpha".to_owned(), make_config());
-        handler.state.set_widget_pid(&"alpha".to_owned(), 200);
+            .register_widget("alpha".to_owned(), GEN, make_config());
+        handler.state.set_widget_pid(&"alpha".to_owned(), GEN, 200);
 
         assert_eq!(
             handler.cleanup_log.len(),
@@ -460,11 +468,11 @@ mod tests {
         };
         handler
             .state
-            .register_widget("alpha".to_owned(), make_config());
-        handler.state.set_widget_pid(&"alpha".to_owned(), 200);
+            .register_widget("alpha".to_owned(), GEN, make_config());
+        handler.state.set_widget_pid(&"alpha".to_owned(), GEN, 200);
         let _ = handler.state.drain_connected();
 
-        handler.clear_pid_for_instance(&"alpha".to_owned(), 100);
+        handler.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
 
         assert!(
             handler.cleanup_log.is_empty(),

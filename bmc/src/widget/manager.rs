@@ -33,6 +33,7 @@ use uuid::Uuid;
 
 use super::coordinator::WidgetEnv;
 use super::{SpawnError, WaylandSpawner, WidgetIdentity, WidgetInfo, WidgetRegistry};
+use crate::compositor::WidgetGeneration;
 
 const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 
@@ -94,19 +95,31 @@ pub enum WidgetEvent {
     /// The process exited on its own; externally stopped widgets are not
     /// reported. The pid lets the consumer drop stale pid associations.
     /// The instance stays registered for the respawn.
-    Exited { instance_id: String, pid: u32 },
+    Exited {
+        instance_id: String,
+        generation: WidgetGeneration,
+        pid: u32,
+    },
     /// A crashed widget was respawned; the consumer must bind the new pid
     /// for the reconnecting process to be recognized.
-    Respawned { instance_id: String, pid: u32 },
+    Respawned {
+        instance_id: String,
+        generation: WidgetGeneration,
+        pid: u32,
+    },
     /// Supervision gave up on the instance; nothing will bind a pid to it again,
     /// so the consumer must end the registration
     /// that [`Self::Exited`] deliberately left standing.
-    Abandoned { instance_id: String },
+    Abandoned {
+        instance_id: String,
+        generation: WidgetGeneration,
+    },
 }
 
 enum Command {
     Spawn {
         widget_uid: Uuid,
+        generation: WidgetGeneration,
         env: WidgetEnv,
         reply: oneshot::Sender<SpawnReply>,
     },
@@ -235,11 +248,17 @@ impl WidgetManager {
     /// A crashed widget is respawned automatically with backoff until it is
     /// stopped or its type leaves the registry. Self-exits and respawns are
     /// reported on the stream returned by [`Self::init`].
-    pub(crate) async fn spawn_widget(&self, widget_uid: Uuid, env: WidgetEnv) -> SpawnReply {
+    pub(crate) async fn spawn_widget(
+        &self,
+        widget_uid: Uuid,
+        generation: WidgetGeneration,
+        env: WidgetEnv,
+    ) -> SpawnReply {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Spawn {
                 widget_uid,
+                generation,
                 env,
                 reply: reply_tx,
             })
@@ -330,6 +349,9 @@ enum WidgetState {
 /// [`run_child`] task; the actor holds the channels to reach it.
 struct RunningWidget {
     pid: u32,
+    /// The compositor registration this process belongs to,
+    /// carried across respawns so the events it emits stay addressed to it.
+    generation: WidgetGeneration,
     /// The build this process was launched from, which the registry may since
     /// have replaced.
     identity: WidgetIdentity,
@@ -346,9 +368,18 @@ struct RunningWidget {
     backoff: Duration,
 }
 
+/// What a respawn needs to re-exec an instance, independent of when it fires.
+struct Respawn {
+    instance_id: String,
+    widget_uid: Uuid,
+    generation: WidgetGeneration,
+    env: WidgetEnv,
+}
+
 /// A crashed instance waiting out its respawn delay.
 struct PendingRestart {
     widget_uid: Uuid,
+    generation: WidgetGeneration,
     env: WidgetEnv,
     /// Delay before the respawn after this one, should it crash again.
     backoff: Duration,
@@ -446,11 +477,18 @@ impl Actor {
         match cmd {
             Command::Spawn {
                 widget_uid,
+                generation,
                 env,
                 reply,
             } => {
                 let initial = self.policy.initial;
-                let _ = reply.send(self.spawn_process(widget_uid, env, initial, internal_tx));
+                let _ = reply.send(self.spawn_process(
+                    widget_uid,
+                    generation,
+                    env,
+                    initial,
+                    internal_tx,
+                ));
             }
             Command::Stop { instance_id, reply } => self.stop(&instance_id, reply),
             Command::StopAll { reply } => self.stop_all(reply),
@@ -481,6 +519,7 @@ impl Actor {
     fn spawn_process(
         &mut self,
         widget_uid: Uuid,
+        generation: WidgetGeneration,
         env: WidgetEnv,
         backoff: Duration,
         internal_tx: &mpsc::UnboundedSender<Internal>,
@@ -546,6 +585,7 @@ impl Actor {
             instance_id.clone(),
             WidgetState::Running(RunningWidget {
                 pid,
+                generation,
                 identity: widget.identity,
                 stop_tx,
                 widget_uid,
@@ -647,6 +687,7 @@ impl Actor {
 
         let _ = self.events_tx.send(WidgetEvent::Exited {
             instance_id: exit.instance_id.clone(),
+            generation: widget.generation,
             pid: exit.pid,
         });
 
@@ -662,9 +703,12 @@ impl Actor {
             exit.instance_id, exit.pid, delay
         );
         self.schedule_restart(
-            exit.instance_id,
-            widget.widget_uid,
-            widget.env,
+            Respawn {
+                instance_id: exit.instance_id,
+                widget_uid: widget.widget_uid,
+                generation: widget.generation,
+                env: widget.env,
+            },
             delay,
             next_backoff(delay, self.policy.max),
             internal_tx,
@@ -673,19 +717,24 @@ impl Actor {
 
     fn schedule_restart(
         &mut self,
-        instance_id: String,
-        widget_uid: Uuid,
-        env: WidgetEnv,
+        respawn: Respawn,
         delay: Duration,
         next_delay: Duration,
         internal_tx: &mpsc::UnboundedSender<Internal>,
     ) {
+        let Respawn {
+            instance_id,
+            widget_uid,
+            generation,
+            env,
+        } = respawn;
         let token = self.next_restart_token;
         self.next_restart_token += 1;
         self.children.insert(
             instance_id.clone(),
             WidgetState::PendingRestart(PendingRestart {
                 widget_uid,
+                generation,
                 env,
                 backoff: next_delay,
                 token,
@@ -737,15 +786,14 @@ impl Actor {
         let Some(WidgetState::PendingRestart(pending)) = self.children.get(instance_id) else {
             return;
         };
-        let (widget_uid, env, earned) = (pending.widget_uid, pending.env.clone(), pending.backoff);
-        self.schedule_restart(
-            instance_id.to_owned(),
-            widget_uid,
-            env,
-            self.policy.initial,
-            earned,
-            internal_tx,
-        );
+        let respawn = Respawn {
+            instance_id: instance_id.to_owned(),
+            widget_uid: pending.widget_uid,
+            generation: pending.generation,
+            env: pending.env.clone(),
+        };
+        let earned = pending.backoff;
+        self.schedule_restart(respawn, self.policy.initial, earned, internal_tx);
     }
 
     fn handle_restart_due(
@@ -767,12 +815,14 @@ impl Actor {
             );
             let _ = self.events_tx.send(WidgetEvent::Abandoned {
                 instance_id: instance_id.to_owned(),
+                generation: pending.generation,
             });
             return;
         }
 
         match self.spawn_process(
             pending.widget_uid,
+            pending.generation,
             pending.env.clone(),
             pending.backoff,
             internal_tx,
@@ -780,6 +830,7 @@ impl Actor {
             Ok(pid) => {
                 let _ = self.events_tx.send(WidgetEvent::Respawned {
                     instance_id: instance_id.to_owned(),
+                    generation: pending.generation,
                     pid,
                 });
             }
@@ -789,9 +840,12 @@ impl Actor {
                     instance_id, e, pending.backoff
                 );
                 self.schedule_restart(
-                    instance_id.to_owned(),
-                    pending.widget_uid,
-                    pending.env,
+                    Respawn {
+                        instance_id: instance_id.to_owned(),
+                        widget_uid: pending.widget_uid,
+                        generation: pending.generation,
+                        env: pending.env,
+                    },
                     pending.backoff,
                     next_backoff(pending.backoff, self.policy.max),
                     internal_tx,
@@ -903,6 +957,8 @@ mod tests {
     use std::path::Path;
     use std::time::Instant;
 
+    const GEN: WidgetGeneration = WidgetGeneration(1);
+
     fn write_widget(root: &std::path::Path, body: &str) {
         std::fs::create_dir_all(root).expect("BUG: create widget root");
         std::fs::write(
@@ -920,6 +976,7 @@ mod tests {
         manager
             .spawn_widget(
                 Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: widget uid"),
+                GEN,
                 WidgetEnv {
                     instance_id: instance_id.to_owned(),
                     wayland_display: "wayland-test".to_owned(),
@@ -1174,7 +1231,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with_policy(uid, "true", &[], fast_policy());
         manager
-            .spawn_widget(uid, env("flapping"))
+            .spawn_widget(uid, GEN, env("flapping"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1212,7 +1269,7 @@ mod tests {
         };
         let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, env("flapping"))
+            .spawn_widget(uid, GEN, env("flapping"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1275,7 +1332,7 @@ mod tests {
         };
         let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, env("flapping"))
+            .spawn_widget(uid, GEN, env("flapping"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1342,7 +1399,7 @@ mod tests {
         };
         let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, env("flapping"))
+            .spawn_widget(uid, GEN, env("flapping"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1399,7 +1456,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "sleep", &["30"]);
         manager
-            .spawn_widget(uid, env("healthy"))
+            .spawn_widget(uid, GEN, env("healthy"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1426,7 +1483,7 @@ mod tests {
     async fn spawn_unknown_widget_fails() {
         let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
         let result = manager
-            .spawn_widget(Uuid::new_v4(), env("test-instance"))
+            .spawn_widget(Uuid::new_v4(), GEN, env("test-instance"))
             .await;
         assert!(result.is_err(), "spawn must fail for an unknown widget");
     }
@@ -1466,17 +1523,19 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         let pid = manager
-            .spawn_widget(uid, env("crashy"))
+            .spawn_widget(uid, GEN, env("crashy"))
             .await
             .expect("BUG: test spawn failed");
 
         match next_event(&mut events).await {
             WidgetEvent::Exited {
                 instance_id,
+                generation,
                 pid: exited_pid,
             } => {
                 assert_eq!(instance_id, "crashy");
                 assert_eq!(exited_pid, pid, "the exit must report the crashed pid");
+                assert_eq!(generation, GEN, "the exit must report the spawn's stamp");
             }
             WidgetEvent::Respawned { .. } | WidgetEvent::Abandoned { .. } => {
                 panic!("a crash must be reported before the respawn")
@@ -1486,10 +1545,15 @@ mod tests {
         match next_event(&mut events).await {
             WidgetEvent::Respawned {
                 instance_id,
+                generation,
                 pid: new_pid,
             } => {
                 assert_eq!(instance_id, "crashy");
                 assert_ne!(new_pid, pid, "the respawn must carry the new pid");
+                assert_eq!(
+                    generation, GEN,
+                    "a respawn stays on the registration it was spawned for"
+                );
             }
             WidgetEvent::Exited { .. } | WidgetEvent::Abandoned { .. } => {
                 panic!("expected a respawn after the crash")
@@ -1515,7 +1579,7 @@ mod tests {
         };
         let (manager, mut events, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, env("upgraded"))
+            .spawn_widget(uid, GEN, env("upgraded"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1557,7 +1621,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         manager
-            .spawn_widget(uid, env("uninstalled"))
+            .spawn_widget(uid, GEN, env("uninstalled"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1568,8 +1632,12 @@ mod tests {
         manager.registry().remove(&uid);
 
         match next_event(&mut events).await {
-            WidgetEvent::Abandoned { instance_id } => {
+            WidgetEvent::Abandoned {
+                instance_id,
+                generation,
+            } => {
                 assert_eq!(instance_id, "uninstalled");
+                assert_eq!(generation, GEN, "the abandon must name the registration");
             }
             WidgetEvent::Exited { .. } | WidgetEvent::Respawned { .. } => {
                 panic!("an uninstalled widget type must end supervision, not respawn")
@@ -1582,7 +1650,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "sleep", &["30"]);
         manager
-            .spawn_widget(uid, env("stoppable"))
+            .spawn_widget(uid, GEN, env("stoppable"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1604,7 +1672,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         manager
-            .spawn_widget(uid, env("flappy"))
+            .spawn_widget(uid, GEN, env("flappy"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1649,7 +1717,7 @@ mod tests {
         let (manager, mut events) = manager_with(uid, "sh", &["-c", &script]);
 
         let first = manager
-            .spawn_widget(uid, env("doubled"))
+            .spawn_widget(uid, GEN, env("doubled"))
             .await
             .expect("BUG: test spawn failed");
         assert!(
@@ -1658,7 +1726,7 @@ mod tests {
         );
 
         let second = manager
-            .spawn_widget(uid, env("doubled"))
+            .spawn_widget(uid, GEN, env("doubled"))
             .await
             .expect("BUG: test re-spawn failed");
         assert_ne!(first, second, "the re-spawn must be a new process");
@@ -1686,11 +1754,11 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, _events) = manager_with(uid, "sleep", &["30"]);
         manager
-            .spawn_widget(uid, env("one"))
+            .spawn_widget(uid, GEN, env("one"))
             .await
             .expect("BUG: test spawn failed");
         manager
-            .spawn_widget(uid, env("two"))
+            .spawn_widget(uid, GEN, env("two"))
             .await
             .expect("BUG: test spawn failed");
 

@@ -20,7 +20,7 @@
 
 use bmc::compositor::{
     CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, UpgradeDisplaySnapshot,
-    WidgetAction,
+    WidgetAction, WidgetGeneration,
 };
 use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 
@@ -28,6 +28,7 @@ use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 pub enum CompositorCommand {
     RegisterWidget {
         instance_id: InstanceId,
+        generation: WidgetGeneration,
         position: Position,
         size: Size,
         initial_config: WidgetInitialConfig,
@@ -38,22 +39,28 @@ pub enum CompositorCommand {
     },
     SetWidgetPid {
         instance_id: InstanceId,
+        generation: WidgetGeneration,
         pid: u32,
         ack: flume::Sender<()>,
     },
     BindRespawnedPid {
         instance_id: InstanceId,
+        generation: WidgetGeneration,
         pid: u32,
         ack: flume::Sender<()>,
     },
+    /// Unstamped: one task both ends an instance and re-registers it,
+    /// so this can never overtake a later registration.
     UnregisterWidget {
         instance_id: InstanceId,
     },
     UnregisterAbandoned {
         instance_id: InstanceId,
+        generation: WidgetGeneration,
     },
     ClearPid {
         instance_id: InstanceId,
+        generation: WidgetGeneration,
         expected_pid: u32,
     },
     SetActiveScene {

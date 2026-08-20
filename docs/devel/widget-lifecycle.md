@@ -226,8 +226,11 @@ restarts and prevents PID reuse from being attributed to the old widget.
 stored initial config stay. A crash respawn therefore has something to come back to — the coordinator binds the new
 process with `BindRespawnedPid` (not `SetWidgetPid`, which registers a fresh spawn), and the reconnect replays the same
 configure batch as the first attach, followed by an initial lifecycle event derived from the scene as it stands now. The
-bind is dropped if the instance is no longer unbound, since a scene edit or a widget reload may have re-registered and
-re-bound it while the respawn announcement was still queued.
+bind is dropped unless the instance is still unbound *and* still on the registration the respawn belongs to, since a
+scene edit or a widget reload may have re-registered it while the respawn announcement was still queued — and a fresh
+registration is itself unbound until its `SetWidgetPid` lands, so unbound alone cannot tell the two apart. See "Crash
+supervision" in [`widget-runtime-configuration.md`](widget-runtime-configuration.md) for the generation stamp that
+separates them.
 
 When a widget is unregistered, the compositor removes its protocol record and forgets lifecycle state for that instance.
 If a widget disappears from the derived lifecycle map during a scene step, `LifecycleEmitter` treats it as transitioning
