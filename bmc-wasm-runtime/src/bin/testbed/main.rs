@@ -1348,6 +1348,7 @@ impl TestbedApp {
             Ok(prepared) => prepared,
             Err(error) => {
                 tracing::warn!("hot reload: package preparation failed: {error:#}");
+                self.hot_reload.status.unloadable(format!("{error:#}"));
                 return;
             }
         };
@@ -1373,7 +1374,7 @@ impl TestbedApp {
             .recording_mode
             .active()
             .map(RecordingState::active_tile);
-        let mut swapped = true;
+        let mut refused: Option<String> = None;
         for idx in 0..self.stage.tile_count() {
             // Support, not liveness: a view the last rebuild killed still gets
             // this one, or a broken wasm retires it until restart.
@@ -1414,13 +1415,14 @@ impl TestbedApp {
             };
             if let Err(e) = view.reload(seed, rebind) {
                 tracing::warn!("hot reload: {}: {e:#}", view.label());
-                swapped = false;
+                refused.get_or_insert_with(|| format!("{}: {e:#}", view.label()));
             }
         }
         // A view that refused the rebuild is running what came before the edit,
-        // or nothing at all.
-        if swapped {
-            self.hot_reload.status.swapped();
+        // or nothing at all; either way the cycle did not land.
+        match refused {
+            None => self.hot_reload.status.swapped(),
+            Some(why) => self.hot_reload.status.unloadable(why),
         }
     }
 

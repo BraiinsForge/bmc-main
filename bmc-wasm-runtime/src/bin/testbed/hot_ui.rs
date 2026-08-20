@@ -84,8 +84,15 @@ impl TestbedApp {
     /// A foreground area rather than a panel: egui stacks the device windows
     /// above panels, and one of them would cover it.
     pub(super) fn paint_build_failure(&mut self, ctx: &egui::Context) {
-        let HotPhase::Failed(failure) = self.hot_reload.status.phase() else {
-            return;
+        let trouble = match self.hot_reload.status.phase() {
+            HotPhase::Failed(failure) => Trouble::Build(failure),
+            HotPhase::Unloadable { why } => Trouble::Load(why),
+            HotPhase::Watching
+            | HotPhase::Changed
+            | HotPhase::Building { .. }
+            | HotPhase::Swapping { .. }
+            | HotPhase::Reloaded { .. }
+            | HotPhase::Stopped { .. } => return,
         };
         let palette = self.theme.palette(ctx);
         let icon = &mut self.icons.warning;
@@ -130,7 +137,7 @@ impl TestbedApp {
                                     );
                                     icon.paint(row, mark, palette.support_error);
                                     row.label(
-                                        egui::RichText::new(headline(&failure))
+                                        egui::RichText::new(trouble.headline())
                                             .color(palette.support_error)
                                             .strong()
                                             .size(HEAD_TEXT),
@@ -145,7 +152,7 @@ impl TestbedApp {
                                     .max_height(budget)
                                     // Width fills; height collapses for a short log.
                                     .auto_shrink([false, true])
-                                    .show(body, |ui| paint_report(ui, &failure, palette));
+                                    .show(body, |ui| trouble.paint(ui, palette));
                             });
                     });
             });
@@ -176,7 +183,7 @@ fn paint_mark(painter: &egui::Painter, at: egui::Pos2, phase: &HotPhase, colour:
             line(egui::vec2(-0.85, 0.05), egui::vec2(-0.2, 0.6));
             line(egui::vec2(-0.2, 0.6), egui::vec2(0.85, -0.65));
         }
-        HotPhase::Failed(_) | HotPhase::Stopped { .. } => {
+        HotPhase::Failed(_) | HotPhase::Unloadable { .. } | HotPhase::Stopped { .. } => {
             line(egui::vec2(-0.7, -0.7), egui::vec2(0.7, 0.7));
             line(egui::vec2(-0.7, 0.7), egui::vec2(0.7, -0.7));
         }
@@ -215,6 +222,11 @@ fn describe(phase: &HotPhase, palette: &super::theme::Palette) -> Chip {
             palette.support_error,
             "the views run the last widget that built".to_owned(),
         ),
+        HotPhase::Unloadable { why } => (
+            "Will not load".to_owned(),
+            palette.support_error,
+            why.clone(),
+        ),
         HotPhase::Stopped { why } => (
             "Not watching".to_owned(),
             palette.support_error,
@@ -235,6 +247,31 @@ fn headline(failure: &BuildFailure) -> String {
         0 => "Build failed".to_owned(),
         1 => "Build failed — 1 error".to_owned(),
         errors => format!("Build failed — {errors} errors"),
+    }
+}
+
+/// What the last rebuild cycle failed at.
+enum Trouble {
+    /// Cargo refused the source, and said so in its own markup.
+    Build(std::sync::Arc<BuildFailure>),
+    Load(String),
+}
+
+impl Trouble {
+    fn headline(&self) -> String {
+        match self {
+            Self::Build(failure) => headline(failure),
+            Self::Load(_) => "Built, but will not load".to_owned(),
+        }
+    }
+
+    fn paint(&self, ui: &mut egui::Ui, palette: &super::theme::Palette) {
+        match self {
+            Self::Build(failure) => paint_report(ui, failure, palette),
+            Self::Load(why) => {
+                ui.label(egui::RichText::new(why).monospace());
+            }
+        }
     }
 }
 

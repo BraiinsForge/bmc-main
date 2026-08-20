@@ -63,6 +63,10 @@ pub(crate) enum HotPhase {
     Reloaded { at: Instant, took: Duration },
     /// The build failed, and everything it said.
     Failed(Arc<BuildFailure>),
+    /// Cargo produced a wasm the views could not be given, and why.
+    ///
+    /// Unlike [`Self::Failed`] there are no diagnostics: the source compiled.
+    Unloadable { why: String },
     /// Nothing is watching any more, and why.
     Stopped { why: String },
 }
@@ -141,6 +145,7 @@ impl HotStatus {
             | HotPhase::Building { .. }
             | HotPhase::Reloaded { .. }
             | HotPhase::Failed(_)
+            | HotPhase::Unloadable { .. }
             | HotPhase::Stopped { .. } => Duration::ZERO,
         };
         state.phase = HotPhase::Reloaded {
@@ -160,11 +165,17 @@ impl HotStatus {
             | HotPhase::Changed
             | HotPhase::Building { .. }
             | HotPhase::Failed(_)
+            | HotPhase::Unloadable { .. }
             | HotPhase::Stopped { .. } => false,
         };
         if lapsed {
             state.phase = HotPhase::Watching;
         }
+    }
+
+    /// The wasm on disk will not load; the canvas keeps whatever ran before.
+    pub(crate) fn unloadable(&self, why: String) {
+        self.set(HotPhase::Unloadable { why });
     }
 
     /// Move to `phase` and wake the window, which is how a build starting
