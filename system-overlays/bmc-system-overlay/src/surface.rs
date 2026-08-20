@@ -138,7 +138,7 @@ struct State {
     /// Latest `deck_device_info_v1` events, one latest-wins slot per event
     /// kind: the on-bind replay delivers all three back-to-back in a single
     /// dispatch round, so a shared slot would drop two of them.
-    pending_device_lifecycle: Option<crate::overlay::DeviceState>,
+    pending_device_lifecycle: Option<(crate::overlay::DeviceState, bool)>,
     pending_setup_progress: Option<(crate::overlay::SetupStep, String)>,
     #[expect(
         clippy::option_option,
@@ -678,7 +678,9 @@ impl LayerSurfaceClient {
         self.state.pending_upgrade_snapshot.take()
     }
 
-    pub fn take_device_state(&mut self) -> Option<crate::overlay::DeviceState> {
+    /// The lifecycle state, and whether this session's operational boot sequence
+    /// has already been delivered.
+    pub fn take_device_state(&mut self) -> Option<(crate::overlay::DeviceState, bool)> {
         self.state.pending_device_lifecycle.take()
     }
 
@@ -1071,11 +1073,14 @@ impl Dispatch<DeckDeviceInfoV1, ()> for State {
         // Unknown enum values are dropped, keeping the last coherent value —
         // a newer compositor must not push this client into a guessed state.
         match event {
-            deck_device_info_v1::Event::DeviceState { state: wire } => {
+            deck_device_info_v1::Event::DeviceState {
+                state: wire,
+                boot_flow_delivered,
+            } => {
                 if let WEnum::Value(v) = wire
                     && let Some(v) = device_state_from_wire(v)
                 {
-                    state.pending_device_lifecycle = Some(v);
+                    state.pending_device_lifecycle = Some((v, boot_flow_delivered != 0));
                 }
             }
             deck_device_info_v1::Event::SetupProgress {

@@ -68,6 +68,36 @@ fn access_point_wire(ap: Option<&AccessPointInfo>) -> (String, String) {
     )
 }
 
+/// Whether the on-bind replay carries `progress`, or downgrades it to `idle`.
+///
+/// A replay carries only steps a client cannot reconstruct on its own.
+/// A finished setup or reconfiguration is an announcement: replaying it makes
+/// a later binder congratulate the user again, long after the fact.
+fn replayable(progress: &SetupProgress) -> bool {
+    match progress {
+        // Nothing else on the wire says the device is stuck.
+        SetupProgress::UnexpectedError
+        // Mid-join the lifecycle still reads FactoryDefault, whose screen
+        // advertises an access point the join has already taken down.
+        | SetupProgress::ConnectingToWifi { .. } => true,
+        SetupProgress::Idle
+        | SetupProgress::WifiConnectionSuccess
+        | SetupProgress::WifiConnectionFailed
+        | SetupProgress::WifiReconfigSuccess
+        | SetupProgress::DeviceSetupSuccess => false,
+    }
+}
+
+/// Whether delivering `state` hands out the operational boot sequence.
+/// Only an operational boot has connect screens to run; the setup states drive
+/// screens that reflect a standing condition, re-derived on every bind.
+fn delivers_boot_flow(state: BmcState) -> bool {
+    match state {
+        BmcState::Operational => true,
+        BmcState::FactoryDefault | BmcState::SetupPending | BmcState::WifiReconfiguration => false,
+    }
+}
+
 /// Tracks bound device-info resources and the values replayed to late binders.
 #[derive(Debug)]
 pub struct DeviceInfoState {
@@ -78,6 +108,11 @@ pub struct DeviceInfoState {
     last_device_state: Option<BmcState>,
     last_setup_progress: SetupProgress,
     last_access_point: Option<AccessPointInfo>,
+    /// Latches once an `Operational` state reaches a client, and then rides
+    /// every later `device_state` event: a client binding after the boot screens
+    /// have run must not restart them. Riding every event, not only the bind,
+    /// is what keeps it immune to the client-side latest-wins slots.
+    boot_flow_delivered: bool,
 }
 
 impl Default for DeviceInfoState {
@@ -87,6 +122,7 @@ impl Default for DeviceInfoState {
             last_device_state: None,
             last_setup_progress: SetupProgress::Idle,
             last_access_point: None,
+            boot_flow_delivered: false,
         }
     }
 }
@@ -106,8 +142,19 @@ impl DeviceInfoState {
     pub fn set_device_state(&mut self, state: BmcState) {
         self.prune();
         self.last_device_state = Some(state);
+        let delivered = self.boot_flow_delivered;
         for r in &self.resources {
-            r.device_state(device_state_wire(state));
+            r.device_state(device_state_wire(state), u32::from(delivered));
+        }
+        self.mark_boot_flow_delivered(state);
+    }
+
+    /// Latch the flag once a state carrying the boot sequence has actually
+    /// reached someone. Gated on a live resource, so a broadcast into the void
+    /// — bmc up before the overlay host — does not burn the one boot sequence.
+    fn mark_boot_flow_delivered(&mut self, state: BmcState) {
+        if delivers_boot_flow(state) && !self.resources.is_empty() {
+            self.boot_flow_delivered = true;
         }
     }
 
@@ -131,12 +178,26 @@ impl DeviceInfoState {
 
     /// Replay the cached values to a freshly bound resource so a late binder
     /// starts from the complete picture instead of waiting for the next
-    /// change.
-    fn replay(&self, resource: &DeckDeviceInfoV1) {
+    /// change. Announcement steps are downgraded to `idle` (see `replayable`),
+    /// and the lifecycle state carries whether a boot sequence already ran.
+    fn replay(&mut self, resource: &DeckDeviceInfoV1) {
         if let Some(state) = self.last_device_state {
-            resource.device_state(device_state_wire(state));
+            resource.device_state(
+                device_state_wire(state),
+                u32::from(self.boot_flow_delivered),
+            );
+            // Delivery is certain here: the resource just written to is this bind's own,
+            // not one the broadcast path merely hopes is listening.
+            if delivers_boot_flow(state) {
+                self.boot_flow_delivered = true;
+            }
         }
-        let (state, ssid) = setup_progress_wire(&self.last_setup_progress);
+        let progress = if replayable(&self.last_setup_progress) {
+            self.last_setup_progress.clone()
+        } else {
+            SetupProgress::Idle
+        };
+        let (state, ssid) = setup_progress_wire(&progress);
         resource.setup_progress(state, ssid);
         let (ssid, url) = access_point_wire(self.last_access_point.as_ref());
         resource.access_point(ssid, url);
@@ -242,5 +303,34 @@ mod tests {
     #[test]
     fn access_point_wire_sends_empty_strings_when_down() {
         assert_eq!(access_point_wire(None), (String::new(), String::new()));
+    }
+
+    #[test]
+    fn only_unreconstructable_steps_survive_a_replay() {
+        assert!(replayable(&SetupProgress::UnexpectedError));
+        assert!(replayable(&SetupProgress::ConnectingToWifi {
+            wifi_ssid: "HomeNet".to_owned()
+        }));
+        assert!(!replayable(&SetupProgress::DeviceSetupSuccess));
+        assert!(!replayable(&SetupProgress::WifiReconfigSuccess));
+        assert!(!replayable(&SetupProgress::WifiConnectionSuccess));
+        assert!(!replayable(&SetupProgress::WifiConnectionFailed));
+        assert!(!replayable(&SetupProgress::Idle));
+    }
+
+    #[test]
+    fn a_broadcast_with_no_client_does_not_burn_the_boot_flow() {
+        // bmc up before the overlay host: the sequence is still owed.
+        let mut s = DeviceInfoState::default();
+        s.set_device_state(BmcState::Operational);
+        assert!(!s.boot_flow_delivered);
+    }
+
+    #[test]
+    fn only_an_operational_state_delivers_the_boot_flow() {
+        assert!(delivers_boot_flow(BmcState::Operational));
+        assert!(!delivers_boot_flow(BmcState::FactoryDefault));
+        assert!(!delivers_boot_flow(BmcState::SetupPending));
+        assert!(!delivers_boot_flow(BmcState::WifiReconfiguration));
     }
 }

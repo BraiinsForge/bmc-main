@@ -417,7 +417,11 @@ pub trait SystemOverlay {
     /// Device lifecycle state reported by the compositor, delivered before
     /// `tick`. Replayed on bind, so the current state arrives even when bmc
     /// broadcast it before this overlay connected.
-    fn on_device_state(&mut self, _state: DeviceState) {}
+    ///
+    /// `boot_flow_delivered` means this session's operational boot sequence has
+    /// already been handed out: screens that run once per boot must not start,
+    /// while those reflecting a standing condition ignore it.
+    fn on_device_state(&mut self, _state: DeviceState, _boot_flow_delivered: bool) {}
 
     /// Setup-flow transition reported by the compositor, delivered before
     /// `tick`. `wifi_ssid` is empty unless the step is `ConnectingToWifi`.

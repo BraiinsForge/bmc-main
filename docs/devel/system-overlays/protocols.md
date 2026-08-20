@@ -101,17 +101,35 @@ cache and needs no command channel back to bmc.
 
 ### `deck_device_info_v1` (version 1)
 
-| Member                             | Kind    | Args                                     | Notes                                                                                               |
-| ---------------------------------- | ------- | ---------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `destroy`                          | request | —                                        | Destructor.                                                                                         |
-| `device_state(state)`              | event   | `state: uint(enum)`                      | bmc's `BmcState`; selects the flow. Emitted on bind and on change.                                  |
-| `setup_progress(state, wifi_ssid)` | event   | `state: uint(enum)`, `wifi_ssid: string` | Setup-flow transition (`InitSetupState` + an `idle` entry). SSID set only for `connecting_to_wifi`. |
-| `access_point(ssid, setup_url)`    | event   | `ssid: string`, `setup_url: string`      | Setup-AP SSID and wizard URL, e.g. `http://192.168.8.1/`. Both empty while the AP is down.          |
+| Member                                     | Kind    | Args                                             | Notes                                                                                               |
+| ------------------------------------------ | ------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| `destroy`                                  | request | —                                                | Destructor.                                                                                         |
+| `device_state(state, boot_flow_delivered)` | event   | `state: uint(enum)`, `boot_flow_delivered: uint` | bmc's `BmcState`; selects the flow. Emitted on bind and on change. See "Once-per-session" below.    |
+| `setup_progress(state, wifi_ssid)`         | event   | `state: uint(enum)`, `wifi_ssid: string`         | Setup-flow transition (`InitSetupState` + an `idle` entry). SSID set only for `connecting_to_wifi`. |
+| `access_point(ssid, setup_url)`            | event   | `ssid: string`, `setup_url: string`              | Setup-AP SSID and wizard URL, e.g. `http://192.168.8.1/`. Both empty while the AP is down.          |
 
-**Replay-on-bind.** Every event's last value is cached compositor-side and replayed on bind, so a late-binding overlay
+**Replay-on-bind.** Each event's last value is cached compositor-side and replayed on bind, so a late-binding overlay
 starts from the complete picture. `device_state` is replayed only once known — an overlay bound before bmc is up keeps
-waiting instead of acting on a guessed lifecycle state. `setup_progress` always has a replayable value because of the
-`idle` entry; `access_point` replays empty strings while the AP is down (mirroring `wifi_ap`).
+waiting instead of acting on a guessed lifecycle state. `access_point` replays empty strings while the AP is down
+(mirroring `wifi_ap`).
+
+`setup_progress` is the one event that is **not** replayed verbatim, because it is the only one describing a
+*transition* rather than a current condition. The replay carries only the two steps a client cannot reconstruct from the
+other events — `unexpected_error`, since nothing else on the wire says the device is stuck, and `connecting_to_wifi`,
+since mid-join the lifecycle state still reads `factory_default` and its screen advertises an access point the join has
+already taken down. Everything else replays as `idle`: a finished setup or reconfiguration is an announcement, and
+replaying it makes a client that binds later congratulate the user again long after the fact, while the screens the
+remaining steps lead to are reached anyway from `device_state` plus the station address.
+
+**Once-per-session boot screens.** `boot_flow_delivered` is nonzero once an operational lifecycle state has actually
+reached a client in this compositor session. The operational connect screens (and the post-upgrade "Update Finished"
+screen that opens them) are a boot sequence, not a standing condition — a restarted overlay binds with no memory, so
+without this flag every restart would replay the whole sequence over the scenes, and would undo a dismissal that had
+already sent it away. It is deliberately a property of the *feed*, not of the receiving client: it latches once and
+rides every later `device_state` event, which is what makes it immune to the client-side latest-wins event slots (a
+per-bind-only value could be overwritten by a live event arriving in the same dispatch round). Screens reflecting a
+standing condition — the whole setup flow — ignore it and are re-derived on every bind. Latching is gated on a live
+resource, so a broadcast that reaches nobody (bmc up before the overlay host) does not burn the sequence.
 
 **Responsibility split.** bmc broadcasts through the `Compositor` trait (`broadcast_device_state` /
 `broadcast_setup_progress` / `broadcast_access_point`), fed by the device-info listener in `bmc/src/startup.rs`; the

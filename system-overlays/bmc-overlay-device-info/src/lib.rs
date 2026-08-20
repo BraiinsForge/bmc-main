@@ -383,7 +383,7 @@ impl SystemOverlay for DeviceInfoOverlay {
         let _ = self.render_state.ensure_icons(renderer);
     }
 
-    fn on_device_state(&mut self, state: DeviceState) {
+    fn on_device_state(&mut self, state: DeviceState, boot_flow_delivered: bool) {
         self.mode = match state {
             DeviceState::FactoryDefault => Mode::FactoryDefault,
             DeviceState::WifiReconfiguration => Mode::WifiReconfiguration,
@@ -404,12 +404,13 @@ impl SystemOverlay for DeviceInfoOverlay {
                     self.screen = Screen::SetupConnecting;
                 }
             }
-            // Mid-setup the lifecycle flips to Operational before the final
-            // setup event (reconfiguration exits AP mode first); the setup
-            // flow finishes via those events, so only a cold start enters
-            // the operational connect flow here.
+            // Reconfiguration exits AP mode first, so mid-setup the lifecycle
+            // reaches Operational before the final setup event arrives.
+            // Only a cold start is therefore still `Hidden` here.
+            // The session flag covers a restarted overlay, `Hidden` again,
+            // which must not replay a boot sequence the user already dismissed.
             Mode::Operational => {
-                if self.screen == Screen::Hidden {
+                if self.screen == Screen::Hidden && !boot_flow_delivered {
                     self.screen = operational_entry(self.post_upgrade, Instant::now());
                 }
             }
@@ -585,7 +586,7 @@ mod tests {
     #[test]
     fn operational_runs_the_connect_flow() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         let start = t0();
         let tick = overlay.tick(start);
         assert!(tick.visible);
@@ -597,9 +598,45 @@ mod tests {
     }
 
     #[test]
+    fn a_resumed_bind_does_not_replay_the_boot_flow() {
+        let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        overlay.on_device_state(DeviceState::Operational, true);
+        assert_eq!(overlay.screen, Screen::Hidden);
+        let tick = overlay.tick(t0());
+        assert!(!tick.visible);
+        assert_eq!(tick.next_wake, None);
+    }
+
+    #[test]
+    fn a_resumed_bind_does_not_replay_the_upgrade_screen() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
+        overlay.on_device_state(DeviceState::Operational, true);
+        assert_eq!(overlay.screen, Screen::Hidden);
+    }
+
+    #[test]
+    fn a_resumed_bind_still_enters_the_setup_flow() {
+        // Unlike the boot sequence, these reflect a standing condition:
+        // the device really is waiting in setup right now.
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::FactoryDefault, true);
+        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+
+        let mut pending = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
+        pending.on_device_state(DeviceState::SetupPending, true);
+        let _ = pending.tick(t0());
+        assert_eq!(
+            pending.screen,
+            Screen::SetupConnectInfo,
+            "the setup connect-info must come back for a restarted overlay"
+        );
+    }
+
+    #[test]
     fn operational_without_ip_fails_after_deadline() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         let start = t0();
         let _ = overlay.tick(start);
         let _ = overlay.tick(start + WAIT_FOR_IP);
@@ -609,7 +646,7 @@ mod tests {
     #[test]
     fn factory_default_shows_setup_start_and_ignores_touch() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_access_point(Some(&setup_ap()));
         let tick = overlay.tick(t0());
         assert!(tick.visible);
@@ -631,7 +668,7 @@ mod tests {
     #[test]
     fn first_boot_success_walks_to_connect_info() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
         assert_eq!(overlay.screen, Screen::SetupConnecting);
 
@@ -657,7 +694,7 @@ mod tests {
         // In AP mode the join outcome must come from bmc's setup event;
         // a station address appearing early must not skip ahead.
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
         let _ = overlay.tick(t0());
         assert_eq!(overlay.screen, Screen::SetupConnecting);
@@ -666,7 +703,7 @@ mod tests {
     #[test]
     fn setup_pending_advances_to_connect_info_on_ip() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::SetupPending);
+        overlay.on_device_state(DeviceState::SetupPending, false);
         let _ = overlay.tick(t0());
         assert_eq!(overlay.screen, Screen::SetupConnectInfo);
     }
@@ -674,7 +711,7 @@ mod tests {
     #[test]
     fn connection_failure_returns_to_setup_start() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
         let start = t0();
         let _ = overlay.tick(start + HOLD);
@@ -684,10 +721,10 @@ mod tests {
     #[test]
     fn reconfig_success_returns_to_scenes_without_connect_info() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::WifiReconfiguration);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
         overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
         // Reconfiguration exits AP mode before the success event arrives.
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         assert_eq!(
             overlay.screen,
             Screen::SetupConnecting,
@@ -703,7 +740,7 @@ mod tests {
     #[test]
     fn reconfig_setup_start_times_out_but_events_revive_it() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::WifiReconfiguration);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
         let _ = overlay.tick(t0() + RECONFIG_SCREEN_TIMEOUT);
         assert_eq!(overlay.screen, Screen::Done, "AP screen auto-hides");
 
@@ -714,7 +751,7 @@ mod tests {
     #[test]
     fn first_boot_setup_start_never_times_out() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
         let _ = overlay.tick(t0() + RECONFIG_SCREEN_TIMEOUT + HOLD);
         assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
     }
@@ -722,7 +759,7 @@ mod tests {
     #[test]
     fn unexpected_error_is_sticky() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::SetupPending);
+        overlay.on_device_state(DeviceState::SetupPending, false);
         overlay.on_setup_progress(SetupStep::UnexpectedError, "");
         let tick = overlay.tick(t0() + HOLD + HOLD);
         assert_eq!(overlay.screen, Screen::SetupFatal);
@@ -733,7 +770,7 @@ mod tests {
     #[test]
     fn package_upgrade_success_skips_the_connect_screen() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
         assert_eq!(overlay.screen, Screen::Done);
     }
@@ -741,7 +778,7 @@ mod tests {
     #[test]
     fn firmware_upgrade_success_opens_the_flow_and_hands_over_to_connecting() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
         assert!(matches!(overlay.screen, Screen::OpUpgraded { .. }));
         let start = t0();
@@ -761,7 +798,7 @@ mod tests {
         overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
         assert_eq!(overlay.screen, Screen::Hidden, "no flow to show it in yet");
 
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         assert!(matches!(overlay.screen, Screen::OpUpgraded { .. }));
     }
 
@@ -769,14 +806,14 @@ mod tests {
     fn a_package_success_before_the_lifecycle_still_skips_the_flow() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
         overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         assert_eq!(overlay.screen, Screen::Done);
     }
 
     #[test]
     fn touch_skips_the_success_screen_into_the_connect_flow() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
         let _ = overlay.tick(t0());
 
@@ -797,7 +834,7 @@ mod tests {
     #[test]
     fn upgrade_snapshots_leave_the_setup_flow_alone() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::FactoryDefault);
+        overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
         assert!(
             matches!(overlay.screen, Screen::SetupStart { .. }),
@@ -808,7 +845,7 @@ mod tests {
     #[test]
     fn a_late_upgrade_cannot_resurrect_a_dismissed_flow() {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         let start = t0();
         let _ = overlay.tick(start);
         let _ = overlay.tick(start + SUCCESS_VISIBLE_FOR);
@@ -844,7 +881,7 @@ mod tests {
     #[test]
     fn op_touch_dismisses_immediately() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::Operational);
+        overlay.on_device_state(DeviceState::Operational, false);
         let _ = overlay.tick(t0());
         overlay.on_touch(TouchEvent::Down {
             id: 0,

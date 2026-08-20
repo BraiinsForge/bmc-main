@@ -17,8 +17,10 @@
       screens is either overlay-local (touch dismiss) or owned by bmc's own
       policy timers.
 
-      Every event is emitted on bind with the current value and again on each
-      change, so a late-binding overlay always starts from a complete picture.
+      Every event is emitted on bind and again on each change, so a
+      late-binding overlay starts from a complete picture. The bind replay
+      carries current conditions; see setup_progress for the one event whose
+      replay is filtered, since a past transition is not a condition.
     </description>
 
     <request name="destroy" type="destructor">
@@ -53,8 +55,15 @@
       <description summary="the device lifecycle state changed">
         Sent on bind with the current state, then on every change (for example
         entering or leaving WiFi reconfiguration).
+
+        boot_flow_delivered marks this session's operational boot sequence as
+        already handed out, so a client binding after one has run does not
+        start it again. It is a property of the feed rather than of any one
+        client: it latches on the first operational state delivered to anyone,
+        and every later event carries it.
       </description>
       <arg name="state" type="uint" enum="device_state" summary="current lifecycle state"/>
+      <arg name="boot_flow_delivered" type="uint" summary="nonzero once an operational boot sequence has been delivered this session"/>
     </event>
 
     <event name="setup_progress">
@@ -68,6 +77,12 @@
         so two transitions delivered in one dispatch round leave only the second
         and the first never gets a screen. Real steps are seconds apart,
         so this costs a screen only where a step fails on the spot.
+
+        This is the one event whose on-bind replay is filtered: it describes a
+        transition rather than a current condition, so it carries only the
+        steps a client cannot derive from the other two events —
+        unexpected_error and connecting_to_wifi. The rest replay as idle, so a
+        completed setup does not announce itself twice.
       </description>
       <arg name="state" type="uint" enum="setup_state" summary="current setup step"/>
       <arg name="wifi_ssid" type="string" summary="target SSID, empty unless connecting_to_wifi"/>

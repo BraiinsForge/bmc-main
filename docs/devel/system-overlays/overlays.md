@@ -20,10 +20,17 @@ scene swipes for as long as any screen is up — the scenes handoff is purely th
 
 bmc owns the lifecycle and drives the overlay over `deck_device_info_v1` (see [`protocols.md`](protocols.md)):
 `device_state` selects the flow, `setup_progress` steps the setup flow, and `access_point` carries the setup-AP SSID and
-wizard URL (so the overlay hard-codes no AP addressing). All three are replayed on bind. The displayed device address
-comes from the connectivity prober's `station_ipv4` — the pick that excludes AP-mode interfaces, so the setup AP's own
-address never counts as an uplink. Until the first `device_state` event the overlay stays unmapped rather than guess a
-flow.
+wizard URL (so the overlay hard-codes no AP addressing). The displayed device address comes from the connectivity
+prober's `station_ipv4` — the pick that excludes AP-mode interfaces, so the setup AP's own address never counts as an
+uplink. Until the first `device_state` event the overlay stays unmapped rather than guess a flow.
+
+All three events replay on bind, but the overlay is careful about what a replay is allowed to start, because a restarted
+overlay binds with no memory of what it already showed. The **setup** screens reflect a standing condition — the device
+really is waiting in setup right now — so they are re-derived on every bind, and the setup connect-info comes back on
+its own from `device_state` plus the station address. The **operational connect** screens are a boot sequence instead:
+they run once per session, gated on `device_state`'s `boot_flow_delivered` flag, so a restart neither replays them over
+the scenes nor undoes a dismissal. On the setup side the same distinction is drawn compositor-side, by not replaying the
+announcement steps.
 
 Every screen-hold timer lives in the overlay; bmc emits transitions the moment they happen (recovery policies — the
 no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts `unexpected_error` before acting).
@@ -63,7 +70,9 @@ that decides how the operational flow opens:
 - **After a package activation restart** the flow is skipped entirely (`Done`). Only the compositor restarted — the
   network never dropped — so a connection screen would be stale noise.
 
-The snapshot's `remaining` dwell is ignored: like every other screen here, this one is timed by the overlay.
+The snapshot's `remaining` dwell is ignored: like every other screen here, this one is timed by the overlay. And because
+the screen only ever opens the operational flow, `boot_flow_delivered` covers it too — a restarted overlay does not
+confirm an upgrade the user was already told about.
 
 Which of the two paths runs is decided by the runner, not by the wire: the device-info events are drained before the
 snapshot is applied in `tick`, whichever order the compositor replayed them in. So on a post-upgrade boot the

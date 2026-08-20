@@ -249,8 +249,8 @@ fn deliver_device_info_events(client: &mut LayerSurfaceClient, overlay: &mut dyn
     if !overlay.uses_device_info() {
         return;
     }
-    if let Some(state) = client.take_device_state() {
-        overlay.on_device_state(state);
+    if let Some((state, boot_flow_delivered)) = client.take_device_state() {
+        overlay.on_device_state(state, boot_flow_delivered);
     }
     if let Some((step, ssid)) = client.take_setup_progress() {
         overlay.on_setup_progress(step, &ssid);

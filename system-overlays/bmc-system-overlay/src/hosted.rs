@@ -198,8 +198,8 @@ impl HostedOverlay {
             }
         }
         if self.overlay.uses_device_info() {
-            if let Some(state) = self.client.take_device_state() {
-                self.overlay.on_device_state(state);
+            if let Some((state, boot_flow_delivered)) = self.client.take_device_state() {
+                self.overlay.on_device_state(state, boot_flow_delivered);
             }
             if let Some((step, ssid)) = self.client.take_setup_progress() {
                 self.overlay.on_setup_progress(step, &ssid);
