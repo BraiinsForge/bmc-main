@@ -469,12 +469,17 @@ pub(super) enum NameVerdict {
     /// their data too, since the config writer keeps their bindings and a
     /// dataset holds one fixture.
     Rebinds { drives: Vec<String> },
+    /// The config would not load, so what this name replaces is unknown.
+    Unknown { why: String },
 }
 
 impl NameVerdict {
-    /// Whether committing would replace data already recorded.
+    /// Whether committing would, or might, replace data already recorded.
     fn destructive(&self) -> bool {
-        matches!(self, Self::Replaces | Self::Rebinds { .. })
+        matches!(
+            self,
+            Self::Replaces | Self::Rebinds { .. } | Self::Unknown { .. }
+        )
     }
 }
 
@@ -485,11 +490,33 @@ impl NameVerdict {
 /// single target's rows can judge one.
 pub(super) struct RecordedFixtures {
     by_target: std::collections::HashMap<String, Vec<RecordedDataset>>,
+    /// Why the config could not be read, when it could not be.
+    ///
+    /// An empty map otherwise means the widget recorded nothing.
+    /// A failed load must not borrow that meaning, since the writer
+    /// would replace a fixture it never saw.
+    unreadable: Option<String>,
 }
 
 impl RecordedFixtures {
     pub(super) fn new(by_target: std::collections::HashMap<String, Vec<RecordedDataset>>) -> Self {
-        Self { by_target }
+        Self {
+            by_target,
+            unreadable: None,
+        }
+    }
+
+    /// A config that would not load, so nothing is known about what it holds.
+    pub(super) fn unreadable(why: String) -> Self {
+        Self {
+            by_target: std::collections::HashMap::new(),
+            unreadable: Some(why),
+        }
+    }
+
+    /// Whether an empty row list means "nothing here" or "cannot tell".
+    pub(super) fn is_unreadable(&self) -> bool {
+        self.unreadable.is_some()
     }
 
     /// What `target` already replays.
@@ -514,6 +541,9 @@ impl RecordedFixtures {
     ) -> NameVerdict {
         if !bmc_wasm_runtime::capture_config::is_valid_dataset_name(dataset) {
             return NameVerdict::Unusable;
+        }
+        if let Some(why) = &self.unreadable {
+            return NameVerdict::Unknown { why: why.clone() };
         }
         if self.of(target).iter().any(|row| row.name == dataset) {
             return NameVerdict::Replaces;
@@ -1034,6 +1064,7 @@ const ROW_ICON: f32 = 18.0;
 fn paint_dataset_rows(
     ui: &mut egui::Ui,
     rows: &[RecordedDataset],
+    unreadable: bool,
     dataset: &mut String,
     icons: &mut super::icon::Icons,
     palette: &super::theme::Palette,
@@ -1041,15 +1072,24 @@ fn paint_dataset_rows(
     let width = ui.available_width();
     if rows.is_empty() {
         let (rect, _) = ui.allocate_exact_size(egui::vec2(width, ROW_H), egui::Sense::hover());
-        icons
-            .record
-            .paint(ui, row_icon_rect(rect), palette.text_disabled);
+        let (say, colour) = if unreadable {
+            (
+                "the config would not load — what it holds is unknown",
+                palette.action_danger,
+            )
+        } else {
+            (
+                "nothing recorded here yet — this take would be the first",
+                palette.text_disabled,
+            )
+        };
+        icons.record.paint(ui, row_icon_rect(rect), colour);
         ui.painter().text(
             egui::pos2(rect.left() + row_text_x(), rect.center().y),
             egui::Align2::LEFT_CENTER,
-            "nothing recorded here yet — this take would be the first",
+            say,
             egui::FontId::proportional(13.0),
-            palette.text_disabled,
+            colour,
         );
         return;
     }
@@ -1338,7 +1378,14 @@ impl TestbedApp {
 
                     ui.label(egui::RichText::new("Already recorded").strong());
                     ui.add_space(spacing::S02);
-                    paint_dataset_rows(ui, rows, &mut naming.dataset, icons, palette);
+                    paint_dataset_rows(
+                        ui,
+                        rows,
+                        recorded.is_unreadable(),
+                        &mut naming.dataset,
+                        icons,
+                        palette,
+                    );
 
                     ui.add_space(spacing::S05);
                     ui.label(egui::RichText::new("Dataset name").strong());
@@ -1365,6 +1412,10 @@ impl TestbedApp {
                             drives.join(", ")
                         ))
                         .color(palette.action_danger),
+                        NameVerdict::Unknown { why } => egui::RichText::new(format!(
+                            "cannot read what is already recorded — {why}"
+                        ))
+                        .color(palette.action_danger),
                         NameVerdict::New => {
                             egui::RichText::new("a new dataset for this viewport").weak()
                         }
@@ -1373,7 +1424,15 @@ impl TestbedApp {
 
                 let primary = if verdict.destructive() {
                     DialogPrimary {
-                        label: "Re-record",
+                        // "Re-record" claims a replacement — the one thing
+                        // an unreadable config cannot claim.
+                        label: match verdict {
+                            NameVerdict::Unknown { .. } => "Record anyway",
+                            NameVerdict::Unusable
+                            | NameVerdict::New
+                            | NameVerdict::Replaces
+                            | NameVerdict::Rebinds { .. } => "Re-record",
+                        },
                         fill: palette.action_danger,
                         hover: palette.action_danger_hover,
                         enabled: true,
@@ -1567,6 +1626,25 @@ mod naming_tests {
 
         assert_eq!(recorded.judge("qualifying", small), NameVerdict::Replaces);
         assert_eq!(recorded.judge("race", small), NameVerdict::New);
+    }
+
+    /// An unreadable config holds no rows, exactly as a widget that recorded
+    /// nothing does — and only one of those is safe to call new.
+    #[test]
+    fn an_unreadable_config_judges_no_name_as_new() {
+        let recorded = RecordedFixtures::unreadable("fixture 'race' not found".to_owned());
+
+        let verdict = recorded.judge("race", target("bmc100:small"));
+        assert_eq!(
+            verdict,
+            NameVerdict::Unknown {
+                why: "fixture 'race' not found".to_owned(),
+            },
+        );
+        assert!(
+            verdict.destructive(),
+            "an unknown name must arm the footer as a re-record would",
+        );
     }
 
     /// A dataset name is unique across the whole config, so one belonging to

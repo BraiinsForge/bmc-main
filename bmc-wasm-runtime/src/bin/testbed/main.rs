@@ -1485,9 +1485,9 @@ impl TestbedApp {
             return recording::RecordedFixtures::new(recorded);
         };
         let capture_dir = widget_root.join("capture");
-        let Ok(config) = bmc_wasm_runtime::capture_config::load_from_capture_dir(&capture_dir)
-        else {
-            return recording::RecordedFixtures::new(recorded);
+        let config = match bmc_wasm_runtime::capture_config::load_from_capture_dir(&capture_dir) {
+            Ok(config) => config,
+            Err(e) => return recording::RecordedFixtures::unreadable(format!("{e:#}")),
         };
         for (dataset, entry) in &config.fixtures {
             for target in &entry.targets {
