@@ -559,7 +559,7 @@ mod tests {
     fn setup_ap() -> AccessPoint {
         AccessPoint {
             ssid: "Deck setup".to_owned(),
-            setup_url: "http://192.168.8.1/".to_owned(),
+            setup_url: "http://10.0.0.21/".to_owned(),
         }
     }
 

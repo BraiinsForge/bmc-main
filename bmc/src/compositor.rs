@@ -317,7 +317,7 @@ pub enum AlarmCommand {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessPointInfo {
     pub ssid: String,
-    /// Address the setup wizard is reached at, e.g. `http://192.168.8.1/`.
+    /// Address the setup wizard is reached at, e.g. `http://10.0.0.21/`.
     /// bmc owns the AP addressing so the overlay hard-codes nothing.
     pub setup_url: String,
 }

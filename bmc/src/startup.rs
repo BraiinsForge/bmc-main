@@ -149,12 +149,18 @@ fn spawn_alarm_ringing_watch(alarm_bus: &AlarmBus) -> watch::Receiver<bool> {
     rx
 }
 
-/// Polls, and the gap between them, that a `SetupPending` boot spends waiting
-/// for an IP before bmc gives up and factory-resets: 20 s.
+/// Polls a `SetupPending` boot spends waiting for an IP
+/// before bmc gives up and factory-resets: 20 s at the delay below.
 /// Carried over from the stable-26.02 `display_tasks`.
-const SETUP_IP_POLLS: (usize, Duration) = (10, Duration::from_secs(2));
+const SETUP_IP_POLL_ATTEMPTS: usize = 10;
+const SETUP_IP_POLL_DELAY: Duration = Duration::from_secs(2);
 /// The same, for a setup AP coming up before bmc reboots: 30 s.
-const SETUP_AP_POLLS: (usize, Duration) = (15, Duration::from_secs(2));
+const SETUP_AP_POLL_ATTEMPTS: usize = 15;
+const SETUP_AP_POLL_DELAY: Duration = Duration::from_secs(2);
+/// Total polls the watchdog spends before standing down without a verdict:
+/// the deadline's own, plus a setup-AP window's worth
+/// for the interface to finish switching out of AP mode.
+const SETUP_IP_POLL_CAP: usize = SETUP_IP_POLL_ATTEMPTS + SETUP_AP_POLL_ATTEMPTS;
 /// How long the unexpected-error screen stays visible before the recovery
 /// reboot; mirrors `initial_setup`'s own reboot delay.
 const SETUP_ERROR_REBOOT_DELAY: Duration = Duration::from_secs(10);
@@ -175,11 +181,12 @@ fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
     }
 }
 
-/// Resolve the setup AP's SSID and wizard URL once the AP is up. The
-/// captive-portal redirect host is the AP's own address while setup mode is
-/// active, so it is the authoritative setup-URL host.
+/// Resolve the setup AP's SSID and wizard URL once the AP is up.
+///
+/// Only the SSID is waited for. The AP's address is configuration,
+/// so it is already correct when the SSID appears
+/// and cannot change under a QR code that has been shown.
 async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointInfo> {
-    let (attempts, delay) = SETUP_AP_POLLS;
     let wifi = manager.network_manager().wifi().or_else(|| {
         warn!("no WiFi on this board, so there is no setup AP to resolve");
         None
@@ -187,28 +194,25 @@ async fn resolve_access_point<T: BmcManager>(manager: &T) -> Option<AccessPointI
     // `ap_ssid` never falls back to the joined station network, so the screen
     // cannot advertise the station SSID while the AP is still coming up.
     let mut waited = None;
-    for _ in 0..attempts {
+    for _ in 0..SETUP_AP_POLL_ATTEMPTS {
         if let Some(ssid) = wifi.ap_ssid().await {
             waited = Some(ssid);
             break;
         }
-        tokio::time::sleep(delay).await;
+        tokio::time::sleep(SETUP_AP_POLL_DELAY).await;
     }
     let Some(ssid) = waited else {
         warn!("setup AP did not come up");
         return None;
     };
-    for _ in 0..attempts {
-        if let Some(host) = wifi.captive_portal_redirect_host().await {
-            return Some(AccessPointInfo {
-                ssid,
-                setup_url: format!("http://{host}/"),
-            });
-        }
-        tokio::time::sleep(delay).await;
-    }
-    warn!("setup AP is up but holds no address");
-    None
+    let Some(host) = wifi.captive_portal_redirect_host().await else {
+        warn!("setup AP is up but its address is unknown");
+        return None;
+    };
+    Some(AccessPointInfo {
+        ssid,
+        setup_url: format!("http://{host}/"),
+    })
 }
 
 /// The `SetupPending` recovery policy carried over from stable-26.02:
@@ -218,12 +222,34 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
     compositor: Arc<dyn Compositor>,
     manager: Arc<T>,
 ) {
-    let (attempts, delay) = SETUP_IP_POLLS;
-    for _ in 0..attempts {
-        if manager.network_manager().ip_address().await.is_some() {
-            return;
+    let mut run = 0;
+    for _ in 0..SETUP_IP_POLL_CAP {
+        match bmc_net::station_ip_address(manager.network_manager()).await {
+            Ok(Some(_)) => return,
+            Ok(None) => run += 1,
+            Err(err) => {
+                warn!(%err, "cannot tell whether the device has an uplink");
+                run = 0;
+            }
         }
-        tokio::time::sleep(delay).await;
+        if run >= SETUP_IP_POLL_ATTEMPTS {
+            break;
+        }
+        tokio::time::sleep(SETUP_IP_POLL_DELAY).await;
+    }
+    // A read that failed is not evidence of a missing uplink, and the reset
+    // destroys the configuration, so the deadline counts only an unbroken run
+    // of conclusive polls: an interface still switching out of AP mode reads
+    // either way and never accumulates one. Past the cap the boot goes without
+    // its watchdog, and says so rather than leaving the connect screen up.
+    if run < SETUP_IP_POLL_ATTEMPTS {
+        error!("skipping the setup-pending factory reset: the uplink could not be read");
+        if let Err(err) = compositor
+            .broadcast_setup_progress(SetupProgress::UnexpectedError { restarting: false })
+        {
+            warn!(%err, "failed to signal setup error to overlay");
+        }
+        return;
     }
     warn!("no IP within the setup-pending deadline; factory-resetting");
     if let Err(err) =
@@ -236,16 +262,61 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
     }
 }
 
-/// Broadcast the unrecoverable-setup error and reboot after a visible delay.
-async fn fail_setup_and_reboot<T: BmcManager>(compositor: &dyn Compositor, manager: &T) {
+/// Report a setup failure the device cannot get past, and restart the device
+/// only when a restart is what resolves it.
+///
+/// With nothing to fall back to the device is unusable until setup completes,
+/// so it reboots after a dwell long enough to read the screen.
+/// A device that merely opened setup mode keeps running instead.
+/// It still has its scenes and its settings tray, so restarting it unprompted
+/// would cost more than the failed access point does.
+async fn fail_setup<T: BmcManager>(compositor: &dyn Compositor, manager: &T, state: BmcState) {
+    let restarting = match state {
+        BmcState::FactoryDefault | BmcState::SetupPending => true,
+        BmcState::WifiReconfiguration | BmcState::Operational => false,
+    };
     if let Err(err) =
-        compositor.broadcast_setup_progress(SetupProgress::UnexpectedError { restarting: true })
+        compositor.broadcast_setup_progress(SetupProgress::UnexpectedError { restarting })
     {
         warn!(%err, "failed to signal setup error to overlay");
+    }
+    if !restarting {
+        return;
     }
     tokio::time::sleep(SETUP_ERROR_REBOOT_DELAY).await;
     if let Err(err) = manager.reboot().await {
         error!(%err, "recovery reboot failed");
+    }
+}
+
+/// Resolve the setup AP and publish it, or report the failure.
+///
+/// Runs in its own task, not the listener's: the wait inside it runs
+/// to half a minute, while transitions must keep flowing throughout.
+/// Otherwise the screens reporting them are lost.
+async fn publish_access_point<T: BmcManager>(
+    compositor: Arc<dyn Compositor>,
+    manager: Arc<T>,
+    state: BmcState,
+) {
+    if let Some(ap) = resolve_access_point(manager.as_ref()).await {
+        if let Err(err) = compositor.broadcast_access_point(Some(ap)) {
+            warn!(%err, "failed to signal access point to overlay");
+        }
+        return;
+    }
+    fail_setup(compositor.as_ref(), manager.as_ref(), state).await;
+}
+
+/// Whether `state` runs the setup AP.
+///
+/// The watch only wakes the listener; the state read in the same pass decides.
+/// Otherwise a setup state reaches the overlay alongside a downed access point,
+/// which its setup screen shows as `Starting setup WiFi...` forever.
+fn runs_setup_ap(state: BmcState) -> bool {
+    match state {
+        BmcState::FactoryDefault | BmcState::WifiReconfiguration => true,
+        BmcState::SetupPending | BmcState::Operational => false,
     }
 }
 
@@ -277,13 +348,13 @@ fn spawn_device_info_listener<T: BmcManager + 'static>(
             ));
         }
 
-        // The AP watch is seeded before this subscription, so process the
-        // current value first — it carries the FactoryDefault boot.
-        let mut ap_up = Some(*setup_ap_rx.borrow_and_update());
+        // The seeded value is what the first pass covers: a FactoryDefault boot
+        // already has its AP up, so waiting for a change first waits forever.
+        setup_ap_rx.mark_unchanged();
+        let mut setup_mode_changed = true;
+        let mut resolving: Option<tokio::task::JoinHandle<()>> = None;
         loop {
-            if let Some(ap_up) = ap_up.take() {
-                // The lifecycle state flips together with the AP
-                // (Operational <-> WifiReconfiguration), so re-read both.
+            if std::mem::take(&mut setup_mode_changed) {
                 let state = manager
                     .network_manager()
                     .provisioning()
@@ -292,16 +363,18 @@ fn spawn_device_info_listener<T: BmcManager + 'static>(
                 if let Err(err) = compositor.broadcast_device_state(state) {
                     warn!(%err, "failed to signal device state to overlay");
                 }
-                let ap = if ap_up {
-                    let Some(ap) = resolve_access_point(manager.as_ref()).await else {
-                        fail_setup_and_reboot(compositor.as_ref(), manager.as_ref()).await;
-                        continue;
-                    };
-                    Some(ap)
-                } else {
-                    None
-                };
-                if let Err(err) = compositor.broadcast_access_point(ap) {
+                // A newer transition supersedes one still resolving: its answer
+                // would describe an access point that has since changed.
+                if let Some(handle) = resolving.take() {
+                    handle.abort();
+                }
+                if runs_setup_ap(state) {
+                    resolving = Some(tokio::spawn(publish_access_point(
+                        compositor.clone(),
+                        manager.clone(),
+                        state,
+                    )));
+                } else if let Err(err) = compositor.broadcast_access_point(None) {
                     warn!(%err, "failed to signal access point to overlay");
                 }
             }
@@ -310,7 +383,7 @@ fn spawn_device_info_listener<T: BmcManager + 'static>(
                     if changed.is_err() {
                         break;
                     }
-                    ap_up = Some(*setup_ap_rx.borrow_and_update());
+                    setup_mode_changed = true;
                 }
                 changed = setup_rx.changed() => {
                     if changed.is_err() {
@@ -891,12 +964,12 @@ impl Default for Configuration {
 
 #[cfg(test)]
 mod tests {
-    use super::{forward_upgrade_display_state, post_upgrade_kind};
+    use super::{forward_upgrade_display_state, post_upgrade_kind, runs_setup_ap};
     use crate::compositor::{
         CompositorError, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration,
         UpgradeKind,
     };
-    use crate::manager::UpgradeMarker;
+    use crate::manager::{BmcState, UpgradeMarker};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use tokio::sync::{Notify, watch};
@@ -1026,6 +1099,26 @@ mod tests {
             "the marker's existence proves the firmware upgrade; \
              a failed removal must not demote it to packages"
         );
+    }
+
+    #[test]
+    fn both_setup_states_run_the_access_point() {
+        for state in [BmcState::FactoryDefault, BmcState::WifiReconfiguration] {
+            assert!(
+                runs_setup_ap(state),
+                "{state:?} shows the setup screen, which needs an access point to advertise"
+            );
+        }
+    }
+
+    #[test]
+    fn the_states_without_a_setup_screen_run_no_access_point() {
+        for state in [BmcState::SetupPending, BmcState::Operational] {
+            assert!(
+                !runs_setup_ap(state),
+                "{state:?} joins a network as a station, so no AP is up to publish"
+            );
+        }
     }
 
     #[test]

@@ -102,6 +102,10 @@ pub struct UciNetworkManager {
     /// Signalled after every successful hostname write; see
     /// [`NetworkConfig::hostname_change_notifier`].
     hostname_changed: Arc<Notify>,
+    /// The setup AP's own address, read once from the factory-default script.
+    /// Cached because the captive portal asks for it per request; only a
+    /// successful read is kept, so a failed one is retried on the next request.
+    setup_ap_address: tokio::sync::OnceCell<String>,
 }
 
 impl UciNetworkManager {
@@ -122,6 +126,7 @@ impl UciNetworkManager {
             wifi_event_sender,
             provisioning: Arc::new(UciProvisioningState::new().await),
             hostname_changed: Arc::new(Notify::new()),
+            setup_ap_address: tokio::sync::OnceCell::new(),
         }
     }
 
@@ -150,6 +155,35 @@ impl UciNetworkManager {
     fn mac_address_lookup(&self) -> Option<String> {
         primary_iface(&self.interface_name)
             .and_then(|network| network.mac_address().map(|mac| mac.to_string()))
+    }
+
+    /// The setup AP's address as `bos-factory-default.sh` defines it.
+    ///
+    /// Disagreement with `network.wifi_ap.ipaddr` is worse than it looks: the
+    /// wizard URL and the DNS hijack then point at different addresses and
+    /// setup cannot work at all. It is a packaging bug the user cannot act on,
+    /// so it is logged rather than returned as an error.
+    async fn read_setup_ap_address(&self) -> Result<String> {
+        let raw = run_sourced_to_string(
+            BOS_FACTORY_DEFAULT_LIB,
+            "printf '%s' \"$FACTORY_DEFAULT_AP_IP_ADDR\"",
+        )
+        .await
+        .map_err(|err| anyhow!("the bos-factory-default script failed: {err}"))?;
+        let address = raw
+            .trim()
+            .parse::<Ipv4Addr>()
+            .map_err(|err| anyhow!("FACTORY_DEFAULT_AP_IP_ADDR is not an IPv4 address: {err}"))?
+            .to_string();
+        match uci_get_opt(UCI_NET_WIFI_AP_IPADDR).await {
+            Some(configured) if configured != address => tracing::error!(
+                script = %address,
+                uci = %configured,
+                "the setup AP address and the wifi_ap network address disagree; setup cannot work"
+            ),
+            _ => info!(address = %address, "setup AP address"),
+        }
+        Ok(address)
     }
 
     /// Reads a UCI network option and parses it as an IPv4 address. A
@@ -247,7 +281,7 @@ impl UciNetworkManager {
 
     async fn enable_captive_portal(&self) -> Result<(), InitialSetupError> {
         run_factory_default_script(&format!(
-            "enable_captive_portal $FACTORY_DEFAULT_AP_IP_ADDR && {INIT_SCRIPT_DNSMASQ} restart"
+            "enable_captive_portal \"$FACTORY_DEFAULT_AP_IP_ADDR\" && {INIT_SCRIPT_DNSMASQ} restart"
         ))
         .await
         .map_err(|e| InitialSetupError::UnexpectedFailure(format!("enable captive portal: {e}")))
@@ -589,8 +623,18 @@ impl WifiControl for UciNetworkManager {
             .map_err(|e| InitialSetupError::UnexpectedFailure(e.to_string()))
     }
 
+    /// The setup AP's own address, not the interface's live one: while the
+    /// radio is switching out of station mode the interface still reports the
+    /// lease left over from it, and a wizard URL pointing there is dead. The
+    /// same value bmc hands `enable_captive_portal`, so the URL and the DNS
+    /// hijack cannot disagree.
     async fn captive_portal_redirect_host(&self) -> Option<String> {
-        self.ip_address().await.map(|ip| ip.to_string())
+        self.setup_ap_address
+            .get_or_try_init(|| self.read_setup_ap_address())
+            .await
+            .inspect_err(|err| tracing::error!(%err, "failed to read the setup AP address"))
+            .ok()
+            .cloned()
     }
 
     fn subscribe_wifi_events(&self) -> broadcast::Receiver<WifiEvent> {
@@ -625,6 +669,9 @@ fn mac_short_id(mac: &str) -> String {
             |skip| mac.chars().skip(skip).collect(),
         )
 }
+
+/// UCI option that must carry the same address as the factory-default script.
+const UCI_NET_WIFI_AP_IPADDR: &str = "network.wifi_ap.ipaddr";
 
 async fn uci_get_opt(opt: &str) -> Option<String> {
     call_command_to_string("uci", &["get", opt])

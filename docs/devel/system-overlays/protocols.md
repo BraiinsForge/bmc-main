@@ -106,7 +106,7 @@ cache and needs no command channel back to bmc.
 | `destroy`                                  | request | —                                                | Destructor.                                                                                                                                                                |
 | `device_state(state, boot_flow_delivered)` | event   | `state: uint(enum)`, `boot_flow_delivered: uint` | bmc's `BmcState`; selects the flow. Emitted on bind and on change. See "Once-per-session" below.                                                                           |
 | `setup_progress(state, wifi_ssid)`         | event   | `state: uint(enum)`, `wifi_ssid: string`         | Setup-flow transition (`InitSetupState` + an `idle` entry, with the two `unexpected_error` variants split into their own entries). SSID set only for `connecting_to_wifi`. |
-| `access_point(ssid, setup_url)`            | event   | `ssid: string`, `setup_url: string`              | Setup-AP SSID and wizard URL, e.g. `http://192.168.8.1/`. Both empty while the AP is down.                                                                                 |
+| `access_point(ssid, setup_url)`            | event   | `ssid: string`, `setup_url: string`              | Setup-AP SSID and wizard URL, e.g. `http://10.0.0.21/`. Both empty while the AP is down.                                                                                   |
 
 **Replay-on-bind.** Each event's last value is cached compositor-side and replayed on bind, so a late-binding overlay
 starts from the complete picture. `device_state` is replayed only once known — an overlay bound before bmc is up keeps

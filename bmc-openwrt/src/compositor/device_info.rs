@@ -261,7 +261,7 @@ mod tests {
         });
         s.set_access_point(Some(AccessPointInfo {
             ssid: "Deck setup".to_owned(),
-            setup_url: "http://192.168.8.1/".to_owned(),
+            setup_url: "http://10.0.0.21/".to_owned(),
         }));
 
         assert_eq!(s.last_device_state, Some(BmcState::FactoryDefault));
@@ -282,7 +282,7 @@ mod tests {
         let mut s = DeviceInfoState::default();
         s.set_access_point(Some(AccessPointInfo {
             ssid: "Deck setup".to_owned(),
-            setup_url: "http://192.168.8.1/".to_owned(),
+            setup_url: "http://10.0.0.21/".to_owned(),
         }));
         s.set_access_point(None);
         assert_eq!(s.last_access_point, None);

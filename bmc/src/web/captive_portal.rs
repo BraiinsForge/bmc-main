@@ -32,7 +32,7 @@ use std::{
 };
 use tower::{Layer, Service};
 
-use super::http_server::HttpServer;
+use super::http_server::{DEVICE_SETUP_URL_ENDPOINT, ROOT_URL_ENDPOINT, WIFI_SETUP_URL_ENDPOINT};
 
 const SUFFIX_COM: &str = ".com";
 const SUFFIX_NET: &str = ".net";
@@ -89,50 +89,76 @@ where
     manager: Arc<T>,
 }
 
-impl<S, T: BmcManager> CaptivePortalMiddleware<S, T> {
-    // NOTE: Original list of urls to return redirect is here: https://captivebehavior.wballiance.com/
-    // It is not needed to check individual url, it can be decided based on the top level domain
-    fn should_redirect(req: &Request<Body>, state: BmcState) -> bool {
-        if state == BmcState::Operational {
-            return false;
-        }
+/// Whether `state` runs the setup AP and its captive portal.
+///
+/// Only there does dnsmasq hijack DNS, so only there can a `Host` be a name
+/// the client never aimed at this device, and only there does anything hold
+/// the AP's own address.
+fn runs_captive_portal(state: BmcState) -> bool {
+    match state {
+        BmcState::FactoryDefault | BmcState::WifiReconfiguration => true,
+        BmcState::SetupPending | BmcState::Operational => false,
+    }
+}
 
-        // This is covering a case when user displays the main page in browser. Initial setup needs to be displayed instead of the login page
-        let uri_path = req.uri().path();
-
-        match (state, uri_path) {
-            (_, HttpServer::<T>::ROOT_URL_ENDPOINT)
-            | (
-                BmcState::FactoryDefault | BmcState::WifiReconfiguration,
-                HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT,
-            )
-            | (BmcState::SetupPending, HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT) => {
-                return true;
-            }
-            _ => (),
-        }
-
-        if let Some(host) = req.headers().get("Host")
-            && let Ok(host_str) = host.to_str()
-        {
-            return host_str.ends_with(SUFFIX_COM)
-                || host_str.ends_with(SUFFIX_NET)
-                || host_str.ends_with(SUFFIX_INFO)
-                || host_str.ends_with(SUFFIX_US)
-                || host_str.ends_with(SUFFIX_NETWORK);
-        }
-
-        false
+// NOTE: Original list of urls to return redirect is here: https://captivebehavior.wballiance.com/
+// It is not needed to check individual url, it can be decided based on the top level domain
+fn should_redirect(req: &Request<Body>, state: BmcState) -> bool {
+    if state == BmcState::Operational {
+        return false;
     }
 
-    fn redirect_path(state: BmcState) -> &'static str {
-        match state {
-            BmcState::FactoryDefault | BmcState::WifiReconfiguration => {
-                HttpServer::<T>::WIFI_SETUP_URL_ENDPOINT
-            }
-            BmcState::SetupPending => HttpServer::<T>::DEVICE_SETUP_URL_ENDPOINT,
-            BmcState::Operational => HttpServer::<T>::ROOT_URL_ENDPOINT,
+    // This is covering a case when user displays the main page in browser. Initial setup needs to be displayed instead of the login page
+    let uri_path = req.uri().path();
+
+    match (state, uri_path) {
+        (_, ROOT_URL_ENDPOINT)
+        | (BmcState::FactoryDefault | BmcState::WifiReconfiguration, DEVICE_SETUP_URL_ENDPOINT)
+        | (BmcState::SetupPending, WIFI_SETUP_URL_ENDPOINT) => {
+            return true;
         }
+        _ => (),
+    }
+
+    // Without a portal there is no hijack, so a suffix says nothing
+    // about where the request was aimed.
+    if !runs_captive_portal(state) {
+        return false;
+    }
+
+    if let Some(host) = req.headers().get("Host")
+        && let Ok(host_str) = host.to_str()
+    {
+        return host_str.ends_with(SUFFIX_COM)
+            || host_str.ends_with(SUFFIX_NET)
+            || host_str.ends_with(SUFFIX_INFO)
+            || host_str.ends_with(SUFFIX_US)
+            || host_str.ends_with(SUFFIX_NETWORK);
+    }
+
+    false
+}
+
+/// Where a redirected request is sent, absolute while the captive portal runs.
+///
+/// The hijack can put any name in `Host`, so only naming the device
+/// points the client back at it.
+/// Elsewhere the request arrived on an address the client picked,
+/// and a relative `Location` resolves against it.
+/// That is also the only answer left when the AP address is unknown.
+fn redirect_location(state: BmcState, ap_address: Option<String>) -> String {
+    let path = redirect_path(state);
+    match ap_address {
+        Some(host) if runs_captive_portal(state) => format!("http://{host}{path}"),
+        Some(_) | None => path.to_owned(),
+    }
+}
+
+fn redirect_path(state: BmcState) -> &'static str {
+    match state {
+        BmcState::FactoryDefault | BmcState::WifiReconfiguration => WIFI_SETUP_URL_ENDPOINT,
+        BmcState::SetupPending => DEVICE_SETUP_URL_ENDPOINT,
+        BmcState::Operational => ROOT_URL_ENDPOINT,
     }
 }
 
@@ -174,21 +200,16 @@ where
                 .device_state()
                 .await;
 
-            if Self::should_redirect(&req, state) {
-                let redirect_path = Self::redirect_path(state);
-
-                let redirect_host = match manager.network_manager().wifi() {
+            if should_redirect(&req, state) {
+                let ap_address = match manager.network_manager().wifi() {
                     Some(wifi) => wifi.captive_portal_redirect_host().await,
                     None => None,
                 };
-                let host = redirect_host
-                    .unwrap_or_else(|| req.uri().host().unwrap_or_default().to_owned());
-
-                let redirect_uri = format!("http://{host}{redirect_path}");
+                let location = redirect_location(state, ap_address);
 
                 let response = Response::builder()
                     .status(302)
-                    .header(LOCATION.to_string(), redirect_uri)
+                    .header(LOCATION.to_string(), location)
                     .body(Body::empty())
                     .expect("BUG: Failed to create response");
                 return Ok(response);
@@ -199,5 +220,93 @@ where
 
             Ok(response)
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        DEVICE_SETUP_URL_ENDPOINT, WIFI_SETUP_URL_ENDPOINT, redirect_location, should_redirect,
+    };
+    use crate::manager::BmcState;
+    use axum::body::Body;
+    use hyper::Request;
+
+    fn request(host: &str, path: &str) -> Request<Body> {
+        Request::builder()
+            .uri(path)
+            .header("Host", host)
+            .body(Body::empty())
+            .expect("BUG: failed to build a test request")
+    }
+
+    #[test]
+    fn a_probe_domain_is_redirected_whatever_the_path() {
+        // A relative Location would resolve against the hijacked name.
+        for path in ["/generate_204", "/"] {
+            assert!(
+                should_redirect(
+                    &request("connectivitycheck.gstatic.com", path),
+                    BmcState::FactoryDefault
+                ),
+                "path {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_setup_ap_names_the_device_in_its_location() {
+        assert_eq!(
+            redirect_location(BmcState::FactoryDefault, Some("10.0.0.21".to_owned())),
+            "http://10.0.0.21/init_connect"
+        );
+    }
+
+    #[test]
+    fn an_unknown_ap_address_falls_back_to_the_path() {
+        // Every other answer would name an address nothing holds.
+        assert_eq!(
+            redirect_location(BmcState::WifiReconfiguration, None),
+            WIFI_SETUP_URL_ENDPOINT
+        );
+    }
+
+    #[test]
+    fn without_a_portal_the_client_keeps_the_address_it_used() {
+        assert!(should_redirect(
+            &request("10.0.0.21", WIFI_SETUP_URL_ENDPOINT),
+            BmcState::SetupPending
+        ));
+        assert_eq!(
+            redirect_location(BmcState::SetupPending, Some("10.0.0.21".to_owned())),
+            DEVICE_SETUP_URL_ENDPOINT
+        );
+    }
+
+    #[test]
+    fn without_a_portal_a_suffix_means_nothing() {
+        // Nothing hijacks DNS here.
+        // A .com Host is then a name that genuinely points at this device,
+        // and the AP address is on no interface.
+        assert!(!should_redirect(
+            &request("deck.company.com", "/asset.js"),
+            BmcState::SetupPending
+        ));
+    }
+
+    #[test]
+    fn an_operational_device_hijacks_nothing() {
+        assert!(!should_redirect(
+            &request("connectivitycheck.gstatic.com", "/generate_204"),
+            BmcState::Operational
+        ));
+    }
+
+    #[test]
+    fn a_setup_endpoint_the_state_serves_is_left_alone() {
+        assert!(!should_redirect(
+            &request("10.0.0.21", DEVICE_SETUP_URL_ENDPOINT),
+            BmcState::SetupPending
+        ));
     }
 }

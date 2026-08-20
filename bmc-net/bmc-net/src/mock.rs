@@ -28,7 +28,7 @@ use bmc_net_types::network::{
     IfaceData, InitialSetupError, NetworkInfo, NetworkProtocolConfig, WifiData, WifiEvent,
     WifiNetworkConfig,
 };
-use bmc_net_types::wifi::{EncryptionType, WifiScanItem, WifiStatus};
+use bmc_net_types::wifi::{EncryptionType, WifiConfiguration, WifiMode, WifiScanItem, WifiStatus};
 use tokio::sync::{Notify, broadcast};
 
 use crate::provisioning::{MockProvisioningState, ProvisioningState};
@@ -160,13 +160,30 @@ impl WifiControl for MockNetworkManager {
     }
 
     async fn status(&self) -> anyhow::Result<WifiData> {
-        // Reflect the stored radio flag so `set_wifi_enabled` is observable.
+        // The mock simulates a station that reached the network, with the
+        // address `ip_address` reports. Reflect the stored radio flag and the
+        // connected network so `set_wifi_enabled` and a setup are observable.
+        let configuration = lock(&self.connected_wifi).as_ref().map_or_else(
+            || WifiConfiguration {
+                ssid: "MockAP".to_owned(),
+                ..WifiConfiguration::default()
+            },
+            |config| WifiConfiguration {
+                mode: WifiMode::Station,
+                ssid: config.ssid.clone(),
+                encryption_type: config.encryption,
+            },
+        );
         Ok(WifiData {
+            iface: IfaceData {
+                ip: self.ip_address().await,
+                mac: self.mac_address().and_then(|mac| mac.parse().ok()),
+            },
             status: WifiStatus {
                 enabled: *lock(&self.wifi_enabled),
+                configuration: Some(configuration),
                 ..WifiStatus::default()
             },
-            ..WifiData::default()
         })
     }
 

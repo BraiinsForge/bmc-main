@@ -71,12 +71,13 @@ pub(crate) struct HttpServer<T: BmcManager> {
     widget_registry: Arc<WidgetRegistry>,
 }
 
+pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
+pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
+pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
+
 impl<T: BmcManager> HttpServer<T> {
     const INDEX_PATH: &str = "index.html";
     const INITIAL_SETUP_INDEX_FILENAME: &str = "index-connect.html";
-    pub(crate) const WIFI_SETUP_URL_ENDPOINT: &str = "/init_connect";
-    pub(crate) const DEVICE_SETUP_URL_ENDPOINT: &str = "/init_setup";
-    pub(crate) const ROOT_URL_ENDPOINT: &str = "/";
     const SUPPORT_ARCHIVE: &str = "/api/get_support_archive";
     const WIDGET_ICON: &str = "/widgets/{uid}/icon";
 
@@ -118,15 +119,9 @@ impl<T: BmcManager> HttpServer<T> {
         let index_state = IndexState::new(www_storage, self.manager.clone());
 
         Router::new()
-            .route(Self::ROOT_URL_ENDPOINT, get(Self::index_handler))
-            .route(
-                Self::WIFI_SETUP_URL_ENDPOINT,
-                get(Self::wifi_setup_index_handler),
-            )
-            .route(
-                Self::DEVICE_SETUP_URL_ENDPOINT,
-                get(Self::device_setup_handler),
-            )
+            .route(ROOT_URL_ENDPOINT, get(Self::index_handler))
+            .route(WIFI_SETUP_URL_ENDPOINT, get(Self::wifi_setup_index_handler))
+            .route(DEVICE_SETUP_URL_ENDPOINT, get(Self::device_setup_handler))
             .route("/{*file_path}", get(Self::file_handler_with_index_fallback))
             .with_state(index_state)
             .merge(var_router)
@@ -237,7 +232,7 @@ impl<T: BmcManager> HttpServer<T> {
         {
             return (
                 StatusCode::PERMANENT_REDIRECT,
-                [(http::header::LOCATION.as_str(), Self::ROOT_URL_ENDPOINT)],
+                [(http::header::LOCATION.as_str(), ROOT_URL_ENDPOINT)],
             )
                 .into_response();
         }

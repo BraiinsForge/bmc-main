@@ -195,6 +195,39 @@ pub trait NetworkManager: NetworkConfig {
     }
 }
 
+/// The WiFi interface's address while it is in station mode, i.e. the device's
+/// uplink.
+///
+/// Narrower than [`NetworkConfig::ip_address`], which answers "is anything
+/// addressable" and is right for the captive-portal host but not for "did this
+/// device get onto the network".
+///
+/// `Ok(None)` is a confirmed absence: the interface is a station and holds no
+/// address. `Err` is "unknown" — the mode or the interface could not be read,
+/// which is not evidence either way. Callers that reset or reboot on a missing
+/// uplink depend on the two staying distinct.
+///
+/// A free function rather than a [`NetworkManager`] method because the trait
+/// has no `#[async_trait]`, and a native `async fn` on it would cost every
+/// caller its `&dyn NetworkManager`.
+pub async fn station_ip_address(manager: &dyn NetworkManager) -> anyhow::Result<Option<IpAddr>> {
+    let data = manager.require_wifi()?.status().await?;
+    let configuration = data
+        .status
+        .configuration
+        .ok_or_else(|| anyhow::anyhow!("the enabled WiFi interface has no parsed configuration"))?;
+    if configuration.mode != bmc_net_types::wifi::WifiMode::Station {
+        // Not "no uplink": the question does not apply to an AP interface, and
+        // `status` reads the first *enabled* section, which need not be the
+        // station one.
+        return Err(anyhow::anyhow!(
+            "the enabled WiFi interface is in {:?} mode, not station",
+            configuration.mode
+        ));
+    }
+    Ok(data.iface.ip)
+}
+
 /// Validates a hostname against RFC 1123: at most 253 characters total,
 /// dot-separated labels of 1-63 ASCII alphanumeric/hyphen characters, with
 /// no label starting or ending with a hyphen.

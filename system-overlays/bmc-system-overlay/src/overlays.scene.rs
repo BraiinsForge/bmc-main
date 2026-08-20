@@ -42,7 +42,7 @@ use bmc_overlay_settings_tray::{
 use bmc_overlay_upgrade::{PACKAGE_SURFACE_SIZE, UpgradeRenderState, UpgradeView, render_upgrade};
 use bmc_render::colors::Color;
 use bmc_render::renderer::Renderer;
-use bmc_system_overlay::{DownloadProgress, UpgradeKind, UpgradePhase};
+use bmc_system_overlay::{AccessPoint, DownloadProgress, UpgradeKind, UpgradePhase};
 
 scene_meta! { title: "Overlays" }
 
@@ -413,10 +413,10 @@ fn device_info_stage(
 )]
 fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
     let flat = ctx.toggle("Flat backdrop", false);
-    let ap = Some((
-        "Braiins Deck AP".to_owned(),
-        "http://192.168.8.1/".to_owned(),
-    ));
+    let ap = Some(AccessPoint {
+        ssid: "Braiins Deck AP".to_owned(),
+        setup_url: "http://10.0.0.21/".to_owned(),
+    });
 
     device_info_stage(
         ctx,

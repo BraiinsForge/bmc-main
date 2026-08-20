@@ -21,7 +21,7 @@
 
 # Stub for bmc-virt — real implementation lives in bos-main OpenWrt fork.
 
-export FACTORY_DEFAULT_AP_IP_ADDR="192.168.8.1"
+export FACTORY_DEFAULT_AP_IP_ADDR="10.0.0.21"
 
 bos_factory_reset() {
     echo "bos_factory_reset: stub (bmc-virt)"

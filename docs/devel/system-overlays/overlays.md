@@ -33,8 +33,9 @@ the scenes nor undoes a dismissal. On the setup side the same distinction is dra
 announcement steps.
 
 Every screen-hold timer lives in the overlay; bmc emits transitions the moment they happen (recovery policies — the
-no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts the failure before acting, flagged as
-restarting so the screen can promise what bmc is about to do).
+no-IP factory reset, and a reboot when the setup AP will not come up on a device that has nothing to fall back to — stay
+in bmc, which broadcasts the failure before acting, flagged as restarting so the screen only promises a restart that is
+actually coming; the same failure during WiFi reconfiguration leaves the running device alone).
 
 ### Flows
 
@@ -47,7 +48,8 @@ restarting so the screen can promise what bmc is about to do).
   completed (5 s) → unmap. A `wifi_connection_failed` shows the error for 5 s and returns to setup-start (the AP is
   still up). Setup screens ignore touch — dismissing them would leave a blank screen mid-wizard.
 - **SetupPending boot** (configured but unfinished): connecting, self-advancing to the setup connect-info when the
-  station address appears; bmc's watchdog factory-resets if none comes.
+  station address appears; bmc's watchdog factory-resets if none comes, but only when every poll could actually read the
+  uplink — a failed read is not evidence, and the reset destroys the configuration.
 - **WiFi reconfiguration**: the same setup flow, entered when `device_state` flips to `wifi_reconfiguration`; on
   `wifi_reconfig_success` the connected screen shows 5 s and unmaps straight to scenes (no connect-info). The
   setup-start screen auto-hides after 8 minutes with the AP left up; a later setup event revives the flow.
