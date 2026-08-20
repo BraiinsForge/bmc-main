@@ -58,9 +58,9 @@ label), with the rest of the surface transparent. It takes no touch input.
 
 ## Settings tray (`bmc-overlay-settings-tray`)
 
-The swipe-from-top quick-settings panel: a brightness slider, WiFi station info, and hold-to-confirm WiFi
-reconfigure/reconnect buttons. It is the only overlay that uses both vendored protocols. It is ported from the BDK-343
-`settings-stub` widget, translated to the native `bmc-render` tree.
+The swipe-from-top quick-settings panel: a brightness slider, WiFi station info, and a hold-to-confirm WiFi reconfigure
+button. It is the only overlay that uses both vendored protocols. It is ported from the BDK-343 `settings-stub` widget,
+translated to the native `bmc-render` tree.
 
 Its `LayerConfig` is built by hand: `Layer::Overlay`, anchored to all four edges, **full** input region (the tray is
 full-screen and blocks scene swipes while it is up). `screen_edge()` returns `ScreenEdge::Top` and `uses_settings()` is
@@ -102,15 +102,12 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
 - **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 3 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM
   advances through holding/pending/active states from the `wifi_ap` event, with a timeout and error label if setup never
   starts.
-- **Reconnect WiFi** — a separate hold-to-confirm button that fire-and-forget spawns a detached shell sequence (pulse
-  the `WIFI-RESET` GPIO, then bounce the WiFi stack: `wifi down; wifi up`). The child is reaped so it does not zombie;
-  there is no completion event.
 
 ### Platform gating
 
-The reconfigure and reconnect buttons are only rendered where the platform supports them: `wifi_reconfig_supported` is
-true for `Product::Bmc100` and `Product::Bfm100` only. BMM boards (ESP32 AP) hide both buttons. The panel also adapts
-its layout to display shape (round vs. wide vs. narrow rectangular).
+The reconfigure button follows the compositor's `caps.wifi_setup` on v2. On v1 it falls back to
+`wifi_reconfig_supported`, true for `Product::Bmc100` and `Product::Bfm100` only, so BMM boards (ESP32 AP) hide it. The
+panel also adapts its layout to display shape (round vs. wide vs. narrow rectangular).
 
 ## Alarm (`bmc-overlay-alarm`)
 

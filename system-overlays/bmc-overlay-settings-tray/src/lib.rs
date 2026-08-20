@@ -20,7 +20,7 @@
 
 //! Swipe-from-top quick-settings overlay: round icon controls (±10 step
 //! buttons for brightness and volume, night-mode toggle, hold-to-confirm
-//! restart and WiFi reconfigure/reconnect) plus WiFi station info. Ported from
+//! restart and WiFi reconfigure) plus WiFi station info. Ported from
 //! the `settings-stub` widget to a native `bmc-render` `TreeNode` overlay.
 //!
 //! The surface is fullscreen with a full input region so the tray blocks scene
@@ -33,7 +33,6 @@ mod icons;
 pub mod ui;
 
 use std::net::Ipv4Addr;
-use std::process::{Child, Command};
 use std::time::{Duration, Instant};
 
 use bmc_platform::{BmcInfo, DisplayShape, HardwareProfile, Product};
@@ -44,9 +43,7 @@ use bmc_system_overlay::{
 };
 
 use crate::dismiss::Pt;
-use crate::fsm::{
-    ButtonState, FsmAction, ReconnectAction, ReconnectState, RestartAction, RestartState,
-};
+use crate::fsm::{ButtonState, FsmAction, RestartAction, RestartState};
 use crate::ui::{Panel, WifiView};
 
 /// Kernel hostname, exposed by procfs.
@@ -69,34 +66,12 @@ const STEP_ECHO_SETTLE: Duration = Duration::from_millis(300);
 /// fire without a touch/network event to wake the loop.
 const FAST_WAKE: Duration = Duration::from_millis(33);
 
-/// Shell sequence the reconnect button runs: pulse the WiFi-reset GPIO, then
-/// bounce the WiFi stack. Run via `sh` because the `$(gpiofind …)` substitution
-/// and the inter-step `sleep`s need a shell.
-const WIFI_RECONNECT_SEQUENCE: &str = "gpioset $(gpiofind WIFI-RESET)=1; sleep 1; \
-     gpioset $(gpiofind WIFI-RESET)=0; sleep 1; wifi down; sleep 1; wifi up";
-
 /// Whether WiFi reconfiguration is supported on this platform. It only works
-/// where the setup AP runs over the mac80211 radio (BMC100, BFM100). The BMM
-/// boards drive their ESP32 AP through a separate firmware path the overlay
-/// does not implement, so the reconfigure/reconnect buttons are hidden there.
+/// where the setup AP runs over the mac80211 radio (BMC100, BFM100).
+/// The BMM boards drive their ESP32 AP through a separate firmware path
+/// the overlay does not implement, so the reconfigure button is hidden there.
 fn wifi_reconfig_supported(product: Product) -> bool {
     matches!(product, Product::Bmc100 | Product::Bfm100)
-}
-
-/// Spawn the detached WiFi reconnect sequence. The sequence sleeps ~3s and is
-/// never waited on synchronously; the handle is reaped so it does not zombie.
-fn spawn_wifi_reconnect() -> Option<Child> {
-    match Command::new("/bin/sh")
-        .arg("-c")
-        .arg(WIFI_RECONNECT_SEQUENCE)
-        .spawn()
-    {
-        Ok(child) => Some(child),
-        Err(err) => {
-            tracing::error!("failed to spawn WiFi reconnect sequence: {err}");
-            None
-        }
-    }
 }
 
 /// Device hostname from procfs, trimmed of its trailing newline. `None` when
@@ -317,17 +292,15 @@ pub struct SettingsTrayView {
     /// surfaces one.
     pub restart_caption: Option<String>,
     pub reconfig_caption: Option<String>,
-    pub reconnect_caption: Option<String>,
     /// 0..=1 hold fractions for the progress rings.
     pub restart_progress: f32,
     pub reconfig_progress: f32,
-    pub reconnect_progress: f32,
     pub hostname: Option<String>,
     pub ip: Option<String>,
     pub wifi_signal: Option<i32>,
     pub ssid: Option<String>,
     pub setup_ssid: Option<String>,
-    pub wifi_buttons: bool,
+    pub wifi_button: bool,
     /// Forced pressed key for gallery injection; the runtime leaves this
     /// `None` and derives the pressed key from the tree's touch state.
     pub pressed_key: Option<String>,
@@ -354,16 +327,14 @@ impl SettingsTrayView {
             show_restart: true,
             restart_caption: None,
             reconfig_caption: None,
-            reconnect_caption: None,
             restart_progress: 0.0,
             reconfig_progress: 0.0,
-            reconnect_progress: 0.0,
             hostname: None,
             ip: None,
             wifi_signal: None,
             ssid: None,
             setup_ssid: None,
-            wifi_buttons: wifi_reconfig_supported(product),
+            wifi_button: wifi_reconfig_supported(product),
             pressed_key: None,
         }
     }
@@ -451,8 +422,6 @@ pub struct SettingsTrayOverlay {
     setup_ssid: Option<String>,
 
     button: ButtonState,
-    reconnect: ReconnectState,
-    reconnect_child: Option<Child>,
 
     restart: RestartState,
     /// Reason from the last `restart_declined` event, shown in place of the
@@ -523,8 +492,6 @@ impl SettingsTrayOverlay {
             snapshot_version: None,
             setup_ssid: None,
             button: ButtonState::default(),
-            reconnect: ReconnectState::default(),
-            reconnect_child: None,
             restart: RestartState::default(),
             declined_reason: None,
             render_state: SettingsTrayRenderState::new(now),
@@ -564,27 +531,25 @@ impl SettingsTrayOverlay {
         view.restart_progress = self.restart.progress(now);
         view.reconfig_caption = self.button.caption().map(str::to_owned);
         view.reconfig_progress = self.button.progress(now);
-        view.reconnect_caption = self.reconnect.caption().map(str::to_owned);
-        view.reconnect_progress = self.reconnect.progress(now);
         view.hostname.clone_from(&self.hostname);
         view.ip.clone_from(&self.ip);
         view.wifi_signal = self.wifi_signal;
         view.ssid.clone_from(&self.ssid);
         view.setup_ssid.clone_from(&self.setup_ssid);
-        view.wifi_buttons = wifi_reconfig_supported(self.product);
+        view.wifi_button = wifi_reconfig_supported(self.product);
         if let Some(caps) = self.caps {
             view.show_brightness = caps.brightness;
             view.show_volume = caps.sound;
-            view.wifi_buttons = caps.wifi_setup;
+            view.wifi_button = caps.wifi_setup;
         } else {
             // v1 compositor: exactly today's tray. Brightness + the
-            // product-gated WiFi buttons; every v2 control is hidden (its
+            // product-gated WiFi button; every v2 control is hidden (its
             // requests would be protocol violations and its events never
             // arrive).
             view.show_volume = false;
             view.night_mode = None;
             view.show_restart = false;
-            view.wifi_buttons = wifi_reconfig_supported(self.product);
+            view.wifi_button = wifi_reconfig_supported(self.product);
         }
         view
     }
@@ -624,18 +589,8 @@ impl SettingsTrayOverlay {
         self.content_dirty |= content_changed;
     }
 
-    /// Reap a finished reconnect child so the `sh` process does not zombie.
-    fn reap_reconnect_child(&mut self) {
-        if let Some(child) = self.reconnect_child.as_mut() {
-            match child.try_wait() {
-                Ok(Some(_)) | Err(_) => self.reconnect_child = None,
-                Ok(None) => {}
-            }
-        }
-    }
-
-    /// Advance both hold FSMs from the tree's press state and apply their side
-    /// effects: queue a reconfigure request, spawn the reconnect sequence.
+    /// Advance both hold FSMs from the tree's press state and queue the
+    /// request each one confirms.
     fn advance_buttons(&mut self, now: Instant) {
         let reconfig_pressed = self.render_state.tree.is_pressed(ui::WIFI_RECONFIG_KEY);
         let prev = self.button;
@@ -643,21 +598,6 @@ impl SettingsTrayOverlay {
             self.pending_requests.push(SettingsRequest::ReconfigureWifi);
         }
         if self.button != prev {
-            self.content_dirty = true;
-        }
-
-        self.reap_reconnect_child();
-        let reconnect_pressed = self.render_state.tree.is_pressed(ui::WIFI_RECONNECT_KEY);
-        let prev_reconnect = self.reconnect;
-        if self.reconnect.tick(reconnect_pressed, now) == ReconnectAction::Spawn {
-            if let Some(mut prev) = self.reconnect_child.take() {
-                // Drop never waits; reap the previous shell before replacing it.
-                let _ = prev.kill();
-                let _ = prev.wait();
-            }
-            self.reconnect_child = spawn_wifi_reconnect();
-        }
-        if self.reconnect != prev_reconnect {
             self.content_dirty = true;
         }
 
@@ -804,10 +744,8 @@ impl SettingsTrayOverlay {
     /// frame, so the loop should fast-poll to keep the hold accruing.
     fn animating(&self) -> bool {
         self.button.is_animating()
-            || self.reconnect.is_animating()
             || self.restart.is_animating()
             || self.render_state.tree.is_pressed(ui::WIFI_RECONFIG_KEY)
-            || self.render_state.tree.is_pressed(ui::WIFI_RECONNECT_KEY)
             || self.render_state.tree.is_pressed(ui::RESTART_KEY)
     }
 }
@@ -842,17 +780,15 @@ impl SystemOverlay for SettingsTrayOverlay {
     fn on_reveal(&mut self) {
         let now = Instant::now();
         // The panel cache may still show pre-hide transient UI (hold progress,
-        // reconnect cooldown); when this reset changes content, repaint instead
-        // of blitting the stale cache through the reveal ramp.
+        // a decline message); when this reset changes content, repaint
+        // instead of blitting the stale cache through the reveal ramp.
         if self.button != ButtonState::default()
-            || self.reconnect != ReconnectState::default()
             || self.restart != RestartState::default()
             || self.declined_reason.is_some()
         {
             self.content_dirty = true;
         }
         self.button = ButtonState::default();
-        self.reconnect = ReconnectState::default();
         self.restart = RestartState::default();
         self.declined_reason = None;
         self.touch_track = None;
@@ -964,7 +900,7 @@ impl SystemOverlay for SettingsTrayOverlay {
         let now = Instant::now();
         let mut view = self.view(now);
         view.show_volume = true;
-        view.wifi_buttons = true;
+        view.wifi_button = true;
         view.night_mode = Some(NightModeView {
             active: false,
             until: Some("06:30".to_owned()),
@@ -1032,7 +968,7 @@ impl SystemOverlay for SettingsTrayOverlay {
     }
 }
 
-const PRESSABLE: [&str; 8] = [
+const PRESSABLE: [&str; 7] = [
     ui::VOLUME_DOWN_KEY,
     ui::VOLUME_UP_KEY,
     ui::BRIGHTNESS_DOWN_KEY,
@@ -1040,7 +976,6 @@ const PRESSABLE: [&str; 8] = [
     ui::NIGHT_MODE_KEY,
     ui::RESTART_KEY,
     ui::WIFI_RECONFIG_KEY,
-    ui::WIFI_RECONNECT_KEY,
 ];
 
 pub fn render_settings_tray(
@@ -1083,10 +1018,6 @@ pub fn render_settings_tray(
             caption: view.reconfig_caption.as_deref(),
             progress: view.reconfig_progress,
         },
-        wifi_reconnect: ui::HoldControl {
-            caption: view.reconnect_caption.as_deref(),
-            progress: view.reconnect_progress,
-        },
         pressed,
     };
     let node = ui::build_tree(
@@ -1099,7 +1030,7 @@ pub fn render_settings_tray(
             shape: view.shape,
             width: view.width,
             height: view.height,
-            wifi_buttons: view.wifi_buttons,
+            wifi_button: view.wifi_button,
         },
         wifi_view,
         icons.controls,
@@ -1164,7 +1095,7 @@ mod view_tests {
         assert_eq!(view.wifi_signal, Some(-52));
         assert_eq!(view.ssid.as_deref(), Some("Braiins-WiFi"));
         assert_eq!(view.setup_ssid.as_deref(), Some("Deck setup"));
-        assert!(view.wifi_buttons);
+        assert!(view.wifi_button);
         assert_eq!(
             view.reconfig_caption, None,
             "an active setup AP silences the reconfigure caption"
@@ -1215,8 +1146,8 @@ mod view_tests {
         assert!(view.night_mode.is_none(), "night mode is v2-only");
         assert!(!view.show_restart, "restart is v2-only");
         assert!(
-            view.wifi_buttons,
-            "BMC100 keeps its product-gated WiFi buttons"
+            view.wifi_button,
+            "BMC100 keeps its product-gated WiFi button"
         );
     }
 
@@ -1232,7 +1163,7 @@ mod view_tests {
         let view = overlay.view(now);
         assert!(!view.show_volume);
         assert!(
-            !view.wifi_buttons,
+            !view.wifi_button,
             "the compositor's word beats wifi_reconfig_supported(product)"
         );
         assert!(
@@ -1248,7 +1179,7 @@ mod view_tests {
 
         assert_eq!(view.width, 480);
         assert_eq!(view.height, 320);
-        assert!(!view.wifi_buttons);
+        assert!(!view.wifi_button);
     }
 
     struct StaticEnv {

@@ -19,9 +19,8 @@
 // the grant above.
 
 //! Pure hold-to-confirm state machines ported from the `settings-stub`:
-//! the WiFi-reconfigure button (with a completion event) and the bare WiFi
-//! reconnect button (fire-and-forget). Kept GPU-free so the hold/timeout edges
-//! are unit-testable.
+//! the WiFi-reconfigure button (with a completion event) and the restart button.
+//! Kept GPU-free so the hold/timeout edges are unit-testable.
 
 use std::time::{Duration, Instant};
 
@@ -167,91 +166,8 @@ impl ButtonState {
     }
 }
 
-/// Hold-to-confirm state machine for the bare WiFi reconnect button. Unlike the
-/// reconfigure button there is no completion event, so the sequence is fired
-/// and forgotten; `Cooldown` only locks out a re-fire until the finger lifts so
-/// a single sustained hold cannot spawn the sequence on every frame.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ReconnectState {
-    #[default]
-    Idle,
-    Holding {
-        since: Instant,
-    },
-    Cooldown,
-}
-
-/// Side effect the reconnect FSM asks the caller to perform on a tick.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReconnectAction {
-    None,
-    Spawn,
-}
-
-impl ReconnectState {
-    /// Advance on a touch/timer tick. `pressed` = finger down on the button
-    /// this frame. Mutates in place and returns any side effect.
-    pub fn tick(&mut self, pressed: bool, now: Instant) -> ReconnectAction {
-        let (next, action) = match *self {
-            ReconnectState::Idle => {
-                if pressed {
-                    (
-                        ReconnectState::Holding { since: now },
-                        ReconnectAction::None,
-                    )
-                } else {
-                    (ReconnectState::Idle, ReconnectAction::None)
-                }
-            }
-            ReconnectState::Holding { since } => {
-                if !pressed {
-                    (ReconnectState::Idle, ReconnectAction::None)
-                } else if now.duration_since(since) >= HOLD {
-                    (ReconnectState::Cooldown, ReconnectAction::Spawn)
-                } else {
-                    (ReconnectState::Holding { since }, ReconnectAction::None)
-                }
-            }
-            ReconnectState::Cooldown => {
-                if pressed {
-                    (ReconnectState::Cooldown, ReconnectAction::None)
-                } else {
-                    (ReconnectState::Idle, ReconnectAction::None)
-                }
-            }
-        };
-        *self = next;
-        action
-    }
-
-    /// Keep ticking/repainting (short poll timeout) while the hold accrues.
-    #[must_use]
-    pub fn is_animating(self) -> bool {
-        matches!(self, ReconnectState::Holding { .. })
-    }
-
-    /// Hold fraction for the progress ring; nonzero only while holding.
-    #[must_use]
-    pub fn progress(self, now: Instant) -> f32 {
-        match self {
-            ReconnectState::Holding { since } => hold_fraction(since, now, HOLD),
-            ReconnectState::Idle | ReconnectState::Cooldown => 0.0,
-        }
-    }
-
-    /// Dynamic caption for the shared caption line; `None` when idle.
-    #[must_use]
-    pub fn caption(self) -> Option<&'static str> {
-        match self {
-            ReconnectState::Idle => None,
-            ReconnectState::Holding { .. } => Some("Keep holding…"),
-            ReconnectState::Cooldown => Some("Reconnecting…"),
-        }
-    }
-}
-
 /// Hold duration to confirm a restart — deliberately longer than the WiFi
-/// holds: it is the most destructive action in the tray.
+/// hold: it is the most destructive action in the tray.
 const RESTART_HOLD: Duration = Duration::from_secs(5);
 
 /// Hold-to-confirm state machine for the restart button. Restart is
@@ -272,7 +188,6 @@ pub enum RestartState {
     /// locked out until the finger lifts. Without this gate a finger still held
     /// through a decline would immediately re-enter `Holding` — wiping the
     /// reason before it renders and re-firing the restart every hold period.
-    /// Mirrors `ReconnectState::Cooldown`.
     Cooldown {
         message_since: Instant,
     },
@@ -482,22 +397,6 @@ mod tests {
     }
 
     #[test]
-    fn reconnect_hold_spawns_once_then_cooldown() {
-        let t0 = Instant::now();
-        let mut r = ReconnectState::default();
-        assert_eq!(r.tick(true, t0), ReconnectAction::None);
-        assert_eq!(
-            r.tick(true, t0 + Duration::from_secs(3)),
-            ReconnectAction::Spawn
-        );
-        assert_eq!(
-            r.tick(true, t0 + Duration::from_secs(6)),
-            ReconnectAction::None,
-            "sustained hold does not re-spawn"
-        );
-    }
-
-    #[test]
     fn restart_hold_five_seconds_sends_once() {
         let t0 = Instant::now();
         let mut r = RestartState::default();
@@ -632,20 +531,6 @@ mod tests {
             0.5,
             "restart holds for 5s, so 2.5s is half",
         );
-
-        let mut c = ReconnectState::default();
-        c.tick(true, t0);
-        assert_close(
-            c.progress(t0 + Duration::from_millis(1500)),
-            0.5,
-            "half of 3s hold",
-        );
-        c.tick(true, t0 + Duration::from_secs(3));
-        assert_close(
-            c.progress(t0 + Duration::from_secs(3)),
-            0.0,
-            "cooldown is not a hold",
-        );
     }
 
     #[test]
@@ -665,13 +550,6 @@ mod tests {
         );
         b.on_wifi_ap(true);
         assert_eq!(b.caption(), None, "setup-active hides the control entirely");
-
-        let mut c = ReconnectState::default();
-        assert_eq!(c.caption(), None);
-        c.tick(true, t0);
-        assert_eq!(c.caption(), Some("Keep holding…"));
-        c.tick(true, t0 + Duration::from_secs(3));
-        assert_eq!(c.caption(), Some("Reconnecting…"));
 
         let mut r = RestartState::default();
         assert_eq!(r.caption(), None);

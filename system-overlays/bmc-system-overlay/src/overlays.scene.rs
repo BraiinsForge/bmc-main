@@ -121,11 +121,11 @@ fn bfm100_tray_view() -> SettingsTrayView {
 }
 
 /// Worst-case view: every control group visible at once (volume, brightness,
-/// night mode, restart, both WiFi holds) on the given product.
+/// night mode, restart, the WiFi hold) on the given product.
 fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
     let mut view = base;
     view.show_volume = true;
-    view.wifi_buttons = true;
+    view.wifi_button = true;
     view.show_restart = true;
     view.night_mode = Some(NightModeView {
         active: true,
@@ -133,7 +133,6 @@ fn all_groups_view(base: SettingsTrayView) -> SettingsTrayView {
     });
     view.restart_caption = None;
     view.reconfig_caption = None;
-    view.reconnect_caption = None;
     view
 }
 

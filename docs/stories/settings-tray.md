@@ -53,7 +53,6 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 
 - A hold-to-confirm "Reset WiFi" button starts the WiFi setup access point; the tray then shows the setup network to
   join from a phone.
-- A separate hold-to-confirm "Reconnect" button retries the currently configured network without discarding it.
 - The tray shows the connection status: the connected network, IP address, and signal strength.
 
 ### See only the controls the device supports
@@ -61,7 +60,7 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 > As a user, I want the tray to show only controls my device actually has so that nothing on screen is a dead end.
 
 - Devices without sound hardware show no volume slider.
-- Devices whose WiFi is not managed directly by the system show no WiFi buttons.
+- Devices whose WiFi is not managed directly by the system show no WiFi button.
 - The available controls are decided by the device itself; the tray never guesses.
 
 ## Constraints

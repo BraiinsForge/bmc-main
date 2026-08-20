@@ -34,9 +34,6 @@ use bmc_wasm_protocol::{
 /// Stable touch key for the WiFi reconfiguration hold button.
 pub const WIFI_RECONFIG_KEY: &str = "wifi_reconfig";
 
-/// Stable touch key for the bare WiFi reconnect hold button.
-pub const WIFI_RECONNECT_KEY: &str = "wifi_reconnect";
-
 /// Stable touch key for the night-mode tap toggle.
 pub const NIGHT_MODE_KEY: &str = "night_mode";
 
@@ -196,12 +193,11 @@ pub struct Panel {
     pub shape: DisplayShape,
     pub width: u32,
     pub height: u32,
-    /// Whether to render the WiFi reconfigure/reconnect buttons. WiFi
-    /// reconfiguration is only supported on boards whose AP runs over the
-    /// mac80211 radio (BMC100, BFM100); the BMM boards drive their ESP32 AP
-    /// through a separate firmware path the overlay does not implement, so the
-    /// buttons are hidden there.
-    pub wifi_buttons: bool,
+    /// Whether to render the WiFi reconfigure button. On a v2 compositor
+    /// `caps.wifi_setup` decides; v1 falls back to the product allowlist,
+    /// since reconfiguration needs the setup AP on a mac80211 radio
+    /// (BMC100, BFM100), not a BMM board's ESP32 firmware path.
+    pub wifi_button: bool,
 }
 
 /// Presentation bucket of a Wi-Fi signal reading — which icon it selects.
@@ -305,7 +301,6 @@ pub struct Controls<'a> {
     pub night_mode: Option<NightMode<'a>>,
     pub restart: Option<HoldControl<'a>>,
     pub wifi_reconfig: HoldControl<'a>,
-    pub wifi_reconnect: HoldControl<'a>,
     pub pressed: Option<&'a str>,
 }
 
@@ -718,7 +713,7 @@ fn single_group(
 /// All control groups in spec order, split into the ± pair groups
 /// (volume/brightness) and the single-button groups. On the Large tier the
 /// two halves concatenate into one row; medium/small render them as two rows.
-/// `wifi` is true only when the WiFi buttons apply (product/caps gate, not
+/// `wifi` is true only when the WiFi button applies (product/caps gate, not
 /// in setup mode).
 fn control_groups(
     tier: Tier,
@@ -808,17 +803,6 @@ fn control_groups(
             "Reset WiFi",
             "hold 3 seconds",
         ));
-        let p = controls.pressed == Some(WIFI_RECONNECT_KEY);
-        singles.push(single_group(
-            tier,
-            WIFI_RECONNECT_KEY,
-            ButtonIcon::square(wifi_icons.strong),
-            press_fill(p),
-            press_tint(p),
-            Some(controls.wifi_reconnect.progress),
-            "Reconnect",
-            "hold 3 seconds",
-        ));
     }
     (pairs, singles)
 }
@@ -859,7 +843,7 @@ fn control_rows(tier: Tier, pairs: Vec<TreeNode>, singles: Vec<TreeNode>) -> Vec
 }
 
 /// Dynamic status line under the control rows. Precedence: restart >
-/// reconfigure > reconnect > night-mode-until (medium/small only) > none.
+/// reconfigure > night-mode-until (medium/small only) > none.
 /// Prefixed with the control name so unlabeled small-tier buttons stay
 /// attributable.
 fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<TreeNode> {
@@ -867,8 +851,6 @@ fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<Tr
         Some(format!("Restart: {c}"))
     } else if let Some(c) = controls.wifi_reconfig.caption {
         Some(format!("Reset WiFi: {c}"))
-    } else if let Some(c) = controls.wifi_reconnect.caption {
-        Some(format!("Reconnect: {c}"))
     } else if !tier.large_text
         && let Some(n) = controls.night_mode
         && let Some(until) = n.until
@@ -1235,10 +1217,10 @@ pub fn build_tree(
     );
     let ssid_str = ssid.unwrap_or("Not configured");
 
-    // The WiFi hold buttons render only in normal (non-setup) mode and only
-    // when the product supports reconfiguration; the setup badge still
+    // The WiFi hold button renders only in normal (non-setup) mode, and only
+    // where the panel reports reconfiguration support; the setup badge still
     // renders via setup_row.
-    let wifi = panel.wifi_buttons && matches!(wifi_view, WifiView::Idle);
+    let wifi = panel.wifi_button && matches!(wifi_view, WifiView::Idle);
     let (pairs, singles) = control_groups(tier, &controls, controls_icons, icons, wifi);
     let rows = control_rows(tier, pairs, singles);
 
@@ -1335,7 +1317,7 @@ mod tests {
             shape: DisplayShape::Round,
             width: 480,
             height: 480,
-            wifi_buttons: true,
+            wifi_button: true,
         }
     }
 
@@ -1344,7 +1326,7 @@ mod tests {
             shape: DisplayShape::Rectangular,
             width: 1280,
             height: 480,
-            wifi_buttons: true,
+            wifi_button: true,
         }
     }
 
@@ -1353,7 +1335,7 @@ mod tests {
             shape: DisplayShape::Rectangular,
             width: 480,
             height: 320,
-            wifi_buttons: true,
+            wifi_button: true,
         }
     }
 
@@ -1362,7 +1344,7 @@ mod tests {
             shape: DisplayShape::Rectangular,
             width: 320,
             height: 240,
-            wifi_buttons: true,
+            wifi_button: true,
         }
     }
 
@@ -1377,7 +1359,6 @@ mod tests {
             }),
             restart: Some(HoldControl::default()),
             wifi_reconfig: HoldControl::default(),
-            wifi_reconnect: HoldControl::default(),
             pressed: None,
         }
     }
@@ -1685,7 +1666,7 @@ mod tests {
         }
         assert!(
             minimal.iter().any(|k| k == WIFI_RECONFIG_KEY),
-            "wifi buttons render when the panel supports them"
+            "wifi button renders when the panel supports it"
         );
 
         let full = keys(wide_panel(), WifiView::Idle, all_controls());
@@ -1697,17 +1678,15 @@ mod tests {
             NIGHT_MODE_KEY,
             RESTART_KEY,
             WIFI_RECONFIG_KEY,
-            WIFI_RECONNECT_KEY,
             CLOSE_KEY,
         ] {
             assert!(full.iter().any(|k| k == key), "{key} renders when enabled");
         }
 
         let mut no_wifi_panel = wide_panel();
-        no_wifi_panel.wifi_buttons = false;
+        no_wifi_panel.wifi_button = false;
         let no_wifi = keys(no_wifi_panel, WifiView::Idle, all_controls());
         assert!(!no_wifi.iter().any(|k| k == WIFI_RECONFIG_KEY));
-        assert!(!no_wifi.iter().any(|k| k == WIFI_RECONNECT_KEY));
 
         let setup = keys(
             wide_panel(),
@@ -1717,7 +1696,6 @@ mod tests {
             all_controls(),
         );
         assert!(!setup.iter().any(|k| k == WIFI_RECONFIG_KEY));
-        assert!(!setup.iter().any(|k| k == WIFI_RECONNECT_KEY));
         assert!(setup.iter().any(|k| k == CLOSE_KEY));
     }
 
@@ -1858,47 +1836,27 @@ mod tests {
         let all = Controls {
             restart: Some(holding),
             wifi_reconfig: holding,
-            wifi_reconnect: holding,
             ..Controls::default()
         };
         let all_texts = caption_texts(narrow_panel(), all);
         assert!(
             all_texts.iter().any(|t| t == "Restart: Keep holding…"),
-            "restart beats the wifi captions"
+            "restart beats the wifi caption"
         );
         assert!(
-            !all_texts
-                .iter()
-                .any(|t| t.starts_with("Reset WiFi:") || t.starts_with("Reconnect:")),
-            "the losing captions must not render alongside the winner"
+            !all_texts.iter().any(|t| t.starts_with("Reset WiFi:")),
+            "the losing caption must not render alongside the winner"
         );
 
         let wifi_only = Controls {
             wifi_reconfig: holding,
-            wifi_reconnect: holding,
-            ..Controls::default()
-        };
-        let wifi_texts = caption_texts(narrow_panel(), wifi_only);
-        assert!(
-            wifi_texts.iter().any(|t| t == "Reset WiFi: Keep holding…"),
-            "reconfigure beats reconnect"
-        );
-        assert!(
-            !wifi_texts.iter().any(|t| t.starts_with("Reconnect:")),
-            "the losing reconnect caption must not render"
-        );
-
-        let reconnect_only = Controls {
-            wifi_reconnect: HoldControl {
-                caption: Some("Reconnecting…"),
-                progress: 0.0,
-            },
             ..Controls::default()
         };
         assert!(
-            caption_texts(narrow_panel(), reconnect_only)
+            caption_texts(narrow_panel(), wifi_only)
                 .iter()
-                .any(|t| t == "Reconnect: Reconnecting…")
+                .any(|t| t == "Reset WiFi: Keep holding…"),
+            "reconfigure surfaces its own caption when it is the only hold"
         );
 
         let night = Controls {
@@ -1933,12 +1891,7 @@ mod tests {
         BRIGHTNESS_DOWN_KEY,
         BRIGHTNESS_UP_KEY,
     ];
-    const SINGLE_KEYS: [&str; 4] = [
-        NIGHT_MODE_KEY,
-        RESTART_KEY,
-        WIFI_RECONFIG_KEY,
-        WIFI_RECONNECT_KEY,
-    ];
+    const SINGLE_KEYS: [&str; 3] = [NIGHT_MODE_KEY, RESTART_KEY, WIFI_RECONFIG_KEY];
 
     fn is_control_key(k: &str) -> bool {
         PAIR_KEYS.contains(&k) || SINGLE_KEYS.contains(&k)
