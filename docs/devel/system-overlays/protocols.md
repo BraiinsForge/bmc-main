@@ -101,12 +101,12 @@ cache and needs no command channel back to bmc.
 
 ### `deck_device_info_v1` (version 1)
 
-| Member                                     | Kind    | Args                                             | Notes                                                                                               |
-| ------------------------------------------ | ------- | ------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| `destroy`                                  | request | —                                                | Destructor.                                                                                         |
-| `device_state(state, boot_flow_delivered)` | event   | `state: uint(enum)`, `boot_flow_delivered: uint` | bmc's `BmcState`; selects the flow. Emitted on bind and on change. See "Once-per-session" below.    |
-| `setup_progress(state, wifi_ssid)`         | event   | `state: uint(enum)`, `wifi_ssid: string`         | Setup-flow transition (`InitSetupState` + an `idle` entry). SSID set only for `connecting_to_wifi`. |
-| `access_point(ssid, setup_url)`            | event   | `ssid: string`, `setup_url: string`              | Setup-AP SSID and wizard URL, e.g. `http://192.168.8.1/`. Both empty while the AP is down.          |
+| Member                                     | Kind    | Args                                             | Notes                                                                                                                                                                      |
+| ------------------------------------------ | ------- | ------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `destroy`                                  | request | —                                                | Destructor.                                                                                                                                                                |
+| `device_state(state, boot_flow_delivered)` | event   | `state: uint(enum)`, `boot_flow_delivered: uint` | bmc's `BmcState`; selects the flow. Emitted on bind and on change. See "Once-per-session" below.                                                                           |
+| `setup_progress(state, wifi_ssid)`         | event   | `state: uint(enum)`, `wifi_ssid: string`         | Setup-flow transition (`InitSetupState` + an `idle` entry, with the two `unexpected_error` variants split into their own entries). SSID set only for `connecting_to_wifi`. |
+| `access_point(ssid, setup_url)`            | event   | `ssid: string`, `setup_url: string`              | Setup-AP SSID and wizard URL, e.g. `http://192.168.8.1/`. Both empty while the AP is down.                                                                                 |
 
 **Replay-on-bind.** Each event's last value is cached compositor-side and replayed on bind, so a late-binding overlay
 starts from the complete picture. `device_state` is replayed only once known — an overlay bound before bmc is up keeps
@@ -114,8 +114,8 @@ waiting instead of acting on a guessed lifecycle state. `access_point` replays e
 (mirroring `wifi_ap`).
 
 `setup_progress` is the one event that is **not** replayed verbatim, because it is the only one describing a
-*transition* rather than a current condition. The replay carries only the two steps a client cannot reconstruct from the
-other events — `unexpected_error`, since nothing else on the wire says the device is stuck, and `connecting_to_wifi`,
+*transition* rather than a current condition. The replay carries only the steps a client cannot reconstruct from the
+other events — both `unexpected_error` entries, since nothing else says the device is stuck, and `connecting_to_wifi`,
 since mid-join the lifecycle state still reads `factory_default` and its screen advertises an access point the join has
 already taken down. Everything else replays as `idle`: a finished setup or reconfiguration is an announcement, and
 replaying it makes a client that binds later congratulate the user again long after the fact, while the screens the

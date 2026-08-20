@@ -328,12 +328,18 @@ pub struct AccessPointInfo {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SetupProgress {
     Idle,
-    ConnectingToWifi { wifi_ssid: String },
+    ConnectingToWifi {
+        wifi_ssid: String,
+    },
     WifiConnectionSuccess,
     WifiConnectionFailed,
     WifiReconfigSuccess,
     DeviceSetupSuccess,
-    UnexpectedError,
+    /// Setup cannot continue; `restarting` says whether bmc resolves it
+    /// by restarting or resetting the device.
+    UnexpectedError {
+        restarting: bool,
+    },
 }
 
 #[derive(Debug, Error)]

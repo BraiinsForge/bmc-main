@@ -169,7 +169,9 @@ fn setup_progress(state: Option<InitSetupState>) -> SetupProgress {
         Some(InitSetupState::WifiConnectionFailed) => SetupProgress::WifiConnectionFailed,
         Some(InitSetupState::WifiReconfigSuccess) => SetupProgress::WifiReconfigSuccess,
         Some(InitSetupState::DeviceSetupSuccess) => SetupProgress::DeviceSetupSuccess,
-        Some(InitSetupState::UnexpectedError) => SetupProgress::UnexpectedError,
+        Some(InitSetupState::UnexpectedError { restarting }) => {
+            SetupProgress::UnexpectedError { restarting }
+        }
     }
 }
 
@@ -224,7 +226,9 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
         tokio::time::sleep(delay).await;
     }
     warn!("no IP within the setup-pending deadline; factory-resetting");
-    if let Err(err) = compositor.broadcast_setup_progress(SetupProgress::UnexpectedError) {
+    if let Err(err) =
+        compositor.broadcast_setup_progress(SetupProgress::UnexpectedError { restarting: true })
+    {
         warn!(%err, "failed to signal setup error to overlay");
     }
     if let Err(err) = manager.factory_reset(false).await {
@@ -234,7 +238,9 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
 
 /// Broadcast the unrecoverable-setup error and reboot after a visible delay.
 async fn fail_setup_and_reboot<T: BmcManager>(compositor: &dyn Compositor, manager: &T) {
-    if let Err(err) = compositor.broadcast_setup_progress(SetupProgress::UnexpectedError) {
+    if let Err(err) =
+        compositor.broadcast_setup_progress(SetupProgress::UnexpectedError { restarting: true })
+    {
         warn!(%err, "failed to signal setup error to overlay");
     }
     tokio::time::sleep(SETUP_ERROR_REBOOT_DELAY).await;

@@ -262,7 +262,12 @@ pub enum SetupStep {
     WifiConnectionFailed,
     WifiReconfigSuccess,
     DeviceSetupSuccess,
-    UnexpectedError,
+    /// Setup cannot continue. `restarting` says whether bmc resolves it
+    /// by restarting or resetting the device, which decides
+    /// whether the screen waits it out or asks the user to act.
+    UnexpectedError {
+        restarting: bool,
+    },
 }
 
 /// Setup access point reported over `deck_device_info_v1`.

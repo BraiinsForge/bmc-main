@@ -190,6 +190,7 @@ device_info_render_states!(
     DI_SETUP_CONNECT_INFO_PENDING,
     DI_SETUP_COMPLETED,
     DI_SETUP_ERROR,
+    DI_SETUP_FATAL_RESTARTING,
     DI_SETUP_FATAL,
     DI_UPGRADE_SUCCESS,
     DI_CONNECTING,
@@ -502,9 +503,18 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
     device_info_stage(
         ctx,
         ui,
+        "SetupFatal (restarting)",
+        "bmc restarts or resets the device",
+        DeviceInfoView::SetupFatal { restarting: true },
+        &DI_SETUP_FATAL_RESTARTING,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
         "SetupFatal",
-        "sticky; bmc recovers on its own",
-        DeviceInfoView::SetupFatal,
+        "bmc takes no action; the user has to restart",
+        DeviceInfoView::SetupFatal { restarting: false },
         &DI_SETUP_FATAL,
         flat,
     );

@@ -33,7 +33,8 @@ the scenes nor undoes a dismissal. On the setup side the same distinction is dra
 announcement steps.
 
 Every screen-hold timer lives in the overlay; bmc emits transitions the moment they happen (recovery policies — the
-no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts `unexpected_error` before acting).
+no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts the failure before acting, flagged as
+restarting so the screen can promise what bmc is about to do).
 
 ### Flows
 
@@ -50,7 +51,12 @@ no-IP factory reset and the no-AP reboot — stay in bmc, which broadcasts `unex
 - **WiFi reconfiguration**: the same setup flow, entered when `device_state` flips to `wifi_reconfiguration`; on
   `wifi_reconfig_success` the connected screen shows 5 s and unmaps straight to scenes (no connect-info). The
   setup-start screen auto-hides after 8 minutes with the AP left up; a later setup event revives the flow.
-- **Unexpected error**: sticky full-screen error; bmc recovers on its own (factory reset or reboot).
+- **Unexpected error**: a sticky full-screen failure, in two variants that differ in what happens next rather than in
+  how bad the failure is. `unexpected_error_restarting` means bmc is restarting or resetting the device, so the screen
+  says so and simply waits it out. `unexpected_error` means bmc takes no action — the device keeps running, but stuck in
+  whatever state the failure left it — so the screen asks the user to restart it instead. Both ignore touch: the
+  condition is unresolved either way, and dismissing would hide it (after a failed reconfiguration exit, for instance,
+  the setup AP is still broadcasting).
 
 In the operational connect-info the last-known IP is held through a transient DHCP loss, so the screen does not flicker.
 The screens render through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build

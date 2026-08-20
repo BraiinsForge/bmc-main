@@ -1053,7 +1053,12 @@ fn setup_step_from_wire(state: WireSetupState) -> Option<crate::overlay::SetupSt
         }
         WireSetupState::WifiReconfigSuccess => Some(crate::overlay::SetupStep::WifiReconfigSuccess),
         WireSetupState::DeviceSetupSuccess => Some(crate::overlay::SetupStep::DeviceSetupSuccess),
-        WireSetupState::UnexpectedError => Some(crate::overlay::SetupStep::UnexpectedError),
+        WireSetupState::UnexpectedError => {
+            Some(crate::overlay::SetupStep::UnexpectedError { restarting: false })
+        }
+        WireSetupState::UnexpectedErrorRestarting => {
+            Some(crate::overlay::SetupStep::UnexpectedError { restarting: true })
+        }
         other => {
             tracing::warn!(?other, "unknown setup_progress state");
             None

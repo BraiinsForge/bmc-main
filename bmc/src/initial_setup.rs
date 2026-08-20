@@ -139,7 +139,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         let network = manager.network_manager();
         let Some(wifi) = network.wifi() else {
             warn!("WiFi initial setup not supported");
-            state_service.notify(InitSetupState::UnexpectedError);
+            state_service.notify(InitSetupState::UnexpectedError { restarting: false });
             return;
         };
         match wifi.wifi_initial_setup(config).await {
@@ -149,7 +149,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
             }
             Err(InitialSetupError::NotSupported) => {
                 warn!("WiFi initial setup not supported");
-                state_service.notify(InitSetupState::UnexpectedError);
+                state_service.notify(InitSetupState::UnexpectedError { restarting: false });
             }
             Err(InitialSetupError::UnexpectedFailure(err)) => {
                 warn!(
@@ -181,7 +181,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
         let network = manager.network_manager();
         let Some(wifi) = network.wifi() else {
             warn!("WiFi reconfiguration not supported");
-            state_service.notify(InitSetupState::UnexpectedError);
+            state_service.notify(InitSetupState::UnexpectedError { restarting: false });
             return;
         };
         match wifi
@@ -193,7 +193,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
                 // Exit reconfiguration mode (disables captive portal, removes flag)
                 if let Err(err) = wifi.exit_wifi_reconfiguration().await {
                     warn!(error = %err, "Failed to exit wifi reconfiguration mode");
-                    state_service.notify(InitSetupState::UnexpectedError);
+                    state_service.notify(InitSetupState::UnexpectedError { restarting: false });
                     return;
                 }
                 state_service.notify(InitSetupState::WifiReconfigSuccess);
@@ -212,7 +212,7 @@ impl<T: BmcManager, F: FirmwareIndex> InitialSetup<T, F> {
     }
 
     async fn notify_failure_and_reboot(manager: Arc<T>, state_service: &StateService) {
-        state_service.notify(InitSetupState::UnexpectedError);
+        state_service.notify(InitSetupState::UnexpectedError { restarting: true });
         tokio::time::sleep(REBOOT_SLEEP_DURATION).await;
         _ = manager.reboot().await;
     }
@@ -336,11 +336,18 @@ pub(crate) enum DeviceSetupError {
 
 #[derive(PartialEq, Debug, Clone)]
 pub enum InitSetupState {
-    ConnectingToWifi { wifi_ssid: String },
+    ConnectingToWifi {
+        wifi_ssid: String,
+    },
     WifiConnectionSuccess,
     WifiConnectionFailed,
     WifiReconfigSuccess,
-    UnexpectedError,
+    /// Setup cannot continue. `restarting` says whether bmc resolves it
+    /// by restarting or resetting the device, which is what decides
+    /// whether the screen waits it out or asks the user to act.
+    UnexpectedError {
+        restarting: bool,
+    },
     DeviceSetupSuccess,
 }
 

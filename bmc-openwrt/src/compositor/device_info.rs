@@ -56,7 +56,12 @@ fn setup_progress_wire(progress: &SetupProgress) -> (SetupState, String) {
         SetupProgress::WifiConnectionFailed => (SetupState::WifiConnectionFailed, String::new()),
         SetupProgress::WifiReconfigSuccess => (SetupState::WifiReconfigSuccess, String::new()),
         SetupProgress::DeviceSetupSuccess => (SetupState::DeviceSetupSuccess, String::new()),
-        SetupProgress::UnexpectedError => (SetupState::UnexpectedError, String::new()),
+        SetupProgress::UnexpectedError { restarting: false } => {
+            (SetupState::UnexpectedError, String::new())
+        }
+        SetupProgress::UnexpectedError { restarting: true } => {
+            (SetupState::UnexpectedErrorRestarting, String::new())
+        }
     }
 }
 
@@ -76,7 +81,7 @@ fn access_point_wire(ap: Option<&AccessPointInfo>) -> (String, String) {
 fn replayable(progress: &SetupProgress) -> bool {
     match progress {
         // Nothing else on the wire says the device is stuck.
-        SetupProgress::UnexpectedError
+        SetupProgress::UnexpectedError { .. }
         // Mid-join the lifecycle still reads FactoryDefault, whose screen
         // advertises an access point the join has already taken down.
         | SetupProgress::ConnectingToWifi { .. } => true,
@@ -307,7 +312,12 @@ mod tests {
 
     #[test]
     fn only_unreconstructable_steps_survive_a_replay() {
-        assert!(replayable(&SetupProgress::UnexpectedError));
+        assert!(replayable(&SetupProgress::UnexpectedError {
+            restarting: false
+        }));
+        assert!(replayable(&SetupProgress::UnexpectedError {
+            restarting: true
+        }));
         assert!(replayable(&SetupProgress::ConnectingToWifi {
             wifi_ssid: "HomeNet".to_owned()
         }));
@@ -316,6 +326,18 @@ mod tests {
         assert!(!replayable(&SetupProgress::WifiConnectionSuccess));
         assert!(!replayable(&SetupProgress::WifiConnectionFailed));
         assert!(!replayable(&SetupProgress::Idle));
+    }
+
+    #[test]
+    fn each_fatal_keeps_its_own_wire_entry() {
+        assert_eq!(
+            setup_progress_wire(&SetupProgress::UnexpectedError { restarting: false }).0,
+            SetupState::UnexpectedError
+        );
+        assert_eq!(
+            setup_progress_wire(&SetupProgress::UnexpectedError { restarting: true }).0,
+            SetupState::UnexpectedErrorRestarting
+        );
     }
 
     #[test]

@@ -35,6 +35,9 @@ const WIFI_ERROR: Svg = include_svg!("assets/wifi_error.svg");
 const SUCCESS: Svg = include_svg!("assets/success.svg");
 const REFRESH: Svg = include_svg!("assets/refresh.svg");
 const DESKTOP_CLOCK: Svg = include_svg!("assets/desktop_clock.svg");
+/// Carried over from the upgrade overlay rather than the legacy init-setup set,
+/// which has no icon for a failure that is not about WiFi.
+const ERROR: Svg = include_svg!("assets/error.svg");
 
 /// A registered icon and the viewBox it was authored at.
 /// The host scales X and Y independently,
@@ -54,6 +57,7 @@ pub struct DeviceInfoIcons {
     pub success: Icon,
     pub refresh: Icon,
     pub desktop_clock: Icon,
+    pub error: Icon,
 }
 
 #[must_use]
@@ -75,5 +79,6 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> DeviceInfoIcons {
         success: reg(&SUCCESS),
         refresh: reg(&REFRESH),
         desktop_clock: reg(&DESKTOP_CLOCK),
+        error: reg(&ERROR),
     }
 }

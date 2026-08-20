@@ -41,6 +41,11 @@
       <description summary="progress within the setup flow">
         Mirrors bmc's InitSetupState, with an extra idle entry so the current
         value is always well-defined for the on-bind replay.
+
+        The two unexpected_error entries differ in what happens next, not in
+        how bad the failure is: one is followed by a restart the screen can
+        simply wait out, the other by nothing, so the screen has to tell the
+        user to restart the device themselves.
       </description>
       <entry name="idle" value="0" summary="no setup step in progress"/>
       <entry name="connecting_to_wifi" value="1" summary="joining the configured network"/>
@@ -48,7 +53,8 @@
       <entry name="wifi_connection_failed" value="3" summary="join failed; the AP screen returns"/>
       <entry name="wifi_reconfig_success" value="4" summary="reconfiguration done; return to scenes"/>
       <entry name="device_setup_success" value="5" summary="setup wizard completed"/>
-      <entry name="unexpected_error" value="6" summary="unrecoverable; bmc will recover on its own (reset or reboot)"/>
+      <entry name="unexpected_error" value="6" summary="setup cannot continue and bmc takes no action; the user has to restart the device"/>
+      <entry name="unexpected_error_restarting" value="7" summary="setup cannot continue; bmc is restarting or resetting the device"/>
     </enum>
 
     <event name="device_state">

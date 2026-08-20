@@ -60,8 +60,12 @@ pub enum DeviceInfoView {
     },
     SetupCompleted,
     SetupError,
-    /// Unrecoverable setup error; bmc recovers on its own (reset or reboot).
-    SetupFatal,
+    /// Setup failure that only something outside the overlay can clear.
+    /// `restarting` says whether bmc is restarting the device, i.e. whether
+    /// the screen waits it out or asks the user to act.
+    SetupFatal {
+        restarting: bool,
+    },
     /// Post-firmware-upgrade success, the operational flow's opening screen.
     UpgradeSuccess,
     /// Operational-boot connect progress.
@@ -121,6 +125,8 @@ const SETUP_AP_PENDING_TITLE: &str = "Starting setup WiFi...";
 /// one, so the wording cannot drift between the flows.
 const CONNECTING_TITLE: &str = "Connecting to WiFi...";
 const UPGRADE_SUCCESS_TITLE: &str = "Update Finished";
+/// Shared by both setup-failure screens, which differ only in what follows.
+const SETUP_FATAL_TITLE: &str = "Problem Occurred";
 const QR_SIZE: f32 = 336.0;
 /// The QR in a column that carries its own text: small enough that the headline
 /// above it and the address below still fit the panel's height.
@@ -561,13 +567,20 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
             "Could not connect. Please try again.",
             Vec::new(),
         ),
-        DeviceInfoView::SetupFatal => template_tree(
-            Justify::Center,
-            false,
-            icons.refresh,
-            "Problem Occurred. Restarting Braiins Deck.",
-            Vec::new(),
-        ),
+        DeviceInfoView::SetupFatal { restarting } => {
+            let (icon_id, line) = if *restarting {
+                (icons.refresh, "Restarting Braiins Deck.")
+            } else {
+                (icons.error, "Restart Braiins Deck to try again.")
+            };
+            template_tree(
+                Justify::Center,
+                false,
+                icon_id,
+                SETUP_FATAL_TITLE,
+                vec![content(line, TextAlign::Center)],
+            )
+        }
         DeviceInfoView::UpgradeSuccess => template_tree(
             Justify::Center,
             false,

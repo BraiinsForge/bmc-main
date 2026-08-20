@@ -103,8 +103,12 @@ enum Screen {
     SetupError {
         since: Instant,
     },
-    /// Sticky general error; bmc recovers on its own (reset or reboot).
-    SetupFatal,
+    /// Sticky setup failure. `restarting` says whether bmc resolves it
+    /// by restarting the device, which is all the screen does differently.
+    /// Both hold until something outside the overlay moves the device on.
+    SetupFatal {
+        restarting: bool,
+    },
     OpConnecting {
         since: Instant,
     },
@@ -133,7 +137,7 @@ impl Screen {
                 | Screen::SetupConnectInfo
                 | Screen::SetupCompleted { .. }
                 | Screen::SetupError { .. }
-                | Screen::SetupFatal
+                | Screen::SetupFatal { .. }
         )
     }
 
@@ -226,7 +230,9 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
                 screen
             }
         }
-        Screen::Hidden | Screen::SetupConnectInfo | Screen::SetupFatal | Screen::Done => screen,
+        Screen::Hidden | Screen::SetupConnectInfo | Screen::SetupFatal { .. } | Screen::Done => {
+            screen
+        }
     };
     let changed = next != screen;
     (next, changed)
@@ -264,7 +270,7 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
             Some(NextWake::Poll)
         }
         Screen::OpFailed { since } => Some(NextWake::At(since + FAILURE_VISIBLE_FOR)),
-        Screen::Hidden | Screen::SetupFatal | Screen::Done => None,
+        Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => None,
     }
 }
 
@@ -339,7 +345,7 @@ impl DeviceInfoOverlay {
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
             Screen::SetupError { .. } => DeviceInfoView::SetupError,
-            Screen::SetupFatal => DeviceInfoView::SetupFatal,
+            Screen::SetupFatal { restarting } => DeviceInfoView::SetupFatal { restarting },
             Screen::OpUpgraded { .. } => DeviceInfoView::UpgradeSuccess,
             Screen::OpConnecting { .. } => DeviceInfoView::Connecting { ssid: self.ssid() },
             Screen::OpSuccess { ip, .. } => DeviceInfoView::Success { ip },
@@ -439,7 +445,7 @@ impl SystemOverlay for DeviceInfoOverlay {
             },
             SetupStep::WifiConnectionFailed => Screen::SetupError { since: now },
             SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
-            SetupStep::UnexpectedError => Screen::SetupFatal,
+            SetupStep::UnexpectedError { restarting } => Screen::SetupFatal { restarting },
         };
         self.dirty = true;
     }
@@ -758,13 +764,44 @@ mod tests {
 
     #[test]
     fn unexpected_error_is_sticky() {
+        // Both variants wait for something outside the overlay: the device
+        // restarting, or the user restarting it.
+        for restarting in [true, false] {
+            let mut overlay = overlay_with_ip(None);
+            overlay.on_device_state(DeviceState::SetupPending, false);
+            overlay.on_setup_progress(SetupStep::UnexpectedError { restarting }, "");
+            let tick = overlay.tick(t0() + HOLD + HOLD);
+            assert_eq!(overlay.screen, Screen::SetupFatal { restarting });
+            assert!(tick.visible, "restarting={restarting}");
+            assert_eq!(tick.next_wake, None, "restarting={restarting}");
+
+            overlay.on_touch(TouchEvent::Down {
+                id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+            assert!(
+                overlay.tick(t0()).visible,
+                "a touch must not dismiss an unresolved failure (restarting={restarting})"
+            );
+        }
+    }
+
+    #[test]
+    fn the_fatal_screen_says_whether_a_restart_is_coming() {
         let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::SetupPending, false);
-        overlay.on_setup_progress(SetupStep::UnexpectedError, "");
-        let tick = overlay.tick(t0() + HOLD + HOLD);
-        assert_eq!(overlay.screen, Screen::SetupFatal);
-        assert!(tick.visible);
-        assert_eq!(tick.next_wake, None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupFatal { restarting: false }
+        );
+
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: true }, "");
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupFatal { restarting: true }
+        );
     }
 
     #[test]
