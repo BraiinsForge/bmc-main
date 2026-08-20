@@ -1413,9 +1413,8 @@ impl WasmWidgetRuntime {
         match render_result {
             Ok((result, has_active)) => {
                 state.last_timings = timings;
-                // This frame repainted in full where it was armed to, so both
-                // export buffers now hold the change.
-                state.stale_export_buffer = false;
+                // One more buffer has been painted in full, if any was owed.
+                state.painted_in_full();
                 // Shift the damage history: this walk's regions become the
                 // newest, and the pair spans the buffer rotation.
                 state.recent_dynamic_rects.swap(0, 1);
@@ -1730,6 +1729,16 @@ impl WasmWidgetRuntime {
     #[must_use]
     pub fn has_pending_lifecycle(&self) -> bool {
         self.pending_hook.is_some()
+    }
+
+    /// Report that the slot acquired a fresh render target.
+    ///
+    /// Its export buffers hold nothing, while the damage history survived and
+    /// describes the target they replaced. Scissoring to it would paint the
+    /// moving regions onto an undefined buffer and leave the rest black, which
+    /// is what a dormant scene showed for its first frames after a swipe.
+    pub fn invalidate_export_buffers(&mut self) {
+        self.store.data_mut().stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
     }
 
     /// Deliver queued hooks with renderer access for suspension and guest imports.

@@ -898,6 +898,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
         self.lifecycle.apply(&mut ctx, now);
         if !had_render_target && self.render_target.is_some() {
             self.rendered_since_acquire = false;
+            self.runtime.invalidate_export_buffers();
         }
         let current = self.lifecycle.current();
         if previous != current {

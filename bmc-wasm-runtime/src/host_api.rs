@@ -945,10 +945,6 @@ impl StagedGuestDeliveries {
 }
 
 /// Host-side state accessible to WASM via host functions.
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "independent one-shot host flags, each consumed by a different path"
-)]
 pub(crate) struct HostState {
     /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
     /// render scope. `None` outside a render scope; host imports that read this must
@@ -1013,16 +1009,21 @@ pub(crate) struct HostState {
     /// not mean an unchanged layer.
     pub last_static_key: Option<(u64, u64)>,
 
-    /// Whether the export buffer *not* painted last still holds pre-change
-    /// static pixels, so the next frame has to repaint in full.
+    /// How many upcoming frames must repaint in full because the export buffer
+    /// they will paint does not hold what the frame before it showed.
     ///
-    /// A frame paints one of the host's two export buffers. Changed static
-    /// content therefore reaches only that one, and the next frame — drawing
-    /// into the other and scissored to damage, which covers dynamic regions
-    /// only — leaves the change unpainted there. The two alternate on screen, so
-    /// a clicked button flickers between its pressed and unpressed shading and a
-    /// counter alternates between its old and new value at the display rate.
-    pub stale_export_buffer: bool,
+    /// A frame paints one of the host's export buffers, so changed static
+    /// content reaches only that one; the next frame draws into another,
+    /// scissored to damage, which covers dynamic regions only. The buffers
+    /// alternate on screen, so the change flickers in and out at the display
+    /// rate — a clicked button between its pressed and unpressed shading, a
+    /// counter between its old and new value.
+    ///
+    /// Waking sets it to the full count rather than one: a dormant slot has no
+    /// render target at all (`bmc_wasm_host::lifecycle::has_render_target`), so
+    /// every buffer is newly allocated and holds nothing. Repainting only the
+    /// damage over one of those leaves the rest of the surface black.
+    pub stale_export_buffers: u8,
 
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
@@ -1452,7 +1453,7 @@ impl HostState {
             recent_dynamic_rects: [Vec::new(), Vec::new()],
             static_layer_useful: true,
             last_static_key: None,
-            stale_export_buffer: false,
+            stale_export_buffers: 0,
             cached_tree: None,
             system_time,
             monotonic_ms: 0,
@@ -1629,17 +1630,27 @@ impl HostState {
     }
 }
 
+/// Export buffers the host rotates through per slot — `DoubleBufferState` in
+/// `bmc_wasm_host::render_target`. Frames that must reach every buffer, rather
+/// than the one they paint, repeat this many times.
+pub(crate) const EXPORT_BUFFERS: u8 = 2;
+
 impl HostState {
     /// Damage for the frame about to render, or empty to repaint everything.
     ///
-    /// Reads [`Self::stale_export_buffer`] first: a frame catching the other
-    /// export buffer up on a static change cannot scissor to the dynamic
-    /// regions, since the change it is there to paint is not one of them.
+    /// Reads [`Self::stale_export_buffers`] first: a frame catching a buffer up
+    /// on content it never received cannot scissor to the dynamic regions,
+    /// since what it is there to paint is not one of them.
     pub(crate) fn frame_damage(&self, width: f32, height: f32) -> Vec<Rect> {
-        if self.stale_export_buffer {
+        if self.stale_export_buffers > 0 {
             return Vec::new();
         }
         damage_rects(&self.recent_dynamic_rects, width, height)
+    }
+
+    /// Account for a frame that repainted its whole target.
+    pub(crate) fn painted_in_full(&mut self) {
+        self.stale_export_buffers = self.stale_export_buffers.saturating_sub(1);
     }
 }
 
@@ -2012,6 +2023,55 @@ mod tests {
             state.hermetic.as_ref().expect("BUG: set above").breaches,
             ["fetch: GET https://x/y", "websocket: wss://z"]
         );
+    }
+
+    /// A state carrying damage from two walks, as a settled widget has.
+    fn state_with_damage() -> HostState {
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+        );
+        state.recent_dynamic_rects = [
+            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
+            vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
+        ];
+        state
+    }
+
+    #[test]
+    fn a_settled_widget_scissors_to_its_damage() {
+        let state = state_with_damage();
+        assert!(!state.frame_damage(1280.0, 480.0).is_empty());
+    }
+
+    /// Waking allocates every export buffer afresh, and the damage history
+    /// survives dormancy describing a target that no longer exists. Scissoring
+    /// to it paints the moving regions onto an undefined buffer and leaves the
+    /// static half black — the flicker on swiping to a dormant scene.
+    #[test]
+    fn every_buffer_repaints_in_full_after_waking() {
+        let mut state = state_with_damage();
+        state.stale_export_buffers = super::EXPORT_BUFFERS;
+
+        for buffer in 0..super::EXPORT_BUFFERS {
+            assert!(
+                state.frame_damage(1280.0, 480.0).is_empty(),
+                "buffer {buffer} has never been painted, so nothing may be preserved"
+            );
+            state.painted_in_full();
+        }
+
+        assert!(
+            !state.frame_damage(1280.0, 480.0).is_empty(),
+            "every buffer holds a full frame now, so damage tracking resumes"
+        );
+    }
+
+    #[test]
+    fn painting_in_full_while_nothing_is_owed_stays_settled() {
+        let mut state = state_with_damage();
+        state.painted_in_full();
+        assert_eq!(state.stale_export_buffers, 0);
     }
 
     fn schedule(animation_cadence_ms: u32) -> FrameScheduleState {

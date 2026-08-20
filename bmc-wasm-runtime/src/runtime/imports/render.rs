@@ -300,30 +300,64 @@ fn submit_tree(
             }
         }
         match render_result {
-            Ok((result, has_active)) => {
-                let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
-                state.tree_clicks = result.clicks;
-                state.tree_drags = result.drags;
-                state.last_timings = timings;
-                state.frame_schedule.has_active_animations = has_active;
-                state.frame_schedule.interaction_pending = had_interaction;
-                state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
-                state.cached_tree = Some((tree_node, w, h));
-                state.last_static_key = Some(static_key);
-                // This frame painted the change into the buffer it holds; the
-                // other one is a frame behind and keeps showing the old static
-                // half until it repaints in full.
-                state.stale_export_buffer = !static_unchanged;
-                // Shift the damage history: this walk's regions become the
-                // newest, and the pair spans the buffer rotation.
-                state.recent_dynamic_rects.swap(0, 1);
-                state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
-            }
+            Ok((result, has_active)) => commit_submitted_frame(
+                state,
+                SubmittedFrame {
+                    tree_node,
+                    w,
+                    h,
+                    static_key,
+                    static_unchanged,
+                    timings,
+                    has_active,
+                },
+                result,
+            ),
             Err(error) => {
                 tracing::error!("tree processing failed: {error}");
             }
         }
     })
+}
+
+/// What a completed guest frame contributes to [`HostState`] beyond its draws.
+struct SubmittedFrame {
+    tree_node: bmc_render::tree::TreeNode,
+    w: f32,
+    h: f32,
+    static_key: (u64, u64),
+    static_unchanged: bool,
+    timings: bmc_render::FrameTimings,
+    has_active: bool,
+}
+
+/// Fold a rendered guest frame's results into the host state.
+fn commit_submitted_frame(
+    state: &mut HostState,
+    frame: SubmittedFrame,
+    result: bmc_render::tree::TreeResult,
+) {
+    let had_interaction = !result.clicks.is_empty() || !result.drags.is_empty();
+    state.tree_clicks = result.clicks;
+    state.tree_drags = result.drags;
+    state.last_timings = frame.timings;
+    state.frame_schedule.has_active_animations = frame.has_active;
+    state.frame_schedule.interaction_pending = had_interaction;
+    state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
+    state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
+    state.last_static_key = Some(frame.static_key);
+    // This frame painted the buffer it holds in full. A changed static half
+    // still owes every other buffer, each of which keeps showing the old one
+    // until it repaints in full too.
+    if frame.static_unchanged {
+        state.painted_in_full();
+    } else {
+        state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
+    }
+    // Shift the damage history: this walk's regions become the newest, and the
+    // pair spans the buffer rotation.
+    state.recent_dynamic_rects.swap(0, 1);
+    state.recent_dynamic_rects[0].clone_from(&result.dynamic_rects);
 }
 
 fn register_tree_imports(linker: &mut Linker<HostState>) -> Result<()> {
