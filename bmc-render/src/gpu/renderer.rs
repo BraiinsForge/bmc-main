@@ -2325,7 +2325,7 @@ impl Renderer for FemtoVgRenderer {
         };
 
         let dpi = self.dpi_scale;
-        let height_px = (self.height * dpi) as i32;
+        let (width_px, height_px) = ((self.width * dpi) as i32, (self.height * dpi) as i32);
         // SAFETY: the renderer's GL context is current for the whole frame.
         unsafe {
             self.gl.disable(glow::BLEND);
@@ -2349,14 +2349,12 @@ impl Renderer for FemtoVgRenderer {
                 2 * F32_BYTES,
             );
 
-            for &Rect{x, y, w, h} in rects {
+            for &rect in rects {
                 // The quad always covers the whole surface; the scissor is what
                 // restricts the pixels written, so the cost tracks the damage
-                // area rather than the number of rectangles. GL's scissor
-                // origin is bottom-left, the tree's is top-left.
-                let (px, pw, ph) = ((x * dpi) as i32, (w * dpi) as i32, (h * dpi) as i32);
-                let py = height_px - ((y * dpi) as i32) - ph;
-                self.gl.scissor(px, py, pw.max(0), ph.max(0));
+                // area rather than the number of rectangles.
+                let (px, py, pw, ph) = scissor_box(rect, dpi, width_px, height_px);
+                self.gl.scissor(px, py, pw, ph);
                 self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             }
 
@@ -2405,6 +2403,28 @@ fn line_style(style: &TextStyle, size: f32) -> LineStyle {
 }
 
 /// Logical size scaled to device pixels, saturating rather than wrapping.
+/// The `glScissor` box covering `rect`, in physical pixels.
+///
+/// Taffy hands out fractional bounds, so both edges have to round outwards: a
+/// truncated origin *and* extent inscribe the box inside the damage rect, and
+/// the fractional column at the right or bottom edge is then never written. On
+/// a `FrameClear::Keep` frame that column keeps the previous frame's pixels,
+/// which is a one-pixel trail behind anything moving right or down. The scissor
+/// must cover the damage; covering a pixel too many only costs the pixel.
+///
+/// GL's scissor origin is bottom-left, the tree's is top-left.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "physical pixel coordinates, bounded by the render target and clamped to it"
+)]
+fn scissor_box(rect: Rect, dpi: f32, width_px: i32, height_px: i32) -> (i32, i32, i32, i32) {
+    let left = ((rect.x * dpi).floor() as i32).clamp(0, width_px);
+    let right = (((rect.x + rect.w) * dpi).ceil() as i32).clamp(left, width_px);
+    let top = ((rect.y * dpi).floor() as i32).clamp(0, height_px);
+    let bottom = (((rect.y + rect.h) * dpi).ceil() as i32).clamp(top, height_px);
+    (left, height_px - bottom, right - left, bottom - top)
+}
+
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -3508,6 +3528,78 @@ mod multiline_text_tests {
             leaked, 0,
             "BUG: second line leaked the first span's red color ({leaked} px)",
         );
+    }
+}
+
+#[cfg(test)]
+mod scissor_tests {
+    use super::scissor_box;
+    use crate::interaction::Rect;
+
+    const W: i32 = 1280;
+    const H: i32 = 480;
+
+    /// The reported case: at DPI 1 a rect of x=10.2 w=5.2 reaches 15.4, and a
+    /// truncated box covered 10..15 — leaving column 15 holding the previous
+    /// frame under `FrameClear::Keep`.
+    #[test]
+    fn a_fractional_right_edge_is_covered_not_clipped() {
+        let (x, _, w, _) = scissor_box(Rect::new(10.2, 0.0, 5.2, 4.0), 1.0, W, H);
+        assert_eq!(
+            (x, x + w),
+            (10, 16),
+            "10.2..15.4 must cover columns 10..=15"
+        );
+    }
+
+    #[test]
+    fn a_fractional_bottom_edge_is_covered_not_clipped() {
+        let (_, y, _, h) = scissor_box(Rect::new(0.0, 10.2, 4.0, 5.2), 1.0, W, H);
+        assert_eq!(
+            (H - (y + h), H - y),
+            (10, 16),
+            "top-down 10.2..15.4 must cover rows 10..=15"
+        );
+    }
+
+    #[test]
+    fn a_whole_pixel_rect_gains_nothing() {
+        let (x, y, w, h) = scissor_box(Rect::new(10.0, 20.0, 5.0, 6.0), 1.0, W, H);
+        assert_eq!((x, w, h), (10, 5, 6));
+        assert_eq!(y, H - 26, "bottom-left origin, from the rect's lower edge");
+    }
+
+    #[test]
+    fn dpi_scales_before_rounding() {
+        let (x, _, w, _) = scissor_box(Rect::new(10.2, 0.0, 5.2, 4.0), 2.0, W, H);
+        assert_eq!(
+            (x, x + w),
+            (20, 31),
+            "20.4..30.8 must cover columns 20..=30"
+        );
+    }
+
+    /// A rect reaching past the target would otherwise hand GL a box extending
+    /// beyond it, and a negative origin a negative width.
+    #[test]
+    fn a_rect_outside_the_target_is_clamped_to_it() {
+        let (x, y, w, h) = scissor_box(Rect::new(-20.0, -20.0, 40.0, 40.0), 1.0, W, H);
+        assert_eq!((x, w), (0, 20));
+        assert_eq!((y + h, h), (H, 20));
+
+        let (x, _, w, _) = scissor_box(Rect::new(1270.0, 0.0, 40.0, 4.0), 1.0, W, H);
+        assert_eq!(
+            (x, w),
+            (1270, 10),
+            "clipped at the right edge, never past it"
+        );
+
+        let (x, y, w, h) = scissor_box(Rect::new(2000.0, 2000.0, 10.0, 10.0), 1.0, W, H);
+        assert!(
+            w >= 0 && h >= 0,
+            "a fully offscreen rect stays non-negative"
+        );
+        assert_eq!((x, y, w, h), (W, H - H, 0, 0));
     }
 }
 

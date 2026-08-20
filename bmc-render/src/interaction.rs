@@ -24,4 +24,4 @@ mod state;
 mod types;
 
 pub use state::InteractionState;
-pub use types::{ActionEvent, Rect, TouchEvent};
+pub use types::{ActionEvent, Coalesce, CoalesceIterExt, Rect, TouchEvent};

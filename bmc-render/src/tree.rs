@@ -2108,7 +2108,9 @@ fn dynamic_area_pct(bounds: Option<Rect>, width: f32, height: f32) -> u32 {
     if surface <= 0.0 {
         return 0;
     }
-    bounds.map_or(0, |Rect { w, h, .. }| (100.0 * w * h / surface).round() as u32)
+    bounds.map_or(0, |Rect { w, h, .. }| {
+        (100.0 * w * h / surface).round() as u32
+    })
 }
 
 /// Drop animation and transition states no walk touched this frame, and record
@@ -2912,21 +2914,9 @@ pub(crate) fn render_taffy_node(
         .get_node_context(node_id)
         .is_none_or(|ctx| anim_ctx.emit.emits(ctx.self_dynamic));
 
-    // Record what a damage-tracked frame would have to repaint. Leaves only:
-    // `dynamic` on a container merely says a descendant animates, so counting
-    // containers would union the whole subtree and report the root as damaged.
-    // A canvas is the finest granularity available here — its draws animate
-    // individually, but they are not laid out, so the canvas rect is the region
-    // a repaint would have to cover.
-    if taffy.child_count(node_id) == 0
-        && taffy
-            .get_node_context(node_id)
-            .is_some_and(|ctx| ctx.dynamic)
-    {
-        Rect::union_bounds(&mut result.dynamic_bounds, (x, y, w, h).into());
-        result.dynamic_rects.push((x, y, w, h).into());
-        result.dynamic_node_count += 1;
-    }
+    // The index this node's canvas draws key their transition state on, read
+    // before the walk below advances it.
+    let canvas_index = anim_ctx.canvas_index;
 
     if let Some(ctx) = taffy.get_node_context(node_id) {
         if !emits {
@@ -3033,6 +3023,50 @@ pub(crate) fn render_taffy_node(
                 anim_ctx.has_active = true;
             }
             renderer.pop_scissor();
+        }
+    }
+
+    // Record what a damage-tracked frame would have to repaint. Leaves only:
+    // `dynamic` on a container merely says a descendant animates, so counting
+    // containers would union the whole subtree and report the root as damaged.
+    //
+    // After the draws above, not before: that pass is what advances each
+    // transition's recorded span, and a rect taken beforehand would describe the
+    // span the *previous* walk interpolated — one guest frame stale, so a target
+    // the guest has just moved would sweep outside it.
+    if taffy.child_count(node_id) == 0
+        && let Some(ctx) = taffy.get_node_context(node_id)
+        && ctx.dynamic
+    {
+        let node = Rect::new(x, y, w, h);
+        // A canvas is one leaf holding many draws, so its own rect is far
+        // coarser than the draws that actually move; `crate::damage` bounds each
+        // of those, and only one it cannot bound falls back to the whole canvas.
+        // A dynamic leaf with no draws at all is host-driven — a time label, a
+        // progress bar, a modal — and repaints entirely.
+        let mut damaged = ctx.draws.is_empty().then_some(node);
+        for draw in ctx
+            .draws
+            .iter()
+            .filter(|d| crate::partition::draw_is_dynamic(d))
+        {
+            let bounded = crate::damage::canvas_draw_damage(
+                draw,
+                node,
+                anim_ctx.transition_states,
+                canvas_index,
+            );
+            if let Some(rect) = bounded {
+                Rect::union_bounds(&mut damaged, rect);
+            } else {
+                damaged = Some(node);
+                break;
+            }
+        }
+        if let Some(damaged) = damaged {
+            Rect::union_bounds(&mut result.dynamic_bounds, damaged);
+            result.dynamic_rects.push(damaged);
+            result.dynamic_node_count += 1;
         }
     }
 

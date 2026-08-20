@@ -1254,7 +1254,7 @@ fn animation_key(def: &HostAnimationDef, draw_counter: u32) -> u64 {
 
 /// Extract the static values from a draw command's innermost content for transition tracking.
 #[expect(clippy::too_many_lines)]
-fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
+pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
     match draw {
         DrawCommand::Bitmap { x, y, w, h, .. } | DrawCommand::NinePatch { x, y, w, h, .. } => {
             PrevDrawValues {

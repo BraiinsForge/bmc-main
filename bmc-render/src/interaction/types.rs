@@ -87,10 +87,7 @@ impl Rect {
     /// Check if a point is inside the rectangle.
     #[must_use]
     pub fn contains(&self, px: f32, py: f32) -> bool {
-        px >= self.x
-        && py >= self.y
-        && px < self.x + self.w
-        && py < self.y + self.h
+        px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
     }
 
     /// Area for hit-test specificity (smaller area = more specific target).
@@ -109,6 +106,15 @@ impl Rect {
         self.h = y1 - self.y;
     }
 
+    /// Whether the two rectangles share any area.
+    #[must_use]
+    pub fn overlaps(&self, other: Rect) -> bool {
+        self.x < other.x + other.w
+            && other.x < self.x + self.w
+            && self.y < other.y + other.h
+            && other.y < self.y + self.h
+    }
+
     /// Grow `bounds` to include `rect`.
     pub fn union_bounds(bounds: &mut Option<Rect>, rect: Rect) {
         if let Some(bounds) = bounds {
@@ -116,6 +122,39 @@ impl Rect {
         } else {
             *bounds = Some(rect);
         }
+    }
+
+    /// Merge overlapping rectangles in place into their bounding unions until none overlap.
+    ///
+    /// The damage set spans two walks, so anything still moving contributes a rect
+    /// per walk — near-identical ones for content that barely moved. Left alone each
+    /// is scissored and drawn separately, painting the same pixels twice and
+    /// counting them twice against `BMC_DAMAGE_MAX_PCT`; an analog clock's hands
+    /// crossed that cap on the double count alone and fell back to full repaints.
+    ///
+    /// Merging to the bounding box can cover pixels neither input did, which is
+    /// sound for damage (it only ever repaints more) and pays here because the
+    /// inputs are near-duplicates. The lists are a handful of rects per frame, so
+    /// the repeated rescan costs nothing worth optimising.
+    #[must_use]
+    pub fn coalesce(mut rects: Vec<Rect>) -> Vec<Rect> {
+        let mut head: usize = 0;
+        while head < rects.len() {
+            let mut i = head + 1;
+            while i < rects.len() {
+                if rects[head].overlaps(rects[i]) {
+                    let other = rects.swap_remove(i);
+                    rects[head].union(other);
+                    i = head + 1;
+                } else {
+                    i += 1;
+                }
+            }
+            head += 1;
+        }
+
+        rects.shrink_to_fit();
+        rects
     }
 }
 
@@ -136,3 +175,25 @@ impl From<(f32, f32, f32, f32)> for Rect {
         Self { x, y, w, h }
     }
 }
+
+pub trait Coalesce {
+    #[must_use]
+    fn coalesce(self) -> Self;
+}
+
+impl Coalesce for Vec<Rect> {
+    /// Works in place.
+    fn coalesce(self) -> Self {
+        Rect::coalesce(self)
+    }
+}
+
+pub trait CoalesceIterExt: Iterator<Item = Rect> + Sized {
+    /// Allocates Vec<Rect> for N rects.
+    fn coalesce(self) -> Vec<Rect> {
+        let rects: Vec<Rect> = self.collect();
+        Rect::coalesce(rects)
+    }
+}
+
+impl<I: Iterator<Item = Rect>> CoalesceIterExt for I {}

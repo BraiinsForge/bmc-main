@@ -43,7 +43,11 @@ use taffy::prelude::*;
 use bmc_render::interaction::InteractionState;
 use bmc_render::renderer::Renderer;
 use bmc_render::tree::NodeContext;
-use bmc_render::{AnimationState, ModalState, ScrollState, TransitionState, interaction::Rect, TransitionStateKey};
+use bmc_render::{
+    AnimationState, ModalState, ScrollState, TransitionState, TransitionStateKey,
+    interaction::{CoalesceIterExt, Rect},
+};
+
 use bmc_wasm_protocol::{
     AudioId, FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, ImageJobId, JsonId,
     MdnsBrowseId, MdnsRegId, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId, XmlId,
@@ -1615,19 +1619,15 @@ impl HostState {
 /// (default 60): past that the bookkeeping and the extra draw calls cost more
 /// than the pixels they save, and a widget that animates its whole surface
 /// should not pay for tracking that can never help it.
-pub fn damage_rects(
-    recent: &[Vec<Rect>; 2],
-    width: f32,
-    height: f32,
-) -> Vec<Rect> {
+pub fn damage_rects(recent: &[Vec<Rect>; 2], width: f32, height: f32) -> Vec<Rect> {
     let surface = width * height;
     if surface <= 0.0 || recent.iter().all(Vec::is_empty) {
         return Vec::new();
     }
-    let rects: Vec<_> = recent.iter().flatten().copied().collect();
-    // Overlapping rectangles are counted twice, which overstates the area and
-    // so only ever errs toward a full repaint.
-    let covered: f32 = rects.iter().map(|Rect {w, h, ..}| w * h).sum();
+    let rects = recent.iter().flatten().copied().coalesce();
+    // Rectangles that survive coalescing are disjoint, so this is the real
+    // covered area rather than an over-count.
+    let covered: f32 = rects.iter().map(|Rect { w, h, .. }| w * h).sum();
     if covered / surface > damage_max_fraction() {
         return Vec::new();
     }
@@ -1654,8 +1654,9 @@ mod tests {
     use super::{
         CancelDisposition, CompletedFetch, DecodedImage, DelayedFetch, FetchCompletionContext,
         FetchRequestKey, FetchState, FrameScheduleState, HermeticRun, HostState,
-        MAX_FETCH_URL_BYTES, RendererAssetGate,
+        MAX_FETCH_URL_BYTES, RendererAssetGate, damage_rects,
     };
+    use bmc_render::interaction::Rect;
     use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
     use crate::image_decode_lock::ImageDecodePermit;
@@ -2133,6 +2134,44 @@ mod tests {
         s.host_frame_delay_ms = Some(1_000);
         s.has_active_animations = true;
         assert_eq!(s.effective_delay_ms(0), Some(33));
+    }
+
+    #[test]
+    fn overlapping_damage_from_two_walks_merges_into_one_rect() {
+        // What the clock produces: a hand's rect from each walk, a couple of
+        // pixels apart, plus a separate region elsewhere on the surface.
+        let recent = [
+            vec![
+                Rect::new(100.0, 100.0, 200.0, 200.0),
+                Rect::new(0.0, 0.0, 10.0, 10.0),
+            ],
+            vec![Rect::new(102.0, 100.0, 200.0, 200.0)],
+        ];
+        let mut rects = damage_rects(&recent, 1280.0, 480.0);
+        rects.sort_by(|a, b| a.x.total_cmp(&b.x));
+        let corners: Vec<(f32, f32, f32, f32)> = rects.into_iter().map(Into::into).collect();
+        assert_eq!(
+            corners,
+            [(0.0, 0.0, 10.0, 10.0), (100.0, 100.0, 202.0, 200.0)],
+            "the two hand rects merge; the disjoint one is left alone"
+        );
+    }
+
+    #[test]
+    fn the_cap_is_measured_on_the_merged_area_not_the_double_count() {
+        // Two walks of the same 35%-of-surface region: 70% counted separately,
+        // 35% once merged — the difference decides whether tracking survives.
+        let region = Rect::new(0.0, 0.0, 1280.0 * 0.35, 480.0);
+        let recent = [vec![region], vec![region]];
+        let merged: Vec<(f32, f32, f32, f32)> = damage_rects(&recent, 1280.0, 480.0)
+            .into_iter()
+            .map(Into::into)
+            .collect();
+        assert_eq!(
+            merged,
+            [region.into()],
+            "a widget under the cap must not be pushed over it by its own history"
+        );
     }
 
     #[test]
