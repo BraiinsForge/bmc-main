@@ -330,7 +330,14 @@ impl Default for DeviceInfoOverlay {
 }
 
 impl DeviceInfoOverlay {
-    fn ssid(&self) -> Option<String> {
+    /// The network the setup flow is joining: the target named by the event
+    /// where there is one, else the saved station network, which is what
+    /// a SetupPending boot has, since it never sees a `connecting_to_wifi`.
+    ///
+    /// Setup screens only. The operational screens describe the network
+    /// the device is configured for, so they read the prober directly
+    /// rather than inherit a join target that has outlived its flow.
+    fn setup_ssid(&self) -> Option<String> {
         self.target_ssid
             .clone()
             .or_else(|| self.station_ssid.clone())
@@ -343,19 +350,27 @@ impl DeviceInfoOverlay {
             Screen::SetupStart { .. } => DeviceInfoView::SetupStart {
                 ap: self.ap.clone(),
             },
-            Screen::SetupConnecting => DeviceInfoView::SetupConnecting { ssid: self.ssid() },
-            Screen::SetupConnected { .. } => DeviceInfoView::SetupConnected { ssid: self.ssid() },
+            Screen::SetupConnecting => DeviceInfoView::SetupConnecting {
+                ssid: self.setup_ssid(),
+            },
+            Screen::SetupConnected { .. } => DeviceInfoView::SetupConnected {
+                ssid: self.setup_ssid(),
+            },
             Screen::SetupConnectInfo { ip } => DeviceInfoView::SetupConnectInfo {
                 ip,
-                ssid: self.ssid(),
+                ssid: self.setup_ssid(),
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
             Screen::SetupError { .. } => DeviceInfoView::SetupError,
             Screen::SetupFatal { restarting } => DeviceInfoView::SetupFatal { restarting },
             Screen::OpUpgraded { .. } => DeviceInfoView::UpgradeSuccess,
-            Screen::OpConnecting { .. } => DeviceInfoView::Connecting { ssid: self.ssid() },
+            Screen::OpConnecting { .. } => DeviceInfoView::Connecting {
+                ssid: self.station_ssid.clone(),
+            },
             Screen::OpSuccess { ip, .. } => DeviceInfoView::Success { ip },
-            Screen::OpFailed { .. } => DeviceInfoView::Failed { ssid: self.ssid() },
+            Screen::OpFailed { .. } => DeviceInfoView::Failed {
+                ssid: self.station_ssid.clone(),
+            },
         }
     }
 
@@ -706,6 +721,28 @@ mod tests {
         overlay.on_setup_progress(SetupStep::DeviceSetupSuccess, "");
         let _ = overlay.tick(start + HOLD + HOLD);
         assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn a_join_target_never_reaches_the_operational_screens() {
+        // The target belongs to the setup flow. The operational screens name
+        // the network the device is configured for, which is the prober's.
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::SetupConnecting {
+                ssid: Some("HomeNet".to_owned())
+            }
+        );
+
+        overlay.screen = Screen::OpConnecting { since: t0() };
+        assert_eq!(
+            overlay.view(),
+            DeviceInfoView::Connecting { ssid: None },
+            "the stale target must not survive into the connect screen"
+        );
     }
 
     #[test]
