@@ -1116,9 +1116,6 @@ struct HotReload {
     manual_reload: bool,
     /// Where the cycle has got to, as the chip and the failure bar read it.
     status: hot::HotStatus,
-    /// Whether the failed build's report is open, kept across the frame the
-    /// bar was clicked in.
-    report_open: bool,
     /// The thread building the widget, and the build it has in flight.
     /// `None` when there is no widget root to watch, so nothing to build.
     source: Option<hot::SourceWatcher>,
@@ -1289,7 +1286,6 @@ impl TestbedApp {
                 watcher_rx,
                 manual_reload: false,
                 status: hot_status,
-                report_open: false,
                 source: source_watcher,
             },
             perf: PerfState {
@@ -2076,13 +2072,18 @@ fn paint_placeholder(
     );
 }
 
-fn paint_tile_texture(ui: &egui::Ui, tile: &DeviceView, rect: egui::Rect) {
+fn paint_tile_texture(
+    ui: &egui::Ui,
+    tile: &DeviceView,
+    rect: egui::Rect,
+    palette: &theme::Palette,
+) {
     // FemtoVG renders bottom-up into the FBO; flip V to display top-down.
     let uv = egui::Rect::from_min_max(egui::pos2(0.0, 1.0), egui::pos2(1.0, 0.0));
     ui.painter()
         .image(tile.tex_id(), rect, uv, egui::Color32::WHITE);
     if paint::is_round(tile.shape) {
-        paint::paint_round_overlay(ui.painter(), rect);
+        paint::paint_round_overlay(ui.painter(), rect, palette);
     }
 }
 

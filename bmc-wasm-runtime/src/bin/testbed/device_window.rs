@@ -623,7 +623,7 @@ impl TestbedApp {
                 ui.painter().rect_filled(rect, 0.0, palette.layer_accent);
                 continue;
             }
-            super::paint_tile_texture(ui, view, rect);
+            super::paint_tile_texture(ui, view, rect, palette);
             debug_outline(ui, rect, "view", egui::Align2::LEFT_TOP);
             // A choose overlay per candidate viewport: clicking it is what
             // starts the take, so it swallows the view's touch input.
@@ -737,7 +737,9 @@ impl TestbedApp {
             n => format!("{n} datasets recorded"),
         };
         let fill = egui::Color32::from_black_alpha(210);
-        let title_colour = ui.visuals().strong_text_color();
+        // The pill is dark on either theme, so the chrome's own text colour
+        // has nothing to do with the contrast that matters here.
+        let title_colour = palette.text_on_color;
         let detail_colour = accent;
 
         let title =

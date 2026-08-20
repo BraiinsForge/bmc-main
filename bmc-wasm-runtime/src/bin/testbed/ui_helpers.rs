@@ -222,10 +222,6 @@ pub(super) fn dialog_surface(palette: &Palette) -> egui::Frame {
     }
 }
 
-/// How much of the canvas a dialog's backdrop takes out. Heavy, since the
-/// surface carries no border or shadow to separate it from the mock behind.
-pub(super) const DIALOG_BACKDROP_ALPHA: u8 = 200;
-
 /// The dialog body's inset from its surface.
 pub(super) const DIALOG_PAD: i8 = spacing::S05 as i8;
 

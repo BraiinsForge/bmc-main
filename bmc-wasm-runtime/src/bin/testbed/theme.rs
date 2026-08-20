@@ -64,6 +64,13 @@ pub(crate) struct Palette {
     /// Separators between control groups.
     pub(crate) border_subtle: Color32,
 
+    /// Backdrop behind a dialog, taking the canvas out of play while it is up.
+    pub(crate) backdrop: Color32,
+    /// Scrim over the corners a round display cannot light.
+    /// Thinner than [`Self::backdrop`], which has a whole canvas to subdue where
+    /// this has only the margin of one mock, and thinner again on the light theme.
+    pub(crate) display_unlit: Color32,
+
     /// Recording mode's identity, carried by everything the mode owns —
     /// the toolbar chip, the choose overlays, the take's panel.
     pub(crate) accent_record: Color32,
@@ -73,6 +80,7 @@ pub(crate) struct Palette {
     // which is something to click.
     pub(crate) support_success: Color32,
     pub(crate) support_error: Color32,
+    pub(crate) support_warning: Color32,
 
     // `action_*` — what the operator clicks to commit something.
     /// The primary action of a dialog, and the selection highlight — one
@@ -111,10 +119,13 @@ pub(crate) const DARK: Palette = Palette {
     field: swatch::GRAY_80.to_egui(),
     field_hover: swatch::GRAY_70.to_egui(),
     border_subtle: swatch::GRAY_80.to_egui(),
+    backdrop: Color32::from_black_alpha(170),
+    display_unlit: Color32::from_black_alpha(170),
     accent_record: swatch::ORANGE_50.to_egui(),
     accent_record_hover: swatch::ORANGE_60.to_egui(),
     support_success: swatch::GREEN_60.to_egui(),
     support_error: swatch::RED_60.to_egui(),
+    support_warning: swatch::YELLOW_30.to_egui(),
     action_primary: swatch::VIOLET_60.to_egui(),
     action_primary_hover: swatch::VIOLET_70.to_egui(),
     action_danger: swatch::RED_60.to_egui(),
@@ -140,10 +151,13 @@ pub(crate) const LIGHT: Palette = Palette {
     field: swatch::WHITE.to_egui(),
     field_hover: swatch::GRAY_20.to_egui(),
     border_subtle: swatch::GRAY_30.to_egui(),
+    backdrop: Color32::from_black_alpha(150),
+    display_unlit: Color32::from_black_alpha(110),
     accent_record: swatch::ORANGE_50.to_egui(),
     accent_record_hover: swatch::ORANGE_60.to_egui(),
     support_success: swatch::GREEN_60.to_egui(),
     support_error: swatch::RED_60.to_egui(),
+    support_warning: swatch::YELLOW_30.to_egui(),
     action_primary: swatch::VIOLET_60.to_egui(),
     action_primary_hover: swatch::VIOLET_70.to_egui(),
     action_danger: swatch::RED_60.to_egui(),
@@ -173,6 +187,19 @@ pub(crate) mod size {
     pub(crate) const XS: f32 = 24.0;
     /// A dialog's footer actions, which carry the weight of the decision.
     pub(crate) const LG: f32 = 48.0;
+}
+
+/// How much of a support colour survives when it is thinned to a surface:
+/// enough to tint the `layer` beneath it on either theme, never enough
+/// to carry text of its own.
+const WASH: f32 = 0.16;
+
+impl Palette {
+    /// The surface a failure states itself on: `support_error` thinned
+    /// by [`WASH`], so the header reads as a washed `layer`, not a red panel.
+    pub(crate) fn support_error_wash(&self) -> Color32 {
+        self.support_error.gamma_multiply(WASH)
+    }
 }
 
 /// The shadow under something floating clear of the chrome — a banner over

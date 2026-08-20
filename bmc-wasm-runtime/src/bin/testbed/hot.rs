@@ -332,9 +332,10 @@ fn build(widget_root: &Path, workspace: &Path, hot: &HotStatus, watcher: &Source
         .arg(widget_root.join("Cargo.toml"))
         .arg("--target")
         .arg(WASM_TARGET)
-        // Records on stdout, each diagnostic rendered by rustc: the window
-        // shows the same text a terminal would.
-        .arg("--message-format=json")
+        // Records on stdout, each diagnostic rendered by rustc with the SGR
+        // codes it would print to a terminal: the window colours the report
+        // from rustc's own markup rather than guessing at the text.
+        .arg("--message-format=json-diagnostic-rendered-ansi")
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 

@@ -19,27 +19,28 @@
 // the grant above.
 
 //! What the rebuild cycle looks like: a chip in the status bar, and — while a
-//! build is failing — a bar over the canvas that opens what cargo said.
+//! build is failing — what cargo said, over the canvas.
 //!
 //! The widget on screen is the last one that built, so a failure has to say
 //! so: without it the canvas looks like an edit that simply did nothing.
 
 use super::TestbedApp;
-use super::hot::{BuildFailure, HotPhase, MessageLevel};
-
-/// Gold while something is happening, green for a cycle that came out, red
-/// for one that did not.
-const BUSY: egui::Color32 = egui::Color32::from_rgb(0xC8, 0x9B, 0x3C);
-const DONE: egui::Color32 = egui::Color32::from_rgb(0x6C, 0xC8, 0x7A);
-const BROKEN: egui::Color32 = egui::Color32::from_rgb(0xE0, 0x6C, 0x6C);
-
-/// What the failure bar is filled with: dark enough not to glow, loud enough
-/// not to read as chrome.
-const BAR_FILL: egui::Color32 = egui::Color32::from_rgb(0x4A, 0x1D, 0x1D);
+use super::hot::{BuildFailure, HotPhase};
+use super::theme::spacing;
 
 /// The box the chip's mark is drawn in, and the gap between it and the words.
 const MARK: f32 = 9.0;
 const MARK_GAP: f32 = 5.0;
+
+/// The failure box: the widest it grows to, the share of the canvas its log
+/// may take before scrolling, and its inner inset.
+const BOX_MAX_W: f32 = 720.0;
+const BOX_MAX_H_SHARE: f32 = 0.65;
+const BOX_PAD: i8 = spacing::S05 as i8;
+
+/// The header's mark and its type.
+const HEAD_ICON: f32 = 16.0;
+const HEAD_TEXT: f32 = 15.0;
 
 /// How a phase reads on the chip.
 struct Chip {
@@ -54,8 +55,9 @@ impl TestbedApp {
     /// Its mark is drawn rather than typed, because a glyph comes from
     /// whichever fallback face has it, at that face's weight and baseline.
     pub(super) fn paint_hot_chip(&mut self, ui: &mut egui::Ui) {
+        let palette = self.theme.palette(ui.ctx());
         let phase = self.hot_reload.status.phase();
-        let chip = describe(&phase);
+        let chip = describe(&phase, palette);
         let words = ui.painter().layout_no_wrap(
             chip.text,
             egui::TextStyle::Body.resolve(ui.style()),
@@ -77,59 +79,76 @@ impl TestbedApp {
         response.on_hover_text(chip.hover);
     }
 
-    /// The bar over the canvas while a build is failing, and the report a
-    /// click on it opens.
+    /// What cargo said, over the canvas, for as long as the build is failing.
+    ///
+    /// A foreground area rather than a panel: egui stacks the device windows
+    /// above panels, and one of them would cover it.
     pub(super) fn paint_build_failure(&mut self, ctx: &egui::Context) {
         let HotPhase::Failed(failure) = self.hot_reload.status.phase() else {
-            self.hot_reload.report_open = false;
             return;
         };
+        let palette = self.theme.palette(ctx);
+        let icon = &mut self.icons.warning;
 
-        let mut clicked = false;
-        egui::TopBottomPanel::top("build_failure")
-            .frame(
+        // Last frame's: the CentralPanel measures the canvas further down,
+        // and only a sidebar toggle moves it.
+        let over = self.canvas.rect;
+        // The box is content-sized, so its centre is reached as an offset
+        // from the rect `Area` anchors within.
+        let off_centre = over.center() - ctx.content_rect().center();
+        let width = BOX_MAX_W.min(over.width());
+        let inner = width - f32::from(BOX_PAD) * 2.0;
+        let budget = over.height() * BOX_MAX_H_SHARE;
+
+        egui::Area::new(egui::Id::new("build_failure"))
+            .order(egui::Order::Foreground)
+            .anchor(egui::Align2::CENTER_CENTER, off_centre)
+            .show(ctx, |area| {
+                area.painter()
+                    .with_clip_rect(over)
+                    .rect_filled(over, 0.0, palette.backdrop);
+                // `Area` sizes this ui from the previous frame, so a `ScrollArea`
+                // in it never grows past what it first settled at.
+                area.set_max_height(budget);
                 egui::Frame::NONE
-                    .fill(BAR_FILL)
-                    .inner_margin(egui::Margin::symmetric(8, 4)),
-            )
-            .show_separator_line(false)
-            .show(ctx, |ui| {
-                let bar = ui
-                    .horizontal(|row| {
-                        row.label(
-                            egui::RichText::new(headline(&failure))
-                                .color(BROKEN)
-                                .strong(),
-                        );
-                        row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
-                            end.label(
-                                egui::RichText::new("Click for what cargo said")
-                                    .color(end.visuals().weak_text_color()),
-                            );
-                        });
-                    })
-                    .response
-                    .interact(egui::Sense::click());
-                if bar.hovered() {
-                    ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
-                }
-                clicked = bar.clicked();
+                    .fill(palette.layer)
+                    .stroke(egui::Stroke::new(1.0_f32, palette.border_subtle))
+                    .shadow(super::theme::OVERLAY_SHADOW)
+                    .show(area, |ui| {
+                        ui.set_width(width);
+                        ui.spacing_mut().item_spacing.y = 0.0;
+                        egui::Frame::NONE
+                            .fill(palette.support_error_wash())
+                            .inner_margin(egui::Margin::same(BOX_PAD))
+                            .show(ui, |head| {
+                                head.set_width(inner);
+                                head.horizontal(|row| {
+                                    row.spacing_mut().item_spacing.x = spacing::S03;
+                                    let (mark, _) = row.allocate_exact_size(
+                                        egui::Vec2::splat(HEAD_ICON),
+                                        egui::Sense::hover(),
+                                    );
+                                    icon.paint(row, mark, palette.support_error);
+                                    row.label(
+                                        egui::RichText::new(headline(&failure))
+                                            .color(palette.support_error)
+                                            .strong()
+                                            .size(HEAD_TEXT),
+                                    );
+                                });
+                            });
+                        egui::Frame::NONE
+                            .inner_margin(egui::Margin::same(BOX_PAD))
+                            .show(ui, |body| {
+                                body.set_width(inner);
+                                egui::ScrollArea::vertical()
+                                    .max_height(budget)
+                                    // Width fills; height collapses for a short log.
+                                    .auto_shrink([false, true])
+                                    .show(body, |ui| paint_report(ui, &failure, palette));
+                            });
+                    });
             });
-        if clicked {
-            self.hot_reload.report_open = !self.hot_reload.report_open;
-        }
-
-        if self.hot_reload.report_open {
-            let report = egui::Modal::new(egui::Id::new("build_report")).show(ctx, |ui| {
-                // The modal's bound, not the report's, so a long build log
-                // scrolls rather than growing the window off the screen.
-                ui.set_max_size(ctx.content_rect().size() * 0.8);
-                paint_report(ui, &failure);
-            });
-            if report.should_close() {
-                self.hot_reload.report_open = false;
-            }
-        }
     }
 }
 
@@ -164,39 +183,43 @@ fn paint_mark(painter: &egui::Painter, at: egui::Pos2, phase: &HotPhase, colour:
     }
 }
 
-fn describe(phase: &HotPhase) -> Chip {
+fn describe(phase: &HotPhase, palette: &super::theme::Palette) -> Chip {
     let (text, colour, hover) = match phase {
         HotPhase::Watching => (
             "Watching".to_owned(),
-            egui::Color32::from_gray(140),
+            palette.text_disabled,
             "editing the widget's source rebuilds it".to_owned(),
         ),
         HotPhase::Changed => (
             "Changed".to_owned(),
-            BUSY,
+            palette.support_warning,
             "an edit landed; building once it stops".to_owned(),
         ),
         HotPhase::Building { since } => (
             format!("Building {:.1}s", since.elapsed().as_secs_f32()),
-            BUSY,
+            palette.support_warning,
             "cargo is rebuilding the widget".to_owned(),
         ),
         HotPhase::Swapping { .. } => (
             "Swapping".to_owned(),
-            BUSY,
+            palette.support_warning,
             "built; loading it into the views".to_owned(),
         ),
         HotPhase::Reloaded { took, .. } => (
             format!("Reloaded · {:.1}s", took.as_secs_f32()),
-            DONE,
+            palette.support_success,
             "what the views run is the edit's".to_owned(),
         ),
         HotPhase::Failed(_) => (
             "Build failed".to_owned(),
-            BROKEN,
+            palette.support_error,
             "the views run the last widget that built".to_owned(),
         ),
-        HotPhase::Stopped { why } => ("Not watching".to_owned(), BROKEN, why.clone()),
+        HotPhase::Stopped { why } => (
+            "Not watching".to_owned(),
+            palette.support_error,
+            why.clone(),
+        ),
     };
     Chip {
         text,
@@ -215,34 +238,48 @@ fn headline(failure: &BuildFailure) -> String {
     }
 }
 
-/// The whole of what cargo said, each message in the colour of what it weighs.
-fn paint_report(ui: &mut egui::Ui, failure: &BuildFailure) {
-    ui.horizontal(|row| {
-        row.label(
-            egui::RichText::new("What cargo said")
-                .color(BROKEN)
-                .strong(),
-        );
-        row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |end| {
-            if super::ui_helpers::with_pointer(end.button("Close")).clicked() {
-                end.close();
-            }
-        });
-    });
-    ui.separator();
-    egui::ScrollArea::both().show(ui, |ui| {
-        ui.spacing_mut().item_spacing.y = 8.0;
-        for message in &failure.messages {
-            let colour = match message.level {
-                MessageLevel::Error => BROKEN,
-                MessageLevel::Warning => BUSY,
-                MessageLevel::Note => ui.visuals().text_color(),
-            };
-            ui.label(
-                egui::RichText::new(message.text.trim_end())
-                    .monospace()
-                    .color(colour),
-            );
-        }
-    });
+/// The whole of what cargo said, coloured by rustc's own markup.
+fn paint_report(ui: &mut egui::Ui, failure: &BuildFailure, palette: &super::theme::Palette) {
+    ui.spacing_mut().item_spacing.y = spacing::S03;
+    let theme = report_theme(ui, palette);
+    for message in &failure.messages {
+        ui.label(egui_sgr::ansi_to_layout_job(
+            message.text.trim_end(),
+            &theme,
+        ));
+    }
+}
+
+/// rustc's SGR palette, re-pointed at the theme's.
+///
+/// Only the eight basic slots move, with their bright twins: rustc colours
+/// diagnostics out of those. Blue deliberately lands on `text_disabled`,
+/// since rustc spends it on the gutter and the `-->` line, not on content.
+fn report_theme(ui: &egui::Ui, palette: &super::theme::Palette) -> egui_sgr::EguiAnsiTheme {
+    let base = ui.visuals().text_color();
+    let mut theme = egui_sgr::EguiAnsiTheme::xterm();
+    theme.default_format = egui::TextFormat {
+        font_id: egui::TextStyle::Monospace.resolve(ui.style()),
+        color: base,
+        ..Default::default()
+    };
+    theme.default_foreground = base;
+    theme.default_background = egui::Color32::TRANSPARENT;
+    for (slot, colour) in [
+        palette.text_disabled,
+        palette.support_error,
+        palette.support_success,
+        palette.support_warning,
+        palette.text_disabled,
+        palette.action_primary,
+        palette.action_primary,
+        base,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        theme.palette[slot] = colour;
+        theme.palette[slot + 8] = colour;
+    }
+    theme
 }

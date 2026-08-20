@@ -706,11 +706,18 @@ pub(super) fn circle_outside_spans(x: f32, width: f32, height: f32) -> (f32, f32
 }
 
 /// Draw the round visible-area treatment over a tile rect.
-pub(super) fn paint_round_overlay(painter: &egui::Painter, rect: egui::Rect) {
+///
+/// The corners are scrimmed rather than filled, so a widget's overdraw
+/// outside the circle stays visible to whoever caused it.
+pub(super) fn paint_round_overlay(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    palette: &super::theme::Palette,
+) {
     if rect.width() < 2.0 || rect.height() < 2.0 {
         return;
     }
-    let dim = egui::Color32::from_rgba_unmultiplied(10, 10, 14, 200);
+    let dim = palette.display_unlit;
     let cols = rect.width().ceil() as usize;
     for col in 0..cols {
         let x = col as f32;
@@ -737,10 +744,7 @@ pub(super) fn paint_round_overlay(painter: &egui::Painter, rect: egui::Rect) {
     painter.circle_stroke(
         center,
         radius,
-        egui::Stroke::new(
-            1.5_f32,
-            egui::Color32::from_rgba_unmultiplied(200, 200, 220, 160),
-        ),
+        egui::Stroke::new(1.5_f32, palette.border_subtle),
     );
 }
 

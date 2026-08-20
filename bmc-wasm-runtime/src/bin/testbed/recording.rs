@@ -32,8 +32,8 @@ use bmc_wasm_runtime::unified_fixture::{
 use super::TestbedApp;
 use super::theme::spacing;
 use super::ui_helpers::{
-    DIALOG_BACKDROP_ALPHA, DialogPrimary, FooterClick, dialog_body, dialog_footer, dialog_header,
-    dialog_surface, target_name, text_field,
+    DialogPrimary, FooterClick, dialog_body, dialog_footer, dialog_header, dialog_surface,
+    target_name, text_field,
 };
 use super::view::DeviceView;
 
@@ -1322,7 +1322,7 @@ impl TestbedApp {
 
         let dialog = egui::Modal::new(egui::Id::new("record_dataset"))
             .frame(dialog_surface(palette))
-            .backdrop_color(egui::Color32::from_black_alpha(DIALOG_BACKDROP_ALPHA))
+            .backdrop_color(palette.backdrop)
             .show(ctx, |ui| {
                 ui.set_width(DIALOG_W);
                 let verdict = recorded.judge(&naming.dataset, target);
