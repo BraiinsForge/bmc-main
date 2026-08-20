@@ -536,8 +536,6 @@ fn run_unified_capture(
     let mut frame_count: u32 = 0;
     let mut captured_count: u32 = 0;
     let mut event_cursor: usize = 0;
-    // Coalesced-render gate for the advance loop;
-    // inert unless the widget's config opts in via `honor_frame_schedule`.
     let mut gate = FrameGate::default();
 
     // Process all user events by advancing time to each one
@@ -546,19 +544,21 @@ fn run_unified_capture(
         // Convert to monotonic time: monotonic = recorded + (monotonic - fixture).
         let target_ms = user_events[event_cursor].at_ms + (monotonic_ms - fixture_ms);
 
-        // Advance to the event's timestamp. I/O is delivered every tick;
-        // the render is gated on the widget's cadence when opted in
-        // (see `FrameGate`), otherwise every tick force-renders as before.
+        // Advance to the event's timestamp. I/O is delivered every tick,
+        // but the render is gated on the widget's own cadence.
         while monotonic_ms < target_ms {
             runtime.set_time(system_time, monotonic_ms);
             runtime.inject_fixture_events(fixture_ms);
             deliver_all_io(&mut runtime, &mut renderer)?;
-            if !config.honor_frame_schedule || gate.due(&runtime, monotonic_ms) {
-                if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                    bail!("widget died at frame {frame_count}");
-                }
-                unsafe { gl.flush() };
-                gate.rendered(&runtime, monotonic_ms);
+            if gate.due(&runtime, monotonic_ms) {
+                gate.render(
+                    &mut runtime,
+                    &mut renderer,
+                    ctx,
+                    &gl,
+                    frame_count,
+                    monotonic_ms,
+                )?;
             }
 
             monotonic_ms += u64::from(DELTA_MS);
@@ -582,10 +582,15 @@ fn run_unified_capture(
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime, &mut renderer)?;
-                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                            bail!("widget died during settle at frame {frame_count}");
-                        }
-                        unsafe { gl.flush() };
+                        gate.render(
+                            &mut runtime,
+                            &mut renderer,
+                            ctx,
+                            &gl,
+                            frame_count,
+                            monotonic_ms,
+                        )
+                        .context("while settling before the capture")?;
                         monotonic_ms += u64::from(DELTA_MS);
                         fixture_ms += u64::from(DELTA_MS);
                         system_time += chrono::Duration::milliseconds(i64::from(DELTA_MS));
@@ -611,10 +616,15 @@ fn run_unified_capture(
                         }
                         std::thread::sleep(std::time::Duration::from_millis(2));
                         deliver_all_io(&mut runtime, &mut renderer)?;
-                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                            bail!("widget died draining I/O at frame {frame_count}");
-                        }
-                        unsafe { gl.flush() };
+                        gate.render(
+                            &mut runtime,
+                            &mut renderer,
+                            ctx,
+                            &gl,
+                            frame_count,
+                            monotonic_ms,
+                        )
+                        .context("while draining I/O")?;
                     }
 
                     // How many frames to capture and at what interval
@@ -657,10 +667,14 @@ fn run_unified_capture(
                             runtime.set_time(system_time, monotonic_ms);
                             runtime.inject_fixture_events(fixture_ms);
                             deliver_all_io(&mut runtime, &mut renderer)?;
-                            if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                                bail!("widget died at frame {frame_count}");
-                            }
-                            unsafe { gl.flush() };
+                            gate.render(
+                                &mut runtime,
+                                &mut renderer,
+                                ctx,
+                                &gl,
+                                frame_count,
+                                monotonic_ms,
+                            )?;
                             monotonic_ms += u64::from(DELTA_MS);
                             system_time += chrono::Duration::milliseconds(i64::from(DELTA_MS));
                             frame_count += 1;
@@ -670,10 +684,14 @@ fn run_unified_capture(
                         runtime.set_time(system_time, monotonic_ms);
                         runtime.inject_fixture_events(fixture_ms);
                         deliver_all_io(&mut runtime, &mut renderer)?;
-                        if !render_frame(&mut runtime, &mut renderer, ctx, frame_count) {
-                            bail!("widget died at frame {frame_count}");
-                        }
-                        unsafe { gl.flush() };
+                        gate.render(
+                            &mut runtime,
+                            &mut renderer,
+                            ctx,
+                            &gl,
+                            frame_count,
+                            monotonic_ms,
+                        )?;
 
                         let path = ctx
                             .output_dir
@@ -726,6 +744,7 @@ fn run_unified_capture(
                         &mut renderer,
                         ctx,
                         &gl,
+                        &mut gate,
                         &mut monotonic_ms,
                         &mut fixture_ms,
                         &mut system_time,
@@ -737,6 +756,7 @@ fn run_unified_capture(
                         &mut renderer,
                         ctx,
                         &gl,
+                        &mut gate,
                         &mut monotonic_ms,
                         &mut fixture_ms,
                         &mut system_time,
@@ -761,6 +781,7 @@ fn run_unified_capture(
                         &mut renderer,
                         ctx,
                         &gl,
+                        &mut gate,
                         &mut monotonic_ms,
                         &mut fixture_ms,
                         &mut system_time,
@@ -778,6 +799,7 @@ fn run_unified_capture(
                             &mut renderer,
                             ctx,
                             &gl,
+                            &mut gate,
                             &mut monotonic_ms,
                             &mut fixture_ms,
                             &mut system_time,
@@ -790,6 +812,7 @@ fn run_unified_capture(
                         &mut renderer,
                         ctx,
                         &gl,
+                        &mut gate,
                         &mut monotonic_ms,
                         &mut fixture_ms,
                         &mut system_time,
@@ -814,6 +837,7 @@ fn run_unified_capture(
                         &mut renderer,
                         ctx,
                         &gl,
+                        &mut gate,
                         &mut monotonic_ms,
                         &mut fixture_ms,
                         &mut system_time,
@@ -828,6 +852,7 @@ fn run_unified_capture(
                             &mut renderer,
                             ctx,
                             &gl,
+                            &mut gate,
                             &mut monotonic_ms,
                             &mut fixture_ms,
                             &mut system_time,
@@ -840,6 +865,7 @@ fn run_unified_capture(
                         &mut renderer,
                         ctx,
                         &gl,
+                        &mut gate,
                         &mut monotonic_ms,
                         &mut fixture_ms,
                         &mut system_time,
@@ -952,6 +978,7 @@ fn tick_one_frame(
     renderer: &mut FemtoVgRenderer,
     ctx: &CaptureCtx,
     gl: &glow::Context,
+    gate: &mut FrameGate,
     monotonic_ms: &mut u64,
     fixture_ms: &mut u64,
     system_time: &mut chrono::DateTime<chrono::FixedOffset>,
@@ -960,10 +987,7 @@ fn tick_one_frame(
     runtime.set_time(*system_time, *monotonic_ms);
     runtime.inject_fixture_events(*fixture_ms);
     deliver_all_io(runtime, renderer)?;
-    if !render_frame(runtime, renderer, ctx, *frame_count) {
-        bail!("widget died at frame {}", *frame_count);
-    }
-    unsafe { gl.flush() };
+    gate.render(runtime, renderer, ctx, gl, *frame_count, *monotonic_ms)?;
     *monotonic_ms += u64::from(DELTA_MS);
     *fixture_ms += u64::from(DELTA_MS);
     *system_time += chrono::Duration::milliseconds(i64::from(DELTA_MS));
@@ -971,18 +995,21 @@ fn tick_one_frame(
     Ok(())
 }
 
-/// Faithful-cadence render gate for the inter-event advance loop.
+/// Faithful-cadence render gate, and the only door a frame leaves through:
+/// [`FrameGate::render`] arms the next deadline at every render,
+/// so a settle or capture burst cannot leave the schedule
+/// phased off the last gated frame.
 ///
 /// The device host coalesces renders onto the cadence the widget requests
-/// with `request_frame_after`, so a fold decoupled from the render loop runs
-/// only at those coalesced wakes. Force-rendering every virtual frame instead
-/// folds on a different schedule and samples a different device set. A group
-/// transiently present on hardware can then vanish on replay,
-/// and an interaction recorded against it misses its target.
-/// Under `honor_frame_schedule` the replay renders on the widget's schedule,
-/// reproducing the hardware cadence on the synthetic clock.
+/// with `request_frame_after`, so a fold decoupled from the render loop
+/// runs only at those coalesced wakes.
 ///
-/// Mirrors the testbed's on-demand drive (`render_tiles`).
+/// Rendering every virtual frame would fold on a different schedule and
+/// sample a different device set: a group transiently present on hardware
+/// vanishes on replay, so an interaction recorded against it misses its target.
+///
+/// Mirrors the testbed's on-demand drive (`render_tiles`):
+/// device, testbed and replay all redraw on the same signal.
 #[derive(Default)]
 struct FrameGate {
     ever_rendered: bool,
@@ -1004,13 +1031,27 @@ impl FrameGate {
         due
     }
 
-    /// Record a render at `monotonic_ms`, arming the next deadline from what
-    /// the widget asked for during it (`None` = idle until the next delivery).
-    fn rendered(&mut self, runtime: &WasmWidgetRuntime, monotonic_ms: u64) {
+    /// Render one frame, flush it, and arm the next deadline
+    /// from what the widget asked for during the draw
+    /// (`None` = idle until the next delivery).
+    fn render(
+        &mut self,
+        runtime: &mut WasmWidgetRuntime,
+        renderer: &mut FemtoVgRenderer,
+        ctx: &CaptureCtx,
+        gl: &glow::Context,
+        frame_count: u32,
+        monotonic_ms: u64,
+    ) -> Result<()> {
+        if !render_frame(runtime, renderer, ctx, frame_count) {
+            bail!("widget died at frame {frame_count}");
+        }
+        unsafe { gl.flush() };
         self.ever_rendered = true;
         self.next_render_at_ms = runtime
             .wants_next_frame()
             .then(|| monotonic_ms + u64::from(runtime.next_frame_delay().unwrap_or(0)));
+        Ok(())
     }
 }
 
@@ -1763,10 +1804,6 @@ pub fn write_default_capture_config(dir: &Path) -> Result<()> {
 # Each one advances the replay clock by 16 ms and delivers timeline events.
 # A widget whose visuals follow the clock captures a later state than at 0.
 # settle_delay = 30
-
-# Replay at the widget's own frame cadence instead of every virtual frame.
-# Only needed when the widget folds its data off the render loop.
-# honor_frame_schedule = true
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 

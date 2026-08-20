@@ -59,9 +59,9 @@ therefore changes the frames, and baselines must be refreshed with them. The def
 ready as soon as its data lands. A dataset may override it with its own `settle_delay`, and seed extra KV with
 `kv = { … }`.
 
-`honor_frame_schedule` replays at the widget's own `request_frame_after` cadence instead of rendering every virtual
-frame. Needed only by a widget that decouples its data fold from the render loop — fleet-management folds on a ~1 s
-interval — so replay samples the state hardware would.
+Replay renders on the widget's own `request_frame_after` cadence, which is what the device host and the testbed do. A
+widget that folds its data off the render loop — fleet-management folds on a ~1 s interval — therefore folds on the
+schedule hardware uses, and replay samples the state hardware would.
 
 Because a fixture carries no geometry of its own, one dataset can drive several targets:
 

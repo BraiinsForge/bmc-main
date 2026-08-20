@@ -71,16 +71,6 @@ pub struct FixtureEntry {
 #[derive(Debug, Default)]
 pub struct CaptureConfig {
     pub settle_delay: u32,
-    /// Replay at the widget's own frame cadence (`request_frame_after`)
-    /// instead of force-rendering every virtual frame.
-    ///
-    /// A widget that decouples its data fold from the render loop folds
-    /// on the coalesced schedule the device host uses, so replay samples
-    /// the state hardware would — needed for the fleet widget, whose fold
-    /// is gated on a ~1s interval.
-    ///
-    /// Off by default, so every other widget keeps its per-frame baselines.
-    pub honor_frame_schedule: bool,
     /// Datasets by name. The name is the recorded file's stem, the config key,
     /// and the last path component of the frames it produces.
     pub fixtures: BTreeMap<String, FixtureEntry>,
@@ -177,7 +167,7 @@ fn try_load_from_dir(capture_dir: &Path) -> Result<Option<CaptureConfig>> {
 // ── Config parsing ───────────────────────────────────────────────────
 
 /// All known top-level keys in capture/config.toml.
-const KNOWN_CONFIG_KEYS: &[&str] = &["settle_delay", "honor_frame_schedule", "fixtures"];
+const KNOWN_CONFIG_KEYS: &[&str] = &["settle_delay", "fixtures"];
 
 /// All known keys inside a `[fixtures.<name>]` table.
 const KNOWN_FIXTURE_KEYS: &[&str] = &["path", "targets", "kv", "settle_delay"];
@@ -189,7 +179,6 @@ pub fn parse_capture_config(content: &str) -> Result<CaptureConfig> {
 
     Ok(CaptureConfig {
         settle_delay: parse_optional_u32(&table, "settle_delay")?.unwrap_or(0),
-        honor_frame_schedule: parse_optional_bool(&table, "honor_frame_schedule")?.unwrap_or(false),
         fixtures: parse_fixtures_table(&table)?,
         config_dir: None,
     })
@@ -313,14 +302,6 @@ fn parse_optional_u32(table: &toml::Table, key: &str) -> Result<Option<u32>> {
     }
 }
 
-fn parse_optional_bool(table: &toml::Table, key: &str) -> Result<Option<bool>> {
-    match table.get(key) {
-        Some(toml::Value::Boolean(b)) => Ok(Some(*b)),
-        Some(_) => bail!("'{key}' must be a boolean"),
-        None => Ok(None),
-    }
-}
-
 fn parse_string_array(table: &toml::Table, key: &str) -> Result<Vec<String>> {
     match table.get(key) {
         Some(toml::Value::Array(a)) => {
@@ -405,7 +386,6 @@ mod tests {
     fn config_all_known_keys_accepted() {
         let toml = r#"
             settle_delay = 5
-            honor_frame_schedule = true
 
             [fixtures.mining]
             path = "fixtures/mining.jsonl.gz"
@@ -426,6 +406,7 @@ mod tests {
             r#"sizes = ["full"]"#,
             "[kv]\ntheme = \"dark\"",
             "[[variants]]\nname = \"dark\"",
+            "honor_frame_schedule = true",
         ] {
             assert!(
                 parse_capture_config(retired).is_err(),
@@ -439,24 +420,6 @@ mod tests {
         let cfg = parse_capture_config("").expect("BUG: empty config should be valid");
         assert_eq!(cfg.settle_delay, 0);
         assert!(cfg.fixtures.is_empty());
-        assert!(!cfg.honor_frame_schedule);
-    }
-
-    #[test]
-    fn config_honor_frame_schedule_parsed() {
-        let cfg = parse_capture_config("honor_frame_schedule = true")
-            .expect("BUG: honor_frame_schedule config should parse");
-        assert!(cfg.honor_frame_schedule);
-    }
-
-    #[test]
-    fn config_honor_frame_schedule_rejects_non_bool() {
-        let err = parse_capture_config("honor_frame_schedule = 1")
-            .expect_err("BUG: non-boolean honor_frame_schedule must fail to parse");
-        assert!(
-            format!("{err:#}").contains("honor_frame_schedule"),
-            "should name the bad key: {err:#}"
-        );
     }
 
     #[test]

@@ -1,10 +1,5 @@
 settle_delay = 60
 
-# The widget decouples its fleet fold from the render loop on a ~1s interval,
-# so replay must render at the widget's coalesced cadence, not every frame,
-# to sample the device set hardware would.
-honor_frame_schedule = true
-
 [fixtures.bmc100-full]
 path = "fixtures/bmc100-full.jsonl.gz"
 targets = ["bmc100:full"]
