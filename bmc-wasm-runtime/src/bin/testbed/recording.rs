@@ -117,9 +117,8 @@ impl RecordingState {
     /// Net effect: one Capture per cluster of changes ≤500 ms apart,
     /// fired 500 ms after the cluster's last delivery.
     ///
-    /// The scan-backwards approach matches only `Capture { duration_ms: None,
-    /// fps: None }` so gesture-path animation Captures (with concrete duration)
-    /// never get slid forward by a param / system delivery.
+    /// The one it slides is remembered, not recognised: an operator's Capture
+    /// is the same shape, and a gesture's carries a duration.
     fn record_delivery(&mut self, make_event: impl FnOnce() -> UnifiedEvent) {
         let at_ms = self.clock.now_ms();
         self.events.push(TimelineEvent {
@@ -131,22 +130,13 @@ impl RecordingState {
         }
         let capture_at = at_ms + AUTO_CAPTURE_DELAY_MS;
         let pending = self
-            .events
-            .iter_mut()
-            .rev()
-            .find(|e| {
-                matches!(
-                    e.event,
-                    UnifiedEvent::Capture {
-                        duration_ms: None,
-                        fps: None,
-                    }
-                )
-            })
-            .filter(|e| e.at_ms > at_ms);
+            .pending_auto_capture
+            .and_then(|index| self.events.get_mut(index))
+            .filter(|capture| capture.at_ms > at_ms);
         if let Some(prev_capture) = pending {
             prev_capture.at_ms = capture_at;
         } else {
+            self.pending_auto_capture = Some(self.events.len());
             self.events.push(TimelineEvent {
                 at_ms: capture_at,
                 event: UnifiedEvent::Capture {
@@ -171,6 +161,9 @@ pub(super) struct RecordingState {
     dataset: String,
     /// Unified timeline events (user actions + fetch recordings).
     events: Vec<TimelineEvent>,
+    /// Which event in `events` is this cluster's auto-`Capture`.
+    /// Stable because a take only ever appends.
+    pending_auto_capture: Option<usize>,
     /// Events already pulled out of the view's runtime and the fetch buffer.
     /// Both hand their contents over once and forget them, so a failed write
     /// would lose them; held here, every Save attempt merges them afresh.
@@ -887,6 +880,7 @@ impl RecordingState {
             target,
             dataset,
             events: Vec::new(),
+            pending_auto_capture: None,
             drained: Vec::new(),
             gesture: None,
             widget_root,
@@ -1762,6 +1756,43 @@ mod begin_tests {
             "the fixture header must carry the params as JSON, self-contained",
         );
         assert!(state.credentials_snapshot.contains_key("pool"));
+    }
+
+    /// A manual `Capture` is the same shape as the debounced one, so a cluster
+    /// spanning it must still settle into one auto-`Capture`, not two.
+    #[test]
+    fn a_manual_capture_mid_cluster_does_not_strand_the_debounced_one() {
+        let mut state = begin("bmc100:full");
+        let at = |state: &RecordingState, ms: u64| state.clock.advance(TAKE_EPOCH_MS + ms);
+
+        at(&state, 1_000);
+        state.record_delivery(delivery);
+        at(&state, 1_100);
+        state.record_capture();
+        at(&state, 1_200);
+        state.record_delivery(delivery);
+
+        // Sorted as the fixture writer does: the slid Capture keeps the index
+        // it was pushed at, so `events` is not in time order.
+        let mut captures: Vec<u64> = state
+            .events
+            .iter()
+            .filter(|e| matches!(e.event, super::UnifiedEvent::Capture { .. }))
+            .map(|e| e.at_ms)
+            .collect();
+        captures.sort_unstable();
+        assert_eq!(
+            captures,
+            vec![1_100, 1_700],
+            "the operator's capture stands, and the cluster fires once 500 ms \
+             after its last delivery",
+        );
+    }
+
+    fn delivery() -> super::UnifiedEvent {
+        super::UnifiedEvent::ParamDelivery {
+            params: serde_json::Map::new(),
+        }
     }
 
     #[test]
