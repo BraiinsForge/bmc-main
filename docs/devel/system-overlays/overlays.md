@@ -58,9 +58,12 @@ restarting so the screen can promise what bmc is about to do).
   condition is unresolved either way, and dismissing would hide it (after a failed reconfiguration exit, for instance,
   the setup AP is still broadcasting).
 
-In the operational connect-info the last-known IP is held through a transient DHCP loss, so the screen does not flicker.
-The screens render through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build
-time; every screen has a gallery cell (`overlays.scene.rs`).
+Both connect-info screens hold the last-known address through a transient DHCP loss rather than reading the prober live.
+On the operational screen that stops a flicker; on the setup screen it matters more, since falling back to the
+connect-progress screen would be a dead end — no bmc event is coming, there is no deadline, and setup screens ignore
+touch — while the address is exactly what the user still needs to finish the wizard in a browser. The screens render
+through the `bmc-render` tree pipeline with the six legacy init-setup SVG icons embedded at build time; every screen has
+a gallery cell (`overlays.scene.rs`).
 
 ### Opening after an upgrade
 

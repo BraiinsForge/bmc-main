@@ -96,7 +96,12 @@ enum Screen {
         since: Instant,
         to_scenes: bool,
     },
-    SetupConnectInfo,
+    /// Setup connect-info. Carries the address rather than reading the prober
+    /// live, so losing it cannot drop the screen back to connect progress —
+    /// nothing would ever move it off there again.
+    SetupConnectInfo {
+        ip: Option<Ipv4Addr>,
+    },
     SetupCompleted {
         since: Instant,
     },
@@ -134,7 +139,7 @@ impl Screen {
             Screen::SetupStart { .. }
                 | Screen::SetupConnecting
                 | Screen::SetupConnected { .. }
-                | Screen::SetupConnectInfo
+                | Screen::SetupConnectInfo { .. }
                 | Screen::SetupCompleted { .. }
                 | Screen::SetupError { .. }
                 | Screen::SetupFatal { .. }
@@ -165,7 +170,7 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
             // Only a SetupPending boot self-advances on the address: in AP
             // mode the join outcome arrives as an explicit setup event.
             if mode == Mode::SetupPending && station_ip.is_some() {
-                Screen::SetupConnectInfo
+                Screen::SetupConnectInfo { ip: station_ip }
             } else {
                 screen
             }
@@ -175,7 +180,7 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
                 if to_scenes {
                     Screen::Done
                 } else {
-                    Screen::SetupConnectInfo
+                    Screen::SetupConnectInfo { ip: station_ip }
                 }
             } else {
                 screen
@@ -230,9 +235,10 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
                 screen
             }
         }
-        Screen::Hidden | Screen::SetupConnectInfo | Screen::SetupFatal { .. } | Screen::Done => {
-            screen
-        }
+        Screen::SetupConnectInfo { ip: shown } => Screen::SetupConnectInfo {
+            ip: station_ip.or(shown),
+        },
+        Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => screen,
     };
     let changed = next != screen;
     (next, changed)
@@ -266,9 +272,9 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         | Screen::SetupError { since }
         | Screen::OpUpgraded { since } => Some(NextWake::At(since + HOLD)),
         // The shown address may still change (late DHCP), so keep polling.
-        Screen::SetupConnectInfo | Screen::OpConnecting { .. } | Screen::OpSuccess { .. } => {
-            Some(NextWake::Poll)
-        }
+        Screen::SetupConnectInfo { .. }
+        | Screen::OpConnecting { .. }
+        | Screen::OpSuccess { .. } => Some(NextWake::Poll),
         Screen::OpFailed { since } => Some(NextWake::At(since + FAILURE_VISIBLE_FOR)),
         Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => None,
     }
@@ -339,8 +345,8 @@ impl DeviceInfoOverlay {
             },
             Screen::SetupConnecting => DeviceInfoView::SetupConnecting { ssid: self.ssid() },
             Screen::SetupConnected { .. } => DeviceInfoView::SetupConnected { ssid: self.ssid() },
-            Screen::SetupConnectInfo => DeviceInfoView::SetupConnectInfo {
-                ip: self.station_ip,
+            Screen::SetupConnectInfo { ip } => DeviceInfoView::SetupConnectInfo {
+                ip,
                 ssid: self.ssid(),
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
@@ -634,7 +640,9 @@ mod tests {
         let _ = pending.tick(t0());
         assert_eq!(
             pending.screen,
-            Screen::SetupConnectInfo,
+            Screen::SetupConnectInfo {
+                ip: Some(Ipv4Addr::new(10, 0, 0, 5))
+            },
             "the setup connect-info must come back for a restarted overlay"
         );
     }
@@ -681,7 +689,12 @@ mod tests {
         overlay.on_setup_progress(SetupStep::WifiConnectionSuccess, "");
         let start = t0();
         let _ = overlay.tick(start + HOLD);
-        assert_eq!(overlay.screen, Screen::SetupConnectInfo);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo {
+                ip: Some(Ipv4Addr::new(10, 0, 0, 5))
+            }
+        );
         assert_eq!(
             overlay.view(),
             DeviceInfoView::SetupConnectInfo {
@@ -711,7 +724,12 @@ mod tests {
         let mut overlay = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
         overlay.on_device_state(DeviceState::SetupPending, false);
         let _ = overlay.tick(t0());
-        assert_eq!(overlay.screen, Screen::SetupConnectInfo);
+        assert_eq!(
+            overlay.screen,
+            Screen::SetupConnectInfo {
+                ip: Some(Ipv4Addr::new(10, 0, 0, 5))
+            }
+        );
     }
 
     #[test]
@@ -890,6 +908,36 @@ mod tests {
 
         overlay.on_upgrade_state(succeeded(UpgradeKind::Firmware, Duration::from_secs(3)));
         assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
+    fn setup_connect_info_keeps_its_address_through_a_probe_loss() {
+        let shown = Ipv4Addr::new(10, 0, 0, 5);
+        let (next, changed) = step(
+            Screen::SetupConnectInfo { ip: Some(shown) },
+            Mode::SetupPending,
+            t0(),
+            None,
+        );
+        assert_eq!(
+            next,
+            Screen::SetupConnectInfo { ip: Some(shown) },
+            "the QR must stay up: the user needs it to finish the wizard"
+        );
+        assert!(!changed);
+    }
+
+    #[test]
+    fn setup_connect_info_picks_up_a_late_address() {
+        let ip = Ipv4Addr::new(10, 0, 0, 5);
+        let (next, changed) = step(
+            Screen::SetupConnectInfo { ip: None },
+            Mode::SetupPending,
+            t0(),
+            Some(ip),
+        );
+        assert_eq!(next, Screen::SetupConnectInfo { ip: Some(ip) });
+        assert!(changed);
     }
 
     #[test]
