@@ -160,7 +160,6 @@ wildcard_enum_match_arm = "warn"
 
 [workspace.dependencies]
 ab_glyph = "0.2"
-aes = "0.8.4"
 anstyle-parse = "0.2.6"
 anyhow = "1.0.98"
 apa102-spi = "0.5.1"
@@ -223,7 +222,6 @@ bytes = { version = "1.6.0", default-features = false }
 bytesize = { version = "2.0.1", features = ["serde"] }
 calloop = { version = "0.14.2", features = ["executor"] }
 calloop-wayland-source = "0.3"
-cbc = { version = "0.1.2", default-features = false }
 chrono = { version = "0.4.40", features = ["serde"] }
 chrono-tz = { version = "0.10.3", default-features = false }
 clap = { version = "4.5.37", features = ["derive", "std"] }

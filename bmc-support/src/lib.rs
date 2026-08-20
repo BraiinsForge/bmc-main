@@ -20,7 +20,6 @@
 // the grant above.
 
 pub mod constants;
-pub mod encrypt;
 mod filters;
 mod format;
 
@@ -35,14 +34,14 @@ use crate::constants::{
 use crate::network::PcapResult;
 use anyhow::{Context, Result};
 use std::fs::File;
-use std::io::{Cursor, Read, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing::{error, info, warn};
 use walkdir::WalkDir;
-use zip::result::ZipResult;
-use zip::write::SimpleFileOptions;
+use zip::write::{SimpleFileOptions, StreamWriter};
 use zip::{CompressionMethod, ZipWriter};
 
 const PCAP_DURATION: Duration = Duration::from_secs(5);
@@ -121,7 +120,7 @@ pub const PING_HOSTS: &[&str] = &[
     "public-api.braiins.com",
 ];
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 pub enum SupportArchiveFormat {
     Zip,
     ZipEncrypted,
@@ -132,7 +131,11 @@ pub fn collect(
     format: SupportArchiveFormat,
     compress: bool,
 ) -> Result<()> {
-    let mut archive = SupportZipWriter::new(writer, format, compress);
+    let format: &dyn ArchiveFormat = match format {
+        SupportArchiveFormat::Zip => &PlainZip,
+        SupportArchiveFormat::ZipEncrypted => &PasswordProtectedZip,
+    };
+    let mut archive = SupportArchive::new(writer, format, compress);
 
     // include outputs of commands
     // These run before the log capture below since some of them emit syslog (e.g. dnsmasq).
@@ -214,39 +217,37 @@ pub fn collect(
     Ok(())
 }
 
-struct SupportZipWriter<'w, W: Write> {
-    writer: &'w mut W,
-    format: SupportArchiveFormat,
-    archive: ZipWriter<Cursor<Vec<u8>>>,
+/// Streaming writer for the support archive: entries are written to the
+/// wrapped output as they are produced instead of buffering the archive.
+pub struct SupportArchive<'a> {
+    zip: ZipWriter<StreamWriter<Box<dyn FinishWrite + 'a>>>,
     options: SimpleFileOptions,
 }
 
-impl<'w, W: Write> SupportZipWriter<'w, W> {
-    pub fn new(writer: &'w mut W, format: SupportArchiveFormat, compress: bool) -> Self {
-        let options = SimpleFileOptions::default().compression_method(if compress {
-            CompressionMethod::Deflated
-        } else {
-            CompressionMethod::Stored
-        });
+impl std::fmt::Debug for SupportArchive<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SupportArchive").finish_non_exhaustive()
+    }
+}
+
+impl<'a> SupportArchive<'a> {
+    pub fn new(writer: impl Write + 'a, format: &dyn ArchiveFormat, compress: bool) -> Self {
+        let options = format.file_options(SimpleFileOptions::default().compression_method(
+            if compress {
+                CompressionMethod::Deflated
+            } else {
+                CompressionMethod::Stored
+            },
+        ));
 
         Self {
-            writer,
-            format,
-            archive: ZipWriter::new(Cursor::new(vec![])),
+            zip: ZipWriter::new_stream(format.wrap(Box::new(writer))),
             options,
         }
     }
 
-    pub fn finish(self) -> ZipResult<()> {
-        let mut buffer = self.archive.finish()?.into_inner();
-
-        buffer = match self.format {
-            SupportArchiveFormat::ZipEncrypted => encrypt::encrypt(&buffer),
-            SupportArchiveFormat::Zip => buffer,
-        };
-
-        self.writer.write_all(&buffer)?;
-
+    pub fn finish(self) -> Result<()> {
+        self.zip.finish()?.into_inner().finish()?;
         Ok(())
     }
 
@@ -258,18 +259,22 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
             return Ok(());
         }
 
-        let mut file = File::open(path)?;
-        let mut buf = vec![];
-        file.read_to_end(&mut buf)?;
-
-        let buf = filters::apply(path, buf);
-
         let name = Path::new("filesystem")
             .join(path.strip_prefix("/")?)
             .display()
             .to_string();
 
-        self.write_file(&name, &buf)?;
+        let mut file = File::open(path)?;
+
+        if filters::is_filtered(path) {
+            let mut buf = vec![];
+            file.read_to_end(&mut buf)?;
+            let buf = filters::apply(path, buf);
+            self.write_file(&name, &buf)?;
+        } else {
+            self.zip.start_file(&name, self.options)?;
+            io::copy(&mut file, &mut self.zip)?;
+        }
 
         Ok(())
     }
@@ -301,16 +306,39 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
     pub fn add_cmd_output(&mut self, cmdline: &[&str]) -> Result<()> {
         let (&program, args) = cmdline.split_first().expect("BUG: empty command");
 
-        let output = Command::new(program).args(args).output()?;
+        let mut child = Command::new(program)
+            .args(args)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
 
         let name = cmdline.join("_").replace(['/', '.'], "_");
 
-        let stdout = format!("command/{name}");
-        self.write_file(&stdout, &output.stdout)?;
+        // NOTE: drain stderr concurrently to avoid a pipe-buffer deadlock: if
+        // the child fills the stderr pipe (~64KB) before finishing stdout, it
+        // blocks on the stderr write while we block reading stdout.
+        let mut stderr_pipe = child.stderr.take();
+        let stderr_handle = thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(stderr) = stderr_pipe.as_mut() {
+                let _ = stderr.read_to_end(&mut buf);
+            }
+            buf
+        });
 
-        if !output.stderr.is_empty() {
-            let stderr = format!("command/{name}.stderr");
-            self.write_file(&stderr, &output.stderr)?;
+        let stdout_name = format!("command/{name}");
+        self.zip.start_file(&stdout_name, self.options)?;
+        if let Some(mut stdout) = child.stdout.take() {
+            io::copy(&mut stdout, &mut self.zip)?;
+        }
+
+        child.wait()?;
+        let stderr = stderr_handle
+            .join()
+            .expect("BUG: stderr drain thread panicked");
+        if !stderr.is_empty() {
+            let stderr_name = format!("command/{name}.stderr");
+            self.write_file(&stderr_name, &stderr)?;
         }
 
         Ok(())
@@ -331,8 +359,8 @@ impl<'w, W: Write> SupportZipWriter<'w, W> {
     }
 
     fn write_file(&mut self, name: &str, buf: &[u8]) -> Result<()> {
-        self.archive.start_file(name, self.options)?;
-        self.archive.write_all(buf)?;
+        self.zip.start_file(name, self.options)?;
+        self.zip.write_all(buf)?;
         Ok(())
     }
 }
@@ -459,7 +487,7 @@ mod tests {
 
     fn nix_profile_archive(profile_dir: &Path) -> BTreeMap<String, Vec<u8>> {
         let mut buf = Vec::new();
-        let mut archive = SupportZipWriter::new(&mut buf, SupportArchiveFormat::Zip, false);
+        let mut archive = SupportArchive::new(&mut buf, &PlainZip, false);
         archive
             .add_nix_profile(profile_dir)
             .expect("BUG: add nix profile");

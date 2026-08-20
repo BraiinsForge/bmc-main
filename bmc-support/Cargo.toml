@@ -9,10 +9,8 @@ authors = ["Braiins <braiins@braiins.com>"]
 workspace = true
 
 [dependencies]
-aes.workspace = true
 anyhow.workspace = true
 bmc-net-diag.workspace = true
-cbc = { workspace = true, features = ["alloc", "block-padding"] }
 # zip crate with 'deflate-flate2' cannot be compiled without 'flate2' with 'rust_backend'
 flate2 = { workspace = true, features = ["rust_backend"] }
 regex.workspace = true

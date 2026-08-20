@@ -59,6 +59,12 @@ pub fn is_excluded(path: &Path) -> bool {
     path.parent() == secrets.parent() && name.starts_with(&format!("{stem}."))
 }
 
+/// Whether a credential filter applies to `path`, i.e. whether its content
+/// must be buffered for censoring instead of streamed.
+pub fn is_filtered(path: &Path) -> bool {
+    CREDENTIAL_FILTERS.iter().any(|(matches, _)| matches(path))
+}
+
 /// Apply credential censoring to file content if a filter matches the path.
 ///
 /// Returns the filtered content, or the original content unchanged if:

@@ -1284,10 +1284,8 @@ dependencies = [
 name = "bmc-support"
 version = "0.1.0"
 dependencies = [
- "aes",
  "anyhow",
  "bmc-net-diag",
- "cbc",
  "flate2",
  "regex",
  "tempfile",
