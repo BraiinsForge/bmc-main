@@ -190,6 +190,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         None => sole_dataset_for(&config, target, args.online || args.fixture.is_some())?,
     };
 
+    let manifest = load_widget_manifest(&args.wasm_path, args.capture_dir.as_deref())?;
     let ctx = CaptureCtx::new(
         args.wasm_path,
         &prepared,
@@ -201,7 +202,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         args.stack_profiling,
     );
 
-    run_capture(&ctx, &config)
+    run_capture(&ctx, &config, &manifest)
 }
 
 /// The one dataset bound to a target, when `--dataset` is omitted.
@@ -244,9 +245,25 @@ fn offline_fixture_path(ctx: &CaptureCtx, config: &CaptureConfig) -> Option<Path
         .or_else(|| config.fixtures.get(&ctx.dataset).map(|e| e.path.clone()))
 }
 
-fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
+fn run_capture(
+    ctx: &CaptureCtx,
+    config: &CaptureConfig,
+    manifest: &bmc_widget_manifest::Manifest,
+) -> Result<()> {
+    // Checked here so every route is admitted alike: no baseline for geometry
+    // the device refuses and the testbed paints as a declined slab.
+    if let Err(declined) = target_admitted(manifest, ctx.target) {
+        bail!("{}: {declined}", ctx.target);
+    }
+
     if ctx.online {
-        return run_unified_capture(ctx, config, &synth_online_fixture(), "online (live data)");
+        return run_unified_capture(
+            ctx,
+            config,
+            manifest,
+            &synth_online_fixture(),
+            "online (live data)",
+        );
     }
 
     let fixture_path = offline_fixture_path(ctx, config).with_context(|| {
@@ -261,14 +278,19 @@ fn run_capture(ctx: &CaptureCtx, config: &CaptureConfig) -> Result<()> {
     })?;
     let fixture = load_unified_fixture(&fixture_path)
         .with_context(|| format!("failed to load fixture {}", fixture_path.display()))?;
-    run_unified_capture(ctx, config, &fixture, &fixture_path.display().to_string()).with_context(
-        || {
-            format!(
-                "replay failed — frames captured so far are in {}",
-                ctx.output_dir.display()
-            )
-        },
+    run_unified_capture(
+        ctx,
+        config,
+        manifest,
+        &fixture,
+        &fixture_path.display().to_string(),
     )
+    .with_context(|| {
+        format!(
+            "replay failed — frames captured so far are in {}",
+            ctx.output_dir.display()
+        )
+    })
 }
 
 /// A fixture with no recorded I/O: the widget starts at the current instant
@@ -301,10 +323,23 @@ fn synth_online_fixture() -> UnifiedFixture {
 }
 
 /// Load the widget's `manifest.json` sitting next to its wasm binary.
-fn load_widget_manifest(wasm_path: &Path) -> Result<bmc_widget_manifest::Manifest> {
-    let root = bmc_wasm_runtime::fixtures::find_widget_root(wasm_path)
-        .context("cannot locate the widget's manifest.json from the wasm path")?;
-    let manifest_path = root.join("manifest.json");
+/// The widget's manifest, from wherever this run can reach its root.
+///
+/// A nix build hands over a store path, not the wasm in its own source tree,
+/// while `--capture-dir` still points inside the widget.
+fn load_widget_manifest(
+    wasm_path: &Path,
+    capture_dir: Option<&Path>,
+) -> Result<bmc_widget_manifest::Manifest> {
+    let manifest_path = [
+        bmc_wasm_runtime::fixtures::find_widget_root(wasm_path),
+        capture_dir.and_then(|dir| dir.parent().map(Path::to_owned)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|root| root.join("manifest.json"))
+    .find(|candidate| candidate.is_file())
+    .context("cannot locate the widget's manifest.json from the wasm path or --capture-dir")?;
     let text = std::fs::read_to_string(&manifest_path)
         .with_context(|| format!("failed to read {}", manifest_path.display()))?;
     text.parse()
@@ -312,16 +347,6 @@ fn load_widget_manifest(wasm_path: &Path) -> Result<bmc_widget_manifest::Manifes
 }
 
 /// Manifest default params for an `--online` preview.
-fn online_default_params(
-    wasm_path: &Path,
-) -> Result<
-    std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-> {
-    Ok(bmc_wasm_runtime::manifest_default_params(
-        &load_widget_manifest(wasm_path)?,
-    ))
-}
-
 /// Render every (dataset, target) pair into `<output>/<platform>/<viewport>/<dataset>/`,
 /// skipping targets the widget's manifest declines.
 ///
@@ -337,7 +362,7 @@ fn run_all_supported_targets(
         .output_dir
         .clone()
         .context("--output=<dir> is required")?;
-    let manifest = load_widget_manifest(&args.wasm_path)?;
+    let manifest = load_widget_manifest(&args.wasm_path, args.capture_dir.as_deref())?;
 
     let matrix = if args.online {
         catalog_matrix()
@@ -350,8 +375,8 @@ fn run_all_supported_targets(
 
     let mut rendered = 0_usize;
     for (dataset, target) in matrix {
-        if !target_supported(&manifest, target) {
-            eprintln!("→ {target} {dataset}: manifest declines this viewport, skipping");
+        if let Err(declined) = target_admitted(&manifest, target) {
+            eprintln!("→ {target} {dataset}: {declined}, skipping");
             continue;
         }
         eprintln!("→ {target} {dataset}");
@@ -367,6 +392,7 @@ fn run_all_supported_targets(
                 args.stack_profiling,
             ),
             config,
+            &manifest,
         )?;
         rendered += 1;
     }
@@ -390,8 +416,14 @@ fn catalog_matrix() -> Vec<(&'static str, Target)> {
 }
 
 /// Whether the widget's manifest admits a target, DPI included.
-fn target_supported(manifest: &bmc_widget_manifest::Manifest, target: Target) -> bool {
-    manifest.supports_viewport_at_dpi(
+///
+/// The verdict is returned rather than acted on: iterating the whole catalog
+/// skips what a widget declines, where a named target is a mistake to report.
+fn target_admitted(
+    manifest: &bmc_widget_manifest::Manifest,
+    target: Target,
+) -> Result<(), bmc_widget_manifest::ViewportDeclined> {
+    manifest.admits_viewport_at_dpi(
         manifest_viewport_shape(target.viewport.shape),
         target.viewport.width,
         target.viewport.height,
@@ -417,6 +449,7 @@ fn target_supported(manifest: &bmc_widget_manifest::Manifest, target: Target) ->
 fn run_unified_capture(
     ctx: &CaptureCtx,
     config: &CaptureConfig,
+    manifest: &bmc_widget_manifest::Manifest,
     fixture: &UnifiedFixture,
     source_label: &str,
 ) -> Result<()> {
@@ -455,7 +488,7 @@ fn run_unified_capture(
     // is fully  self-contained (no `manifest.json` lookup at replay time).
     // Online previews have no fixture params, so seed the manifest defaults.
     let initial_params = if ctx.online {
-        online_default_params(&ctx.wasm_path)?
+        bmc_wasm_runtime::manifest_default_params(manifest)
     } else {
         bmc_wasm_runtime::parse_params_json(&fixture.header.initial_params)
             .expect("BUG: capture fixture initial_params must be valid")
@@ -1920,6 +1953,44 @@ mod tests {
         );
     }
 
+    /// The shape a nix build hands `capture run` — the wasm nowhere near
+    /// the manifest that admits it.
+    #[test]
+    fn a_manifest_is_reached_through_the_capture_dir() {
+        let widget = tempfile::tempdir().expect("BUG: widget root");
+        std::fs::write(
+            widget.path().join("manifest.json"),
+            r#"{
+            "uid": "550e8400-e29b-41d4-a716-446655440202",
+            "version": "0.1.0",
+            "name": "out-of-tree",
+            "description": "built somewhere its source is not",
+            "author": { "name": "Braiins Forge", "url": "https://braiinsforge.com" },
+            "binary": "bin/out-of-tree",
+            "icon": "assets/icon.svg",
+            "category": "utility",
+            "settings": [],
+            "supported_viewports": [{ "type": "rectangular" }],
+            "params": {}
+        }"#,
+        )
+        .expect("BUG: write manifest");
+        let capture_dir = widget.path().join("capture");
+        std::fs::create_dir(&capture_dir).expect("BUG: capture dir");
+
+        let elsewhere = tempfile::tempdir().expect("BUG: build output");
+        let wasm = elsewhere.path().join("out_of_tree.wasm");
+        std::fs::write(&wasm, b"").expect("BUG: write wasm");
+
+        assert!(
+            bmc_wasm_runtime::fixtures::find_widget_root(&wasm).is_none(),
+            "the wasm must be out of reach, or this proves nothing"
+        );
+        let manifest = load_widget_manifest(&wasm, Some(&capture_dir))
+            .expect("the capture dir's parent is the widget root");
+        assert_eq!(manifest.name, "out-of-tree");
+    }
+
     #[test]
     fn manifest_dpi_bounds_gate_a_target() {
         let manifest: bmc_widget_manifest::Manifest = r#"{
@@ -1938,13 +2009,20 @@ mod tests {
         .parse()
         .expect("BUG: test manifest must parse");
 
-        assert!(
-            target_supported(&manifest, "bmc100:full".parse().expect("BUG: parse")),
+        assert_eq!(
+            target_admitted(&manifest, "bmc100:full".parse().expect("BUG: parse")),
+            Ok(()),
             "BMC100 is 217 dpi, inside the declared range",
         );
-        assert!(
-            !target_supported(&manifest, "bmm100:full".parse().expect("BUG: parse")),
+        assert_eq!(
+            target_admitted(&manifest, "bmm100:full".parse().expect("BUG: parse")),
+            Err(bmc_widget_manifest::ViewportDeclined::Dpi),
             "BMM100 is 141 dpi, below the declared minimum",
+        );
+        assert_eq!(
+            target_admitted(&manifest, "bfm100:full".parse().expect("BUG: parse")),
+            Err(bmc_widget_manifest::ViewportDeclined::Geometry),
+            "BFM100 is round, and only a rectangular viewport is declared",
         );
     }
 

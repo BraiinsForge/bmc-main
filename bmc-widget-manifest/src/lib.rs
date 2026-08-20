@@ -39,6 +39,7 @@
 //!
 //! See the per-type docs for the complete split.
 
+use std::fmt;
 use std::io::Read;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -354,9 +355,38 @@ impl Manifest {
         height: u32,
         dpi: u32,
     ) -> bool {
-        self.supported_viewports
-            .iter()
-            .any(|v| v.admits_size(shape, width, height) && v.admits_dpi(dpi))
+        self.admits_viewport_at_dpi(shape, width, height, dpi)
+            .is_ok()
+    }
+
+    /// As [`Self::supports_viewport_at_dpi`], but saying which half turned
+    /// the viewport away, so a caller can report the two cases differently.
+    ///
+    /// # Errors
+    /// [`ViewportDeclined`], naming which of the geometry or the density
+    /// no declared viewport accepts.
+    pub fn admits_viewport_at_dpi(
+        &self,
+        shape: ViewportShape,
+        width: u32,
+        height: u32,
+        dpi: u32,
+    ) -> Result<(), ViewportDeclined> {
+        let mut fits_size = false;
+        for viewport in &self.supported_viewports {
+            if !viewport.admits_size(shape, width, height) {
+                continue;
+            }
+            fits_size = true;
+            if viewport.admits_dpi(dpi) {
+                return Ok(());
+            }
+        }
+        Err(if fits_size {
+            ViewportDeclined::Dpi
+        } else {
+            ViewportDeclined::Geometry
+        })
     }
 
     pub fn from_reader<R: Read>(reader: R) -> Result<Self, ManifestError> {
@@ -505,6 +535,31 @@ pub enum SettingKey {
     Timezone,
     /// Night-mode dimming preference.
     NightMode,
+}
+
+/// Why a manifest turned a viewport away.
+///
+/// The two want different handling: undeclared geometry is a size the widget
+/// cannot draw at all, a rejected density only a display it was not built for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ViewportDeclined {
+    /// No declared viewport takes this shape and size.
+    Geometry,
+    /// One takes the size, but not at this display's density.
+    Dpi,
+}
+
+impl fmt::Display for ViewportDeclined {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Geometry => {
+                f.write_str("the manifest declares no viewport of this shape and size")
+            }
+            Self::Dpi => {
+                f.write_str("the manifest declares this size, but not at this display's dpi")
+            }
+        }
+    }
 }
 
 /// Visible viewport shape a widget viewport constraint targets.
