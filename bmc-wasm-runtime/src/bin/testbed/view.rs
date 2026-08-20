@@ -376,6 +376,9 @@ pub(crate) struct DeviceView {
     width: u32,
     height: u32,
     led_count: Option<usize>,
+    /// Whether the manifest admits this viewport at all — fixed for life,
+    /// unlike `info.live`, which a failed rebuild also clears.
+    supported: bool,
     info: ViewInfo,
     report: ViewReport,
     /// Requests from the UI, applied at the start of the next tick.
@@ -403,6 +406,7 @@ impl DeviceView {
         parts: ViewParts,
         egui_tex_id: egui::TextureId,
         led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
+        supported: bool,
     ) -> Self {
         let core = ViewCore::new(
             parts.runtime,
@@ -427,6 +431,7 @@ impl DeviceView {
             width,
             height,
             led_count: placed.led_count,
+            supported,
             info,
             report: ViewReport::default(),
             inbox: std::collections::VecDeque::new(),
@@ -439,6 +444,7 @@ impl DeviceView {
         platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
         worker: worker::Worker,
         tex_ids: [egui::TextureId; 2],
+        supported: bool,
     ) -> Self {
         let info = worker.info();
         let (width, height) = (placed.w, placed.h);
@@ -452,6 +458,7 @@ impl DeviceView {
             width,
             height,
             led_count: placed.led_count,
+            supported,
             info,
             report: ViewReport::default(),
             inbox: std::collections::VecDeque::new(),
@@ -466,6 +473,11 @@ impl DeviceView {
     /// Whether a runtime was built for this viewport.
     pub(crate) fn is_live(&self) -> bool {
         self.info.live
+    }
+
+    /// Whether the manifest admits this viewport, however the last build went.
+    pub(crate) fn is_supported(&self) -> bool {
+        self.supported
     }
 
     pub(crate) fn label(&self) -> &str {
@@ -572,6 +584,10 @@ impl DeviceView {
     /// The seed is passed rather than a built runtime because a threaded view
     /// must construct its own: the renderer whose assets go with the old one
     /// lives on that thread, and a runtime built here could not reach it.
+    ///
+    /// A failed build leaves the view with no runtime, on either path.
+    /// Its `ViewInfo` says so too, so the canvas paints the placeholder
+    /// rather than a widget the edit already replaced.
     pub(crate) fn reload(&mut self, seed: ViewSeed, rebind: Rebind) -> anyhow::Result<()> {
         // Requests aimed at the runtime being replaced would land on a widget
         // that never saw the state they build on.
@@ -579,17 +595,26 @@ impl DeviceView {
         self.report = ViewReport::default();
 
         match &mut self.render {
-            Render::Inline { core, .. } => {
-                let runtime = seed.build_runtime()?;
-                core.install_runtime(runtime, rebind.led_rx);
-                if let Some(rt) = core.runtime.as_mut() {
-                    rt.deliver_credentials_update(*rebind.credentials, *rebind.secrets);
+            Render::Inline { core, .. } => match seed.build_runtime() {
+                Ok(runtime) => {
+                    core.install_runtime(runtime, rebind.led_rx);
+                    if let Some(rt) = core.runtime.as_mut() {
+                        rt.deliver_credentials_update(*rebind.credentials, *rebind.secrets);
+                    }
+                    self.info = core.info();
                 }
-                self.info = core.info();
-            }
+                Err(e) => {
+                    core.install_runtime(None, None);
+                    self.info = core.info();
+                    return Err(e);
+                }
+            },
             Render::Threaded(worker) => {
-                worker.reload(seed, rebind).map_err(anyhow::Error::msg)?;
+                let reloaded = worker.reload(seed, rebind).map_err(anyhow::Error::msg);
+                // Taken before the error propagates, because a failed build
+                // has already dropped the worker's runtime.
                 self.info = worker.info();
+                reloaded?;
             }
         }
         Ok(())

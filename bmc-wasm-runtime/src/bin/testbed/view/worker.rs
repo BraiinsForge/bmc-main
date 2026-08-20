@@ -185,17 +185,25 @@ impl Worker {
         self.take_reload_ack()
     }
 
-    /// Read the worker's answer to a reload, adopting the `ViewInfo` a rebuilt
-    /// widget reports.
+    /// Read the worker's answer to a reload, adopting
+    /// the `ViewInfo` a rebuilt widget reports.
+    ///
+    /// A reload that produced no working widget leaves the default behind,
+    /// so the view reports itself dead rather than keeping the replaced
+    /// build's answers to `live` and `sdk_version`.
     fn take_reload_ack(&mut self) -> Result<(), String> {
         match self.rx.recv() {
             Ok(FromWorker::Reloaded(Ok(info))) => {
                 self.info = info;
                 Ok(())
             }
-            Ok(FromWorker::Reloaded(Err(e))) => Err(e),
+            Ok(FromWorker::Reloaded(Err(e))) => {
+                self.info = ViewInfo::default();
+                Err(e)
+            }
             // A `Ticked` here would mean the protocol stopped alternating.
             Ok(FromWorker::Ticked { .. }) | Err(_) => {
+                self.info = ViewInfo::default();
                 let _ = self.lost();
                 Err(NO_ANSWER.to_owned())
             }

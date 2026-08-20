@@ -1375,8 +1375,10 @@ impl TestbedApp {
             .map(RecordingState::active_tile);
         let mut swapped = true;
         for idx in 0..self.stage.tile_count() {
-            let Some(view) = self.stage.tile(idx).filter(|view| view.is_live()) else {
-                continue; // placeholder — no runtime to rebuild
+            // Support, not liveness: a view the last rebuild killed still gets
+            // this one, or a broken wasm retires it until restart.
+            let Some(view) = self.stage.tile(idx).filter(|view| view.is_supported()) else {
+                continue; // the manifest declines this viewport
             };
             let (platform, placed_shape) = (view.platform, view.shape);
             let (width, height) = (view.width(), view.height());
@@ -1399,8 +1401,6 @@ impl TestbedApp {
                 geometry: RuntimeTileGeometry::for_viewport_shape(platform, placed_shape),
                 config,
                 label,
-                // Only live views reach here, and a view is live because its
-                // viewport was supported when it was built.
                 supported: true,
                 get_proc: self.get_proc.clone(),
             };
@@ -1749,6 +1749,7 @@ impl TestbedApp {
         painter: &mut egui_glow::Painter,
         window: &window::GlWindow,
     ) -> Result<DeviceView> {
+        let supported = seed.supported;
         let placement = placement_for_build(self.views, self.recording_mode.active().is_some());
         if placement == ViewPlacement::OwnThread {
             // Only the context is tried here. A build that fails on the worker
@@ -1770,7 +1771,9 @@ impl TestbedApp {
                         *tex_id = painter
                             .register_native_texture(egui_glow::glow::NativeTexture(texture));
                     }
-                    return Ok(DeviceView::new_threaded(placed, platform, worker, tex_ids));
+                    return Ok(DeviceView::new_threaded(
+                        placed, platform, worker, tex_ids, supported,
+                    ));
                 }
                 Err(e) => tracing::warn!(
                     label = %placed.label,
@@ -1781,7 +1784,7 @@ impl TestbedApp {
         let parts = seed.build(&self.gl)?;
         let tex_id = parts.targets.register(painter);
         Ok(DeviceView::new_inline(
-            placed, platform, parts, tex_id, led_rx,
+            placed, platform, parts, tex_id, led_rx, supported,
         ))
     }
 
