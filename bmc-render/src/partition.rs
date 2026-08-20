@@ -78,6 +78,56 @@ pub fn draw_is_dynamic(draw: &DrawCommand) -> bool {
     }
 }
 
+/// Where a draw sits in its canvas's paint order relative to the dynamic half.
+///
+/// The cached layer is composited at one point in the frame, so it can only
+/// hold content that paints *before* everything dynamic. Paint order inside a
+/// canvas is the order the draws were pushed, and a static draw pushed after a
+/// dynamic one has to keep painting after it — putting it in the layer inverts
+/// the two. An analog clock's centre cap did exactly that, and the ISS widget's
+/// ground track and marker vanished under the globe they are drawn on top of.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Band {
+    /// Static and painted before anything dynamic: the cached layer.
+    Below,
+    /// Repainted every frame.
+    Dynamic,
+    /// Static, but ordered after dynamic content, so it repaints with the
+    /// dynamic half to keep that order. A layer of its own would restore the
+    /// caching, and costs a full-surface texture and a blit per widget to do it.
+    Above,
+}
+
+impl Band {
+    /// Whether the cached layer holds this draw.
+    #[must_use]
+    pub fn is_in_layer(self) -> bool {
+        matches!(self, Self::Below)
+    }
+}
+
+/// The [`Band`] of each draw, in paint order.
+///
+/// One pass answering for the whole canvas, because [`Band::Above`] is a
+/// property of a draw's position among its siblings rather than of the draw
+/// itself. Emission, damage collection, [`static_hash`] and
+/// [`has_static_content`] all read it: they have to agree, or a draw emitted
+/// with the dynamic half but missing from the damage set is scissored away and
+/// disappears exactly as if it were still buried in the layer.
+pub fn canvas_bands(draws: &[DrawCommand]) -> impl Iterator<Item = Band> + '_ {
+    let mut seen_dynamic = false;
+    draws.iter().map(move |draw| {
+        if draw_is_dynamic(draw) {
+            seen_dynamic = true;
+            Band::Dynamic
+        } else if seen_dynamic {
+            Band::Above
+        } else {
+            Band::Below
+        }
+    })
+}
+
 /// Whether `node`, or any descendant, can change while the guest is idle.
 #[must_use]
 pub fn node_is_dynamic(node: &TreeNode) -> bool {
@@ -202,7 +252,7 @@ pub fn has_static_content(node: &TreeNode) -> bool {
             props, children, ..
         } => props.background != Color::default() || children.iter().any(has_static_content),
         TreeNode::Canvas { props, draws, .. } => {
-            props.background != Color::default() || draws.iter().any(|draw| !draw_is_dynamic(draw))
+            props.background != Color::default() || canvas_bands(draws).any(Band::is_in_layer)
         }
         TreeNode::Tag { content, .. } => has_static_content(content),
         // Never in the layer, so they contribute nothing to it; a spacer
@@ -274,7 +324,11 @@ fn hash_node<H: Hasher>(node: &TreeNode, hasher: &mut H) {
         } => {
             hash_debug(props, hasher);
             hash_debug(touch_key, hasher);
-            for draw in draws.iter().filter(|d| !draw_is_dynamic(d)) {
+            for (draw, _) in draws
+                .iter()
+                .zip(canvas_bands(draws))
+                .filter(|(_, band)| band.is_in_layer())
+            {
                 hash_debug(draw, hasher);
             }
         }
@@ -292,7 +346,10 @@ fn hash_node<H: Hasher>(node: &TreeNode, hasher: &mut H) {
 
 #[cfg(test)]
 mod tests {
-    use super::{draw_is_dynamic, has_static_content, node_is_dynamic, node_self_is_dynamic};
+    use super::{
+        Band, canvas_bands, draw_is_dynamic, has_static_content, node_is_dynamic,
+        node_self_is_dynamic, static_hash,
+    };
     use crate::tree::{DrawCommand, HostAnimationDef, HostTransitionDef, TreeNode};
     use bmc_wasm_protocol::{
         AnimProperty, ArcCap, ArcFill, ArcSegments, Color, ColorSpace, Easing, LoopMode,
@@ -566,6 +623,90 @@ mod tests {
             subtitle: "s".to_owned(),
         }));
     }
+    // ── canvas_bands ────────────────────────────────────────────────
+
+    fn bands(draws: &[DrawCommand]) -> Vec<Band> {
+        canvas_bands(draws).collect()
+    }
+
+    #[test]
+    fn statics_before_the_first_dynamic_draw_go_in_the_layer() {
+        assert_eq!(
+            bands(&[leaf(), leaf(), animated(leaf())]),
+            [Band::Below, Band::Below, Band::Dynamic]
+        );
+    }
+
+    #[test]
+    fn a_track_drawn_over_an_animated_globe_paints_with_the_dynamic_half() {
+        // The ISS widget's canvas: a transitioned sphere, then the ground track
+        // and marker that belong on top of it.
+        assert_eq!(
+            bands(&[transitioned(leaf()), leaf(), leaf()]),
+            [Band::Dynamic, Band::Above, Band::Above]
+        );
+    }
+
+    #[test]
+    fn a_centre_cap_between_two_hands_stays_above_both() {
+        // The analog clock's order: hour and minute hands, the cap that covers
+        // their pivot, then the second hand and its own cap.
+        assert_eq!(
+            bands(&[transitioned(leaf()), leaf(), transitioned(leaf()), leaf()]),
+            [Band::Dynamic, Band::Above, Band::Dynamic, Band::Above]
+        );
+    }
+
+    #[test]
+    fn a_canvas_with_nothing_dynamic_is_entirely_in_the_layer() {
+        assert_eq!(bands(&[leaf(), leaf()]), [Band::Below, Band::Below]);
+    }
+
+    #[test]
+    fn a_canvas_whose_statics_all_sit_above_contributes_nothing_to_the_layer() {
+        let node = canvas(vec![transitioned(leaf()), leaf()]);
+        assert!(
+            !has_static_content(&node),
+            "capturing a layer for content the dynamic pass repaints buys nothing"
+        );
+    }
+
+    // ── static_hash ─────────────────────────────────────────────────
+
+    /// `leaf()` with a distinguishable radius, for hashing two canvases that
+    /// differ in exactly one static draw.
+    fn leaf_with_radius(radius: f32) -> DrawCommand {
+        DrawCommand::Arc {
+            cx: 20.0,
+            cy: 30.0,
+            radius,
+            start_angle: 0.0,
+            end_angle: 1.0,
+            width: 6.0,
+            fill: ArcFill::Solid(Color::from_rgb(1, 2, 3)),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Round,
+        }
+    }
+
+    #[test]
+    fn changing_a_draw_in_the_layer_invalidates_it() {
+        assert_ne!(
+            static_hash(&canvas(vec![leaf_with_radius(1.0)])),
+            static_hash(&canvas(vec![leaf_with_radius(2.0)]))
+        );
+    }
+
+    #[test]
+    fn changing_a_draw_above_the_dynamic_half_does_not() {
+        // It is not in the layer, so re-capturing on its account would rewrite
+        // an identical texture.
+        assert_eq!(
+            static_hash(&canvas(vec![transitioned(leaf()), leaf_with_radius(1.0)])),
+            static_hash(&canvas(vec![transitioned(leaf()), leaf_with_radius(2.0)]))
+        );
+    }
+
     // ── has_static_content ──────────────────────────────────────────
 
     /// The case that motivated it: every draw animates, so the layer would hold
@@ -580,13 +721,15 @@ mod tests {
         assert!(!has_static_content(&node));
     }
 
-    /// One unanimated draw is enough to make the layer worth keeping.
+    /// One unanimated draw ahead of the animation is enough to make the layer
+    /// worth keeping. Behind it the draw is [`Band::Above`] and repaints with
+    /// the dynamic half instead.
     #[test]
     fn one_static_draw_keeps_the_layer() {
         let node = TreeNode::Canvas {
             props: PropsData::default(),
             touch_key: None,
-            draws: vec![animated(leaf()), leaf()],
+            draws: vec![leaf(), animated(leaf())],
         };
         assert!(has_static_content(&node));
     }

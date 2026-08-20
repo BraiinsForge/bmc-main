@@ -1564,6 +1564,7 @@ use crate::components::switcher::{SwitcherData, SwitcherTabData, render_switcher
 use crate::components::tag::{TAG_PAD_VERT, TagData, render_tag, tag_content_padding, tag_theme};
 use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
 use crate::interaction::InteractionState;
+use crate::partition::Band;
 use crate::renderer::{RenderTarget, Renderer, RendererAssetResolver};
 use crate::{
     AnimationState, FrameTimings, ModalState, ScrollState, TransitionState, TransitionStateKey,
@@ -1596,6 +1597,12 @@ impl EmitMode {
             Self::StaticOnly => !node_is_dynamic,
             Self::DynamicOnly => node_is_dynamic,
         }
+    }
+
+    /// Whether a canvas draw in `band` should paint in this mode.
+    #[must_use]
+    pub fn emits_band(self, band: Band) -> bool {
+        self.emits(!band.is_in_layer())
     }
 }
 
@@ -1957,6 +1964,7 @@ fn layout_and_render_inner(
             ctx.taffy,
         );
     }
+
 
     sweep_stale_state(&mut anim_ctx, ctx.frame_counter, timings);
     timings.hit_region_count = ctx.interaction.hit_region_count();
@@ -3001,12 +3009,13 @@ pub(crate) fn render_taffy_node(
         if !ctx.draws.is_empty() {
             renderer.push_scissor(x, y, w, h);
             anim_ctx.draw_in_canvas = 0;
-            for draw in &ctx.draws {
-                // Split per draw: a canvas is tagged dynamic when any single
-                // draw is, so the node-level gate is too coarse here. Skipping
-                // a non-`Modified` draw cannot desynchronise `draw_counter` —
-                // that counter only advances inside the `Modified` arm.
-                if anim_ctx.emit.emits(crate::partition::draw_is_dynamic(draw)) {
+            // Split per draw: a canvas is tagged dynamic when any single draw
+            // is, so the node-level gate is too coarse here. Skipping a
+            // non-`Modified` draw cannot desynchronise `draw_counter` — that
+            // counter only advances inside the `Modified` arm.
+            let bands = crate::partition::canvas_bands(&ctx.draws);
+            for (draw, band) in ctx.draws.iter().zip(bands) {
+                if anim_ctx.emit.emits_band(band) {
                     render_draw_command(renderer, draw, x, y, w, h, anim_ctx);
                 }
                 anim_ctx.draw_in_canvas += 1;
@@ -3040,15 +3049,18 @@ pub(crate) fn render_taffy_node(
     {
         let node = Rect::new(x, y, w, h);
         // A canvas is one leaf holding many draws, so its own rect is far
-        // coarser than the draws that actually move; `crate::damage` bounds each
-        // of those, and only one it cannot bound falls back to the whole canvas.
+        // coarser than the draws the dynamic pass repaints; `crate::damage`
+        // bounds each of those — a [`Band::Above`] draw to its own still box —
+        // and only one it cannot bound falls back to the whole canvas.
         // A dynamic leaf with no draws at all is host-driven — a time label, a
         // progress bar, a modal — and repaints entirely.
         let mut damaged = ctx.draws.is_empty().then_some(node);
-        for draw in ctx
+        let bands = crate::partition::canvas_bands(&ctx.draws);
+        for (draw, _) in ctx
             .draws
             .iter()
-            .filter(|d| crate::partition::draw_is_dynamic(d))
+            .zip(bands)
+            .filter(|(_, band)| !band.is_in_layer())
         {
             let bounded = crate::damage::canvas_draw_damage(
                 draw,
