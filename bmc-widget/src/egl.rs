@@ -387,10 +387,13 @@ impl EglContext {
 
         // Create GL texture backed by the EGLImage
         let texture = unsafe {
-            let tex = self
-                .gl
-                .create_texture()
-                .map_err(|e| anyhow::anyhow!("Failed to create texture: {e}"))?;
+            let tex = match self.gl.create_texture() {
+                Ok(tex) => tex,
+                Err(e) => {
+                    (self.egl_destroy_image)(self.egl_display_raw, egl_image);
+                    anyhow::bail!("Failed to create texture: {e}");
+                }
+            };
             self.gl.bind_texture(glow::TEXTURE_2D, Some(tex));
             (self.gl_image_target_texture)(GL_TEXTURE_2D, egl_image);
 
@@ -417,58 +420,17 @@ impl EglContext {
             tex
         };
 
-        // Create FBO with color attachment and optional depth.
-        #[expect(clippy::cast_possible_wrap, reason = "dimensions fit in i32")]
-        let (fbo, depth_rb, stencil_rb) = unsafe {
-            let fbo = self
-                .gl
-                .create_framebuffer()
-                .map_err(|e| anyhow::anyhow!("Failed to create framebuffer: {e}"))?;
-            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
-            self.gl.framebuffer_texture_2d(
-                glow::FRAMEBUFFER,
-                glow::COLOR_ATTACHMENT0,
-                glow::TEXTURE_2D,
-                Some(texture),
-                0,
-            );
-
-            let stencil_rb = self.make_renderbuffer(glow::STENCIL_INDEX8, width, height)?;
-            self.gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(stencil_rb),
-            );
-
-            let depth_rb = if depth == Depth::Enabled {
-                let rb = self
-                    .gl
-                    .create_renderbuffer()
-                    .map_err(|e| anyhow::anyhow!("Failed to create depth renderbuffer: {e}"))?;
-                self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rb));
-                self.gl.renderbuffer_storage(
-                    glow::RENDERBUFFER,
-                    glow::DEPTH_COMPONENT16,
-                    width as i32,
-                    height as i32,
-                );
-                self.gl.framebuffer_renderbuffer(
-                    glow::FRAMEBUFFER,
-                    glow::DEPTH_ATTACHMENT,
-                    glow::RENDERBUFFER,
-                    Some(rb),
-                );
-                Some(rb)
-            } else {
-                None
-            };
-
-            let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
-            if status != glow::FRAMEBUFFER_COMPLETE {
-                anyhow::bail!("Export framebuffer incomplete: 0x{status:x}");
+        // Every resource from here on is this buffer's own, so a failure has to
+        // give back the EGLImage and texture created above — an allocation that
+        // half-succeeded and leaked would make the next attempt likelier to fail
+        // for the same reason.
+        let (fbo, depth_rb, stencil_rb) = match self.make_export_fbo(texture, width, height, depth)
+        {
+            Ok(attachments) => attachments,
+            Err(error) => {
+                unsafe { self.release_image_texture(egl_image, texture) };
+                return Err(error);
             }
-            (fbo, depth_rb, stencil_rb)
         };
 
         let cached_stride = bo.stride();
@@ -489,6 +451,92 @@ impl EglContext {
             format,
             modifier,
         })
+    }
+
+    /// Create this buffer's framebuffer and attach colour, the pooled stencil
+    /// and an optional depth renderbuffer.
+    ///
+    /// Owns what it creates: on failure the framebuffer and any depth
+    /// renderbuffer are destroyed before returning. The stencil is not — it
+    /// belongs to the pool and outlives every buffer that borrows it.
+    fn make_export_fbo(
+        &self,
+        texture: glow::Texture,
+        width: u32,
+        height: u32,
+        depth: Depth,
+    ) -> Result<(
+        glow::Framebuffer,
+        Option<glow::Renderbuffer>,
+        glow::Renderbuffer,
+    )> {
+        unsafe {
+            let fbo = self
+                .gl
+                .create_framebuffer()
+                .map_err(|e| anyhow::anyhow!("Failed to create framebuffer: {e}"))?;
+            self.gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
+            self.gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+
+            let stencil_rb = match self.shared_stencil(width, height) {
+                Ok(rb) => rb,
+                Err(error) => {
+                    self.gl.delete_framebuffer(fbo);
+                    return Err(error);
+                }
+            };
+            self.gl.framebuffer_renderbuffer(
+                glow::FRAMEBUFFER,
+                glow::STENCIL_ATTACHMENT,
+                glow::RENDERBUFFER,
+                Some(stencil_rb),
+            );
+
+            let depth_rb = if depth == Depth::Enabled {
+                match self.make_renderbuffer(glow::DEPTH_COMPONENT16, width, height) {
+                    Ok(rb) => {
+                        self.gl.framebuffer_renderbuffer(
+                            glow::FRAMEBUFFER,
+                            glow::DEPTH_ATTACHMENT,
+                            glow::RENDERBUFFER,
+                            Some(rb),
+                        );
+                        Some(rb)
+                    }
+                    Err(error) => {
+                        self.gl.delete_framebuffer(fbo);
+                        return Err(error);
+                    }
+                }
+            } else {
+                None
+            };
+
+            let status = self.gl.check_framebuffer_status(glow::FRAMEBUFFER);
+            if status != glow::FRAMEBUFFER_COMPLETE {
+                self.gl.delete_framebuffer(fbo);
+                if let Some(rb) = depth_rb {
+                    self.gl.delete_renderbuffer(rb);
+                }
+                anyhow::bail!("Export framebuffer incomplete: 0x{status:x}");
+            }
+            Ok((fbo, depth_rb, stencil_rb))
+        }
+    }
+
+    /// Give back an EGLImage and the texture bound to it, for an allocation
+    /// abandoned partway.
+    unsafe fn release_image_texture(&self, egl_image: *mut c_void, texture: glow::Texture) {
+        unsafe {
+            self.gl.delete_texture(texture);
+            (self.egl_destroy_image)(self.egl_display_raw, egl_image);
+        }
     }
 
     /// Allocate a per-widget staging render target.
@@ -592,6 +640,14 @@ impl EglContext {
         }
     }
 
+    /// Allocate a renderbuffer, failing if the driver could not back it.
+    ///
+    /// `glRenderbufferStorage` reports `GL_OUT_OF_MEMORY` rather than failing the
+    /// handle, so an unchecked allocation returns a name whose storage does not
+    /// exist and every framebuffer it is attached to comes back incomplete. That
+    /// matters most for the pooled stencil in [`Self::shared_stencil`]: caching a
+    /// failed handle would turn one transient OOM into every later buffer of that
+    /// size being unusable for the life of the process.
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     fn make_renderbuffer(
         &self,
@@ -605,9 +661,29 @@ impl EglContext {
                 .create_renderbuffer()
                 .map_err(|e| anyhow::anyhow!("create_renderbuffer failed: {e}"))?;
             self.gl.bind_renderbuffer(glow::RENDERBUFFER, Some(rbo));
+            self.drain_gl_errors();
             self.gl
                 .renderbuffer_storage(glow::RENDERBUFFER, format, width as i32, height as i32);
+            let error = self.gl.get_error();
+            if error != glow::NO_ERROR {
+                self.gl.delete_renderbuffer(rbo);
+                anyhow::bail!(
+                    "renderbuffer_storage({format:#x}) for {width}x{height} failed: 0x{error:x}"
+                );
+            }
             Ok(rbo)
+        }
+    }
+
+    /// Discard errors an earlier call left queued, so the next check can only
+    /// report its own. Bounded because a lost context reports the same error
+    /// forever.
+    unsafe fn drain_gl_errors(&self) {
+        const MAX_DRAIN: usize = 8;
+        for _ in 0..MAX_DRAIN {
+            if unsafe { self.gl.get_error() } == glow::NO_ERROR {
+                return;
+            }
         }
     }
 
@@ -696,7 +772,7 @@ impl EglContext {
             if let Some(depth_rb) = buf.depth_rb {
                 self.gl.delete_renderbuffer(depth_rb);
             }
-            self.gl.delete_renderbuffer(buf.stencil_rb);
+            // `stencil_rb` belongs to the pool and outlives this buffer.
             self.gl.delete_texture(buf.texture);
             (self.egl_destroy_image)(self.egl_display_raw, buf.egl_image);
         }
@@ -782,6 +858,10 @@ pub struct ExportBuffer {
     depth_rb: Option<glow::Renderbuffer>,
     /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated: femtovg
     /// paints straight into this FBO and its fill algorithms need stencil.
+    /// Borrowed from the context's size pool, so destroying this buffer must
+    /// not free it: femtovg needs the attachment but keeps nothing in it between
+    /// frames, and the cross-process GPU lock serialises renders, so no two
+    /// buffers hold it attached at once.
     stencil_rb: glow::Renderbuffer,
     /// Buffer width in pixels.
     pub width: u32,
