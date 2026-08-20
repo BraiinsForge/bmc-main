@@ -22,7 +22,10 @@
 pub mod constants;
 pub mod encrypt;
 mod filters;
+mod format;
+
 pub use bmc_net_diag as network;
+pub use format::{ArchiveFormat, FinishWrite, PasswordProtectedZip, PlainZip};
 
 use crate::constants::{
     BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION,
