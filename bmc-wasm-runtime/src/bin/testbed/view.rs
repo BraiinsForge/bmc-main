@@ -465,6 +465,11 @@ impl DeviceView {
         }
     }
 
+    /// Drop what is queued without applying it — for a view that will not tick.
+    pub(crate) fn discard_inbox(&mut self) {
+        self.inbox.clear();
+    }
+
     /// Queue a request. Applied at the start of the next tick, in order.
     pub(crate) fn send(&mut self, command: ViewCommand) {
         self.inbox.push_back(command);

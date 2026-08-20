@@ -1939,6 +1939,9 @@ impl TestbedApp {
         )> = None;
         for (idx, view) in self.stage.tiles_mut().iter_mut().enumerate() {
             if active_record_idx.is_some_and(|active| active != idx) {
+                // Dropping the queue loses nothing: ending the take rebuilds
+                // these views from the values as they stand then.
+                view.discard_inbox();
                 continue;
             }
             let tick = view::ViewTick {
