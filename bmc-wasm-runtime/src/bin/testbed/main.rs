@@ -1549,8 +1549,8 @@ impl TestbedApp {
     /// would otherwise say nothing about where the fixture went, and a failed
     /// write nothing at all.
     fn save_recording(&mut self, ctx: &egui::Context) {
-        // Drain first: the runtime and the fetch buffer only give their events
-        // up once, and they need the view still live to do it.
+        // Again, for the tail: fetches land off-thread, so one can arrive
+        // between this frame's drain and the click that got here.
         self.drain_take_sources();
         let Some(outcome) = self.recording_mode.write_take() else {
             return;
@@ -1872,6 +1872,8 @@ impl TestbedApp {
             now,
             next_wake_ms: self.render_tiles(now),
         };
+        // Straight after the tick that produced them.
+        self.drain_take_sources();
 
         // Seal the report and close once enough real renders are collected.
         if self.cli.perf_report_path.is_some() && self.perf.frame_count >= self.cli.perf_frames {

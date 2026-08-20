@@ -1449,7 +1449,10 @@ impl TestbedApp {
     }
 
     /// Move everything the view's runtime and the fetch observer have
-    /// buffered into the take.
+    /// buffered into the take. A no-op outside one.
+    ///
+    /// Called every frame rather than at Save, or a take of network traffic
+    /// alone looks empty until the moment it is written.
     pub(super) fn drain_take_sources(&mut self) {
         let Some(active_tile) = self
             .recording_mode
