@@ -387,6 +387,19 @@ struct PendingRestart {
     /// a stop or an external re-spawn replaces the entry,
     /// orphaning the token and cancelling the respawn.
     token: u64,
+    timer: tokio::task::JoinHandle<()>,
+}
+
+/// Stop a cancelled respawn's timer from sleeping out a delay
+/// nobody will act on. Every cancellation path drops the entry,
+/// so aborting here is the one place that cannot be forgotten.
+///
+/// The token stays load-bearing either way:
+/// an [`Internal::RestartDue`] already in the channel cannot be un-sent.
+impl Drop for PendingRestart {
+    fn drop(&mut self) {
+        self.timer.abort();
+    }
 }
 
 enum Internal {
@@ -730,21 +743,26 @@ impl Actor {
         } = respawn;
         let token = self.next_restart_token;
         self.next_restart_token += 1;
+        let timer = tokio::spawn({
+            let internal_tx = internal_tx.clone();
+            let instance_id = instance_id.clone();
+            async move {
+                tokio::time::sleep(delay).await;
+                let _ = internal_tx.send(Internal::RestartDue { instance_id, token });
+            }
+        });
+        // Inserting drops any entry already here, aborting its timer.
         self.children.insert(
-            instance_id.clone(),
+            instance_id,
             WidgetState::PendingRestart(PendingRestart {
                 widget_uid,
                 generation,
                 env,
                 backoff: next_delay,
                 token,
+                timer,
             }),
         );
-        let internal_tx = internal_tx.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(delay).await;
-            let _ = internal_tx.send(Internal::RestartDue { instance_id, token });
-        });
     }
 
     /// Bring every pending respawn forward to the initial delay,
@@ -844,7 +862,7 @@ impl Actor {
                         instance_id: instance_id.to_owned(),
                         widget_uid: pending.widget_uid,
                         generation: pending.generation,
-                        env: pending.env,
+                        env: pending.env.clone(),
                     },
                     pending.backoff,
                     next_backoff(pending.backoff, self.policy.max),
@@ -1160,6 +1178,22 @@ mod tests {
             initial: Duration::from_millis(10),
             max: Duration::from_millis(40),
             healthy_uptime: Duration::from_hours(1),
+        }
+    }
+
+    fn bare_actor(uid: Uuid) -> Actor {
+        let (events_tx, _events_rx) = mpsc::unbounded_channel();
+        Actor {
+            registry: Arc::new(WidgetRegistry::new([test_widget_info(uid)])),
+            spawner: Box::new(FakeSpawner {
+                program: "true".to_owned(),
+                args: Vec::new(),
+                launched: LaunchLog::default(),
+            }),
+            children: HashMap::new(),
+            next_restart_token: 0,
+            events_tx,
+            policy: RestartPolicy::default(),
         }
     }
 
@@ -1643,6 +1677,34 @@ mod tests {
                 panic!("an uninstalled widget type must end supervision, not respawn")
             }
         }
+    }
+
+    /// The token makes an obsolete RestartDue harmless on arrival,
+    /// but a task left sleeping still holds its delay —
+    /// five minutes at the ceiling, once per re-schedule.
+    #[tokio::test]
+    async fn a_re_scheduled_respawn_aborts_the_timer_it_replaces() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
+        let respawn = || Respawn {
+            instance_id: "flapping".to_owned(),
+            widget_uid: uid,
+            generation: WidgetGeneration(1),
+            env: env("flapping"),
+        };
+
+        let about_to_fire = Duration::from_millis(10);
+        let ceiling = RESTART_BACKOFF_MAX;
+        actor.schedule_restart(respawn(), about_to_fire, ceiling, &internal_tx);
+        actor.schedule_restart(respawn(), ceiling, ceiling, &internal_tx);
+
+        assert!(
+            timeout(about_to_fire * 20, internal_rx.recv())
+                .await
+                .is_err(),
+            "the delay the re-schedule cut short must not fire"
+        );
     }
 
     #[tokio::test]
