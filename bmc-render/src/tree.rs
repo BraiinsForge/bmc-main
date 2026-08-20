@@ -1948,23 +1948,21 @@ fn layout_and_render_inner(
         &mut anim_ctx,
     );
 
-    // Render modal overlays
-    for modal in &modals {
-        render_modal(
-            modal,
-            width,
-            height,
-            &mut target,
-            ctx.interaction,
-            ctx.modal_states,
-            ctx.scroll_states,
-            ctx.delta_ms,
-            &mut result,
-            &mut anim_ctx,
-            ctx.taffy,
-        );
-    }
+    render_modal_overlays(
+        &modals,
+        width,
+        height,
+        &mut target,
+        ctx.interaction,
+        ctx.modal_states,
+        ctx.scroll_states,
+        ctx.delta_ms,
+        ctx.taffy,
+        &mut result,
+        &mut anim_ctx,
+    );
 
+    record_modal_damage(ctx.modal_states, width, height, &mut result);
 
     sweep_stale_state(&mut anim_ctx, ctx.frame_counter, timings);
     timings.hit_region_count = ctx.interaction.hit_region_count();
@@ -1993,6 +1991,84 @@ fn layout_and_render_inner(
     });
 
     Ok((result, has_active || modal_animating))
+}
+
+/// Damage the whole surface while a modal is on screen.
+///
+/// A modal paints outside the walk entirely: it lays out as a `Display::None`
+/// leaf and is drawn by an overlay pass afterwards, so nothing has described its
+/// backdrop — which covers the surface — to damage tracking. Left unrecorded,
+/// the darkening lands only inside whatever rects the walk happened to report,
+/// and the pixels it covered never repaint once it closes.
+///
+/// The whole surface, not the panel: the backdrop dims everything. Call after
+/// the overlay pass, which is where a modal's state first appears, or the frame
+/// it opens on records nothing. Recording it also cleans up afterwards, the
+/// damage history spanning two walks so the frame following the modal's last one
+/// still repaints in full.
+fn record_modal_damage(
+    modal_states: &HashMap<String, ModalState>,
+    width: f32,
+    height: f32,
+    result: &mut TreeResult,
+) {
+    let visible = modal_states
+        .values()
+        .any(|s| s.is_open || s.animation_progress > 0.0);
+    if !visible {
+        return;
+    }
+    let surface = Rect::new(0.0, 0.0, width, height);
+    Rect::union_bounds(&mut result.dynamic_bounds, surface);
+    result.dynamic_rects.push(surface);
+    result.dynamic_node_count += 1;
+}
+
+/// Paint the frame's open modals, always emitting in full.
+///
+/// A modal is never in the cached layer: [`crate::partition::has_static_content`]
+/// reports false for it, [`crate::partition::static_hash`] skips it, and layout
+/// gives it `Display::None` so the main walk never draws it. It is painted here
+/// instead, from its own Taffy tree, after that walk. So the static half of a
+/// modal's body has nowhere to come from, and leaving `emit` at
+/// [`EmitMode::DynamicOnly`] — where [`render_tree`] leaves it whenever the layer
+/// was blitted — silently dropped every static node inside an open modal, its
+/// body text included.
+#[expect(clippy::too_many_arguments, reason = "render plumbing is irreducible")]
+fn render_modal_overlays(
+    modals: &[ModalInfo],
+    width: f32,
+    height: f32,
+    renderer: &mut RenderTarget<'_, '_, '_>,
+    interaction: &mut InteractionState,
+    modal_states: &mut HashMap<String, ModalState>,
+    scroll_states: &mut HashMap<String, ScrollState>,
+    delta_ms: u32,
+    taffy: &mut TaffyTree<NodeContext>,
+    result: &mut TreeResult,
+    anim_ctx: &mut AnimationContext<'_>,
+) {
+    if modals.is_empty() {
+        return;
+    }
+    let emit_before = anim_ctx.emit;
+    anim_ctx.emit = EmitMode::All;
+    for modal in modals {
+        render_modal(
+            modal,
+            width,
+            height,
+            renderer,
+            interaction,
+            modal_states,
+            scroll_states,
+            delta_ms,
+            result,
+            anim_ctx,
+            taffy,
+        );
+    }
+    anim_ctx.emit = emit_before;
 }
 
 /// Render the tree, splitting into a static and a dynamic pass when this frame
@@ -3636,7 +3712,7 @@ mod intrinsic_button_width_tests {
 }
 
 #[cfg(test)]
-mod static_layer_key_tests {
+mod frame_pass_tests {
     use std::collections::HashMap;
 
     use super::{ProcessContext, TreeNode, layout_and_render};
@@ -3655,8 +3731,12 @@ mod static_layer_key_tests {
     /// apart — a caller passing a constant is the regression this catches.
     #[derive(Default)]
     struct KeyRecordingRenderer {
+        /// Bounds of every shape this renderer was actually asked to paint.
+        draws: Vec<crate::interaction::Rect>,
         calls: Vec<(&'static str, String)>,
         captured: Vec<String>,
+        /// Paragraph text this renderer was actually asked to paint.
+        paragraphs: Vec<String>,
     }
 
     impl Renderer for KeyRecordingRenderer {
@@ -3680,24 +3760,43 @@ mod static_layer_key_tests {
             self.captured.retain(|k| k != key);
         }
 
-        fn fill_rect(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _color: Color) {}
+        fn fill_rect(&mut self, x: f32, y: f32, w: f32, h: f32, _color: Color) {
+            self.draws.push(crate::interaction::Rect::new(x, y, w, h));
+        }
 
         fn fill_rounded_rect(
             &mut self,
-            _x: f32,
-            _y: f32,
-            _w: f32,
-            _h: f32,
+            x: f32,
+            y: f32,
+            w: f32,
+            h: f32,
             _radius: f32,
             _color: Color,
         ) {
+            self.draws.push(crate::interaction::Rect::new(x, y, w, h));
         }
 
-        fn fill_circle(&mut self, _cx: f32, _cy: f32, _r: f32, _color: Color) {}
+        fn fill_circle(&mut self, cx: f32, cy: f32, r: f32, _color: Color) {
+            self.draws.push(crate::interaction::Rect::new(
+                cx - r,
+                cy - r,
+                2.0 * r,
+                2.0 * r,
+            ));
+        }
 
-        fn fill_rect_paint(&mut self, _x: f32, _y: f32, _w: f32, _h: f32, _fill: &Fill) {}
+        fn fill_rect_paint(&mut self, x: f32, y: f32, w: f32, h: f32, _fill: &Fill) {
+            self.draws.push(crate::interaction::Rect::new(x, y, w, h));
+        }
 
-        fn fill_circle_paint(&mut self, _cx: f32, _cy: f32, _r: f32, _fill: &Fill) {}
+        fn fill_circle_paint(&mut self, cx: f32, cy: f32, r: f32, _fill: &Fill) {
+            self.draws.push(crate::interaction::Rect::new(
+                cx - r,
+                cy - r,
+                2.0 * r,
+                2.0 * r,
+            ));
+        }
 
         fn stroke_arc(
             &mut self,
@@ -3765,11 +3864,13 @@ mod static_layer_key_tests {
         fn draw_paragraph(
             &mut self,
             _style: &TextStyle,
-            _spans: &[SpanData],
+            spans: &[SpanData],
             _x: f32,
             _y: f32,
             _max_width: f32,
         ) {
+            self.paragraphs
+                .extend(spans.iter().map(|span| span.text.clone()));
         }
 
         fn draw_paragraph_clipped(
@@ -4008,6 +4109,282 @@ mod static_layer_key_tests {
         let mut timings = FrameTimings::default();
         layout_and_render(&tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
             .expect("BUG: layout_and_render must succeed for a trivial tree");
+    }
+
+    /// An open modal whose body is a single static paragraph.
+    fn modal_tree_with_body_text(text: &str) -> TreeNode {
+        let TreeNode::Column(props, mut children) = modal_tree(true) else {
+            unreachable!("BUG: modal_tree builds a Column")
+        };
+        if let Some(TreeNode::Modal { body, .. }) = children.last_mut() {
+            *body = vec![TreeNode::Paragraph {
+                props: PropsData::default(),
+                base_style: TextStyle::default(),
+                spans: vec![SpanData {
+                    text: text.to_owned(),
+                    weight: None,
+                    color: None,
+                    italic: false,
+                    underline: false,
+                    strikethrough: false,
+                }],
+            }];
+        }
+        TreeNode::Column(props, children)
+    }
+
+    fn modal_tree(is_open: bool) -> TreeNode {
+        TreeNode::Column(
+            PropsData::default(),
+            vec![
+                TreeNode::Spacer { flex: 1.0 },
+                TreeNode::Modal {
+                    modal_id: "confirm".to_owned(),
+                    is_open,
+                    padding: 8,
+                    backdrop_alpha: 160,
+                    title: String::new(),
+                    content_height: 40.0,
+                    bg_color: Color::default(),
+                    header_color: Color::default(),
+                    title_color: Color::default(),
+                    max_width: 0,
+                    body: Vec::new(),
+                    footer_primary_key: String::new(),
+                    footer_primary_label: String::new(),
+                    footer_secondary_key: String::new(),
+                    footer_secondary_label: String::new(),
+                    footer_danger: false,
+                },
+            ],
+        )
+    }
+
+    /// A modal's body is not in the cached layer, so a frame that reuses the
+    /// layer must still emit it in full. This regressed once: `render_tree`
+    /// leaves `emit` at `DynamicOnly` after blitting, the modal pass inherited
+    /// it, and every static node inside an open modal — its body text included —
+    /// was silently dropped while the modal itself kept painting.
+    #[test]
+    fn an_open_modal_emits_its_static_body_on_a_layer_reusing_frame() {
+        let mut state = SlotState::default();
+        let mut renderer = KeyRecordingRenderer::default();
+        let tree = modal_tree_with_body_text("are you sure?");
+
+        // First frame captures the layer, so the second can reuse it.
+        render_with(&mut state, &mut renderer, &tree, true, false);
+        renderer.paragraphs.clear();
+        render_with(&mut state, &mut renderer, &tree, false, true);
+
+        assert!(
+            renderer.calls.iter().any(|(call, _)| *call == "blit"),
+            "the second frame must reuse the layer, or this proves nothing",
+        );
+        assert!(
+            renderer.paragraphs.iter().any(|t| t == "are you sure?"),
+            "the modal's body text must be painted on a layer-reusing frame; \
+             got {:?}",
+            renderer.paragraphs,
+        );
+    }
+
+    fn render_with(
+        state: &mut SlotState,
+        renderer: &mut KeyRecordingRenderer,
+        tree: &TreeNode,
+        capture_static: bool,
+        reuse_static_layer: bool,
+    ) {
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: super::EmitMode::All,
+            capture_static,
+            reuse_static_layer,
+            static_layer_key: "modal-test",
+            damage_rects: &[],
+        };
+        let mut timings = FrameTimings::default();
+        layout_and_render(tree, 200.0, 200.0, renderer, &mut timings, &mut ctx)
+            .expect("BUG: layout_and_render must succeed for the modal tree");
+    }
+
+    /// The cached-frame pass: dynamic draws only, scissored to `damage`.
+    fn render_dynamic_pass(
+        state: &mut SlotState,
+        renderer: &mut KeyRecordingRenderer,
+        tree: &TreeNode,
+        damage: &[crate::interaction::Rect],
+    ) {
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 3,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: super::EmitMode::DynamicOnly,
+            capture_static: false,
+            reuse_static_layer: true,
+            static_layer_key: "damage-test",
+            damage_rects: damage,
+        };
+        let mut timings = FrameTimings::default();
+        layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
+            .expect("BUG: layout_and_render must succeed for the dynamic pass");
+    }
+
+    fn render_once(
+        state: &mut SlotState,
+        renderer: &mut KeyRecordingRenderer,
+        tree: &TreeNode,
+    ) -> super::TreeResult {
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: super::EmitMode::All,
+            capture_static: false,
+            reuse_static_layer: false,
+            static_layer_key: "modal-test",
+            damage_rects: &[],
+        };
+        let mut timings = FrameTimings::default();
+        let (result, _) = layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
+            .expect("BUG: layout_and_render must succeed for a modal tree");
+        result
+    }
+
+    /// A canvas whose one draw animates, so the walk tags it dynamic and the
+    /// cached-frame pass repaints it.
+    fn moving_dot(x: f32) -> TreeNode {
+        use bmc_wasm_protocol::animation::{AnimProperty, ColorSpace, Easing, LoopMode};
+
+        TreeNode::Canvas {
+            props: PropsData::default(),
+            touch_key: None,
+            draws: vec![super::DrawCommand::Modified {
+                animations: vec![super::HostAnimationDef {
+                    property: AnimProperty::Alpha,
+                    from: 0.0,
+                    to: 1.0,
+                    duration_ms: 500,
+                    delay_ms: 0,
+                    easing: Easing::Linear,
+                    loop_mode: LoopMode::Forever,
+                }],
+                transition: None,
+                color_space: ColorSpace::default(),
+                inner: Box::new(super::DrawCommand::Rect {
+                    x,
+                    y: 10.0,
+                    w: 12.0,
+                    h: 12.0,
+                    fill: Fill::Solid(Color::from_rgb(9, 9, 9)),
+                }),
+            }],
+        }
+    }
+
+    fn within(outer: &[crate::interaction::Rect], inner: crate::interaction::Rect) -> bool {
+        outer.iter().any(|o| {
+            o.x <= inner.x
+                && o.y <= inner.y
+                && o.x + o.w >= inner.x + inner.w
+                && o.y + o.h >= inner.y + inner.h
+        })
+    }
+
+    /// The contract a damage-scissored frame rests on: everything the dynamic
+    /// pass paints falls inside the damage the walks reported, so the scissor
+    /// drops nothing. A draw outside it is a pixel that never lands — the
+    /// partial-redraw defect that otherwise only shows on hardware.
+    ///
+    /// The span is two walks wide because the device rotates export buffers:
+    /// this frame paints into the buffer the frame *before* last drew, so the
+    /// region that one moved is still stale in it.
+    #[test]
+    fn every_dynamic_draw_lands_inside_the_two_walk_damage_span() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        let older = render_once(&mut state, &mut renderer, &moving_dot(10.0));
+        let newer = render_once(&mut state, &mut renderer, &moving_dot(60.0));
+
+        let span: Vec<_> = newer
+            .dynamic_rects
+            .iter()
+            .chain(older.dynamic_rects.iter())
+            .copied()
+            .collect();
+        assert!(
+            !span.is_empty(),
+            "an animating draw must report damage, or a cached frame repaints nothing"
+        );
+
+        renderer.draws.clear();
+        render_dynamic_pass(&mut state, &mut renderer, &moving_dot(60.0), &span);
+
+        assert!(
+            !renderer.draws.is_empty(),
+            "the dynamic pass must paint the animating draw, or this proves nothing"
+        );
+        for draw in &renderer.draws {
+            assert!(
+                within(&span, *draw),
+                "draw {draw:?} falls outside the damage span {span:?}, so the scissor drops it"
+            );
+        }
+    }
+
+    /// The backdrop dims the whole surface from outside the walk, so a frame
+    /// that scissors to the walk's rects darkens only those and leaves the rest
+    /// stale — and keeps the covered pixels once the modal closes.
+    #[test]
+    fn an_open_modal_damages_the_whole_surface() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        let result = render_once(&mut state, &mut renderer, &modal_tree(true));
+
+        assert!(
+            result
+                .dynamic_rects
+                .iter()
+                .any(|r| r.w >= 100.0 && r.h >= 100.0),
+            "an open modal must damage the surface, got {:?}",
+            result.dynamic_rects
+        );
+    }
+
+    #[test]
+    fn a_closed_modal_damages_nothing() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        let result = render_once(&mut state, &mut renderer, &modal_tree(false));
+
+        assert!(
+            result.dynamic_rects.is_empty(),
+            "a modal that never opened paints nothing, got {:?}",
+            result.dynamic_rects
+        );
     }
 
     /// Two slots sharing one renderer must address distinct layers. Before the
