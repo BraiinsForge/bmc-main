@@ -98,16 +98,21 @@ impl PreparedWidget {
 
 /// Build a [`RuntimeConfig`] for unified fixture recording mode.
 ///
-/// Instead of writing fetches to `fetch_responses.json`, the observer appends
-/// `TimelineEvent::Fetch` entries to a shared vec with `at_ms` computed from
-/// the provided `start_instant`. Network events are recorded via the runtime's
-/// `record_events` flag and retrieved with `take_recorded_events()`.
+/// Instead of writing fetches to `fetch_responses.json`, the observer
+/// appends `TimelineEvent::Fetch` entries to a shared vec, stamping
+/// `at_ms` from `take_clock`.
+///
+/// The host republishes the take's elapsed time there once a frame,
+/// so a fetch arriving on a view's own thread still lands on the take's scale.
+///
+/// Network events take a separate route: the runtime's `record_events` flag
+/// buffers them and `take_recorded_events()` retrieves them, still carrying
+/// the host's monotonic reading rather than the take's.
 #[must_use]
-#[expect(clippy::cast_possible_truncation)]
 pub fn build_unified_recording_config(
     kv_dir: PathBuf,
     fetch_events: std::sync::Arc<std::sync::Mutex<Vec<crate::unified_fixture::TimelineEvent>>>,
-    start_instant: std::time::Instant,
+    take_clock: std::sync::Arc<std::sync::atomic::AtomicU64>,
 ) -> RuntimeConfig {
     use crate::unified_fixture::{FixtureBody, TimelineEvent, UnifiedEvent};
 
@@ -122,7 +127,7 @@ pub fn build_unified_recording_config(
     rt_config.fetch_observer = Some(Box::new(move |key, status, body| {
         // Parse "METHOD URL" key
         let (method, url) = key.split_once(' ').unwrap_or(("GET", key));
-        let at_ms = start_instant.elapsed().as_millis() as u64;
+        let at_ms = take_clock.load(std::sync::atomic::Ordering::Relaxed);
         let event = TimelineEvent {
             at_ms,
             event: UnifiedEvent::Fetch {

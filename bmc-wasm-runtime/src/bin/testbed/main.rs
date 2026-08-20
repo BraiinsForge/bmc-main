@@ -1091,6 +1091,13 @@ struct Clock {
     monotonic_offset_ms: u64,
 }
 
+impl Clock {
+    /// The monotonic reading the runtimes see at `now`.
+    fn monotonic_ms(&self, now: std::time::Instant) -> u64 {
+        now.duration_since(self.start_instant).as_millis() as u64 + self.monotonic_offset_ms
+    }
+}
+
 /// The rebuild cycle end to end: the source watcher that starts a build, the
 /// wasm watcher that notices its result, and the phase both report into.
 ///
@@ -1531,6 +1538,7 @@ impl TestbedApp {
             &self.credentials,
             kv_stash,
             &displaced,
+            self.clock.monotonic_ms(std::time::Instant::now()),
         );
         assert!(started, "BUG: begin_take refused after the active() guard");
         // Repack once the rebuilt views exist: the recording sidebar just
@@ -1805,15 +1813,15 @@ impl TestbedApp {
     ///
     /// The recording view gets the unified fetch observer, so its traffic
     /// reaches the timeline; every other view takes the plain default.
-    /// The observer stamps `at_ms` against the take's own start, so a view
+    /// The observer stamps `at_ms` against the take's own clock, so a view
     /// rebuilt mid-recording keeps writing on the timeline earlier events used.
     fn view_runtime_config(&self, kv_path: PathBuf, recording: bool) -> RuntimeConfig {
-        let recording_start = self.recording_mode.take_epoch().filter(|_| recording);
-        let mut config = if let Some(start) = recording_start {
+        let take_clock = self.recording_mode.take_clock().filter(|_| recording);
+        let mut config = if let Some(clock) = take_clock {
             fixtures::build_unified_recording_config(
                 kv_path,
                 self.recording_mode.fetch_buffer(),
-                start,
+                clock,
             )
         } else {
             RuntimeConfig {
@@ -1898,8 +1906,8 @@ impl TestbedApp {
         // ages out; "reset" rewinds only the display clock, never the monotonic
         // one (which uses its own ratcheting offset).
         let offset_ms = self.clock.offset_ms;
-        let monotonic_ms = now.duration_since(self.clock.start_instant).as_millis() as u64
-            + self.clock.monotonic_offset_ms;
+        let monotonic_ms = self.clock.monotonic_ms(now);
+        self.recording_mode.advance_clock(monotonic_ms);
         let system_time = (chrono::Local::now()
             + chrono::Duration::milliseconds(offset_ms.cast_signed()))
         .fixed_offset();

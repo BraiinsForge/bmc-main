@@ -49,8 +49,57 @@ struct GestureTracker {
 /// Delay between a user action and its auto-inserted capture event (ms).
 const AUTO_CAPTURE_DELAY_MS: u64 = 500;
 
+/// The take's own clock: milliseconds since the operator pressed Record,
+/// so a fixture's timeline starts at zero however long the testbed ran first.
+///
+/// It follows the host's monotonic clock, not wall time: the fast-forward
+/// lives there, so replay advances through the same span the widget saw.
+///
+/// Shared, because a threaded view's fetch observer stamps off-thread.
+struct TakeClock {
+    /// The host reading this take treats as zero.
+    epoch_monotonic_ms: u64,
+    now_ms: std::sync::Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl TakeClock {
+    fn start(monotonic_ms: u64) -> Self {
+        Self {
+            epoch_monotonic_ms: monotonic_ms,
+            now_ms: std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// Republish the host's reading on the take's scale, once per frame.
+    ///
+    /// An off-thread reader lags by up to one repaint (`DRAIN_TICK_MS`, 33 ms),
+    /// which replay's 16 ms frame and the 500 ms capture debounce both swallow.
+    /// Worth it to keep every stamp derived from a single reading.
+    fn advance(&self, monotonic_ms: u64) {
+        self.now_ms.store(
+            self.rebase(monotonic_ms),
+            std::sync::atomic::Ordering::Relaxed,
+        );
+    }
+
+    fn now_ms(&self) -> u64 {
+        self.now_ms.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// Put a host-stamped `at_ms` on the take's scale: the runtime stamps events
+    /// with the clock the host feeds it, so only their origin needs moving.
+    fn rebase(&self, monotonic_ms: u64) -> u64 {
+        monotonic_ms.saturating_sub(self.epoch_monotonic_ms)
+    }
+
+    /// A handle for the fetch observer, which stamps from a view's own thread.
+    fn reader(&self) -> std::sync::Arc<std::sync::atomic::AtomicU64> {
+        std::sync::Arc::clone(&self.now_ms)
+    }
+}
+
 impl RecordingState {
-    /// Append a delivery event to the timeline at `recording_start.elapsed()`
+    /// Append a delivery event to the timeline at the take's current time
     /// and, when `auto_capture` is on, attach a debounced auto-`Capture`
     /// 500 ms later so each settled state yields one baseline frame.
     ///
@@ -72,7 +121,7 @@ impl RecordingState {
     /// fps: None }` so gesture-path animation Captures (with concrete duration)
     /// never get slid forward by a param / system delivery.
     fn record_delivery(&mut self, make_event: impl FnOnce() -> UnifiedEvent) {
-        let at_ms = self.recording_start.elapsed().as_millis() as u64;
+        let at_ms = self.clock.now_ms();
         self.events.push(TimelineEvent {
             at_ms,
             event: make_event(),
@@ -129,8 +178,7 @@ pub(super) struct RecordingState {
     gesture: Option<GestureTracker>,
     /// Widget root directory (for output paths).
     widget_root: Option<PathBuf>,
-    /// Wall-clock reference for `at_ms` calculation.
-    recording_start: std::time::Instant,
+    clock: TakeClock,
     /// Snapshot of KV dir state at recording start.
     kv_snapshot: std::collections::HashMap<String, String>,
     /// Snapshot of params at recording start (manifest defaults plus any operator
@@ -347,7 +395,7 @@ impl RecordingState {
     /// Append a manual single-frame `Capture` — the operator committing the
     /// current widget state as a baseline frame.
     pub(super) fn record_capture(&mut self) {
-        let at_ms = self.recording_start.elapsed().as_millis() as u64;
+        let at_ms = self.clock.now_ms();
         self.events.push(TimelineEvent {
             at_ms,
             event: UnifiedEvent::Capture {
@@ -680,6 +728,7 @@ impl RecordingMode {
         credentials: &serde_json::Map<String, serde_json::Value>,
         kv_stash: (PathBuf, Option<PathBuf>),
         current_canvas: &[&'static bmc_wasm_runtime::platform_catalog::Platform],
+        monotonic_ms: u64,
     ) -> bool {
         if self.active().is_some() {
             return false;
@@ -705,6 +754,7 @@ impl RecordingMode {
                 params,
                 system,
                 credentials,
+                monotonic_ms,
             )),
             restore_platforms,
             kv_stash,
@@ -712,10 +762,17 @@ impl RecordingMode {
         true
     }
 
-    /// The take's own timestamp origin, which the fetch observer stamps
-    /// `at_ms` against; `None` outside a take.
-    pub(super) fn take_epoch(&self) -> Option<std::time::Instant> {
-        self.active().map(|rec| rec.recording_start)
+    /// A reader on the take's clock for the fetch observer, which stamps
+    /// `at_ms` against it; `None` outside a take.
+    pub(super) fn take_clock(&self) -> Option<std::sync::Arc<std::sync::atomic::AtomicU64>> {
+        self.active().map(|rec| rec.clock.reader())
+    }
+
+    /// Move the running take's clock to the host's reading for this frame.
+    pub(super) fn advance_clock(&self, monotonic_ms: u64) {
+        if let Some(rec) = self.active() {
+            rec.clock.advance(monotonic_ms);
+        }
     }
 
     /// A handle on the fetch buffer for a recording view's observer.
@@ -787,6 +844,7 @@ impl RecordingState {
         >,
         system: &bmc_wasm_runtime::SystemSnapshot,
         credentials: &serde_json::Map<String, serde_json::Value>,
+        monotonic_ms: u64,
     ) -> Self {
         let active_tile = target
             .platform
@@ -802,7 +860,7 @@ impl RecordingState {
             drained: Vec::new(),
             gesture: None,
             widget_root,
-            recording_start: std::time::Instant::now(),
+            clock: TakeClock::start(monotonic_ms),
             // Filled by `build_views` once the take's KV dir is wiped and seeded.
             kv_snapshot: std::collections::HashMap::new(),
             // Pre-encoded into the JSON shape `FixtureHeader::initial_params`
@@ -902,7 +960,7 @@ impl RecordingState {
         let dy = gesture.current_pos.1 - gesture.start_pos.1;
         let adx = dx.abs();
         let ady = dy.abs();
-        let at_ms = self.recording_start.elapsed().as_millis() as u64;
+        let at_ms = self.clock.now_ms();
 
         let Some(ref id) = gesture.start_element else {
             if adx < GESTURE_THRESHOLD && ady < GESTURE_THRESHOLD {
@@ -1406,14 +1464,20 @@ impl TestbedApp {
             .map(DeviceView::take_recorded_events)
             .unwrap_or_default();
         let mut drained = fixtures::fixture_events_to_timeline(&runtime_events);
-        drained.extend(std::mem::take(
+        let fetched = std::mem::take(
             &mut *self
                 .recording_mode
                 .fetch_events
                 .lock()
                 .expect("BUG: fetch events poisoned"),
-        ));
+        );
         if let Some(rec) = self.recording_mode.active_mut() {
+            // The observer already stamped the fetches on the take's clock;
+            // only the runtime's own events arrive on the host's.
+            for event in &mut drained {
+                event.at_ms = rec.clock.rebase(event.at_ms);
+            }
+            drained.extend(fetched);
             rec.absorb(drained);
         }
     }
@@ -1557,6 +1621,10 @@ mod naming_tests {
 mod begin_tests {
     use super::RecordingState;
 
+    /// A take entered three minutes into the session, so a stamp that skipped
+    /// the rebase lands far from zero instead of coincidentally on it.
+    const TAKE_EPOCH_MS: u64 = 180_000;
+
     fn begin(target: &str) -> RecordingState {
         let manifest_json = serde_json::json!({
             "uid": "550e8400-e29b-41d4-a716-446655440201",
@@ -1593,6 +1661,7 @@ mod begin_tests {
             &params,
             &bmc_wasm_runtime::SystemSnapshot::default(),
             &credentials,
+            TAKE_EPOCH_MS,
         )
     }
 
@@ -1612,6 +1681,28 @@ mod begin_tests {
             "the fixture header must carry the params as JSON, self-contained",
         );
         assert!(state.credentials_snapshot.contains_key("pool"));
+    }
+
+    #[test]
+    fn every_source_stamps_one_host_reading_the_same_way() {
+        let state = begin("bmc100:full");
+        let host_ms = TAKE_EPOCH_MS + 2_000;
+        state.clock.advance(host_ms);
+
+        assert_eq!(state.clock.now_ms(), 2_000, "a gesture or fetch stamp");
+        assert_eq!(
+            state.clock.rebase(host_ms),
+            2_000,
+            "a drained runtime stamp"
+        );
+    }
+
+    #[test]
+    fn a_take_starts_at_zero_however_long_the_testbed_ran() {
+        let state = begin("bmc100:full");
+        state.clock.advance(TAKE_EPOCH_MS);
+
+        assert_eq!(state.clock.now_ms(), 0);
     }
 
     #[test]
