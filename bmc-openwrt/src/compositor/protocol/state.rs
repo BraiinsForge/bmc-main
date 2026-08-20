@@ -319,9 +319,12 @@ impl DeckWidgetProtocolState {
             self.purge_pending_connections(instance_id, pid);
             return false;
         }
-        // The respawn postdates the exit that recorded any dead pid,
-        // so a recycled pid belongs to the live process it announces.
-        widget.exited_before_bind = None;
+        // A recycled pid belongs to the live process this respawn announces,
+        // so a tombstone naming that pid is stale and may go. One naming a
+        // different pid is not: its own set_widget_pid may still be queued.
+        if widget.exited_before_bind == Some(pid) {
+            widget.exited_before_bind = None;
+        }
         self.set_widget_pid(instance_id, generation, pid);
         true
     }
@@ -1230,6 +1233,25 @@ mod tests {
             state.widgets["alpha"].pid,
             Some(300),
             "the live process must survive the stale abandon"
+        );
+    }
+
+    /// The coordinator's own `set_widget_pid` for the first process can still
+    /// be queued when the respawn arrives. Disarming the tombstone that call
+    /// was recorded for lets it bind a pid the kernel has already reaped.
+    #[test]
+    fn a_respawn_leaves_a_tombstone_for_another_pid_armed() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), GEN, make_config());
+        state.clear_pid_for_instance(&"alpha".to_owned(), GEN, 100);
+
+        assert!(state.bind_respawned_pid(&"alpha".to_owned(), GEN, 200));
+        state.set_widget_pid(&"alpha".to_owned(), GEN, 100);
+
+        assert_eq!(
+            state.widgets["alpha"].pid,
+            Some(200),
+            "the respawned process must survive the late bind of the dead pid"
         );
     }
 
