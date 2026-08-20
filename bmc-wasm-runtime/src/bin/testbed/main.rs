@@ -73,7 +73,7 @@ use bmc_wasm_runtime::fixtures::{
 use bmc_wasm_runtime::platform_catalog::{
     self, DisplayShape, Platform, Viewport, manifest_viewport_shape,
 };
-use bmc_wasm_runtime::{DiskCache, PackageAssetStore, RuntimeConfig, SystemSnapshot};
+use bmc_wasm_runtime::{DiskCache, RuntimeConfig, SystemSnapshot};
 use clap::Parser;
 
 use paint::{
@@ -1832,7 +1832,7 @@ impl TestbedApp {
             }
         };
         config.mesh_msaa_samples = 4;
-        config.package_assets = Some(PackageAssetStore::new(self.prepared_widget.asset_root()));
+        config.package_assets = Some(self.prepared_widget.asset_store());
         config.params = self.params.clone();
         config.system = self.system.clone();
         // The sidebar's bindings as well: a rebuilt runtime starts unbound,

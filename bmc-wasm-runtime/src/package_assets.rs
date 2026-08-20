@@ -33,6 +33,9 @@ const MAX_PACKAGE_ASSET_PAYLOAD_LEN: u64 = 24 * 1_024 * 1_024;
 #[derive(Clone, Debug)]
 pub struct PackageAssetStore {
     root: PathBuf,
+    /// A share of whatever owns the extraction `root` points into. Opaque:
+    /// the store needs it dropped no sooner than itself, never read.
+    keep_alive: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 #[derive(Debug, Error)]
@@ -61,7 +64,23 @@ pub enum PackageAssetError {
 impl PackageAssetStore {
     #[must_use]
     pub fn new(root: impl Into<PathBuf>) -> Self {
-        Self { root: root.into() }
+        Self {
+            root: root.into(),
+            keep_alive: None,
+        }
+    }
+
+    /// Hold `keeper` for as long as this store lives.
+    ///
+    /// For a root someone else owns and may replace: reads happen on demand,
+    /// so the store cannot rely on the extractor still holding it.
+    #[must_use]
+    pub fn kept_alive_by(
+        mut self,
+        keeper: std::sync::Arc<dyn std::any::Any + Send + Sync>,
+    ) -> Self {
+        self.keep_alive = Some(keeper);
+        self
     }
 
     #[must_use]
@@ -151,6 +170,25 @@ mod tests {
         fs::write(directory.join(format!("{id}.asset")), payload)
             .expect("BUG: write package asset test payload");
         id
+    }
+
+    #[test]
+    fn a_store_outlives_whoever_extracted_it() {
+        let payload = b"compiled svg";
+        let owner = std::sync::Arc::new(tempdir().expect("BUG: create package asset directory"));
+        let id = write_asset(owner.path(), PackageAssetKind::Svg, payload);
+        let store = PackageAssetStore::new(owner.path())
+            .kept_alive_by(std::sync::Arc::clone(&owner) as std::sync::Arc<_>);
+
+        // What a hot reload does to the handle the extraction came from.
+        drop(owner);
+
+        assert_eq!(
+            store
+                .load(PackageAssetKind::Svg, id)
+                .expect("a store holding its extraction must still read from it"),
+            payload
+        );
     }
 
     #[test]

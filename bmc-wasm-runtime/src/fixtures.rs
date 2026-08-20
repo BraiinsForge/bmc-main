@@ -25,6 +25,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context as _, Result, ensure};
 
@@ -34,7 +35,9 @@ use crate::{FixtureEvent, FixtureEventKind, RuntimeConfig};
 pub struct PreparedWidget {
     wasm_path: PathBuf,
     asset_root: PathBuf,
-    _temporary_directory: Option<tempfile::TempDir>,
+    /// Shared, so an extraction outlives this handle — a hot reload replaces
+    /// it while runtimes that read from it by path are still installed.
+    temporary_directory: Option<Arc<tempfile::TempDir>>,
 }
 
 impl PreparedWidget {
@@ -48,7 +51,7 @@ impl PreparedWidget {
             return Ok(Self {
                 wasm_path: source_wasm.to_owned(),
                 asset_root: asset_root.to_owned(),
-                _temporary_directory: None,
+                temporary_directory: None,
             });
         }
 
@@ -79,7 +82,7 @@ impl PreparedWidget {
         Ok(Self {
             wasm_path,
             asset_root,
-            _temporary_directory: Some(temporary_directory),
+            temporary_directory: Some(Arc::new(temporary_directory)),
         })
     }
 
@@ -91,6 +94,16 @@ impl PreparedWidget {
     #[must_use]
     pub fn asset_root(&self) -> &Path {
         &self.asset_root
+    }
+
+    /// A store on the asset root, holding whatever keeps it on disk.
+    #[must_use]
+    pub fn asset_store(&self) -> crate::package_assets::PackageAssetStore {
+        let store = crate::package_assets::PackageAssetStore::new(&self.asset_root);
+        match &self.temporary_directory {
+            Some(keeper) => store.kept_alive_by(Arc::clone(keeper) as Arc<_>),
+            None => store,
+        }
     }
 }
 
