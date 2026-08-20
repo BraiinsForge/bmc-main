@@ -282,6 +282,11 @@ impl EglContext {
         // Prefer a Vivante-tiled buffer: the GC400 texture unit cannot sample
         // linear, so a linear export forces the compositor's driver to keep
         // a full-size tiled shadow copy per imported buffer.
+        //
+        // Vivante_tiled specifically, not a wider list: super-tiled was measured
+        // on the Deck and lost, its 64-row supertiles padding a 480-row buffer to
+        // 512 for 4.2 MB of `shared` on one fullscreen widget and 12.7 MB on
+        // four, with no change in frame time. A 4x4 tile divides 480 exactly.
         let bo = self
             .gbm
             .create_buffer_object_with_modifiers2::<()>(
