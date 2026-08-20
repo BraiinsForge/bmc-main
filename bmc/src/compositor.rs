@@ -420,11 +420,13 @@ pub trait Compositor: Send + Sync {
         params: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), CompositorError>;
 
-    /// Push a re-resolved credential set to a single running widget.
+    /// Push a re-resolved credential set to a single running widget,
+    /// reporting whether it changed what the compositor already held.
     ///
-    /// The compositor drops the push when the values match
-    /// what it already holds, since callers here react to
-    /// a change hint and have no old value to compare against.
+    /// The compositor drops the push when the values match, since callers here
+    /// react to a change hint and have no old value to compare against.
+    /// The answer comes back so a caller woken by a bare hint
+    /// can tell a real credential edit from an unrelated one.
     ///
     /// Refreshes the stored initial config for the same reason
     /// [`Compositor::update_widget_params`] does.
@@ -433,7 +435,7 @@ pub trait Compositor: Send + Sync {
         instance_id: &InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
-    ) -> Result<(), CompositorError>;
+    ) -> Result<bool, CompositorError>;
 
     /// Get a receiver for widget action requests (sound, LED).
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction>;

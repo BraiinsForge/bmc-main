@@ -288,8 +288,11 @@ impl std::fmt::Debug for Coordinator {
 /// whose surface has not attached yet must still see the change,
 /// because the handshake replays the stored config —
 /// and the compositor skips an instance it holds no record of.
+///
 /// Re-resolving is cheap and a no-change push is dropped,
-/// so over-firing costs nothing.
+/// so the fan-out itself costs nothing.
+/// Re-arming a pending respawn is not free — it resets the tempo
+/// the backoff ceiling bounds — so it happens only on a real change.
 pub fn start_credential_listener(
     coordinator: Arc<Coordinator>,
     config_handle: Arc<RwLock<ConfigHandle>>,
@@ -988,6 +991,12 @@ impl Coordinator {
             .update_widget_params(&instance_id.to_owned(), params_to_json_map(params))
     }
 
+    /// Ask a crash-looping widget to try the configuration just pushed to it,
+    /// rather than sit out a delay earned against the configuration it replaced.
+    pub async fn retry_pending_widget(&self, instance_id: &str) {
+        self.widget_manager.retry_pending(instance_id).await;
+    }
+
     /// Resolve the widget's bindings against the installed manifest
     /// and the stored accounts.
     ///
@@ -1035,11 +1044,16 @@ impl Coordinator {
 
     pub async fn update_widget_credentials(&self, widget: &Widget) -> Result<(), CompositorError> {
         let resolved = self.resolve_credentials(widget).await;
-        self.compositor.update_widget_credentials(
-            &widget.id.as_uuid().to_string(),
+        let instance_id = widget.id.as_uuid().to_string();
+        let changed = self.compositor.update_widget_credentials(
+            &instance_id,
             resolved.view,
             resolved.secrets,
-        )
+        )?;
+        if changed {
+            self.retry_pending_widget(&instance_id).await;
+        }
+        Ok(())
     }
 
     pub async fn stop_scene_widgets(&self, scene: &Scene) {

@@ -106,6 +106,9 @@ pub enum CompositorCommand {
         instance_id: InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
+        /// Carries whether the push changed the stored resolution.
+        /// Only the compositor holds the previous value to compare against.
+        ack: flume::Sender<bool>,
     },
     Shutdown,
     RingAlarm {

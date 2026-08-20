@@ -155,12 +155,18 @@ impl Compositor for RecordingCompositor {
         instance_id: &InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: CredentialSecrets,
-    ) -> Result<(), CompositorError> {
-        self.credential_pushes
+    ) -> Result<bool, CompositorError> {
+        let mut pushes = self
+            .credential_pushes
             .lock()
-            .expect("BUG: recording compositor lock must not be poisoned")
-            .push((instance_id.clone(), credentials, secrets));
-        Ok(())
+            .expect("BUG: recording compositor lock must not be poisoned");
+        let changed = pushes
+            .iter()
+            .rev()
+            .find(|(id, _, _)| id == instance_id)
+            .is_none_or(|(_, view, stored)| view != &credentials || stored != &secrets);
+        pushes.push((instance_id.clone(), credentials, secrets));
+        Ok(changed)
     }
 
     fn action_receiver(&self) -> tokio::sync::mpsc::UnboundedReceiver<WidgetAction> {

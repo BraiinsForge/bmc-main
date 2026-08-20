@@ -121,6 +121,10 @@ enum Command {
         instance_id: String,
         reply: oneshot::Sender<ChildObservation>,
     },
+    RetryPending {
+        instance_id: String,
+        reply: oneshot::Sender<()>,
+    },
     RegistryRefreshed {
         reply: oneshot::Sender<()>,
     },
@@ -182,6 +186,26 @@ impl WidgetManager {
     #[must_use]
     pub fn registry(&self) -> Arc<WidgetRegistry> {
         self.registry.clone()
+    }
+
+    /// Bring a pending crash respawn forward to the initial delay while keeping
+    /// its earned rung. A running or already-stopped instance is untouched.
+    ///
+    /// Callers push something that may be the fix — new params, a re-resolved
+    /// credential — and this asks the widget to try it now rather than sit out
+    /// a delay it earned against the configuration that was just replaced.
+    pub(crate) async fn retry_pending(&self, instance_id: &str) {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::RetryPending {
+                instance_id: instance_id.to_owned(),
+                reply: reply_tx,
+            })
+            .await
+            .expect("BUG: widget child actor terminated");
+        reply_rx
+            .await
+            .expect("BUG: widget child actor dropped a retry-pending reply");
     }
 
     /// Re-scan the widget discovery paths so newly-installed widgets become
@@ -433,6 +457,10 @@ impl Actor {
             Command::Observe { instance_id, reply } => {
                 let _ = reply.send(self.observe(&instance_id));
             }
+            Command::RetryPending { instance_id, reply } => {
+                self.retry_pending(&instance_id, internal_tx);
+                let _ = reply.send(());
+            }
             Command::RegistryRefreshed { reply } => {
                 self.reset_restart_backoff(internal_tx);
                 let _ = reply.send(());
@@ -678,16 +706,11 @@ impl Actor {
     /// Forgiving the ladder too would let repeated unrelated applies
     /// grind a real crash-looper back down to a 1 s tempo.
     fn reset_restart_backoff(&mut self, internal_tx: &mpsc::UnboundedSender<Internal>) {
-        let pending: Vec<_> = self
+        let pending: Vec<String> = self
             .children
             .iter()
             .filter_map(|(instance_id, state)| match state {
-                WidgetState::PendingRestart(pending) => Some((
-                    instance_id.clone(),
-                    pending.widget_uid,
-                    pending.env.clone(),
-                    pending.backoff,
-                )),
+                WidgetState::PendingRestart(_) => Some(instance_id.clone()),
                 WidgetState::Running(_) => None,
             })
             .collect();
@@ -700,16 +723,29 @@ impl Actor {
             pending.len(),
             self.policy.initial
         );
-        for (instance_id, widget_uid, env, earned) in pending {
-            self.schedule_restart(
-                instance_id,
-                widget_uid,
-                env,
-                self.policy.initial,
-                earned,
-                internal_tx,
-            );
+        for instance_id in pending {
+            self.retry_pending(&instance_id, internal_tx);
         }
+    }
+
+    /// Re-arm one pending respawn at the initial delay, keeping its rung.
+    ///
+    /// Re-scheduling replaces the entry and orphans the old token,
+    /// preventing the shortened delay from also firing.
+    /// Running instances need nothing; stopped instances must stay stopped.
+    fn retry_pending(&mut self, instance_id: &str, internal_tx: &mpsc::UnboundedSender<Internal>) {
+        let Some(WidgetState::PendingRestart(pending)) = self.children.get(instance_id) else {
+            return;
+        };
+        let (widget_uid, env, earned) = (pending.widget_uid, pending.env.clone(), pending.backoff);
+        self.schedule_restart(
+            instance_id.to_owned(),
+            widget_uid,
+            env,
+            self.policy.initial,
+            earned,
+            internal_tx,
+        );
     }
 
     fn handle_restart_due(
@@ -1285,6 +1321,105 @@ mod tests {
             waited >= RUNG_FLOOR,
             "the next wait must be the earned rung near {CEILING:?}, waited {waited:?}"
         );
+    }
+
+    /// A params or credential push may be the fix for whatever keeps killing
+    /// the widget, so it gets tried now rather than after the climbed delay —
+    /// and the rung survives, exactly as a registry re-scan leaves it.
+    #[tokio::test]
+    async fn a_retry_brings_a_pending_respawn_forward_and_keeps_the_rung() {
+        const INITIAL: Duration = Duration::from_millis(10);
+        const CEILING: Duration = Duration::from_millis(400);
+        /// Splits a prompt retry from one that sat out the rung. Comfortably
+        /// inside CEILING either way, so neither bound rides on scheduling.
+        const RUNG_THRESHOLD: Duration = Duration::from_millis(200);
+
+        let uid = Uuid::new_v4();
+        let policy = RestartPolicy {
+            initial: INITIAL,
+            max: CEILING,
+            healthy_uptime: Duration::from_hours(1),
+        };
+        let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
+        manager
+            .spawn_widget(uid, env("flapping"))
+            .await
+            .expect("BUG: test spawn failed");
+
+        let mut delay = INITIAL;
+        while delay < CEILING {
+            assert!(matches!(
+                next_event(&mut events).await,
+                WidgetEvent::Exited { .. }
+            ));
+            assert!(matches!(
+                next_event(&mut events).await,
+                WidgetEvent::Respawned { .. }
+            ));
+            delay = next_backoff(delay, CEILING);
+        }
+        // This crash leaves a wait of CEILING pending.
+        assert!(matches!(
+            next_event(&mut events).await,
+            WidgetEvent::Exited { .. }
+        ));
+
+        let retried_at = Instant::now();
+        manager.retry_pending("flapping").await;
+        assert!(
+            matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
+            "the retry must respawn the instance"
+        );
+        let promptly = retried_at.elapsed();
+        assert!(
+            promptly < RUNG_THRESHOLD,
+            "the push must be tried without waiting out the climbed delay, waited {promptly:?}"
+        );
+
+        assert!(matches!(
+            next_event(&mut events).await,
+            WidgetEvent::Exited { .. }
+        ));
+        let crashed_at = Instant::now();
+        assert!(matches!(
+            next_event(&mut events).await,
+            WidgetEvent::Respawned { .. }
+        ));
+        let waited = crashed_at.elapsed();
+        assert!(
+            waited >= RUNG_THRESHOLD,
+            "the next wait must still be the earned rung, waited {waited:?}"
+        );
+    }
+
+    /// A retry must not resurrect a widget an explicit stop ended,
+    /// nor disturb one that is running perfectly well.
+    #[tokio::test]
+    async fn a_retry_does_nothing_for_a_running_or_stopped_instance() {
+        let uid = Uuid::new_v4();
+        let (manager, mut events) = manager_with(uid, "sleep", &["30"]);
+        manager
+            .spawn_widget(uid, env("healthy"))
+            .await
+            .expect("BUG: test spawn failed");
+
+        manager.retry_pending("healthy").await;
+        assert!(
+            matches!(
+                manager.observe_child("healthy").await,
+                ChildObservation::Running(_)
+            ),
+            "a running instance must be left alone"
+        );
+
+        manager.stop_widget("healthy").await;
+        manager.retry_pending("healthy").await;
+        assert_eq!(
+            manager.observe_child("healthy").await,
+            ChildObservation::Missing,
+            "a stopped instance must stay stopped"
+        );
+        assert_no_event(&mut events, "neither retry may emit an event");
     }
 
     #[tokio::test]

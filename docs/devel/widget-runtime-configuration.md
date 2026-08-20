@@ -130,6 +130,14 @@ unrelated installs cannot grind a genuine crash-looper back down to a 1-second t
 instance only where the build it is *running* differs from the installed one, so a widget that supervision has already
 brought back on the new files is left alone rather than blinking a second time.
 
+A configuration push buys the same prompt attempt. Changing a widget's params, or re-resolving its credentials after a
+scene or account edit, updates the stored configuration even while the instance is between processes — the compositor
+keeps the registration a crash deliberately leaves standing, so the change is cached for the respawn to replay. Left
+alone, a crash-looping widget would sit out the rest of its climbed delay before trying the very change that may fix it,
+so both pushes ask supervision to retry now. It is the same operation the re-scan performs, scoped to one instance: the
+rung survives, so a stream of edits cannot forgive the ladder either, and an instance that is running or has been
+stopped is left exactly as it is.
+
 ### What supervision observes — and what it does not
 
 Detection is a chain of four edge-triggered hops, with no polling at any layer:

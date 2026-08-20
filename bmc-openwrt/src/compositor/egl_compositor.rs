@@ -2284,12 +2284,14 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             instance_id,
             credentials,
             secrets,
+            ack,
         } => {
             tracing::debug!("Updating widget credentials: {instance_id}");
-            state
+            let changed = state
                 .compositor
                 .deck_widget_state
                 .update_widget_credentials(&instance_id, credentials, secrets);
+            let _ = ack.send(changed);
         }
         CompositorCommand::Shutdown => {
             tracing::info!("Shutdown command received");
@@ -2783,14 +2785,21 @@ impl Compositor for EglCompositor {
         instance_id: &InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
-    ) -> Result<(), CompositorError> {
+    ) -> Result<bool, CompositorError> {
+        let (ack_tx, ack_rx) = flume::bounded(1);
         self.command_tx
             .send(CompositorCommand::UpdateWidgetCredentials {
                 instance_id: instance_id.clone(),
                 credentials,
                 secrets,
+                ack: ack_tx,
             })
-            .map_err(|e| CompositorError::SendError(e.to_string()))
+            .map_err(|e| CompositorError::SendError(e.to_string()))?;
+        ack_rx
+            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
+            .map_err(|e| {
+                CompositorError::ThreadError(format!("update_widget_credentials ack: {e}"))
+            })
     }
 
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {

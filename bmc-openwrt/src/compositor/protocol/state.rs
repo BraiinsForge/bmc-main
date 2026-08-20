@@ -514,28 +514,32 @@ impl DeckWidgetProtocolState {
     /// Also refreshes the stored config, so a reconnect replays the resolution.
     /// Callers push without checking liveness,
     /// so a missing record or surface is the designed skip, not an anomaly.
+    ///
+    /// Returns whether the stored resolution changed.
+    /// A record with no surface still counts as changed:
+    /// a crash-looping widget has none.
     pub fn update_widget_credentials(
         &mut self,
         instance_id: &InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
-    ) {
+    ) -> bool {
         let Some(widget_data) = self.widgets.get_mut(instance_id) else {
             tracing::debug!("update_widget_credentials: no widget record for {instance_id}");
-            return;
+            return false;
         };
         if !credentials_changed(&widget_data.config, &credentials, &secrets) {
-            return;
+            return false;
         }
         widget_data.config.credentials = credentials;
         widget_data.config.credential_secrets = secrets;
 
-        let Some(surface) = widget_data.protocol_surface.as_ref() else {
+        if let Some(surface) = widget_data.protocol_surface.as_ref() {
+            emit_credentials(surface, &widget_data.config);
+        } else {
             tracing::debug!("update_widget_credentials: widget {instance_id} has no surface yet");
-            return;
-        };
-
-        emit_credentials(surface, &widget_data.config);
+        }
+        true
     }
 
     /// Emit the initial configure batch on the given surface for the
@@ -1434,5 +1438,26 @@ mod tests {
 
         let stored = state.widget_config("alpha").expect("BUG: registered");
         assert!(stored.credentials.is_empty() && stored.credential_secrets.is_empty());
+    }
+
+    /// A crash-looping widget has no surface,
+    /// and it is the one whose respawn a credential change re-arms.
+    #[test]
+    fn a_surfaceless_record_still_reports_a_credential_change() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+        let (view, secrets) = bound_pool();
+
+        assert!(state.update_widget_credentials(&"alpha".to_owned(), view, secrets));
+    }
+
+    #[test]
+    fn a_repeated_credential_push_reports_no_change() {
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_widget("alpha".to_owned(), make_config());
+        let (view, secrets) = bound_pool();
+        state.update_widget_credentials(&"alpha".to_owned(), view.clone(), secrets.clone());
+
+        assert!(!state.update_widget_credentials(&"alpha".to_owned(), view, secrets));
     }
 }

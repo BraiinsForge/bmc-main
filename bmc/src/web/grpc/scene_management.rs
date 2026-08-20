@@ -1616,7 +1616,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         // concurrent update_widget calls; the cost is that other writers
         // queue behind disk I/O. Updates are rare enough that this is
         // acceptable.
-        let respawn_target = {
+        let (respawn_target, retry_target) = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes_mut()
@@ -1708,22 +1708,27 @@ impl GrpcSceneManagementService for SceneManagementService {
             // concurrent updates can't reorder against the
             // compositor.
             match decide_update_widget_action(showing, placement_changed, params_changed) {
-                UpdateWidgetAction::Respawn => Some((instance_id, updated_widget)),
+                UpdateWidgetAction::Respawn => (Some((instance_id, updated_widget)), None),
                 UpdateWidgetAction::HotPushParams => {
                     self.coordinator
                         .update_widget_params(&instance_id, &updated_widget.params)
                         .map_err(|e| {
                             Status::internal(format!("failed to push live params to widget: {e}"))
                         })?;
-                    None
+                    (None, Some(instance_id))
                 }
-                UpdateWidgetAction::Nothing => None,
+                UpdateWidgetAction::Nothing => (None, None),
             }
         };
 
         if let Some((instance_id, widget)) = respawn_target {
             self.coordinator.stop_widget(&instance_id).await;
             self.coordinator.spawn_widget(&scene_id_key, &widget).await;
+        }
+        // After the lock, so the params reach the compositor before the
+        // respawn that replays them.
+        if let Some(instance_id) = retry_target {
+            self.coordinator.retry_pending_widget(&instance_id).await;
         }
         self.refresh_compositor_scenes().await;
 

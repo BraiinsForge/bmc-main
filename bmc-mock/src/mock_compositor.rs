@@ -356,18 +356,20 @@ impl Compositor for MockCompositor {
         Ok(())
     }
 
+    /// Always reports a change: the mock stores no resolution to compare against,
+    /// and over-reporting only costs a redundant respawn retry.
     fn update_widget_credentials(
         &self,
         instance_id: &InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
         _secrets: CredentialSecrets,
-    ) -> Result<(), CompositorError> {
+    ) -> Result<bool, CompositorError> {
         // The view names accounts but carries no secret, so logging it is safe.
         tracing::info!(
             "MockCompositor: update_widget_credentials {instance_id}: {}",
             serde_json::Value::Object(credentials)
         );
-        Ok(())
+        Ok(true)
     }
 
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {
