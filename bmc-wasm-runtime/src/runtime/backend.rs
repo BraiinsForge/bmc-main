@@ -1731,6 +1731,33 @@ impl WasmWidgetRuntime {
         self.pending_hook.is_some()
     }
 
+    /// Drop the cached static layer for the duration of dormancy.
+    ///
+    /// It is the largest thing a dormant instance holds — a full-surface RGBA8
+    /// texture, 4 bytes per pixel of slot area against the 8 the export buffers
+    /// take, and those the slot releases already. It is also pure cache: the
+    /// tree it was rasterised from is still in hand, so waking re-captures it.
+    ///
+    /// Clearing the hash alongside is what makes that happen. Left set, the
+    /// first guest frame back hashes the same tree, concludes the layer is
+    /// still valid and asks to blit one that no longer exists — which degrades
+    /// to a full pass rather than corrupting, so the widget would go on
+    /// rendering correctly while silently never caching again.
+    pub fn release_static_layer(&mut self, renderer: NonNull<dyn Renderer>) {
+        self.with_renderer(renderer, |rt| {
+            let state = rt.store.data_mut();
+            let Some(mut ptr) = state.renderer_ptr else {
+                return;
+            };
+            // SAFETY: `with_renderer` installed this pointer for this call on
+            // the same thread, and single-threaded wasmi dispatch keeps the
+            // borrow unique for its duration.
+            let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
+            renderer.invalidate_static_layer(&state.instance_id);
+            state.last_static_key = None;
+        });
+    }
+
     /// Report that the slot acquired a fresh render target.
     ///
     /// Its export buffers hold nothing, while the damage history survived and

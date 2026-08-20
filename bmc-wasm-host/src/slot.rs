@@ -881,7 +881,15 @@ impl<S: SlotSurface> WidgetSlot<S> {
         self.runtime.set_time(system_time, self.monotonic_ms(now));
     }
 
-    pub fn apply_lifecycle(&mut self, now: Instant, egl: &dyn LifecycleEgl) {
+    /// Advance the lifecycle, returning the hook the transition fired.
+    ///
+    /// The caller acts on [`LifecycleHook::Sleep`] by releasing the cached
+    /// static layer, which needs the shared renderer this type does not hold.
+    pub fn apply_lifecycle(
+        &mut self,
+        now: Instant,
+        egl: &dyn LifecycleEgl,
+    ) -> Option<LifecycleHook> {
         let previous = self.lifecycle.current();
         let had_render_target = self.render_target.is_some();
         let w = self.surface.width();
@@ -899,28 +907,38 @@ impl<S: SlotSurface> WidgetSlot<S> {
         if !had_render_target && self.render_target.is_some() {
             self.rendered_since_acquire = false;
             self.runtime.invalidate_export_buffers();
+            // Pre-warm: render while the slot is still off-screen. Waking owes
+            // a full repaint of both fresh buffers and a re-capture of the
+            // static layer, and left to arrive on its own that work lands on
+            // the frame the scene slides in, competing with the slide for the
+            // GPU. `rendered_since_acquire` is false here, so this dirty flag
+            // is allowed through before the slot is `Visible`.
+            self.surface.mark_needs_render();
         }
         let current = self.lifecycle.current();
-        if previous != current {
-            tracing::debug!(
-                peer_pid = ?self.peer_pid,
-                wasm = %self.wasm_basename,
-                ?previous,
-                ?current,
-                blocked = self.lifecycle.blocked(),
-                render_target = self.render_target.is_some(),
-                "slot lifecycle applied"
-            );
-            match lifecycle_hook(previous, current) {
-                Some(LifecycleHook::Wake) => {
-                    self.runtime.notify_wake();
-                }
-                Some(LifecycleHook::Sleep) => {
-                    self.runtime.notify_dormant();
-                }
-                None => {}
-            }
+        if previous == current {
+            return None;
         }
+        tracing::debug!(
+            peer_pid = ?self.peer_pid,
+            wasm = %self.wasm_basename,
+            ?previous,
+            ?current,
+            blocked = self.lifecycle.blocked(),
+            render_target = self.render_target.is_some(),
+            "slot lifecycle applied"
+        );
+        let hook = lifecycle_hook(previous, current);
+        match hook {
+            Some(LifecycleHook::Wake) => {
+                self.runtime.notify_wake();
+            }
+            Some(LifecycleHook::Sleep) => {
+                self.runtime.notify_dormant();
+            }
+            None => {}
+        }
+        hook
     }
 
     pub fn render(

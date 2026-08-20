@@ -34,6 +34,7 @@ use bmc_system_overlay::HostedOverlay;
 use crate::cache_gc;
 use crate::control::{AdmissionAdvance, ListenSocket, PendingAdmission};
 use crate::host::SharedHost;
+use crate::lifecycle::LifecycleHook;
 use crate::slot::{SlotSurface, WidgetSlot};
 
 /// Let a startup/scene burst settle before the next GC, per review.
@@ -580,19 +581,38 @@ impl ControlFirstPostPoll for PostPollState<'_> {
                 tracing::error!(?error, "failed to reclaim retired widget GPU resources");
             }
             let now = Instant::now();
-            if slot.has_lifecycle_gpu_work(now) {
-                if let Err(error) =
-                    self.shared
-                        .with_gpu_render_lock("host_widget_lifecycle", |shared| {
-                            slot.apply_lifecycle(now, &shared.egl);
-                            Ok(())
-                        })
-                {
-                    tracing::error!(?error, "failed to apply widget GPU lifecycle work");
-                    continue;
+            // Copied out so the closure below does not borrow `self` while
+            // `self.shared` is mutably borrowed by the lock.
+            let renderer_ptr = self.renderer_ptr;
+            let hook = if slot.has_lifecycle_gpu_work(now) {
+                match self
+                    .shared
+                    .with_gpu_render_lock("host_widget_lifecycle", |shared| {
+                        Ok(slot.apply_lifecycle(now, &shared.egl))
+                    }) {
+                    Ok(hook) => hook,
+                    Err(error) => {
+                        tracing::error!(?error, "failed to apply widget GPU lifecycle work");
+                        continue;
+                    }
                 }
             } else {
-                slot.apply_lifecycle(now, &self.shared.egl);
+                slot.apply_lifecycle(now, &self.shared.egl)
+            };
+            // The layer is the largest thing a dormant slot would keep, and the
+            // renderer that owns it lives here rather than on the slot. Dropping
+            // it deletes a texture, so it takes the GPU lock like any other
+            // renderer mutation. Waking pre-warms a render, so the re-capture
+            // this costs happens before the scene is on screen.
+            if hook == Some(LifecycleHook::Sleep)
+                && let Err(error) =
+                    self.shared
+                        .with_gpu_render_lock("host_widget_layer_release", |_shared| {
+                            slot.runtime.release_static_layer(renderer_ptr);
+                            Ok(())
+                        })
+            {
+                tracing::error!(?error, "failed to release the dormant static layer");
             }
             slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
             slot.runtime.stage_deliveries();
