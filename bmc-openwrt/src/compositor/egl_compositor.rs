@@ -527,6 +527,7 @@ impl EglCompositor {
                 SceneCyclingRuntimeConfig::default(),
             ),
             pending_transition_warm_up: None,
+            last_scene_change: None,
             scene_cycling_timer_generation: 0,
             alarm_fallback_generation: 0,
             alarm_no_overlay_since: None,
@@ -1015,6 +1016,22 @@ struct AppState {
     pending_lifecycle_emission: bool,
     automatic_cycling: AutomaticCycling,
     pending_transition_warm_up: Option<TransitionWarmUp>,
+    /// Blocks the *next* scene drag until the scenes it could reach have
+    /// committed a frame of their own.
+    ///
+    /// A scene arriving from dormancy allocates its export buffers fresh and
+    /// re-rasterises whatever it had cached, and that work lands on the frame
+    /// it becomes visible — competing with the slide for the GPU. Swiping again
+    /// before it finishes queues another one behind it, which reads as a
+    /// freeze. Armed on every committed change with the new neighbours'
+    /// When the active scene last changed, bounding how long a drag can be
+    /// refused while the destination has nothing to show.
+    ///
+    /// A widget that never commits must stay reachable, and the renderer
+    /// already has an answer for a scene with no buffers — `ScenePlaceholder` —
+    /// so past the ceiling the swipe goes through and shows that rather than
+    /// locking the direction for good.
+    last_scene_change: Option<Instant>,
     scene_cycling_timer_generation: u64,
     /// Generation guard for the alarm no-overlay fallback watchdog timer; a
     /// bump invalidates any in-flight timer (mirrors `scene_cycling_timer_generation`).
@@ -1100,6 +1117,40 @@ impl AppState {
             }
         }
         self.schedule_scene_cycling_timer(now);
+    }
+
+    /// Whether the scene this drag is heading for has content to show.
+    ///
+    /// Asked of the destination alone, so a drag back toward a scene that is
+    /// ready is never refused because the *other* neighbour is not. Answered
+    /// from the buffers each widget currently holds: they are dropped per
+    /// instance on sleep and reappear on the first commit after waking, so no
+    /// snapshot has to be armed at the scene change and no generation compared.
+    fn scene_settled(&mut self, now: Instant) -> bool {
+        let Some(drag) = self.gesture.drag_info() else {
+            return true;
+        };
+        // Same sign rule as `drag_neighbor_scene`: dragging left reveals the
+        // scene after this one.
+        let direction = if drag.dx <= 0.0 { 1 } else { -1 };
+        let Some(destination) = self.compositor.widgets.neighbor_scene(direction) else {
+            return true;
+        };
+        let buffers = &self.compositor.widget_buffers;
+        if scene_buffers_committed(destination, |id| buffers.iter().any(|(_, held)| held == id)) {
+            return true;
+        }
+        if self
+            .last_scene_change
+            .is_none_or(|at| now.saturating_duration_since(at) >= TRANSITION_WARM_UP_TIMEOUT)
+        {
+            return true;
+        }
+        tracing::debug!(
+            ?direction,
+            "scene drag refused: destination has no buffers yet"
+        );
+        false
     }
 
     fn reset_automatic_waiting(&mut self, now: Instant) {
@@ -1635,6 +1686,7 @@ impl AppState {
             && !self.scene_drag_active
             && self.compositor.widgets.can_drag()
             && !self.compositor.neighbors_suppressed()
+            && self.scene_settled(Instant::now())
         {
             // Mid-touch transition: arbitrate to scene drag and cancel the
             // wl_touch sequence the widget is currently seeing. Skipped when
@@ -1974,6 +2026,19 @@ fn transition_warm_up_ready(
     })
 }
 
+/// Whether every visible widget of `scene` is currently holding a buffer.
+///
+/// All rather than any: a combined scene with one half still bufferless slides
+/// in showing black for that half, which is worse than waiting a moment.
+fn scene_buffers_committed(
+    scene: &SceneLayout,
+    holds_buffer: impl Fn(&InstanceId) -> bool,
+) -> bool {
+    transition_incoming_widget_ids(scene)
+        .iter()
+        .all(holds_buffer)
+}
+
 fn emit_transition_incoming_for_target(
     state: &mut AppState,
     target: SceneTransitionTarget,
@@ -2051,6 +2116,7 @@ fn clamp_initial_lifecycle(state: LifecycleState) -> LifecycleState {
 fn after_scene_change(state: &mut AppState) {
     state.compositor.mark_full_output_damage();
     state.pending_lifecycle_emission = true;
+    state.last_scene_change = Some(Instant::now());
 }
 
 /// Drag-in-progress variant of [`after_scene_change`]: damage the output and
@@ -2826,11 +2892,12 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-        ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
-        GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
-        TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
-        emit_lifecycle_transitions, emit_transition_incoming_batch, handle_command,
-        process_protocol_events, transition_incoming_widget_ids, transition_warm_up_ready,
+    ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
+    GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
+    TransitionWarmUp, WidgetTracker, clamp_initial_lifecycle, dispatch_timeout,
+    emit_lifecycle_batches, emit_lifecycle_transitions, emit_transition_incoming_batch,
+    handle_command, process_protocol_events, scene_buffers_committed, scene_settle_warm_up,
+    transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
@@ -3000,6 +3067,7 @@ mod tests {
                 SceneCyclingRuntimeConfig::default(),
             ),
             pending_transition_warm_up: None,
+            last_scene_change: None,
             scene_cycling_timer_generation: 0,
             alarm_fallback_generation: 0,
             alarm_no_overlay_since: None,
@@ -3229,6 +3297,28 @@ mod tests {
 
     fn gen_nz(n: u64) -> std::num::NonZeroU64 {
         std::num::NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
+    }
+
+    /// A scene holding `instance_ids` as visible widgets, for the readiness
+    /// gate — `test_scene` builds exactly one.
+    fn test_scene_with_widgets(instance_ids: &[&str]) -> SceneLayout {
+        SceneLayout {
+            scene_id: None,
+            cycle_duration: None,
+            combined: instance_ids.len() > 1,
+            widgets: instance_ids
+                .iter()
+                .map(|instance_id| WidgetPlacement {
+                    instance_id: (*instance_id).to_owned(),
+                    position: Position { x: 0, y: 0 },
+                    size: Size {
+                        width: 480,
+                        height: 1280,
+                    },
+                    visible: true,
+                })
+                .collect(),
+        }
     }
 
     fn test_scene(instance_id: &str) -> SceneLayout {
@@ -4066,6 +4156,29 @@ mod tests {
             started_at + Duration::from_millis(100),
             |_| Some(gen_nz(8)),
         ));
+    }
+
+    /// A combined scene slides in with one half black if the gate settles for
+    /// "any widget has a buffer", so every visible one has to hold one.
+    #[test]
+    fn a_scene_is_ready_only_once_every_visible_widget_holds_a_buffer() {
+        let scene = test_scene_with_widgets(&["left", "right"]);
+        let ids = transition_incoming_widget_ids(&scene);
+        assert_eq!(ids.len(), 2, "the fixture must have two visible widgets");
+
+        assert!(
+            !scene_buffers_committed(&scene, |id| *id == ids[0]),
+            "one of two is not ready"
+        );
+        assert!(scene_buffers_committed(&scene, |_| true));
+    }
+
+    /// A scene whose widgets are all hidden has nothing to wait for; refusing
+    /// on it would lock that direction until the ceiling every time.
+    #[test]
+    fn a_scene_with_no_visible_widgets_is_ready() {
+        let scene = test_scene_with_widgets(&[]);
+        assert!(scene_buffers_committed(&scene, |_| false));
     }
 
     #[test]
