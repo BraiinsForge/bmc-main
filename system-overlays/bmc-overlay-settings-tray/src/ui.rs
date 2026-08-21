@@ -153,7 +153,7 @@ const ROUND_CONTROLS_TOP: f32 = 142.0;
 /// bottom edge instead of sitting flush against it.
 const ROUND_BOTTOM_GAP: f32 = 48.0;
 
-/// Gap kept above the hostname on round panels so the first row clears the
+/// Gap kept above the header on round panels so the first row clears the
 /// curved top edge.
 const ROUND_TOP_GAP: f32 = 48.0;
 
@@ -161,10 +161,10 @@ const ROUND_TOP_GAP: f32 = 48.0;
 /// circle where the usable width is narrower than the full panel.
 const ROUND_H_PAD: f32 = 48.0;
 
-/// Usable hostname width (px) on round panels. Near the top curve the
-/// inscribed circle's chord is narrower than the full width, so the centered
-/// hostname is budgeted against this chord rather than the panel width.
-const ROUND_HOSTNAME_WIDTH: f32 = 256.0;
+/// Usable header width (px) on round panels. The inscribed circle's chord
+/// near the top curve is narrower than the full width, so the centered header
+/// is budgeted against that chord, not the panel width.
+const ROUND_HEADER_WIDTH: f32 = 256.0;
 
 /// Conservative per-glyph advance (px) for the 24px bold hostname font,
 /// rounded up from the measured Braiins Sans bold width so the character
@@ -430,18 +430,18 @@ fn pad_horizontal(node: TreeNode, padding: f32) -> TreeNode {
     )
 }
 
-/// Centered hostname header row. The string is pre-fitted by [`fit_line`],
+/// Centered header row. The string is pre-fitted by [`fit_line`],
 /// so it is laid out on a single line without wrapping. The centering column
 /// is what actually centers the text node; a bare paragraph with
 /// `align: Center` does not center under a stretching parent.
-fn hostname_row(hostname: &str, size: u32) -> TreeNode {
+fn header_row(header: &str, size: u32) -> TreeNode {
     col(
         PropsData {
             cross_align: CrossAlign::Center,
             ..PropsData::default()
         },
         vec![text(
-            hostname,
+            header,
             TextStyle {
                 size,
                 weight: FontWeight::BOLD,
@@ -1133,7 +1133,7 @@ fn wide_halves(
 }
 
 /// Compact station info for the medium/small tiers: one centered line of
-/// icon + fitted SSID. The IP is not shown on these tiers.
+/// icon + fitted SSID. The address heads the panel instead.
 fn compact_info(
     icons: WifiIcons,
     wifi_signal: Option<i32>,
@@ -1227,19 +1227,6 @@ pub fn build_tree(
 ) -> TreeNode {
     let tier = tier_for(&panel);
     let w = panel.width as f32;
-
-    // Fit the hostname to the row's usable width up front: round panels are
-    // capped by the inscribed circle's chord, rectangular ones by the panel
-    // width minus the close target's horizontal band on both sides.
-    let hostname_budget = match panel.shape {
-        DisplayShape::Round => ROUND_HOSTNAME_WIDTH,
-        DisplayShape::Rectangular => w - 2.0 * (CLOSE_TARGET + tier.padding),
-    };
-    let hostname_str = fit_line(
-        hostname.unwrap_or("N/A"),
-        hostname_budget,
-        tier.hostname_size,
-    );
     let ssid_str = ssid.unwrap_or("Not configured");
 
     // The WiFi hold button renders only in normal (non-setup) mode, and only
@@ -1249,7 +1236,7 @@ pub fn build_tree(
     let (pairs, singles) = control_groups(tier, &controls, controls_icons, icons, wifi);
     let rows = control_rows(tier, pairs, singles);
 
-    let hostname_h = tier.hostname_size as f32 * LINE_H;
+    let header_h = tier.hostname_size as f32 * LINE_H;
     let caption_h = tier.caption_size as f32 * LINE_H;
     let (usable, h_pad) = match panel.shape {
         DisplayShape::Round => (w - 2.0 * ROUND_H_PAD, ROUND_H_PAD),
@@ -1283,16 +1270,21 @@ pub fn build_tree(
             children.extend(wide_halves(header, rows, caption_node, tier, h_pad));
         }
         DisplayShape::Rectangular => {
+            let header_str = fit_line(
+                ip.unwrap_or("---"),
+                w - 2.0 * (CLOSE_TARGET + tier.padding),
+                tier.hostname_size,
+            );
             // Top padding is an explicit spacer (not container padding) so the
             // close button's absolute insets resolve against the panel box.
             children.push(fixed_height(tier.padding));
             children.push(pad_horizontal(
-                hostname_row(&hostname_str, tier.hostname_size),
+                header_row(&header_str, tier.hostname_size),
                 CLOSE_TARGET + tier.padding,
             ));
             // Pin the first control row below the close target's bottom edge
             // so their hit regions stay disjoint.
-            children.push(fixed_height((CLOSE_TARGET - hostname_h).max(tier.row_gap)));
+            children.push(fixed_height((CLOSE_TARGET - header_h).max(tier.row_gap)));
             for row_node in rows {
                 children.push(pad_horizontal(row_node, h_pad));
                 children.push(fixed_height(tier.row_gap));
@@ -1304,13 +1296,12 @@ pub fn build_tree(
             children.push(fixed_height(tier.padding));
         }
         DisplayShape::Round => {
+            let header_str = fit_line(ip.unwrap_or("---"), ROUND_HEADER_WIDTH, tier.hostname_size);
             children.push(fixed_height(ROUND_TOP_GAP));
-            children.push(hostname_row(&hostname_str, tier.hostname_size));
+            children.push(header_row(&header_str, tier.hostname_size));
             // Pin the control rows to a fixed top edge below the chord-safe
             // close target.
-            children.push(fixed_height(
-                ROUND_CONTROLS_TOP - ROUND_TOP_GAP - hostname_h,
-            ));
+            children.push(fixed_height(ROUND_CONTROLS_TOP - ROUND_TOP_GAP - header_h));
             for row_node in rows {
                 children.push(pad_horizontal(row_node, h_pad));
                 children.push(fixed_height(tier.row_gap));
@@ -2295,6 +2286,49 @@ mod tests {
         }
     }
 
+    #[test]
+    fn compact_panels_head_with_the_ip_instead_of_the_hostname() {
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            for ip in [Some("10.0.0.2"), Some("255.255.255.255"), None] {
+                let tree = build_tree(
+                    Some("braiins-deck"),
+                    ip,
+                    Some(-55),
+                    Some("MyWifi"),
+                    WifiIcons::default(),
+                    panel,
+                    WifiView::Idle,
+                    ControlIcons::default(),
+                    all_controls(),
+                );
+                let mut texts = Vec::new();
+                collect_texts(&tree, &mut texts);
+                let address = ip.unwrap_or("---");
+                let large = tier_for(&panel).large_text;
+
+                if large {
+                    assert!(
+                        texts.iter().any(|t| t == address),
+                        "{panel:?} ip={ip:?}: the wide header must carry the address"
+                    );
+                } else {
+                    assert_eq!(
+                        texts.first().map(String::as_str),
+                        Some(address),
+                        "{panel:?} ip={ip:?}: the address is the panel's first line — \
+                         anywhere else and it is something the user has to hunt for"
+                    );
+                }
+                assert_eq!(
+                    texts.iter().any(|t| t == "braiins-deck"),
+                    large,
+                    "{panel:?} ip={ip:?}: only the wide tier has the room to keep \
+                     the hostname alongside the address"
+                );
+            }
+        }
+    }
+
     /// Conservative width of a single-line string,
     /// on the same per-glyph budget [`fit_line`] truncates against.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
@@ -2444,17 +2478,17 @@ mod tests {
     }
 
     #[test]
-    fn short_hostname_is_unchanged() {
+    fn short_line_is_unchanged() {
         assert_eq!(
-            fit_line("braiins-deck", ROUND_HOSTNAME_WIDTH, 24),
+            fit_line("braiins-deck", ROUND_HEADER_WIDTH, 24),
             "braiins-deck"
         );
     }
 
     #[test]
-    fn long_hostname_is_truncated_with_ellipsis() {
+    fn long_line_is_truncated_with_ellipsis() {
         let long = "braiins-deck-extremely-long-hostname-xyz";
-        let fitted = fit_line(long, ROUND_HOSTNAME_WIDTH, 24);
+        let fitted = fit_line(long, ROUND_HEADER_WIDTH, 24);
         assert!(fitted.ends_with('…'));
         assert!(fitted.chars().count() < long.chars().count());
     }

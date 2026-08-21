@@ -1298,6 +1298,31 @@ mod view_tests {
     }
 
     #[test]
+    fn an_ip_change_alone_dirties_content() {
+        let now = Instant::now();
+        let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
+        overlay.ip = Some("192.168.1.42".to_owned());
+        overlay.ssid = Some("Braiins-WiFi".to_owned());
+        overlay.wifi_signal = Some(-52);
+        overlay.env = Box::new(StaticEnv {
+            snapshot: Some(Snapshot {
+                ipv4: Some(Ipv4Addr::new(192, 168, 1, 43)),
+                station_ssid: Some("Braiins-WiFi".to_owned()),
+                wifi_signal_dbm: Some(-52),
+            }),
+        });
+        let _ = overlay.take_content_dirty();
+
+        let _ = overlay.tick(now);
+
+        assert!(
+            overlay.content_dirty(),
+            "the compact header is the IP, so a new lease must refresh the panel \
+             cache or the tray keeps blitting the old address"
+        );
+    }
+
+    #[test]
     fn signal_crossing_into_another_icon_band_dirties_content() {
         let now = Instant::now();
         let mut overlay = SettingsTrayOverlay::new_for_product(Product::Bmc100, None, now);
