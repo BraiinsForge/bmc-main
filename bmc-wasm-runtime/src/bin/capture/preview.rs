@@ -81,8 +81,10 @@ pub fn execute(args: &PreviewArgs) -> Result<()> {
             }
         }
 
-        let output_name = format!("preview_{}.mp4", label.replace('/', "_"));
-        let output_path = args.output.join(&output_name);
+        let output_path = super::media::Media::Preview.path(&args.output, rel, "mp4");
+        if let Some(parent) = output_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
 
         encode_video(&ffmpeg_bin, dir, &output_path, args.fps)
             .with_context(|| format!("failed to encode preview for {label}"))?;

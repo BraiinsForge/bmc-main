@@ -26,6 +26,7 @@
 #![expect(clippy::cast_possible_truncation)]
 
 mod diff;
+mod media;
 mod preview;
 mod run;
 mod run_all;

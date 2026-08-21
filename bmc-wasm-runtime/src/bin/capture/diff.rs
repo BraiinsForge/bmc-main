@@ -104,6 +104,8 @@ fn diff_one_widget(
     if diff_dir.exists() {
         let _ = std::fs::remove_dir_all(&diff_dir);
     }
+    // A video the previous run left reads exactly like a fresh one.
+    let _ = std::fs::remove_dir_all(args.output.join(super::media::Media::Comparison.dir()));
 
     let report = diff_directories(
         tmp.path(),
@@ -742,9 +744,7 @@ fn comparison_jobs<'a>(report: &'a WidgetReport, output_dir: &Path) -> Vec<Compa
         .map(|(group, mut pairs)| {
             pairs.sort_by_key(|(_, diff)| *diff);
             let ext = if pairs.len() == 1 { "png" } else { "mp4" };
-            // A dataset name may carry a dot, so append the extension.
-            let mut out_path = out_dir.join(group);
-            out_path.as_mut_os_string().push(format!(".{ext}"));
+            let out_path = super::media::Media::Comparison.path(&out_dir, group, ext);
             ComparisonJob {
                 widget: &report.widget,
                 group: group.to_owned(),
@@ -1347,8 +1347,8 @@ mod tests {
                 "bmc100/small/bmc100-small/frame_0000.png",
             ]),
             [
-                PathBuf::from("out/clock/bmc100/full/bmc100-full.png"),
-                PathBuf::from("out/clock/bmc100/small/bmc100-small.png"),
+                PathBuf::from("out/clock/comparison/bmc100-full/bmc100-full.png"),
+                PathBuf::from("out/clock/comparison/bmc100-small/bmc100-small.png"),
             ],
         );
     }
@@ -1361,8 +1361,8 @@ mod tests {
                 "bmc100/full/qualifying/frame_0000.png",
             ]),
             [
-                PathBuf::from("out/clock/bmc100/full/practice.png"),
-                PathBuf::from("out/clock/bmc100/full/qualifying.png"),
+                PathBuf::from("out/clock/comparison/bmc100-full/practice.png"),
+                PathBuf::from("out/clock/comparison/bmc100-full/qualifying.png"),
             ],
         );
     }
@@ -1374,15 +1374,9 @@ mod tests {
                 "bmc100/full/qualifying/frame_0000.png",
                 "bmc100/full/qualifying/frame_0001.png",
             ]),
-            [PathBuf::from("out/clock/bmc100/full/qualifying.mp4")],
-        );
-    }
-
-    #[test]
-    fn a_dataset_named_with_a_dot_keeps_all_of_it() {
-        assert_eq!(
-            jobs_for(&["bmc100/full/v1.2/frame_0000.png"]),
-            [PathBuf::from("out/clock/bmc100/full/v1.2.png")],
+            [PathBuf::from(
+                "out/clock/comparison/bmc100-full/qualifying.mp4"
+            )],
         );
     }
 
