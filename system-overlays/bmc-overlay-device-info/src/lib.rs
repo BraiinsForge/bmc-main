@@ -396,6 +396,11 @@ impl SystemOverlay for DeviceInfoOverlay {
         // Bottom, not the fullscreen default of Top: the device-info screens
         // must sit below a firing alarm (Top), the upgrade splash (Top),
         // and the settings tray (Overlay), while still occluding the scene.
+        //
+        // Nothing here pauses while covered. An alarm above this layer
+        // can consume a whole boot connect-info window, since the holds
+        // keep running unseen. Deliberate: there is no occlusion signal
+        // to act on, and one brief alarm does not justify a suspend path.
         LayerConfig {
             layer: Layer::Bottom,
             ..LayerConfig::fullscreen("bmc-overlay-device-info")
