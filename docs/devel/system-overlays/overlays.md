@@ -58,9 +58,9 @@ label), with the rest of the surface transparent. It takes no touch input.
 
 ## Settings tray (`bmc-overlay-settings-tray`)
 
-The swipe-from-top quick-settings panel: a brightness slider, WiFi station info, and a hold-to-confirm WiFi reconfigure
-button. It is the only overlay that uses both vendored protocols. It is ported from the BDK-343 `settings-stub` widget,
-translated to the native `bmc-render` tree.
+The swipe-from-top quick-settings panel: ± brightness and volume controls, a night-mode toggle, and hold-to-confirm
+restart and WiFi reconfigure buttons over the WiFi station info. It is the only overlay that uses both vendored
+protocols. It is ported from the BDK-343 `settings-stub` widget, translated to the native `bmc-render` tree.
 
 Its `LayerConfig` is built by hand: `Layer::Overlay`, anchored to all four edges, **full** input region (the tray is
 full-screen and blocks scene swipes while it is up). `screen_edge()` returns `ScreenEdge::Top` and `uses_settings()` is
@@ -76,7 +76,7 @@ out and painted once into the GPU cache and re-blitted at the animation offset, 
 It dismisses on any of:
 
 - an **upward swipe** that travels up at least `DISMISS_DY` (60 px) and is mostly vertical — classified in `dismiss.rs`,
-  distinct from the horizontal slider drag;
+  distinct from a horizontal drag across the controls;
 - **inactivity** after `INACTIVITY_TIMEOUT` (15 s) with no touch;
 - **preemption** — the compositor reports (via `deck_settings_v1.preempted`) that a modal full-screen overlay, such as a
   firing alarm, has mapped below the tray. `on_preempted(true)` runs the same dismiss so the tray never sits on top of
@@ -90,15 +90,20 @@ because a screen-edge overlay is only shown while both revealed *and* `tick`-vis
 
 ### Controls and data
 
-- **Brightness slider** — a `ProgressBar` tree node with a `touch_key`; the drag fraction maps to a brightness value
-  sent as `SettingsRequest::SetBrightness`, throttled to `BRIGHTNESS_SEND_INTERVAL` (80 ms) during a drag with a final
-  value flushed on finger-up. The compositor's `brightness` event (`on_brightness`) updates the displayed value.
-- **WiFi info** — hostname (read once from `/proc/sys/kernel/hostname`) plus the configured SSID, current IP, and a
-  signal-strength icon, all from the connectivity prober's `snapshot_if_changed`; the signal icon is chosen from dBm
-  thresholds. The versioned read is polled on every tick (free while the snapshot is unchanged, even at the ~30 Hz
+- **Brightness and volume** — a ± pair of round buttons each, stepping the value by `STEP` (10) and clamping to
+  `ui::MIN_BRIGHTNESS`..100 and 0..100 respectively, sent as `SettingsRequest::SetBrightness` / `SetVolume`. The
+  compositor's own event (`on_brightness`, `on_volume`) updates the displayed value, except during the
+  `STEP_ECHO_SETTLE` (300 ms) window after a step, where a stale echo would otherwise bounce the value back.
+- **WiFi info** — the configured SSID, the current IP, and a signal-strength icon from the connectivity prober's
+  `snapshot_if_changed`, plus the hostname, read once from `/proc/sys/kernel/hostname`; the signal icon is chosen from
+  dBm thresholds. The versioned read is polled on every tick (free while the snapshot is unchanged, even at the ~30 Hz
   animation cadence); `NETWORK_REFRESH` (2 s) is the idle wake cadence.
-- **WiFi setup view** — when `on_wifi_ap` reports a non-empty setup-AP SSID, the panel replaces the station info and
-  buttons with a setup badge and the AP SSID for the user to join from their phone.
+- **Where the addresses render** — the wide tier's header carries the IP, the hostname, and a QR code of `http://<ip>`;
+  the compact tiers have room for one address, so they head the panel with the IP alone (`---` while unknown) and drop
+  the hostname, keeping SSID and signal on the bottom line.
+- **WiFi setup view** — when `on_wifi_ap` reports a non-empty setup-AP SSID, the panel replaces the station info with a
+  setup badge and the AP SSID for the user to join from their phone, and hides the reconfigure button. The other
+  controls stay.
 - **Reconfigure WiFi** — a hold-to-confirm button (`HOLD` = 3 s) that sends `SettingsRequest::ReconfigureWifi`; the FSM
   advances through holding/pending/active states from the `wifi_ap` event, with a timeout and error label if setup never
   starts.
