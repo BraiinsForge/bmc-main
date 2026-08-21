@@ -166,11 +166,12 @@ const ROUND_H_PAD: f32 = 48.0;
 /// is budgeted against that chord, not the panel width.
 const ROUND_HEADER_WIDTH: f32 = 256.0;
 
-/// Conservative per-glyph advance (px) for the 24px bold hostname font,
-/// rounded up from the measured Braiins Sans bold width so the character
-/// budget never under-counts and lets a string overflow its row. The
-/// renderer has no single-line ellipsis, so the fit is enforced on the
-/// string in [`fit_line`] instead.
+/// Per-glyph advance (px) used to budget 24px single-line strings.
+/// This is an average, not a bound: BraiinsSans-Bold's widest ASCII glyph
+/// advances 23.4px, so a run of wide capitals overflows after fitting.
+/// Digits and dots stay far under it, which is what the IP header relies on.
+/// The renderer has no single-line ellipsis, so [`fit_line`] enforces the fit
+/// on the string instead.
 const HOSTNAME_CHAR_W: f32 = 16.0;
 
 /// What to show in the WiFi/reconfig area of the overlay.
@@ -373,9 +374,9 @@ fn tier_for(panel: &Panel) -> Tier {
     }
 }
 
-/// Generic width-fitting for single-line UI strings: a conservative per-glyph
-/// budget scaled from the 24px hostname advance. The renderer cannot
-/// ellipsize, so overlong strings are truncated here.
+/// Generic width-fitting for single-line UI strings, on the per-glyph budget
+/// [`HOSTNAME_CHAR_W`] estimates. The renderer cannot ellipsize,
+/// so overlong strings are truncated here.
 #[must_use]
 #[expect(
     clippy::cast_possible_truncation,
@@ -700,8 +701,8 @@ fn single_group(
         return btn;
     }
     // The label/sublabel copy is fixed at compile time ("Night Mode: Off",
-    // "hold 5 seconds", …) and sized to its column; the conservative
-    // `fit_line` glyph budget would truncate it, so it is rendered verbatim.
+    // "hold 5 seconds", …) and sized to its column; the `fit_line` budget
+    // would truncate it, so it is rendered verbatim.
     let mut kids = vec![btn, fixed_height(8.0)];
     kids.push(text(
         label,
@@ -2352,14 +2353,15 @@ mod tests {
         }
     }
 
-    /// Conservative width of a single-line string,
-    /// on the same per-glyph budget [`fit_line`] truncates against.
+    /// Width of a single-line string on the per-glyph budget
+    /// [`fit_line`] truncates against — an estimate, not a bound.
     #[expect(clippy::cast_precision_loss, reason = "text sizes are small")]
     fn line_width(s: &str, size: u32) -> f32 {
         s.chars().count() as f32 * HOSTNAME_CHAR_W * (size as f32) / 24.0
     }
 
-    /// Conservative min-content width of [`wide_header`] at its fit budgets.
+    /// Min-content width of [`wide_header`] at its fit budgets. The structure
+    /// is worst-case; the glyph width is only [`HOSTNAME_CHAR_W`]'s estimate.
     /// Including the SETUP badge bounds both WiFi views, leaving idle mode —
     /// which has no badge — some slack. The setup hint is left out: it wraps,
     /// so a single-line glyph budget does not describe it.
@@ -2373,10 +2375,10 @@ mod tests {
         WIDE_INFO_LEFT_PAD + WIDE_QR_SIZE + WIDE_INFO_GAP + addresses + wifi + WIDE_INFO_RIGHT_PAD
     }
 
-    /// Conservative min-content width of a subtree, on the same per-glyph budget
-    /// [`fit_line`] truncates against: rows sum their kids plus their gaps,
-    /// anything else takes its widest child. A declared width is a floor,
+    /// Min-content width of a subtree: rows sum their kids plus their gaps,
+    /// anything else takes its widest child, and a declared width is a floor,
     /// not a cap — content too wide for its box still overflows the panel.
+    /// Structurally worst-case, but only as accurate as [`HOSTNAME_CHAR_W`].
     #[expect(clippy::cast_precision_loss, reason = "child counts are small")]
     fn min_content_width(node: &TreeNode) -> f32 {
         if let TreeNode::Canvas { props, .. } = node {
