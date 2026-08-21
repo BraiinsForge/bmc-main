@@ -237,7 +237,7 @@ def test_judge_rejects_a_request_carrying_the_placeholder_instead_of_the_secret(
 
 def test_judge_rejects_a_secret_that_reached_the_log() -> None:
     """The log must carry the placeholder form; the resolved one is a leak."""
-    host = f"fetch completed status=200 body_len=70 url=http://host/x?v={SECRET}"
+    host = f"fetch succeeded request_id=1 method=GET url=http://host/x?v={SECRET} status=200"
     with pytest.raises(Abort, match="appeared in the wasm-host log"):
         ce._judge([_delivered(), *_all_refusals_satisfied()], host, SECRET)
 

@@ -139,6 +139,10 @@ tempfile.workspace = true
 # to seed `RuntimeConfig` and to name credential types by their enum.
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
+# `tests/credential_egress.rs` reads the fetch logs back to prove they carry
+# the placeholder form. The lines are `debug!`, so capture needs a subscriber,
+# and the crate's own is optional behind `host`, which a test cannot turn on.
+tracing-subscriber.workspace = true
 
 [lints]
 workspace = true
