@@ -2114,9 +2114,13 @@ mod tests {
         };
         assert_eq!(day("date_start").weekday(), chrono::Weekday::Fri);
         assert_eq!(day("date_end").weekday(), chrono::Weekday::Sun);
+
+        // The race is the coming Sunday, so from Friday on the weekend
+        // is already under way — which a deployment reports the same way.
+        // Only a weekend whose race has been run is wrong.
         assert!(
-            day("date_start") > chrono::Utc::now().date_naive(),
-            "the weekend is upcoming, never one already run"
+            day("date_end") >= chrono::Utc::now().date_naive(),
+            "the weekend is upcoming or under way, never one already run"
         );
     }
 
