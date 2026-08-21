@@ -29,7 +29,6 @@
 )]
 use bmc_wasm_sdk::*;
 
-use crate::images::ImageKind;
 use crate::model::{SizeBucket, StandingsRow};
 use crate::screens::parts::{self, color, font, truncate};
 
@@ -42,7 +41,7 @@ pub struct StandingsViewData {
 
 /// Team logo box, which keeps its size at every frame.
 const LOGO: f32 = 32.0;
-/// A flag's height beside its trigram; its width follows the artwork.
+/// A flag's height beside its trigram; the box width derives from it.
 const FLAG_HEIGHT: f32 = LOGO * 0.7;
 /// Position column, its 28 px plus the 8 px it holds off the name.
 const POSITION: f32 = 36.0;
@@ -156,12 +155,7 @@ fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
             row(
                 props!(gap: parts::space::GAP * 3.0, cross_align: CrossAlign::Center),
                 [
-                    parts::image_at_height(
-                        ImageKind::Flag,
-                        &entry.country_flag_url,
-                        FLAG_HEIGHT,
-                        parts::image_placeholder(FLAG_HEIGHT, None),
-                    ),
+                    parts::flag(FLAG_HEIGHT, &entry.country_flag_url),
                     plain(entry.country_code.clone()),
                 ],
             ),

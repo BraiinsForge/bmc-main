@@ -359,38 +359,6 @@ pub fn remote_image(
     )
 }
 
-/// `url` drawn `height` tall and as wide as its own proportions ask,
-/// or `fallback` while nothing has arrived.
-///
-/// The decode fits the source inside its kind's box without distorting it,
-/// so the bitmap's own dimensions are the ratio to honour. Drawing into a
-/// box we picked instead is what stretches it.
-#[must_use]
-pub fn image_at_height(kind: ImageKind, url: &ImageUrl, height: f32, fallback: Node) -> Node {
-    let Some(resolved) = images::resolve(kind, url) else {
-        return fallback;
-    };
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "bitmap dimensions are bounded by the kind's decode box, far inside f32"
-    )]
-    let width = if resolved.height == 0 {
-        height
-    } else {
-        height * (resolved.width as f32) / (resolved.height as f32)
-    };
-    canvas(
-        props!(width: width, height: height),
-        [Draw::bitmap_id(
-            0.0,
-            0.0,
-            width,
-            height,
-            Some(resolved.bitmap),
-        )],
-    )
-}
-
 /// A team's mark: the server's logo once cached, the livery colour until
 /// then. No constructor's artwork ships with the widget, so a mark whose
 /// fetch has not answered is a coloured disc.
@@ -405,13 +373,12 @@ pub fn team_mark(size: f32, url: &ImageUrl, livery: Color) -> Node {
     )
 }
 
-/// A country's flag at `height`, as wide as its own proportions make it.
+/// A country's flag, contain-drawn in the fixed box of [`flag_size`].
 ///
-/// The one image allowed to size itself. Everything else draws into a box
-/// the layout fixed, so no payload can shift a row; a flag is let off that
-/// because one provider serves one flag set, and a set is internally
-/// consistent. Should that ever fail, the cost is a row of flags whose
-/// widths differ — visible at a glance, not a silent wrong.
+/// Flags once sized themselves on the trust that one provider's set is
+/// internally consistent. The real set is not — national flags run from
+/// square to 2:1 — so a column of them ragged, and dragged the trigram
+/// beside each one along.
 ///
 /// Two things put a flag level with that text. The text needs
 /// `line_height: 1.0`, or its box stands a fifth taller than its
@@ -419,21 +386,31 @@ pub fn team_mark(size: f32, url: &ImageUrl, livery: Color) -> Node {
 /// by [`GLYPH_DROP`] to meet letters that sit low in their own box.
 #[must_use]
 pub fn flag(height: f32, url: &ImageUrl) -> Node {
-    // Square while nothing has arrived: the shape our own fixtures take,
-    // and no worse a guess than any other for artwork not yet seen.
+    let (width, height) = flag_size(height);
     let placeholder = col(
-        props!(width: height, height: height, background: color::PLACEHOLDER),
+        props!(width: width, height: height, background: color::PLACEHOLDER),
         [],
     );
     col(
-        props!(),
+        props!(width: width),
         [
             // Twice the drop wanted: the box is centred as a whole, so
             // padding over the flag lowers it by half the padding.
             col(props!(height: height * GLYPH_DROP * 2.0), []),
-            image_at_height(ImageKind::Flag, url, height, placeholder),
+            remote_image(ImageKind::Flag, url, width, height, placeholder),
         ],
     )
+}
+
+/// The box a flag is drawn in, as wide as its decode bound permits.
+fn flag_size(height: f32) -> (f32, f32) {
+    let (bound_width, bound_height) = ImageKind::Flag.decode_size();
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a decode bound is a small constant, far inside f32"
+    )]
+    let aspect = bound_width as f32 / bound_height as f32;
+    (height * aspect, height)
 }
 
 /// Holds an image's box before it arrives, so the row does not reflow
@@ -457,8 +434,49 @@ pub fn image_placeholder(size: f32, livery: Option<Color>) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{CalendarDate, DateFormat, clock, contained, date_range, system};
+    use bmc_wasm_sdk::{Node, assets, cache, encode_image_meta};
+
+    use super::{CalendarDate, DateFormat, clock, contained, date_range, flag, system};
+    use crate::images::{ImageKind, tag_for};
+    use crate::model::ImageUrl;
     use crate::screens::fixtures::{weekend_day, weekend_time};
+
+    /// Put a decoded flag of `width`×`height` behind `url`.
+    fn seed_flag(url: &ImageUrl, width: u32, height: u32) {
+        let meta = encode_image_meta(width, height, url.as_str().as_bytes());
+        cache::put(&tag_for(ImageKind::Flag, url), &meta, &[0_u8; 16]);
+    }
+
+    /// The width of the box the bitmap is actually drawn into, rather than
+    /// of whatever wrapper holds it.
+    fn drawn_box_width(node: &Node) -> f32 {
+        match node {
+            Node::Canvas { props, .. } => props.width,
+            Node::Column(_, children) | Node::Row(_, children) => children
+                .iter()
+                .find_map(|child| match child {
+                    Node::Canvas { props, .. } => Some(props.width),
+                    _ => None,
+                })
+                .unwrap_or_else(|| panic!("BUG: no canvas under the flag")),
+            other => panic!("BUG: a flag is a box, not {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_flag_takes_one_width_whatever_shape_its_country_chose() {
+        assets::init_test_registrars();
+        crate::images::invalidate_all();
+        let wide = ImageUrl::from("https://flags.test/wide.png".to_owned());
+        let square = ImageUrl::from("https://flags.test/square.png".to_owned());
+        seed_flag(&wide, 40, 20);
+        seed_flag(&square, 28, 28);
+
+        let height = 22.4;
+        let (expected, _) = super::flag_size(height);
+        assert_eq!(drawn_box_width(&flag(height, &wide)), expected);
+        assert_eq!(drawn_box_width(&flag(height, &square)), expected);
+    }
 
     /// Every image but a flag draws through this, so a box that stretched
     /// its contents would distort the whole widget at once — which is how
