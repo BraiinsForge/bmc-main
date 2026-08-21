@@ -247,8 +247,6 @@ impl WidgetRegistry {
         map
     }
 
-    /// Drop a widget type from a static registry,
-    /// standing in for the package uninstall that `refresh` picks up on a real one.
     #[cfg(test)]
     pub(crate) fn remove(&self, uid: &Uuid) {
         self.widgets

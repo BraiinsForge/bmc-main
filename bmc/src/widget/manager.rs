@@ -710,7 +710,7 @@ impl Actor {
             .map_or_else(|| "wait failed".to_owned(), |status| status.to_string());
         // Scheduling, not promising:
         // the respawn re-checks the registry when the timer fires,
-        // and gives up if the widget type has been uninstalled.
+        // and gives up if the widget type has left it.
         warn!(
             "widget {} (pid={}) died unexpectedly ({cause}); scheduling a respawn in {:?}",
             exit.instance_id, exit.pid, delay
@@ -828,7 +828,7 @@ impl Actor {
 
         if self.registry.get(&pending.widget_uid).is_none() {
             warn!(
-                "widget type {} is no longer installed; not respawning instance {}",
+                "widget type {} has left the registry; not respawning instance {}",
                 pending.widget_uid, instance_id
             );
             let _ = self.events_tx.send(WidgetEvent::Abandoned {
@@ -1286,7 +1286,7 @@ mod tests {
     /// and the reload that follows hands every non-running instance
     /// to supervision rather than replacing it.
     /// None of them may then serve out a delay
-    /// earned against a binary that is no longer installed.
+    /// earned against a build that has since been replaced.
     #[tokio::test]
     async fn a_registry_refresh_retries_pending_respawns_promptly() {
         /// The delay the ladder must have climbed to before the refresh.
@@ -1651,11 +1651,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uninstalled_widget_type_ends_supervision() {
+    async fn a_widget_type_gone_from_the_registry_ends_supervision() {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         manager
-            .spawn_widget(uid, GEN, env("uninstalled"))
+            .spawn_widget(uid, GEN, env("skipped"))
             .await
             .expect("BUG: test spawn failed");
 
@@ -1670,11 +1670,11 @@ mod tests {
                 instance_id,
                 generation,
             } => {
-                assert_eq!(instance_id, "uninstalled");
+                assert_eq!(instance_id, "skipped");
                 assert_eq!(generation, GEN, "the abandon must name the registration");
             }
             WidgetEvent::Exited { .. } | WidgetEvent::Respawned { .. } => {
-                panic!("an uninstalled widget type must end supervision, not respawn")
+                panic!("a widget type gone from the registry must end supervision")
             }
         }
     }
