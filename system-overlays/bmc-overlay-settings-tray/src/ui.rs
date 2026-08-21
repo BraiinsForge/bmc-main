@@ -306,6 +306,9 @@ pub struct Controls<'a> {
 struct Tier {
     circle: f32,
     icon: f32,
+    /// Gap inside a ± pair. Equal to `group_gap` on the compact tiers:
+    /// their unlabeled circles read a tighter gap as uneven spacing,
+    /// not as grouping.
     pair_gap: f32,
     group_gap: f32,
     large_text: bool,
@@ -341,7 +344,7 @@ fn tier_for(panel: &Panel) -> Tier {
         Tier {
             circle: 48.0,
             icon: 22.0,
-            pair_gap: 6.0,
+            pair_gap: 12.0,
             group_gap: 12.0,
             large_text: false,
             value_size: 12,
@@ -356,7 +359,7 @@ fn tier_for(panel: &Panel) -> Tier {
         Tier {
             circle: 64.0,
             icon: 28.0,
-            pair_gap: 8.0,
+            pair_gap: 20.0,
             group_gap: 20.0,
             large_text: false,
             value_size: 14,
@@ -1428,6 +1431,26 @@ mod tests {
         }
     }
 
+    fn is_absolute(node: &TreeNode) -> bool {
+        match node {
+            TreeNode::Column(props, _) | TreeNode::Row(props, _) | TreeNode::Center(props, _) => {
+                props.is_absolute()
+            }
+            TreeNode::Paragraph { props, .. }
+            | TreeNode::Canvas { props, .. }
+            | TreeNode::Scroll { props, .. } => props.is_absolute(),
+            TreeNode::Button { .. }
+            | TreeNode::Spacer { .. }
+            | TreeNode::Notification { .. }
+            | TreeNode::RelTime { .. }
+            | TreeNode::Tag { .. }
+            | TreeNode::Switcher { .. }
+            | TreeNode::Skeleton(_)
+            | TreeNode::Modal { .. }
+            | TreeNode::ProgressBar { .. } => false,
+        }
+    }
+
     /// Depth-first search for the first Canvas carrying `key`.
     fn find_canvas<'t>(node: &'t TreeNode, key: &str) -> Option<&'t Vec<DrawCommand>> {
         if let TreeNode::Canvas {
@@ -2348,6 +2371,88 @@ mod tests {
             + WIDE_WIFI_GAP
             + WIDE_SSID_WIDTH;
         WIDE_INFO_LEFT_PAD + WIDE_QR_SIZE + WIDE_INFO_GAP + addresses + wifi + WIDE_INFO_RIGHT_PAD
+    }
+
+    /// Conservative min-content width of a subtree, on the same per-glyph budget
+    /// [`fit_line`] truncates against: rows sum their kids plus their gaps,
+    /// anything else takes its widest child. A declared width is a floor,
+    /// not a cap — content too wide for its box still overflows the panel.
+    #[expect(clippy::cast_precision_loss, reason = "child counts are small")]
+    fn min_content_width(node: &TreeNode) -> f32 {
+        if let TreeNode::Canvas { props, .. } = node {
+            return props.width;
+        }
+        if let TreeNode::Paragraph {
+            base_style, spans, ..
+        } = node
+        {
+            return spans
+                .iter()
+                .map(|span| line_width(&span.text, base_style.size))
+                .sum();
+        }
+        let kids: &[TreeNode] = children(node).unwrap_or_default();
+        let flow_kids = kids.iter().filter(|child| !is_absolute(child));
+        let intrinsic = if let TreeNode::Row(props, _) = node {
+            let gaps = props.gap * flow_kids.clone().count().saturating_sub(1) as f32;
+            flow_kids.map(min_content_width).sum::<f32>() + gaps
+        } else {
+            flow_kids.map(min_content_width).fold(0.0, f32::max)
+        };
+        if let TreeNode::Row(props, _) | TreeNode::Column(props, _) = node {
+            return intrinsic.max(props.width);
+        }
+        intrinsic
+    }
+
+    fn assert_control_rows_fit(controls: Controls<'_>) {
+        for panel in [wide_panel(), narrow_panel(), small_panel(), round_panel()] {
+            let tree = build_tree(
+                Some("braiins-deck"),
+                Some("10.0.0.2"),
+                Some(-55),
+                Some("MyWifi"),
+                WifiIcons::default(),
+                panel,
+                WifiView::Idle,
+                ControlIcons::default(),
+                controls,
+            );
+            #[expect(clippy::cast_precision_loss, reason = "panel sizes are small")]
+            let panel_w = panel.width as f32;
+            let kids = children(&tree).expect("BUG: root must be a container");
+
+            let mut rows = 0;
+            for kid in kids {
+                let mut keys = Vec::new();
+                canvas_keys(kid, &mut keys);
+                if !keys.iter().any(|k| is_control_key(k)) {
+                    continue;
+                }
+                rows += 1;
+                let width = min_content_width(kid);
+                assert!(
+                    width <= panel_w,
+                    "{panel:?}: control row of {width} overflows {panel_w} — \
+                     the buttons run off the panel edge"
+                );
+            }
+            assert!(rows > 0, "{panel:?}: control rows must render");
+        }
+    }
+
+    #[test]
+    fn control_rows_fit_the_panel_width() {
+        assert_control_rows_fit(all_controls());
+        let held = HoldControl {
+            caption: Some("Keep holding…"),
+            progress: 0.5,
+        };
+        assert_control_rows_fit(Controls {
+            restart: Some(held),
+            wifi_reconfig: held,
+            ..all_controls()
+        });
     }
 
     #[test]
