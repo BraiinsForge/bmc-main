@@ -90,6 +90,13 @@ h1 { margin-bottom: 8px; }
 .filter button.active { background: #444; color: #fff; }
 .hidden { display: none; }
 
+/* Over the minimap's lower half, and under the lightbox. */
+.to-top { position: fixed; right: 24px; bottom: 24px; z-index: 50; display: none;
+          width: 40px; height: 40px; border-radius: 8px; border: 1px solid #444;
+          background: #222; color: #ccc; font-size: 18px; line-height: 1; cursor: pointer; }
+.to-top:hover { background: #333; color: #fff; }
+.to-top.shown { display: block; }
+
 /* Minimap sidebar — sticky right rail, IDE-style overview of widgets. */
 .minimap {
   position: sticky;
@@ -228,6 +235,8 @@ h1 { margin-bottom: 8px; }
   {% endfor %}
 </aside>
 
+<button class="to-top" onclick="scrollToTop()" title="Back to top" aria-label="Back to top">↑</button>
+
 <div class="lightbox" id="lightbox">
   <div class="lightbox-label" id="lightbox-label">
     <span id="lightbox-label-text">baseline</span>
@@ -237,11 +246,39 @@ h1 { margin-bottom: 8px; }
 </div>
 
 <script>
+// Far enough down that the heading and the filters have gone.
+const TO_TOP_AFTER_PX = 400;
+
+function scrollToTop() {
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+window.addEventListener('scroll', () => {
+  document
+    .querySelector('.to-top')
+    .classList.toggle('shown', window.scrollY > TO_TOP_AFTER_PX);
+});
+
 function filterRows(status) {
   document.querySelectorAll('.filter button').forEach(b => b.classList.remove('active'));
   event.target.classList.add('active');
+  const all = status === 'all';
   document.querySelectorAll('.row').forEach(row => {
-    row.classList.toggle('hidden', status !== 'all' && row.dataset.status !== status);
+    row.classList.toggle('hidden', !all && row.dataset.status !== status);
+  });
+  // A widget with nothing left to show goes too, and its minimap entry with it:
+  // hiding only its rows leaves the heading standing, which reads as a no-op.
+  document.querySelectorAll('details.widget').forEach(widget => {
+    if (widget.dataset.openByDefault === undefined) {
+      widget.dataset.openByDefault = widget.open;
+    }
+    const kept = widget.querySelector('.row:not(.hidden)') !== null;
+    widget.classList.toggle('hidden', !all && !kept);
+    widget.open = all ? widget.dataset.openByDefault === 'true' : kept;
+    const pill = document.querySelector('.minimap-item[href="#' + widget.id + '"]');
+    if (pill) {
+      pill.classList.toggle('hidden', !all && !kept);
+    }
   });
 }
 
