@@ -22,10 +22,11 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 > As a user, I want to adjust screen brightness and sound volume from the tray so that changes take effect immediately
 > where I am.
 
-- Brightness and volume sliders apply their value immediately and the setting persists after the tray is dismissed.
-- The sliders reflect the current system state when the tray opens, including changes made elsewhere (for example from
+- Brightness and volume each step up or down through a pair of buttons; the value applies immediately and persists after
+  the tray is dismissed.
+- The values reflect the current system state when the tray opens, including changes made elsewhere (for example from
   the web UI) while the tray is open.
-- While the user is dragging a slider, delayed feedback of earlier values never yanks the knob away from the finger.
+- While the user is stepping a value, delayed feedback of earlier values never bounces it back.
 
 ### Toggle night mode
 
@@ -46,20 +47,29 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 - While a firmware upgrade is being applied the device declines the restart and the tray shows why, so an upgrade can
   never be corrupted by a manual reboot.
 
+### See the device's address
+
+> As a user, I want the tray to show the device's IP address so that I can reach its web UI from my phone without
+> hunting for it.
+
+- The tray shows the device's current IP address on every device.
+- When no address is available, the tray shows a placeholder rather than a stale or invented one.
+- Where the display has the room, the tray also shows the hostname and a QR code that opens the web UI when scanned.
+
 ### Reconfigure WiFi from the device
 
 > As a user, I want to restart WiFi setup from the tray so that I can re-home the device onto a new network without the
 > web UI.
 
-- A hold-to-confirm "Reset WiFi" button starts the WiFi setup access point; the tray then shows the setup network to
-  join from a phone.
-- The tray shows the connection status: the connected network, IP address, and signal strength.
+- A hold-to-confirm "Reconfigure WiFi" button starts the WiFi setup access point; the tray then shows the setup network
+  to join from a phone.
+- The tray shows the connection status: the connected network and signal strength.
 
 ### See only the controls the device supports
 
 > As a user, I want the tray to show only controls my device actually has so that nothing on screen is a dead end.
 
-- Devices without sound hardware show no volume slider.
+- Devices without sound hardware show no volume controls.
 - Devices whose WiFi is not managed directly by the system show no WiFi button.
 - The available controls are decided by the device itself; the tray never guesses.
 
