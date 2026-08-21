@@ -58,7 +58,7 @@ use bmc_wasm_protocol::system::{
 use bmc_wasm_protocol::{PackageAssetId, PackageAssetKind, PackageAssetRef, SvgId};
 use bmc_wasm_runtime::{
     CredentialView, DiskCache, NextAlarm, PackageAssetStore, RenderStatus, RuntimeConfig,
-    SystemSettings, SystemSnapshot, WasmWidgetRuntime,
+    SystemSettings, SystemSnapshot, TargetContents, WasmWidgetRuntime,
 };
 use bmc_widget_manifest::{ParamKey, ParamValue};
 use bmc_widget_protocol::CredentialSecrets;
@@ -877,7 +877,9 @@ fn render_frame(
 ) -> RenderStatus {
     renderer.begin_frame(320, 240, 1.0);
     let status = runtime
-        .with_renderer(renderer_ptr(renderer), |runtime| runtime.render(delta_ms))
+        .with_renderer(renderer_ptr(renderer), |runtime| {
+            runtime.render(delta_ms, TargetContents::Cleared)
+        })
         .expect("BUG: probe render must not trap");
     renderer.flush();
     status

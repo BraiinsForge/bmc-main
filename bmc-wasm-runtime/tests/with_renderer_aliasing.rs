@@ -32,7 +32,7 @@ use std::ptr::NonNull;
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
 mod common;
@@ -86,7 +86,7 @@ fn install_use_clear_cycle() {
     renderer.begin_frame(320, 240, 1.0);
     let ptr = renderer_ptr(&mut renderer);
     let status = runtime
-        .with_renderer(ptr, |rt| rt.render(16))
+        .with_renderer(ptr, |rt| rt.render(16, TargetContents::Cleared))
         .expect("BUG: probe render must succeed");
     assert!(matches!(status, bmc_wasm_runtime::RenderStatus::Ok));
     renderer.flush();
@@ -96,7 +96,7 @@ fn install_use_clear_cycle() {
     renderer.begin_frame(320, 240, 1.0);
     let ptr = renderer_ptr(&mut renderer);
     let status = runtime
-        .with_renderer(ptr, |rt| rt.render(16))
+        .with_renderer(ptr, |rt| rt.render(16, TargetContents::Cleared))
         .expect("BUG: probe render must succeed");
     assert!(matches!(status, bmc_wasm_runtime::RenderStatus::Ok));
     renderer.flush();
@@ -149,7 +149,7 @@ fn host_import_reborrows_parked_pointer() {
     renderer.begin_frame(320, 240, 1.0);
     let ptr = renderer_ptr(&mut renderer);
     let status = runtime
-        .with_renderer(ptr, |rt| rt.render(16))
+        .with_renderer(ptr, |rt| rt.render(16, TargetContents::Cleared))
         .expect("BUG: render must succeed");
     renderer.flush();
     assert!(matches!(status, bmc_wasm_runtime::RenderStatus::Ok));
@@ -180,7 +180,9 @@ fn host_import_outside_render_scope_traps_guest() {
     // the guest, surfacing as `RenderStatus::Dead` (after fuel-strike accumulation)
     // or an immediate `Err` depending on how the runtime classifies host traps.
     // Either way, the host must NOT panic.
-    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| runtime.render(16)));
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        runtime.render(16, TargetContents::Cleared)
+    }));
     let result = outcome.expect("BUG: host must not panic on out-of-scope renderer access");
     match result {
         // Either wasmi trap reported as Err or fuel-strike accumulation to Dead — both acceptable.
@@ -222,7 +224,7 @@ fn panic_in_with_renderer_closure_clears_pointer() {
         "panic must propagate through with_renderer rather than being swallowed"
     );
 
-    let result = runtime.render(16);
+    let result = runtime.render(16, TargetContents::Cleared);
     assert!(
         result.is_err() || matches!(result, Ok(RenderStatus::Dead)),
         "a renderer import after unwinding must not reuse the parked pointer"
@@ -321,14 +323,18 @@ fn two_runtimes_share_one_renderer_without_cross_slot_bleeding() {
 
     renderer.begin_frame(64, 64, 1.0);
     let status = rt_a
-        .with_renderer(renderer_ptr(&mut renderer), |rt| rt.render(16))
+        .with_renderer(renderer_ptr(&mut renderer), |rt| {
+            rt.render(16, TargetContents::Cleared)
+        })
         .expect("BUG: render A must succeed");
     assert!(matches!(status, RenderStatus::Ok));
     renderer.flush();
 
     renderer.begin_frame(64, 64, 1.0);
     let status = rt_b
-        .with_renderer(renderer_ptr(&mut renderer), |rt| rt.render(16))
+        .with_renderer(renderer_ptr(&mut renderer), |rt| {
+            rt.render(16, TargetContents::Cleared)
+        })
         .expect("BUG: render B must succeed");
     assert!(matches!(status, RenderStatus::Ok));
     renderer.flush();

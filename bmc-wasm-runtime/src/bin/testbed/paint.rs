@@ -81,22 +81,10 @@ impl ViewTargets {
         }
     }
 
-    /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`.
-    pub(super) fn fbo_id(&self) -> u32 {
-        self.fbo.0.get()
-    }
-
     /// GL name of the colour texture — the one part of these targets that a
     /// share group shares, and so the only part another context can name.
     pub(super) fn texture_name(&self) -> u32 {
         self.texture.0.get()
-    }
-
-    /// Hand the colour texture to the painter, which owns it from then on —
-    /// including deleting it, which is why `destroy_container_objects` leaves
-    /// it alone. Only the thread the painter runs on may call this.
-    pub(super) fn register(&self, painter: &mut egui_glow::Painter) -> egui::TextureId {
-        painter.register_native_texture(self.texture)
     }
 
     /// Delete the objects a share group does not share, in the context that
@@ -109,25 +97,96 @@ impl ViewTargets {
             gl.delete_renderbuffer(self.rbo);
         }
     }
+}
 
-    /// Delete everything, texture included — for targets that were never
-    /// registered with the painter, whose texture nobody else will free.
-    pub(super) fn destroy(self, gl: &egui_glow::glow::Context) {
-        let texture = self.texture;
-        self.destroy_container_objects(gl);
-        // SAFETY: the caller holds the creating context current on this thread.
+/// What a view's widget draws into: one framebuffer whose colour attachment
+/// rotates between two textures.
+///
+/// The device rotates export buffers, so a damage-tracked frame's regions have
+/// to span two of them — that span is what the runtime's `recent_dynamic_rects`
+/// pair tracks. A testbed drawing into a single persistent target would exercise
+/// partial redraw while never exercising the rotation, and would pass frames the
+/// Deck shows torn. Rotating here is what puts the artifact in front of whoever
+/// is running the testbed.
+///
+/// The framebuffer's *name* stays put across the rotation, only its attachment
+/// moves: femtovg holds that name as its screen target and restores it mid-frame
+/// (`bmc-render/src/gpu/renderer.rs`, `drop_shadow`), so handing it a different
+/// framebuffer per frame would break that. This is what the host does on the
+/// device (`bmc-widget`'s `retarget_to`).
+pub(super) struct RenderTargets {
+    fbo: egui_glow::glow::Framebuffer,
+    rbo: egui_glow::glow::Renderbuffer,
+    /// Both are painter-owned once registered, so neither is freed here.
+    textures: [egui_glow::glow::Texture; 2],
+    drawing: usize,
+    pub(super) width: u32,
+    pub(super) height: u32,
+}
+
+impl RenderTargets {
+    /// Allocate the pair and a framebuffer pointing at the first of them.
+    pub(super) fn create(gl: &egui_glow::glow::Context, width: u32, height: u32) -> Result<Self> {
+        // SAFETY: the caller holds a context current on this thread.
         unsafe {
-            gl.delete_texture(texture);
+            let mut made = Vec::with_capacity(2);
+            for _ in 0..2 {
+                let texture = gl
+                    .create_texture()
+                    .map_err(|e| anyhow::anyhow!("create_texture: {e}"))?;
+                configure_texture(gl, texture, width, height);
+                made.push(texture);
+            }
+            let textures = [made[0], made[1]];
+            let (fbo, rbo) = create_render_target(gl, textures[0], width, height)?;
+            Ok(Self {
+                fbo,
+                rbo,
+                textures,
+                drawing: 0,
+                width,
+                height,
+            })
         }
     }
 
-    /// Copy this target's colour into `dest`, on whichever context is current.
-    ///
-    /// This is the frame handoff for a threaded view: the renderer always
-    /// draws into one target — femtovg believes it is the screen, and its
-    /// drop-shadow pass restores `RenderTarget::Screen` mid-frame on that
-    /// assumption (`bmc-render/src/gpu/renderer.rs`, `drop_shadow`) — so the
-    /// double buffering happens by copying frames out, never by retargeting.
+    /// Numeric FBO ID for `WasmWidgetRuntime::new(... fbo_id ...)`. Stable for
+    /// the targets' life, rotation included.
+    pub(super) fn fbo_id(&self) -> u32 {
+        self.fbo.0.get()
+    }
+
+    /// Which of the two textures holds the frame drawn most recently.
+    pub(super) fn drawing(&self) -> usize {
+        self.drawing
+    }
+
+    /// Point the framebuffer at the other texture, for the frame about to be
+    /// drawn. Whatever that texture holds is two frames old, which is exactly
+    /// what a damage-tracked frame expects to find.
+    pub(super) fn rotate(&mut self, gl: &egui_glow::glow::Context) {
+        self.drawing = 1 - self.drawing;
+        // SAFETY: the caller holds the creating context current on this thread.
+        unsafe {
+            gl.bind_framebuffer(egui_glow::glow::FRAMEBUFFER, Some(self.fbo));
+            gl.framebuffer_texture_2d(
+                egui_glow::glow::FRAMEBUFFER,
+                egui_glow::glow::COLOR_ATTACHMENT0,
+                egui_glow::glow::TEXTURE_2D,
+                Some(self.textures[self.drawing]),
+                0,
+            );
+            gl.bind_framebuffer(egui_glow::glow::FRAMEBUFFER, None);
+        }
+    }
+
+    /// Hand both textures to the painter, which owns them from then on. The
+    /// caller keeps the ids in the order [`Self::drawing`] indexes.
+    pub(super) fn register(&self, painter: &mut egui_glow::Painter) -> [egui::TextureId; 2] {
+        self.textures.map(|t| painter.register_native_texture(t))
+    }
+
+    /// Copy the frame just drawn into `dest`, on whichever context is current.
     pub(super) fn blit_to(&self, gl: &egui_glow::glow::Context, dest: &ViewTargets) {
         // SAFETY: the caller holds the creating context current on this
         // thread, and both targets were created against it.
@@ -147,6 +206,29 @@ impl ViewTargets {
                 egui_glow::glow::NEAREST,
             );
             gl.bind_framebuffer(egui_glow::glow::FRAMEBUFFER, None);
+        }
+    }
+
+    /// Delete the objects a share group does not share. The textures are not
+    /// among them once registered — the painter frees those with the ids.
+    pub(super) fn destroy_container_objects(self, gl: &egui_glow::glow::Context) {
+        // SAFETY: the caller holds the creating context current on this thread.
+        unsafe {
+            gl.delete_framebuffer(self.fbo);
+            gl.delete_renderbuffer(self.rbo);
+        }
+    }
+
+    /// Delete everything, textures included — for targets never registered
+    /// with a painter, whose textures nobody else will free.
+    pub(super) fn destroy(self, gl: &egui_glow::glow::Context) {
+        let textures = self.textures;
+        self.destroy_container_objects(gl);
+        // SAFETY: the caller holds the creating context current on this thread.
+        unsafe {
+            for texture in textures {
+                gl.delete_texture(texture);
+            }
         }
     }
 }

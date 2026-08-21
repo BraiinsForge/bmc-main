@@ -30,9 +30,10 @@
 //! holds the same fields whether the core is here or on a worker.
 
 use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::Renderer as _;
 use bmc_wasm_runtime::platform_catalog::DisplayShape;
-use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, WasmWidgetRuntime};
+use bmc_wasm_runtime::{LedEffect, LedRequest, RenderStatus, TargetContents, WasmWidgetRuntime};
 
 mod fence;
 mod protocol;
@@ -141,7 +142,7 @@ pub(crate) struct ViewSeed {
 pub(crate) struct ViewParts {
     pub(crate) runtime: Option<WasmWidgetRuntime>,
     pub(crate) renderer: FemtoVgRenderer,
-    pub(crate) targets: super::paint::ViewTargets,
+    pub(crate) targets: super::paint::RenderTargets,
 }
 
 impl ViewSeed {
@@ -149,7 +150,7 @@ impl ViewSeed {
     pub(crate) fn build(self, gl: &egui_glow::glow::Context) -> anyhow::Result<ViewParts> {
         use anyhow::Context as _;
 
-        let targets = super::paint::ViewTargets::create(gl, self.width, self.height)?;
+        let targets = super::paint::RenderTargets::create(gl, self.width, self.height)?;
         // SAFETY: the caller holds a context current on this thread, and the
         // renderer keeps its own glow context for as long as it lives.
         let renderer = unsafe {
@@ -229,7 +230,7 @@ impl ViewCore {
         label: String,
         led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
     ) -> Self {
-        Self {
+        let mut core = Self {
             runtime: parts_runtime,
             renderer,
             width,
@@ -240,6 +241,18 @@ impl ViewCore {
                 rx: led_rx,
                 ..LedState::default()
             },
+        };
+        core.claim_targets();
+        core
+    }
+
+    /// Tell the runtime it may not scissor around what the target pair already
+    /// holds — freshly allocated textures hold nothing, and a reused pair holds
+    /// the outgoing widget's frames. Either way both have to be painted in full
+    /// once before damage tracking spans them.
+    fn claim_targets(&mut self) {
+        if let Some(rt) = self.runtime.as_mut() {
+            rt.invalidate_export_buffers();
         }
     }
 
@@ -256,6 +269,7 @@ impl ViewCore {
     ) {
         self.renderer.drop_all();
         self.runtime = runtime;
+        self.claim_targets();
         self.led.rx = led_rx;
         self.led.scene = None;
         self.led.enabled = false;
@@ -413,7 +427,7 @@ pub(crate) struct DeviceView {
 enum Render {
     Inline {
         core: Box<ViewCore>,
-        targets: super::paint::ViewTargets,
+        targets: super::paint::RenderTargets,
     },
     Threaded(worker::Worker),
 }
@@ -424,7 +438,7 @@ impl DeviceView {
         placed: &PlacedTile,
         platform: &'static bmc_wasm_runtime::platform_catalog::Platform,
         parts: ViewParts,
-        egui_tex_id: egui::TextureId,
+        egui_tex_ids: [egui::TextureId; 2],
         led_rx: Option<std::sync::mpsc::Receiver<LedRequest>>,
         supported: bool,
     ) -> Self {
@@ -443,7 +457,7 @@ impl DeviceView {
                 core: Box::new(core),
                 targets: parts.targets,
             },
-            tex_ids: vec![egui_tex_id],
+            tex_ids: egui_tex_ids.to_vec(),
             platform,
             shape: placed.shape,
             label: placed.label.clone(),
@@ -520,7 +534,7 @@ impl DeviceView {
     /// The texture holding this view's newest frame.
     pub(crate) fn tex_id(&self) -> egui::TextureId {
         let slot = match &self.render {
-            Render::Inline { .. } => 0,
+            Render::Inline { targets, .. } => targets.drawing(),
             Render::Threaded(worker) => worker.showing(),
         };
         self.tex_ids[slot]
@@ -681,11 +695,11 @@ impl DeviceView {
     pub(crate) fn tick(&mut self, tick: &ViewTick, gl: &egui_glow::glow::Context) -> ViewTicked {
         let commands: Vec<ViewCommand> = self.inbox.drain(..).collect();
         match &mut self.render {
-            Render::Inline { core, .. } => {
+            Render::Inline { core, targets } => {
                 for command in commands {
                     core.apply(command);
                 }
-                let ticked = core.tick(tick);
+                let ticked = core.tick(tick, gl, targets);
                 self.report = core.report(tick.profile && ticked.rendered);
                 ticked
             }
@@ -698,6 +712,23 @@ impl DeviceView {
     }
 }
 
+/// What the frame about to be drawn will find in its target.
+///
+/// The same question the device host asks, and the answer has to drive both the
+/// clear and the runtime's damage decision: split them and a frame either keeps
+/// pixels it then repaints, or scissors over a target that was just wiped.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "view dimensions are well under f32 precision"
+)]
+fn target_contents(runtime: &WasmWidgetRuntime, width: u32, height: u32) -> TargetContents {
+    if runtime.next_frame_preserves_target(width as f32, height as f32) {
+        TargetContents::Preserved
+    } else {
+        TargetContents::Cleared
+    }
+}
+
 impl ViewCore {
     /// Advance one tick: drain LED requests and pending I/O,
     /// then render if the widget's own scheduler asks for it.
@@ -705,7 +736,12 @@ impl ViewCore {
     /// The clock and the delivery drain run every tick while the WASM render
     /// is gated, so an idle view costs nothing — the contract the device host
     /// honours too.
-    pub(crate) fn tick(&mut self, tick: &ViewTick) -> ViewTicked {
+    pub(crate) fn tick(
+        &mut self,
+        tick: &ViewTick,
+        gl: &egui_glow::glow::Context,
+        targets: &mut super::paint::RenderTargets,
+    ) -> ViewTicked {
         if self.runtime.is_none() || self.sched.dead {
             return ViewTicked::default();
         }
@@ -782,12 +818,25 @@ impl ViewCore {
         let delta_ms = animation_delta_ms(self.sched.last_render_at, tick.now);
         self.sched.last_render_at = Some(tick.now);
 
-        self.renderer.begin_frame(self.width, self.height, 1.0);
+        // Rotate first: the runtime's answer below is about the target this
+        // frame will paint into, not the one the last frame left behind.
+        targets.rotate(gl);
+        let contents = target_contents(
+            self.runtime.as_ref().expect("BUG: checked above"),
+            self.width,
+            self.height,
+        );
+        let clear = match contents {
+            TargetContents::Preserved => FrameClear::Keep,
+            TargetContents::Cleared => FrameClear::OpaqueBlack,
+        };
+        self.renderer
+            .begin_frame_with_clear(self.width, self.height, 1.0, clear);
         let outcome = self
             .runtime
             .as_mut()
             .expect("BUG: checked above")
-            .with_renderer(renderer_ptr, |rt| rt.render(delta_ms));
+            .with_renderer(renderer_ptr, |rt| rt.render(delta_ms, contents));
         self.log_render_outcome(&outcome);
         let flush_started = std::time::Instant::now();
         self.renderer.flush();

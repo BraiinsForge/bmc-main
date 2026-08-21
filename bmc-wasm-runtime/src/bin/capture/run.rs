@@ -55,8 +55,8 @@ use bmc_wasm_runtime::unified_fixture::{
     validate_fixture,
 };
 use bmc_wasm_runtime::{
-    DiskCache, FixtureEvent, FixtureEventKind, InterceptedReply, PackageAssetStore, RenderStatus,
-    RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+    DiskCache, FixtureEvent, FixtureEventKind, InterceptedReply, PackageAssetStore,
+    RenderStatus, RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
 };
 
 /// Fixed timestep per frame (ms).
@@ -1275,10 +1275,13 @@ fn render_frame(
     ctx: &CaptureCtx,
     frame_count: u32,
 ) -> bool {
+    // `begin_frame` clears, so nothing survives between shots and every frame
+    // has to paint its whole surface. Capture is shot-based rather than
+    // continuous, so it gains nothing from partial redraw anyway.
     renderer.begin_frame(ctx.width, ctx.height, 1.0);
     let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(*renderer);
     let ptr = std::ptr::NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
-    match runtime.with_renderer(ptr, |rt| rt.render(DELTA_MS)) {
+    match runtime.with_renderer(ptr, |rt| rt.render(DELTA_MS, TargetContents::Cleared)) {
         Ok(RenderStatus::Dead) => {
             eprintln!("Widget died at frame {frame_count}");
             false

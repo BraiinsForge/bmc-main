@@ -33,7 +33,7 @@ use bmc_render::renderer::FrameClear;
 use bmc_render::renderer::Renderer;
 use bmc_wasm_runtime::{
     DiskCache, LedEffect, LedRequest, LedScope, NetworkInfo, NextAlarm as RuntimeNextAlarm,
-    RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
+    RenderStatus, RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
 };
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
 use bmc_widget::surface::{
@@ -972,18 +972,19 @@ impl<S: SlotSurface> WidgetSlot<S> {
                 target_width,
                 target_height,
                 |shared| {
+                    let contents = target_contents(runtime, target_width, target_height);
                     bind_export_target_for_frame(
                         shared,
                         &mut egl_target.buffers,
                         ptr,
                         target_width,
                         target_height,
-                        preserves_target(runtime, target_width, target_height),
+                        contents,
                     )?;
                     HostRenderProfiling::log_phase(wasm_basename, "frame_setup", frame_setup_phase);
 
                     let phase_start = HostRenderProfiling::start_phase();
-                    let status = runtime.with_renderer(ptr, |rt| rt.render(delta_ms))?;
+                    let status = runtime.with_renderer(ptr, |rt| rt.render(delta_ms, contents))?;
                     HostRenderProfiling::log_phase(wasm_basename, "runtime_render", phase_start);
 
                     let phase_start = HostRenderProfiling::start_phase();
@@ -1586,17 +1587,25 @@ impl HostRenderProfiling {
 /// the buffer carries a stencil attachment for femtovg's fills. femtovg renders
 /// bottom-up to a framebuffer, so the compositor flips these buffers via its
 /// scanout transform.
-/// Whether the upcoming frame reuses the target's existing pixels.
+/// What the upcoming frame will find in its target.
+///
+/// One answer drives both the clear and the runtime's damage decision: derive
+/// them separately and a frame could keep its pixels while repainting all of
+/// them, or scissor to the damage over a target that was just wiped.
 #[expect(
     clippy::cast_precision_loss,
     reason = "surface dimensions are well under f32 precision"
 )]
-fn preserves_target(
+fn target_contents(
     runtime: &bmc_wasm_runtime::WasmWidgetRuntime,
     width: u32,
     height: u32,
-) -> bool {
-    runtime.next_frame_preserves_target(width as f32, height as f32)
+) -> TargetContents {
+    if runtime.next_frame_preserves_target(width as f32, height as f32) {
+        TargetContents::Preserved
+    } else {
+        TargetContents::Cleared
+    }
 }
 
 fn bind_export_target_for_frame(
@@ -1605,9 +1614,24 @@ fn bind_export_target_for_frame(
     ptr: NonNull<dyn Renderer>,
     width: u32,
     height: u32,
-    preserve: bool,
+    contents: TargetContents,
 ) -> anyhow::Result<()> {
-    buffers.ensure_current(&shared.egl)?;
+    let preserve = matches!(contents, TargetContents::Preserved);
+    // Seed a freshly allocated buffer from its sibling before anything paints
+    // into it. A `Prepared` slot drops its spare and keeps only the buffer on
+    // screen, so waking re-allocates the other one with undefined pixels — and a
+    // damage-scissored frame paints only the regions that moved, leaving the rest
+    // of the surface showing whatever the driver handed back. That is the static
+    // band flickering on a scene the compositor slid to.
+    let (fbo, seed) = {
+        let (export, seed) = buffers.ensure_current_seeded(&shared.egl)?;
+        (export.fbo, seed)
+    };
+    if let Some(src) = seed {
+        shared
+            .scratch
+            .seed_export_buffer(&shared.egl, src, fbo, width, height);
+    }
     let export = buffers
         .current_ref()
         .expect("BUG: ensure_current succeeded, so current_ref must return Some");

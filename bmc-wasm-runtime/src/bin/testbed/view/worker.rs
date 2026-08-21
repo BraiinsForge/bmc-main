@@ -433,7 +433,7 @@ struct WorkerState {
     gl: egui_glow::glow::Context,
     /// What the widget draws into, every frame. Never sampled by the
     /// compositor and never registered with the painter.
-    targets: crate::paint::ViewTargets,
+    targets: crate::paint::RenderTargets,
     /// What the compositor samples: finished frames blitted out of `targets`,
     /// taken in turn.
     present: [crate::paint::ViewTargets; 2],
@@ -503,7 +503,7 @@ fn build(seed: WorkerSeed) -> anyhow::Result<WorkerState> {
 impl WorkerState {
     /// Run one tick and, if it drew, hand the frame over.
     fn render(&mut self, tick: &ViewTick) -> FromWorker {
-        let ticked = self.core.tick(tick);
+        let ticked = self.core.tick(tick, &self.gl, &mut self.targets);
         let report = self.core.report(tick.profile && ticked.rendered);
         let handoff = ticked.rendered.then(|| {
             let slot = self.writing;

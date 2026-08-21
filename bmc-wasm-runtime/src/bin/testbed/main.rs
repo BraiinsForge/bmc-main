@@ -1957,9 +1957,9 @@ impl TestbedApp {
             }
         }
         let parts = seed.build(&self.gl)?;
-        let tex_id = parts.targets.register(painter);
+        let tex_ids = parts.targets.register(painter);
         Ok(DeviceView::new_inline(
-            placed, platform, parts, tex_id, led_rx, supported,
+            placed, platform, parts, tex_ids, led_rx, supported,
         ))
     }
 

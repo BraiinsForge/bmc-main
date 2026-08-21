@@ -30,7 +30,7 @@ use std::ptr::NonNull;
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
-use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{RenderStatus, RuntimeConfig, TargetContents, WasmWidgetRuntime};
 
 mod common;
 use common::headless_egl;
@@ -90,7 +90,7 @@ fn loop_of_ten_frames_succeeds() {
         let raw: *mut dyn Renderer = core::ptr::addr_of_mut!(renderer);
         let ptr = NonNull::new(raw).expect("BUG: addr_of_mut! cannot produce null");
         let status = runtime
-            .with_renderer(ptr, |rt| rt.render(16))
+            .with_renderer(ptr, |rt| rt.render(16, TargetContents::Cleared))
             .expect("BUG: render must succeed");
         assert!(matches!(status, RenderStatus::Ok));
         renderer.flush();

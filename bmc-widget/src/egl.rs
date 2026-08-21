@@ -1056,7 +1056,23 @@ impl DoubleBufferState {
 
     /// Ensure the current back buffer is allocated, return a reference to it.
     pub fn ensure_current(&mut self, ctx: &EglContext) -> Result<&ExportBuffer> {
+        self.ensure_current_seeded(ctx).map(|(buffer, _)| buffer)
+    }
+
+    /// Ensure the current slot holds a buffer, reporting the sibling's texture
+    /// when this call had to allocate it.
+    ///
+    /// A fresh export buffer holds undefined pixels, and a damage-scissored
+    /// frame paints only what moved — so the caller must seed it from the
+    /// sibling before painting, or the untouched part of the surface shows
+    /// whatever the driver handed back. `None` when the buffer already existed,
+    /// or when there is no sibling to copy from.
+    pub fn ensure_current_seeded(
+        &mut self,
+        ctx: &EglContext,
+    ) -> Result<(&ExportBuffer, Option<glow::Texture>)> {
         let idx = self.current_buffer;
+        let mut seed = None;
         if self.buffers[idx].is_none() {
             self.buffers[idx] = Some(ctx.allocate_export_buffer_with_format(
                 self.width,
@@ -1064,10 +1080,14 @@ impl DoubleBufferState {
                 self.depth,
                 self.format,
             )?);
+            seed = self.buffers[1 - idx].as_ref().map(ExportBuffer::texture);
         }
-        Ok(self.buffers[idx]
-            .as_ref()
-            .expect("BUG: buffer should exist after allocation"))
+        Ok((
+            self.buffers[idx]
+                .as_ref()
+                .expect("BUG: buffer should exist after allocation"),
+            seed,
+        ))
     }
 
     /// Get a reference to the current back buffer (`None` if not yet allocated).
@@ -1272,6 +1292,7 @@ struct BlitResources {
     pos_loc: u32,
     uv_loc: u32,
     uv_scale_loc: glow::UniformLocation,
+    uv_offset_loc: glow::UniformLocation,
 }
 
 impl BlitResources {
@@ -1281,8 +1302,9 @@ attribute vec2 a_pos;
 attribute vec2 a_uv;
 varying vec2 v_uv;
 uniform vec2 u_uv_scale;
+uniform vec2 u_uv_offset;
 void main() {
-    v_uv = a_uv * u_uv_scale;
+    v_uv = a_uv * u_uv_scale + u_uv_offset;
     gl_Position = vec4(a_pos, 0.0, 1.0);
 }
 ";
@@ -1337,29 +1359,7 @@ void main() {
             prog
         };
 
-        #[rustfmt::skip]
-        let vertices: [f32; 24] = [
-            -1.0, -1.0,  0.0, 1.0,
-             1.0, -1.0,  1.0, 1.0,
-             1.0,  1.0,  1.0, 0.0,
-            -1.0, -1.0,  0.0, 1.0,
-             1.0,  1.0,  1.0, 0.0,
-            -1.0,  1.0,  0.0, 0.0,
-        ];
-
-        let vbo = unsafe {
-            let buf = gl.create_buffer().map_err(|e| {
-                gl.delete_program(program);
-                anyhow::anyhow!("Blit VBO create: {e}")
-            })?;
-            gl.bind_buffer(glow::ARRAY_BUFFER, Some(buf));
-            let bytes: &[u8] = std::slice::from_raw_parts(
-                vertices.as_ptr().cast::<u8>(),
-                std::mem::size_of_val(&vertices),
-            );
-            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
-            buf
-        };
+        let vbo = Self::upload_quad(gl, program)?;
 
         let pos_loc = unsafe {
             gl.get_attrib_location(program, "a_pos")
@@ -1373,6 +1373,10 @@ void main() {
             gl.get_uniform_location(program, "u_uv_scale")
                 .expect("BUG: u_uv_scale not found in blit shader")
         };
+        let uv_offset_loc = unsafe {
+            gl.get_uniform_location(program, "u_uv_offset")
+                .expect("BUG: u_uv_offset not found in blit shader")
+        };
 
         Ok(Self {
             program,
@@ -1380,7 +1384,37 @@ void main() {
             pos_loc,
             uv_loc,
             uv_scale_loc,
+            uv_offset_loc,
         })
+    }
+
+    /// Upload the full-screen quad. Each vertex pairs its NDC position with a
+    /// UV whose V runs the other way, so sampling is Y-flipped by construction
+    /// - see [`UvSampling`] for the source that has to undo it.
+    fn upload_quad(gl: &glow::Context, program: glow::Program) -> Result<glow::Buffer> {
+        #[rustfmt::skip]
+        let vertices: [f32; 24] = [
+            -1.0, -1.0,  0.0, 1.0,
+             1.0, -1.0,  1.0, 1.0,
+             1.0,  1.0,  1.0, 0.0,
+            -1.0, -1.0,  0.0, 1.0,
+             1.0,  1.0,  1.0, 0.0,
+            -1.0,  1.0,  0.0, 0.0,
+        ];
+
+        unsafe {
+            let buf = gl.create_buffer().map_err(|e| {
+                gl.delete_program(program);
+                anyhow::anyhow!("Blit VBO create: {e}")
+            })?;
+            gl.bind_buffer(glow::ARRAY_BUFFER, Some(buf));
+            let bytes: &[u8] = std::slice::from_raw_parts(
+                vertices.as_ptr().cast::<u8>(),
+                std::mem::size_of_val(&vertices),
+            );
+            gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, bytes, glow::STATIC_DRAW);
+            Ok(buf)
+        }
     }
 
     fn destroy(&self, gl: &glow::Context) {
@@ -1526,6 +1560,36 @@ void main() {
         unsafe {
             gl.delete_program(self.program);
             gl.delete_buffer(self.vbo);
+        }
+    }
+}
+
+/// How the blit program samples its source texture.
+///
+/// The blit quad bakes in a Y-flip, femtovg rendering upside down when it
+/// targets an FBO. A source that is already in export orientation therefore has
+/// to undo that flip rather than inherit it.
+#[derive(Clone, Copy, PartialEq, Debug)]
+struct UvSampling {
+    scale: (f32, f32),
+    offset: (f32, f32),
+}
+
+impl UvSampling {
+    /// Sample a femtovg-rendered region, keeping the quad's Y-flip. `scale`
+    /// narrows the sample to the active slot's corner of the staging texture.
+    fn femtovg_region(scale: (f32, f32)) -> Self {
+        Self {
+            scale,
+            offset: (0.0, 0.0),
+        }
+    }
+
+    /// Sample an already-upright texture whole, undoing the quad's Y-flip.
+    fn upright_whole() -> Self {
+        Self {
+            scale: (1.0, -1.0),
+            offset: (0.0, 1.0),
         }
     }
 }
@@ -1747,8 +1811,40 @@ impl SharedRenderScratch {
     /// Blit the staging color texture into `dest_fbo` with Y-flip, viewport
     /// `(0, 0, w, h)`. Call after femtovg's `flush()` and before swapping the
     /// destination buffer out for export.
-    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     pub fn blit_to(&self, ctx: &EglContext, dest_fbo: glow::Framebuffer, w: u32, h: u32) {
+        let uv_scale = shared_scratch_uv_scale(self.staging.width, self.staging.height, w, h);
+        let sampling = UvSampling::femtovg_region(uv_scale);
+        self.blit_texture_scaled(ctx, self.staging.texture(), sampling, dest_fbo, w, h);
+    }
+
+    /// Copy `src` wholesale into `dest_fbo`, both being the same size.
+    ///
+    /// Seeds a freshly allocated export buffer from its sibling. A `Prepared`
+    /// slot drops its spare buffer (see `prepared_compaction_slot`) and keeps
+    /// only the one on screen, so waking re-allocates the other with undefined
+    /// pixels — and a damage-scissored frame paints only the regions that moved,
+    /// leaving the rest of the surface whatever the driver handed back.
+    pub fn seed_export_buffer(
+        &self,
+        ctx: &EglContext,
+        src: glow::Texture,
+        dest_fbo: glow::Framebuffer,
+        w: u32,
+        h: u32,
+    ) {
+        self.blit_texture_scaled(ctx, src, UvSampling::upright_whole(), dest_fbo, w, h);
+    }
+
+    #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
+    fn blit_texture_scaled(
+        &self,
+        ctx: &EglContext,
+        src: glow::Texture,
+        sampling: UvSampling,
+        dest_fbo: glow::Framebuffer,
+        w: u32,
+        h: u32,
+    ) {
         let gl = ctx.gl();
         unsafe {
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(dest_fbo));
@@ -1761,12 +1857,13 @@ impl SharedRenderScratch {
             gl.color_mask(true, true, true, true);
 
             gl.use_program(Some(self.blit.program));
-            let (u_scale, v_scale) =
-                shared_scratch_uv_scale(self.staging.width, self.staging.height, w, h);
+            let (u_scale, v_scale) = sampling.scale;
             gl.uniform_2_f32(Some(&self.blit.uv_scale_loc), u_scale, v_scale);
+            let (u_offset, v_offset) = sampling.offset;
+            gl.uniform_2_f32(Some(&self.blit.uv_offset_loc), u_offset, v_offset);
 
             gl.active_texture(glow::TEXTURE0);
-            gl.bind_texture(glow::TEXTURE_2D, Some(self.staging.texture()));
+            gl.bind_texture(glow::TEXTURE_2D, Some(src));
 
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(self.blit.vbo));
             gl.enable_vertex_attrib_array(self.blit.pos_loc);
@@ -1872,7 +1969,8 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 mod tests {
     use super::{
         Depth, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, SlotReleaseState,
-        TwoSlotBufferCache, WidgetExportBuffer, offset_panel_ndc_rect, shared_scratch_uv_scale,
+        TwoSlotBufferCache, UvSampling, WidgetExportBuffer, offset_panel_ndc_rect,
+        shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -1947,6 +2045,27 @@ mod tests {
     fn shared_scratch_uv_scale_samples_only_active_slot_region() {
         assert_eq!(shared_scratch_uv_scale(1280, 480, 640, 240), (0.5, 0.5));
         assert_eq!(shared_scratch_uv_scale(1280, 480, 1280, 480), (1.0, 1.0));
+    }
+
+    #[test]
+    fn upright_sampling_undoes_the_blit_quad_y_flip() {
+        // The quad pairs its bottom vertices with v = 1 and its top with v = 0,
+        // the flip femtovg's FBO output needs. Seeding copies a sibling export
+        // buffer, which is already upright, so it has to come back out flat.
+        let (quad_bottom_v, quad_top_v) = (1.0_f32, 0.0_f32);
+        let sample = |s: UvSampling, v: f32| v * s.scale.1 + s.offset.1;
+
+        let femtovg = UvSampling::femtovg_region((1.0, 1.0));
+        assert_eq!(
+            (sample(femtovg, quad_bottom_v), sample(femtovg, quad_top_v)),
+            (1.0, 0.0)
+        );
+
+        let upright = UvSampling::upright_whole();
+        assert_eq!(
+            (sample(upright, quad_bottom_v), sample(upright, quad_top_v)),
+            (0.0, 1.0)
+        );
     }
 
     #[test]

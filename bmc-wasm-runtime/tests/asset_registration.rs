@@ -29,7 +29,7 @@ use bmc_wasm_protocol::{
 };
 use bmc_wasm_runtime::{
     DiskCache, PackageAssetStore, RenderStatus, RendererAssetSuspensionObservation, RuntimeConfig,
-    WasmWidgetRuntime,
+    TargetContents, WasmWidgetRuntime,
 };
 
 #[path = "common/asset_fixtures.rs"]
@@ -413,7 +413,8 @@ fn cache_bitmap_can_be_restored_inside_a_shadow_pass() {
         .expect("BUG: cached bitmap reservation must be valid");
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: shadowed cache-demand render must complete"),
         RenderStatus::Ok
     );
@@ -468,7 +469,8 @@ fn coalesced_sleep_cache_reregistration_restores_on_first_draw() {
         .expect("BUG: cache registration must return a bitmap ID");
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: initial cache-backed draw must complete"),
         RenderStatus::Ok
     );
@@ -490,7 +492,8 @@ fn coalesced_sleep_cache_reregistration_restores_on_first_draw() {
 
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: first draw after coalesced cache registration must complete"),
         RenderStatus::Ok
     );
@@ -1099,7 +1102,8 @@ fn assert_package_demand_fails(runtime: &mut WasmWidgetRuntime, gl: &headless_eg
     );
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: demand failure must produce a render status"),
         RenderStatus::Dead,
         "the first referencing tree must surface an unavailable package payload"
@@ -1349,7 +1353,8 @@ fn stale_ledger_id_still_acquires_gpu_access_before_tag_suspension() {
         let recorded_id = call_export(&mut runtime, &mut renderer, "register_valid");
         assert_eq!(
             runtime
-                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                    .render(16, TargetContents::Cleared))
                 .expect("BUG: package-demand render must complete"),
             RenderStatus::Ok
         );
@@ -1443,7 +1448,7 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
         first_runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16, TargetContents::Cleared))
             .expect("BUG: first widget render must complete"),
         RenderStatus::Ok
     );
@@ -1462,7 +1467,7 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
         second_runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16, TargetContents::Cleared))
             .expect("BUG: second widget render must complete"),
         RenderStatus::Ok
     );
@@ -1472,7 +1477,7 @@ fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
     renderer.begin_frame(64, 64, 1.0);
     assert_eq!(
         first_runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16, TargetContents::Cleared))
             .expect("BUG: stale widget render must complete"),
         RenderStatus::Ok
     );
@@ -1523,7 +1528,8 @@ fn demand_restored_package_assets_report_suspension_once() {
 
         assert_eq!(
             runtime
-                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+                .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                    .render(16, TargetContents::Cleared))
                 .expect("BUG: package-demand render must complete"),
             RenderStatus::Ok
         );
@@ -1730,7 +1736,8 @@ fn package_restore_reports_a_changed_reservation_separately() {
 
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: reservation mismatch must produce a render status"),
         RenderStatus::Dead
     );
@@ -1818,7 +1825,9 @@ fn failed_demand_restore_marks_the_widget_dead_after_on_wake() {
         "on_wake must run before the first tree demands package restoration"
     );
     let status = runtime
-        .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+        .with_renderer(renderer_ptr(&mut renderer), |runtime| {
+            runtime.render(16, TargetContents::Cleared)
+        })
         .expect("BUG: failed restoration must still render the dead overlay");
     assert_eq!(status, RenderStatus::Dead);
     assert_eq!(
@@ -1936,7 +1945,8 @@ fn resident_cache_backed_decode_survives_cache_eviction_without_restoration() {
 
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: first post-decode draw must complete"),
         RenderStatus::Ok
     );
@@ -2224,7 +2234,8 @@ fn render_restores_only_the_cache_bitmap_used_by_a_draw() {
         .expect("BUG: unused bitmap reservation must be valid");
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: selective cache-demand render must complete"),
         RenderStatus::Ok
     );
@@ -2241,7 +2252,8 @@ fn render_restores_only_the_cache_bitmap_used_by_a_draw() {
 
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: repeated selective cache-demand render must complete"),
         RenderStatus::Ok
     );
@@ -2264,7 +2276,11 @@ fn render_restores_only_the_cache_bitmap_used_by_a_draw() {
     );
 
     assert!(
-        runtime.replay_cached_tree_for_test(renderer_ptr(&mut renderer), 16),
+        runtime.replay_cached_tree_for_test(
+            renderer_ptr(&mut renderer),
+            16,
+            TargetContents::Cleared
+        ),
         "cached-tree replay must restore the asset encountered during rendering"
     );
     assert_eq!(
@@ -2288,7 +2304,8 @@ fn render_restores_only_the_cache_bitmap_used_by_a_draw() {
     assert_eq!(call_export(&mut runtime, &mut renderer, "skip_submit"), 1);
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: render without a submitted tree must complete"),
         RenderStatus::Ok
     );
@@ -2366,7 +2383,8 @@ fn missing_cache_payload_is_reported_as_skipped_when_rendered() {
     );
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: cache-demand render must complete"),
         RenderStatus::Ok
     );
@@ -2389,7 +2407,8 @@ fn missing_cache_payload_is_reported_as_skipped_when_rendered() {
 
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: repeated cache-demand render must complete"),
         RenderStatus::Ok
     );
@@ -2408,7 +2427,8 @@ fn missing_cache_payload_is_reported_as_skipped_when_rendered() {
     );
     assert_eq!(
         runtime
-            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime
+                .render(16, TargetContents::Cleared))
             .expect("BUG: refilled cache-demand render must complete"),
         RenderStatus::Ok
     );

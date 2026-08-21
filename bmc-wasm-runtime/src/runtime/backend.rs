@@ -207,6 +207,27 @@ impl InterceptedReply {
 /// and construct the runtime on another; the runtime stays where it is built.
 pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<InterceptedReply> + Send>;
 
+/// Whether the render target still holds the previous frame's pixels when
+/// [`WasmWidgetRuntime::render`] is called.
+///
+/// A damage-tracked frame repaints only the regions that moved,
+/// which is correct only if the rest of the target is still there.
+/// The runtime cannot see the target — the caller owns it, clears it,
+/// rotates it — so the caller has to say. Answering [`Self::Cleared`]
+/// is always safe: the frame repaints everything and costs a full pass.
+///
+/// [`WasmWidgetRuntime::next_frame_preserves_target`] answers whether the
+/// runtime *could* use a preserved target, so a caller that keeps its target
+/// conditionally can drive both this and its own clear from the one call.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetContents {
+    /// The caller left the previous frame in place (`FrameClear::Keep`).
+    Preserved,
+    /// The caller cleared the target, or handed over one whose contents are
+    /// undefined — nothing outside this frame's own drawing survives.
+    Cleared,
+}
+
 /// A callback invoked when a fetch response is delivered.
 /// Called with `(method_and_url, status, headers, body)`.
 ///
@@ -1132,7 +1153,7 @@ impl WasmWidgetRuntime {
         clippy::too_many_lines,
         reason = "carries trace-level instrumentation for BDK-293 hot-reload freeze investigation; remove the expect when the tracing comes back out"
     )]
-    pub fn render(&mut self, delta_ms: u32) -> Result<RenderStatus> {
+    pub fn render(&mut self, delta_ms: u32, target: TargetContents) -> Result<RenderStatus> {
         let state = self.store.data_mut();
         state.last_asset_restoration = None;
         tracing::trace!(
@@ -1160,7 +1181,7 @@ impl WasmWidgetRuntime {
         if self.fuel_dead {
             state.interaction.begin_frame();
             state.begin_render_frame();
-            Self::render_stopped_cached_tree(state, delta_ms);
+            Self::render_stopped_cached_tree(state, delta_ms, target);
             let background =
                 DeadOverlayBackground::for_stopped_widget(state.renderer_asset_failure.as_deref());
             Self::draw_dead_overlay(state, background);
@@ -1169,18 +1190,11 @@ impl WasmWidgetRuntime {
         }
 
         // Decide frame type BEFORE begin_frame consumes events
-        let mut animation_only = state.frame_schedule.is_animation_only_frame()
-            && !state.interaction.has_pending_events()
-            && state.cached_tree.is_some();
+        let animation_only = state.will_replay_cached_tree();
 
-        // Check monotonic deadline for deferred WASM render (request_frame_after).
-        // Uses monotonic_ms instead of delta_ms countdown because sub-millisecond
-        // frames truncate delta_ms to 0 and stall countdown-based timers.
-        if let Some(deadline_ms) = state.frame_schedule.deferred_wasm_render_at_ms
-            && state.monotonic_ms >= deadline_ms
-        {
+        // The deadline has done its job once the guest is running again.
+        if state.deferred_wasm_render_due() {
             state.frame_schedule.deferred_wasm_render_at_ms = None;
-            animation_only = false;
         }
 
         state.interaction.begin_frame();
@@ -1188,7 +1202,7 @@ impl WasmWidgetRuntime {
         state.delta_ms = delta_ms;
 
         if animation_only {
-            if !Self::render_cached_tree(state, delta_ms) {
+            if !Self::render_cached_tree(state, delta_ms, target) {
                 Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                 return Ok(RenderStatus::Dead);
             }
@@ -1290,7 +1304,7 @@ impl WasmWidgetRuntime {
                 if self.fuel_strikes >= self.max_fuel_strikes {
                     self.fuel_dead = true;
                     let state = self.store.data_mut();
-                    Self::render_stopped_cached_tree(state, delta_ms);
+                    Self::render_stopped_cached_tree(state, delta_ms, target);
                     let background = DeadOverlayBackground::for_stopped_widget(
                         state.renderer_asset_failure.as_deref(),
                     );
@@ -1301,7 +1315,7 @@ impl WasmWidgetRuntime {
                 // retry so the widget can run again with any state
                 // changes that happened before the fuel trap.
                 let state = self.store.data_mut();
-                if !Self::render_cached_tree(state, delta_ms) {
+                if !Self::render_cached_tree(state, delta_ms, target) {
                     Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                     return Ok(RenderStatus::Dead);
                 }
@@ -1330,7 +1344,7 @@ impl WasmWidgetRuntime {
     /// Invariant: callers must be inside a [`Self::with_renderer`] scope so
     /// `HostState::renderer_ptr` is installed; the `expect` below asserts the
     /// host's own invariant, not the guest's.
-    fn render_cached_tree(state: &mut HostState, delta_ms: u32) -> bool {
+    fn render_cached_tree(state: &mut HostState, delta_ms: u32, target: TargetContents) -> bool {
         state.last_asset_restoration = None;
         if state.cached_tree.is_none() {
             return true;
@@ -1341,13 +1355,14 @@ impl WasmWidgetRuntime {
         // SAFETY: `ptr` was installed by `WasmWidgetRuntime::with_renderer` on this
         // thread; single-threaded wasmi dispatch keeps it unique for this borrow.
         let renderer: &mut dyn Renderer = unsafe { ptr.as_mut() };
-        Self::layout_cached_tree(state, renderer, delta_ms)
+        Self::layout_cached_tree(state, renderer, delta_ms, target)
     }
 
     fn layout_cached_tree(
         state: &mut HostState,
         renderer: &mut dyn Renderer,
         delta_ms: u32,
+        target: TargetContents,
     ) -> bool {
         let Some((ref tree_node, width, height)) = state.cached_tree else {
             return true;
@@ -1365,9 +1380,13 @@ impl WasmWidgetRuntime {
             .last_static_key
             .is_some_and(|(_, generation)| generation != state.renderer_assets.generation());
 
-        // Only an animation-only frame can trust the target's existing pixels:
-        // a guest frame may have changed the static half.
-        let damage = state.frame_damage(width, height);
+        // Scissoring to the moving regions leaves the rest of the target as
+        // the last frame left it, so a caller that cleared gets no damage and
+        // repaints in full.
+        let damage = match target {
+            TargetContents::Preserved => state.frame_damage(width, height),
+            TargetContents::Cleared => Vec::new(),
+        };
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,
@@ -1445,8 +1464,8 @@ impl WasmWidgetRuntime {
         }
     }
 
-    fn render_stopped_cached_tree(state: &mut HostState, delta_ms: u32) {
-        let _ = Self::render_cached_tree(state, delta_ms);
+    fn render_stopped_cached_tree(state: &mut HostState, delta_ms: u32, target: TargetContents) {
+        let _ = Self::render_cached_tree(state, delta_ms, target);
         state.begin_render_frame();
     }
 
@@ -2027,14 +2046,16 @@ impl WasmWidgetRuntime {
     /// the rest of the target as it is.
     ///
     /// The host has to know before it clears: the clear happens on the way in,
-    /// and it would wipe exactly the pixels a damage-tracked frame reuses. The
-    /// answer depends only on the frame schedule and the recorded damage, both
-    /// settled before the guest runs.
+    /// and it would wipe exactly the pixels a damage-tracked frame reuses.
+    ///
+    /// Everything read here is settled before the guest runs, and the
+    /// replay half of the answer comes from the same `will_replay_cached_tree`
+    /// that [`Self::render`] branches on — asking twice is what let the two
+    /// disagree.
     #[must_use]
     pub fn next_frame_preserves_target(&self, width: f32, height: f32) -> bool {
         let state = self.store.data();
-        state.frame_schedule.is_animation_only_frame()
-            && state.cached_tree.is_some()
+        state.will_replay_cached_tree()
             && state.static_layer_useful
             && !state.frame_damage(width, height).is_empty()
     }
@@ -2219,9 +2240,10 @@ impl WasmWidgetRuntime {
         &mut self,
         renderer: NonNull<dyn Renderer>,
         delta_ms: u32,
+        target: TargetContents,
     ) -> bool {
         self.with_renderer(renderer, |runtime| {
-            Self::render_cached_tree(runtime.store.data_mut(), delta_ms)
+            Self::render_cached_tree(runtime.store.data_mut(), delta_ms, target)
         })
     }
 

@@ -1648,6 +1648,34 @@ impl HostState {
         damage_rects(&self.recent_dynamic_rects, width, height)
     }
 
+    /// Whether the next frame replays the cached tree instead of running the
+    /// guest.
+    ///
+    /// Two places act on this answer and must not disagree: `render`, which
+    /// takes the cached branch, and `next_frame_preserves_target`, which the
+    /// host asks *before* choosing whether to clear the target. Predicting
+    /// "replay" and then running the guest leaves the host preserving pixels
+    /// the guest may not repaint — the previous tree showing through the gaps
+    /// of the new one. Both callers read this, so a new input can only be
+    /// added in one place.
+    pub(crate) fn will_replay_cached_tree(&self) -> bool {
+        self.frame_schedule.is_animation_only_frame()
+            && !self.interaction.has_pending_events()
+            && self.cached_tree.is_some()
+            && !self.deferred_wasm_render_due()
+    }
+
+    /// Whether a `request_frame_after` deadline has come up, which forces the
+    /// guest to run.
+    ///
+    /// Reads `monotonic_ms` rather than counting `delta_ms` down: sub-millisecond
+    /// frames truncate `delta_ms` to 0 and stall a countdown.
+    pub(crate) fn deferred_wasm_render_due(&self) -> bool {
+        self.frame_schedule
+            .deferred_wasm_render_at_ms
+            .is_some_and(|deadline_ms| self.monotonic_ms >= deadline_ms)
+    }
+
     /// Account for a frame that repainted its whole target.
     pub(crate) fn painted_in_full(&mut self) {
         self.stale_export_buffers = self.stale_export_buffers.saturating_sub(1);
@@ -2030,6 +2058,7 @@ mod tests {
         let mut state = HostState::new(
             RuntimeResourceLimits::default(),
             chrono::Local::now().fixed_offset(),
+            FetchAgent::default(),
         );
         state.recent_dynamic_rects = [
             vec![Rect::new(0.0, 0.0, 40.0, 40.0)],
@@ -2042,6 +2071,28 @@ mod tests {
     fn a_settled_widget_scissors_to_its_damage() {
         let state = state_with_damage();
         assert!(!state.frame_damage(1280.0, 480.0).is_empty());
+    }
+
+    /// The pair spans the buffer rotation: this frame paints into the buffer
+    /// the frame *before* last drew, so whatever that one moved is still stale
+    /// in it. Covering only the newest walk leaves that region unrepainted —
+    /// a trail behind anything that moves.
+    #[test]
+    fn the_damage_span_covers_both_walks() {
+        let newest = Rect::new(0.0, 0.0, 20.0, 20.0);
+        let previous = Rect::new(60.0, 60.0, 20.0, 20.0);
+
+        let damage = super::damage_rects(&[vec![newest], vec![previous]], 200.0, 200.0);
+
+        for stale in [newest, previous] {
+            assert!(
+                damage.iter().any(|d| d.x <= stale.x
+                    && d.y <= stale.y
+                    && d.x + d.w >= stale.x + stale.w
+                    && d.y + d.h >= stale.y + stale.h),
+                "{stale:?} is left out of the damage span {damage:?}"
+            );
+        }
     }
 
     /// Waking allocates every export buffer afresh, and the damage history
@@ -2072,6 +2123,51 @@ mod tests {
         let mut state = state_with_damage();
         state.painted_in_full();
         assert_eq!(state.stale_export_buffers, 0);
+    }
+
+    /// A state on the cadence of an animating widget with a cached tree, which
+    /// is the only shape that replays instead of running the guest.
+    fn state_that_would_replay() -> HostState {
+        let mut state = state_with_damage();
+        state.frame_schedule.has_active_animations = true;
+        state.cached_tree = Some((bmc_render::tree::TreeNode::Spacer { flex: 1.0 }, 40.0, 40.0));
+        state
+    }
+
+    #[test]
+    fn an_animating_widget_with_a_cached_tree_replays_it() {
+        assert!(state_that_would_replay().will_replay_cached_tree());
+    }
+
+    /// A tap runs the guest. The host asks before it clears, so a prediction
+    /// that ignored the queue would keep the target and then let the guest
+    /// repaint only part of it.
+    #[test]
+    fn a_queued_touch_stops_the_replay() {
+        let mut state = state_that_would_replay();
+        state
+            .interaction
+            .push_event(bmc_render::interaction::TouchEvent::Down { x: 1.0, y: 1.0 });
+
+        assert!(!state.will_replay_cached_tree());
+        assert!(!state.frame_damage(1280.0, 480.0).is_empty());
+    }
+
+    /// `request_frame_after` elapsing runs the guest — every widget with a
+    /// periodic refresh, a clock once a second.
+    #[test]
+    fn an_elapsed_deferred_deadline_stops_the_replay() {
+        let mut state = state_that_would_replay();
+        state.frame_schedule.deferred_wasm_render_at_ms = Some(1_000);
+
+        state.monotonic_ms = 999;
+        assert!(
+            state.will_replay_cached_tree(),
+            "the deadline has not come up yet"
+        );
+
+        state.monotonic_ms = 1_000;
+        assert!(!state.will_replay_cached_tree());
     }
 
     fn schedule(animation_cadence_ms: u32) -> FrameScheduleState {
