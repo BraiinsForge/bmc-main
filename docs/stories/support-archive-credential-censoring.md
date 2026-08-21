@@ -29,27 +29,51 @@ allow withdrawing Bitcoin.
 - If a filter panics or the file is not valid UTF-8, the original content is included unchanged and a warning is logged.
 - Archive creation is never blocked by a filter failure.
 
-## Censored files
+## What is protected
 
-| File                   | Credential            | Format                          |
-| ---------------------- | --------------------- | ------------------------------- |
-| `/etc/bmc_config.json` | `api_key` JSON values | Regex match on `"api_key": "…"` |
-| `/etc/config/wireless` | `option key` value    | OpenWrt UCI line scanner        |
+Two files are **censored** — the credential value is replaced, the rest is preserved:
+
+| File                                               | Credential            | Format                    |
+| -------------------------------------------------- | --------------------- | ------------------------- |
+| `/etc/bmc/` config family + `/etc/bmc_config.json` | `api_key` JSON values | Regex on `"api_key": "…"` |
+| `/etc/config/wireless`                             | `option key` value    | OpenWrt UCI line scanner  |
+
+One file is **excluded** entirely rather than censored:
+
+| File                    | Reason                                                                  |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `/etc/bmc/secrets.json` | plaintext account credentials, no diagnostic value — dropped altogether |
 
 ## How it works
 
-1. Every file read by `add_fs_file` is passed through `filters::apply()`.
-2. `apply()` looks up the file path in a static `CREDENTIAL_FILTERS` registry.
-3. If a matching filter exists, it runs the filter function on the raw bytes.
-4. The filter returns censored content (or the original content on failure).
-5. The archive writer stores whatever `apply()` returns.
+Every file the archive collects is checked against a set of `SupportFilter`s before it is written. A filter does one of
+two things:
 
-### BMC config filter (`censor_bmc_config`)
+- **Exclude** — `excludes(path)` keeps the file out of the archive entirely.
+- **Censor** — `matches(path)` marks the file for censoring; it is buffered and every matching filter's `apply()` runs
+  in order (each sees the previous one's output) before the result is archived.
 
-Scans for the JSON pattern `"api_key"<colon>"<value>"`, tolerating optional whitespace around the colon and escaped
-quotes inside the value. Replaces each matched value with `<CENSORED>`.
+A file claimed by more than one censor is filtered by all of them, so adding an overlapping censor can never silently
+leak what an earlier one misses. If a filter panics or the file is not valid UTF-8, the original content is archived
+unchanged and a warning is logged — archive creation is never blocked by a filter failure.
 
-### UCI wireless filter (`censor_uci_wireless`)
+The `SupportFilter` trait lives in `bmc-support`, which stays platform-agnostic. The concrete filters below live in
+`bmc-support-openwrt`, shared by every binary running on the OpenWrt board, and each binary (e.g. `bmc-openwrt`)
+registers them in its own `SupportConfig`.
 
-Scans line by line for `option key '<value>'` entries. Replaces the value content with `<CENSORED>`, preserving the
-surrounding single quotes.
+### BMC config censor (`BmcConfigCensor`)
+
+Matches the whole BMC config family — everything under `/etc/bmc/` (the current config and its timestamped backups) plus
+the legacy `/etc/bmc_config.json`. Scans for the JSON pattern `"api_key"<colon>"<value>"`, tolerating optional
+whitespace around the colon and escaped quotes inside the value, and replaces each matched value with `<CENSORED>`.
+
+### UCI wireless censor (`UciWirelessCensor`)
+
+Matches `/etc/config/wireless` and scans line by line for `option key '<value>'` entries, replacing the value with
+`<CENSORED>` while preserving the surrounding single quotes.
+
+### Secrets exclusion (`SecretsExclusion`)
+
+Keeps the plaintext secret store `/etc/bmc/secrets.json` (and its in-progress `secrets.*` temp file) out of the archive
+entirely — a censor would have to track every credential field as the catalog grows, and one miss would leak, so the
+file is dropped rather than filtered.

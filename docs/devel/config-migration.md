@@ -218,9 +218,9 @@ the same code path.
 A bad migration is diagnosed from the pre-migration state, so the support archive (`bmc-support`) collects the whole
 `/etc/bmc/` directory (current config plus every `config.json.backup.<ts>`) **and** the deliberately-kept legacy
 `/etc/bmc_config.json`. Credential censoring matches the whole config family — the current config, its backups, and the
-legacy file — via a path predicate (`filters::is_bmc_config`) rather than a single fixed path, so a newly-created backup
-is never archived uncensored. Note: the censor currently matches only the legacy `"api_key"` key; the v2 account reshape
-moves secrets into `field_values` (`token`/`password`), so broadening it is tracked as a Phase-G follow-up.
+legacy file — via a path predicate (`BmcConfigCensor::matches`) rather than a single fixed path, so a newly-created
+backup is never archived uncensored. Note: the censor currently matches only the legacy `"api_key"` key; the v2 account
+reshape moves secrets into `field_values` (`token`/`password`), so broadening it is tracked as a Phase-G follow-up.
 
 ## Open items / follow-ups
 

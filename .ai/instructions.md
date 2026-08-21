@@ -43,7 +43,11 @@ The backend is organized as a Cargo workspace with the following main components
   - **`bmc-net-dns`**: the `IiResolver` DNS/NTP resolver.
   - **`bmc-net-mdns`**: mDNS/DNS-SD advertisement of the device web UI and API.
   - **`bmc-net-observe`**: synchronous, read-only connectivity probes for OS-driven overlays.
-  - **`bmc-net-diag`**: network diagnostics for the support archive (ifconfig, public IP, ping, pcap).
+  - **`bmc-net-diag`**: network diagnostics for the support archive (ifconfig, public IP, ping).
+- **`bmc-support`**: Platform-agnostic support-archive engine, shared with bos-main — `SupportConfig`, streamed
+  `SupportArchive`, the `SupportFilter` and `SupportExtension` traits and the archive formats.
+- **`bmc-support-openwrt`**: The OpenWrt board's shared support-archive pieces — credential filters for its config
+  layout, the Nix profile and `logread` extensions. Each binary assembles them into its own `SupportConfig`.
 
 ### Frontend Structure (TypeScript/React)
 

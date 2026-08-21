@@ -43,7 +43,11 @@ bmc-main and bos-main share some libraries (`bmc-net-types`, `bmc-net-drv`, `tim
 - **bmc-net/bmc-net-dns** — the `IiResolver` DNS/NTP resolver
 - **bmc-net/bmc-net-mdns** — mDNS/DNS-SD advertisement of the device web UI and API
 - **bmc-net/bmc-net-observe** — synchronous, read-only connectivity probes for OS-driven overlays
-- **bmc-net/bmc-net-diag** — network diagnostics for the support archive (ifconfig, public IP, ping, pcap)
+- **bmc-net/bmc-net-diag** — network diagnostics for the support archive (ifconfig, public IP, ping)
+- **bmc-support** — the platform-agnostic support-archive engine: `SupportConfig`, streamed `SupportArchive`, the
+  `SupportFilter`/`SupportExtension` traits and archive formats
+- **bmc-support-openwrt** — the OpenWrt board's shared credential filters and the Nix profile and `logread` extensions,
+  assembled by each binary into its own `SupportConfig`
 - **bmc-shared/time** — timezone handling
 - **bmc-shared/utils** — number formatting, helpers
 
