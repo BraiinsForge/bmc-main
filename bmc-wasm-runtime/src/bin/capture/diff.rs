@@ -537,6 +537,36 @@ struct WidgetReportView {
     minimap_status: &'static str,
     /// Compact count label shown next to the pill.
     minimap_count: String,
+    /// A/B media rendered for this widget, linked rather than embedded:
+    /// a video inlined as a data URI would dwarf the report around it.
+    comparisons: Vec<ComparisonLink>,
+}
+
+struct ComparisonLink {
+    label: String,
+    href: String,
+}
+
+/// The rendered media a report at `report_dir` can reach by relative path.
+///
+/// A report written outside the capture tree can reach none of it,
+/// and says nothing rather than point at files the reader does not have.
+fn comparison_links(rendered: &[Rendered], widget: &str, report_dir: &Path) -> Vec<ComparisonLink> {
+    rendered
+        .iter()
+        .filter(|media| media.widget == widget)
+        .filter_map(|media| {
+            let href = media.path.strip_prefix(report_dir).ok()?;
+            let tail = href.strip_prefix(widget).unwrap_or(href);
+            let label = tail
+                .strip_prefix(super::media::Media::Comparison.dir())
+                .unwrap_or(tail);
+            Some(ComparisonLink {
+                label: label.to_string_lossy().into_owned(),
+                href: href.to_string_lossy().into_owned(),
+            })
+        })
+        .collect()
 }
 
 struct DiffResultView {
@@ -555,7 +585,12 @@ fn img_to_data_uri(path: &Path) -> Option<String> {
     Some(format!("data:image/png;base64,{b64}"))
 }
 
-pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<()> {
+pub fn generate_html_report(
+    reports: &[WidgetReport],
+    rendered: &[Rendered],
+    output: &Path,
+) -> Result<()> {
+    let report_dir = output.parent().unwrap_or(Path::new(""));
     let total_pass: u32 = reports.iter().map(|r| r.passed).sum();
     let total_tolerated: u32 = reports.iter().map(|r| r.tolerated).sum();
     let total_fail: u32 = reports.iter().map(|r| r.failed).sum();
@@ -617,6 +652,7 @@ pub fn generate_html_report(reports: &[WidgetReport], output: &Path) -> Result<(
                 is_clean,
                 minimap_status,
                 minimap_count,
+                comparisons: comparison_links(rendered, &r.widget, report_dir),
             }
         })
         .collect();
@@ -764,13 +800,19 @@ fn render_comparison(ffmpeg: &Path, job: &ComparisonJob<'_>) -> Result<()> {
     }
 }
 
+/// A rendered comparison, for the report to point at.
+pub struct Rendered {
+    pub widget: String,
+    pub path: PathBuf,
+}
+
 /// Generate A/B comparison media (PNG for single frame, video for animations).
-pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Result<()> {
+pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Result<Vec<Rendered>> {
     use rayon::prelude::*;
 
     let failed_reports: Vec<_> = reports.iter().filter(|r| r.failed > 0).collect();
     if failed_reports.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let ffmpeg_bin = resolve_tool("ffmpeg", "ffmpeg")?;
@@ -817,7 +859,15 @@ pub fn generate_comparisons(reports: &[WidgetReport], output_dir: &Path) -> Resu
     if !errors.is_empty() {
         bail!("comparison failures:\n{}", errors.join("\n"));
     }
-    Ok(())
+    // Only what reached disk — an unfollowable link is worse than none.
+    Ok(jobs
+        .into_iter()
+        .filter(|job| job.out_path.is_file())
+        .map(|job| Rendered {
+            widget: job.widget.to_owned(),
+            path: job.out_path,
+        })
+        .collect())
 }
 
 /// Render a single A/B composite PNG (baseline + diff).
@@ -1252,7 +1302,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("temporary report directory should be created");
         let output = temp.path().join("report.html");
 
-        generate_html_report(&[report], &output).expect("HTML report should render");
+        generate_html_report(&[report], &[], &output).expect("HTML report should render");
         let html = std::fs::read_to_string(output).expect("HTML report should be readable");
 
         assert!(html.contains("<span class=\"hint\">3 px</span>"));
@@ -1385,6 +1435,44 @@ mod tests {
     #[test]
     fn a_frame_outside_any_directory_makes_no_comparison() {
         assert_eq!(jobs_for(&["frame_0000.png"]), [] as [PathBuf; 0]);
+    }
+
+    fn rendered_clock_media() -> [Rendered; 1] {
+        [Rendered {
+            widget: "clock".to_owned(),
+            path: PathBuf::from("captures/clock/comparison/bmc100-full/qualifying.mp4"),
+        }]
+    }
+
+    #[test]
+    fn a_report_beside_the_captures_links_their_media() {
+        let links = comparison_links(&rendered_clock_media(), "clock", Path::new("captures"));
+        let shown: Vec<_> = links
+            .iter()
+            .map(|link| (link.label.as_str(), link.href.as_str()))
+            .collect();
+        assert_eq!(
+            shown,
+            [(
+                "bmc100-full/qualifying.mp4",
+                "clock/comparison/bmc100-full/qualifying.mp4",
+            )],
+        );
+    }
+
+    #[test]
+    fn a_report_written_outside_the_captures_links_nothing() {
+        assert!(
+            comparison_links(&rendered_clock_media(), "clock", Path::new("/elsewhere")).is_empty(),
+            "a link the reader cannot follow is worse than no link",
+        );
+    }
+
+    #[test]
+    fn a_widget_is_not_offered_another_widgets_media() {
+        assert!(
+            comparison_links(&rendered_clock_media(), "calendar", Path::new("captures")).is_empty(),
+        );
     }
 
     #[test]

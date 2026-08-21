@@ -179,6 +179,14 @@ h1 { margin-bottom: 8px; }
 </summary>
 
 <div class="widget-body">
+{% if !report.comparisons.is_empty() %}
+<div class="row comparisons" data-status="diff">
+  <div class="row-header">
+    <span class="tag">A/B</span>
+    {% for comparison in report.comparisons %}<a class="path" href="{{ comparison.href }}">{{ comparison.label }}</a>{% endfor %}
+  </div>
+</div>
+{% endif %}
 {% if report.no_baseline %}
 <div class="row no-baseline" data-status="no-baseline">
   <div class="row-header">

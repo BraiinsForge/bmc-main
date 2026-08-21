@@ -119,11 +119,15 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         baseline_dirs.extend(baseline_tmp);
     }
 
-    if has_failures && let Err(e) = super::diff::generate_comparisons(&reports, &args.output_dir) {
-        eprintln!(
-            "\n  {} failed to generate comparison media: {e:#}",
-            "warning:".yellow().bold()
-        );
+    let mut rendered = Vec::new();
+    if has_failures {
+        match super::diff::generate_comparisons(&reports, &args.output_dir) {
+            Ok(media) => rendered = media,
+            Err(e) => eprintln!(
+                "\n  {} failed to generate comparison media: {e:#}",
+                "warning:".yellow().bold()
+            ),
+        }
     }
 
     // Generate HTML report
@@ -131,7 +135,7 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         .html
         .clone()
         .unwrap_or_else(|| args.output_dir.join("report.html"));
-    super::diff::generate_html_report(&reports, &html_path)?;
+    super::diff::generate_html_report(&reports, &rendered, &html_path)?;
 
     // Drop baseline temp dirs now that comparisons and report are done
     drop(baseline_dirs);

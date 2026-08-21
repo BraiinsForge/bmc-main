@@ -83,8 +83,10 @@ let
       cp captures/report.html "$out/$verdict/${name}/"
     fi
 
+    # Copied whole, not emptied into the artifact: the report links its media
+    # by a path relative to itself, which flattening a level would break.
     if [ "$verdict" != passed ] && [ -d captures/${name} ]; then
-      cp -r captures/${name}/. "$out/$verdict/${name}/"
+      cp -r captures/${name} "$out/$verdict/${name}/"
     fi
   '';
 
