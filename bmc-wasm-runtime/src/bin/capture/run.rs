@@ -85,6 +85,29 @@ impl StackProfiling {
     }
 }
 
+#[derive(Clone, Copy, Default)]
+pub enum LayoutCacheProfiling {
+    Enabled,
+    #[default]
+    Disabled,
+}
+
+impl LayoutCacheProfiling {
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Enabled)
+    }
+}
+
+impl From<bool> for LayoutCacheProfiling {
+    fn from(enabled: bool) -> Self {
+        if enabled {
+            Self::Enabled
+        } else {
+            Self::Disabled
+        }
+    }
+}
+
 impl From<Option<i32>> for StackProfiling {
     fn from(expected_origin: Option<i32>) -> Self {
         expected_origin.map_or(Self::Disabled, |expected_origin| Self::Enabled {
@@ -114,6 +137,7 @@ pub struct RunArgs {
     /// or with `--online`, every target the catalog offers. Ignores `--target`.
     pub all_targets: bool,
     pub stack_profiling: StackProfiling,
+    pub layout_cache_profiling: LayoutCacheProfiling,
 }
 
 /// One (dataset, target) capture.
@@ -132,6 +156,7 @@ struct CaptureCtx {
     fixture: Option<PathBuf>,
     online: bool,
     stack_profiling: StackProfiling,
+    layout_cache_profiling: LayoutCacheProfiling,
 }
 
 impl CaptureCtx {
@@ -148,6 +173,7 @@ impl CaptureCtx {
         fixture: Option<PathBuf>,
         online: bool,
         stack_profiling: StackProfiling,
+        layout_cache_profiling: LayoutCacheProfiling,
     ) -> Self {
         Self {
             wasm_path,
@@ -161,6 +187,7 @@ impl CaptureCtx {
             fixture,
             online,
             stack_profiling,
+            layout_cache_profiling,
         }
     }
 }
@@ -200,6 +227,7 @@ pub fn execute(args: RunArgs) -> Result<()> {
         args.fixture,
         args.online,
         args.stack_profiling,
+        args.layout_cache_profiling,
     );
 
     run_capture(&ctx, &config, &manifest)
@@ -390,6 +418,7 @@ fn run_all_supported_targets(
                 args.fixture.clone(),
                 args.online,
                 args.stack_profiling,
+                args.layout_cache_profiling,
             ),
             config,
             &manifest,
@@ -531,6 +560,9 @@ fn run_unified_capture(
 
     let (gl, fbo, _keep_alive, mut renderer, mut runtime) =
         setup_gl_and_runtime(ctx, system_time, rt_config)?;
+    if ctx.layout_cache_profiling.is_enabled() {
+        renderer.enable_text_layout_profiling();
+    }
 
     let (major, minor, patch) = runtime.sdk_version();
     eprintln!(
@@ -987,6 +1019,95 @@ fn run_unified_capture(
             .exported_global_i32(bmc_wasm_runtime::stack_profile::STACK_HIGH_WATER_EXPORT)
             .context("instrumented widget did not expose its stack measurement")?;
         println!("BMC_STACK_HIGH_WATER={high_water}");
+    }
+    if ctx.layout_cache_profiling.is_enabled() {
+        let layout = renderer.text_layout_counters();
+        println!("BMC_LAYOUT_CACHE_HITS={}", layout.layout_cache_hits);
+        println!("BMC_LAYOUT_CACHE_SHAPES={}", layout.layout_cache_shapes);
+        println!(
+            "BMC_LAYOUT_CACHE_SINGLE_LINE_HITS={}",
+            layout.layout_cache_single_line_hits
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_SINGLE_LINE_SHAPES={}",
+            layout.layout_cache_single_line_shapes
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PARAGRAPH_HITS={}",
+            layout.layout_cache_paragraph_hits
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PARAGRAPH_SHAPES={}",
+            layout.layout_cache_paragraph_shapes
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_SINGLE_LINE_ENTRIES={}",
+            layout.layout_cache_single_line_entries
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_SINGLE_LINE_PEAK_ENTRIES={}",
+            layout.layout_cache_single_line_peak_entries
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PARAGRAPH_ENTRIES={}",
+            layout.layout_cache_paragraph_entries
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PARAGRAPH_PEAK_ENTRIES={}",
+            layout.layout_cache_paragraph_peak_entries
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_RESIDENT_GLYPHS={}",
+            layout.layout_cache_resident_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PEAK_RESIDENT_GLYPHS={}",
+            layout.layout_cache_peak_resident_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_SINGLE_LINE_RESIDENT_GLYPHS={}",
+            layout.layout_cache_single_line_resident_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_SINGLE_LINE_PEAK_RESIDENT_GLYPHS={}",
+            layout.layout_cache_single_line_peak_resident_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PARAGRAPH_RESIDENT_GLYPHS={}",
+            layout.layout_cache_paragraph_resident_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PARAGRAPH_PEAK_RESIDENT_GLYPHS={}",
+            layout.layout_cache_paragraph_peak_resident_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PEAK_FRAME_GLYPH_INSTANCES={}",
+            layout.layout_cache_peak_frame_glyph_instances
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PEAK_FRAME_DISTINCT_GLYPHS={}",
+            layout.layout_cache_peak_frame_distinct_glyphs
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_CAPACITY_EVICTIONS={}",
+            layout.layout_cache_capacity_evictions
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PEAK_ENTRIES={}",
+            layout.layout_cache_peak_entries
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_PEAK_FRAME_KEYS={}",
+            layout.layout_cache_peak_frame_keys
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_REPEAT_SHAPES_SAME_FRAME={}",
+            layout.layout_cache_repeat_shapes_same_frame
+        );
+        println!(
+            "BMC_LAYOUT_CACHE_DRAW_MISSES_AFTER_MEASURE={}",
+            layout.layout_cache_draw_misses_after_measure
+        );
     }
 
     eprintln!(

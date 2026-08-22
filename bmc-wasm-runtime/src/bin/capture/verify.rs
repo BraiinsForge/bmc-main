@@ -73,6 +73,7 @@ pub fn execute(args: &VerifyArgs) -> Result<()> {
         output_dir: args.output_dir.clone(),
         parallel: args.parallel,
         stack_profiling: args.stack_profiling,
+        layout_cache_profile: false,
     })?;
 
     eprintln!();

@@ -102,6 +102,9 @@ enum Command {
         /// Instrument the linked module and print its shadow-stack high-water use.
         #[arg(long, value_name = "RESERVED_BYTES")]
         stack_profile: Option<i32>,
+        /// Print text layout cache pressure after capture.
+        #[arg(long)]
+        layout_cache_profile: bool,
     },
     /// Build and capture every widget across the given workspaces (or one widget).
     RunAll {
@@ -119,6 +122,9 @@ enum Command {
         /// Instrument every module and print a stack-use table after capture.
         #[arg(long, value_name = "RESERVED_BYTES")]
         stack_profile: Option<i32>,
+        /// Print text layout cache pressure for every captured widget.
+        #[arg(long)]
+        layout_cache_profile: bool,
     },
     /// Compare current captures against baselines for a single widget.
     Diff {
@@ -265,6 +271,7 @@ fn init_replay_tracing() {
         .init();
 }
 
+#[expect(clippy::too_many_lines, reason = "single exhaustive CLI dispatch")]
 fn dispatch() -> Result<()> {
     let cli = Cli::parse();
 
@@ -280,6 +287,7 @@ fn dispatch() -> Result<()> {
             online,
             all_targets,
             stack_profile,
+            layout_cache_profile,
         } => {
             init_replay_tracing();
             run::execute(run::RunArgs {
@@ -293,6 +301,7 @@ fn dispatch() -> Result<()> {
                 online,
                 all_targets,
                 stack_profiling: stack_profile.into(),
+                layout_cache_profiling: layout_cache_profile.into(),
             })
         }
         Command::RunAll {
@@ -301,6 +310,7 @@ fn dispatch() -> Result<()> {
             output_dir,
             parallel,
             stack_profile,
+            layout_cache_profile,
         } => run_all::execute(&run_all::RunAllArgs {
             widget,
             workspaces: ws.workspace,
@@ -308,6 +318,7 @@ fn dispatch() -> Result<()> {
             output_dir,
             parallel,
             stack_profiling: stack_profile.into(),
+            layout_cache_profile,
         }),
         Command::Diff {
             capture_dir,

@@ -162,6 +162,10 @@ impl std::fmt::Debug for FemtoVgRenderer {
 pub type FemtovgImageId = femtovg::ImageId;
 
 impl FemtoVgRenderer {
+    pub fn enable_text_layout_profiling(&mut self) {
+        self.paragraph_cache.enable_profiling();
+    }
+
     /// How many textures femtovg's own glyph atlas holds.
     ///
     /// The glyph cache exists so this stays zero: every entry point that could
@@ -281,6 +285,27 @@ impl FemtoVgRenderer {
             metadata_capacity_bytes = self.glyph_cache.metadata_capacity_bytes(),
             layout_cache_hits = layout.layout_cache_hits,
             layout_cache_shapes = layout.layout_cache_shapes,
+            layout_cache_capacity_evictions = layout.layout_cache_capacity_evictions,
+            layout_cache_peak_entries = layout.layout_cache_peak_entries,
+            layout_cache_peak_frame_keys = layout.layout_cache_peak_frame_keys,
+            layout_cache_repeat_shapes_same_frame = layout.layout_cache_repeat_shapes_same_frame,
+            layout_cache_draw_misses_after_measure = layout.layout_cache_draw_misses_after_measure,
+            layout_cache_single_line_hits = layout.layout_cache_single_line_hits,
+            layout_cache_single_line_shapes = layout.layout_cache_single_line_shapes,
+            layout_cache_paragraph_hits = layout.layout_cache_paragraph_hits,
+            layout_cache_paragraph_shapes = layout.layout_cache_paragraph_shapes,
+            layout_cache_single_line_entries = layout.layout_cache_single_line_entries,
+            layout_cache_single_line_peak_entries = layout.layout_cache_single_line_peak_entries,
+            layout_cache_paragraph_entries = layout.layout_cache_paragraph_entries,
+            layout_cache_paragraph_peak_entries = layout.layout_cache_paragraph_peak_entries,
+            layout_cache_resident_glyphs = layout.layout_cache_resident_glyphs,
+            layout_cache_peak_resident_glyphs = layout.layout_cache_peak_resident_glyphs,
+            layout_cache_single_line_resident_glyphs = layout.layout_cache_single_line_resident_glyphs,
+            layout_cache_single_line_peak_resident_glyphs = layout.layout_cache_single_line_peak_resident_glyphs,
+            layout_cache_paragraph_resident_glyphs = layout.layout_cache_paragraph_resident_glyphs,
+            layout_cache_paragraph_peak_resident_glyphs = layout.layout_cache_paragraph_peak_resident_glyphs,
+            layout_cache_peak_frame_glyph_instances = layout.layout_cache_peak_frame_glyph_instances,
+            layout_cache_peak_frame_distinct_glyphs = layout.layout_cache_peak_frame_distinct_glyphs,
             "glyph cache"
         );
     }
@@ -960,7 +985,7 @@ impl Renderer for FemtoVgRenderer {
 
     fn measure_text(&mut self, text: &str, size: f32) -> f32 {
         self.paragraph_cache
-            .layout_single_line(&mut self.font_system, sans_line_style(size), text)
+            .measure_single_line(&mut self.font_system, sans_line_style(size), text)
             .width
     }
 
@@ -3099,6 +3124,8 @@ mod counter_surface_tests {
             layout.layout_cache_hits > 0,
             "the repeated frame must reuse the shaped line"
         );
+        assert_eq!(layout.layout_cache_peak_entries, 1);
+        assert_eq!(layout.layout_cache_capacity_evictions, 0);
 
         assert!(
             target.text_atlas_resident_bytes() > 0,

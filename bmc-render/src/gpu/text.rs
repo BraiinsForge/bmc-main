@@ -45,7 +45,7 @@
 
 #![expect(clippy::cast_precision_loss)]
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 
 use cosmic_text::{
@@ -61,23 +61,66 @@ use crate::gpu::glyph_cache::{
 use crate::renderer::TextLayoutCounters;
 use crate::tree::{AutoFit, FontFamily, FontWeight, SpanData, TextAlign, TextStyle};
 
+// Capture profiling reports 341 entries for the two largest production working sets.
+// 448 matches HashMap's capacity at the former limit.
+const LAYOUT_CACHE_CAPACITY: usize = 448;
+
 // ── Paragraph layout cache ──────────────────────────────────────────
 
-/// Cached paragraph layout (cosmic-text Buffer kept for layout_runs during render).
+/// Compact render-ready paragraph layout.
 pub(crate) struct ParagraphLayoutEntry {
-    pub(crate) buffer: Buffer,
+    pub(crate) lines: Vec<LineGlyphs>,
     pub(crate) width: f32,
     pub(crate) height: f32,
     last_used_frame: u64,
 }
 
-/// Frame-based paragraph layout cache. Evicts entries not accessed in the last 2 frames.
+/// Capacity-bounded paragraph layout cache.
 pub struct ParagraphLayoutCache {
     entries: HashMap<u64, ParagraphLayoutEntry>,
     frame_counter: u64,
     /// Distinguishes a cache hit from a reshape that replaces the same entry,
     /// which entry count and width stability both survive.
+    counters: LayoutCacheCounters,
+    profile: Option<Box<LayoutCacheProfile>>,
+}
+
+#[derive(Debug, Default)]
+struct LayoutCacheCounters {
+    hits: u64,
+    shapes: u64,
+    capacity_evictions: u64,
+    peak_entries: usize,
+}
+
+#[derive(Clone, Copy)]
+enum LookupPhase {
+    Measure,
+    Draw,
+}
+
+#[derive(Clone, Copy, Hash)]
+enum LayoutDomain {
+    SingleLine,
+    Paragraph,
+}
+
+#[derive(Default)]
+struct LayoutCacheProfile {
     counters: TextLayoutCounters,
+    keys_this_frame: HashSet<u64>,
+    shaped_this_frame: HashSet<u64>,
+    measured_this_frame: HashSet<u64>,
+    weighted_keys_this_frame: HashSet<u64>,
+    distinct_glyphs_this_frame: HashSet<cosmic_text::CacheKey>,
+    glyph_instances_this_frame: usize,
+    entries: HashMap<u64, ProfiledEntry>,
+}
+
+#[derive(Clone, Copy)]
+struct ProfiledEntry {
+    domain: LayoutDomain,
+    glyphs: usize,
 }
 
 impl std::fmt::Debug for ParagraphLayoutCache {
@@ -86,6 +129,7 @@ impl std::fmt::Debug for ParagraphLayoutCache {
             .field("entries", &self.entries.len())
             .field("frame_counter", &self.frame_counter)
             .field("counters", &self.counters)
+            .field("profiling_enabled", &self.profile.is_some())
             .finish()
     }
 }
@@ -96,35 +140,89 @@ impl ParagraphLayoutCache {
         Self {
             entries: HashMap::new(),
             frame_counter: 0,
-            counters: TextLayoutCounters::default(),
+            counters: LayoutCacheCounters::default(),
+            profile: None,
         }
+    }
+
+    pub fn enable_profiling(&mut self) {
+        self.profile = Some(Box::default());
     }
 
     #[must_use]
     pub fn counters(&self) -> TextLayoutCounters {
-        self.counters
+        let mut counters = self
+            .profile
+            .as_ref()
+            .map_or_else(TextLayoutCounters::default, |profile| profile.counters);
+        counters.layout_cache_hits = self.counters.hits;
+        counters.layout_cache_shapes = self.counters.shapes;
+        counters.layout_cache_capacity_evictions = self.counters.capacity_evictions;
+        counters.layout_cache_peak_entries = self.counters.peak_entries;
+        counters
     }
 
     /// Must run before the lookup that inserts: `or_insert_with` cannot say
     /// afterwards whether it shaped.
-    fn count_lookup(&mut self, key: u64) {
-        if self.entries.contains_key(&key) {
-            self.counters.layout_cache_hits += 1;
+    fn record_lookup(&mut self, key: u64, domain: LayoutDomain, phase: LookupPhase) {
+        let cache_hit = self.entries.contains_key(&key);
+        if cache_hit {
+            self.counters.hits += 1;
         } else {
-            self.counters.layout_cache_shapes += 1;
+            self.counters.shapes += 1;
+        }
+        let entries_after_lookup = self.entries.len() + usize::from(!cache_hit);
+        self.counters.peak_entries = self.counters.peak_entries.max(entries_after_lookup);
+
+        if let Some(profile) = self.profile.as_mut() {
+            match (domain, cache_hit) {
+                (LayoutDomain::SingleLine, true) => {
+                    profile.counters.layout_cache_single_line_hits += 1;
+                }
+                (LayoutDomain::SingleLine, false) => {
+                    profile.counters.layout_cache_single_line_shapes += 1;
+                }
+                (LayoutDomain::Paragraph, true) => {
+                    profile.counters.layout_cache_paragraph_hits += 1;
+                }
+                (LayoutDomain::Paragraph, false) => {
+                    profile.counters.layout_cache_paragraph_shapes += 1;
+                }
+            }
+            profile.keys_this_frame.insert(key);
+            profile.counters.layout_cache_peak_frame_keys = profile
+                .counters
+                .layout_cache_peak_frame_keys
+                .max(profile.keys_this_frame.len());
+
+            if matches!(phase, LookupPhase::Measure) {
+                profile.measured_this_frame.insert(key);
+            } else if !cache_hit && profile.measured_this_frame.contains(&key) {
+                profile.counters.layout_cache_draw_misses_after_measure += 1;
+            }
+
+            if !cache_hit && !profile.shaped_this_frame.insert(key) {
+                profile.counters.layout_cache_repeat_shapes_same_frame += 1;
+            }
         }
     }
 
-    /// Advance frame counter and evict stale entries.
+    /// Advance the frame counter used for LRU ordering.
     pub fn begin_frame(&mut self, frame_counter: u64) {
         self.frame_counter = frame_counter;
-        self.entries
-            .retain(|_, e| e.last_used_frame + 1 >= frame_counter);
+        if let Some(profile) = self.profile.as_mut() {
+            profile.keys_this_frame.clear();
+            profile.shaped_this_frame.clear();
+            profile.measured_this_frame.clear();
+            profile.weighted_keys_this_frame.clear();
+            profile.distinct_glyphs_this_frame.clear();
+            profile.glyph_instances_this_frame = 0;
+        }
     }
 
     /// Evict the least recently used entry to make room for `key`.
     fn evict_for(&mut self, key: u64) {
-        if self.entries.len() >= 256
+        if self.entries.len() >= LAYOUT_CACHE_CAPACITY
             && !self.entries.contains_key(&key)
             && let Some(&oldest) = self
                 .entries
@@ -133,6 +231,97 @@ impl ParagraphLayoutCache {
                 .map(|(k, _)| k)
         {
             self.entries.remove(&oldest);
+            self.counters.capacity_evictions += 1;
+            if let Some(profile) = self.profile.as_mut()
+                && let Some(entry) = profile.entries.remove(&oldest)
+            {
+                profile.counters.layout_cache_resident_glyphs = profile
+                    .counters
+                    .layout_cache_resident_glyphs
+                    .checked_sub(entry.glyphs)
+                    .expect("BUG: profiled layout glyph count underflowed");
+                let domain_glyphs = match entry.domain {
+                    LayoutDomain::SingleLine => {
+                        profile.counters.layout_cache_single_line_entries = profile
+                            .counters
+                            .layout_cache_single_line_entries
+                            .checked_sub(1)
+                            .expect("BUG: profiled single-line entry count underflowed");
+                        &mut profile.counters.layout_cache_single_line_resident_glyphs
+                    }
+                    LayoutDomain::Paragraph => {
+                        profile.counters.layout_cache_paragraph_entries = profile
+                            .counters
+                            .layout_cache_paragraph_entries
+                            .checked_sub(1)
+                            .expect("BUG: profiled paragraph entry count underflowed");
+                        &mut profile.counters.layout_cache_paragraph_resident_glyphs
+                    }
+                };
+                *domain_glyphs = domain_glyphs
+                    .checked_sub(entry.glyphs)
+                    .expect("BUG: profiled domain glyph count underflowed");
+            }
+        }
+    }
+
+    fn record_profiled_entry(&mut self, key: u64, domain: LayoutDomain) {
+        let Self {
+            entries, profile, ..
+        } = self;
+        let Some(profile) = profile.as_mut() else {
+            return;
+        };
+        let counters = &mut profile.counters;
+        let entry = entries
+            .get(&key)
+            .expect("BUG: a profiled layout lookup must leave a cache entry");
+        let glyphs = entry.lines.iter().map(|line| line.glyphs.len()).sum();
+
+        if profile
+            .entries
+            .insert(key, ProfiledEntry { domain, glyphs })
+            .is_none()
+        {
+            counters.layout_cache_resident_glyphs += glyphs;
+            counters.layout_cache_peak_resident_glyphs = counters
+                .layout_cache_peak_resident_glyphs
+                .max(counters.layout_cache_resident_glyphs);
+            match domain {
+                LayoutDomain::SingleLine => {
+                    counters.layout_cache_single_line_entries += 1;
+                    counters.layout_cache_single_line_peak_entries = counters
+                        .layout_cache_single_line_peak_entries
+                        .max(counters.layout_cache_single_line_entries);
+                    counters.layout_cache_single_line_resident_glyphs += glyphs;
+                    counters.layout_cache_single_line_peak_resident_glyphs = counters
+                        .layout_cache_single_line_peak_resident_glyphs
+                        .max(counters.layout_cache_single_line_resident_glyphs);
+                }
+                LayoutDomain::Paragraph => {
+                    counters.layout_cache_paragraph_entries += 1;
+                    counters.layout_cache_paragraph_peak_entries = counters
+                        .layout_cache_paragraph_peak_entries
+                        .max(counters.layout_cache_paragraph_entries);
+                    counters.layout_cache_paragraph_resident_glyphs += glyphs;
+                    counters.layout_cache_paragraph_peak_resident_glyphs = counters
+                        .layout_cache_paragraph_peak_resident_glyphs
+                        .max(counters.layout_cache_paragraph_resident_glyphs);
+                }
+            }
+        }
+
+        if profile.weighted_keys_this_frame.insert(key) {
+            profile.glyph_instances_this_frame += glyphs;
+            counters.layout_cache_peak_frame_glyph_instances = counters
+                .layout_cache_peak_frame_glyph_instances
+                .max(profile.glyph_instances_this_frame);
+            for glyph in entry.lines.iter().flat_map(|line| &line.glyphs) {
+                profile.distinct_glyphs_this_frame.insert(glyph.key);
+            }
+            counters.layout_cache_peak_frame_distinct_glyphs = counters
+                .layout_cache_peak_frame_distinct_glyphs
+                .max(profile.distinct_glyphs_this_frame.len());
         }
     }
 
@@ -160,24 +349,54 @@ impl ParagraphLayoutCache {
         spans: &[SpanData],
         max_width: Option<f32>,
     ) -> &ParagraphLayoutEntry {
+        self.layout_for(
+            font_system,
+            base_style,
+            spans,
+            max_width,
+            LookupPhase::Measure,
+        )
+    }
+
+    fn layout_for(
+        &mut self,
+        font_system: &mut FontSystem,
+        base_style: &TextStyle,
+        spans: &[SpanData],
+        max_width: Option<f32>,
+        phase: LookupPhase,
+    ) -> &ParagraphLayoutEntry {
         let key = cache_key(base_style, spans, max_width);
         let frame = self.frame_counter;
         self.evict_for(key);
-        self.count_lookup(key);
+        self.record_lookup(key, LayoutDomain::Paragraph, phase);
 
-        let entry = self.entries.entry(key).or_insert_with(|| {
+        let make_entry = || {
             // Styles still come from `spans` — normalizing only edits text, never
             // the span count or order, so a glyph's span index stays valid.
             let normalized = normalize_carriage_returns(spans);
             let (buffer, width, height) =
                 shape_paragraph(font_system, base_style, &normalized, max_width);
+            let lines = extract_lines(&buffer);
             ParagraphLayoutEntry {
-                buffer,
+                lines,
                 width,
                 height,
                 last_used_frame: frame,
             }
-        });
+        };
+        if self.profile.is_some() {
+            {
+                let entry = self.entries.entry(key).or_insert_with(make_entry);
+                entry.last_used_frame = frame;
+            }
+            self.record_profiled_entry(key, LayoutDomain::Paragraph);
+            return self
+                .entries
+                .get(&key)
+                .expect("BUG: profiling must not remove the looked-up layout");
+        }
+        let entry = self.entries.entry(key).or_insert_with(make_entry);
         entry.last_used_frame = frame;
         entry
     }
@@ -192,20 +411,52 @@ impl ParagraphLayoutCache {
         style: LineStyle,
         text: &str,
     ) -> &ParagraphLayoutEntry {
+        self.layout_single_line_for(font_system, style, text, LookupPhase::Draw)
+    }
+
+    pub(crate) fn measure_single_line(
+        &mut self,
+        font_system: &mut FontSystem,
+        style: LineStyle,
+        text: &str,
+    ) -> &ParagraphLayoutEntry {
+        self.layout_single_line_for(font_system, style, text, LookupPhase::Measure)
+    }
+
+    fn layout_single_line_for(
+        &mut self,
+        font_system: &mut FontSystem,
+        style: LineStyle,
+        text: &str,
+        phase: LookupPhase,
+    ) -> &ParagraphLayoutEntry {
         let key = single_line_cache_key(style, text);
         let frame = self.frame_counter;
         self.evict_for(key);
-        self.count_lookup(key);
+        self.record_lookup(key, LayoutDomain::SingleLine, phase);
 
-        let entry = self.entries.entry(key).or_insert_with(|| {
+        let make_entry = || {
             let (buffer, width, height) = shape_single_line(font_system, style, text);
+            let lines = extract_lines(&buffer);
             ParagraphLayoutEntry {
-                buffer,
+                lines,
                 width,
                 height,
                 last_used_frame: frame,
             }
-        });
+        };
+        if self.profile.is_some() {
+            {
+                let entry = self.entries.entry(key).or_insert_with(make_entry);
+                entry.last_used_frame = frame;
+            }
+            self.record_profiled_entry(key, LayoutDomain::SingleLine);
+            return self
+                .entries
+                .get(&key)
+                .expect("BUG: profiling must not remove the looked-up layout");
+        }
+        let entry = self.entries.entry(key).or_insert_with(make_entry);
         entry.last_used_frame = frame;
         entry
     }
@@ -231,12 +482,15 @@ impl ParagraphLayoutCache {
             return;
         }
 
-        // Ensure layout is cached
-        self.measure(font_system, base_style, spans, Some(max_width));
-        let key = cache_key(base_style, spans, Some(max_width));
-        let lines = extract_lines(&self.entries[&key].buffer);
+        let entry = self.layout_for(
+            font_system,
+            base_style,
+            spans,
+            Some(max_width),
+            LookupPhase::Draw,
+        );
 
-        for line in &lines {
+        for line in &entry.lines {
             // baseline_y is the alphabetic baseline (not line top — see module docs)
             let baseline_y = y + line.baseline_y;
             for group in span_groups(&line.glyphs, spans.len()) {
@@ -267,12 +521,6 @@ impl ParagraphLayoutCache {
 }
 
 // ── Internal helpers ────────────────────────────────────────────────
-
-#[derive(Clone, Copy, Hash)]
-enum LayoutDomain {
-    SingleLine,
-    Paragraph,
-}
 
 fn layout_cache_hasher(domain: LayoutDomain) -> std::collections::hash_map::DefaultHasher {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
@@ -484,6 +732,7 @@ fn shape_single_line(
 // ── Per-line glyph extraction ───────────────────────────────────────
 
 /// One visual line's glyphs, with the metrics needed to place it.
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct LineGlyphs {
     pub glyphs: Vec<PositionedGlyphInfo>,
     pub max_ascent: f32,
@@ -493,6 +742,7 @@ pub(crate) struct LineGlyphs {
 }
 
 /// One glyph, positioned relative to its line's alphabetic baseline.
+#[cfg_attr(test, derive(Clone))]
 pub(crate) struct PositionedGlyphInfo {
     pub key: cosmic_text::CacheKey,
     pub x: f32,
@@ -1910,10 +2160,15 @@ mod span_group_tests {
 /// CPU-only — nothing here needs a GL context.
 #[cfg(test)]
 mod line_layout_tests {
+    use std::hash::Hasher as _;
+
     use cosmic_text::{Attrs, Buffer, CacheKeyFlags, Family, FontSystem, Metrics, Shaping};
 
-    use super::{LineStyle, ParagraphLayoutCache, baseline_to_alphabetic, extract_lines};
-    use crate::tree::{FontFamily, FontWeight};
+    use super::{
+        LAYOUT_CACHE_CAPACITY, LayoutDomain, LineStyle, ParagraphLayoutCache,
+        baseline_to_alphabetic, extract_lines, layout_cache_hasher, single_line_cache_key,
+    };
+    use crate::tree::{FontFamily, FontWeight, SpanData, TextStyle};
 
     fn font_system() -> FontSystem {
         crate::gpu::renderer::build_font_system()
@@ -1926,6 +2181,17 @@ mod line_layout_tests {
             italic,
             size,
         }
+    }
+
+    #[test]
+    fn layout_domains_use_distinct_hash_namespaces() {
+        let paragraph = layout_cache_hasher(LayoutDomain::Paragraph).finish();
+        let single_line = layout_cache_hasher(LayoutDomain::SingleLine).finish();
+
+        assert_ne!(
+            paragraph, single_line,
+            "shared cache domains must not start from the same hash state"
+        );
     }
 
     /// Two spans of very different size, forced onto separate lines by `max_width`.
@@ -2006,8 +2272,8 @@ mod line_layout_tests {
         );
     }
 
-    /// Repeating a single-line draw within a frame must reuse the shaped buffer,
-    /// so the miss path is what gets counted.
+    /// Repeating a single-line draw must reuse the extracted glyph allocation;
+    /// rebuilding it on a cache hit would restore the per-draw allocation cost.
     #[test]
     fn single_line_layout_is_cached() {
         let mut font_system = font_system();
@@ -2015,13 +2281,25 @@ mod line_layout_tests {
         let style = line_style(24.0, false);
 
         assert_eq!(cache.counters().layout_cache_shapes, 0);
-        cache.layout_single_line(&mut font_system, style, "12:34");
+        let glyphs = &cache
+            .layout_single_line(&mut font_system, style, "12:34")
+            .lines[0]
+            .glyphs;
+        let glyph_allocation = glyphs.as_ptr();
         assert_eq!(
             cache.counters().layout_cache_shapes,
             1,
             "the first call must shape"
         );
-        cache.layout_single_line(&mut font_system, style, "12:34");
+        let cached_glyphs = &cache
+            .layout_single_line(&mut font_system, style, "12:34")
+            .lines[0]
+            .glyphs;
+        assert_eq!(
+            cached_glyphs.as_ptr(),
+            glyph_allocation,
+            "a cache hit must retain the extracted glyph allocation"
+        );
         assert_eq!(
             cache.counters().layout_cache_shapes,
             1,
@@ -2034,6 +2312,157 @@ mod line_layout_tests {
         );
     }
 
+    #[test]
+    fn layout_survives_an_intervening_widget_frame() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+        let style = line_style(24.0, false);
+
+        cache.begin_frame(1);
+        cache.layout_single_line(&mut font_system, style, "widget A");
+        cache.begin_frame(2);
+        cache.layout_single_line(&mut font_system, style, "widget B");
+        cache.begin_frame(3);
+        cache.layout_single_line(&mut font_system, style, "widget A");
+
+        let counters = cache.counters();
+        assert_eq!(counters.layout_cache_shapes, 2);
+        assert_eq!(counters.layout_cache_hits, 1);
+        assert_eq!(cache.entries.len(), 2);
+    }
+
+    #[test]
+    fn layout_cache_evicts_the_least_recently_used_entry() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+        let style = line_style(24.0, false);
+
+        for index in 0..LAYOUT_CACHE_CAPACITY {
+            cache.begin_frame(u64::try_from(index).expect("test cache index fits in u64"));
+            cache.layout_single_line(&mut font_system, style, &index.to_string());
+        }
+        cache.begin_frame(
+            u64::try_from(LAYOUT_CACHE_CAPACITY).expect("test cache capacity fits in u64"),
+        );
+        cache.layout_single_line(&mut font_system, style, "0");
+        cache.layout_single_line(&mut font_system, style, &LAYOUT_CACHE_CAPACITY.to_string());
+
+        let counters = cache.counters();
+        assert_eq!(cache.entries.len(), LAYOUT_CACHE_CAPACITY);
+        assert_eq!(counters.layout_cache_capacity_evictions, 1);
+        assert_eq!(counters.layout_cache_peak_entries, LAYOUT_CACHE_CAPACITY);
+        assert_eq!(counters.layout_cache_hits, 1);
+        assert!(
+            cache
+                .entries
+                .contains_key(&single_line_cache_key(style, "0")),
+            "a hit must refresh the oldest entry"
+        );
+        assert!(
+            !cache
+                .entries
+                .contains_key(&single_line_cache_key(style, "1")),
+            "the next-oldest entry must be evicted"
+        );
+    }
+
+    #[test]
+    fn profile_reports_a_measured_layout_lost_before_draw() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+        let style = line_style(24.0, false);
+        cache.enable_profiling();
+        cache.begin_frame(1);
+
+        cache.measure_single_line(&mut font_system, style, "measured");
+        cache.measure_single_line(&mut font_system, style, "measured");
+        cache.layout_single_line(&mut font_system, style, "measured");
+        cache.measure_single_line(&mut font_system, style, "other");
+
+        cache
+            .entries
+            .remove(&single_line_cache_key(style, "measured"));
+        cache.layout_single_line(&mut font_system, style, "measured");
+
+        let counters = cache.counters();
+        assert_eq!(counters.layout_cache_peak_frame_keys, 2);
+        assert_eq!(counters.layout_cache_repeat_shapes_same_frame, 1);
+        assert_eq!(counters.layout_cache_draw_misses_after_measure, 1);
+        assert_eq!(counters.layout_cache_single_line_hits, 2);
+        assert_eq!(counters.layout_cache_single_line_shapes, 3);
+        assert_eq!(counters.layout_cache_paragraph_hits, 0);
+        assert_eq!(counters.layout_cache_paragraph_shapes, 0);
+    }
+
+    #[test]
+    fn profile_does_not_carry_frame_local_state_into_the_next_frame() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+        let style = line_style(24.0, false);
+        let key = single_line_cache_key(style, "measured");
+        cache.enable_profiling();
+
+        cache.begin_frame(1);
+        cache.measure_single_line(&mut font_system, style, "measured");
+        cache.entries.remove(&key);
+        cache.layout_single_line(&mut font_system, style, "measured");
+
+        cache.begin_frame(2);
+        cache.entries.remove(&key);
+        cache.layout_single_line(&mut font_system, style, "measured");
+
+        let counters = cache.counters();
+        assert_eq!(counters.layout_cache_peak_frame_keys, 1);
+        assert_eq!(counters.layout_cache_repeat_shapes_same_frame, 1);
+        assert_eq!(counters.layout_cache_draw_misses_after_measure, 1);
+    }
+
+    #[test]
+    fn profile_separates_paragraph_lookups_from_single_line_lookups() {
+        let mut font_system = font_system();
+        let mut cache = ParagraphLayoutCache::new();
+        let style = TextStyle::default();
+        let spans = [SpanData {
+            text: "paragraph".to_owned(),
+            weight: None,
+            color: None,
+            italic: false,
+            underline: false,
+            strikethrough: false,
+        }];
+        cache.enable_profiling();
+        cache.begin_frame(1);
+
+        cache.layout(&mut font_system, &style, &spans, Some(200.0));
+        cache.layout(&mut font_system, &style, &spans, Some(200.0));
+
+        let counters = cache.counters();
+        assert_eq!(counters.layout_cache_single_line_hits, 0);
+        assert_eq!(counters.layout_cache_single_line_shapes, 0);
+        assert_eq!(counters.layout_cache_paragraph_hits, 1);
+        assert_eq!(counters.layout_cache_paragraph_shapes, 1);
+        assert_eq!(counters.layout_cache_single_line_entries, 0);
+        assert_eq!(counters.layout_cache_paragraph_entries, 1);
+        assert_eq!(counters.layout_cache_paragraph_peak_entries, 1);
+        assert!(
+            counters.layout_cache_paragraph_resident_glyphs > 0,
+            "the profiled paragraph must retain at least one glyph"
+        );
+        assert_eq!(
+            counters.layout_cache_resident_glyphs,
+            counters.layout_cache_paragraph_resident_glyphs
+        );
+        assert_eq!(
+            counters.layout_cache_peak_frame_glyph_instances,
+            counters.layout_cache_paragraph_resident_glyphs
+        );
+        assert!(
+            counters.layout_cache_peak_frame_distinct_glyphs
+                <= counters.layout_cache_peak_frame_glyph_instances,
+            "distinct glyphs cannot outnumber retained glyph instances"
+        );
+    }
+
     /// Fractional sizes must key distinct entries.
     /// This is why the single-line path exists at all:
     /// `TextStyle`'s `u32` size would collapse an animated 17.5 px onto 17 px.
@@ -2043,9 +2472,9 @@ mod line_layout_tests {
         let mut cache = ParagraphLayoutCache::new();
 
         let entry = cache.layout_single_line(&mut font_system, line_style(17.0, false), "size");
-        let whole = extract_lines(&entry.buffer);
+        let whole_size = entry.lines[0].glyphs[0].key.font_size_bits;
         let entry = cache.layout_single_line(&mut font_system, line_style(17.5, false), "size");
-        let fractional = extract_lines(&entry.buffer);
+        let fractional_size = entry.lines[0].glyphs[0].key.font_size_bits;
 
         assert_eq!(
             cache.entries.len(),
@@ -2053,12 +2482,12 @@ mod line_layout_tests {
             "a half-pixel step must not collapse"
         );
         assert_eq!(
-            whole[0].glyphs[0].key.font_size_bits,
+            whole_size,
             17.0_f32.to_bits(),
             "the whole size must reach the glyph key unrounded",
         );
         assert_eq!(
-            fractional[0].glyphs[0].key.font_size_bits,
+            fractional_size,
             17.5_f32.to_bits(),
             "the fractional size must reach the glyph key unrounded",
         );
@@ -2075,8 +2504,7 @@ mod line_layout_tests {
         for italic in [false, true] {
             let entry =
                 cache.layout_single_line(&mut font_system, line_style(24.0, italic), "Slanted");
-            let lines = extract_lines(&entry.buffer);
-            let glyphs: Vec<_> = lines.iter().flat_map(|l| l.glyphs.iter()).collect();
+            let glyphs: Vec<_> = entry.lines.iter().flat_map(|l| l.glyphs.iter()).collect();
             assert!(!glyphs.is_empty(), "italic={italic} shaped no glyphs");
             assert_eq!(
                 glyphs

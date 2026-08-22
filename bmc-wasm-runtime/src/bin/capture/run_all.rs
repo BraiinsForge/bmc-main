@@ -68,6 +68,7 @@ pub struct RunAllArgs {
     /// `Some(n)` = n threads, `None` = sequential.
     pub parallel: Option<usize>,
     pub stack_profiling: StackProfiling,
+    pub layout_cache_profile: bool,
 }
 
 /// Resolved widget — knows its workspace and pre-built wasm dir (if any).
@@ -78,6 +79,112 @@ pub struct WidgetEntry {
     /// Pre-built wasm dir, if `--wasm-dir` paired with this workspace.
     /// When `None`, the workspace will be built locally.
     pub wasm_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct LayoutCacheMeasurement {
+    hits: u64,
+    shapes: u64,
+    single_line_hits: u64,
+    single_line_shapes: u64,
+    paragraph_hits: u64,
+    paragraph_shapes: u64,
+    single_line_entries: usize,
+    single_line_peak_entries: usize,
+    paragraph_entries: usize,
+    paragraph_peak_entries: usize,
+    resident_glyphs: usize,
+    peak_resident_glyphs: usize,
+    single_line_resident_glyphs: usize,
+    single_line_peak_resident_glyphs: usize,
+    paragraph_resident_glyphs: usize,
+    paragraph_peak_resident_glyphs: usize,
+    peak_frame_glyph_instances: usize,
+    peak_frame_distinct_glyphs: usize,
+    evictions: u64,
+    peak_entries: usize,
+    peak_frame_keys: usize,
+    repeat_shapes_same_frame: u64,
+    draw_misses_after_measure: u64,
+}
+
+impl LayoutCacheMeasurement {
+    fn add_stdout(&mut self, stdout: &str) -> Result<()> {
+        let hits = profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_HITS=")?;
+        let shapes = profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_SHAPES=")?;
+        let single_line_hits = profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_HITS=")?;
+        let single_line_shapes =
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_SHAPES=")?;
+        let paragraph_hits = profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_HITS=")?;
+        let paragraph_shapes = profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_SHAPES=")?;
+        let single_line_entries =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_ENTRIES=")?;
+        let single_line_peak_entries =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_PEAK_ENTRIES=")?;
+        let paragraph_entries =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_ENTRIES=")?;
+        let paragraph_peak_entries =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_PEAK_ENTRIES=")?;
+        let resident_glyphs = profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_RESIDENT_GLYPHS=")?;
+        let peak_resident_glyphs =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_RESIDENT_GLYPHS=")?;
+        let single_line_resident_glyphs =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_RESIDENT_GLYPHS=")?;
+        let single_line_peak_resident_glyphs =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_PEAK_RESIDENT_GLYPHS=")?;
+        let paragraph_resident_glyphs =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_RESIDENT_GLYPHS=")?;
+        let paragraph_peak_resident_glyphs =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_PEAK_RESIDENT_GLYPHS=")?;
+        let peak_frame_glyph_instances =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_FRAME_GLYPH_INSTANCES=")?;
+        let peak_frame_distinct_glyphs =
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_FRAME_DISTINCT_GLYPHS=")?;
+        let evictions = profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_CAPACITY_EVICTIONS=")?;
+        let peak_entries = profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_ENTRIES=")?;
+        let peak_frame_keys = profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_FRAME_KEYS=")?;
+        let repeat_shapes_same_frame =
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_REPEAT_SHAPES_SAME_FRAME=")?;
+        let draw_misses_after_measure =
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_DRAW_MISSES_AFTER_MEASURE=")?;
+
+        self.hits += hits;
+        self.shapes += shapes;
+        self.single_line_hits += single_line_hits;
+        self.single_line_shapes += single_line_shapes;
+        self.paragraph_hits += paragraph_hits;
+        self.paragraph_shapes += paragraph_shapes;
+        self.single_line_entries = self.single_line_entries.max(single_line_entries);
+        self.single_line_peak_entries = self.single_line_peak_entries.max(single_line_peak_entries);
+        self.paragraph_entries = self.paragraph_entries.max(paragraph_entries);
+        self.paragraph_peak_entries = self.paragraph_peak_entries.max(paragraph_peak_entries);
+        self.resident_glyphs = self.resident_glyphs.max(resident_glyphs);
+        self.peak_resident_glyphs = self.peak_resident_glyphs.max(peak_resident_glyphs);
+        self.single_line_resident_glyphs = self
+            .single_line_resident_glyphs
+            .max(single_line_resident_glyphs);
+        self.single_line_peak_resident_glyphs = self
+            .single_line_peak_resident_glyphs
+            .max(single_line_peak_resident_glyphs);
+        self.paragraph_resident_glyphs = self
+            .paragraph_resident_glyphs
+            .max(paragraph_resident_glyphs);
+        self.paragraph_peak_resident_glyphs = self
+            .paragraph_peak_resident_glyphs
+            .max(paragraph_peak_resident_glyphs);
+        self.peak_frame_glyph_instances = self
+            .peak_frame_glyph_instances
+            .max(peak_frame_glyph_instances);
+        self.peak_frame_distinct_glyphs = self
+            .peak_frame_distinct_glyphs
+            .max(peak_frame_distinct_glyphs);
+        self.evictions += evictions;
+        self.peak_entries = self.peak_entries.max(peak_entries);
+        self.peak_frame_keys = self.peak_frame_keys.max(peak_frame_keys);
+        self.repeat_shapes_same_frame += repeat_shapes_same_frame;
+        self.draw_misses_after_measure += draw_misses_after_measure;
+        Ok(())
+    }
 }
 
 pub fn execute(args: &RunAllArgs) -> Result<()> {
@@ -116,6 +223,7 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
                 &widgets,
                 threads,
                 args.stack_profiling,
+                args.layout_cache_profile,
             )?;
         } else {
             capture_sequential(
@@ -123,6 +231,7 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
                 &args.output_dir,
                 &widgets,
                 args.stack_profiling,
+                args.layout_cache_profile,
             )?;
         }
     } else {
@@ -131,6 +240,7 @@ pub fn execute(args: &RunAllArgs) -> Result<()> {
             &args.output_dir,
             &widgets,
             args.stack_profiling,
+            args.layout_cache_profile,
         )?;
     }
 
@@ -423,7 +533,8 @@ fn capture_widget(
     entry: &WidgetEntry,
     show_progress: bool,
     stack_profiling: StackProfiling,
-) -> Result<(f64, Option<u32>)> {
+    layout_cache_profile: bool,
+) -> Result<(f64, Option<u32>, Option<LayoutCacheMeasurement>)> {
     let example = entry.name.as_str();
     let wasm = wasm_in_dir(&wasm_dir_for(entry)?, example);
     let asset_root = asset_root_for(entry);
@@ -443,11 +554,12 @@ fn capture_widget(
     let matrix = config.capture_matrix();
     ensure_profile_has_datasets(&matrix, stack_profiling)?;
     if matrix.is_empty() {
-        return Ok((0.0, None));
+        return Ok((0.0, None, None));
     }
 
     let t0 = Instant::now();
     let mut stack_high_water = None;
+    let mut layout_cache = layout_cache_profile.then(LayoutCacheMeasurement::default);
 
     for (dataset, target) in matrix {
         let output = CaptureConfig::frame_dir(&output_root, dataset, target);
@@ -472,6 +584,9 @@ fn capture_widget(
                 unreachable!("BUG: enabled stack profiling must carry its expected origin");
             };
             cmd.arg(format!("--stack-profile={expected_origin}"));
+        }
+        if layout_cache_profile {
+            cmd.arg("--layout-cache-profile");
         }
         // Give a failing run's replay.log the widget's own diagnostics —
         // per-poll telemetry and the click/capture trace, not the frame trail.
@@ -512,7 +627,7 @@ fn capture_widget(
             );
         }
         if stack_profiling.is_enabled() {
-            let stdout = String::from_utf8(result.stdout)
+            let stdout = std::str::from_utf8(&result.stdout)
                 .context("capture stack profile emitted non-UTF-8 output")?;
             let value = stdout
                 .lines()
@@ -525,13 +640,31 @@ fn capture_widget(
                 .context("capture stack profile emitted no measurement")?;
             stack_high_water = Some(stack_high_water.map_or(value, |old: u32| old.max(value)));
         }
+        if let Some(measurement) = layout_cache.as_mut() {
+            let stdout = std::str::from_utf8(&result.stdout)
+                .context("capture layout cache profile emitted non-UTF-8 output")?;
+            measurement.add_stdout(stdout)?;
+        }
     }
 
     if stack_profiling.is_enabled() && stack_high_water.is_none() {
         bail!("stack profile produced no measurement for {example}");
     }
 
-    Ok((t0.elapsed().as_secs_f64(), stack_high_water))
+    Ok((t0.elapsed().as_secs_f64(), stack_high_water, layout_cache))
+}
+
+fn profile_value<T>(stdout: &str, prefix: &str) -> Result<T>
+where
+    T: std::str::FromStr,
+    T::Err: std::error::Error + Send + Sync + 'static,
+{
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .with_context(|| format!("capture profile emitted no {prefix} measurement"))?
+        .parse()
+        .with_context(|| format!("capture profile emitted an invalid {prefix} measurement"))
 }
 
 fn ensure_profile_has_widgets(
@@ -615,17 +748,63 @@ fn capture_sequential(
     output_dir: &Path,
     widgets: &[WidgetEntry],
     stack_profiling: StackProfiling,
+    layout_cache_profile: bool,
 ) -> Result<()> {
     let is_tty = std::io::stderr().is_terminal();
     let mut failures: Vec<(&str, &str, String)> = Vec::new();
     for entry in widgets {
         let ws = workspace_label(&entry.workspace);
-        match capture_widget(binary, output_dir, entry, is_tty, stack_profiling) {
-            Ok((elapsed, high_water)) => {
+        match capture_widget(
+            binary,
+            output_dir,
+            entry,
+            is_tty,
+            stack_profiling,
+            layout_cache_profile,
+        ) {
+            Ok((elapsed, high_water, layout_cache)) => {
                 clear_progress();
                 widget_status_line(ws, &entry.name, elapsed);
                 if let Some(bytes) = high_water {
                     println!("| {} | {bytes} |", entry.name);
+                }
+                if let Some(measurement) = layout_cache {
+                    eprintln!(
+                        "    layout cache: peak_entries={} peak_frame_keys={} hits={} shapes={} \
+                         single_line_hits={} single_line_shapes={} paragraph_hits={} \
+                         paragraph_shapes={} \
+                         single_line_entries={} single_line_peak_entries={} \
+                         paragraph_entries={} paragraph_peak_entries={} \
+                         resident_glyphs={} peak_resident_glyphs={} \
+                         single_line_resident_glyphs={} single_line_peak_resident_glyphs={} \
+                         paragraph_resident_glyphs={} paragraph_peak_resident_glyphs={} \
+                         peak_frame_glyph_instances={} peak_frame_distinct_glyphs={} \
+                         repeat_shapes_same_frame={} draw_misses_after_measure={} \
+                         capacity_evictions={}",
+                        measurement.peak_entries,
+                        measurement.peak_frame_keys,
+                        measurement.hits,
+                        measurement.shapes,
+                        measurement.single_line_hits,
+                        measurement.single_line_shapes,
+                        measurement.paragraph_hits,
+                        measurement.paragraph_shapes,
+                        measurement.single_line_entries,
+                        measurement.single_line_peak_entries,
+                        measurement.paragraph_entries,
+                        measurement.paragraph_peak_entries,
+                        measurement.resident_glyphs,
+                        measurement.peak_resident_glyphs,
+                        measurement.single_line_resident_glyphs,
+                        measurement.single_line_peak_resident_glyphs,
+                        measurement.paragraph_resident_glyphs,
+                        measurement.paragraph_peak_resident_glyphs,
+                        measurement.peak_frame_glyph_instances,
+                        measurement.peak_frame_distinct_glyphs,
+                        measurement.repeat_shapes_same_frame,
+                        measurement.draw_misses_after_measure,
+                        measurement.evictions
+                    );
                 }
             }
             Err(e) => {
@@ -649,6 +828,7 @@ fn capture_parallel(
     widgets: &[WidgetEntry],
     threads: usize,
     stack_profiling: StackProfiling,
+    layout_cache_profile: bool,
 ) -> Result<()> {
     use rayon::prelude::*;
 
@@ -661,7 +841,14 @@ fn capture_parallel(
         widgets
             .par_iter()
             .map(|entry| {
-                let result = capture_widget(binary, output_dir, entry, false, stack_profiling);
+                let result = capture_widget(
+                    binary,
+                    output_dir,
+                    entry,
+                    false,
+                    stack_profiling,
+                    layout_cache_profile,
+                );
                 (
                     workspace_label(&entry.workspace).to_owned(),
                     entry.name.clone(),
@@ -675,10 +862,48 @@ fn capture_parallel(
     let mut failures: Vec<(&str, &str, String)> = Vec::new();
     for (ws, name, result) in &results {
         match result {
-            Ok((elapsed, high_water)) => {
+            Ok((elapsed, high_water, layout_cache)) => {
                 widget_status_line(ws, name, *elapsed);
                 if let Some(bytes) = high_water {
                     println!("| {name} | {bytes} |");
+                }
+                if let Some(measurement) = layout_cache {
+                    eprintln!(
+                        "    layout cache: peak_entries={} peak_frame_keys={} hits={} shapes={} \
+                         single_line_hits={} single_line_shapes={} paragraph_hits={} \
+                         paragraph_shapes={} \
+                         single_line_entries={} single_line_peak_entries={} \
+                         paragraph_entries={} paragraph_peak_entries={} \
+                         resident_glyphs={} peak_resident_glyphs={} \
+                         single_line_resident_glyphs={} single_line_peak_resident_glyphs={} \
+                         paragraph_resident_glyphs={} paragraph_peak_resident_glyphs={} \
+                         peak_frame_glyph_instances={} peak_frame_distinct_glyphs={} \
+                         repeat_shapes_same_frame={} draw_misses_after_measure={} \
+                         capacity_evictions={}",
+                        measurement.peak_entries,
+                        measurement.peak_frame_keys,
+                        measurement.hits,
+                        measurement.shapes,
+                        measurement.single_line_hits,
+                        measurement.single_line_shapes,
+                        measurement.paragraph_hits,
+                        measurement.paragraph_shapes,
+                        measurement.single_line_entries,
+                        measurement.single_line_peak_entries,
+                        measurement.paragraph_entries,
+                        measurement.paragraph_peak_entries,
+                        measurement.resident_glyphs,
+                        measurement.peak_resident_glyphs,
+                        measurement.single_line_resident_glyphs,
+                        measurement.single_line_peak_resident_glyphs,
+                        measurement.paragraph_resident_glyphs,
+                        measurement.paragraph_peak_resident_glyphs,
+                        measurement.peak_frame_glyph_instances,
+                        measurement.peak_frame_distinct_glyphs,
+                        measurement.repeat_shapes_same_frame,
+                        measurement.draw_misses_after_measure,
+                        measurement.evictions
+                    );
                 }
             }
             Err(e) => {
@@ -770,7 +995,7 @@ fn format_time(seconds: f64) -> String {
 mod tests {
     use super::{
         StackProfiling, WidgetEntry, distill_capture_error, ensure_profile_has_datasets,
-        ensure_profile_has_widgets, filter_profile_widgets, renderer_from_stderr,
+        ensure_profile_has_widgets, filter_profile_widgets, profile_value, renderer_from_stderr,
     };
 
     const STACK_PROFILING: StackProfiling = StackProfiling::Enabled {
@@ -817,6 +1042,78 @@ mod tests {
     fn stderr_without_a_renderer_marker_names_nothing() {
         assert_eq!(renderer_from_stderr(b"Captured frame 0\n"), None);
         assert_eq!(renderer_from_stderr(b"renderer: \n"), None);
+    }
+
+    #[test]
+    fn layout_cache_profile_reads_the_named_measurement() {
+        let stdout = "BMC_LAYOUT_CACHE_HITS=200\n\
+                      BMC_LAYOUT_CACHE_SHAPES=30\n\
+                      BMC_LAYOUT_CACHE_SINGLE_LINE_HITS=120\n\
+                      BMC_LAYOUT_CACHE_SINGLE_LINE_SHAPES=20\n\
+                      BMC_LAYOUT_CACHE_PARAGRAPH_HITS=80\n\
+                      BMC_LAYOUT_CACHE_PARAGRAPH_SHAPES=10\n\
+                      BMC_LAYOUT_CACHE_SINGLE_LINE_ENTRIES=25\n\
+                      BMC_LAYOUT_CACHE_SINGLE_LINE_PEAK_ENTRIES=27\n\
+                      BMC_LAYOUT_CACHE_PARAGRAPH_ENTRIES=100\n\
+                      BMC_LAYOUT_CACHE_PARAGRAPH_PEAK_ENTRIES=103\n\
+                      BMC_LAYOUT_CACHE_RESIDENT_GLYPHS=900\n\
+                      BMC_LAYOUT_CACHE_PEAK_RESIDENT_GLYPHS=950\n\
+                      BMC_LAYOUT_CACHE_SINGLE_LINE_RESIDENT_GLYPHS=500\n\
+                      BMC_LAYOUT_CACHE_SINGLE_LINE_PEAK_RESIDENT_GLYPHS=525\n\
+                      BMC_LAYOUT_CACHE_PARAGRAPH_RESIDENT_GLYPHS=400\n\
+                      BMC_LAYOUT_CACHE_PARAGRAPH_PEAK_RESIDENT_GLYPHS=425\n\
+                      BMC_LAYOUT_CACHE_PEAK_FRAME_GLYPH_INSTANCES=300\n\
+                      BMC_LAYOUT_CACHE_PEAK_FRAME_DISTINCT_GLYPHS=90\n\
+                      BMC_LAYOUT_CACHE_CAPACITY_EVICTIONS=3\n\
+                      BMC_LAYOUT_CACHE_PEAK_ENTRIES=127\n\
+                      BMC_LAYOUT_CACHE_PEAK_FRAME_KEYS=19\n\
+                      BMC_LAYOUT_CACHE_REPEAT_SHAPES_SAME_FRAME=2\n\
+                      BMC_LAYOUT_CACHE_DRAW_MISSES_AFTER_MEASURE=1\n";
+        assert_eq!(
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_SINGLE_LINE_HITS=")
+                .expect("the emitted single-line hit count must parse"),
+            120
+        );
+        assert_eq!(
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_PARAGRAPH_SHAPES=")
+                .expect("the emitted paragraph shape count must parse"),
+            10
+        );
+        assert_eq!(
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_RESIDENT_GLYPHS=")
+                .expect("the emitted peak resident glyph count must parse"),
+            950
+        );
+        assert_eq!(
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_FRAME_DISTINCT_GLYPHS=")
+                .expect("the emitted per-frame distinct glyph count must parse"),
+            90
+        );
+        assert_eq!(
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_ENTRIES=")
+                .expect("the emitted peak must parse"),
+            127
+        );
+        assert_eq!(
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_CAPACITY_EVICTIONS=")
+                .expect("the emitted eviction count must parse"),
+            3
+        );
+        assert_eq!(
+            profile_value::<usize>(stdout, "BMC_LAYOUT_CACHE_PEAK_FRAME_KEYS=")
+                .expect("the emitted per-frame peak must parse"),
+            19
+        );
+        assert_eq!(
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_REPEAT_SHAPES_SAME_FRAME=")
+                .expect("the emitted repeat-shape count must parse"),
+            2
+        );
+        assert_eq!(
+            profile_value::<u64>(stdout, "BMC_LAYOUT_CACHE_DRAW_MISSES_AFTER_MEASURE=")
+                .expect("the emitted draw-miss count must parse"),
+            1
+        );
     }
 
     #[test]

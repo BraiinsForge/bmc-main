@@ -47,6 +47,27 @@ pub use crate::gpu::glyph_cache::Counters as GlyphCacheCounters;
 pub struct TextLayoutCounters {
     pub layout_cache_hits: u64,
     pub layout_cache_shapes: u64,
+    pub layout_cache_capacity_evictions: u64,
+    pub layout_cache_peak_entries: usize,
+    pub layout_cache_peak_frame_keys: usize,
+    pub layout_cache_repeat_shapes_same_frame: u64,
+    pub layout_cache_draw_misses_after_measure: u64,
+    pub layout_cache_single_line_hits: u64,
+    pub layout_cache_single_line_shapes: u64,
+    pub layout_cache_paragraph_hits: u64,
+    pub layout_cache_paragraph_shapes: u64,
+    pub layout_cache_single_line_entries: usize,
+    pub layout_cache_single_line_peak_entries: usize,
+    pub layout_cache_paragraph_entries: usize,
+    pub layout_cache_paragraph_peak_entries: usize,
+    pub layout_cache_resident_glyphs: usize,
+    pub layout_cache_peak_resident_glyphs: usize,
+    pub layout_cache_single_line_resident_glyphs: usize,
+    pub layout_cache_single_line_peak_resident_glyphs: usize,
+    pub layout_cache_paragraph_resident_glyphs: usize,
+    pub layout_cache_paragraph_peak_resident_glyphs: usize,
+    pub layout_cache_peak_frame_glyph_instances: usize,
+    pub layout_cache_peak_frame_distinct_glyphs: usize,
 }
 
 /// State of an asset tag's registry reservation.
