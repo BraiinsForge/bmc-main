@@ -31,8 +31,8 @@ mod registry;
 mod signals;
 mod spawner;
 
+pub use coordinator::Coordinator;
 pub(crate) use coordinator::UpgradeWidgetLifecycle;
-pub use coordinator::{Coordinator, WidgetEnv};
 pub use discovery::{PathDiscovery, WidgetDiscovery};
 pub use manager::{WidgetEvent, WidgetManager};
 pub use registry::{
@@ -41,3 +41,8 @@ pub use registry::{
 };
 pub(crate) use signals::spawn_reload_signal_task;
 pub use spawner::{SpawnError, WaylandSpawner};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WidgetEnv {
+    pub wayland_display: String,
+}

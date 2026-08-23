@@ -24,16 +24,17 @@ use std::io::{Error, ErrorKind};
 use std::path::PathBuf;
 use std::process::ExitStatus;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
 use tokio::process::Child;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use super::coordinator::WidgetEnv;
-use super::{SpawnError, WaylandSpawner, WidgetIdentity, WidgetInfo, WidgetRegistry};
+use super::{SpawnError, WaylandSpawner, WidgetEnv, WidgetIdentity, WidgetInfo, WidgetRegistry};
 use crate::compositor::WidgetGeneration;
+use crate::scene::SceneId;
 
 const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 
@@ -42,16 +43,88 @@ const DEFAULT_XDG_RUNTIME_DIR: &str = "/tmp/run";
 /// need time to run destructors so the kernel can reclaim CMA memory.
 const GRACEFUL_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// What the actor knows about an instance's process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub(crate) enum ManagerMode {
+    Running,
+    Paused,
+    ShuttingDown,
+}
+
+impl ManagerMode {
+    fn from_u8(value: u8) -> Self {
+        match value {
+            value if value == Self::Running as u8 => Self::Running,
+            value if value == Self::Paused as u8 => Self::Paused,
+            value if value == Self::ShuttingDown as u8 => Self::ShuttingDown,
+            _ => unreachable!("BUG: invalid widget manager mode"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum ChildObservation {
-    /// Running the carried build. A respawn re-reads the registry, so what a
-    /// process runs can differ from what its first spawn asked for.
-    Running(WidgetIdentity),
-    /// Still supervised, but between processes: its respawn is pending.
-    Exited,
-    /// Not supervised at all: never spawned, stopped, or given up on.
-    Missing,
+pub(crate) struct WidgetConfigKey {
+    pub(crate) scene_id: SceneId,
+    pub(crate) instance_id: Uuid,
+    pub(crate) widget_uid: Uuid,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct WidgetLaunch {
+    pub(crate) config_key: WidgetConfigKey,
+    pub(crate) env: WidgetEnv,
+    _sealed: (),
+}
+
+impl WidgetLaunch {
+    pub(crate) fn new(
+        scene_id: SceneId,
+        widget_key: Uuid,
+        widget_uid: Uuid,
+        wayland_display: String,
+    ) -> Self {
+        Self {
+            config_key: WidgetConfigKey {
+                scene_id,
+                instance_id: widget_key,
+                widget_uid,
+            },
+            env: WidgetEnv { wayland_display },
+            _sealed: (),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagedWidgetState {
+    Running,
+    Stopping,
+    PendingRestart,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagedWidgetSnapshot {
+    pub(crate) launch: WidgetLaunch,
+    pub(crate) identity: WidgetIdentity,
+    pub(crate) state: ManagedWidgetState,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ManagerSnapshot {
+    pub(crate) mode: ManagerMode,
+    pub(crate) widgets: Vec<ManagedWidgetSnapshot>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum StartError {
+    #[error("widget instance {0} is already running or stopping")]
+    Occupied(String),
+    #[error("widget manager is {0:?}")]
+    Mode(ManagerMode),
+    #[error("widget process failed to spawn; restart remains pending: {0}")]
+    PendingRestart(SpawnError),
+    #[error(transparent)]
+    Spawn(SpawnError),
 }
 
 /// Each command is awaited for its reply, so the depth is based on the number
@@ -87,6 +160,7 @@ const RESTART_HEALTHY_UPTIME: Duration = Duration::from_mins(1);
 pub struct WidgetManager {
     registry: Arc<WidgetRegistry>,
     cmd_tx: mpsc::Sender<Command>,
+    mode: Arc<AtomicU8>,
 }
 
 /// Widget lifecycle notification from the child actor.
@@ -118,21 +192,22 @@ pub enum WidgetEvent {
 
 enum Command {
     Spawn {
-        widget_uid: Uuid,
+        launch: WidgetLaunch,
         generation: WidgetGeneration,
-        env: WidgetEnv,
         reply: oneshot::Sender<SpawnReply>,
     },
     Stop {
         instance_id: String,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<TerminationHandle>,
     },
-    StopAll {
-        reply: oneshot::Sender<Vec<String>>,
+    Pause {
+        reply: oneshot::Sender<StopAllResult>,
     },
-    Observe {
-        instance_id: String,
-        reply: oneshot::Sender<ChildObservation>,
+    Shutdown {
+        reply: oneshot::Sender<StopAllResult>,
+    },
+    Resume {
+        reply: oneshot::Sender<ManagerMode>,
     },
     RetryPending {
         instance_id: String,
@@ -141,9 +216,31 @@ enum Command {
     RegistryRefreshed {
         reply: oneshot::Sender<()>,
     },
+    Snapshot {
+        reply: oneshot::Sender<ManagerSnapshot>,
+    },
 }
 
-type SpawnReply = Result<u32, SpawnError>;
+type SpawnReply = Result<u32, StartError>;
+
+#[derive(Debug, Clone)]
+pub(crate) struct TerminationHandle {
+    done: watch::Receiver<bool>,
+}
+
+impl TerminationHandle {
+    pub(crate) async fn join(mut self) {
+        if *self.done.borrow() {
+            return;
+        }
+        let _ = self.done.wait_for(|done| *done).await;
+    }
+}
+
+struct StopAllResult {
+    instance_ids: Vec<String>,
+    terminations: Vec<TerminationHandle>,
+}
 
 impl WidgetManager {
     /// Returns the handle together with its lifecycle event stream.
@@ -182,23 +279,36 @@ impl WidgetManager {
     ) -> (Self, mpsc::UnboundedReceiver<WidgetEvent>) {
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
         let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let mode = Arc::new(AtomicU8::new(ManagerMode::Running as u8));
         let actor = Actor {
             registry: registry.clone(),
             spawner,
             children: HashMap::new(),
+            mode: Arc::clone(&mode),
             next_restart_token: 0,
             events_tx,
             policy,
         };
         tokio::spawn(actor.run(cmd_rx));
 
-        (Self { registry, cmd_tx }, events_rx)
+        (
+            Self {
+                registry,
+                cmd_tx,
+                mode,
+            },
+            events_rx,
+        )
     }
 
     /// Get a shared reference to the widget registry.
     #[must_use]
     pub fn registry(&self) -> Arc<WidgetRegistry> {
         self.registry.clone()
+    }
+
+    pub(crate) fn mode(&self) -> ManagerMode {
+        ManagerMode::from_u8(self.mode.load(Ordering::Acquire))
     }
 
     /// Bring a pending crash respawn forward to the initial delay while keeping
@@ -250,16 +360,14 @@ impl WidgetManager {
     /// reported on the stream returned by [`Self::init`].
     pub(crate) async fn spawn_widget(
         &self,
-        widget_uid: Uuid,
+        launch: WidgetLaunch,
         generation: WidgetGeneration,
-        env: WidgetEnv,
     ) -> SpawnReply {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Spawn {
-                widget_uid,
+                launch,
                 generation,
-                env,
                 reply: reply_tx,
             })
             .await
@@ -269,9 +377,9 @@ impl WidgetManager {
             .expect("BUG: widget child actor dropped a spawn reply")
     }
 
-    /// Stop a widget process, returning once it has exited.
-    /// Also cancels a pending crash respawn of the instance.
-    pub async fn stop_widget(&self, instance_id: &str) {
+    /// Request a stop and return a handle that joins the current child.
+    /// A pending crash respawn is cancelled and returns an already-ready handle.
+    pub(crate) async fn stop_widget(&self, instance_id: &str) -> TerminationHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Stop {
@@ -280,38 +388,60 @@ impl WidgetManager {
             })
             .await
             .expect("BUG: widget child actor terminated");
-        // A dropped reply says the same thing as a sent one: the process is gone.
-        // The child can exit between the actor queueing the acknowledger
-        // and `run_child` selecting on it.
-        let _ = reply_rx.await;
+        reply_rx
+            .await
+            .expect("BUG: widget child actor dropped a stop reply")
     }
 
     /// Stop all widget processes and return the instance ids that were
     /// stopped, so callers can run per-instance cleanup for each of them.
-    pub async fn stop_all(&self) -> Vec<String> {
+    async fn transition_and_stop(&self, shutdown: bool) -> Vec<String> {
         let (reply_tx, reply_rx) = oneshot::channel();
+        let command = if shutdown {
+            Command::Shutdown { reply: reply_tx }
+        } else {
+            Command::Pause { reply: reply_tx }
+        };
         self.cmd_tx
-            .send(Command::StopAll { reply: reply_tx })
+            .send(command)
             .await
             .expect("BUG: widget child actor terminated");
-        reply_rx
+        let result = reply_rx
             .await
-            .expect("BUG: widget child actor dropped a stop-all reply")
+            .expect("BUG: widget child actor dropped a mode-transition reply");
+        futures::future::join_all(result.terminations.into_iter().map(TerminationHandle::join))
+            .await;
+        result.instance_ids
     }
 
-    /// Report what the actor tracks for the instance.
-    pub(crate) async fn observe_child(&self, instance_id: &str) -> ChildObservation {
+    pub(crate) async fn pause(&self) -> Vec<String> {
+        self.transition_and_stop(false).await
+    }
+
+    pub(crate) async fn shutdown(&self) -> Vec<String> {
+        self.transition_and_stop(true).await
+    }
+
+    pub(crate) async fn resume(&self) -> ManagerMode {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
-            .send(Command::Observe {
-                instance_id: instance_id.to_owned(),
-                reply: reply_tx,
-            })
+            .send(Command::Resume { reply: reply_tx })
             .await
             .expect("BUG: widget child actor terminated");
         reply_rx
             .await
-            .expect("BUG: widget child actor dropped an observe reply")
+            .expect("BUG: widget child actor dropped a resume reply")
+    }
+
+    pub(crate) async fn snapshot(&self) -> ManagerSnapshot {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::Snapshot { reply: reply_tx })
+            .await
+            .expect("BUG: widget child actor terminated");
+        reply_rx
+            .await
+            .expect("BUG: widget child actor dropped a snapshot reply")
     }
 }
 
@@ -320,6 +450,7 @@ trait WidgetSpawn: Send + 'static {
     fn spawn(
         &self,
         widget: &WidgetInfo,
+        widget_key: Uuid,
         env: &WidgetEnv,
         xdg_runtime_dir: &str,
     ) -> Result<Child, SpawnError>;
@@ -329,19 +460,17 @@ impl WidgetSpawn for WaylandSpawner {
     fn spawn(
         &self,
         widget: &WidgetInfo,
+        widget_key: Uuid,
         env: &WidgetEnv,
         xdg_runtime_dir: &str,
     ) -> Result<Child, SpawnError> {
-        WaylandSpawner::spawn(self, widget, env, xdg_runtime_dir)
+        WaylandSpawner::spawn(self, widget, widget_key, env, xdg_runtime_dir)
     }
 }
 
-/// A widget instance as the actor tracks it:
-/// either a live process, or a crashed one whose respawn timer runs.
-/// An external stop removes the entry entirely,
-/// which is what distinguishes "stopped" from "crashed".
 enum WidgetState {
     Running(RunningWidget),
+    Stopping(StoppingWidget),
     PendingRestart(PendingRestart),
 }
 
@@ -355,14 +484,10 @@ struct RunningWidget {
     /// The build this process was launched from, which the registry may since
     /// have replaced.
     identity: WidgetIdentity,
-    /// Requests a graceful stop;
-    /// carries the reply sender acknowledged once the process is gone.
-    stop_tx: oneshot::Sender<oneshot::Sender<()>>,
-    widget_uid: Uuid,
-    /// Kept for a crash respawn. `wayland_display` cannot be re-derived —
-    /// the manager holds no compositor reference by design — so a compositor
-    /// restart (`ListeningSocket::bind_auto`) strands every env cached here.
-    env: WidgetEnv,
+    stop_tx: oneshot::Sender<()>,
+    done_tx: watch::Sender<bool>,
+    termination: TerminationHandle,
+    launch: WidgetLaunch,
     spawned_at: Instant,
     /// Delay before the respawn if this process crashes.
     backoff: Duration,
@@ -370,24 +495,30 @@ struct RunningWidget {
 
 /// What a respawn needs to re-exec an instance, independent of when it fires.
 struct Respawn {
-    instance_id: String,
-    widget_uid: Uuid,
+    launch: WidgetLaunch,
     generation: WidgetGeneration,
-    env: WidgetEnv,
+    identity: WidgetIdentity,
 }
 
 /// A crashed instance waiting out its respawn delay.
 struct PendingRestart {
-    widget_uid: Uuid,
+    launch: WidgetLaunch,
     generation: WidgetGeneration,
-    env: WidgetEnv,
+    identity: WidgetIdentity,
     /// Delay before the respawn after this one, should it crash again.
     backoff: Duration,
     /// Matches the queued [`Internal::RestartDue`] to this crash;
-    /// a stop or an external re-spawn replaces the entry,
+    /// a stop or an explicit start replaces the entry,
     /// orphaning the token and cancelling the respawn.
     token: u64,
     timer: tokio::task::JoinHandle<()>,
+}
+
+struct StoppingWidget {
+    launch: WidgetLaunch,
+    identity: WidgetIdentity,
+    done_tx: watch::Sender<bool>,
+    termination: TerminationHandle,
 }
 
 /// Stop a cancelled respawn's timer from sleeping out a delay
@@ -403,11 +534,7 @@ impl Drop for PendingRestart {
 }
 
 enum Internal {
-    /// A [`run_child`] task reports its process exited on its own
-    /// (externally stopped children are acknowledged through the stop
-    /// reply instead).
     Exit(ChildExit),
-    /// A respawn timer elapsed.
     RestartDue { instance_id: String, token: u64 },
 }
 
@@ -455,11 +582,12 @@ fn restart_delay(uptime: Duration, backoff: Duration, policy: &RestartPolicy) ->
     }
 }
 
-/// The actor task: sole owner of the running widget set.
+/// The actor task: sole owner of every process lifecycle state.
 struct Actor {
     registry: Arc<WidgetRegistry>,
     spawner: Box<dyn WidgetSpawn>,
     children: HashMap<String, WidgetState>,
+    mode: Arc<AtomicU8>,
     next_restart_token: u64,
     events_tx: mpsc::UnboundedSender<WidgetEvent>,
     policy: RestartPolicy,
@@ -489,24 +617,27 @@ impl Actor {
     fn handle_command(&mut self, cmd: Command, internal_tx: &mpsc::UnboundedSender<Internal>) {
         match cmd {
             Command::Spawn {
-                widget_uid,
+                launch,
                 generation,
-                env,
                 reply,
             } => {
-                let initial = self.policy.initial;
-                let _ = reply.send(self.spawn_process(
-                    widget_uid,
-                    generation,
-                    env,
-                    initial,
-                    internal_tx,
-                ));
+                let _ = reply.send(self.start(launch, generation, internal_tx));
             }
             Command::Stop { instance_id, reply } => self.stop(&instance_id, reply),
-            Command::StopAll { reply } => self.stop_all(reply),
-            Command::Observe { instance_id, reply } => {
-                let _ = reply.send(self.observe(&instance_id));
+            Command::Pause { reply } => {
+                let _ = reply.send(self.transition_and_stop(ManagerMode::Paused));
+            }
+            Command::Shutdown { reply } => {
+                let _ = reply.send(self.transition_and_stop(ManagerMode::ShuttingDown));
+            }
+            Command::Resume { reply } => {
+                let mode = if self.current_mode() == ManagerMode::ShuttingDown {
+                    ManagerMode::ShuttingDown
+                } else {
+                    self.publish_mode(ManagerMode::Running);
+                    ManagerMode::Running
+                };
+                let _ = reply.send(mode);
             }
             Command::RetryPending { instance_id, reply } => {
                 self.retry_pending(&instance_id, internal_tx);
@@ -516,52 +647,118 @@ impl Actor {
                 self.reset_restart_backoff(internal_tx);
                 let _ = reply.send(());
             }
+            Command::Snapshot { reply } => {
+                let _ = reply.send(self.snapshot());
+            }
         }
     }
 
-    fn observe(&self, instance_id: &str) -> ChildObservation {
-        match self.children.get(instance_id) {
+    fn current_mode(&self) -> ManagerMode {
+        ManagerMode::from_u8(self.mode.load(Ordering::Acquire))
+    }
+
+    fn publish_mode(&self, mode: ManagerMode) {
+        self.mode.store(mode as u8, Ordering::Release);
+    }
+
+    fn start(
+        &mut self,
+        launch: WidgetLaunch,
+        generation: WidgetGeneration,
+        internal_tx: &mpsc::UnboundedSender<Internal>,
+    ) -> SpawnReply {
+        if self.current_mode() != ManagerMode::Running {
+            return Err(StartError::Mode(self.current_mode()));
+        }
+
+        let instance_id = launch.config_key.instance_id.to_string();
+        let pending = match self.children.remove(&instance_id) {
+            Some(WidgetState::PendingRestart(pending)) => Some(pending),
             Some(WidgetState::Running(widget)) => {
-                ChildObservation::Running(widget.identity.clone())
+                self.children
+                    .insert(instance_id.clone(), WidgetState::Running(widget));
+                return Err(StartError::Occupied(instance_id));
             }
-            Some(WidgetState::PendingRestart(_)) => ChildObservation::Exited,
-            None => ChildObservation::Missing,
+            Some(WidgetState::Stopping(widget)) => {
+                self.children
+                    .insert(instance_id.clone(), WidgetState::Stopping(widget));
+                return Err(StartError::Occupied(instance_id));
+            }
+            None => None,
+        };
+        let backoff = pending
+            .as_ref()
+            .map_or(self.policy.initial, |pending| pending.backoff);
+
+        match self.spawn_process(launch.clone(), generation, backoff, internal_tx) {
+            Ok(pid) => Ok(pid),
+            Err((error, Some(identity))) => {
+                self.schedule_restart(
+                    Respawn {
+                        launch,
+                        generation,
+                        identity,
+                    },
+                    backoff,
+                    next_backoff(backoff, self.policy.max),
+                    internal_tx,
+                );
+                let StartError::Spawn(error) = error else {
+                    unreachable!("BUG: spawning a process only returns spawn failures")
+                };
+                Err(StartError::PendingRestart(error))
+            }
+            Err((error, None)) => Err(error),
         }
     }
 
     fn spawn_process(
         &mut self,
-        widget_uid: Uuid,
+        launch: WidgetLaunch,
         generation: WidgetGeneration,
-        env: WidgetEnv,
         backoff: Duration,
         internal_tx: &mpsc::UnboundedSender<Internal>,
-    ) -> SpawnReply {
+    ) -> Result<u32, (StartError, Option<WidgetIdentity>)> {
+        let widget_uid = launch.config_key.widget_uid;
         let widget = self.registry.get(&widget_uid).ok_or_else(|| {
-            SpawnError::SpawnProcess(Error::new(
-                ErrorKind::NotFound,
-                format!("widget not found: {widget_uid}"),
-            ))
+            (
+                StartError::Spawn(SpawnError::SpawnProcess(Error::new(
+                    ErrorKind::NotFound,
+                    format!("widget not found: {widget_uid}"),
+                ))),
+                None,
+            )
         })?;
+        let identity = widget.identity.clone();
+        let instance_id = launch.config_key.instance_id.to_string();
 
         info!(
             "spawning widget '{}' instance {}",
-            widget.manifest.name, env.instance_id
+            widget.manifest.name, instance_id
         );
 
         let xdg_runtime_dir =
             std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| DEFAULT_XDG_RUNTIME_DIR.to_owned());
 
-        let mut child = self.spawner.spawn(&widget, &env, &xdg_runtime_dir)?;
+        let mut child = self
+            .spawner
+            .spawn(
+                &widget,
+                launch.config_key.instance_id,
+                &launch.env,
+                &xdg_runtime_dir,
+            )
+            .map_err(|error| (StartError::Spawn(error), Some(identity.clone())))?;
         let pid = child.id().ok_or_else(|| {
-            SpawnError::SpawnProcess(Error::other("spawned child has no pid (already exited?)"))
+            (
+                StartError::Spawn(SpawnError::SpawnProcess(Error::other(
+                    "spawned child has no pid (already exited?)",
+                ))),
+                Some(identity.clone()),
+            )
         })?;
 
-        let short_instance_id = env
-            .instance_id
-            .get(..8)
-            .unwrap_or(&env.instance_id)
-            .to_owned();
+        let short_instance_id = instance_id.get(..8).unwrap_or(&instance_id).to_owned();
         if let Some(stdout) = child.stdout.take() {
             let name = widget.manifest.name.clone();
             let instance = short_instance_id.clone();
@@ -578,31 +775,18 @@ impl Actor {
         }
 
         let (stop_tx, stop_rx) = oneshot::channel();
-        let instance_id = env.instance_id.clone();
-        // Re-spawning over a live instance must not leave the old process
-        // to kill_on_drop: SIGKILL skips the destructors that free GEM/DMA-BUF,
-        // leaking CMA.
-        // Dropping the acknowledger keeps the actor unblocked
-        // while the old run_child task runs the full SIGTERM -> SIGKILL stop.
-        // Replacing a PendingRestart entry needs none of this —
-        // orphaning its token is how an external re-spawn cancels a queued one.
-        if let Some(WidgetState::Running(previous)) = self.children.remove(&instance_id) {
-            warn!(
-                "re-spawning live widget {} (pid={}); stopping it first",
-                instance_id, previous.pid
-            );
-            let (done_tx, _done_rx) = oneshot::channel();
-            let _ = previous.stop_tx.send(done_tx);
-        }
+        let (done_tx, done) = watch::channel(false);
+        let termination = TerminationHandle { done };
         self.children.insert(
             instance_id.clone(),
             WidgetState::Running(RunningWidget {
                 pid,
                 generation,
-                identity: widget.identity,
+                identity,
                 stop_tx,
-                widget_uid,
-                env,
+                done_tx,
+                termination,
+                launch,
                 spawned_at: Instant::now(),
                 backoff,
             }),
@@ -620,71 +804,89 @@ impl Actor {
         Ok(pid)
     }
 
-    fn stop(&mut self, instance_id: &str, reply: oneshot::Sender<()>) {
+    fn completed_termination() -> TerminationHandle {
+        let (_done_tx, done) = watch::channel(true);
+        TerminationHandle { done }
+    }
+
+    fn stop(&mut self, instance_id: &str, reply: oneshot::Sender<TerminationHandle>) {
         match self.children.remove(instance_id) {
             Some(WidgetState::Running(widget)) => {
-                if let Err(reply) = widget.stop_tx.send(reply) {
-                    // The child task is already gone (its exit notification
-                    // may still be queued); nothing left to stop.
-                    let _ = reply.send(());
-                }
+                let termination = self.begin_stop(instance_id.to_owned(), widget);
+                let _ = reply.send(termination);
+            }
+            Some(WidgetState::Stopping(widget)) => {
+                let termination = widget.termination.clone();
+                self.children
+                    .insert(instance_id.to_owned(), WidgetState::Stopping(widget));
+                let _ = reply.send(termination);
             }
             Some(WidgetState::PendingRestart(_)) => {
-                // Removing the entry orphans the restart token,
-                // cancelling the queued respawn.
-                let _ = reply.send(());
+                let _ = reply.send(Self::completed_termination());
             }
             None => {
                 warn!("attempted to stop unknown widget instance {}", instance_id);
-                let _ = reply.send(());
+                let _ = reply.send(Self::completed_termination());
             }
         }
     }
 
-    fn stop_all(&mut self, reply: oneshot::Sender<Vec<String>>) {
+    fn begin_stop(&mut self, instance_id: String, widget: RunningWidget) -> TerminationHandle {
+        let termination = widget.termination.clone();
+        let _ = widget.stop_tx.send(());
+        self.children.insert(
+            instance_id,
+            WidgetState::Stopping(StoppingWidget {
+                launch: widget.launch,
+                identity: widget.identity,
+                done_tx: widget.done_tx,
+                termination: termination.clone(),
+            }),
+        );
+        termination
+    }
+
+    fn transition_and_stop(&mut self, requested: ManagerMode) -> StopAllResult {
+        let mode = if self.current_mode() == ManagerMode::ShuttingDown {
+            ManagerMode::ShuttingDown
+        } else {
+            requested
+        };
+        self.publish_mode(mode);
+
         let mut ids = Vec::with_capacity(self.children.len());
-        let mut done_rxs = Vec::with_capacity(self.children.len());
-        for (id, state) in self.children.drain() {
+        let mut terminations = Vec::with_capacity(self.children.len());
+        let children = self.children.drain().collect::<Vec<_>>();
+        for (id, state) in children {
             match state {
                 WidgetState::Running(widget) => {
-                    let (done_tx, done_rx) = oneshot::channel();
-                    if widget.stop_tx.send(done_tx).is_ok() {
-                        done_rxs.push(done_rx);
-                    }
+                    let termination = self.begin_stop(id.clone(), widget);
+                    terminations.push(termination);
+                }
+                WidgetState::Stopping(widget) => {
+                    terminations.push(widget.termination.clone());
+                    self.children
+                        .insert(id.clone(), WidgetState::Stopping(widget));
                 }
                 WidgetState::PendingRestart(_) => {}
             }
             ids.push(id);
         }
-        // Await the acknowledgements outside the actor so a slow widget
-        // (up to the SIGKILL timeout) cannot stall other commands.
-        tokio::spawn(async move {
-            futures::future::join_all(done_rxs).await;
-            info!("all widgets stopped");
-            let _ = reply.send(ids);
-        });
-    }
-
-    /// Take the entry only if it is the live process `pid` belongs to.
-    /// A stopped instance, a pending restart, or an already-replaced spawn
-    /// leaves the map untouched — which is what makes a stale exit a no-op.
-    fn take_running(&mut self, instance_id: &str, pid: u32) -> Option<RunningWidget> {
-        match self.children.remove(instance_id)? {
-            WidgetState::Running(widget) if widget.pid == pid => Some(widget),
-            other @ (WidgetState::Running(_) | WidgetState::PendingRestart(_)) => {
-                self.children.insert(instance_id.to_owned(), other);
-                None
-            }
+        StopAllResult {
+            instance_ids: ids,
+            terminations,
         }
     }
 
     /// Take the entry only if it is still waiting out `token`'s respawn delay.
-    /// A stop or an external re-spawn replaces the entry and orphans the token,
+    /// A stop or an explicit start replaces the entry and orphans the token,
     /// so a mismatch means the timer lost its race and must do nothing.
     fn take_pending_restart(&mut self, instance_id: &str, token: u64) -> Option<PendingRestart> {
         match self.children.remove(instance_id)? {
             WidgetState::PendingRestart(pending) if pending.token == token => Some(pending),
-            other @ (WidgetState::Running(_) | WidgetState::PendingRestart(_)) => {
+            other @ (WidgetState::Running(_)
+            | WidgetState::Stopping(_)
+            | WidgetState::PendingRestart(_)) => {
                 self.children.insert(instance_id.to_owned(), other);
                 None
             }
@@ -692,17 +894,34 @@ impl Actor {
     }
 
     fn handle_exit(&mut self, exit: ChildExit, internal_tx: &mpsc::UnboundedSender<Internal>) {
-        // Only a live entry with a matching pid counts as a crash;
-        // anything else is a stale exit of an already replaced spawn.
-        let Some(widget) = self.take_running(&exit.instance_id, exit.pid) else {
+        let Some(state) = self.children.remove(&exit.instance_id) else {
             return;
         };
+        let widget = match state {
+            WidgetState::Stopping(widget) => {
+                let _ = widget.done_tx.send(true);
+                return;
+            }
+            WidgetState::Running(widget) => widget,
+            pending @ WidgetState::PendingRestart(_) => {
+                self.children.insert(exit.instance_id, pending);
+                return;
+            }
+        };
+        assert_eq!(
+            widget.pid, exit.pid,
+            "BUG: current running child must be the only child able to exit"
+        );
 
         let _ = self.events_tx.send(WidgetEvent::Exited {
             instance_id: exit.instance_id.clone(),
             generation: widget.generation,
             pid: exit.pid,
         });
+
+        if self.current_mode() != ManagerMode::Running {
+            return;
+        }
 
         let delay = restart_delay(widget.spawned_at.elapsed(), widget.backoff, &self.policy);
         let cause = exit
@@ -717,10 +936,9 @@ impl Actor {
         );
         self.schedule_restart(
             Respawn {
-                instance_id: exit.instance_id,
-                widget_uid: widget.widget_uid,
+                launch: widget.launch,
                 generation: widget.generation,
-                env: widget.env,
+                identity: widget.identity,
             },
             delay,
             next_backoff(delay, self.policy.max),
@@ -735,12 +953,10 @@ impl Actor {
         next_delay: Duration,
         internal_tx: &mpsc::UnboundedSender<Internal>,
     ) {
-        let Respawn {
-            instance_id,
-            widget_uid,
-            generation,
-            env,
-        } = respawn;
+        if self.current_mode() != ManagerMode::Running {
+            return;
+        }
+        let instance_id = respawn.launch.config_key.instance_id.to_string();
         let token = self.next_restart_token;
         self.next_restart_token += 1;
         let timer = tokio::spawn({
@@ -755,9 +971,9 @@ impl Actor {
         self.children.insert(
             instance_id,
             WidgetState::PendingRestart(PendingRestart {
-                widget_uid,
-                generation,
-                env,
+                launch: respawn.launch,
+                generation: respawn.generation,
+                identity: respawn.identity,
                 backoff: next_delay,
                 token,
                 timer,
@@ -773,12 +989,15 @@ impl Actor {
     /// Forgiving the ladder too would let repeated unrelated applies
     /// grind a real crash-looper back down to a 1 s tempo.
     fn reset_restart_backoff(&mut self, internal_tx: &mpsc::UnboundedSender<Internal>) {
+        if self.current_mode() != ManagerMode::Running {
+            return;
+        }
         let pending: Vec<String> = self
             .children
             .iter()
             .filter_map(|(instance_id, state)| match state {
                 WidgetState::PendingRestart(_) => Some(instance_id.clone()),
-                WidgetState::Running(_) => None,
+                WidgetState::Running(_) | WidgetState::Stopping(_) => None,
             })
             .collect();
 
@@ -805,10 +1024,9 @@ impl Actor {
             return;
         };
         let respawn = Respawn {
-            instance_id: instance_id.to_owned(),
-            widget_uid: pending.widget_uid,
+            launch: pending.launch.clone(),
             generation: pending.generation,
-            env: pending.env.clone(),
+            identity: pending.identity.clone(),
         };
         let earned = pending.backoff;
         self.schedule_restart(respawn, self.policy.initial, earned, internal_tx);
@@ -820,16 +1038,24 @@ impl Actor {
         token: u64,
         internal_tx: &mpsc::UnboundedSender<Internal>,
     ) {
+        if self.current_mode() != ManagerMode::Running {
+            let _ = self.take_pending_restart(instance_id, token);
+            return;
+        }
         // A mismatched token means the instance was stopped or replaced
         // while the timer ran; the respawn is cancelled.
         let Some(pending) = self.take_pending_restart(instance_id, token) else {
             return;
         };
 
-        if self.registry.get(&pending.widget_uid).is_none() {
+        if self
+            .registry
+            .get(&pending.launch.config_key.widget_uid)
+            .is_none()
+        {
             warn!(
                 "widget type {} has left the registry; not respawning instance {}",
-                pending.widget_uid, instance_id
+                pending.launch.config_key.widget_uid, instance_id
             );
             let _ = self.events_tx.send(WidgetEvent::Abandoned {
                 instance_id: instance_id.to_owned(),
@@ -839,9 +1065,8 @@ impl Actor {
         }
 
         match self.spawn_process(
-            pending.widget_uid,
+            pending.launch.clone(),
             pending.generation,
-            pending.env.clone(),
             pending.backoff,
             internal_tx,
         ) {
@@ -852,23 +1077,56 @@ impl Actor {
                     pid,
                 });
             }
-            Err(e) => {
+            Err((e, identity)) => {
                 warn!(
                     "failed to respawn widget {}: {}; retrying in {:?}",
                     instance_id, e, pending.backoff
                 );
                 self.schedule_restart(
                     Respawn {
-                        instance_id: instance_id.to_owned(),
-                        widget_uid: pending.widget_uid,
+                        launch: pending.launch.clone(),
                         generation: pending.generation,
-                        env: pending.env.clone(),
+                        identity: identity.unwrap_or_else(|| pending.identity.clone()),
                     },
                     pending.backoff,
                     next_backoff(pending.backoff, self.policy.max),
                     internal_tx,
                 );
             }
+        }
+    }
+
+    fn snapshot(&self) -> ManagerSnapshot {
+        let mut widgets = self
+            .children
+            .values()
+            .map(|state| match state {
+                WidgetState::Running(widget) => ManagedWidgetSnapshot {
+                    launch: widget.launch.clone(),
+                    identity: widget.identity.clone(),
+                    state: ManagedWidgetState::Running,
+                },
+                WidgetState::PendingRestart(widget) => ManagedWidgetSnapshot {
+                    launch: widget.launch.clone(),
+                    identity: widget.identity.clone(),
+                    state: ManagedWidgetState::PendingRestart,
+                },
+                WidgetState::Stopping(widget) => ManagedWidgetSnapshot {
+                    launch: widget.launch.clone(),
+                    identity: widget.identity.clone(),
+                    state: ManagedWidgetState::Stopping,
+                },
+            })
+            .collect::<Vec<_>>();
+        widgets.sort_by(|left, right| {
+            left.launch
+                .config_key
+                .instance_id
+                .cmp(&right.launch.config_key.instance_id)
+        });
+        ManagerSnapshot {
+            mode: self.current_mode(),
+            widgets,
         }
     }
 }
@@ -883,14 +1141,14 @@ async fn run_child(
     instance_id: String,
     pid: u32,
     mut child: Child,
-    mut stop_rx: oneshot::Receiver<oneshot::Sender<()>>,
+    mut stop_rx: oneshot::Receiver<()>,
     internal_tx: mpsc::UnboundedSender<Internal>,
 ) {
-    let mut stop_reply = None;
+    let mut stopped = false;
     let wait_result: Option<std::io::Result<ExitStatus>> = tokio::select! {
         status = child.wait() => Some(status),
         stop = &mut stop_rx => {
-            stop_reply = stop.ok();
+            stopped = stop.is_ok();
             None
         }
     };
@@ -917,9 +1175,13 @@ async fn run_child(
             }));
         }
         None => {
-            if let Some(reply) = stop_reply {
-                graceful_stop(instance_id, child).await;
-                let _ = reply.send(());
+            if stopped {
+                graceful_stop(instance_id.clone(), child).await;
+                let _ = internal_tx.send(Internal::Exit(ChildExit {
+                    instance_id,
+                    pid,
+                    status: None,
+                }));
             }
         }
     }
@@ -974,8 +1236,24 @@ mod tests {
     use std::os::unix::fs::PermissionsExt;
     use std::path::Path;
     use std::time::Instant;
+    use std::{
+        collections::hash_map::DefaultHasher,
+        hash::{Hash, Hasher},
+    };
 
     const GEN: WidgetGeneration = WidgetGeneration(1);
+
+    fn widget_key(label: &str) -> Uuid {
+        let mut first = DefaultHasher::new();
+        label.hash(&mut first);
+        let mut second = DefaultHasher::new();
+        (label, "widget-instance").hash(&mut second);
+        Uuid::from_u64_pair(first.finish(), second.finish())
+    }
+
+    fn instance_id(label: &str) -> String {
+        widget_key(label).to_string()
+    }
 
     fn write_widget(root: &std::path::Path, body: &str) {
         std::fs::create_dir_all(root).expect("BUG: create widget root");
@@ -991,15 +1269,9 @@ mod tests {
     }
 
     async fn spawn(manager: &WidgetManager, instance_id: &str) -> u32 {
+        let uid = Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: widget uid");
         manager
-            .spawn_widget(
-                Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: widget uid"),
-                GEN,
-                WidgetEnv {
-                    instance_id: instance_id.to_owned(),
-                    wayland_display: "wayland-test".to_owned(),
-                },
-            )
+            .spawn_widget(launch(uid, instance_id), GEN)
             .await
             .expect("BUG: spawn widget")
     }
@@ -1007,36 +1279,58 @@ mod tests {
     async fn wait_for_pending_restart(manager: &WidgetManager, instance_id: &str) {
         let deadline = Instant::now() + EVENT_TIMEOUT;
         loop {
-            let observation = manager.observe_child(instance_id).await;
-            if observation == ChildObservation::Exited {
+            let snapshot = snapshot_widget(manager, instance_id).await;
+            if matches!(
+                snapshot,
+                Some(ManagedWidgetSnapshot {
+                    state: ManagedWidgetState::PendingRestart,
+                    ..
+                })
+            ) {
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "crashed child never reached a pending restart: {observation:?}"
+                "crashed child never reached a pending restart: {snapshot:?}"
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
     }
 
+    async fn snapshot_widget(
+        manager: &WidgetManager,
+        instance_id: &str,
+    ) -> Option<ManagedWidgetSnapshot> {
+        manager
+            .snapshot()
+            .await
+            .widgets
+            .into_iter()
+            .find(|widget| widget.launch.config_key.instance_id == widget_key(instance_id))
+    }
+
     #[tokio::test]
-    async fn child_observation_distinguishes_running_exited_and_missing() {
+    async fn snapshots_distinguish_running_pending_and_missing() {
         let temp = tempfile::TempDir::new().expect("BUG: tempdir");
         let running_dir = temp.path().join("running");
         write_widget(&running_dir, "#!/bin/sh\nwhile :; do sleep 1; done\n");
         let (running_manager, _events) =
             WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
         let _ = spawn(&running_manager, "running").await;
-        let observation = running_manager.observe_child("running").await;
+        let observation = snapshot_widget(&running_manager, "running").await;
         assert!(
-            matches!(&observation, ChildObservation::Running(identity)
+            matches!(&observation, Some(ManagedWidgetSnapshot { identity, state: ManagedWidgetState::Running, .. })
                 if identity.canonical_dir == running_dir),
             "a live child must report the build it was spawned from, got {observation:?}"
         );
-        running_manager.stop_widget("running").await;
+        running_manager
+            .stop_widget(&instance_id("running"))
+            .await
+            .join()
+            .await;
         assert_eq!(
-            running_manager.observe_child("running").await,
-            ChildObservation::Missing,
+            snapshot_widget(&running_manager, "running").await,
+            None,
             "an external stop ends supervision, so nothing is tracked"
         );
 
@@ -1047,6 +1341,41 @@ mod tests {
             WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
         let _ = spawn(&exited_manager, "exited").await;
         wait_for_pending_restart(&exited_manager, "exited").await;
+    }
+
+    #[tokio::test]
+    async fn widget_process_receives_its_stable_key() {
+        let temp = tempfile::TempDir::new().expect("BUG: tempdir");
+        let output = temp.path().join("widget-key");
+        let widget_dir = temp.path().join("widget");
+        write_widget(
+            &widget_dir,
+            &format!(
+                "#!/bin/sh\nprintf '%s' \"$BMC_WIDGET_KEY\" > {}\n",
+                output.display()
+            ),
+        );
+        let (manager, _events) = WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
+        let widget_uid =
+            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").expect("BUG: widget uid");
+        let widget_key = Uuid::new_v4();
+        let expected_key = widget_key.to_string();
+        let widget_launch = WidgetLaunch::new(
+            SceneId::generate(),
+            widget_key,
+            widget_uid,
+            "wayland-test".to_owned(),
+        );
+
+        manager
+            .spawn_widget(widget_launch, GEN)
+            .await
+            .expect("BUG: test spawn failed");
+        assert!(
+            await_file_content(&output, &expected_key).await,
+            "the widget must record its complete launch key"
+        );
+        manager.stop_widget(&expected_key).await.join().await;
     }
 
     const EVENT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -1109,10 +1438,39 @@ mod tests {
         launched: LaunchLog,
     }
 
+    struct FailOnceSpawner {
+        fail_next: std::sync::atomic::AtomicBool,
+    }
+
+    impl WidgetSpawn for FailOnceSpawner {
+        fn spawn(
+            &self,
+            _widget: &WidgetInfo,
+            _widget_key: Uuid,
+            _env: &WidgetEnv,
+            _xdg_runtime_dir: &str,
+        ) -> Result<Child, SpawnError> {
+            if self.fail_next.swap(false, Ordering::SeqCst) {
+                return Err(SpawnError::SpawnProcess(Error::other(
+                    "simulated transient spawn failure",
+                )));
+            }
+            let mut command = tokio::process::Command::new("sleep");
+            command
+                .arg("30")
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .kill_on_drop(true);
+            command.spawn().map_err(SpawnError::SpawnProcess)
+        }
+    }
+
     impl WidgetSpawn for FakeSpawner {
         fn spawn(
             &self,
             widget: &WidgetInfo,
+            _widget_key: Uuid,
             _env: &WidgetEnv,
             _xdg_runtime_dir: &str,
         ) -> Result<Child, SpawnError> {
@@ -1191,17 +1549,20 @@ mod tests {
                 launched: LaunchLog::default(),
             }),
             children: HashMap::new(),
+            mode: Arc::new(AtomicU8::new(ManagerMode::Running as u8)),
             next_restart_token: 0,
             events_tx,
             policy: RestartPolicy::default(),
         }
     }
 
-    fn env(instance_id: &str) -> WidgetEnv {
-        WidgetEnv {
-            instance_id: instance_id.to_owned(),
-            wayland_display: "wayland-test".to_owned(),
-        }
+    fn launch(widget_uid: Uuid, instance_id: &str) -> WidgetLaunch {
+        WidgetLaunch::new(
+            SceneId::generate(),
+            widget_key(instance_id),
+            widget_uid,
+            "wayland-test".to_owned(),
+        )
     }
 
     /// Wait for a marker file the fake widget writes, returning whether it
@@ -1213,6 +1574,19 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
         path.exists()
+    }
+
+    async fn await_file_content(path: &Path, expected: &str) -> bool {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        loop {
+            if std::fs::read_to_string(path).is_ok_and(|content| content == expected) {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
     }
 
     async fn next_event(events: &mut mpsc::UnboundedReceiver<WidgetEvent>) -> WidgetEvent {
@@ -1265,7 +1639,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with_policy(uid, "true", &[], fast_policy());
         manager
-            .spawn_widget(uid, GEN, env("flapping"))
+            .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1303,7 +1677,7 @@ mod tests {
         };
         let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, GEN, env("flapping"))
+            .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1366,7 +1740,7 @@ mod tests {
         };
         let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, GEN, env("flapping"))
+            .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1433,7 +1807,7 @@ mod tests {
         };
         let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, GEN, env("flapping"))
+            .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1456,7 +1830,7 @@ mod tests {
         ));
 
         let retried_at = Instant::now();
-        manager.retry_pending("flapping").await;
+        manager.retry_pending(&instance_id("flapping")).await;
         assert!(
             matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
             "the retry must respawn the instance"
@@ -1490,24 +1864,31 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "sleep", &["30"]);
         manager
-            .spawn_widget(uid, GEN, env("healthy"))
+            .spawn_widget(launch(uid, "healthy"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        manager.retry_pending("healthy").await;
+        manager.retry_pending(&instance_id("healthy")).await;
         assert!(
             matches!(
-                manager.observe_child("healthy").await,
-                ChildObservation::Running(_)
+                snapshot_widget(&manager, "healthy").await,
+                Some(ManagedWidgetSnapshot {
+                    state: ManagedWidgetState::Running,
+                    ..
+                })
             ),
             "a running instance must be left alone"
         );
 
-        manager.stop_widget("healthy").await;
-        manager.retry_pending("healthy").await;
+        manager
+            .stop_widget(&instance_id("healthy"))
+            .await
+            .join()
+            .await;
+        manager.retry_pending(&instance_id("healthy")).await;
         assert_eq!(
-            manager.observe_child("healthy").await,
-            ChildObservation::Missing,
+            snapshot_widget(&manager, "healthy").await,
+            None,
             "a stopped instance must stay stopped"
         );
         assert_no_event(&mut events, "neither retry may emit an event");
@@ -1517,7 +1898,7 @@ mod tests {
     async fn spawn_unknown_widget_fails() {
         let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
         let result = manager
-            .spawn_widget(Uuid::new_v4(), GEN, env("test-instance"))
+            .spawn_widget(launch(Uuid::new_v4(), "test-instance"), GEN)
             .await;
         assert!(result.is_err(), "spawn must fail for an unknown widget");
     }
@@ -1525,7 +1906,7 @@ mod tests {
     #[tokio::test]
     async fn stop_unknown_widget_returns() {
         let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
-        manager.stop_widget("no-such-instance").await;
+        manager.stop_widget("no-such-instance").await.join().await;
     }
 
     /// The event stream closing is the only signal a listener has to stop, so
@@ -1547,9 +1928,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn stop_all_without_widgets_returns_no_ids() {
+    async fn pause_without_widgets_returns_no_ids() {
         let (manager, _events) = WidgetManager::init(Vec::new(), false).await;
-        assert!(manager.stop_all().await.is_empty());
+        assert!(manager.pause().await.is_empty());
     }
 
     #[tokio::test]
@@ -1557,17 +1938,17 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         let pid = manager
-            .spawn_widget(uid, GEN, env("crashy"))
+            .spawn_widget(launch(uid, "crashy"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
         match next_event(&mut events).await {
             WidgetEvent::Exited {
-                instance_id,
+                instance_id: event_instance_id,
                 generation,
                 pid: exited_pid,
             } => {
-                assert_eq!(instance_id, "crashy");
+                assert_eq!(event_instance_id, instance_id("crashy"));
                 assert_eq!(exited_pid, pid, "the exit must report the crashed pid");
                 assert_eq!(generation, GEN, "the exit must report the spawn's stamp");
             }
@@ -1578,11 +1959,11 @@ mod tests {
 
         match next_event(&mut events).await {
             WidgetEvent::Respawned {
-                instance_id,
+                instance_id: event_instance_id,
                 generation,
                 pid: new_pid,
             } => {
-                assert_eq!(instance_id, "crashy");
+                assert_eq!(event_instance_id, instance_id("crashy"));
                 assert_ne!(new_pid, pid, "the respawn must carry the new pid");
                 assert_eq!(
                     generation, GEN,
@@ -1613,7 +1994,7 @@ mod tests {
         };
         let (manager, mut events, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
-            .spawn_widget(uid, GEN, env("upgraded"))
+            .spawn_widget(launch(uid, "upgraded"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1630,9 +2011,9 @@ mod tests {
             matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
             "the widget must come back on the replaced build"
         );
-        let observation = manager.observe_child("upgraded").await;
+        let observation = snapshot_widget(&manager, "upgraded").await;
         assert!(
-            matches!(&observation, ChildObservation::Running(identity)
+            matches!(&observation, Some(ManagedWidgetSnapshot { identity, state: ManagedWidgetState::Running, .. })
                 if identity.canonical_dir == Path::new("/test/widgets/test-widget-v2")),
             "the respawn must report the build it was launched from, got {observation:?}"
         );
@@ -1655,7 +2036,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         manager
-            .spawn_widget(uid, GEN, env("skipped"))
+            .spawn_widget(launch(uid, "skipped"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1667,10 +2048,10 @@ mod tests {
 
         match next_event(&mut events).await {
             WidgetEvent::Abandoned {
-                instance_id,
+                instance_id: event_instance_id,
                 generation,
             } => {
-                assert_eq!(instance_id, "skipped");
+                assert_eq!(event_instance_id, instance_id("skipped"));
                 assert_eq!(generation, GEN, "the abandon must name the registration");
             }
             WidgetEvent::Exited { .. } | WidgetEvent::Respawned { .. } => {
@@ -1688,10 +2069,9 @@ mod tests {
         let mut actor = bare_actor(uid);
         let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
         let respawn = || Respawn {
-            instance_id: "flapping".to_owned(),
-            widget_uid: uid,
+            launch: launch(uid, "flapping"),
             generation: WidgetGeneration(1),
-            env: env("flapping"),
+            identity: test_widget_info(uid).identity,
         };
 
         let about_to_fire = Duration::from_millis(10);
@@ -1712,15 +2092,19 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "sleep", &["30"]);
         manager
-            .spawn_widget(uid, GEN, env("stoppable"))
+            .spawn_widget(launch(uid, "stoppable"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        manager.stop_widget("stoppable").await;
+        manager
+            .stop_widget(&instance_id("stoppable"))
+            .await
+            .join()
+            .await;
 
         assert_eq!(
-            manager.observe_child("stoppable").await,
-            ChildObservation::Missing,
+            snapshot_widget(&manager, "stoppable").await,
+            None,
             "an external stop must end supervision, leaving nothing to respawn"
         );
         assert_no_event(
@@ -1734,7 +2118,7 @@ mod tests {
         let uid = Uuid::new_v4();
         let (manager, mut events) = manager_with(uid, "true", &[]);
         manager
-            .spawn_widget(uid, GEN, env("flappy"))
+            .spawn_widget(launch(uid, "flappy"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
@@ -1742,22 +2126,22 @@ mod tests {
             matches!(next_event(&mut events).await, WidgetEvent::Exited { .. }),
             "the crash must be reported first"
         );
-        manager.stop_widget("flappy").await;
+        manager
+            .stop_widget(&instance_id("flappy"))
+            .await
+            .join()
+            .await;
 
         assert_eq!(
-            manager.observe_child("flappy").await,
-            ChildObservation::Missing,
+            snapshot_widget(&manager, "flappy").await,
+            None,
             "a stop during the respawn window must cancel the respawn"
         );
         assert_no_event(&mut events, "a cancelled respawn must emit no events");
     }
 
-    /// Re-spawning over a live instance is reachable in production (preview a
-    /// disabled scene, then enable it while the preview holds the stream open),
-    /// and the replaced process must still get its destructors — a SIGKILL here
-    /// leaks the CMA that the graceful stop exists to reclaim.
     #[tokio::test]
-    async fn re_spawn_over_a_live_instance_stops_it_gracefully() {
+    async fn start_rejects_a_running_instance_until_it_is_reaped() {
         let dir = tempfile::tempdir().expect("BUG: test tempdir");
         let path = |name: &str| {
             dir.path()
@@ -1779,53 +2163,388 @@ mod tests {
         let (manager, mut events) = manager_with(uid, "sh", &["-c", &script]);
 
         let first = manager
-            .spawn_widget(uid, GEN, env("doubled"))
+            .spawn_widget(launch(uid, "doubled"), GEN)
             .await
             .expect("BUG: test spawn failed");
         assert!(
             await_file(&ready).await,
-            "the trap must be installed before the re-spawn, or SIGTERM meets the default disposition"
+            "the trap must be installed before stop, or SIGTERM meets the default disposition"
         );
 
-        let second = manager
-            .spawn_widget(uid, GEN, env("doubled"))
+        let occupied = manager.spawn_widget(launch(uid, "doubled"), GEN).await;
+        assert!(
+            matches!(occupied, Err(StartError::Occupied(ref instance)) if instance == &instance_id("doubled")),
+            "a start must not replace a running predecessor: {occupied:?}"
+        );
+
+        manager
+            .stop_widget(&instance_id("doubled"))
             .await
-            .expect("BUG: test re-spawn failed");
-        assert_ne!(first, second, "the re-spawn must be a new process");
+            .join()
+            .await;
 
         assert!(
             await_file(&terminated).await,
-            "the replaced widget must receive SIGTERM, not be dropped onto kill_on_drop"
+            "the stopped widget must receive SIGTERM, not be dropped onto kill_on_drop"
         );
+
+        let second = manager
+            .spawn_widget(launch(uid, "doubled"), GEN)
+            .await
+            .expect("BUG: start after reap failed");
+        assert_ne!(first, second, "the successor must be a new process");
 
         assert!(
             matches!(
-                manager.observe_child("doubled").await,
-                ChildObservation::Running(_)
+                snapshot_widget(&manager, "doubled").await,
+                Some(ManagedWidgetSnapshot {
+                    state: ManagedWidgetState::Running,
+                    ..
+                })
             ),
-            "the replacement must be the process supervision now tracks"
+            "the successor must be the process supervision now tracks"
         );
         assert_no_event(
             &mut events,
-            "replacing a live instance is not a crash, so it must emit no events",
+            "a stopped predecessor must emit no crash events",
         );
     }
 
     #[tokio::test]
-    async fn stop_all_returns_every_instance_id() {
+    async fn pause_returns_every_instance_id() {
         let uid = Uuid::new_v4();
         let (manager, _events) = manager_with(uid, "sleep", &["30"]);
         manager
-            .spawn_widget(uid, GEN, env("one"))
+            .spawn_widget(launch(uid, "one"), GEN)
             .await
             .expect("BUG: test spawn failed");
         manager
-            .spawn_widget(uid, GEN, env("two"))
+            .spawn_widget(launch(uid, "two"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        let mut ids = manager.stop_all().await;
+        let mut ids = manager.pause().await;
         ids.sort();
-        assert_eq!(ids, ["one", "two"]);
+        assert_eq!(ids, [instance_id("one"), instance_id("two")]);
+    }
+
+    #[tokio::test]
+    async fn explicit_start_failure_keeps_one_pending_timer_and_the_earned_rung() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        actor.spawner = Box::new(FakeSpawner {
+            program: "/definitely/missing/widget".to_owned(),
+            args: Vec::new(),
+            launched: LaunchLog::default(),
+        });
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+
+        assert!(matches!(
+            actor.start(launch(uid, "pending"), GEN, &internal_tx),
+            Err(StartError::PendingRestart(_))
+        ));
+        let first = match actor.children.get(&instance_id("pending")) {
+            Some(WidgetState::PendingRestart(pending)) => (pending.backoff, pending.token),
+            Some(WidgetState::Running(_) | WidgetState::Stopping(_)) | None => {
+                panic!("spawn failure must remain supervised")
+            }
+        };
+
+        assert!(matches!(
+            actor.start(launch(uid, "pending"), GEN, &internal_tx),
+            Err(StartError::PendingRestart(_))
+        ));
+        let second = match actor.children.get(&instance_id("pending")) {
+            Some(WidgetState::PendingRestart(pending)) => (pending.backoff, pending.token),
+            Some(WidgetState::Running(_) | WidgetState::Stopping(_)) | None => {
+                panic!("retry failure must remain supervised")
+            }
+        };
+        assert_eq!(second.0, next_backoff(first.0, actor.policy.max));
+        assert_ne!(second.1, first.1, "the old timer token must be replaced");
+        assert_eq!(actor.children.len(), 1, "only one timer may remain armed");
+        let snapshot = actor.snapshot();
+        assert!(matches!(
+            snapshot.widgets.as_slice(),
+            [ManagedWidgetSnapshot {
+                launch: WidgetLaunch {
+                    config_key: WidgetConfigKey { widget_uid, .. },
+                    ..
+                },
+                identity,
+                state: ManagedWidgetState::PendingRestart,
+            }] if *widget_uid == uid
+                && identity.canonical_dir == Path::new("/test/widgets/test-widget")
+        ));
+    }
+
+    #[tokio::test]
+    async fn transient_explicit_spawn_failure_recovers_without_registry_activity() {
+        let uid = Uuid::new_v4();
+        let registry = Arc::new(WidgetRegistry::new([test_widget_info(uid)]));
+        let (manager, mut events) = WidgetManager::with_parts(
+            registry,
+            Box::new(FailOnceSpawner {
+                fail_next: std::sync::atomic::AtomicBool::new(true),
+            }),
+            fast_policy(),
+        );
+
+        assert!(matches!(
+            manager.spawn_widget(launch(uid, "recovering"), GEN).await,
+            Err(StartError::PendingRestart(_))
+        ));
+        assert!(matches!(
+            next_event(&mut events).await,
+            WidgetEvent::Respawned { instance_id: id, .. } if id == instance_id("recovering")
+        ));
+        assert!(matches!(
+            snapshot_widget(&manager, "recovering").await,
+            Some(ManagedWidgetSnapshot {
+                state: ManagedWidgetState::Running,
+                ..
+            })
+        ));
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn repeated_stop_joins_one_stopping_child_while_actor_responds() {
+        let dir = tempfile::tempdir().expect("BUG: test tempdir");
+        let ready = dir.path().join("ready");
+        let ready = ready.to_str().expect("BUG: tempdir path is not UTF-8");
+        let script = format!(
+            "trap 'sleep 1; exit 0' TERM; touch {ready}; while :; do sleep 30 & wait; done"
+        );
+        let uid = Uuid::new_v4();
+        let (manager, _events) = manager_with(uid, "sh", &["-c", &script]);
+        manager
+            .spawn_widget(launch(uid, "slow"), GEN)
+            .await
+            .expect("BUG: test spawn failed");
+        assert!(await_file(ready).await, "the signal trap must be installed");
+
+        let first = manager.stop_widget(&instance_id("slow")).await;
+        let second = manager.stop_widget(&instance_id("slow")).await;
+        let snapshot = timeout(Duration::from_millis(200), manager.snapshot())
+            .await
+            .expect("the actor must answer while graceful termination is pending");
+        assert!(matches!(
+            snapshot.widgets.as_slice(),
+            [ManagedWidgetSnapshot {
+                launch: WidgetLaunch {
+                    config_key: WidgetConfigKey { widget_uid, .. },
+                    ..
+                },
+                identity,
+                state: ManagedWidgetState::Stopping,
+                ..
+            }] if *widget_uid == uid
+                && identity.canonical_dir == Path::new("/test/widgets/test-widget")
+        ));
+        assert!(matches!(
+            manager.spawn_widget(launch(uid, "slow"), GEN).await,
+            Err(StartError::Occupied(_))
+        ));
+
+        timeout(
+            EVENT_TIMEOUT,
+            futures::future::join(first.join(), second.join()),
+        )
+        .await
+        .expect("every stop waiter must resolve after reap");
+        assert!(manager.snapshot().await.widgets.is_empty());
+    }
+
+    #[tokio::test]
+    async fn closed_stop_channel_waits_for_the_actor_to_process_exit() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let widget_launch = launch(uid, "queued-exit");
+        let (stop_tx, stop_rx) = oneshot::channel();
+        drop(stop_rx);
+        let (done_tx, done) = watch::channel(false);
+        actor.children.insert(
+            instance_id("queued-exit"),
+            WidgetState::Running(RunningWidget {
+                pid: 42,
+                generation: GEN,
+                identity: test_widget_info(uid).identity,
+                stop_tx,
+                done_tx,
+                termination: TerminationHandle { done },
+                launch: widget_launch,
+                spawned_at: Instant::now(),
+                backoff: actor.policy.initial,
+            }),
+        );
+
+        let (reply_tx, reply_rx) = oneshot::channel();
+        actor.stop(&instance_id("queued-exit"), reply_tx);
+        let handle = reply_rx.await.expect("BUG: stop reply");
+        assert!(
+            !*handle.done.borrow(),
+            "a closed stop channel does not prove the child has been reaped"
+        );
+
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        actor.handle_exit(
+            ChildExit {
+                instance_id: instance_id("queued-exit"),
+                pid: 42,
+                status: None,
+            },
+            &internal_tx,
+        );
+        assert!(
+            *handle.done.borrow(),
+            "the handle becomes ready only after the actor removes Stopping"
+        );
+        assert!(actor.children.is_empty());
+    }
+
+    #[tokio::test]
+    async fn pause_cancels_pending_work_and_terminal_shutdown_absorbs_resume() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        actor.spawner = Box::new(FakeSpawner {
+            program: "/definitely/missing/widget".to_owned(),
+            args: Vec::new(),
+            launched: LaunchLog::default(),
+        });
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        assert!(
+            actor
+                .start(launch(uid, "pending"), GEN, &internal_tx)
+                .is_err()
+        );
+        let stale_token = match actor.children.get(&instance_id("pending")) {
+            Some(WidgetState::PendingRestart(pending)) => pending.token,
+            Some(WidgetState::Running(_) | WidgetState::Stopping(_)) | None => {
+                panic!("spawn failure must be pending")
+            }
+        };
+
+        let paused = actor.transition_and_stop(ManagerMode::Paused);
+        assert_eq!(paused.instance_ids, [instance_id("pending")]);
+        actor.handle_restart_due(&instance_id("pending"), stale_token, &internal_tx);
+        assert!(
+            actor.children.is_empty(),
+            "paused stale work must stay inert"
+        );
+        assert!(matches!(
+            actor.start(launch(uid, "pending"), GEN, &internal_tx),
+            Err(StartError::Mode(ManagerMode::Paused))
+        ));
+
+        actor.transition_and_stop(ManagerMode::ShuttingDown);
+        assert_eq!(
+            actor.current_mode(),
+            ManagerMode::ShuttingDown,
+            "terminal transition must publish before it returns"
+        );
+
+        let (manager, _events) = manager_with(uid, "sleep", &["30"]);
+        manager.shutdown().await;
+        assert_eq!(manager.resume().await, ManagerMode::ShuttingDown);
+        assert!(matches!(
+            manager.spawn_widget(launch(uid, "stale"), GEN).await,
+            Err(StartError::Mode(ManagerMode::ShuttingDown))
+        ));
+    }
+
+    #[tokio::test]
+    async fn paused_manager_resumes_and_accepts_upgrade_recovery_starts() {
+        let uid = Uuid::new_v4();
+        let (manager, _events) = manager_with(uid, "sleep", &["30"]);
+
+        assert!(manager.pause().await.is_empty());
+        assert_eq!(manager.mode(), ManagerMode::Paused);
+        assert!(matches!(
+            manager.spawn_widget(launch(uid, "paused"), GEN).await,
+            Err(StartError::Mode(ManagerMode::Paused))
+        ));
+
+        assert_eq!(manager.resume().await, ManagerMode::Running);
+        manager
+            .spawn_widget(launch(uid, "recovered"), GEN)
+            .await
+            .expect("a failed upgrade must be able to restart widgets");
+        manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn queued_exit_keeps_completed_child_occupied_until_the_actor_handles_it() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
+        actor
+            .start(launch(uid, "queued"), GEN, &internal_tx)
+            .expect("BUG: test child must start");
+        let Internal::Exit(exit) = internal_rx.recv().await.expect("child exit") else {
+            panic!("BUG: child must report Exit")
+        };
+
+        assert!(matches!(
+            actor.start(launch(uid, "queued"), GEN, &internal_tx),
+            Err(StartError::Occupied(_))
+        ));
+        actor.handle_exit(exit, &internal_tx);
+        assert!(!matches!(
+            actor.children.get(&instance_id("queued")),
+            Some(WidgetState::Running(_) | WidgetState::Stopping(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn queued_exit_after_pause_or_shutdown_cannot_create_successor_work() {
+        for mode in [ManagerMode::Paused, ManagerMode::ShuttingDown] {
+            let uid = Uuid::new_v4();
+            let mut actor = bare_actor(uid);
+            let (internal_tx, mut internal_rx) = mpsc::unbounded_channel();
+            actor
+                .start(launch(uid, "queued"), GEN, &internal_tx)
+                .expect("BUG: test child must start");
+            let Internal::Exit(exit) = internal_rx.recv().await.expect("child exit") else {
+                panic!("BUG: child must report Exit")
+            };
+            actor.publish_mode(mode);
+            actor.handle_exit(exit, &internal_tx);
+            assert!(actor.children.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn stale_restart_due_cannot_replace_an_explicit_successor() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        actor.spawner = Box::new(FakeSpawner {
+            program: "/definitely/missing/widget".to_owned(),
+            args: Vec::new(),
+            launched: LaunchLog::default(),
+        });
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        assert!(matches!(
+            actor.start(launch(uid, "stale"), GEN, &internal_tx),
+            Err(StartError::PendingRestart(_))
+        ));
+        let token = match actor.children.get(&instance_id("stale")) {
+            Some(WidgetState::PendingRestart(pending)) => pending.token,
+            _ => panic!("spawn failure must remain pending"),
+        };
+        actor.spawner = Box::new(FakeSpawner {
+            program: "sleep".to_owned(),
+            args: vec!["30".to_owned()],
+            launched: LaunchLog::default(),
+        });
+        let pid = actor
+            .start(launch(uid, "stale"), GEN, &internal_tx)
+            .expect("explicit retry must start");
+
+        actor.handle_restart_due(&instance_id("stale"), token, &internal_tx);
+        assert!(matches!(
+            actor.children.get(&instance_id("stale")),
+            Some(WidgetState::Running(widget)) if widget.pid == pid
+        ));
     }
 }

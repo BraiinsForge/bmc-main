@@ -22,9 +22,10 @@
 use std::process::Stdio;
 
 use tokio::process::{Child, Command};
+use uuid::Uuid;
 
+use super::WidgetEnv;
 use super::WidgetInfo;
-use super::coordinator::WidgetEnv;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SpawnError {
@@ -46,12 +47,14 @@ impl WaylandSpawner {
     pub fn spawn(
         &self,
         widget: &WidgetInfo,
+        widget_key: Uuid,
         env: &WidgetEnv,
         xdg_runtime_dir: &str,
     ) -> Result<Child, SpawnError> {
         let mut cmd = Command::new(&widget.binary_path);
 
         cmd.env("WAYLAND_DISPLAY", &env.wayland_display)
+            .env("BMC_WIDGET_KEY", widget_key.to_string())
             .env("XDG_RUNTIME_DIR", xdg_runtime_dir);
 
         let (stdout, stderr) = if self.capture_output {
@@ -68,7 +71,7 @@ impl WaylandSpawner {
 
         tracing::info!(
             "widget process spawned: instance={} pid={:?}",
-            env.instance_id,
+            widget_key,
             child.id()
         );
 
