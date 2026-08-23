@@ -50,6 +50,16 @@ pub struct WidgetInfo {
     pub identity: WidgetIdentity,
 }
 
+impl WidgetInfo {
+    #[must_use]
+    pub fn supports_viewport(&self, descriptor: &ViewportDescriptor) -> bool {
+        self.manifest
+            .supported_viewports
+            .iter()
+            .any(|constraint| descriptor.matched_by(constraint))
+    }
+}
+
 #[cfg(test)]
 impl WidgetInfo {
     pub(crate) fn for_test(
@@ -295,12 +305,7 @@ impl WidgetRegistry {
             .read()
             .expect("BUG: widget registry lock poisoned")
             .get(uid)
-            .is_some_and(|w| {
-                w.manifest
-                    .supported_viewports
-                    .iter()
-                    .any(|c| descriptor.matched_by(c))
-            })
+            .is_some_and(|widget| widget.supports_viewport(descriptor))
     }
 
     /// Returns the number of registered widgets.

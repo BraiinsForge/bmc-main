@@ -39,6 +39,7 @@ use uuid::Uuid;
 
 use bmc_platform::HardwareCapabilities;
 
+use crate::compositor::WidgetInstanceKey;
 use crate::config::ConfigHandle;
 use crate::credential;
 use crate::data::{Account, AccountId, SceneCycling, SceneCyclingTransition};
@@ -224,6 +225,10 @@ fn bad_request_status(violations: FieldViolations) -> Status {
     )
 }
 
+fn live_params_status(error: &crate::compositor::CompositorError) -> Status {
+    Status::internal(format!("failed to push live params to widget: {error}"))
+}
+
 fn parse_uuid_field(s: &str, path: &str, violations: &mut FieldViolations) -> Option<Uuid> {
     if let Ok(uuid) = Uuid::parse_str(s) {
         Some(uuid)
@@ -354,6 +359,12 @@ struct ParsedUpdateWidgetShape {
     credential_bindings: Option<web::CredentialBindings>,
 }
 
+struct ValidatedWidgetUpdate {
+    widget: scene::Widget,
+    placement_changed: bool,
+    params_changed: bool,
+}
+
 fn parse_update_widget_shape(
     req: web::UpdateWidgetRequest,
 ) -> Result<ParsedUpdateWidgetShape, Status> {
@@ -451,6 +462,73 @@ impl SceneManagementService {
             .save()
             .await
             .map_err(|e| Status::internal(format!("failed to save config: {e}")))
+    }
+
+    async fn validate_widget_update(
+        &self,
+        scene: &scene::Scene,
+        widget_id: scene::WidgetId,
+        position: scene::WidgetPosition,
+        placement: scene::WidgetPlacement,
+        params: Option<web::WidgetDataStruct>,
+        credential_bindings: Option<web::CredentialBindings>,
+    ) -> Result<ValidatedWidgetUpdate, Status> {
+        let existing = scene
+            .widgets
+            .get(&widget_id)
+            .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
+        let info = self
+            .widget_registry
+            .get(&existing.widget_type_id)
+            .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
+        let platform = PlatformDescriptor::from(&self.capabilities);
+        let Some(descriptor) = platform.descriptor_for_placement(&placement) else {
+            return Err(Status::failed_precondition(
+                "size is not supported on this platform",
+            ));
+        };
+        if !self
+            .widget_registry
+            .supports_viewport(&existing.widget_type_id, &descriptor)
+        {
+            return Err(Status::failed_precondition(format!(
+                "widget {} does not support size viewport",
+                existing.widget_type_id,
+            )));
+        }
+
+        let typed_params = validate_widget_params(
+            &info.manifest,
+            &params.unwrap_or_default(),
+            ValidateMode::Update,
+        )
+        .map_err(bad_request_status)?;
+        let typed_bindings = match credential_bindings {
+            None => existing.credential_bindings.clone(),
+            Some(requested) => validate_credential_bindings(
+                &info.manifest,
+                &requested.bindings,
+                self.secret_store.read().await.accounts(),
+            )
+            .map_err(bad_request_status)?,
+        };
+        let mut widget = scene::Widget {
+            id: widget_id,
+            position,
+            placement,
+            widget_type_id: existing.widget_type_id,
+            viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
+            params: typed_params,
+            credential_bindings: typed_bindings,
+        };
+        stamp_widget_viewport_shape_from_caps(&mut widget, &self.capabilities);
+        validate_widget_placement(scene, &widget, Some(widget_id))?;
+
+        Ok(ValidatedWidgetUpdate {
+            placement_changed: existing.placement != widget.placement,
+            params_changed: existing.params != widget.params,
+            widget,
+        })
     }
 }
 
@@ -1178,8 +1256,9 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
         let scene_id_key = scene::SceneId::from(id);
-        let was_enabled;
-        {
+        let (stop, start) = {
+            let preview = self.preview_scene_id.lock().await;
+            let previewing = *preview == Some(scene_id_key);
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes_mut()
@@ -1196,32 +1275,35 @@ impl GrpcSceneManagementService for SceneManagementService {
                 )));
             }
 
-            was_enabled = scene.enabled;
+            let was_enabled = scene.enabled;
+            let was_shown = was_enabled || previewing;
             scene.enabled = req.enabled;
             scene.cycle_duration = cycle_duration;
+            let is_shown = scene.enabled || previewing;
+            let became_enabled = !was_enabled && scene.enabled;
+            let scene_to_stop = (was_shown && !is_shown).then(|| scene.clone());
 
             Self::save_config(&mut config).await?;
-        }
-
-        // Spawn/stop widgets based on enabled state change
-        if was_enabled != req.enabled {
-            if req.enabled {
-                self.coordinator
-                    .spawn_configured_scene_widgets(
-                        &self.config_handle,
-                        scene_id_key,
-                        ConfiguredSceneState::Enabled,
-                    )
-                    .await;
+            if let Some(scene) = scene_to_stop {
+                (
+                    Some(self.coordinator.enqueue_scene_stop(&scene).await),
+                    false,
+                )
             } else {
-                let scene = {
-                    let config = self.config_handle.read().await;
-                    config.scenes().get(&scene_id_key).cloned()
-                };
-                if let Some(scene) = scene {
-                    self.coordinator.stop_scene_widgets(&scene).await;
-                }
+                (None, became_enabled)
             }
+        };
+
+        if let Some(stop) = stop {
+            stop.wait().await;
+        } else if start {
+            self.coordinator
+                .spawn_configured_scene_widgets(
+                    &self.config_handle,
+                    scene_id_key,
+                    ConfiguredSceneState::Enabled,
+                )
+                .await;
         }
 
         self.refresh_compositor_scenes().await;
@@ -1315,24 +1397,25 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
         let scene_id_key = scene::SceneId::from(id);
 
-        if self.preview_scene_id.lock().await.as_ref() == Some(&scene_id_key) {
+        let preview = self.preview_scene_id.lock().await;
+        if preview.as_ref() == Some(&scene_id_key) {
             return Err(Status::failed_precondition(
                 "scene is currently being previewed",
             ));
         }
 
-        let removed_scene;
-        {
+        let stop = {
             let mut config = self.config_handle.write().await;
-            removed_scene = config
+            let removed_scene = config
                 .scenes_mut()
                 .shift_remove(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
             Self::save_config(&mut config).await?;
-        }
+            self.coordinator.enqueue_scene_delete(&removed_scene).await
+        };
+        drop(preview);
 
-        // Stop all widgets from the removed scene
-        self.coordinator.delete_scene_widgets(&removed_scene).await;
+        stop.wait().await;
         self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
@@ -1349,7 +1432,41 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
         let scene_id = scene::SceneId::from(id);
 
-        let (scene_was_disabled, scene) = {
+        struct PreviewGuard {
+            coordinator: Arc<Coordinator>,
+            config_handle: Arc<RwLock<ConfigHandle>>,
+            preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
+            led_coordinator: LedCoordinatorHandle,
+        }
+        impl Drop for PreviewGuard {
+            fn drop(&mut self) {
+                self.led_coordinator.publish(Layer::Preview, None);
+                let coordinator = Arc::clone(&self.coordinator);
+                let config_handle = Arc::clone(&self.config_handle);
+                let preview_scene_id = Arc::clone(&self.preview_scene_id);
+                tokio::spawn(async move {
+                    let mut preview = preview_scene_id.lock().await;
+                    let stop = {
+                        let config = config_handle.read().await;
+                        match preview.as_ref().and_then(|id| config.scenes().get(id)) {
+                            Some(scene) if !scene.enabled => {
+                                Some(coordinator.enqueue_scene_stop(scene).await)
+                            }
+                            _ => None,
+                        }
+                    };
+                    if let Some(stop) = stop {
+                        stop.wait().await;
+                    }
+                    let config = config_handle.read().await;
+                    coordinator.refresh_scene_cycling(config.scenes());
+                    // Release after restoration so a successor cannot pin before it.
+                    preview.take();
+                });
+            }
+        }
+
+        let scene_was_disabled = {
             let mut preview = self.preview_scene_id.lock().await;
             if preview.is_some() {
                 return Err(Status::resource_exhausted("scene preview already active"));
@@ -1363,19 +1480,24 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             *preview = Some(scene_id);
 
-            let disabled = !scene.enabled;
-            (disabled, scene.clone())
+            !scene.enabled
+        };
+        let guard = PreviewGuard {
+            coordinator: Arc::clone(&self.coordinator),
+            config_handle: Arc::clone(&self.config_handle),
+            preview_scene_id: Arc::clone(&self.preview_scene_id),
+            led_coordinator: self.led_coordinator.clone(),
         };
         if scene_was_disabled {
             self.coordinator
                 .spawn_configured_scene_widgets(
                     &self.config_handle,
                     scene_id,
-                    ConfiguredSceneState::Preview(Arc::clone(&self.preview_scene_id)),
+                    ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&self.preview_scene_id)),
                 )
                 .await;
         }
-        self.coordinator.pin_preview_scene(&scene);
+        self.refresh_compositor_scenes().await;
         self.led_coordinator.publish(
             Layer::Preview,
             Some(bmc_led::data::LedScene {
@@ -1384,48 +1506,6 @@ impl GrpcSceneManagementService for SceneManagementService {
                 duration: None,
             }),
         );
-
-        // Guard that clears the preview slot and reverts the compositor
-        // back to the first enabled scene when the client drops the stream.
-        // If we spawned widgets to back a disabled preview, stop them too.
-        struct PreviewGuard {
-            coordinator: Arc<Coordinator>,
-            config_handle: Arc<RwLock<ConfigHandle>>,
-            preview_scene_id: Arc<Mutex<Option<scene::SceneId>>>,
-            led_coordinator: LedCoordinatorHandle,
-            spawned_widgets: bool,
-        }
-        impl Drop for PreviewGuard {
-            fn drop(&mut self) {
-                self.led_coordinator.publish(Layer::Preview, None);
-                let coordinator = Arc::clone(&self.coordinator);
-                let config_handle = Arc::clone(&self.config_handle);
-                let preview_scene_id = Arc::clone(&self.preview_scene_id);
-                let spawned = self.spawned_widgets;
-                tokio::spawn(async move {
-                    let id = preview_scene_id.lock().await.take();
-                    let scene = if spawned {
-                        let config = config_handle.read().await;
-                        id.as_ref().and_then(|id| config.scenes().get(id)).cloned()
-                    } else {
-                        None
-                    };
-                    if let Some(scene) = scene {
-                        coordinator.stop_scene_widgets(&scene).await;
-                    }
-                    let config = config_handle.read().await;
-                    coordinator.refresh_scene_cycling(config.scenes());
-                });
-            }
-        }
-
-        let guard = PreviewGuard {
-            coordinator: Arc::clone(&self.coordinator),
-            config_handle: Arc::clone(&self.config_handle),
-            preview_scene_id: Arc::clone(&self.preview_scene_id),
-            led_coordinator: self.led_coordinator.clone(),
-            spawned_widgets: scene_was_disabled,
-        };
 
         // Heartbeat every 5s so the client sees a live stream; the guard
         // rides along in the unfold state and drops with the stream.
@@ -1448,8 +1528,8 @@ impl GrpcSceneManagementService for SceneManagementService {
         let widget_id =
             Uuid::parse_str(&req.id).map_err(|_| Status::invalid_argument("invalid widget ID"))?;
 
-        let instance_id = widget_id.to_string();
-        {
+        let preview = self.preview_scene_id.lock().await;
+        let stop = {
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes_mut()
@@ -1467,9 +1547,13 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
 
             Self::save_config(&mut config).await?;
-        }
+            self.coordinator
+                .enqueue_widget_delete(WidgetInstanceKey::new(widget_id))
+                .await
+        };
+        drop(preview);
 
-        self.coordinator.delete_widget(&instance_id).await;
+        stop.wait().await;
         self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
@@ -1581,9 +1665,8 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let scene_id_key = scene::SceneId::from(scene_id);
 
-        let preview_snapshot = *self.preview_scene_id.lock().await;
-
         let widget_to_spawn = {
+            let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
             widget.credential_bindings = validate_credential_bindings(
                 manifest,
@@ -1602,12 +1685,9 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             validate_widget_placement(scene, &widget, None)?;
 
-            let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
-            let configured_state = if scene.enabled {
-                ConfiguredSceneState::Enabled
-            } else {
-                ConfiguredSceneState::Preview(Arc::clone(&self.preview_scene_id))
-            };
+            let showing = scene.enabled || *preview == Some(scene_id_key);
+            let configured_state =
+                ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&self.preview_scene_id));
             scene.widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
 
@@ -1638,9 +1718,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             credential_bindings,
         } = parse_update_widget_shape(request.into_inner())?;
 
-        let scene_id_key = scene::SceneId::from(scene_id);
-        let widget_id_key = scene::WidgetId::from(widget_id);
-        let preview_snapshot = *self.preview_scene_id.lock().await;
+        let (scene_id_key, widget_id_key) = (scene_id.into(), widget_id.into());
 
         // The write lock is held across `save_config().await` (disk I/O)
         // and across the synchronous live-push send below. Keeping the
@@ -1649,6 +1727,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         // queue behind disk I/O. Updates are rare enough that this is
         // acceptable.
         let (respawn_target, retry_target) = {
+            let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
             let scene = config
                 .scenes_mut()
@@ -1660,76 +1739,29 @@ impl GrpcSceneManagementService for SceneManagementService {
                 reject_combined_when_no_slot_grid(&self.capabilities)?;
             }
 
-            let existing = scene
-                .widgets
-                .get(&widget_id_key)
-                .ok_or_else(|| Status::not_found(format!("widget not found: {widget_id}")))?;
-            let widget_uid = existing.widget_type_id;
-            let previous_placement = existing.placement.clone();
-
-            let info = self
-                .widget_registry
-                .get(&widget_uid)
-                .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
-            let manifest = &info.manifest;
-
-            let platform = PlatformDescriptor::from(&self.capabilities);
-            let Some(descriptor) = platform.descriptor_for_placement(&placement) else {
-                return Err(Status::failed_precondition(
-                    "size is not supported on this platform",
-                ));
-            };
-            if !self
-                .widget_registry
-                .supports_viewport(&widget_uid, &descriptor)
-            {
-                return Err(Status::failed_precondition(format!(
-                    "widget {widget_uid} does not support size viewport",
-                )));
-            }
-
-            let params = params.unwrap_or_default();
-            let typed_params = validate_widget_params(manifest, &params, ValidateMode::Update)
-                .map_err(bad_request_status)?;
-
-            let params_changed = existing.params != typed_params;
-
-            // Keeping stored bindings on absent means the FE call sites that rebuild
-            // this request from a cached widget cannot unbind an account they never saw.
-            let typed_bindings = match credential_bindings {
-                None => existing.credential_bindings.clone(),
-                Some(requested) => validate_credential_bindings(
-                    manifest,
-                    &requested.bindings,
-                    self.secret_store.read().await.accounts(),
+            let ValidatedWidgetUpdate {
+                widget: updated_widget,
+                placement_changed,
+                params_changed,
+            } = self
+                .validate_widget_update(
+                    scene,
+                    widget_id_key,
+                    position,
+                    placement,
+                    params,
+                    credential_bindings,
                 )
-                .map_err(bad_request_status)?,
-            };
-
-            // Build the post-update widget snapshot first so placement
-            // validation runs against immutable state. If anything below
-            // fails the in-memory ConfigHandle is left untouched.
-            let mut updated_widget = scene::Widget {
-                id: widget_id_key,
-                position,
-                placement,
-                widget_type_id: widget_uid,
-                viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
-                params: typed_params,
-                credential_bindings: typed_bindings,
-            };
-            stamp_widget_viewport_shape_from_caps(&mut updated_widget, &self.capabilities);
-            validate_widget_placement(scene, &updated_widget, Some(widget_id_key))?;
+                .await?;
 
             scene
                 .widgets
                 .insert(updated_widget.id, updated_widget.clone());
 
-            let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
+            let showing = scene.enabled || *preview == Some(scene_id_key);
+            let configured_state =
+                ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&self.preview_scene_id));
             Self::save_config(&mut config).await?;
-
-            let instance_id = updated_widget.id.as_uuid().to_string();
-            let placement_changed = previous_placement != updated_widget.placement;
 
             // Position-only changes get picked up by
             // `refresh_compositor_scenes` below, so we only respawn when
@@ -1739,23 +1771,32 @@ impl GrpcSceneManagementService for SceneManagementService {
             // The send happens under the still-held write lock so two
             // concurrent updates can't reorder against the
             // compositor.
+            let instance_id = updated_widget.id.as_uuid().to_string();
             match decide_update_widget_action(showing, placement_changed, params_changed) {
-                UpdateWidgetAction::Respawn => (Some((instance_id, updated_widget)), None),
+                UpdateWidgetAction::Respawn => {
+                    let cutoff = self
+                        .coordinator
+                        .enqueue_widget_replacement(WidgetInstanceKey::new(
+                            updated_widget.id.as_uuid(),
+                        ))
+                        .await;
+                    (Some((updated_widget, configured_state, cutoff)), None)
+                }
                 UpdateWidgetAction::HotPushParams => {
                     self.coordinator
                         .update_widget_params(&instance_id, &updated_widget.params)
-                        .map_err(|e| {
-                            Status::internal(format!("failed to push live params to widget: {e}"))
-                        })?;
+                        .map_err(|error| live_params_status(&error))?;
                     (None, Some(instance_id))
                 }
                 UpdateWidgetAction::Nothing => (None, None),
             }
         };
 
-        if let Some((instance_id, widget)) = respawn_target {
-            self.coordinator.stop_widget(&instance_id).await;
-            self.coordinator.spawn_widget(&scene_id_key, &widget).await;
+        if let Some((widget, state, cutoff)) = respawn_target {
+            cutoff.wait().await;
+            self.coordinator
+                .spawn_configured_widget(&self.config_handle, scene_id_key, widget.id, state)
+                .await;
         }
         // After the lock, so the params reach the compositor before the
         // respawn that replays them.
@@ -1773,6 +1814,7 @@ mod tests {
     use super::*;
 
     use crate::compositor::testing::RecordingCompositor;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn reject_remove_widget_in_fullscreen_passes_for_combined() {
@@ -4126,5 +4168,691 @@ mod tests {
         );
         // Absent category defaults to misc through the manifest layer.
         assert_eq!(make(""), i32::from(web::WidgetCategory::Misc));
+    }
+
+    struct PreviewLifecycleFixture {
+        _temp: tempfile::TempDir,
+        service: Arc<SceneManagementService>,
+        coordinator: Arc<Coordinator>,
+        compositor: Arc<RecordingCompositor>,
+        config: Arc<RwLock<ConfigHandle>>,
+        scene_id: scene::SceneId,
+        widget_uid: Uuid,
+    }
+
+    async fn preview_lifecycle_fixture(
+        enabled: bool,
+        with_widget: bool,
+    ) -> PreviewLifecycleFixture {
+        let temp = tempfile::tempdir().expect("BUG: preview lifecycle tempdir");
+        let package = temp.path().join("widget-package");
+        std::fs::create_dir(&package).expect("BUG: create widget package");
+        let widget_uid = Uuid::new_v4();
+        std::fs::write(
+            package.join("manifest.json"),
+            format!(
+                r#"{{"uid":"{widget_uid}","version":"1.0.0","name":"preview-test","description":"preview test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}},{{"type":"rectangular","min_width":638,"max_width":638,"min_height":238,"max_height":238}}]}}"#
+            ),
+        )
+        .expect("BUG: write widget manifest");
+        let binary = package.join("widget");
+        std::fs::write(&binary, "#!/bin/sh\nexec sleep 30\n").expect("BUG: write widget binary");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("BUG: make widget executable");
+
+        let manager =
+            crate::widget::WidgetManager::init(vec![temp.path().to_path_buf()], false).await;
+        let registry = manager.registry();
+        let compositor = Arc::new(RecordingCompositor::default());
+        let capabilities = bmc100_caps(Some(SlotGrid {
+            columns: 4,
+            rows: 2,
+        }));
+        let coordinator = Arc::new(Coordinator::new(
+            manager,
+            Arc::clone(&compositor) as Arc<dyn crate::compositor::Compositor>,
+            Arc::clone(&registry),
+            capabilities,
+            empty_secret_store().await,
+        ));
+        let config = Arc::new(RwLock::new(
+            ConfigHandle::init(
+                temp.path().join("settings.json"),
+                50,
+                50,
+                50,
+                50,
+                bmc_platform::Product::Bmc100,
+            )
+            .await
+            .0,
+        ));
+        let mut configured = scene::Scene {
+            id: scene::SceneId::generate(),
+            enabled,
+            cycle_duration: None,
+            kind: scene::SceneKind::Combined,
+            widgets: IndexMap::new(),
+        };
+        if with_widget {
+            let widget = scene::Widget::new(
+                widget_uid,
+                BTreeMap::new(),
+                scene::WidgetPosition { row: 0, col: 0 },
+                scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                    columns: 1,
+                    rows: 1,
+                }),
+            );
+            configured.widgets.insert(widget.id, widget);
+        }
+        let scene_id = configured.id;
+        config
+            .write()
+            .await
+            .scenes_mut()
+            .insert(scene_id, configured);
+        let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
+        let service = Arc::new(SceneManagementService::new(
+            registry,
+            Arc::clone(&config),
+            empty_secret_store().await,
+            Arc::clone(&coordinator),
+            capabilities,
+            crate::led_coordinator::spawn_led_coordinator(led_tx),
+        ));
+        PreviewLifecycleFixture {
+            _temp: temp,
+            service,
+            coordinator,
+            compositor,
+            config,
+            scene_id,
+            widget_uid,
+        }
+    }
+
+    fn add_widget_request(fixture: &PreviewLifecycleFixture) -> web::AddWidgetRequest {
+        web::AddWidgetRequest {
+            scene_id: fixture.scene_id.to_string(),
+            position: Some(web::WidgetPosition { row: 0, col: 0 }),
+            size: web::WidgetSize::Small.into(),
+            config: Some(web::WidgetConfig {
+                widget_uid: fixture.widget_uid.to_string(),
+                params: Some(web::WidgetDataStruct::default()),
+                credential_bindings: Some(web::CredentialBindings::default()),
+            }),
+        }
+    }
+
+    async fn fixture_widget_id(fixture: &PreviewLifecycleFixture) -> scene::WidgetId {
+        *fixture
+            .config
+            .read()
+            .await
+            .scenes()
+            .get(&fixture.scene_id)
+            .expect("BUG: fixture scene")
+            .widgets
+            .first()
+            .expect("BUG: fixture widget")
+            .0
+    }
+
+    fn update_widget_request(
+        fixture: &PreviewLifecycleFixture,
+        widget_id: scene::WidgetId,
+    ) -> web::UpdateWidgetRequest {
+        web::UpdateWidgetRequest {
+            scene_id: fixture.scene_id.to_string(),
+            id: widget_id.to_string(),
+            position: Some(web::WidgetPosition { row: 0, col: 0 }),
+            size: web::WidgetSize::Medium.into(),
+            params: Some(web::WidgetDataStruct::default()),
+            credential_bindings: Some(web::CredentialBindings::default()),
+        }
+    }
+
+    async fn start_preview(
+        fixture: &PreviewLifecycleFixture,
+    ) -> BoxStream<'static, Result<(), Status>> {
+        fixture
+            .service
+            .preview_scene(Request::new(fixture.scene_id.to_string()))
+            .await
+            .expect("BUG: preview must start")
+            .into_inner()
+    }
+
+    async fn set_fixture_scene_enabled(fixture: &PreviewLifecycleFixture, enabled: bool) {
+        fixture
+            .service
+            .update_scene(Request::new(web::UpdateSceneRequest {
+                id: fixture.scene_id.to_string(),
+                enabled,
+                cycle_duration_sec: None,
+            }))
+            .await
+            .expect("BUG: scene update must succeed");
+    }
+
+    async fn wait_for_preview_lock(service: &SceneManagementService) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while service.preview_scene_id.try_lock().is_ok() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the first lifecycle operation did not acquire the preview lock"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn wait_for_preview_clear(service: &SceneManagementService) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            if service.preview_scene_id.lock().await.is_none() {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "preview teardown did not clear the active scene"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn wait_for_managed_widgets(coordinator: &Coordinator, expected: usize) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            if coordinator.running_widget_count().await == expected {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "widget manager did not reach the expected running state"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    async fn add_during_preview_start(preview_first: bool) {
+        let fixture = preview_lifecycle_fixture(false, false).await;
+        let config_guard = fixture.config.write().await;
+        let stream = if preview_first {
+            let service = Arc::clone(&fixture.service);
+            let scene_id = fixture.scene_id;
+            let preview = tokio::spawn(async move {
+                service
+                    .preview_scene(Request::new(scene_id.to_string()))
+                    .await
+                    .expect("BUG: preview must start")
+                    .into_inner()
+            });
+            wait_for_preview_lock(&fixture.service).await;
+            let request = add_widget_request(&fixture);
+            let service = Arc::clone(&fixture.service);
+            let add = tokio::spawn(async move {
+                service
+                    .add_widget(Request::new(request))
+                    .await
+                    .expect("BUG: widget add must succeed")
+            });
+            drop(config_guard);
+            let stream = preview.await.expect("BUG: preview task");
+            add.await.expect("BUG: add task");
+            stream
+        } else {
+            let request = add_widget_request(&fixture);
+            let service = Arc::clone(&fixture.service);
+            let add = tokio::spawn(async move {
+                service
+                    .add_widget(Request::new(request))
+                    .await
+                    .expect("BUG: widget add must succeed")
+            });
+            wait_for_preview_lock(&fixture.service).await;
+            let service = Arc::clone(&fixture.service);
+            let scene_id = fixture.scene_id;
+            let preview = tokio::spawn(async move {
+                service
+                    .preview_scene(Request::new(scene_id.to_string()))
+                    .await
+                    .expect("BUG: preview must start")
+                    .into_inner()
+            });
+            drop(config_guard);
+            add.await.expect("BUG: add task");
+            preview.await.expect("BUG: preview task")
+        };
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        assert_eq!(fixture.coordinator.running_widget_count().await, 1);
+        let calls = fixture.compositor.widget_calls();
+        assert!(calls.iter().any(|call| call.starts_with("activate ")));
+        assert!(!calls.iter().any(|call| {
+            call.starts_with("deactivate ") || call.starts_with("unregister_retained ")
+        }));
+        drop(stream);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn add_widget_and_preview_start_converge_in_both_lock_orders() {
+        add_during_preview_start(true).await;
+        add_during_preview_start(false).await;
+    }
+
+    async fn update_during_preview_start(preview_first: bool) {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let widget_id = fixture_widget_id(&fixture).await;
+        let config_guard = fixture.config.write().await;
+        let stream = if preview_first {
+            let service = Arc::clone(&fixture.service);
+            let scene_id = fixture.scene_id;
+            let preview = tokio::spawn(async move {
+                service
+                    .preview_scene(Request::new(scene_id.to_string()))
+                    .await
+                    .expect("BUG: preview must start")
+                    .into_inner()
+            });
+            wait_for_preview_lock(&fixture.service).await;
+            let service = Arc::clone(&fixture.service);
+            let request = update_widget_request(&fixture, widget_id);
+            let update = tokio::spawn(async move {
+                service
+                    .update_widget(Request::new(request))
+                    .await
+                    .expect("BUG: widget update must succeed")
+            });
+            drop(config_guard);
+            let stream = preview.await.expect("BUG: preview task");
+            update.await.expect("BUG: update task");
+            stream
+        } else {
+            let service = Arc::clone(&fixture.service);
+            let request = update_widget_request(&fixture, widget_id);
+            let update = tokio::spawn(async move {
+                service
+                    .update_widget(Request::new(request))
+                    .await
+                    .expect("BUG: widget update must succeed")
+            });
+            wait_for_preview_lock(&fixture.service).await;
+            let service = Arc::clone(&fixture.service);
+            let scene_id = fixture.scene_id;
+            let preview = tokio::spawn(async move {
+                service
+                    .preview_scene(Request::new(scene_id.to_string()))
+                    .await
+                    .expect("BUG: preview must start")
+                    .into_inner()
+            });
+            drop(config_guard);
+            update.await.expect("BUG: update task");
+            preview.await.expect("BUG: preview task")
+        };
+
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let retained_size = fixture
+            .compositor
+            .retained_size(WidgetInstanceKey::new(widget_id.as_uuid()))
+            .expect("updated widget must remain registered");
+        assert_eq!(
+            retained_size,
+            crate::compositor::Size {
+                width: 638,
+                height: 238
+            }
+        );
+        drop(stream);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn restart_update_and_preview_start_converge_in_both_lock_orders() {
+        update_during_preview_start(true).await;
+        update_during_preview_start(false).await;
+    }
+
+    #[tokio::test]
+    async fn restart_update_cuts_off_the_predecessor_before_credential_refresh() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        fixture
+            .coordinator
+            .spawn_configured_scene_widgets(
+                &fixture.config,
+                fixture.scene_id,
+                ConfiguredSceneState::Enabled,
+            )
+            .await;
+        let scenes_rx = fixture.config.read().await.subscribe_scenes_change();
+        let (_accounts_tx, accounts_rx) = tokio::sync::broadcast::channel(1);
+        crate::widget::coordinator::start_credential_listener(
+            Arc::clone(&fixture.coordinator),
+            Arc::clone(&fixture.config),
+            scenes_rx,
+            accounts_rx,
+        );
+        let widget_id = fixture_widget_id(&fixture).await;
+
+        fixture
+            .service
+            .update_widget(Request::new(update_widget_request(&fixture, widget_id)))
+            .await
+            .expect("BUG: widget update must succeed");
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let calls = loop {
+            let calls = fixture.compositor.widget_calls();
+            if calls.iter().any(|call| call.starts_with("credentials ")) {
+                break calls;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "credential listener did not observe the saved scene"
+            );
+            tokio::task::yield_now().await;
+        };
+        let deactivate = calls
+            .iter()
+            .position(|call| call.starts_with("deactivate "))
+            .expect("replacement must enqueue a cutoff");
+        let credentials = calls
+            .iter()
+            .position(|call| call.starts_with("credentials "))
+            .expect("listener must push credentials");
+        assert!(
+            deactivate < credentials,
+            "the predecessor must be cut off before a config-triggered credential push"
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn preview_pin_reads_layout_after_widget_start_receipts() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fixture.compositor.hold_widget_receipts();
+        let service = Arc::clone(&fixture.service);
+        let scene_id = fixture.scene_id;
+        let preview = tokio::spawn(async move {
+            service
+                .preview_scene(Request::new(scene_id.to_string()))
+                .await
+                .expect("BUG: preview must start")
+                .into_inner()
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while !fixture
+            .compositor
+            .widget_calls()
+            .iter()
+            .any(|call| call.starts_with("activate "))
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "preview start did not enqueue widget activation"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        {
+            let mut config = tokio::time::timeout(Duration::from_secs(1), fixture.config.write())
+                .await
+                .expect("receipt wait must release the configuration lock");
+            let widget = config
+                .scenes_mut()
+                .get_mut(&fixture.scene_id)
+                .expect("BUG: fixture scene")
+                .widgets
+                .first_mut()
+                .expect("BUG: fixture widget")
+                .1;
+            widget.placement = scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
+                columns: 2,
+                rows: 1,
+            });
+        }
+        fixture.compositor.release_widget_receipts();
+        let stream = preview.await.expect("BUG: preview task");
+
+        {
+            let lists = fixture
+                .compositor
+                .scene_cycling_lists
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned");
+            let pinned = lists.last().expect("preview must pin a scene");
+            assert_eq!(pinned.len(), 1, "preview must pin exactly one scene");
+            assert_eq!(
+                pinned[0].widgets[0].size,
+                crate::compositor::Size {
+                    width: 638,
+                    height: 238,
+                },
+                "preview pin must include layout changes made during widget startup"
+            );
+        }
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_preview_start_releases_slot() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fixture.compositor.hold_widget_receipts();
+        let service = Arc::clone(&fixture.service);
+        let scene_id = fixture.scene_id;
+        let preview = tokio::spawn(async move {
+            service
+                .preview_scene(Request::new(scene_id.to_string()))
+                .await
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while !fixture
+            .compositor
+            .widget_calls()
+            .iter()
+            .any(|call| call.starts_with("activate "))
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "preview start did not enqueue widget activation"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        preview.abort();
+        let Err(error) = preview.await else {
+            panic!("BUG: preview task must report cancellation");
+        };
+        assert!(error.is_cancelled(), "preview task must be cancelled");
+        fixture.compositor.release_widget_receipts();
+        wait_for_preview_clear(&fixture.service).await;
+
+        let stream = start_preview(&fixture).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn preview_teardown_orders_reopen_after_restoration() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let stream = start_preview(&fixture).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        fixture.compositor.hold_widget_receipts();
+        drop(stream);
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while !fixture
+            .compositor
+            .widget_calls()
+            .iter()
+            .any(|call| call.starts_with("deactivate "))
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "preview teardown did not enqueue widget deactivation"
+            );
+            tokio::task::yield_now().await;
+        }
+        tokio::task::yield_now().await;
+
+        assert!(
+            fixture.service.preview_scene_id.try_lock().is_err(),
+            "preview teardown must reserve the slot until restoration is enqueued"
+        );
+        let service = Arc::clone(&fixture.service);
+        let scene_id = fixture.scene_id;
+        let reopen = tokio::spawn(async move {
+            service
+                .preview_scene(Request::new(scene_id.to_string()))
+                .await
+                .expect("BUG: preview must reopen")
+                .into_inner()
+        });
+        tokio::task::yield_now().await;
+        assert!(!reopen.is_finished(), "preview reopened before restoration");
+        fixture.compositor.release_widget_receipts();
+        let reopened_stream = reopen.await.expect("BUG: preview reopen task");
+        {
+            let lists = fixture
+                .compositor
+                .scene_cycling_lists
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned");
+            assert_eq!(
+                lists.last().map(Vec::len),
+                Some(1),
+                "reopened preview pin must follow the old cycling restoration"
+            );
+        }
+        drop(reopened_stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn update_survives_enabled_scene_handoff_to_preview() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        fixture
+            .coordinator
+            .spawn_configured_scene_widgets(
+                &fixture.config,
+                fixture.scene_id,
+                ConfiguredSceneState::Enabled,
+            )
+            .await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let stream = start_preview(&fixture).await;
+        let widget_id = fixture_widget_id(&fixture).await;
+
+        fixture.compositor.hold_widget_receipts();
+        let service = Arc::clone(&fixture.service);
+        let request = update_widget_request(&fixture, widget_id);
+        let update = tokio::spawn(async move {
+            service
+                .update_widget(Request::new(request))
+                .await
+                .expect("BUG: widget update must succeed")
+        });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while !fixture
+            .compositor
+            .widget_calls()
+            .iter()
+            .any(|call| call.starts_with("deactivate "))
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "replacement did not enqueue its cutoff"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        set_fixture_scene_enabled(&fixture, false).await;
+        fixture.compositor.release_widget_receipts();
+        update.await.expect("BUG: update task");
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let retained_size = fixture
+            .compositor
+            .retained_size(WidgetInstanceKey::new(widget_id.as_uuid()))
+            .expect("updated widget must remain registered");
+        assert_eq!(
+            retained_size,
+            crate::compositor::Size {
+                width: 638,
+                height: 238
+            }
+        );
+
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        wait_for_managed_widgets(&fixture.coordinator, 0).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn enabling_during_preview_keeps_widget_running_after_stream_drop() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let stream = start_preview(&fixture).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+
+        set_fixture_scene_enabled(&fixture, true).await;
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+
+        set_fixture_scene_enabled(&fixture, false).await;
+        wait_for_managed_widgets(&fixture.coordinator, 0).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn enabling_during_preview_recovers_a_missing_widget() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let stream = start_preview(&fixture).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let widget_id = fixture_widget_id(&fixture).await;
+        fixture
+            .coordinator
+            .enqueue_widget_replacement(WidgetInstanceKey::new(widget_id.as_uuid()))
+            .await
+            .wait()
+            .await;
+        wait_for_managed_widgets(&fixture.coordinator, 0).await;
+
+        set_fixture_scene_enabled(&fixture, true).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        set_fixture_scene_enabled(&fixture, false).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn disabling_during_preview_defers_stop_until_stream_drop() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        fixture
+            .coordinator
+            .spawn_configured_scene_widgets(
+                &fixture.config,
+                fixture.scene_id,
+                ConfiguredSceneState::Enabled,
+            )
+            .await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let stream = start_preview(&fixture).await;
+
+        set_fixture_scene_enabled(&fixture, false).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        wait_for_managed_widgets(&fixture.coordinator, 0).await;
+        fixture.coordinator.shutdown_widget_manager().await;
     }
 }

@@ -31,6 +31,7 @@ pub(crate) type CredentialPush = (
     serde_json::Map<String, serde_json::Value>,
     CredentialSecrets,
 );
+type RegistrationObserver = Box<dyn FnOnce() + Send>;
 
 #[derive(Default)]
 pub(crate) struct RecordingCompositor {
@@ -40,7 +41,10 @@ pub(crate) struct RecordingCompositor {
     pub(crate) connected: Mutex<BTreeSet<InstanceId>>,
     widget_calls: Mutex<Vec<String>>,
     retained_modes: Mutex<BTreeMap<WidgetInstanceKey, WidgetConnectionMode>>,
+    retained_sizes: Mutex<BTreeMap<WidgetInstanceKey, Size>>,
+    retained_params: Mutex<BTreeMap<WidgetInstanceKey, serde_json::Map<String, serde_json::Value>>>,
     held_widget_receipts: Mutex<Option<Vec<tokio::sync::oneshot::Sender<()>>>>,
+    next_registration_observer: Mutex<Option<RegistrationObserver>>,
 }
 
 impl RecordingCompositor {
@@ -66,11 +70,38 @@ impl RecordingCompositor {
             .copied()
     }
 
+    pub(crate) fn retained_params(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Option<serde_json::Map<String, serde_json::Value>> {
+        self.retained_params
+            .lock()
+            .expect("BUG: retained-params lock must not be poisoned")
+            .get(&key)
+            .cloned()
+    }
+
+    pub(crate) fn retained_size(&self, key: WidgetInstanceKey) -> Option<Size> {
+        self.retained_sizes
+            .lock()
+            .expect("BUG: retained-size lock must not be poisoned")
+            .get(&key)
+            .copied()
+    }
+
     pub(crate) fn hold_widget_receipts(&self) {
         *self
             .held_widget_receipts
             .lock()
             .expect("BUG: receipt gate lock must not be poisoned") = Some(Vec::new());
+    }
+
+    pub(crate) fn observe_next_registration(&self, observer: impl FnOnce() + Send + 'static) {
+        *self
+            .next_registration_observer
+            .lock()
+            .expect("BUG: registration observer lock must not be poisoned") =
+            Some(Box::new(observer));
     }
 
     pub(crate) fn release_widget_receipts(&self) {
@@ -116,6 +147,28 @@ impl Compositor for RecordingCompositor {
         &self,
         registration: WidgetRegistration,
     ) -> Result<CompositorReceipt, CompositorError> {
+        if let Some(observer) = self
+            .next_registration_observer
+            .lock()
+            .expect("BUG: registration observer lock must not be poisoned")
+            .take()
+        {
+            observer();
+        }
+        self.retained_sizes
+            .lock()
+            .expect("BUG: retained-size lock must not be poisoned")
+            .insert(
+                registration.key,
+                Size {
+                    width: registration.initial_config.width,
+                    height: registration.initial_config.height,
+                },
+            );
+        self.retained_params
+            .lock()
+            .expect("BUG: retained-params lock must not be poisoned")
+            .insert(registration.key, registration.initial_config.params.clone());
         self.retained_modes
             .lock()
             .expect("BUG: retained-mode lock must not be poisoned")
@@ -202,9 +255,18 @@ impl Compositor for RecordingCompositor {
 
     fn update_widget_params(
         &self,
-        _instance_id: &InstanceId,
-        _params: serde_json::Map<String, serde_json::Value>,
+        instance_id: &InstanceId,
+        params: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), CompositorError> {
+        let key = WidgetInstanceKey::new(
+            instance_id
+                .parse()
+                .expect("BUG: coordinator instance IDs must be UUIDs"),
+        );
+        self.retained_params
+            .lock()
+            .expect("BUG: retained-params lock must not be poisoned")
+            .insert(key, params);
         Ok(())
     }
 
@@ -214,6 +276,7 @@ impl Compositor for RecordingCompositor {
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: CredentialSecrets,
     ) -> Result<bool, CompositorError> {
+        self.record(format!("credentials {instance_id}"));
         let mut pushes = self
             .credential_pushes
             .lock()
