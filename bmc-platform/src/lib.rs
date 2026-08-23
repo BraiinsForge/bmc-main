@@ -28,6 +28,7 @@ pub mod linux_input;
 pub mod serial_number;
 
 use index_bmc::BmcPlatform as IndexBmcPlatform;
+use serial_number::{BoardSerial, PcbVersion};
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -251,6 +252,53 @@ const WIFI_USB_HUBBED: &str =
 /// Realtek USB WiFi wired directly to the EHCI root port (BMC100 hubless revision).
 const WIFI_USB_HUBLESS: &str = "/sys/devices/platform/soc/5800d000.usbh-ehci/usb3/3-1/3-1:1.0";
 
+/// BMC100 boards carry the USB hub from PCB version `000200` on;
+/// later revisions are expected to keep it.
+const BMC100_FIRST_HUBBED_VERSION: PcbVersion = PcbVersion::new(0, 0x02, 0);
+
+/// The WiFi radio a board carries and where it sits on the bus.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WifiChip {
+    /// USB-attached nl80211 radio (BMC100, BFM100).
+    UsbNl80211 { syspath: PathBuf },
+    /// ESP32 companion radio on SDIO (BMM10x).
+    SdioEsp32 { syspath: PathBuf },
+}
+
+impl WifiChip {
+    fn usb(syspath: &str) -> Self {
+        Self::UsbNl80211 {
+            syspath: PathBuf::from(syspath),
+        }
+    }
+
+    #[must_use]
+    pub fn syspath(&self) -> &Path {
+        match self {
+            Self::UsbNl80211 { syspath } | Self::SdioEsp32 { syspath } => syspath,
+        }
+    }
+}
+
+enum WifiLocation {
+    Fixed(WifiChip),
+    Probe(Vec<WifiChip>),
+}
+
+impl WifiLocation {
+    fn locate_with(self, exists: impl Fn(&Path) -> bool) -> WifiChip {
+        match self {
+            Self::Fixed(chip) => chip,
+            Self::Probe(candidates) => candidates
+                .iter()
+                .find(|chip| exists(chip.syspath()))
+                .cloned()
+                .or_else(|| candidates.into_iter().next())
+                .expect("BUG: probe candidate lists are built non-empty"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PlatformPaths {
     pub backlight: Option<PathBuf>,
@@ -393,6 +441,41 @@ impl HardwareProfile {
                 led_strip: None,
                 paths,
             },
+        }
+    }
+
+    /// The board's WiFi radio.
+    ///
+    /// A Deck serial pins BMC100 to the hubbed or hubless syspath
+    /// by PCB revision; without one the candidates are probed for existence,
+    /// falling back to the primary when the radio has not enumerated yet;
+    /// the syspath is opened lazily.
+    #[must_use]
+    pub fn locate_wifi_chip(&self, serial: Option<&BoardSerial>) -> WifiChip {
+        self.wifi_location(serial).locate_with(Path::exists)
+    }
+
+    fn wifi_location(&self, serial: Option<&BoardSerial>) -> WifiLocation {
+        match self.product {
+            Product::Bmc100 => {
+                let deck_version = serial
+                    .filter(|serial| serial.product() == serial_number::PRODUCT_DECK)
+                    .map(BoardSerial::pcb_version);
+                match deck_version {
+                    Some(version) if version >= BMC100_FIRST_HUBBED_VERSION => {
+                        WifiLocation::Fixed(WifiChip::usb(WIFI_USB_HUBBED))
+                    }
+                    Some(_) => WifiLocation::Fixed(WifiChip::usb(WIFI_USB_HUBLESS)),
+                    None => WifiLocation::Probe(vec![
+                        WifiChip::usb(WIFI_USB_HUBBED),
+                        WifiChip::usb(WIFI_USB_HUBLESS),
+                    ]),
+                }
+            }
+            Product::Bmm100 | Product::Bmm101 => WifiLocation::Fixed(WifiChip::SdioEsp32 {
+                syspath: PathBuf::from(WIFI_SDIO_ESP32),
+            }),
+            Product::Bfm100 => WifiLocation::Fixed(WifiChip::usb(WIFI_USB_HUBBED)),
         }
     }
 
@@ -648,6 +731,95 @@ mod test {
 
         let bfm = HardwareProfile::for_product(Product::Bfm100).paths.wifi;
         assert_eq!(bfm, [PathBuf::from(WIFI_USB_HUBBED)]);
+    }
+
+    /// A synthetic Deck serial `BF0001B00yy00B0000000000`
+    /// with the given packed `yy` version component.
+    fn deck_serial(version_yy: u8) -> BoardSerial {
+        let mut raw = [
+            0xBF, 0x00, 0x01, 0xB0, 0x00, 0x00, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        raw[4] |= version_yy >> 4;
+        raw[5] = version_yy << 4;
+        BoardSerial::parse(raw).expect("BUG: synthetic deck serial must parse")
+    }
+
+    fn usb_chip(syspath: &str) -> WifiChip {
+        WifiChip::UsbNl80211 {
+            syspath: PathBuf::from(syspath),
+        }
+    }
+
+    #[test]
+    fn serial_revision_pins_bmc100_wifi_chip() {
+        let cases = [
+            (0x01, WIFI_USB_HUBLESS),
+            (0x02, WIFI_USB_HUBBED),
+            (0x03, WIFI_USB_HUBBED),
+        ];
+        for (version_yy, expected) in cases {
+            let chip = HardwareProfile::for_product(Product::Bmc100)
+                .locate_wifi_chip(Some(&deck_serial(version_yy)));
+            assert_eq!(chip, usb_chip(expected), "version yy={version_yy:#04x}");
+        }
+    }
+
+    #[test]
+    fn bmc100_without_serial_probes_first_existing_candidate() {
+        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(None);
+        let chip = location.locate_with(|path| path == Path::new(WIFI_USB_HUBLESS));
+        assert_eq!(chip, usb_chip(WIFI_USB_HUBLESS));
+    }
+
+    #[test]
+    fn bmc100_probe_falls_back_to_hubbed_when_nothing_exists() {
+        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(None);
+        let chip = location.locate_with(|_| false);
+        assert_eq!(
+            chip,
+            usb_chip(WIFI_USB_HUBBED),
+            "hubbed is the primary candidate"
+        );
+    }
+
+    #[test]
+    fn bmc100_probe_prefers_hubbed_when_both_exist() {
+        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(None);
+        let chip = location.locate_with(|_| true);
+        assert_eq!(chip, usb_chip(WIFI_USB_HUBBED), "hubbed outranks hubless");
+    }
+
+    #[test]
+    fn non_deck_serial_probes_bmc100_candidates() {
+        let mut raw = [
+            0xBF, 0x00, 0x01, 0xB0, 0x00, 0x20, 0x0B, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        raw[2] = 0x02;
+        let foreign = BoardSerial::parse(raw).expect("BUG: product 0002 serial must parse");
+        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(Some(&foreign));
+        let chip = location.locate_with(|path| path == Path::new(WIFI_USB_HUBLESS));
+        assert_eq!(
+            chip,
+            usb_chip(WIFI_USB_HUBLESS),
+            "a foreign serial must fall back to probing, not pin a path"
+        );
+    }
+
+    #[test]
+    fn fixed_products_ignore_the_serial() {
+        let esp32 = WifiChip::SdioEsp32 {
+            syspath: PathBuf::from(WIFI_SDIO_ESP32),
+        };
+        let cases = [
+            (Product::Bmm100, esp32.clone()),
+            (Product::Bmm101, esp32),
+            (Product::Bfm100, usb_chip(WIFI_USB_HUBBED)),
+        ];
+        for (product, expected) in cases {
+            let chip =
+                HardwareProfile::for_product(product).locate_wifi_chip(Some(&deck_serial(0x01)));
+            assert_eq!(chip, expected, "{product:?}");
+        }
     }
 
     #[test]
