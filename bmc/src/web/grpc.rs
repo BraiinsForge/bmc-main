@@ -217,7 +217,7 @@ impl<T: BmcManager, S: SessionManager, U: FirmwareIndex, V: DisplayBacklightDriv
                     self.widget_registry,
                     self.config_handle.clone(),
                     self.secret_store.clone(),
-                    self.widget_coordinator,
+                    self.widget_coordinator.clone(),
                     self.hardware_capabilities,
                     self.led_coordinator,
                 ),

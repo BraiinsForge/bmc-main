@@ -37,8 +37,8 @@ use super::{
 };
 use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, InstanceId,
-    LedRequestStatusEvent, SceneLayout, SettingsCommand, WIDGET_COMMAND_ACK_TIMEOUT, WidgetAction,
-    WidgetInstanceKey, WidgetRegistration,
+    LedRequestStatusEvent, SceneLayout, SettingsCommand, WidgetAction, WidgetInstanceKey,
+    WidgetRegistration,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::backlight::ScreenVisibility;
@@ -2133,8 +2133,11 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             let _ = applied.send(());
         }
         CompositorCommand::ActivateWidget { key, applied } => {
-            state.compositor.deck_widget_state.activate_widget(key);
-            let _ = applied.send(());
+            if state.compositor.deck_widget_state.activate_widget(key) {
+                let _ = applied.send(());
+            } else {
+                tracing::warn!(%key, "cannot activate an unregistered widget");
+            }
         }
         CompositorCommand::DeactivateWidget { key, applied } => {
             let instance_id = key.to_string();
@@ -2217,28 +2220,25 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
         CompositorCommand::RestartDeclined { reason } => {
             state.compositor.settings.restart_declined(&reason);
         }
-        CompositorCommand::UpdateWidgetParams {
-            instance_id,
-            params,
-        } => {
-            tracing::debug!("Updating widget params: {instance_id}");
+        CompositorCommand::UpdateWidgetParams { key, params } => {
+            tracing::debug!("Updating widget params: {key}");
             state
                 .compositor
                 .deck_widget_state
-                .update_widget_params(&instance_id, params);
+                .update_widget_params(key, params);
         }
         CompositorCommand::UpdateWidgetCredentials {
-            instance_id,
+            key,
             credentials,
             secrets,
-            ack,
+            changed,
         } => {
-            tracing::debug!("Updating widget credentials: {instance_id}");
-            let changed = state
+            tracing::debug!("Updating widget credentials: {key}");
+            let retained_state_changed = state
                 .compositor
                 .deck_widget_state
-                .update_widget_credentials(&instance_id, credentials, secrets);
-            let _ = ack.send(changed);
+                .update_widget_credentials(key, credentials, secrets);
+            let _ = changed.send(retained_state_changed);
         }
         CompositorCommand::Shutdown => {
             tracing::info!("Shutdown command received");
@@ -2698,37 +2698,30 @@ impl Compositor for EglCompositor {
 
     fn update_widget_params(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         params: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), CompositorError> {
         self.command_tx
-            .send(CompositorCommand::UpdateWidgetParams {
-                instance_id: instance_id.clone(),
-                params,
-            })
+            .send(CompositorCommand::UpdateWidgetParams { key, params })
             .map_err(|e| CompositorError::SendError(e.to_string()))
     }
 
-    fn update_widget_credentials(
+    fn enqueue_update_widget_credentials(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
-    ) -> Result<bool, CompositorError> {
-        let (ack_tx, ack_rx) = flume::bounded(1);
+    ) -> Result<bmc::compositor::CredentialUpdateReceipt, CompositorError> {
+        let (changed, receipt) = bmc::compositor::CredentialUpdateReceipt::pending();
         self.command_tx
             .send(CompositorCommand::UpdateWidgetCredentials {
-                instance_id: instance_id.clone(),
+                key,
                 credentials,
                 secrets,
-                ack: ack_tx,
+                changed,
             })
             .map_err(|e| CompositorError::SendError(e.to_string()))?;
-        ack_rx
-            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
-            .map_err(|e| {
-                CompositorError::ThreadError(format!("update_widget_credentials ack: {e}"))
-            })
+        Ok(receipt)
     }
 
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {
@@ -3065,6 +3058,45 @@ mod tests {
     }
 
     #[test]
+    fn credential_receipt_follows_detached_retained_state_mutation() {
+        let mut state = make_app_state();
+        let registration = retained_registration();
+        let key = registration.key;
+        state
+            .compositor
+            .deck_widget_state
+            .register_retained_widget(registration);
+        let credentials = serde_json::json!({"pool": "account"})
+            .as_object()
+            .expect("BUG: test credentials must be an object")
+            .clone();
+        let (changed, mut receipt) = tokio::sync::oneshot::channel();
+
+        handle_command(
+            &mut state,
+            CompositorCommand::UpdateWidgetCredentials {
+                key,
+                credentials: credentials.clone(),
+                secrets: bmc_widget_protocol::CredentialSecrets::default(),
+                changed,
+            },
+        );
+
+        assert_eq!(receipt.try_recv(), Ok(true));
+        let (changed, mut repeated_receipt) = tokio::sync::oneshot::channel();
+        handle_command(
+            &mut state,
+            CompositorCommand::UpdateWidgetCredentials {
+                key,
+                credentials,
+                secrets: bmc_widget_protocol::CredentialSecrets::default(),
+                changed,
+            },
+        );
+        assert_eq!(repeated_receipt.try_recv(), Ok(false));
+    }
+
+    #[test]
     fn replacement_pass_keeps_connected_watch_and_emits_successor_lifecycle() {
         let mut state = make_app_state();
         let registration = retained_registration();
@@ -3146,6 +3178,23 @@ mod tests {
             compositor
                 .enqueue_activate_widget(WidgetInstanceKey::from(bmc::scene::WidgetId::generate())),
             Err(CompositorError::SendError(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn missing_registration_leaves_activation_unapplied() {
+        let mut state = make_app_state();
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        let (applied, receipt) = bmc::compositor::CompositorReceipt::pending("activate widget");
+
+        handle_command(
+            &mut state,
+            CompositorCommand::ActivateWidget { key, applied },
+        );
+
+        assert!(matches!(
+            receipt.wait().await,
+            Err(CompositorError::ReceiptDropped("activate widget"))
         ));
     }
 

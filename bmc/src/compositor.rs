@@ -87,6 +87,34 @@ pub struct CompositorReceipt {
     applied: tokio::sync::oneshot::Receiver<()>,
 }
 
+#[derive(Debug)]
+pub struct CredentialUpdateReceipt {
+    changed: tokio::sync::oneshot::Receiver<bool>,
+}
+
+impl CredentialUpdateReceipt {
+    #[must_use]
+    pub fn pending() -> (tokio::sync::oneshot::Sender<bool>, Self) {
+        let (changed_tx, changed) = tokio::sync::oneshot::channel();
+        (changed_tx, Self { changed })
+    }
+
+    #[must_use]
+    pub fn completed(changed: bool) -> Self {
+        let (changed_tx, receipt) = Self::pending();
+        let _ = changed_tx.send(changed);
+        receipt
+    }
+
+    pub async fn wait(self) -> Result<bool, CompositorError> {
+        match tokio::time::timeout(WIDGET_COMMAND_ACK_TIMEOUT, self.changed).await {
+            Ok(Ok(changed)) => Ok(changed),
+            Ok(Err(_)) => Err(CompositorError::ReceiptDropped("update widget credentials")),
+            Err(_) => Err(CompositorError::ReceiptTimeout("update widget credentials")),
+        }
+    }
+}
+
 impl CompositorReceipt {
     #[must_use]
     pub fn pending(operation: &'static str) -> (tokio::sync::oneshot::Sender<()>, Self) {
@@ -98,6 +126,12 @@ impl CompositorReceipt {
     pub fn completed(operation: &'static str) -> Self {
         let (applied_tx, receipt) = Self::pending(operation);
         let _ = applied_tx.send(());
+        receipt
+    }
+
+    #[must_use]
+    pub fn not_applied(operation: &'static str) -> Self {
+        let (_, receipt) = Self::pending(operation);
         receipt
     }
 
@@ -433,26 +467,24 @@ pub trait Compositor: Send + Sync {
     /// so whatever is stored here is what the widget comes back with.
     fn update_widget_params(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         params: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), CompositorError>;
 
-    /// Push a re-resolved credential set to a single running widget,
-    /// reporting whether it changed what the compositor already held.
+    /// Enqueue a re-resolved credential set for one retained widget.
     ///
-    /// The compositor drops the push when the values match, since callers here
-    /// react to a change hint and have no old value to compare against.
-    /// The answer comes back so a caller woken by a bare hint
-    /// can tell a real credential edit from an unrelated one.
+    /// The compositor drops the push when the values match.
+    /// The receipt reports whether retained state changed, so callers only
+    /// accelerate a pending restart after a semantic credential edit.
     ///
     /// Refreshes the stored initial config for the same reason
     /// [`Compositor::update_widget_params`] does.
-    fn update_widget_credentials(
+    fn enqueue_update_widget_credentials(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
-    ) -> Result<bool, CompositorError>;
+    ) -> Result<CredentialUpdateReceipt, CompositorError>;
 
     /// Get a receiver for widget action requests (sound, LED).
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction>;
@@ -549,7 +581,8 @@ pub(crate) async fn run_night_mode_cycling_task(
 #[cfg(test)]
 mod tests {
     use super::{
-        CompositorError, CompositorReceipt, SceneLayout, ScenePlaceholder, WidgetPlacement,
+        CompositorError, CompositorReceipt, CredentialUpdateReceipt, SceneLayout, ScenePlaceholder,
+        WidgetPlacement,
     };
 
     fn placement() -> WidgetPlacement {
@@ -618,6 +651,39 @@ mod tests {
         assert!(matches!(
             receipt.wait().await,
             Err(CompositorError::ReceiptTimeout("deactivate widget"))
+        ));
+    }
+
+    #[tokio::test]
+    async fn credential_receipt_reports_the_retained_state_change() {
+        let receipt = CredentialUpdateReceipt::completed(true);
+
+        assert!(
+            receipt
+                .wait()
+                .await
+                .expect("BUG: completed receipt must resolve")
+        );
+    }
+
+    #[tokio::test]
+    async fn dropped_credential_receipt_uses_the_widget_receipt_error() {
+        let (changed, receipt) = CredentialUpdateReceipt::pending();
+        drop(changed);
+
+        assert!(matches!(
+            receipt.wait().await,
+            Err(CompositorError::ReceiptDropped("update widget credentials"))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn credential_receipt_uses_the_widget_command_timeout() {
+        let (_changed, receipt) = CredentialUpdateReceipt::pending();
+
+        assert!(matches!(
+            receipt.wait().await,
+            Err(CompositorError::ReceiptTimeout("update widget credentials"))
         ));
     }
 }

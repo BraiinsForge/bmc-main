@@ -19,7 +19,7 @@
 // the grant above.
 
 use bmc::compositor::{
-    CompositorEvent, InstanceId, SceneCycling, SceneLayout, UpgradeDisplaySnapshot, WidgetAction,
+    CompositorEvent, SceneCycling, SceneLayout, UpgradeDisplaySnapshot, WidgetAction,
     WidgetInstanceKey, WidgetRegistration,
 };
 use bmc_widget_protocol::SettingUpdate;
@@ -84,17 +84,15 @@ pub enum CompositorCommand {
     /// its EGL surface and Slint scene and re-reads its manifest
     /// options from the new `params` event.
     UpdateWidgetParams {
-        instance_id: InstanceId,
+        key: WidgetInstanceKey,
         params: serde_json::Map<String, serde_json::Value>,
     },
-    /// Push a re-resolved credential set to a running widget.
+    /// Push a re-resolved credential set to a retained widget registration.
     UpdateWidgetCredentials {
-        instance_id: InstanceId,
+        key: WidgetInstanceKey,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
-        /// Carries whether the push changed the stored resolution.
-        /// Only the compositor holds the previous value to compare against.
-        ack: flume::Sender<bool>,
+        changed: tokio::sync::oneshot::Sender<bool>,
     },
     Shutdown,
     RingAlarm {

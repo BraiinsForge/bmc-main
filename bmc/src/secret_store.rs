@@ -43,6 +43,8 @@ const SECRETS_FILE_MODE: u32 = 0o600;
 
 const STORE_VERSION: u32 = 1;
 
+const CHANNEL_CAPACITY: usize = 16;
+
 /// On-disk shape of the secret store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct StoredSecrets {
@@ -55,17 +57,10 @@ struct StoredSecrets {
     accounts: IndexMap<AccountId, Account>,
 }
 
-/// Matches the config-notify channels; a credential listener
-/// only needs the most recent wake, so a small buffer is ample.
-const CHANNEL_CAPACITY: usize = 16;
-
 #[derive(Debug, Clone)]
 pub struct SecretStoreHandle {
     path: PathBuf,
     accounts: IndexMap<AccountId, Account>,
-    /// Fires on every successful save.
-    /// The store holds nothing but accounts, so a save is always
-    /// an account write and needs no dirty flag to qualify it.
     accounts_change: broadcast::Sender<()>,
 }
 
@@ -158,8 +153,6 @@ impl SecretStoreHandle {
         &mut self.accounts
     }
 
-    /// Wake on every account write, so a bound widget can re-resolve.
-    /// The payload is a bare hint — the store itself stays authoritative.
     #[must_use]
     pub fn subscribe_accounts_change(&self) -> broadcast::Receiver<()> {
         self.accounts_change.subscribe()
@@ -208,16 +201,15 @@ mod tests {
     async fn saving_accounts_wakes_a_subscriber() {
         let dir = tempfile::tempdir().expect("BUG: tempdir");
         let mut handle = SecretStoreHandle::init(&config_path(&dir)).await;
-        let mut woken = handle.subscribe_accounts_change();
-
+        let mut changed = handle.subscribe_accounts_change();
         let account = account("pool");
         handle.accounts_mut().insert(account.id.clone(), account);
+
         handle.save().await.expect("BUG: save must succeed");
 
-        assert!(
-            woken.try_recv().is_ok(),
-            "a bound widget only re-resolves if the write is announced"
-        );
+        changed
+            .try_recv()
+            .expect("a successful account save must wake credential refresh");
     }
 
     #[tokio::test]

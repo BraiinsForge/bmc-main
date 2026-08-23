@@ -485,8 +485,6 @@ where
             compositor.clone(),
         );
 
-        // Before the initial spawn, so an account or scene change
-        // landing mid-spawn is buffered rather than never observed.
         {
             let scenes_rx = config_handle.read().await.subscribe_scenes_change();
             let accounts_rx = secret_store.read().await.subscribe_accounts_change();

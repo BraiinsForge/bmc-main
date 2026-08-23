@@ -67,26 +67,15 @@ impl Unauthorised {
 /// and that has to hold for config written earlier:
 /// a package can update under the same uid and drop a slot or redeclare its type,
 /// and nothing re-runs the write-path validation over config already on disk.
-///
-/// Absent `slots` means the manifest could not be read, and then nothing is filtered.
-/// Discovery replaces the registry wholesale from a scan that cannot fail,
-/// and a missing path or a walk error yields a partial set that looks complete.
-/// Reading absence as "the slot is gone" would therefore strip the credentials
-/// of a running widget during an unrelated package operation,
-/// with no discovery wake to restore them.
 #[must_use]
 pub fn authorised_bindings(
     bindings: &BTreeMap<CredentialKey, AccountId>,
-    slots: Option<&IndexMap<CredentialKey, CredentialSlot>>,
+    slots: &IndexMap<CredentialKey, CredentialSlot>,
     accounts: &IndexMap<AccountId, Account>,
 ) -> (
     BTreeMap<CredentialKey, AccountId>,
     Vec<(CredentialKey, Unauthorised)>,
 ) {
-    let Some(slots) = slots else {
-        return (bindings.clone(), Vec::new());
-    };
-
     let mut authorised = BTreeMap::new();
     let mut rejected = Vec::new();
     for (slot, id) in bindings {
@@ -242,7 +231,7 @@ mod tests {
     fn a_slot_the_manifest_still_declares_is_authorised() {
         let (authorised, rejected) = authorised_bindings(
             &bound(&[(POOL, "a-1")]),
-            Some(&declares(&[(POOL, BuiltinType::BraiinsPool.id())])),
+            &declares(&[(POOL, BuiltinType::BraiinsPool.id())]),
             &store(vec![pool_account()]),
         );
 
@@ -254,7 +243,7 @@ mod tests {
     fn a_slot_the_updated_manifest_dropped_is_withheld() {
         let (authorised, rejected) = authorised_bindings(
             &bound(&[(POOL, "a-1")]),
-            Some(&declares(&[])),
+            &declares(&[]),
             &store(vec![pool_account()]),
         );
 
@@ -269,7 +258,7 @@ mod tests {
     fn a_slot_redeclared_with_another_type_is_withheld() {
         let (authorised, rejected) = authorised_bindings(
             &bound(&[(POOL, "a-1")]),
-            Some(&declares(&[(POOL, BuiltinType::GenericToken.id())])),
+            &declares(&[(POOL, BuiltinType::GenericToken.id())]),
             &store(vec![pool_account()]),
         );
 
@@ -280,24 +269,13 @@ mod tests {
         assert_eq!(rejected, vec![(slot(POOL), Unauthorised::TypeMismatch)]);
     }
 
-    /// Discovery cannot distinguish a half-failed scan from a complete one,
-    /// so an unreadable manifest must not read as "every slot was removed".
-    #[test]
-    fn an_unreadable_manifest_withholds_nothing() {
-        let (authorised, rejected) =
-            authorised_bindings(&bound(&[(POOL, "a-1")]), None, &store(vec![pool_account()]));
-
-        assert_eq!(authorised, bound(&[(POOL, "a-1")]));
-        assert!(rejected.is_empty());
-    }
-
     /// A missing account cannot be type-checked. Withholding it here would report it
     /// as a manifest problem, when it is the already-handled unbound case.
     #[test]
     fn a_binding_whose_account_vanished_is_left_to_the_unbound_path() {
         let (authorised, rejected) = authorised_bindings(
             &bound(&[(POOL, "a-1")]),
-            Some(&declares(&[(POOL, BuiltinType::BraiinsPool.id())])),
+            &declares(&[(POOL, BuiltinType::BraiinsPool.id())]),
             &store(vec![]),
         );
 

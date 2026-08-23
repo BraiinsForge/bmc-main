@@ -178,9 +178,12 @@ impl DeckWidgetProtocolState {
         );
     }
 
-    pub fn activate_widget(&mut self, key: WidgetInstanceKey) {
+    pub fn activate_widget(&mut self, key: WidgetInstanceKey) -> bool {
         if let Some(widget) = self.widgets.get_mut(&key) {
             widget.connection_mode = WidgetConnectionMode::Accepting;
+            true
+        } else {
+            false
         }
     }
 
@@ -375,17 +378,17 @@ impl DeckWidgetProtocolState {
     /// current values.
     pub fn update_widget_params(
         &mut self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         params: serde_json::Map<String, serde_json::Value>,
     ) {
-        let Some(widget_data) = self.widget_mut(instance_id) else {
-            tracing::warn!("update_widget_params: no widget record for {instance_id}");
+        let Some(widget_data) = self.widgets.get_mut(&key) else {
+            tracing::warn!("update_widget_params: no widget record for {key}");
             return;
         };
         widget_data.config.params = params;
 
         let Some(surface) = widget_data.protocol_surface.as_ref() else {
-            tracing::warn!("update_widget_params: widget {instance_id} has no surface yet");
+            tracing::warn!("update_widget_params: widget {key} has no surface yet");
             return;
         };
 
@@ -402,12 +405,12 @@ impl DeckWidgetProtocolState {
     /// a crash-looping widget has none.
     pub fn update_widget_credentials(
         &mut self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: bmc_widget_protocol::CredentialSecrets,
     ) -> bool {
-        let Some(widget_data) = self.widget_mut(instance_id) else {
-            tracing::debug!("update_widget_credentials: no widget record for {instance_id}");
+        let Some(widget_data) = self.widgets.get_mut(&key) else {
+            tracing::debug!("update_widget_credentials: no widget record for {key}");
             return false;
         };
         if !credentials_changed(&widget_data.config, &credentials, &secrets) {
@@ -419,7 +422,7 @@ impl DeckWidgetProtocolState {
         if let Some(surface) = widget_data.protocol_surface.as_ref() {
             emit_credentials(surface, &widget_data.config);
         } else {
-            tracing::debug!("update_widget_credentials: widget {instance_id} has no surface yet");
+            tracing::debug!("update_widget_credentials: widget {key} has no surface yet");
         }
         true
     }
@@ -487,9 +490,7 @@ impl DeckWidgetProtocolState {
         instance_id: &str,
         sink: RecordingSurface,
     ) -> Option<RecordedEvents> {
-        if self.widget(instance_id).is_none() {
-            return None;
-        }
+        self.widget(instance_id)?;
         self.emit_initial_state_into(&instance_id.to_owned(), &sink);
         Some(sink.into_events())
     }
@@ -886,6 +887,12 @@ mod tests {
 
     const TEST_INSTANCE_ID: &str = "00000000-0000-0000-0000-000000000001";
 
+    fn test_instance_key() -> WidgetInstanceKey {
+        TEST_INSTANCE_ID
+            .parse()
+            .expect("BUG: test widget instance ID must be a canonical key")
+    }
+
     struct TestObjectData;
 
     impl ObjectData<CompositorState> for TestObjectData {
@@ -1031,7 +1038,7 @@ mod tests {
         let registration = retained_registration(WidgetConnectionMode::Inactive);
         let key = registration.key;
 
-        state.activate_widget(key);
+        assert!(!state.activate_widget(key));
         assert!(!state.widgets.contains_key(&key));
 
         state.register_retained_widget(registration);
@@ -1039,8 +1046,8 @@ mod tests {
             state.widgets[&key].connection_mode,
             WidgetConnectionMode::Inactive
         );
-        state.activate_widget(key);
-        state.activate_widget(key);
+        assert!(state.activate_widget(key));
+        assert!(state.activate_widget(key));
         assert_eq!(
             state.widgets[&key].connection_mode,
             WidgetConnectionMode::Accepting
@@ -1450,7 +1457,7 @@ mod tests {
         let mut state = DeckWidgetProtocolState::new();
         let (view, secrets) = bound_pool();
         register_test_widget(&mut state, TEST_INSTANCE_ID.to_owned(), make_config());
-        state.update_widget_credentials(&TEST_INSTANCE_ID.to_owned(), view, secrets);
+        state.update_widget_credentials(test_instance_key(), view, secrets);
 
         let events = state
             .test_emit_initial_state_events(TEST_INSTANCE_ID)
@@ -1514,10 +1521,10 @@ mod tests {
         let mut state = DeckWidgetProtocolState::new();
         register_test_widget(&mut state, TEST_INSTANCE_ID.to_owned(), make_config());
         let (view, secrets) = bound_pool();
-        state.update_widget_credentials(&TEST_INSTANCE_ID.to_owned(), view, secrets);
+        state.update_widget_credentials(test_instance_key(), view, secrets);
 
         state.update_widget_credentials(
-            &TEST_INSTANCE_ID.to_owned(),
+            test_instance_key(),
             serde_json::Map::new(),
             CredentialSecrets::default(),
         );
@@ -1536,7 +1543,15 @@ mod tests {
         register_test_widget(&mut state, TEST_INSTANCE_ID.to_owned(), make_config());
         let (view, secrets) = bound_pool();
 
-        assert!(state.update_widget_credentials(&TEST_INSTANCE_ID.to_owned(), view, secrets));
+        assert!(state.update_widget_credentials(test_instance_key(), view, secrets));
+    }
+
+    #[test]
+    fn a_missing_record_reports_no_credential_change() {
+        let mut state = DeckWidgetProtocolState::new();
+        let (view, secrets) = bound_pool();
+
+        assert!(!state.update_widget_credentials(test_instance_key(), view, secrets));
     }
 
     #[test]
@@ -1544,12 +1559,8 @@ mod tests {
         let mut state = DeckWidgetProtocolState::new();
         register_test_widget(&mut state, TEST_INSTANCE_ID.to_owned(), make_config());
         let (view, secrets) = bound_pool();
-        state.update_widget_credentials(
-            &TEST_INSTANCE_ID.to_owned(),
-            view.clone(),
-            secrets.clone(),
-        );
+        state.update_widget_credentials(test_instance_key(), view.clone(), secrets.clone());
 
-        assert!(!state.update_widget_credentials(&TEST_INSTANCE_ID.to_owned(), view, secrets));
+        assert!(!state.update_widget_credentials(test_instance_key(), view, secrets));
     }
 }

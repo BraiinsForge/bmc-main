@@ -32,19 +32,32 @@ pub(crate) type CredentialPush = (
     CredentialSecrets,
 );
 type RegistrationObserver = Box<dyn FnOnce() + Send>;
+pub(crate) type ParameterPush = (InstanceId, serde_json::Map<String, serde_json::Value>);
+type RetainedCredentials = (
+    serde_json::Map<String, serde_json::Value>,
+    CredentialSecrets,
+);
+type HeldCredentialReceipt = (tokio::sync::oneshot::Sender<bool>, bool);
 
 #[derive(Default)]
 pub(crate) struct RecordingCompositor {
     pub(crate) scene_cycling_configs: Mutex<Vec<SceneCycling>>,
     pub(crate) scene_cycling_lists: Mutex<Vec<Vec<SceneLayout>>>,
     pub(crate) credential_pushes: Mutex<Vec<CredentialPush>>,
+    pub(crate) parameter_pushes: Mutex<Vec<ParameterPush>>,
     pub(crate) connected: Mutex<BTreeSet<InstanceId>>,
     widget_calls: Mutex<Vec<String>>,
     retained_modes: Mutex<BTreeMap<WidgetInstanceKey, WidgetConnectionMode>>,
     retained_sizes: Mutex<BTreeMap<WidgetInstanceKey, Size>>,
     retained_params: Mutex<BTreeMap<WidgetInstanceKey, serde_json::Map<String, serde_json::Value>>>,
+    retained_credentials: Mutex<BTreeMap<WidgetInstanceKey, RetainedCredentials>>,
     held_widget_receipts: Mutex<Option<Vec<tokio::sync::oneshot::Sender<()>>>>,
     next_registration_observer: Mutex<Option<RegistrationObserver>>,
+    held_credential_receipts: Mutex<Option<Vec<HeldCredentialReceipt>>>,
+    next_credential_error: Mutex<Option<CompositorError>>,
+    next_parameter_error: Mutex<Option<CompositorError>>,
+    credential_update_attempts: AtomicUsize,
+    shutdown_calls: AtomicUsize,
 }
 
 impl RecordingCompositor {
@@ -60,6 +73,14 @@ impl RecordingCompositor {
             .lock()
             .expect("BUG: recording compositor lock must not be poisoned")
             .clone()
+    }
+
+    pub(crate) fn shutdown_call_count(&self) -> usize {
+        self.shutdown_calls.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn credential_update_attempt_count(&self) -> usize {
+        self.credential_update_attempts.load(Ordering::Relaxed)
     }
 
     pub(crate) fn retained_mode(&self, key: WidgetInstanceKey) -> Option<WidgetConnectionMode> {
@@ -89,6 +110,17 @@ impl RecordingCompositor {
             .copied()
     }
 
+    pub(crate) fn retained_credentials(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Option<RetainedCredentials> {
+        self.retained_credentials
+            .lock()
+            .expect("BUG: retained-credentials lock must not be poisoned")
+            .get(&key)
+            .cloned()
+    }
+
     pub(crate) fn hold_widget_receipts(&self) {
         *self
             .held_widget_receipts
@@ -116,6 +148,51 @@ impl RecordingCompositor {
         }
     }
 
+    pub(crate) fn hold_credential_receipts(&self) {
+        *self
+            .held_credential_receipts
+            .lock()
+            .expect("BUG: credential receipt gate lock must not be poisoned") = Some(Vec::new());
+    }
+
+    pub(crate) fn release_credential_receipts(&self) {
+        let receipts = self
+            .held_credential_receipts
+            .lock()
+            .expect("BUG: credential receipt gate lock must not be poisoned")
+            .take()
+            .expect("BUG: credential receipts were not held");
+        for (receipt, changed) in receipts {
+            let _ = receipt.send(changed);
+        }
+    }
+
+    pub(crate) fn drop_credential_receipts(&self) {
+        self.held_credential_receipts
+            .lock()
+            .expect("BUG: credential receipt gate lock must not be poisoned")
+            .take()
+            .expect("BUG: credential receipts were not held");
+    }
+
+    pub(crate) fn fail_next_credential_update(&self) {
+        *self
+            .next_credential_error
+            .lock()
+            .expect("BUG: credential failure lock must not be poisoned") = Some(
+            CompositorError::SendError("injected credential update failure".to_owned()),
+        );
+    }
+
+    pub(crate) fn fail_next_parameter_update(&self) {
+        *self
+            .next_parameter_error
+            .lock()
+            .expect("BUG: parameter failure lock must not be poisoned") = Some(
+            CompositorError::SendError("injected parameter update failure".to_owned()),
+        );
+    }
+
     fn widget_receipt(&self, operation: &'static str) -> CompositorReceipt {
         let mut held = self
             .held_widget_receipts
@@ -126,6 +203,19 @@ impl RecordingCompositor {
         };
         let (applied, receipt) = CompositorReceipt::pending(operation);
         receipts.push(applied);
+        receipt
+    }
+
+    fn credential_receipt(&self, changed: bool) -> CredentialUpdateReceipt {
+        let mut held = self
+            .held_credential_receipts
+            .lock()
+            .expect("BUG: credential receipt gate lock must not be poisoned");
+        let Some(receipts) = held.as_mut() else {
+            return CredentialUpdateReceipt::completed(changed);
+        };
+        let (applied, receipt) = CredentialUpdateReceipt::pending();
+        receipts.push((applied, changed));
         receipt
     }
 }
@@ -169,6 +259,16 @@ impl Compositor for RecordingCompositor {
             .lock()
             .expect("BUG: retained-params lock must not be poisoned")
             .insert(registration.key, registration.initial_config.params.clone());
+        self.retained_credentials
+            .lock()
+            .expect("BUG: retained-credentials lock must not be poisoned")
+            .insert(
+                registration.key,
+                (
+                    registration.initial_config.credentials.clone(),
+                    registration.initial_config.credential_secrets.clone(),
+                ),
+            );
         self.retained_modes
             .lock()
             .expect("BUG: retained-mode lock must not be poisoned")
@@ -181,14 +281,14 @@ impl Compositor for RecordingCompositor {
         &self,
         key: WidgetInstanceKey,
     ) -> Result<CompositorReceipt, CompositorError> {
-        if let Some(mode) = self
+        let mut modes = self
             .retained_modes
             .lock()
-            .expect("BUG: retained-mode lock must not be poisoned")
-            .get_mut(&key)
-        {
-            *mode = WidgetConnectionMode::Accepting;
-        }
+            .expect("BUG: retained-mode lock must not be poisoned");
+        let Some(mode) = modes.get_mut(&key) else {
+            return Ok(CompositorReceipt::not_applied("activate widget"));
+        };
+        *mode = WidgetConnectionMode::Accepting;
         self.record(format!("activate {key}"));
         Ok(self.widget_receipt("activate widget"))
     }
@@ -216,6 +316,18 @@ impl Compositor for RecordingCompositor {
         self.retained_modes
             .lock()
             .expect("BUG: retained-mode lock must not be poisoned")
+            .remove(&key);
+        self.retained_params
+            .lock()
+            .expect("BUG: retained-params lock must not be poisoned")
+            .remove(&key);
+        self.retained_sizes
+            .lock()
+            .expect("BUG: retained-size lock must not be poisoned")
+            .remove(&key);
+        self.retained_credentials
+            .lock()
+            .expect("BUG: retained-credentials lock must not be poisoned")
             .remove(&key);
         self.record(format!("unregister_retained {key}"));
         Ok(self.widget_receipt("unregister widget"))
@@ -255,39 +367,68 @@ impl Compositor for RecordingCompositor {
 
     fn update_widget_params(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         params: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), CompositorError> {
-        let key = WidgetInstanceKey::new(
-            instance_id
-                .parse()
-                .expect("BUG: coordinator instance IDs must be UUIDs"),
-        );
-        self.retained_params
+        if let Some(error) = self
+            .next_parameter_error
+            .lock()
+            .expect("BUG: parameter failure lock must not be poisoned")
+            .take()
+        {
+            return Err(error);
+        }
+        if let Some(stored) = self
+            .retained_params
             .lock()
             .expect("BUG: retained-params lock must not be poisoned")
-            .insert(key, params);
+            .get_mut(&key)
+        {
+            *stored = params.clone();
+        }
+        self.parameter_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .push((key.to_string(), params));
         Ok(())
     }
 
-    fn update_widget_credentials(
+    fn enqueue_update_widget_credentials(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: CredentialSecrets,
-    ) -> Result<bool, CompositorError> {
-        self.record(format!("credentials {instance_id}"));
-        let mut pushes = self
-            .credential_pushes
+    ) -> Result<CredentialUpdateReceipt, CompositorError> {
+        self.credential_update_attempts
+            .fetch_add(1, Ordering::Relaxed);
+        if let Some(error) = self
+            .next_credential_error
             .lock()
-            .expect("BUG: recording compositor lock must not be poisoned");
-        let changed = pushes
-            .iter()
-            .rev()
-            .find(|(id, _, _)| id == instance_id)
-            .is_none_or(|(_, view, stored)| view != &credentials || stored != &secrets);
-        pushes.push((instance_id.clone(), credentials, secrets));
-        Ok(changed)
+            .expect("BUG: credential failure lock must not be poisoned")
+            .take()
+        {
+            return Err(error);
+        }
+        self.record(format!("credentials {key}"));
+        let changed = {
+            let mut retained = self
+                .retained_credentials
+                .lock()
+                .expect("BUG: retained-credentials lock must not be poisoned");
+            retained
+                .get_mut(&key)
+                .is_some_and(|(stored_credentials, stored_secrets)| {
+                    let changed = *stored_credentials != credentials || *stored_secrets != secrets;
+                    *stored_credentials = credentials.clone();
+                    *stored_secrets = secrets.clone();
+                    changed
+                })
+        };
+        self.credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .push((key.to_string(), credentials, secrets));
+        Ok(self.credential_receipt(changed))
     }
 
     fn action_receiver(&self) -> tokio::sync::mpsc::UnboundedReceiver<WidgetAction> {

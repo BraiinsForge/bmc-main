@@ -156,13 +156,19 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                         .accounts_mut()
                         .get_mut(&id)
                         .ok_or_else(|| Status::not_found("Account not found"))?;
-                    account.name = name;
-                    if replace_values {
-                        account.field_values = field_values;
+                    let effective_values = if replace_values {
+                        field_values
+                    } else {
+                        account.field_values.clone()
+                    };
+                    if account.name == name
+                        && account.field_values == effective_values
+                        && account.allow_hosts == allow_hosts
+                    {
+                        return Ok(Response::new(id.to_string()));
                     }
-
-                    // Replaced wholesale, unlike field_values: the list is not
-                    // secret, so the form always carries the current one.
+                    account.name = name;
+                    account.field_values = effective_values;
                     account.allow_hosts = allow_hosts;
                     id
                 } else {
@@ -178,6 +184,7 @@ impl web::account_management_service_server::AccountManagementService for Accoun
                     return Err(Status::internal("Failed to save accounts"));
                 }
                 *store = temp;
+
                 Ok(Response::new(id.to_string()))
             }
         });
@@ -194,10 +201,6 @@ impl web::account_management_service_server::AccountManagementService for Accoun
         }
         let id = id.ok_or_else(unchecked_field_violations_status)?;
 
-        if !self.secret_store.read().await.accounts().contains_key(&id) {
-            return Err(Status::not_found("Account not found"));
-        }
-
         // Unbind and delete under one config write lock,
         // so a binding written in between cannot outlive the account it names.
         // Both locks sit inside the task: a dropped `JoinHandle` does not cancel it,
@@ -211,23 +214,37 @@ impl web::account_management_service_server::AccountManagementService for Accoun
             let secret_store = self.secret_store.clone();
             async move {
                 let mut config = config_handle.write().await;
-                if unbind_account(config.scenes_mut(), &id) {
-                    config
+                let mut store = secret_store.write().await;
+                if !store.accounts().contains_key(&id) {
+                    return Err(Status::not_found("Account not found"));
+                }
+
+                let mut new_config = config.clone();
+                if unbind_account(new_config.scenes_mut(), &id) {
+                    new_config
                         .save()
                         .await
                         .map_err(|e| Status::internal(format!("failed to save config: {e}")))?;
+                    *config = new_config;
                 }
 
-                let mut store = secret_store.write().await;
                 let mut temp = store.clone();
                 temp.accounts_mut()
                     .shift_remove(&id)
                     .ok_or_else(|| Status::not_found("Account not found"))?;
-                if let Err(err) = temp.save().await {
-                    error!("Cannot save accounts: {err}");
-                    return Err(Status::internal("Failed to save accounts"));
+                let delete_error = match temp.save().await {
+                    Ok(()) => {
+                        *store = temp;
+                        None
+                    }
+                    Err(err) => {
+                        error!("Cannot save accounts: {err}");
+                        Some(Status::internal("Failed to save accounts"))
+                    }
+                };
+                if let Some(error) = delete_error {
+                    return Err(error);
                 }
-                *store = temp;
                 Ok(Response::new(()))
             }
         });
@@ -496,12 +513,21 @@ enum CredentialCheckError {
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeMap;
+    use std::os::unix::fs::PermissionsExt;
 
     use proptest::prelude::*;
     use tonic_types::FieldViolation;
 
     use super::*;
+    use crate::compositor::testing::RecordingCompositor;
+    use crate::compositor::{
+        Compositor, CredentialSecrets, DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid,
+        WidgetConnectionMode, WidgetInitialConfig, WidgetInstanceKey, WidgetRegistration,
+    };
     use crate::scene::{SceneKind, Widget, WidgetPlacement, WidgetPosition};
+    use crate::widget::{Coordinator, WidgetManager};
+
+    const TEST_WIDGET_TYPE: &str = "550e8400-e29b-41d4-a716-446655440000";
 
     fn values(pairs: &[(&str, &str)]) -> IndexMap<ParamKey, String> {
         pairs
@@ -658,7 +684,7 @@ mod tests {
     /// A widget whose slots, keyed `slot0`, `slot1`, …, bind the given accounts.
     fn widget_binding(accounts: &[&str]) -> Widget {
         let mut widget = Widget::new(
-            uuid::Uuid::nil(),
+            uuid::Uuid::parse_str(TEST_WIDGET_TYPE).expect("BUG: test widget type is valid"),
             BTreeMap::new(),
             WidgetPosition { row: 0, col: 0 },
             WidgetPlacement::Fullscreen,
@@ -698,6 +724,72 @@ mod tests {
 
     fn scenes_of(scenes: Vec<Scene>) -> IndexMap<SceneId, Scene> {
         scenes.into_iter().map(|scene| (scene.id, scene)).collect()
+    }
+
+    fn install_account_test_widget(tmp: &tempfile::TempDir) -> Vec<std::path::PathBuf> {
+        let package = tmp.path().join("account-test-widget");
+        std::fs::create_dir(&package).expect("BUG: create test widget package");
+        std::fs::write(
+            package.join("manifest.json"),
+            format!(
+                r#"{{"uid":"{TEST_WIDGET_TYPE}","version":"1.0.0","name":"account-test","description":"account test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}}],"credentials":{{"slot0":{{"type":"generic-token","label":"First"}},"slot1":{{"type":"generic-token","label":"Second"}},"slot2":{{"type":"generic-token","label":"Third"}}}}}}"#
+            ),
+        )
+        .expect("BUG: write test widget manifest");
+        let binary = package.join("widget");
+        std::fs::write(&binary, "#!/bin/sh\nexit 0\n").expect("BUG: write test widget binary");
+        std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755))
+            .expect("BUG: make test widget executable");
+        vec![tmp.path().to_path_buf()]
+    }
+
+    fn register_retained_widgets(compositor: &RecordingCompositor, widgets: &[Widget]) {
+        for widget in widgets {
+            compositor
+                .enqueue_register_widget(WidgetRegistration {
+                    key: widget.id.into(),
+                    connection_mode: WidgetConnectionMode::Accepting,
+                    initial_config: WidgetInitialConfig {
+                        width: 1280,
+                        height: 480,
+                        viewport_shape: bmc_widget_protocol::ViewportShape::Rectangular,
+                        display: bmc_widget_protocol::DisplayInfo::BMC100,
+                        params: serde_json::Map::new(),
+                        credentials: serde_json::Map::new(),
+                        credential_secrets: CredentialSecrets::default(),
+                        token: widget.id.to_string(),
+                    },
+                })
+                .expect("BUG: seed retained widget");
+        }
+    }
+
+    async fn prime_retained_credentials(
+        coordinator: &Coordinator,
+        compositor: &RecordingCompositor,
+        widgets: &[Widget],
+    ) {
+        for widget in widgets {
+            let resolved = coordinator
+                .resolve_credentials(widget)
+                .await
+                .expect("BUG: seeded widget manifest is installed");
+            compositor
+                .enqueue_update_widget_credentials(
+                    WidgetInstanceKey::new(widget.id.as_uuid()),
+                    resolved.view,
+                    resolved.secrets,
+                )
+                .expect("BUG: seed retained credentials")
+                .wait()
+                .await
+                .expect("BUG: seed credential receipt");
+        }
+        compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .clear();
     }
 
     #[test]
@@ -761,6 +853,8 @@ mod tests {
         AccountManagementService,
         Arc<RwLock<ConfigHandle>>,
         Arc<RwLock<SecretStoreHandle>>,
+        Arc<Coordinator>,
+        Arc<RecordingCompositor>,
     ) {
         let config_path = tmp.path().join("bmc-config.json");
         let config_handle = Arc::new(RwLock::new(
@@ -777,6 +871,7 @@ mod tests {
         ));
         {
             let mut config = config_handle.write().await;
+            config.scenes_mut().clear();
             for scene in scenes {
                 config.scenes_mut().insert(scene.id, scene);
             }
@@ -801,9 +896,524 @@ mod tests {
         store.save().await.expect("BUG: seed store must save");
         let secret_store = Arc::new(RwLock::new(store));
 
+        let widgets = config_handle
+            .read()
+            .await
+            .scenes()
+            .values()
+            .flat_map(|scene| scene.widgets.values().cloned())
+            .collect::<Vec<_>>();
+        let manager = WidgetManager::init(install_account_test_widget(tmp), false).await;
+        let registry = manager.registry();
+        let compositor = Arc::new(RecordingCompositor::default());
+        register_retained_widgets(&compositor, &widgets);
+        let widget_coordinator = Arc::new(Coordinator::new(
+            manager,
+            Arc::clone(&compositor) as Arc<dyn Compositor>,
+            registry,
+            HardwareCapabilities {
+                display: DisplayInfo {
+                    width: 1280,
+                    height: 480,
+                    shape: DisplayShape::Rectangular,
+                    dpi: 1,
+                },
+                slot_grid: Some(SlotGrid {
+                    columns: 4,
+                    rows: 2,
+                }),
+            },
+            Arc::clone(&secret_store),
+        ));
+        prime_retained_credentials(&widget_coordinator, &compositor, &widgets).await;
+
+        let scenes_rx = config_handle.read().await.subscribe_scenes_change();
+        let accounts_rx = secret_store.read().await.subscribe_accounts_change();
+        crate::widget::coordinator::start_credential_listener(
+            Arc::clone(&widget_coordinator),
+            Arc::clone(&config_handle),
+            scenes_rx,
+            accounts_rx,
+        );
+
         let service =
             AccountManagementService::new(Arc::clone(&config_handle), Arc::clone(&secret_store));
-        (service, config_handle, secret_store)
+        (
+            service,
+            config_handle,
+            secret_store,
+            widget_coordinator,
+            compositor,
+        )
+    }
+
+    fn pushed_widget_ids(compositor: &RecordingCompositor) -> Vec<String> {
+        let mut ids = compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .iter()
+            .map(|(instance_id, _, _)| instance_id.clone())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
+
+    fn sorted_widget_ids(widgets: &[&Widget]) -> Vec<String> {
+        let mut ids = widgets
+            .iter()
+            .map(|widget| widget.id.to_string())
+            .collect::<Vec<_>>();
+        ids.sort();
+        ids
+    }
+
+    fn account_update_request(token: &str) -> Request<web::UpsertAccountRequest> {
+        Request::new(web::UpsertAccountRequest {
+            id: "acct-1".to_owned(),
+            type_id: String::new(),
+            name: "acct-1".to_owned(),
+            field_values: HashMap::from([("token".to_owned(), token.to_owned())]),
+            allow_hosts: Vec::new(),
+        })
+    }
+
+    async fn wait_for_credential_pushes(compositor: &RecordingCompositor, count: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if compositor
+                    .credential_pushes
+                    .lock()
+                    .expect("BUG: recording compositor lock must not be poisoned")
+                    .len()
+                    == count
+                {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("credential refreshes must be enqueued");
+    }
+
+    async fn wait_for_retry_pending_calls(coordinator: &Coordinator, count: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while coordinator.retry_pending_call_count() != count {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("changed credential refreshes must retry pending widgets");
+    }
+
+    fn replace_file_with_directory(path: &std::path::Path) {
+        std::fs::remove_file(path).expect("BUG: seeded persistence file must exist");
+        std::fs::create_dir(path).expect("BUG: replace persistence file with a directory");
+    }
+
+    #[tokio::test]
+    async fn account_changes_refresh_all_widgets_and_retry_only_changed_ones() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let first = widget_binding(&["acct-1", "acct-1"]);
+        let second = widget_binding(&["acct-1"]);
+        let other = widget_binding(&["acct-2"]);
+        let expected = sorted_widget_ids(&[&first, &second, &other]);
+        let scene = scene_of(SceneKind::Combined, vec![first, second, other]);
+        let (service, _config, _store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
+
+        let request = |name: &str, token: &str, allow_hosts: &[&str]| {
+            Request::new(web::UpsertAccountRequest {
+                id: "acct-1".to_owned(),
+                type_id: String::new(),
+                name: name.to_owned(),
+                field_values: HashMap::from([("token".to_owned(), token.to_owned())]),
+                allow_hosts: allow_hosts.iter().map(|host| (*host).to_owned()).collect(),
+            })
+        };
+
+        service
+            .upsert_account(request("renamed", "s3cr3t", &[]))
+            .await
+            .expect("BUG: name update must succeed");
+        wait_for_credential_pushes(&compositor, 3).await;
+        wait_for_retry_pending_calls(&coordinator, 2).await;
+        assert_eq!(pushed_widget_ids(&compositor), expected);
+        compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .clear();
+
+        service
+            .upsert_account(request("renamed", "replacement", &[]))
+            .await
+            .expect("BUG: field update must succeed");
+        wait_for_credential_pushes(&compositor, 3).await;
+        wait_for_retry_pending_calls(&coordinator, 4).await;
+        assert_eq!(pushed_widget_ids(&compositor), expected);
+        compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .clear();
+
+        service
+            .upsert_account(request(
+                "renamed",
+                "replacement",
+                &["b.example", "a.example"],
+            ))
+            .await
+            .expect("BUG: host update must succeed");
+        wait_for_credential_pushes(&compositor, 3).await;
+        wait_for_retry_pending_calls(&coordinator, 6).await;
+        assert_eq!(pushed_widget_ids(&compositor), expected);
+    }
+
+    #[tokio::test]
+    async fn one_failed_credential_enqueue_does_not_skip_later_widgets() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let first = widget_binding(&["acct-1"]);
+        let second = widget_binding(&["acct-1"]);
+        let scene = scene_of(SceneKind::Combined, vec![first, second]);
+        let (service, _config, _store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        compositor.fail_next_credential_update();
+
+        service
+            .upsert_account(account_update_request("replacement"))
+            .await
+            .expect("BUG: one widget enqueue failure must not fail the account update");
+
+        wait_for_credential_pushes(&compositor, 1).await;
+        wait_for_retry_pending_calls(&coordinator, 1).await;
+        assert_eq!(pushed_widget_ids(&compositor).len(), 1);
+    }
+
+    #[tokio::test]
+    async fn missing_manifest_does_not_block_later_listener_refreshes() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let missing = widget_binding(&["acct-1"]);
+        let installed = widget_binding(&["acct-1"]);
+        let installed_id = installed.id.to_string();
+        let scene = scene_of(SceneKind::Combined, vec![missing, installed]);
+        let (service, config, _store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        config
+            .write()
+            .await
+            .scenes_mut()
+            .values_mut()
+            .next()
+            .expect("BUG: seeded scene")
+            .widgets
+            .first_mut()
+            .expect("BUG: missing-manifest widget")
+            .1
+            .widget_type_id = uuid::Uuid::new_v4();
+
+        service
+            .upsert_account(account_update_request("replacement"))
+            .await
+            .expect("BUG: account update must succeed");
+
+        wait_for_credential_pushes(&compositor, 1).await;
+        wait_for_retry_pending_calls(&coordinator, 1).await;
+        assert_eq!(pushed_widget_ids(&compositor), vec![installed_id]);
+    }
+
+    #[tokio::test]
+    async fn dropped_credential_receipts_are_awaited_without_source_locks() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
+        let (service, config, store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        compositor.hold_credential_receipts();
+        let update = tokio::spawn(async move {
+            service
+                .upsert_account(account_update_request("replacement"))
+                .await
+        });
+        wait_for_credential_pushes(&compositor, 1).await;
+
+        let config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
+            .await
+            .expect("credential receipt wait must not hold the config lock");
+        drop(config_guard);
+        let store_guard = tokio::time::timeout(Duration::from_secs(1), store.write())
+            .await
+            .expect("credential receipt wait must not hold the secret-store lock");
+        drop(store_guard);
+        compositor.drop_credential_receipts();
+
+        update
+            .await
+            .expect("BUG: account update task must not panic")
+            .expect("BUG: a dropped widget receipt must not fail the account update");
+        assert_eq!(coordinator.retry_pending_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn cancelled_account_rpc_finishes_enqueued_refreshes() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
+        let (service, _config, store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        compositor.hold_credential_receipts();
+        let update = tokio::spawn(async move {
+            service
+                .upsert_account(account_update_request("replacement"))
+                .await
+        });
+        wait_for_credential_pushes(&compositor, 1).await;
+
+        update.abort();
+        compositor.release_credential_receipts();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while coordinator.retry_pending_call_count() != 1 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("detached refresh continuation must retry the changed widget");
+
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(
+            store.read().await.accounts()[&id].field_values["token"],
+            "replacement"
+        );
+    }
+
+    #[tokio::test]
+    async fn account_deletion_holds_config_while_waiting_for_secrets() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
+        let (service, config, store, _coordinator, _compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        let secret_guard = store.write().await;
+        let deletion = tokio::spawn(async move {
+            service
+                .remove_account(Request::new("acct-1".to_owned()))
+                .await
+        });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if config.try_read().is_err() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("account deletion must acquire config before waiting for secrets");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), config.write())
+                .await
+                .is_err(),
+            "a competing config writer must serialize behind account deletion"
+        );
+        drop(secret_guard);
+        deletion
+            .await
+            .expect("BUG: account deletion task must not panic")
+            .expect("BUG: account deletion must converge after secrets are released");
+        let _config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
+            .await
+            .expect("config lock must be released after account deletion");
+    }
+
+    #[tokio::test]
+    async fn account_update_does_not_hold_config_while_waiting_for_secrets() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
+        let (service, config, store, _coordinator, _compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        let secret_guard = store.read().await;
+        let update = tokio::spawn(async move {
+            service
+                .upsert_account(account_update_request("replacement"))
+                .await
+        });
+        let config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
+            .await
+            .expect("an account-only update must not acquire the config lock");
+        drop(config_guard);
+        drop(secret_guard);
+        update
+            .await
+            .expect("BUG: account update task must not panic")
+            .expect("BUG: account update must converge after secrets are released");
+        let _config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
+            .await
+            .expect("config lock must be released after account update");
+    }
+
+    #[tokio::test]
+    async fn account_no_ops_do_not_wake_but_creation_is_a_semantic_noop() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
+        let (service, _config, _store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        let request = |id: &str, fields: HashMap<String, String>| {
+            Request::new(web::UpsertAccountRequest {
+                id: id.to_owned(),
+                type_id: credential::BuiltinType::GenericToken.id().to_owned(),
+                name: if id.is_empty() { "created" } else { "acct-1" }.to_owned(),
+                field_values: fields,
+                allow_hosts: Vec::new(),
+            })
+        };
+
+        service
+            .upsert_account(request("acct-1", HashMap::new()))
+            .await
+            .expect("BUG: empty fields preserve the stored value");
+        service
+            .upsert_account(request(
+                "acct-1",
+                HashMap::from([("token".to_owned(), "s3cr3t".to_owned())]),
+            ))
+            .await
+            .expect("BUG: identical fields are a no-op");
+        service
+            .upsert_account(request(
+                "",
+                HashMap::from([("token".to_owned(), "new".to_owned())]),
+            ))
+            .await
+            .expect("BUG: account creation must succeed");
+
+        wait_for_credential_pushes(&compositor, 1).await;
+        assert_eq!(pushed_widget_ids(&compositor).len(), 1);
+        assert_eq!(coordinator.retry_pending_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn account_deletion_refreshes_all_and_retries_only_formerly_bound_widgets() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let first = widget_binding(&["acct-1", "acct-1"]);
+        let second = widget_binding(&["acct-1"]);
+        let other = widget_binding(&["acct-2"]);
+        let expected = sorted_widget_ids(&[&first, &second, &other]);
+        let scene = scene_of(SceneKind::Combined, vec![first, second, other]);
+        let (service, config, store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
+
+        service
+            .remove_account(Request::new("acct-1".to_owned()))
+            .await
+            .expect("BUG: bound account deletion must succeed");
+
+        wait_for_credential_pushes(&compositor, 3).await;
+        wait_for_retry_pending_calls(&coordinator, 2).await;
+        assert_eq!(pushed_widget_ids(&compositor), expected);
+        let deleted = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert!(!store.read().await.accounts().contains_key(&deleted));
+        assert!(
+            !bindings_by_account(config.read().await.scenes()).contains_key(&deleted),
+            "persisted widgets must no longer bind the deleted account"
+        );
+    }
+
+    #[tokio::test]
+    async fn config_save_failure_keeps_account_bindings_and_credentials_unchanged() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let widget = widget_binding(&["acct-1"]);
+        let scene = scene_of(SceneKind::Fullscreen, vec![widget]);
+        let (service, config, store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        replace_file_with_directory(&tmp.path().join("bmc-config.json"));
+
+        let error = service
+            .remove_account(Request::new("acct-1".to_owned()))
+            .await
+            .expect_err("BUG: deleting through an unwritable config must fail");
+
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(error.code(), Code::Internal);
+        assert!(
+            bindings_by_account(config.read().await.scenes()).contains_key(&id),
+            "failed persistence must not commit cloned binding removal"
+        );
+        assert!(store.read().await.accounts().contains_key(&id));
+        wait_for_credential_pushes(&compositor, 1).await;
+        assert_eq!(pushed_widget_ids(&compositor).len(), 1);
+        assert_eq!(coordinator.retry_pending_call_count(), 0);
+    }
+
+    #[tokio::test]
+    async fn secret_save_failure_commits_safe_unbound_state_and_clears_former_target() {
+        use web::account_management_service_server::AccountManagementService as _;
+
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let affected = widget_binding(&["acct-1"]);
+        let unrelated = widget_binding(&["acct-2"]);
+        let affected_key = WidgetInstanceKey::new(affected.id.as_uuid());
+        let unrelated_key = WidgetInstanceKey::new(unrelated.id.as_uuid());
+        let scene = scene_of(
+            SceneKind::Combined,
+            vec![affected.clone(), unrelated.clone()],
+        );
+        let (service, config, store, coordinator, compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
+        let unrelated_before = compositor
+            .retained_credentials(unrelated_key)
+            .expect("BUG: unrelated retained widget must be seeded");
+        replace_file_with_directory(&tmp.path().join(crate::secret_store::SECRETS_FILE_NAME));
+
+        let error = service
+            .remove_account(Request::new("acct-1".to_owned()))
+            .await
+            .expect_err("BUG: deleting through an unwritable secret store must fail");
+
+        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
+        assert_eq!(error.code(), Code::Internal);
+        assert!(!bindings_by_account(config.read().await.scenes()).contains_key(&id));
+        assert!(store.read().await.accounts().contains_key(&id));
+        wait_for_credential_pushes(&compositor, 2).await;
+        wait_for_retry_pending_calls(&coordinator, 1).await;
+        assert_eq!(
+            pushed_widget_ids(&compositor),
+            sorted_widget_ids(&[&affected, &unrelated])
+        );
+        let (view, secrets) = compositor
+            .retained_credentials(affected_key)
+            .expect("BUG: affected retained widget must remain registered");
+        assert!(view.is_empty());
+        assert!(
+            secrets.eq(&CredentialSecrets::default()),
+            "former target must retain no credential secrets"
+        );
+        assert!(
+            compositor
+                .retained_credentials(unrelated_key)
+                .as_ref()
+                .is_some_and(|retained| retained.eq(&unrelated_before)),
+            "unrelated retained credentials must not be refreshed or changed"
+        );
     }
 
     #[tokio::test]
@@ -811,7 +1421,8 @@ mod tests {
         use web::account_management_service_server::AccountManagementService as _;
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
-        let (service, _config, store) = seeded_service(&tmp, vec![], &[]).await;
+        let (service, _config, store, _coordinator, _compositor) =
+            seeded_service(&tmp, vec![], &[]).await;
 
         let upsert = async |id: &str, hosts: &[&str]| {
             service
@@ -854,7 +1465,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let (scene, _) = scene_binding(&["acct-1"]);
-        let (service, config_handle, secret_store) =
+        let (service, config_handle, secret_store, _coordinator, _compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
 
         service
@@ -875,7 +1486,8 @@ mod tests {
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let (scene, _) = scene_binding(&["acct-1"]);
-        let (service, config_handle, _store) = seeded_service(&tmp, vec![scene], &["acct-1"]).await;
+        let (service, config_handle, _store, _coordinator, _compositor) =
+            seeded_service(&tmp, vec![scene], &["acct-1"]).await;
 
         let err = service
             .remove_account(Request::new("acct-gone".to_owned()))

@@ -48,7 +48,7 @@ use crate::scene;
 use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
-use crate::widget::coordinator::ConfiguredSceneState;
+use crate::widget::coordinator::{ConfiguredSceneState, WidgetStopBatch};
 use crate::widget::{Coordinator, WidgetRegistry};
 
 pub(crate) struct PlatformDescriptor {
@@ -365,6 +365,15 @@ struct ValidatedWidgetUpdate {
     params_changed: bool,
 }
 
+struct PendingWidgetUpdateCompletion {
+    scene_id: scene::SceneId,
+    widget_id: scene::WidgetId,
+    configured_state: ConfiguredSceneState,
+    replacement: Option<WidgetStopBatch>,
+    retry_params: bool,
+    response_error: Option<Status>,
+}
+
 fn parse_update_widget_shape(
     req: web::UpdateWidgetRequest,
 ) -> Result<ParsedUpdateWidgetShape, Status> {
@@ -399,6 +408,7 @@ fn parse_update_widget_shape(
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct SceneManagementService {
     widget_registry: Arc<WidgetRegistry>,
     config_handle: Arc<RwLock<ConfigHandle>>,
@@ -464,14 +474,12 @@ impl SceneManagementService {
             .map_err(|e| Status::internal(format!("failed to save config: {e}")))
     }
 
-    async fn validate_widget_update(
+    fn validate_widget_update(
         &self,
         scene: &scene::Scene,
         widget_id: scene::WidgetId,
-        position: scene::WidgetPosition,
-        placement: scene::WidgetPlacement,
-        params: Option<web::WidgetDataStruct>,
-        credential_bindings: Option<web::CredentialBindings>,
+        parsed: ParsedUpdateWidgetShape,
+        accounts: &IndexMap<AccountId, Account>,
     ) -> Result<ValidatedWidgetUpdate, Status> {
         let existing = scene
             .widgets
@@ -482,7 +490,7 @@ impl SceneManagementService {
             .get(&existing.widget_type_id)
             .ok_or_else(|| Status::failed_precondition("widget manifest not installed"))?;
         let platform = PlatformDescriptor::from(&self.capabilities);
-        let Some(descriptor) = platform.descriptor_for_placement(&placement) else {
+        let Some(descriptor) = platform.descriptor_for_placement(&parsed.placement) else {
             return Err(Status::failed_precondition(
                 "size is not supported on this platform",
             ));
@@ -499,23 +507,21 @@ impl SceneManagementService {
 
         let typed_params = validate_widget_params(
             &info.manifest,
-            &params.unwrap_or_default(),
+            &parsed.params.unwrap_or_default(),
             ValidateMode::Update,
         )
         .map_err(bad_request_status)?;
-        let typed_bindings = match credential_bindings {
+        let typed_bindings = match parsed.credential_bindings {
             None => existing.credential_bindings.clone(),
-            Some(requested) => validate_credential_bindings(
-                &info.manifest,
-                &requested.bindings,
-                self.secret_store.read().await.accounts(),
-            )
-            .map_err(bad_request_status)?,
+            Some(requested) => {
+                validate_credential_bindings(&info.manifest, &requested.bindings, accounts)
+                    .map_err(bad_request_status)?
+            }
         };
         let mut widget = scene::Widget {
             id: widget_id,
-            position,
-            placement,
+            position: parsed.position,
+            placement: parsed.placement,
             widget_type_id: existing.widget_type_id,
             viewport_shape: bmc_widget_manifest::ViewportShape::Rectangular,
             params: typed_params,
@@ -529,6 +535,106 @@ impl SceneManagementService {
             params_changed: existing.params != widget.params,
             widget,
         })
+    }
+
+    async fn update_widget_transaction(
+        self,
+        parsed: ParsedUpdateWidgetShape,
+    ) -> Result<Response<()>, Status> {
+        let scene_id_key = scene::SceneId::from(parsed.scene_id);
+        let widget_id_key = scene::WidgetId::from(parsed.widget_id);
+        let configured_state =
+            ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&self.preview_scene_id));
+
+        let completion = {
+            let preview = self.preview_scene_id.lock().await;
+            let mut config = self.config_handle.write().await;
+            let accounts = self.secret_store.read().await;
+            let scene = config.scenes_mut().get_mut(&scene_id_key).ok_or_else(|| {
+                Status::not_found(format!("scene not found: {}", parsed.scene_id))
+            })?;
+
+            reject_update_widget_in_fullscreen(
+                &scene.kind,
+                parsed.proto_position,
+                &parsed.placement,
+            )?;
+            if scene.kind == scene::SceneKind::Combined {
+                reject_combined_when_no_slot_grid(&self.capabilities)?;
+            }
+
+            let ValidatedWidgetUpdate {
+                widget,
+                placement_changed,
+                params_changed,
+            } = self.validate_widget_update(scene, widget_id_key, parsed, accounts.accounts())?;
+            let showing = scene.enabled || *preview == Some(scene_id_key);
+            scene.widgets.insert(widget.id, widget.clone());
+            Self::save_config(&mut config).await?;
+
+            let replacement = if showing && placement_changed {
+                Some(
+                    self.coordinator
+                        .enqueue_widget_replacement(WidgetInstanceKey::new(widget.id.as_uuid()))
+                        .await,
+                )
+            } else {
+                None
+            };
+            let mut response_error = None;
+            let retry_params = if replacement.is_none() && params_changed {
+                match self.coordinator.update_widget_params(
+                    WidgetInstanceKey::new(widget.id.as_uuid()),
+                    &widget.params,
+                ) {
+                    Ok(()) => true,
+                    Err(error) => {
+                        response_error = Some(live_params_status(&error));
+                        false
+                    }
+                }
+            } else {
+                false
+            };
+            PendingWidgetUpdateCompletion {
+                scene_id: scene_id_key,
+                widget_id: widget_id_key,
+                configured_state,
+                replacement,
+                retry_params,
+                response_error,
+            }
+        };
+
+        self.finish_widget_update(completion).await
+    }
+
+    async fn finish_widget_update(
+        &self,
+        completion: PendingWidgetUpdateCompletion,
+    ) -> Result<Response<()>, Status> {
+        let retry = completion.retry_params;
+        if let Some(cutoff) = completion.replacement {
+            cutoff.wait().await;
+            self.coordinator
+                .spawn_configured_widget(
+                    &self.config_handle,
+                    completion.scene_id,
+                    completion.widget_id,
+                    completion.configured_state,
+                )
+                .await;
+        }
+        if retry {
+            self.coordinator
+                .retry_pending_widget(&completion.widget_id.to_string())
+                .await;
+        }
+        self.refresh_compositor_scenes().await;
+
+        completion
+            .response_error
+            .map_or_else(|| Ok(Response::new(())), Err)
     }
 }
 
@@ -759,43 +865,6 @@ fn reject_update_widget_in_fullscreen(
 pub(crate) enum ValidateMode {
     Add,
     Update,
-}
-
-enum UpdateWidgetAction {
-    /// Stop the widget and respawn it. Required when the surface size
-    /// changes — size is fixed at the initial configure batch, so the
-    /// widget process needs a fresh start to size its renderer.
-    Respawn,
-    /// Push fresh params to the running widget via the live-reload
-    /// path. Valid when the widget is showing, size is unchanged, and
-    /// params actually differ.
-    HotPushParams,
-    /// Nothing to do — either the widget is not running (scene not
-    /// showing, so the new config will be picked up on next spawn) or
-    /// it is running but only position changed (picked up by
-    /// `refresh_compositor_scenes`).
-    Nothing,
-}
-
-/// Decide what to do with a running widget after a config update.
-///
-/// Inputs:
-/// - `showing` — whether the scene this widget belongs to is currently
-///   on screen (enabled, or being previewed).
-/// - `placement_changed` — whether the updated widget has a different placement
-///   than the on-disk snapshot.
-/// - `params_changed` — whether the updated widget's typed params
-///   differ from the on-disk snapshot.
-fn decide_update_widget_action(
-    showing: bool,
-    placement_changed: bool,
-    params_changed: bool,
-) -> UpdateWidgetAction {
-    match (showing, placement_changed, params_changed) {
-        (true, true, _) => UpdateWidgetAction::Respawn,
-        (true, false, true) => UpdateWidgetAction::HotPushParams,
-        (true, false, false) | (false, _, _) => UpdateWidgetAction::Nothing,
-    }
 }
 
 #[expect(
@@ -1490,11 +1559,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         };
         if scene_was_disabled {
             self.coordinator
-                .spawn_configured_scene_widgets(
-                    &self.config_handle,
-                    scene_id,
-                    ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&self.preview_scene_id)),
-                )
+                .spawn_configured_scene_widgets(&self.config_handle, scene_id)
                 .await;
         }
         self.refresh_compositor_scenes().await;
@@ -1708,104 +1773,10 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         request: Request<web::UpdateWidgetRequest>,
     ) -> Result<Response<()>, Status> {
-        let ParsedUpdateWidgetShape {
-            scene_id,
-            widget_id,
-            proto_position,
-            position,
-            placement,
-            params,
-            credential_bindings,
-        } = parse_update_widget_shape(request.into_inner())?;
-
-        let (scene_id_key, widget_id_key) = (scene_id.into(), widget_id.into());
-
-        // The write lock is held across `save_config().await` (disk I/O)
-        // and across the synchronous live-push send below. Keeping the
-        // send inside the locked region preserves ordering between
-        // concurrent update_widget calls; the cost is that other writers
-        // queue behind disk I/O. Updates are rare enough that this is
-        // acceptable.
-        let (respawn_target, retry_target) = {
-            let preview = self.preview_scene_id.lock().await;
-            let mut config = self.config_handle.write().await;
-            let scene = config
-                .scenes_mut()
-                .get_mut(&scene_id_key)
-                .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
-
-            reject_update_widget_in_fullscreen(&scene.kind, proto_position, &placement)?;
-            if scene.kind == scene::SceneKind::Combined {
-                reject_combined_when_no_slot_grid(&self.capabilities)?;
-            }
-
-            let ValidatedWidgetUpdate {
-                widget: updated_widget,
-                placement_changed,
-                params_changed,
-            } = self
-                .validate_widget_update(
-                    scene,
-                    widget_id_key,
-                    position,
-                    placement,
-                    params,
-                    credential_bindings,
-                )
-                .await?;
-
-            scene
-                .widgets
-                .insert(updated_widget.id, updated_widget.clone());
-
-            let showing = scene.enabled || *preview == Some(scene_id_key);
-            let configured_state =
-                ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&self.preview_scene_id));
-            Self::save_config(&mut config).await?;
-
-            // Position-only changes get picked up by
-            // `refresh_compositor_scenes` below, so we only respawn when
-            // the widget's surface size actually changed. Params are
-            // pushed only when they actually differ — a pure position
-            // move doesn't disturb the running widget's state.
-            // The send happens under the still-held write lock so two
-            // concurrent updates can't reorder against the
-            // compositor.
-            let instance_id = updated_widget.id.as_uuid().to_string();
-            match decide_update_widget_action(showing, placement_changed, params_changed) {
-                UpdateWidgetAction::Respawn => {
-                    let cutoff = self
-                        .coordinator
-                        .enqueue_widget_replacement(WidgetInstanceKey::new(
-                            updated_widget.id.as_uuid(),
-                        ))
-                        .await;
-                    (Some((updated_widget, configured_state, cutoff)), None)
-                }
-                UpdateWidgetAction::HotPushParams => {
-                    self.coordinator
-                        .update_widget_params(&instance_id, &updated_widget.params)
-                        .map_err(|error| live_params_status(&error))?;
-                    (None, Some(instance_id))
-                }
-                UpdateWidgetAction::Nothing => (None, None),
-            }
-        };
-
-        if let Some((widget, state, cutoff)) = respawn_target {
-            cutoff.wait().await;
-            self.coordinator
-                .spawn_configured_widget(&self.config_handle, scene_id_key, widget.id, state)
-                .await;
-        }
-        // After the lock, so the params reach the compositor before the
-        // respawn that replays them.
-        if let Some(instance_id) = retry_target {
-            self.coordinator.retry_pending_widget(&instance_id).await;
-        }
-        self.refresh_compositor_scenes().await;
-
-        Ok(Response::new(()))
+        let parsed = parse_update_widget_shape(request.into_inner())?;
+        tokio::spawn(self.clone().update_widget_transaction(parsed))
+            .await
+            .map_err(|error| Status::internal(format!("widget update task failed: {error}")))?
     }
 }
 
@@ -2196,7 +2167,7 @@ mod tests {
         widget_type_id: Uuid,
         slots: &[(&str, &str, bool)],
         secret_store: Arc<RwLock<SecretStoreHandle>>,
-    ) -> Coordinator {
+    ) -> (Coordinator, Arc<RecordingCompositor>) {
         let mut manifest = manifest_with_credentials(slots);
         manifest.uid = widget_type_id;
         let registry = Arc::new(WidgetRegistry::new(vec![
@@ -2207,15 +2178,18 @@ mod tests {
                 None,
             ),
         ]));
-        let compositor: Arc<dyn crate::compositor::Compositor> =
-            Arc::new(RecordingCompositor::default());
+        let compositor = Arc::new(RecordingCompositor::default());
+        let compositor_trait: Arc<dyn crate::compositor::Compositor> = compositor.clone();
         let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
-        Coordinator::new(
-            widget_manager,
+        (
+            Coordinator::new(
+                widget_manager,
+                compositor_trait,
+                registry,
+                bmc100_caps(None),
+                secret_store,
+            ),
             compositor,
-            registry,
-            bmc100_caps(None),
-            secret_store,
         )
     }
 
@@ -2249,7 +2223,7 @@ mod tests {
         let widget_type_id = Uuid::new_v4();
         let (store, account_id) =
             store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
-        let coordinator = coordinator_declaring(
+        let (coordinator, _) = coordinator_declaring(
             widget_type_id,
             &[("pool", credential::BuiltinType::BraiinsPool.id(), true)],
             store,
@@ -2258,7 +2232,8 @@ mod tests {
 
         let resolved = coordinator
             .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
-            .await;
+            .await
+            .expect("installed manifest must resolve credentials");
 
         assert_eq!(resolved.secrets.slot_count(), 1);
     }
@@ -2270,11 +2245,12 @@ mod tests {
         let widget_type_id = Uuid::new_v4();
         let (store, account_id) =
             store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
-        let coordinator = coordinator_declaring(widget_type_id, &[], store).await;
+        let (coordinator, _) = coordinator_declaring(widget_type_id, &[], store).await;
 
         let resolved = coordinator
             .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
-            .await;
+            .await
+            .expect("installed manifest must resolve credentials");
 
         assert_eq!(
             resolved.secrets.slot_count(),
@@ -2291,7 +2267,7 @@ mod tests {
         let widget_type_id = Uuid::new_v4();
         let (store, account_id) =
             store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
-        let coordinator = coordinator_declaring(
+        let (coordinator, _) = coordinator_declaring(
             widget_type_id,
             &[("pool", credential::BuiltinType::GenericToken.id(), true)],
             store,
@@ -2300,171 +2276,10 @@ mod tests {
 
         let resolved = coordinator
             .resolve_credentials(&widget_bound_to(widget_type_id, "pool", &account_id))
-            .await;
+            .await
+            .expect("installed manifest must resolve credentials");
 
         assert_eq!(resolved.secrets.slot_count(), 0);
-    }
-
-    /// Drive `start_credential_listener` end to end:
-    /// a scene holding one widget bound to `pool`, woken by an account save.
-    /// `connected` controls whether the widget's surface has attached yet.
-    /// Returns the compositor and the widget's instance id;
-    /// assert on that instance's recorded push — the default scenes push too.
-    async fn hot_push_through_listener(
-        declared_slots: &[(&str, &str, bool)],
-        connected: bool,
-    ) -> (Arc<RecordingCompositor>, String) {
-        let widget_type_id = Uuid::new_v4();
-        let (store, account_id) =
-            store_holding("a-1", credential::BuiltinType::BraiinsPool.id()).await;
-
-        let mut manifest = manifest_with_credentials(declared_slots);
-        manifest.uid = widget_type_id;
-        let registry = Arc::new(WidgetRegistry::new(vec![
-            crate::widget::WidgetInfo::for_test(
-                manifest,
-                std::path::PathBuf::from("/test/widgets/test-widget"),
-                std::path::PathBuf::from("/test/widgets/test-widget/bin/widget"),
-                None,
-            ),
-        ]));
-
-        let mut scene = scene::Scene::fullscreen(widget_type_id, BTreeMap::new());
-        let widget = scene
-            .widgets
-            .values_mut()
-            .next()
-            .expect("BUG: a fullscreen scene holds one widget");
-        let key: CredentialKey = serde_json::from_str("\"pool\"").expect("BUG: valid key");
-        widget.credential_bindings.insert(key, account_id);
-        let instance_id = widget.id.as_uuid().to_string();
-
-        let compositor = Arc::new(RecordingCompositor::default());
-        if connected {
-            compositor
-                .connected
-                .lock()
-                .expect("BUG: recording compositor lock must not be poisoned")
-                .insert(instance_id.clone());
-        }
-        let compositor_for_coordinator: Arc<dyn crate::compositor::Compositor> = compositor.clone();
-        let widget_manager = crate::widget::WidgetManager::init(Vec::new(), false).await;
-        let coordinator = Arc::new(Coordinator::new(
-            widget_manager,
-            compositor_for_coordinator,
-            registry,
-            bmc100_caps(None),
-            store,
-        ));
-
-        let tmp = tempfile::tempdir().expect("BUG: tempdir creation must succeed in tests");
-        let config_handle = Arc::new(RwLock::new(
-            ConfigHandle::init(
-                tmp.path().join("bmc-config.json"),
-                50,
-                50,
-                50,
-                50,
-                bmc_platform::Product::Bmc100,
-            )
-            .await
-            .0,
-        ));
-        config_handle
-            .write()
-            .await
-            .scenes_mut()
-            .insert(scene.id, scene);
-
-        let (_scenes_tx, scenes_rx) = tokio::sync::broadcast::channel(4);
-        let (accounts_tx, accounts_rx) = tokio::sync::broadcast::channel(4);
-        crate::widget::coordinator::start_credential_listener(
-            coordinator,
-            config_handle,
-            scenes_rx,
-            accounts_rx,
-        );
-        accounts_tx
-            .send(())
-            .expect("BUG: the listener must be receiving");
-
-        for _ in 0..100 {
-            if compositor
-                .credential_pushes
-                .lock()
-                .expect("BUG: recording compositor lock must not be poisoned")
-                .iter()
-                .any(|(id, _, _)| *id == instance_id)
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        (compositor, instance_id)
-    }
-
-    /// The recorded push for `instance_id`, or a panic naming the miss.
-    fn push_for(
-        compositor: &RecordingCompositor,
-        instance_id: &str,
-    ) -> (
-        serde_json::Map<String, serde_json::Value>,
-        bmc_widget_protocol::CredentialSecrets,
-    ) {
-        compositor
-            .credential_pushes
-            .lock()
-            .expect("BUG: recording compositor lock must not be poisoned")
-            .iter()
-            .find(|(id, _, _)| id == instance_id)
-            .map(|(_, view, secrets)| (view.clone(), secrets.clone()))
-            .expect("BUG: the save must trigger a push for the bound widget")
-    }
-
-    /// The pair below mirrors the resolve pair above, but through the listener:
-    /// without the positive case, a push that always withheld
-    /// would satisfy the negative one.
-    #[tokio::test]
-    async fn a_save_hot_push_delivers_a_slot_the_manifest_still_declares() {
-        let (compositor, instance_id) = hot_push_through_listener(
-            &[("pool", credential::BuiltinType::BraiinsPool.id(), true)],
-            true,
-        )
-        .await;
-
-        let (view, secrets) = push_for(&compositor, &instance_id);
-        assert_eq!(secrets.slot_count(), 1);
-        assert!(!view.is_empty());
-    }
-
-    /// A package update can shrink a manifest under a running widget;
-    /// the next save must not re-deliver the secret spawn would withhold.
-    #[tokio::test]
-    async fn a_save_hot_push_withholds_a_slot_the_manifest_dropped() {
-        let (compositor, instance_id) = hot_push_through_listener(&[], true).await;
-
-        let (view, secrets) = push_for(&compositor, &instance_id);
-        assert_eq!(
-            secrets.slot_count(),
-            0,
-            "a hot push must not deliver a secret for a slot the installed manifest dropped"
-        );
-        assert!(view.is_empty());
-    }
-
-    /// An account change between `register_widget` and the surface attaching
-    /// must still reach the compositor — the handshake replays the stored config,
-    /// so a dropped push here delivers a stale secret.
-    #[tokio::test]
-    async fn a_save_hot_push_reaches_a_widget_whose_surface_has_not_attached_yet() {
-        let (compositor, instance_id) = hot_push_through_listener(
-            &[("pool", credential::BuiltinType::BraiinsPool.id(), true)],
-            false,
-        )
-        .await;
-
-        let (_, secrets) = push_for(&compositor, &instance_id);
-        assert_eq!(secrets.slot_count(), 1);
     }
 
     fn binding_violations(
@@ -4178,6 +3993,7 @@ mod tests {
         config: Arc<RwLock<ConfigHandle>>,
         scene_id: scene::SceneId,
         widget_uid: Uuid,
+        account_id: AccountId,
     }
 
     async fn preview_lifecycle_fixture(
@@ -4191,7 +4007,7 @@ mod tests {
         std::fs::write(
             package.join("manifest.json"),
             format!(
-                r#"{{"uid":"{widget_uid}","version":"1.0.0","name":"preview-test","description":"preview test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}},{{"type":"rectangular","min_width":638,"max_width":638,"min_height":238,"max_height":238}}]}}"#
+                r#"{{"uid":"{widget_uid}","version":"1.0.0","name":"preview-test","description":"preview test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}},{{"type":"rectangular","min_width":638,"max_width":638,"min_height":238,"max_height":238}}],"params":{{"label":{{"name":"Label","type":"string","default_value":"old"}}}},"credentials":{{"pool":{{"type":"braiins-pool","label":"Pool","required":true}}}}}}"#
             ),
         )
         .expect("BUG: write widget manifest");
@@ -4208,24 +4024,20 @@ mod tests {
             columns: 4,
             rows: 2,
         }));
+        let (secret_store, account_id) =
+            store_holding("pool-account", credential::BuiltinType::BraiinsPool.id()).await;
         let coordinator = Arc::new(Coordinator::new(
             manager,
             Arc::clone(&compositor) as Arc<dyn crate::compositor::Compositor>,
             Arc::clone(&registry),
             capabilities,
-            empty_secret_store().await,
+            Arc::clone(&secret_store),
         ));
+        let config_path = temp.path().join("settings.json");
         let config = Arc::new(RwLock::new(
-            ConfigHandle::init(
-                temp.path().join("settings.json"),
-                50,
-                50,
-                50,
-                50,
-                bmc_platform::Product::Bmc100,
-            )
-            .await
-            .0,
+            ConfigHandle::init(config_path, 50, 50, 50, 50, bmc_platform::Product::Bmc100)
+                .await
+                .0,
         ));
         let mut configured = scene::Scene {
             id: scene::SceneId::generate(),
@@ -4235,9 +4047,15 @@ mod tests {
             widgets: IndexMap::new(),
         };
         if with_widget {
+            let label = serde_json::from_str("\"label\"").expect("BUG: valid parameter key");
             let widget = scene::Widget::new(
                 widget_uid,
-                BTreeMap::new(),
+                [(
+                    label,
+                    bmc_widget_manifest::ParamValue::String("old".to_owned()),
+                )]
+                .into_iter()
+                .collect(),
                 scene::WidgetPosition { row: 0, col: 0 },
                 scene::WidgetPlacement::SlotSpan(scene::SlotSpan {
                     columns: 1,
@@ -4252,11 +4070,19 @@ mod tests {
             .await
             .scenes_mut()
             .insert(scene_id, configured);
+        let scenes_rx = config.read().await.subscribe_scenes_change();
+        let accounts_rx = secret_store.read().await.subscribe_accounts_change();
+        crate::widget::coordinator::start_credential_listener(
+            Arc::clone(&coordinator),
+            Arc::clone(&config),
+            scenes_rx,
+            accounts_rx,
+        );
         let (led_tx, _led_rx) = tokio::sync::mpsc::channel(16);
         let service = Arc::new(SceneManagementService::new(
             registry,
             Arc::clone(&config),
-            empty_secret_store().await,
+            secret_store,
             Arc::clone(&coordinator),
             capabilities,
             crate::led_coordinator::spawn_led_coordinator(led_tx),
@@ -4269,6 +4095,7 @@ mod tests {
             config,
             scene_id,
             widget_uid,
+            account_id,
         }
     }
 
@@ -4308,9 +4135,46 @@ mod tests {
             id: widget_id.to_string(),
             position: Some(web::WidgetPosition { row: 0, col: 0 }),
             size: web::WidgetSize::Medium.into(),
-            params: Some(web::WidgetDataStruct::default()),
+            params: Some(fields_one("label", wdv_string("old"))),
             credential_bindings: Some(web::CredentialBindings::default()),
         }
+    }
+
+    fn hot_update_request(
+        fixture: &PreviewLifecycleFixture,
+        widget_id: scene::WidgetId,
+        label: &str,
+        binding: Option<&AccountId>,
+    ) -> web::UpdateWidgetRequest {
+        web::UpdateWidgetRequest {
+            scene_id: fixture.scene_id.to_string(),
+            id: widget_id.to_string(),
+            position: Some(web::WidgetPosition { row: 0, col: 0 }),
+            size: web::WidgetSize::Small.into(),
+            params: Some(fields_one("label", wdv_string(label))),
+            credential_bindings: Some(web::CredentialBindings {
+                bindings: binding
+                    .map(|account| {
+                        [("pool".to_owned(), account.to_string())]
+                            .into_iter()
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+            }),
+        }
+    }
+
+    async fn start_fixture_widget(fixture: &PreviewLifecycleFixture) -> scene::WidgetId {
+        fixture
+            .coordinator
+            .spawn_configured_scene_widgets(
+                &fixture.config,
+                fixture.scene_id,
+                ConfiguredSceneState::Enabled,
+            )
+            .await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        fixture_widget_id(fixture).await
     }
 
     async fn start_preview(
@@ -4373,6 +4237,357 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    async fn wait_for_credential_pushes(compositor: &RecordingCompositor, expected: usize) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            if compositor
+                .credential_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .len()
+                >= expected
+            {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "credential listener did not push the expected updates"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn wait_for_credential_attempts(compositor: &RecordingCompositor, expected: usize) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while compositor.credential_update_attempt_count() < expected {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "credential listener did not attempt the expected updates"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    async fn wait_for_retry_calls(coordinator: &Coordinator, expected: usize) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while coordinator.retry_pending_call_count() < expected {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "credential listener did not request the expected retries"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
+    #[tokio::test]
+    async fn binding_only_update_targets_once_and_equivalent_binding_is_a_noop() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = start_fixture_widget(&fixture).await;
+        let baseline_calls = fixture.compositor.widget_calls().len();
+
+        fixture
+            .service
+            .update_widget(Request::new(hot_update_request(
+                &fixture,
+                widget_id,
+                "old",
+                Some(&fixture.account_id),
+            )))
+            .await
+            .expect("binding update must succeed");
+
+        wait_for_credential_pushes(&fixture.compositor, 1).await;
+        wait_for_retry_calls(&fixture.coordinator, 1).await;
+
+        {
+            let pushes = fixture
+                .compositor
+                .credential_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned");
+            assert_eq!(pushes.len(), 1);
+            assert_eq!(pushes[0].0, widget_id.to_string());
+        }
+        assert_eq!(fixture.coordinator.retry_pending_call_count(), 1);
+        assert!(
+            fixture
+                .compositor
+                .parameter_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .is_empty()
+        );
+        assert!(
+            !fixture.compositor.widget_calls()[baseline_calls..]
+                .iter()
+                .any(|call| call.starts_with("deactivate ")
+                    || call.starts_with("register_retained "))
+        );
+
+        fixture
+            .service
+            .update_widget(Request::new(hot_update_request(
+                &fixture,
+                widget_id,
+                "old",
+                Some(&fixture.account_id),
+            )))
+            .await
+            .expect("equivalent update must succeed");
+        fixture
+            .service
+            .secret_store
+            .write()
+            .await
+            .save()
+            .await
+            .expect("BUG: listener barrier save must succeed");
+        wait_for_credential_pushes(&fixture.compositor, 2).await;
+        assert_eq!(
+            fixture.coordinator.retry_pending_call_count(),
+            1,
+            "equivalent bindings must not retry the child"
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn binding_update_holds_config_while_waiting_for_secrets() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = fixture_widget_id(&fixture).await;
+        let secret_guard = fixture.service.secret_store.write().await;
+        let service = Arc::clone(&fixture.service);
+        let request = hot_update_request(&fixture, widget_id, "old", Some(&fixture.account_id));
+        let update =
+            tokio::spawn(async move { service.update_widget(Request::new(request)).await });
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if fixture.config.try_read().is_err() {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("binding update must acquire config before waiting for secrets");
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), fixture.config.read())
+                .await
+                .is_err(),
+            "a competing config reader must serialize behind binding update"
+        );
+        drop(secret_guard);
+        update
+            .await
+            .expect("BUG: binding update task must not panic")
+            .expect("BUG: binding update must converge after secrets are released");
+        let _config_guard = tokio::time::timeout(Duration::from_secs(1), fixture.config.read())
+            .await
+            .expect("config lock must be released after binding update");
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn credential_listener_drops_source_locks_before_waiting_for_receipt() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = start_fixture_widget(&fixture).await;
+        fixture.compositor.hold_credential_receipts();
+        let service = Arc::clone(&fixture.service);
+        let request = hot_update_request(&fixture, widget_id, "old", Some(&fixture.account_id));
+        let update =
+            tokio::spawn(async move { service.update_widget(Request::new(request)).await });
+        while fixture
+            .compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .is_empty()
+        {
+            tokio::task::yield_now().await;
+        }
+
+        update
+            .await
+            .expect("BUG: update task")
+            .expect("saved binding must not await credential delivery");
+        assert!(
+            fixture.config.try_write().is_ok(),
+            "receipt wait must release configuration"
+        );
+        assert!(
+            fixture.service.secret_store.try_write().is_ok(),
+            "receipt wait must release accounts"
+        );
+        fixture.compositor.release_credential_receipts();
+        wait_for_retry_calls(&fixture.coordinator, 1).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn dropped_credential_receipt_does_not_retry_the_child() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = start_fixture_widget(&fixture).await;
+        fixture.compositor.hold_credential_receipts();
+        let service = Arc::clone(&fixture.service);
+        let request = hot_update_request(&fixture, widget_id, "old", Some(&fixture.account_id));
+        let update =
+            tokio::spawn(async move { service.update_widget(Request::new(request)).await });
+        while fixture
+            .compositor
+            .credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .is_empty()
+        {
+            tokio::task::yield_now().await;
+        }
+
+        fixture.compositor.drop_credential_receipts();
+        update
+            .await
+            .expect("BUG: update task")
+            .expect("saved binding must not await credential delivery");
+        fixture
+            .service
+            .secret_store
+            .write()
+            .await
+            .save()
+            .await
+            .expect("BUG: listener barrier save must succeed");
+        wait_for_credential_pushes(&fixture.compositor, 2).await;
+        assert_eq!(fixture.coordinator.retry_pending_call_count(), 0);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn retained_inactive_widget_accepts_params_and_credentials_while_detached() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = start_fixture_widget(&fixture).await;
+        set_fixture_scene_enabled(&fixture, false).await;
+        wait_for_managed_widgets(&fixture.coordinator, 0).await;
+
+        fixture
+            .service
+            .update_widget(Request::new(hot_update_request(
+                &fixture,
+                widget_id,
+                "new",
+                Some(&fixture.account_id),
+            )))
+            .await
+            .expect("detached retained update must succeed");
+        wait_for_credential_pushes(&fixture.compositor, 1).await;
+        wait_for_retry_calls(&fixture.coordinator, 2).await;
+
+        let key = WidgetInstanceKey::new(widget_id.as_uuid());
+        assert_eq!(
+            fixture.compositor.retained_mode(key),
+            Some(crate::compositor::WidgetConnectionMode::Inactive)
+        );
+        assert_eq!(
+            fixture
+                .compositor
+                .retained_params(key)
+                .expect("retained params")["label"],
+            serde_json::json!("new")
+        );
+        assert!(
+            fixture.compositor.retained_credentials(key).is_some(),
+            "detached record must retain resolved credentials"
+        );
+        assert_eq!(fixture.coordinator.retry_pending_call_count(), 2);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn mixed_update_applies_params_while_credential_delivery_recovers() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = start_fixture_widget(&fixture).await;
+        fixture.compositor.fail_next_credential_update();
+
+        fixture
+            .service
+            .update_widget(Request::new(hot_update_request(
+                &fixture,
+                widget_id,
+                "new",
+                Some(&fixture.account_id),
+            )))
+            .await
+            .expect("saved update must not await credential delivery");
+        wait_for_credential_attempts(&fixture.compositor, 1).await;
+        fixture
+            .service
+            .secret_store
+            .write()
+            .await
+            .save()
+            .await
+            .expect("BUG: credential retry wake must save");
+        wait_for_credential_pushes(&fixture.compositor, 1).await;
+        wait_for_retry_calls(&fixture.coordinator, 2).await;
+
+        assert_eq!(
+            fixture
+                .compositor
+                .retained_params(WidgetInstanceKey::new(widget_id.as_uuid()))
+                .expect("retained params")["label"],
+            serde_json::json!("new")
+        );
+        assert_eq!(
+            fixture
+                .compositor
+                .parameter_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .len(),
+            1
+        );
+        assert_eq!(fixture.coordinator.retry_pending_call_count(), 2);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn mixed_update_attempts_credentials_after_parameter_send_failure() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        let widget_id = start_fixture_widget(&fixture).await;
+        fixture.compositor.fail_next_parameter_update();
+
+        let status = fixture
+            .service
+            .update_widget(Request::new(hot_update_request(
+                &fixture,
+                widget_id,
+                "new",
+                Some(&fixture.account_id),
+            )))
+            .await
+            .expect_err("parameter send failure must reach the caller");
+
+        assert_eq!(status.code(), tonic::Code::Internal);
+        assert_eq!(
+            fixture
+                .compositor
+                .credential_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .len(),
+            1
+        );
+        assert!(
+            fixture
+                .compositor
+                .parameter_pushes
+                .lock()
+                .expect("BUG: recording compositor lock must not be poisoned")
+                .is_empty()
+        );
+        assert_eq!(fixture.coordinator.retry_pending_call_count(), 1);
+        fixture.coordinator.shutdown_widget_manager().await;
     }
 
     async fn add_during_preview_start(preview_first: bool) {
@@ -4512,60 +4727,6 @@ mod tests {
     async fn restart_update_and_preview_start_converge_in_both_lock_orders() {
         update_during_preview_start(true).await;
         update_during_preview_start(false).await;
-    }
-
-    #[tokio::test]
-    async fn restart_update_cuts_off_the_predecessor_before_credential_refresh() {
-        let fixture = preview_lifecycle_fixture(true, true).await;
-        fixture
-            .coordinator
-            .spawn_configured_scene_widgets(
-                &fixture.config,
-                fixture.scene_id,
-                ConfiguredSceneState::Enabled,
-            )
-            .await;
-        let scenes_rx = fixture.config.read().await.subscribe_scenes_change();
-        let (_accounts_tx, accounts_rx) = tokio::sync::broadcast::channel(1);
-        crate::widget::coordinator::start_credential_listener(
-            Arc::clone(&fixture.coordinator),
-            Arc::clone(&fixture.config),
-            scenes_rx,
-            accounts_rx,
-        );
-        let widget_id = fixture_widget_id(&fixture).await;
-
-        fixture
-            .service
-            .update_widget(Request::new(update_widget_request(&fixture, widget_id)))
-            .await
-            .expect("BUG: widget update must succeed");
-
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
-        let calls = loop {
-            let calls = fixture.compositor.widget_calls();
-            if calls.iter().any(|call| call.starts_with("credentials ")) {
-                break calls;
-            }
-            assert!(
-                tokio::time::Instant::now() < deadline,
-                "credential listener did not observe the saved scene"
-            );
-            tokio::task::yield_now().await;
-        };
-        let deactivate = calls
-            .iter()
-            .position(|call| call.starts_with("deactivate "))
-            .expect("replacement must enqueue a cutoff");
-        let credentials = calls
-            .iter()
-            .position(|call| call.starts_with("credentials "))
-            .expect("listener must push credentials");
-        assert!(
-            deactivate < credentials,
-            "the predecessor must be cut off before a config-triggered credential push"
-        );
-        fixture.coordinator.shutdown_widget_manager().await;
     }
 
     #[tokio::test]
@@ -4791,6 +4952,63 @@ mod tests {
         drop(stream);
         wait_for_preview_clear(&fixture.service).await;
         wait_for_managed_widgets(&fixture.coordinator, 0).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_replacement_update_still_starts_the_saved_successor() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        fixture
+            .coordinator
+            .spawn_configured_scene_widgets(
+                &fixture.config,
+                fixture.scene_id,
+                ConfiguredSceneState::Enabled,
+            )
+            .await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let widget_id = fixture_widget_id(&fixture).await;
+
+        fixture.compositor.hold_widget_receipts();
+        let service = Arc::clone(&fixture.service);
+        let request = update_widget_request(&fixture, widget_id);
+        let request_task =
+            tokio::spawn(async move { service.update_widget(Request::new(request)).await });
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while !fixture
+            .compositor
+            .widget_calls()
+            .iter()
+            .any(|call| call.starts_with("deactivate "))
+        {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "saved replacement did not enqueue its cutoff"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        request_task.abort();
+        fixture.compositor.release_widget_receipts();
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+        let key = WidgetInstanceKey::new(widget_id.as_uuid());
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let retained_size = fixture.compositor.retained_size(key);
+            if retained_size
+                == Some(crate::compositor::Size {
+                    width: 638,
+                    height: 238,
+                })
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "detached update did not register the saved successor"
+            );
+            tokio::task::yield_now().await;
+        }
         fixture.coordinator.shutdown_widget_manager().await;
     }
 

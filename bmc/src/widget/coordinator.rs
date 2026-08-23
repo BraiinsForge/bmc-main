@@ -20,25 +20,31 @@
 // the grant above.
 
 use bmc_shared_time::time::Timezone;
-use bmc_widget_manifest::{ParamKey, ParamValue};
+use bmc_widget_manifest::{Manifest, ParamKey, ParamValue};
 use bmc_widget_protocol::{
     Localization, NextAlarm, SettingUpdate, ViewportShape, WidgetInitialConfig,
 };
+use futures::future::join_all;
 use indexmap::IndexMap;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex, RwLock, broadcast, watch};
 use tracing::{debug, error, info, warn};
 
 use crate::BmcManager;
 use crate::compositor::{
-    Compositor, CompositorError, CompositorReceipt, HardwareCapabilities, Position, SceneLayout,
-    Size, WidgetConnectionMode, WidgetInstanceKey, WidgetPlacement, WidgetRegistration,
+    Compositor, CompositorError, CompositorReceipt, CredentialUpdateReceipt, HardwareCapabilities,
+    InstanceId, Position, SceneLayout, Size, WidgetConnectionMode, WidgetInstanceKey,
+    WidgetPlacement, WidgetRegistration,
 };
 use crate::config::ConfigHandle;
 use crate::config::LocalizationConfig;
 use crate::credential;
+use crate::data::{Account, AccountId};
 use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 use crate::secret_store::SecretStoreHandle;
 use bmc_net::NetworkManager;
@@ -256,6 +262,8 @@ pub struct Coordinator {
     /// Lock order: config before secrets. A spawner takes the config lock
     /// first or not at all, and never takes it while holding this one.
     secret_store: Arc<RwLock<SecretStoreHandle>>,
+    #[cfg(test)]
+    retry_pending_calls: AtomicUsize,
 }
 
 #[derive(Clone)]
@@ -273,6 +281,53 @@ enum RetainedWidgetStop {
 pub(crate) struct WidgetStopBatch {
     receipts: Vec<Result<CompositorReceipt, CompositorError>>,
     terminations: Vec<super::manager::TerminationHandle>,
+}
+
+struct PendingCredentialUpdate {
+    instance_id: InstanceId,
+    receipt: CredentialUpdateReceipt,
+}
+
+/// Refresh retained credentials from one consistent configuration/account snapshot.
+/// Commands are enqueued under the source locks, but compositor receipts are awaited after release.
+pub fn start_credential_listener(
+    coordinator: Arc<Coordinator>,
+    config_handle: Arc<RwLock<ConfigHandle>>,
+    mut scenes_change_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
+    mut accounts_change_rx: broadcast::Receiver<()>,
+) {
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                result = scenes_change_rx.recv() => {
+                    if matches!(result, Err(broadcast::error::RecvError::Closed)) {
+                        break;
+                    }
+                }
+                result = accounts_change_rx.recv() => {
+                    if matches!(result, Err(broadcast::error::RecvError::Closed)) {
+                        break;
+                    }
+                }
+            }
+
+            let pending = {
+                let config = config_handle.read().await;
+                let accounts = coordinator.secret_store.read().await;
+                while matches!(
+                    scenes_change_rx.try_recv(),
+                    Ok(_) | Err(broadcast::error::TryRecvError::Lagged(_))
+                ) {}
+                while matches!(
+                    accounts_change_rx.try_recv(),
+                    Ok(()) | Err(broadcast::error::TryRecvError::Lagged(_))
+                ) {}
+                coordinator.enqueue_configured_widget_credentials(&config, accounts.accounts())
+            };
+
+            coordinator.finish_credential_refreshes(pending).await;
+        }
+    });
 }
 
 impl WidgetStopBatch {
@@ -324,54 +379,6 @@ impl std::fmt::Debug for Coordinator {
             .field("widget_manager", &self.widget_manager)
             .finish_non_exhaustive()
     }
-}
-
-/// Re-resolve every configured widget's credentials whenever a binding
-/// or an account changes, and push the result to the compositor.
-///
-/// Both wakes are bare hints: a scene save fires for any edit,
-/// not just a rebind, and an account save fires for any account.
-///
-/// Deliberately unfiltered by liveness: a registered widget
-/// whose surface has not attached yet must still see the change,
-/// because the handshake replays the stored config —
-/// and the compositor skips an instance it holds no record of.
-///
-/// Re-resolving is cheap and a no-change push is dropped,
-/// so the fan-out itself costs nothing.
-/// Re-arming a pending respawn is not free — it resets the tempo
-/// the backoff ceiling bounds — so it happens only on a real change.
-pub fn start_credential_listener(
-    coordinator: Arc<Coordinator>,
-    config_handle: Arc<RwLock<ConfigHandle>>,
-    mut scenes_change_rx: broadcast::Receiver<crate::config::WidgetSceneMap>,
-    mut accounts_change_rx: broadcast::Receiver<()>,
-) {
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                res = scenes_change_rx.recv() => match res {
-                    Ok(_) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => break,
-                },
-                res = accounts_change_rx.recv() => match res {
-                    Ok(()) | Err(broadcast::error::RecvError::Lagged(_)) => {}
-                    Err(broadcast::error::RecvError::Closed) => break,
-                },
-            }
-
-            let config = config_handle.read().await;
-            for widget in config
-                .scenes()
-                .values()
-                .flat_map(|scene| scene.widgets.values())
-            {
-                if let Err(err) = coordinator.update_widget_credentials(widget).await {
-                    warn!(widget_id = %widget.id, error = %err, "failed to push credentials to widget");
-                }
-            }
-        }
-    });
 }
 
 /// Broadcast the effective display brightness to the settings-tray overlay
@@ -589,6 +596,8 @@ impl Coordinator {
             widget_registry,
             hardware_capabilities,
             secret_store,
+            #[cfg(test)]
+            retry_pending_calls: AtomicUsize::new(0),
         }
     }
 
@@ -751,6 +760,9 @@ impl Coordinator {
                 }
             }
         }
+
+        self.refresh_configured_widget_credentials(config_handle)
+            .await;
 
         info!("finished handling widget reload");
     }
@@ -1267,51 +1279,35 @@ impl Coordinator {
 
     pub fn update_widget_params(
         &self,
-        instance_id: &str,
+        key: WidgetInstanceKey,
         params: &BTreeMap<ParamKey, ParamValue>,
     ) -> Result<(), CompositorError> {
         self.compositor
-            .update_widget_params(&instance_id.to_owned(), params_to_json_map(params))
+            .update_widget_params(key, params_to_json_map(params))
     }
 
     /// Ask a crash-looping widget to try the configuration just pushed to it,
     /// rather than sit out a delay earned against the configuration it replaced.
     pub async fn retry_pending_widget(&self, instance_id: &str) {
+        #[cfg(test)]
+        self.retry_pending_calls.fetch_add(1, Ordering::Relaxed);
         self.widget_manager.retry_pending(instance_id).await;
     }
 
-    /// Resolve the widget's bindings against the installed manifest
-    /// and the stored accounts.
-    ///
-    /// Warns for any slot the manifest no longer authorises,
-    /// and any whose account has since disappeared.
-    ///
-    /// Both spawn and hot-push resolve here.
-    /// Neither can drift into checking the manifest while the other does not.
-    pub(crate) async fn resolve_credentials(&self, widget: &Widget) -> credential::Resolution {
-        let installed = self.widget_registry.get(&widget.widget_type_id);
-        self.resolve_credentials_for(widget, installed.as_ref())
-            .await
+    #[cfg(test)]
+    pub(crate) fn retry_pending_call_count(&self) -> usize {
+        self.retry_pending_calls.load(Ordering::Relaxed)
     }
 
-    async fn resolve_credentials_for(
-        &self,
+    fn resolve_credentials_for(
         widget: &Widget,
-        installed: Option<&super::WidgetInfo>,
+        manifest: &Manifest,
+        accounts: &IndexMap<AccountId, Account>,
     ) -> credential::Resolution {
-        let store = self.secret_store.read().await;
-        if installed.is_none() && !widget.credential_bindings.is_empty() {
-            warn!(
-                widget_id = %widget.id,
-                widget_type_id = %widget.widget_type_id,
-                "widget is not in the registry; honouring its stored bindings unchecked"
-            );
-        }
-
         let (authorised, unauthorised) = credential::authorised_bindings(
             &widget.credential_bindings,
-            installed.map(|info| &info.manifest.credentials),
-            store.accounts(),
+            &manifest.credentials,
+            accounts,
         );
         for (slot, why) in unauthorised {
             warn!(
@@ -1322,7 +1318,7 @@ impl Coordinator {
             );
         }
 
-        for (slot, account) in credential::dangling_bindings(&authorised, store.accounts()) {
+        for (slot, account) in credential::dangling_bindings(&authorised, accounts) {
             warn!(
                 widget_id = %widget.id,
                 slot = slot.as_str(),
@@ -1331,21 +1327,110 @@ impl Coordinator {
             );
         }
 
-        credential::resolve(&authorised, store.accounts())
+        credential::resolve(&authorised, accounts)
     }
 
-    pub async fn update_widget_credentials(&self, widget: &Widget) -> Result<(), CompositorError> {
-        let resolved = self.resolve_credentials(widget).await;
+    #[cfg(test)]
+    pub(crate) async fn resolve_credentials(
+        &self,
+        widget: &Widget,
+    ) -> Option<credential::Resolution> {
+        let installed = self.widget_registry.get(&widget.widget_type_id)?;
+        let store = self.secret_store.read().await;
+        Some(Self::resolve_credentials_for(
+            widget,
+            &installed.manifest,
+            store.accounts(),
+        ))
+    }
+
+    fn enqueue_widget_credentials(
+        &self,
+        widget: &Widget,
+        accounts: &IndexMap<AccountId, Account>,
+    ) -> Result<Option<PendingCredentialUpdate>, CompositorError> {
+        let Some(installed) = self.widget_registry.get(&widget.widget_type_id) else {
+            warn!(
+                widget_id = %widget.id,
+                widget_type_id = %widget.widget_type_id,
+                "skipping credential refresh because the installed manifest is unavailable"
+            );
+            return Ok(None);
+        };
+        let resolved = Self::resolve_credentials_for(widget, &installed.manifest, accounts);
         let instance_id = widget.id.as_uuid().to_string();
-        let changed = self.compositor.update_widget_credentials(
-            &instance_id,
+        let receipt = self.compositor.enqueue_update_widget_credentials(
+            WidgetInstanceKey::new(widget.id.as_uuid()),
             resolved.view,
             resolved.secrets,
         )?;
-        if changed {
-            self.retry_pending_widget(&instance_id).await;
+        Ok(Some(PendingCredentialUpdate {
+            instance_id,
+            receipt,
+        }))
+    }
+
+    async fn finish_widget_credentials_update(
+        &self,
+        pending: PendingCredentialUpdate,
+    ) -> Result<Option<InstanceId>, CompositorError> {
+        let changed = pending.receipt.wait().await?;
+        Ok(changed.then_some(pending.instance_id))
+    }
+
+    fn enqueue_configured_widget_credentials(
+        &self,
+        config: &ConfigHandle,
+        accounts: &IndexMap<AccountId, Account>,
+    ) -> Vec<PendingCredentialUpdate> {
+        let mut seen = HashSet::new();
+        config
+            .scenes()
+            .values()
+            .flat_map(|scene| scene.widgets.values())
+            .filter(|widget| seen.insert(widget.id))
+            .filter_map(
+                |widget| match self.enqueue_widget_credentials(widget, accounts) {
+                    Ok(update) => update,
+                    Err(error) => {
+                        warn!(
+                            widget_id = %widget.id,
+                            %error,
+                            "failed to enqueue widget credential refresh"
+                        );
+                        None
+                    }
+                },
+            )
+            .collect()
+    }
+
+    async fn finish_credential_refreshes(&self, pending: Vec<PendingCredentialUpdate>) {
+        let results = join_all(
+            pending
+                .into_iter()
+                .map(|update| self.finish_widget_credentials_update(update)),
+        )
+        .await;
+        for result in results {
+            match result {
+                Ok(Some(instance_id)) => self.retry_pending_widget(&instance_id).await,
+                Ok(None) => {}
+                Err(error) => warn!(%error, "failed to finish widget credential refresh"),
+            }
         }
-        Ok(())
+    }
+
+    async fn refresh_configured_widget_credentials(
+        &self,
+        config_handle: &Arc<RwLock<ConfigHandle>>,
+    ) {
+        let pending = {
+            let config = config_handle.read().await;
+            let accounts = self.secret_store.read().await;
+            self.enqueue_configured_widget_credentials(&config, accounts.accounts())
+        };
+        self.finish_credential_refreshes(pending).await;
     }
 
     /// Stop all widget processes and shut down the compositor.
@@ -2035,6 +2120,7 @@ mod tests {
                 "deactivate",
                 "register_retained",
                 "activate",
+                "credentials",
             ],
             "package reload must replace retained state before starting the new build",
         );
@@ -2085,7 +2171,7 @@ mod tests {
                 .expect("BUG: test widget")
                 .params = params.clone();
             coordinator
-                .update_widget_params(&widget.id.to_string(), &params)
+                .update_widget_params(WidgetInstanceKey::new(widget.id.as_uuid()), &params)
                 .expect("parameter update must enqueue");
         }
         compositor.release_widget_receipts();
@@ -2537,7 +2623,11 @@ mod tests {
         .expect("BUG: replace manifest");
         coordinator.reload_changed_widgets(&config).await;
 
-        assert_eq!(compositor.widget_calls().len(), 2);
+        assert_widget_call_kinds(
+            &compositor,
+            &["register_retained", "activate", "credentials"],
+            "registry reload must refresh credentials after restoring the manifest",
+        );
         assert!(matches!(
             coordinator
                 .widget_manager
@@ -2595,7 +2685,13 @@ mod tests {
 
         coordinator.reload_changed_widgets(&config).await;
 
-        assert_eq!(compositor.widget_calls(), calls);
+        let reloaded_calls = compositor.widget_calls();
+        assert_eq!(&reloaded_calls[..calls.len()], calls);
+        assert_eq!(
+            reloaded_calls[calls.len()..],
+            [format!("credentials {}", scene.widgets[0].id)],
+            "registry reload may refresh retained credentials but must not restart a stopping widget"
+        );
         stop.wait().await;
         coordinator.widget_manager.shutdown().await;
     }

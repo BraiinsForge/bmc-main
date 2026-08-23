@@ -26,9 +26,10 @@ use std::collections::{BTreeSet, HashMap};
 
 use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CompositorReceipt,
-    CredentialSecrets, HardwareCapabilities, InstanceId, LedRequestStatusEvent, SceneCycling,
-    SceneLayout, SettingUpdate, SettingsCommand, UpgradeDisplaySnapshot, WidgetAction,
-    WidgetConnectionMode, WidgetInstanceKey, WidgetRegistration,
+    CredentialSecrets, CredentialUpdateReceipt, HardwareCapabilities, InstanceId,
+    LedRequestStatusEvent, SceneCycling, SceneLayout, SettingUpdate, SettingsCommand,
+    UpgradeDisplaySnapshot, WidgetAction, WidgetConnectionMode, WidgetInstanceKey,
+    WidgetRegistration,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -239,14 +240,14 @@ impl Compositor for MockCompositor {
         &self,
         key: WidgetInstanceKey,
     ) -> Result<CompositorReceipt, CompositorError> {
-        if let Some(registration) = self
+        let mut registrations = self
             .registrations
             .lock()
-            .expect("BUG: registrations lock poisoned")
-            .get_mut(&key)
-        {
-            registration.connection_mode = WidgetConnectionMode::Accepting;
-        }
+            .expect("BUG: registrations lock poisoned");
+        let Some(registration) = registrations.get_mut(&key) else {
+            return Ok(CompositorReceipt::not_applied("activate widget"));
+        };
+        registration.connection_mode = WidgetConnectionMode::Accepting;
         Ok(CompositorReceipt::completed("activate widget"))
     }
 
@@ -331,51 +332,47 @@ impl Compositor for MockCompositor {
 
     fn update_widget_params(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         params: serde_json::Map<String, serde_json::Value>,
     ) -> Result<(), CompositorError> {
         tracing::info!(
-            "MockCompositor: update_widget_params {instance_id}: {}",
+            "MockCompositor: update_widget_params {key}: {}",
             serde_json::Value::Object(params.clone())
         );
         if let Some(registration) = self
             .registrations
             .lock()
             .expect("BUG: registrations lock poisoned")
-            .values_mut()
-            .find(|registration| registration.key.to_string() == *instance_id)
+            .get_mut(&key)
         {
             registration.initial_config.params = params;
         }
         Ok(())
     }
 
-    fn update_widget_credentials(
+    fn enqueue_update_widget_credentials(
         &self,
-        instance_id: &InstanceId,
+        key: WidgetInstanceKey,
         credentials: serde_json::Map<String, serde_json::Value>,
         secrets: CredentialSecrets,
-    ) -> Result<bool, CompositorError> {
+    ) -> Result<CredentialUpdateReceipt, CompositorError> {
         // The view names accounts but carries no secret, so logging it is safe.
         tracing::info!(
-            "MockCompositor: update_widget_credentials {instance_id}: {}",
+            "MockCompositor: update_widget_credentials {key}: {}",
             serde_json::Value::Object(credentials.clone())
         );
         let mut registrations = self
             .registrations
             .lock()
             .expect("BUG: registrations lock poisoned");
-        let Some(registration) = registrations
-            .values_mut()
-            .find(|registration| registration.key.to_string() == *instance_id)
-        else {
-            return Ok(true);
+        let Some(registration) = registrations.get_mut(&key) else {
+            return Ok(CredentialUpdateReceipt::completed(false));
         };
         let changed = registration.initial_config.credentials != credentials
             || registration.initial_config.credential_secrets != secrets;
         registration.initial_config.credentials = credentials;
         registration.initial_config.credential_secrets = secrets;
-        Ok(changed)
+        Ok(CredentialUpdateReceipt::completed(changed))
     }
 
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {
@@ -543,16 +540,56 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn legacy_credential_update_still_reports_a_change_without_retained_state() {
+    async fn missing_registration_reports_an_unchanged_credential_update() {
         let compositor = MockCompositor::new(Product::Bmc100);
+        let key = registration(WidgetConnectionMode::Inactive).key;
         assert!(
-            compositor
-                .update_widget_credentials(
-                    &"legacy".to_owned(),
+            !compositor
+                .enqueue_update_widget_credentials(
+                    key,
                     serde_json::Map::new(),
                     CredentialSecrets::default(),
                 )
-                .expect("BUG: mock credential update must succeed")
+                .expect("BUG: mock credential update must enqueue")
+                .wait()
+                .await
+                .expect("BUG: mock credential update receipt must complete")
+        );
+    }
+
+    #[tokio::test]
+    async fn inactive_registration_retains_credential_updates() {
+        let compositor = MockCompositor::new(Product::Bmc100);
+        let registration = registration(WidgetConnectionMode::Inactive);
+        let key = registration.key;
+        compositor
+            .enqueue_register_widget(registration)
+            .expect("BUG: mock registration enqueue must succeed");
+        let credentials = serde_json::json!({"pool": "account"})
+            .as_object()
+            .expect("BUG: test credentials must be an object")
+            .clone();
+
+        assert!(
+            compositor
+                .enqueue_update_widget_credentials(
+                    key,
+                    credentials.clone(),
+                    CredentialSecrets::default(),
+                )
+                .expect("BUG: mock credential update must enqueue")
+                .wait()
+                .await
+                .expect("BUG: mock credential update receipt must complete")
+        );
+        assert_eq!(
+            compositor
+                .registrations
+                .lock()
+                .expect("BUG: registrations lock poisoned")[&key]
+                .initial_config
+                .credentials,
+            credentials
         );
     }
 
