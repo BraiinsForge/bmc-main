@@ -44,18 +44,6 @@ use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use tokio::sync::Mutex;
 use tracing::{error, info, warn};
 
-/// Pick the first WiFi syspath candidate that exists, falling back to the
-/// primary candidate when none is present yet (the radio may enumerate shortly
-/// after boot; `OpenwrtWifiManager` resolves the path lazily).
-fn select_wifi_syspath(candidates: &[PathBuf]) -> PathBuf {
-    candidates
-        .iter()
-        .find(|path| path.exists())
-        .or(candidates.first())
-        .cloned()
-        .unwrap_or_default()
-}
-
 fn led_driver_for_profile(
     profile: &bmc_platform::HardwareProfile,
 ) -> bmc_led::led_driver::LedDriver {
@@ -124,8 +112,6 @@ async fn main() -> Result<()> {
     };
 
     // BMC_WIFI_SYSPATH overrides the platform path (x86 QEMU with mac80211_hwsim).
-    // Otherwise take the platform's candidate list and pick the first path that
-    // exists, which selects between BMC100's hubbed and hubless revisions.
     let wifi_path: String = if let Ok(path) = std::env::var("BMC_WIFI_SYSPATH") {
         info!("Using WiFi device path from BMC_WIFI_SYSPATH: {path}");
         path
@@ -141,10 +127,10 @@ async fn main() -> Result<()> {
                     );
                 })?,
         };
-        let candidates = HardwareProfile::for_product(platform.product()).paths.wifi;
-        select_wifi_syspath(&candidates)
-            .to_string_lossy()
-            .into_owned()
+        let chip = HardwareProfile::for_product(platform.product())
+            .locate_wifi_chip(board_serial.as_ref());
+        info!(?chip, "located WiFi chip");
+        chip.syspath().to_string_lossy().into_owned()
     };
 
     info!("Using WiFi device path: {wifi_path}");

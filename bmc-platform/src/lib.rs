@@ -304,10 +304,6 @@ pub struct PlatformPaths {
     pub backlight: Option<PathBuf>,
     pub scanout_node: PathBuf,
     pub render_node: PathBuf,
-    /// Candidate WiFi device syspaths in priority order. A board may ship in
-    /// more than one hardware revision (BMC100 hubbed vs hubless), so the
-    /// consumer selects the first candidate that exists at runtime.
-    pub wifi: Vec<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -323,19 +319,10 @@ impl HardwareProfile {
     #[must_use]
     #[expect(clippy::too_many_lines)]
     pub fn for_product(product: Product) -> Self {
-        let wifi = match product {
-            Product::Bmc100 => vec![
-                PathBuf::from(WIFI_USB_HUBBED),
-                PathBuf::from(WIFI_USB_HUBLESS),
-            ],
-            Product::Bmm100 | Product::Bmm101 => vec![PathBuf::from(WIFI_SDIO_ESP32)],
-            Product::Bfm100 => vec![PathBuf::from(WIFI_USB_HUBBED)],
-        };
         let paths = PlatformPaths {
             backlight: Some(PathBuf::from("/sys/class/backlight/display-bl")),
             scanout_node: PathBuf::from("/dev/dri/card1"),
             render_node: PathBuf::from("/dev/dri/renderD128"),
-            wifi,
         };
         match product {
             Product::Bmc100 => Self {
@@ -706,31 +693,6 @@ mod test {
                 "{product:?}: scanout transform"
             );
         }
-    }
-
-    #[test]
-    fn wifi_candidates_match_per_product_radio() {
-        let bmc = HardwareProfile::for_product(Product::Bmc100).paths.wifi;
-        assert_eq!(
-            bmc,
-            [
-                PathBuf::from(WIFI_USB_HUBBED),
-                PathBuf::from(WIFI_USB_HUBLESS)
-            ],
-            "BMC100 must offer both hubbed and hubless USB candidates"
-        );
-
-        for product in [Product::Bmm100, Product::Bmm101] {
-            let wifi = HardwareProfile::for_product(product).paths.wifi;
-            assert_eq!(
-                wifi,
-                [PathBuf::from(WIFI_SDIO_ESP32)],
-                "{product:?} is ESP32-over-SDIO"
-            );
-        }
-
-        let bfm = HardwareProfile::for_product(Product::Bfm100).paths.wifi;
-        assert_eq!(bfm, [PathBuf::from(WIFI_USB_HUBBED)]);
     }
 
     /// A synthetic Deck serial `BF0001B00yy00B0000000000`
