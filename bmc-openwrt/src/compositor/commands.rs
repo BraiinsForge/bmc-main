@@ -19,10 +19,10 @@
 // the grant above.
 
 use bmc::compositor::{
-    CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, UpgradeDisplaySnapshot,
-    WidgetAction, WidgetGeneration, WidgetInstanceKey, WidgetRegistration,
+    CompositorEvent, InstanceId, SceneCycling, SceneLayout, UpgradeDisplaySnapshot, WidgetAction,
+    WidgetInstanceKey, WidgetRegistration,
 };
-use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
+use bmc_widget_protocol::SettingUpdate;
 
 #[derive(Debug)]
 pub enum CompositorCommand {
@@ -41,43 +41,6 @@ pub enum CompositorCommand {
     UnregisterRetainedWidget {
         key: WidgetInstanceKey,
         applied: tokio::sync::oneshot::Sender<()>,
-    },
-    RegisterWidget {
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        position: Position,
-        size: Size,
-        initial_config: WidgetInitialConfig,
-        /// Signalled once the command has been fully applied. The coordinator
-        /// waits on this before spawning so that the widget's first Wayland
-        /// request reliably resolves to the registered instance.
-        ack: flume::Sender<()>,
-    },
-    SetWidgetPid {
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-        ack: flume::Sender<()>,
-    },
-    BindRespawnedPid {
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-        ack: flume::Sender<()>,
-    },
-    /// Unstamped: one task both ends an instance and re-registers it,
-    /// so this can never overtake a later registration.
-    UnregisterWidget {
-        instance_id: InstanceId,
-    },
-    UnregisterAbandoned {
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-    },
-    ClearPid {
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        expected_pid: u32,
     },
     SetActiveScene {
         layout: SceneLayout,

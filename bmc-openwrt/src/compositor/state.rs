@@ -31,8 +31,7 @@ use super::widget_tracker::{LifecycleState, WidgetTracker};
 use crate::compositor::layer_surface::{LayerEntry, replace_buffer};
 use bmc::compositor::InstanceId;
 use bmc_widget_protocol::server::{
-    deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_manager_v2::DeckWidgetManagerV2,
-    deck_widget_surface_v1::DeckWidgetSurfaceV1,
+    deck_widget_manager_v2::DeckWidgetManagerV2, deck_widget_surface_v1::DeckWidgetSurfaceV1,
 };
 use deck_screen_edge_v1::server::deck_screen_edge_manager_v1::Border;
 use deck_settings_v1::server::deck_settings_v1::Capability;
@@ -184,15 +183,13 @@ pub struct CompositorState {
     pub pending_frame_callbacks: Vec<PendingFrameCallback>,
     pub pending_layer_frame_callbacks: Vec<WlCallback>,
 
-    /// Widget registration and connection tracking.
     pub widgets: WidgetTracker,
 
     /// Tracks the last-emitted lifecycle state per widget to compute
     /// release/acquire batches on scene changes.
     pub lifecycle: LifecycleEmitter,
 
-    /// Per-widget frame generations used to correlate frame callbacks with
-    /// the content that was actually presented.
+    /// Per-widget commit sequence and callback pacing state.
     widget_frame_clocks: std::collections::HashMap<InstanceId, WidgetFrameClockState>,
 
     /// Touch handle for sending wl_touch events to widget surfaces.
@@ -222,11 +219,10 @@ pub struct CompositorState {
 #[derive(Debug)]
 pub struct PendingFrameCallback {
     pub callback: WlCallback,
+    /// Unknown surfaces remain deferred because they cannot be associated
+    /// with presented widget content.
     pub instance_id: Option<InstanceId>,
-    pub client_pid: Option<u32>,
-    /// `None` is a placeholder used when the callback was queued before
-    /// the widget's `instance_id` resolved. Such callbacks bypass the
-    /// generation comparison once resolved.
+    /// Commit sequence captured when the callback was requested.
     pub generation: Option<NonZeroU64>,
 }
 
@@ -300,11 +296,12 @@ fn should_complete_frame_callback(
     generation: Option<NonZeroU64>,
     eligible_generations: &std::collections::HashMap<InstanceId, NonZeroU64>,
 ) -> bool {
-    instance_id.is_some_and(|instance_id| {
-        eligible_generations
-            .get(instance_id)
-            .is_some_and(|eligible_generation| generation.is_none_or(|g| g <= *eligible_generation))
-    })
+    let (Some(instance_id), Some(generation)) = (instance_id, generation) else {
+        return false;
+    };
+    eligible_generations
+        .get(instance_id)
+        .is_some_and(|eligible_generation| generation <= *eligible_generation)
 }
 
 impl CompositorState {
@@ -314,7 +311,7 @@ impl CompositorState {
             return false;
         };
         self.lifecycle.forget(&instance_id);
-        self.drop_widget_render_state(&instance_id, detached.pid);
+        self.drop_widget_render_state(&instance_id);
         if let Some(client_id) = detached.client_id {
             self.display_handle
                 .backend_handle()
@@ -328,7 +325,7 @@ impl CompositorState {
         let Some(detached) = self.deck_widget_state.unregister_retained_widget(key) else {
             return false;
         };
-        self.drop_widget_render_state(&instance_id, detached.pid);
+        self.drop_widget_render_state(&instance_id);
         self.lifecycle.forget(&instance_id);
         if let Some(client_id) = detached.client_id {
             self.display_handle
@@ -486,7 +483,6 @@ impl CompositorState {
         &mut self,
         callbacks: &mut Vec<WlCallback>,
         instance_id: Option<&InstanceId>,
-        client_pid: Option<u32>,
         generation: Option<NonZeroU64>,
     ) {
         let pending_instance_id = instance_id.cloned();
@@ -507,7 +503,6 @@ impl CompositorState {
             .extend(callbacks.drain(..).map(|callback| PendingFrameCallback {
                 callback,
                 instance_id: pending_instance_id.clone(),
-                client_pid,
                 generation,
             }));
     }
@@ -605,24 +600,6 @@ impl CompositorState {
         }
     }
 
-    fn surface_client_pid(&self, surface: &WlSurface) -> Option<u32> {
-        let client = surface.client()?;
-        let credentials = client.get_credentials(&self.display_handle).ok()?;
-        #[expect(clippy::cast_sign_loss, reason = "PID is always positive")]
-        Some(credentials.pid as u32)
-    }
-
-    fn resolve_pending_callback_instance_id(
-        &self,
-        pending: &PendingFrameCallback,
-    ) -> Option<InstanceId> {
-        pending.instance_id.clone().or_else(|| {
-            self.deck_widget_state
-                .instance_id_for_surface_by_pid(pending.client_pid)
-                .cloned()
-        })
-    }
-
     fn widget_has_buffer(&self, instance_id: &InstanceId) -> bool {
         self.widget_buffers
             .iter()
@@ -674,9 +651,8 @@ impl CompositorState {
         let now = Instant::now();
 
         for pending in pending_callbacks {
-            let resolved_instance_id = self.resolve_pending_callback_instance_id(&pending);
             if !should_complete_frame_callback(
-                resolved_instance_id.as_ref(),
+                pending.instance_id.as_ref(),
                 pending.generation,
                 &eligible_generations,
             ) {
@@ -687,7 +663,7 @@ impl CompositorState {
             // Per-widget minimum-interval pacing. Callbacks for widgets whose
             // previous callback fired within the interval are deferred and
             // re-evaluated on the next render pass.
-            if let Some(id) = resolved_instance_id.as_ref()
+            if let Some(id) = pending.instance_id.as_ref()
                 && let Some(state) = self.widget_frame_clocks.get(id)
                 && let Some(last) = state.last_callback_fired_at
                 && now.duration_since(last) < FRAME_CALLBACK_MIN_INTERVAL
@@ -696,7 +672,7 @@ impl CompositorState {
                 continue;
             }
 
-            if let Some(id) = resolved_instance_id.as_ref()
+            if let Some(id) = pending.instance_id.as_ref()
                 && let Some(state) = self.widget_frame_clocks.get_mut(id)
             {
                 state.last_callback_fired_at = Some(now);
@@ -721,26 +697,10 @@ impl CompositorState {
         }
     }
 
-    pub fn drop_widget_callback_state(
-        &mut self,
-        instance_id: &InstanceId,
-        client_pid: Option<u32>,
-    ) {
+    pub fn drop_widget_callback_state(&mut self, instance_id: &InstanceId) {
         self.widget_frame_clocks.remove(instance_id);
-        self.pending_frame_callbacks.retain(|pending| {
-            if pending.instance_id.as_ref() == Some(instance_id) {
-                return false;
-            }
-
-            if pending.instance_id.is_none()
-                && client_pid.is_some()
-                && pending.client_pid == client_pid
-            {
-                return false;
-            }
-
-            true
-        });
+        self.pending_frame_callbacks
+            .retain(|pending| pending.instance_id.as_ref() != Some(instance_id));
     }
 
     pub fn mark_full_output_damage(&mut self) {
@@ -1029,9 +989,9 @@ impl DeckWidgetHandler for CompositorState {
         &mut self.deck_widget_state
     }
 
-    fn drop_widget_render_state(&mut self, instance_id: &InstanceId, pid: Option<u32>) {
+    fn drop_widget_render_state(&mut self, instance_id: &InstanceId) {
         self.mark_full_output_damage();
-        self.drop_widget_callback_state(instance_id, pid);
+        self.drop_widget_callback_state(instance_id);
         self.drop_widget_render_surface(instance_id);
         self.drop_widget_buffers(instance_id);
     }
@@ -1059,30 +1019,10 @@ impl CompositorHandler for CompositorState {
         }
 
         tracing::trace!("Surface committed: {:?}", surface.id());
-        let surface_pid = self.surface_client_pid(surface);
-
-        // First try to match by surface directly (for protocol surface)
-        let mut instance_id = self
+        let instance_id = self
             .deck_widget_state
             .instance_id_for_surface(surface)
             .cloned();
-
-        // If not found, try to match by PID (for Slint render surfaces)
-        if instance_id.is_none()
-            && let Some(pid) = surface_pid
-        {
-            instance_id = self
-                .deck_widget_state
-                .instance_id_for_surface_by_pid(Some(pid))
-                .cloned();
-            if instance_id.is_some() {
-                tracing::trace!(
-                    "Matched surface {:?} to widget by PID {}",
-                    surface.id(),
-                    pid
-                );
-            }
-        }
 
         // Track render surface → instance_id mapping for wl_touch event routing.
         // Always insert (not or_insert) so reconnecting widgets update the surface.
@@ -1107,7 +1047,6 @@ impl CompositorHandler for CompositorState {
             self.queue_frame_callbacks(
                 &mut attributes.frame_callbacks,
                 instance_id.as_ref(),
-                surface_pid,
                 callback_generation,
             );
 
@@ -1443,12 +1382,6 @@ delegate_output_capture_source!(self::CompositorState);
 delegate_image_copy_capture!(self::CompositorState);
 
 wl::delegate_global_dispatch!(
-    CompositorState: [DeckWidgetManagerV1: ()] => DeckWidgetProtocolState
-);
-wl::delegate_dispatch!(
-    CompositorState: [DeckWidgetManagerV1: WidgetManagerUserData] => DeckWidgetProtocolState
-);
-wl::delegate_global_dispatch!(
     CompositorState: [DeckWidgetManagerV2: ()] => DeckWidgetProtocolState
 );
 wl::delegate_dispatch!(
@@ -1461,106 +1394,20 @@ wl::delegate_dispatch!(
 #[cfg(test)]
 mod tests {
     use super::{
-        ClientState, CompositorState, OutputDamage, OutputDamageTracker, PendingFrameCallback,
-        remove_destroyed_widget_buffers, should_complete_frame_callback,
+        OutputDamage, OutputDamageTracker, remove_destroyed_widget_buffers,
+        should_complete_frame_callback,
     };
-    use bmc::compositor::{
-        Position, Size, WidgetConnectionMode, WidgetGeneration, WidgetInstanceKey, WidgetPlacement,
-        WidgetRegistration,
-    };
-    use bmc_widget_protocol::{DisplayInfo, ViewportShape, WidgetInitialConfig};
     use std::collections::HashMap;
     use std::num::NonZeroU64;
-    use std::os::unix::net::UnixStream;
-    use std::sync::Arc;
 
-    use smithay::reexports::wayland_server::{
-        Display, backend::ObjectId, protocol::wl_callback::WlCallback,
-    };
+    use smithay::reexports::wayland_server::backend::ObjectId;
 
     fn gen_n(n: u64) -> NonZeroU64 {
         NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
     }
 
     #[test]
-    fn lifecycle_cutoff_removes_unresolved_callback_by_prebind_pid() {
-        for unregister in [false, true] {
-            let display = Display::<CompositorState>::new()
-                .expect("BUG: test Wayland display should initialize");
-            let mut handle = display.handle();
-            let (socket, _peer) =
-                UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
-            let client = handle
-                .insert_client(socket, Arc::new(ClientState::default()))
-                .expect("BUG: test Wayland client should register");
-            let callback = client
-                .create_resource::<WlCallback, _, CompositorState>(&handle, 1, ())
-                .expect("BUG: test callback should initialize");
-            let mut state = CompositorState::new(
-                &display,
-                480,
-                1280,
-                480,
-                1280,
-                60_000,
-                "test-seat",
-                crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
-            );
-            let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
-            let instance_id = key.to_string();
-            let config = WidgetInitialConfig {
-                width: 100,
-                height: 100,
-                viewport_shape: ViewportShape::Rectangular,
-                display: DisplayInfo::BMC100,
-                params: serde_json::Map::new(),
-                credentials: serde_json::Map::new(),
-                credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
-                token: instance_id.clone(),
-            };
-            state.deck_widget_state.register_widget(
-                instance_id.clone(),
-                WidgetGeneration(1),
-                config.clone(),
-            );
-            state
-                .deck_widget_state
-                .set_widget_pid(&instance_id, WidgetGeneration(1), 123);
-            state
-                .deck_widget_state
-                .register_retained_widget(WidgetRegistration {
-                    key,
-                    connection_mode: WidgetConnectionMode::Accepting,
-                    placement: WidgetPlacement {
-                        instance_id,
-                        position: Position { x: 0, y: 0 },
-                        size: Size {
-                            width: 100,
-                            height: 100,
-                        },
-                        visible: true,
-                    },
-                    initial_config: config,
-                });
-            state.pending_frame_callbacks.push(PendingFrameCallback {
-                callback,
-                instance_id: None,
-                client_pid: Some(123),
-                generation: None,
-            });
-
-            if unregister {
-                state.unregister_retained_widget(key);
-            } else {
-                state.deactivate_retained_widget(key);
-            }
-
-            assert!(state.pending_frame_callbacks.is_empty());
-        }
-    }
-
-    #[test]
-    fn unknown_surface_callback_stays_deferred_until_it_resolves() {
+    fn unknown_surface_callback_is_never_completed() {
         assert!(!should_complete_frame_callback(
             None,
             Some(gen_n(1)),
@@ -1610,18 +1457,6 @@ mod tests {
         assert!(should_complete_frame_callback(
             Some(&String::from("clock-left")),
             Some(gen_n(1)),
-            &eligible_generations,
-        ));
-    }
-
-    #[test]
-    fn unresolved_generation_placeholder_always_passes_for_known_widget() {
-        let mut eligible_generations = HashMap::new();
-        eligible_generations.insert(String::from("clock-left"), gen_n(5));
-
-        assert!(should_complete_frame_callback(
-            Some(&String::from("clock-left")),
-            None,
             &eligible_generations,
         ));
     }

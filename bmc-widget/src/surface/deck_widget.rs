@@ -32,7 +32,6 @@ use wayland_client::{
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
 
 use bmc_widget_protocol::client::{
-    deck_widget_manager_v1::DeckWidgetManagerV1,
     deck_widget_manager_v2::DeckWidgetManagerV2,
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
@@ -42,7 +41,7 @@ use bmc_widget_protocol::{
 use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
-use crate::wayland::{from_protocol, to_protocol};
+use crate::protocol::{from_protocol, to_protocol};
 
 use super::common::{
     BufferSlotMap, PollOutcome, ReleasedBuffer, ReleasedBufferSet, blocking_dispatch_impl,
@@ -156,8 +155,7 @@ pub struct DeckWidgetSurfaceState {
 
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
-    widget_manager: Option<DeckWidgetManagerV1>,
-    keyed_widget_manager: Option<DeckWidgetManagerV2>,
+    widget_manager: Option<DeckWidgetManagerV2>,
     linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
     seat: Option<wl_seat::WlSeat>,
     touch: Option<wl_touch::WlTouch>,
@@ -293,26 +291,9 @@ impl fmt::Debug for DeckWidgetSurfaceClient {
 }
 
 impl DeckWidgetSurfaceClient {
-    /// Connect to the Wayland display using an already-open file descriptor.
-    ///
-    /// Equivalent to [`Self::connect`] but takes an `OwnedFd` pointing at an
-    /// open Wayland socket instead of reading `WAYLAND_DISPLAY` from the
-    /// environment. Used by the multi-widget host to give each slot its own
-    /// dedicated Wayland connection over a pre-created socket pair.
-    pub fn connect_with_fd(wayland_fd: std::os::fd::OwnedFd) -> Result<(Self, InitialState)> {
-        Self::connect_with_fd_inner(wayland_fd, None)
-    }
-
-    pub fn connect_with_fd_keyed(
+    pub fn connect_with_fd_and_key(
         wayland_fd: std::os::fd::OwnedFd,
         widget_key: WidgetInstanceKey,
-    ) -> Result<(Self, InitialState)> {
-        Self::connect_with_fd_inner(wayland_fd, Some(widget_key))
-    }
-
-    fn connect_with_fd_inner(
-        wayland_fd: std::os::fd::OwnedFd,
-        widget_key: Option<WidgetInstanceKey>,
     ) -> Result<(Self, InitialState)> {
         use std::os::unix::net::UnixStream;
         let stream = UnixStream::from(wayland_fd);
@@ -334,7 +315,6 @@ impl DeckWidgetSurfaceClient {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
-            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -366,19 +346,11 @@ impl DeckWidgetSurfaceClient {
         );
 
         let surface = compositor.create_surface(&qh, ());
-        let widget_surface = if let Some(widget_key) = widget_key {
-            state
-                .keyed_widget_manager
-                .as_ref()
-                .context("deck_widget_manager_v2 not available")?
-                .get_widget_surface(widget_key.to_string(), &surface, &qh, ())
-        } else {
-            state
-                .widget_manager
-                .as_ref()
-                .context("deck_widget_manager_v1 not available")?
-                .get_widget_surface(&surface, &qh, ())
-        };
+        let widget_surface = state
+            .widget_manager
+            .as_ref()
+            .context("deck_widget_manager_v2 not available")?
+            .get_widget_surface(widget_key.to_string(), &surface, &qh, ());
 
         surface.commit();
 
@@ -436,26 +408,16 @@ impl DeckWidgetSurfaceClient {
         self.conn.as_fd()
     }
 
-    /// Connect to the Wayland display, create a `deck_widget_v1` surface,
-    /// and block until the compositor has finished emitting its initial
-    /// configure batch.
+    /// Connect to the Wayland display and return the compositor's initial state.
     ///
-    /// Binds `wl_compositor`, `deck_widget_manager_v1`, and
-    /// `zwp_linux_dmabuf_v1`, creates a surface, then waits for a
-    /// `configure_done` event before returning. The returned
-    /// [`InitialState`] carries size class, pixel dimensions, widget
-    /// params, and any runtime settings the compositor already knew about
-    /// at spawn time.
+    /// Requires the globals `wl_compositor`, `deck_widget_manager_v2`,
+    /// and `zwp_linux_dmabuf_v1`; returns after `configure_done`.
     pub fn connect() -> Result<(Self, InitialState)> {
-        Self::connect_inner(None)
-    }
-
-    pub fn connect_keyed() -> Result<(Self, InitialState)> {
         let widget_key = widget_key_from_env()?;
-        Self::connect_inner(Some(widget_key))
+        Self::connect_inner(widget_key)
     }
 
-    fn connect_inner(widget_key: Option<WidgetInstanceKey>) -> Result<(Self, InitialState)> {
+    fn connect_inner(widget_key: WidgetInstanceKey) -> Result<(Self, InitialState)> {
         let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
         let mut queue = conn.new_event_queue();
         let qh = queue.handle();
@@ -471,7 +433,6 @@ impl DeckWidgetSurfaceClient {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
-            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -503,19 +464,11 @@ impl DeckWidgetSurfaceClient {
         );
 
         let surface = compositor.create_surface(&qh, ());
-        let widget_surface = if let Some(widget_key) = widget_key {
-            state
-                .keyed_widget_manager
-                .as_ref()
-                .context("deck_widget_manager_v2 not available")?
-                .get_widget_surface(widget_key.to_string(), &surface, &qh, ())
-        } else {
-            state
-                .widget_manager
-                .as_ref()
-                .context("deck_widget_manager_v1 not available")?
-                .get_widget_surface(&surface, &qh, ())
-        };
+        let widget_surface = state
+            .widget_manager
+            .as_ref()
+            .context("deck_widget_manager_v2 not available")?
+            .get_widget_surface(widget_key.to_string(), &surface, &qh, ());
 
         surface.commit();
 
@@ -911,19 +864,11 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                     tracing::debug!("Bound wl_compositor v{}", version.min(6));
                     state.compositor = Some(compositor);
                 }
-                "deck_widget_manager_v1" => {
-                    // 2 is where the credential events arrive; an older
-                    // compositor still offers 1 and every slot reads unbound.
-                    let widget_manager =
-                        registry.bind::<DeckWidgetManagerV1, _, _>(name, version.min(2), qh, ());
-                    tracing::debug!("Bound deck_widget_manager_v1 v{}", version.min(2));
-                    state.widget_manager = Some(widget_manager);
-                }
                 "deck_widget_manager_v2" => {
                     let widget_manager =
                         registry.bind::<DeckWidgetManagerV2, _, _>(name, version.min(2), qh, ());
                     tracing::debug!("Bound deck_widget_manager_v2 v{}", version.min(2));
-                    state.keyed_widget_manager = Some(widget_manager);
+                    state.widget_manager = Some(widget_manager);
                 }
                 "zwp_linux_dmabuf_v1" => {
                     let dmabuf = registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
@@ -943,18 +888,6 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                 _ => {}
             }
         }
-    }
-}
-
-impl Dispatch<DeckWidgetManagerV1, ()> for DeckWidgetSurfaceState {
-    fn event(
-        _: &mut Self,
-        _: &DeckWidgetManagerV1,
-        _: <DeckWidgetManagerV1 as wayland_client::Proxy>::Event,
-        (): &(),
-        _: &Connection,
-        _: &QueueHandle<Self>,
-    ) {
     }
 }
 
@@ -1361,7 +1294,6 @@ mod tests {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
-            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -1511,7 +1443,6 @@ mod tests {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
-            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -1548,7 +1479,6 @@ mod tests {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
-            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,

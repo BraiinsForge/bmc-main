@@ -41,8 +41,6 @@ pub use bmc_widget_protocol::{LifecycleState, SettingUpdate};
 
 /// Re-export the deadline-aware dispatch helper from [`crate::poll`] so the
 /// surface clients can keep importing it as `super::common::poll_dispatch`.
-/// The non-gated [`crate::poll`] module is the single owner of this logic
-/// (also used by `crate::wayland::WidgetProtocolClient::wait_for_configure`).
 pub use crate::poll::PollOutcome;
 pub use crate::poll::poll_dispatch;
 

@@ -25,9 +25,7 @@
 //! widget startup) needs the standard `wayland-rs`
 //! prepare_read → poll → read | cancel → dispatch_pending recipe to make
 //! the deadline actually enforceable. This module provides that helper
-//! once for both the Slint protocol path
-//! ([`crate::wayland::WidgetProtocolClient`]) and the GPU surface clients
-//! under `crate::surface`.
+//! once for the GPU surface clients under `crate::surface`.
 
 use std::os::fd::{AsFd, AsRawFd};
 

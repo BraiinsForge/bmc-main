@@ -26,10 +26,9 @@ use std::collections::{BTreeSet, HashMap};
 
 use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CompositorReceipt,
-    CredentialSecrets, HardwareCapabilities, InstanceId, LedRequestStatusEvent, Position,
-    SceneCycling, SceneLayout, SettingUpdate, SettingsCommand, Size, UpgradeDisplaySnapshot,
-    WidgetAction, WidgetConnectionMode, WidgetGeneration, WidgetInitialConfig, WidgetInstanceKey,
-    WidgetRegistration,
+    CredentialSecrets, HardwareCapabilities, InstanceId, LedRequestStatusEvent, SceneCycling,
+    SceneLayout, SettingUpdate, SettingsCommand, UpgradeDisplaySnapshot, WidgetAction,
+    WidgetConnectionMode, WidgetInstanceKey, WidgetRegistration,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -275,103 +274,6 @@ impl Compositor for MockCompositor {
             .expect("BUG: registrations lock poisoned")
             .remove(&key);
         Ok(CompositorReceipt::completed("unregister widget"))
-    }
-
-    fn register_widget(
-        &self,
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        position: Position,
-        size: Size,
-        initial_config: WidgetInitialConfig,
-    ) -> Result<(), CompositorError> {
-        tracing::info!(
-            "MockCompositor: register widget '{}' (generation {}) at ({},{}) size {}x{} initial={:?}",
-            instance_id,
-            generation,
-            position.x,
-            position.y,
-            size.width,
-            size.height,
-            initial_config,
-        );
-        self.connected_widgets_tx.send_modify(|set| {
-            set.insert(instance_id.clone());
-        });
-        // Immediately signal that the widget is ready
-        let _ = self
-            .event_tx
-            .send(CompositorEvent::WidgetReady { instance_id });
-        Ok(())
-    }
-
-    fn set_widget_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        tracing::info!(
-            "MockCompositor: set_widget_pid '{}' generation={} pid={}",
-            instance_id,
-            generation,
-            pid
-        );
-        Ok(())
-    }
-
-    fn bind_respawned_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        tracing::info!(
-            "MockCompositor: bind_respawned_pid '{}' generation={} pid={}",
-            instance_id,
-            generation,
-            pid
-        );
-        Ok(())
-    }
-
-    fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
-        tracing::info!("MockCompositor: unregister widget '{}'", instance_id);
-        self.connected_widgets_tx.send_modify(|set| {
-            set.remove(instance_id);
-        });
-        Ok(())
-    }
-
-    fn unregister_abandoned(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-    ) -> Result<(), CompositorError> {
-        tracing::info!(
-            "MockCompositor: unregister abandoned widget '{}' (generation {})",
-            instance_id,
-            generation
-        );
-        self.connected_widgets_tx.send_modify(|set| {
-            set.remove(instance_id);
-        });
-        Ok(())
-    }
-
-    fn clear_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        tracing::info!(
-            "MockCompositor: clear_pid instance='{}' generation={} pid={}",
-            instance_id,
-            generation,
-            pid
-        );
-        Ok(())
     }
 
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError> {

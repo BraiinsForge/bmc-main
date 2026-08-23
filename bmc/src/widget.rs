@@ -34,7 +34,7 @@ mod spawner;
 pub use coordinator::Coordinator;
 pub(crate) use coordinator::UpgradeWidgetLifecycle;
 pub use discovery::{PathDiscovery, WidgetDiscovery};
-pub use manager::{WidgetEvent, WidgetManager};
+pub use manager::WidgetManager;
 pub use registry::{
     RegistryError, ViewportDescriptor, WidgetIdentity, WidgetInfo, WidgetRegistry,
     slot_span_descriptor,

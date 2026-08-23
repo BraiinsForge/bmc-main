@@ -25,7 +25,7 @@ use super::{
     commands::CompositorCommand,
     device_access::{DeviceAccessConfig, RootLibinputInterface, set_libinput_debug_priority},
     lifecycle_emitter::Emission,
-    protocol::{DeckWidgetHandler, DeckWidgetProtocolState},
+    protocol::DeckWidgetProtocolState,
     render::{DrmOutput, EglContext},
     scene_cycling::{
         AutomaticCycling, AutomaticCyclingAction, AutomaticCyclingPhase, SceneCyclingRuntimeConfig,
@@ -37,14 +37,13 @@ use super::{
 };
 use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, InstanceId,
-    LedRequestStatusEvent, Position, SceneLayout, SettingsCommand, Size,
-    WIDGET_COMMAND_ACK_TIMEOUT, WidgetAction, WidgetGeneration, WidgetInstanceKey,
-    WidgetRegistration,
+    LedRequestStatusEvent, SceneLayout, SettingsCommand, WIDGET_COMMAND_ACK_TIMEOUT, WidgetAction,
+    WidgetInstanceKey, WidgetRegistration,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::backlight::ScreenVisibility;
 use bmc_platform::linux_input::discover_touch_node;
-use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
+use bmc_widget_protocol::SettingUpdate;
 use smithay::backend::{
     input::{AbsolutePositionEvent, InputEvent, TouchEvent as TouchEventTrait, TouchSlot},
     libinput::LibinputInputBackend,
@@ -2077,26 +2076,6 @@ fn emit_pending_lifecycle(state: &mut AppState) {
     emit_lifecycle_transitions(state);
 }
 
-fn handle_clear_pid_command(
-    state: &mut AppState,
-    instance_id: &InstanceId,
-    generation: WidgetGeneration,
-    expected_pid: u32,
-) {
-    tracing::debug!(
-        "Clearing pid for widget {} (expected_pid={})",
-        instance_id,
-        expected_pid
-    );
-    if state
-        .compositor
-        .clear_pid_for_instance(instance_id, generation, expected_pid)
-        .is_some()
-    {
-        state.compositor.lifecycle.forget(instance_id);
-    }
-}
-
 fn handle_set_scene_cycling_suspended_command(state: &mut AppState, suspended: bool) {
     tracing::debug!(suspended, "scene cycling suspend gate changed");
     state.automatic_cycling.set_suspended(suspended);
@@ -2171,78 +2150,6 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             }
             let _ = applied.send(());
         }
-        CompositorCommand::RegisterWidget {
-            instance_id,
-            generation,
-            position,
-            size,
-            initial_config,
-            ack,
-        } => {
-            tracing::debug!(
-                "Registering widget {} (generation {generation}) at ({}, {}) size {}x{} initial={:?}",
-                instance_id,
-                position.x,
-                position.y,
-                size.width,
-                size.height,
-                initial_config
-            );
-            state.compositor.deck_widget_state.register_widget(
-                instance_id,
-                generation,
-                initial_config,
-            );
-            let _ = ack.send(());
-        }
-        CompositorCommand::SetWidgetPid {
-            instance_id,
-            generation,
-            pid,
-            ack,
-        } => {
-            tracing::debug!("Associating pid {} with widget {}", pid, instance_id);
-            state
-                .compositor
-                .deck_widget_state
-                .set_widget_pid(&instance_id, generation, pid);
-            let _ = ack.send(());
-        }
-        CompositorCommand::BindRespawnedPid {
-            instance_id,
-            generation,
-            pid,
-            ack,
-        } => {
-            tracing::debug!("Binding respawned pid {} to widget {}", pid, instance_id);
-            state
-                .compositor
-                .deck_widget_state
-                .bind_respawned_pid(&instance_id, generation, pid);
-            let _ = ack.send(());
-        }
-        CompositorCommand::UnregisterWidget { instance_id } => {
-            tracing::debug!("Unregistering widget {}", instance_id);
-            state.compositor.unregister_widget(&instance_id);
-            state.compositor.lifecycle.forget(&instance_id);
-        }
-        CompositorCommand::UnregisterAbandoned {
-            instance_id,
-            generation,
-        } => {
-            tracing::debug!("Unregistering abandoned widget {}", instance_id);
-            if state
-                .compositor
-                .unregister_abandoned(&instance_id, generation)
-            {
-                state.compositor.lifecycle.forget(&instance_id);
-            }
-        }
-        CompositorCommand::ClearPid {
-            instance_id,
-            generation,
-            expected_pid,
-        } => handle_clear_pid_command(state, &instance_id, generation, expected_pid),
         CompositorCommand::SetActiveScene { layout } => {
             let active_scene_before = (
                 state.compositor.widgets.active_scene_id(),
@@ -2430,9 +2337,6 @@ fn process_protocol_events(state: &mut AppState) {
             }
 
             tracing::info!("Widget connected: {}", instance_id);
-            let _ = state.event_tx.send(CompositorEvent::WidgetReady {
-                instance_id: instance_id.clone(),
-            });
         }
         let mut sink = AppStateLifecycleSink {
             deck_widget_state: &mut state.compositor.deck_widget_state,
@@ -2691,106 +2595,6 @@ impl Compositor for EglCompositor {
         Ok(receipt)
     }
 
-    fn register_widget(
-        &self,
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        position: Position,
-        size: Size,
-        initial_config: WidgetInitialConfig,
-    ) -> Result<(), CompositorError> {
-        let (ack_tx, ack_rx) = flume::bounded(1);
-        self.command_tx
-            .send(CompositorCommand::RegisterWidget {
-                instance_id,
-                generation,
-                position,
-                size,
-                initial_config,
-                ack: ack_tx,
-            })
-            .map_err(|e| CompositorError::SendError(e.to_string()))?;
-        ack_rx
-            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
-            .map_err(|e| CompositorError::ThreadError(format!("register_widget ack: {e}")))
-    }
-
-    fn set_widget_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        let (ack_tx, ack_rx) = flume::bounded(1);
-        self.command_tx
-            .send(CompositorCommand::SetWidgetPid {
-                instance_id: instance_id.clone(),
-                generation,
-                pid,
-                ack: ack_tx,
-            })
-            .map_err(|e| CompositorError::SendError(e.to_string()))?;
-        ack_rx
-            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
-            .map_err(|e| CompositorError::ThreadError(format!("set_widget_pid ack: {e}")))
-    }
-
-    fn bind_respawned_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        let (ack_tx, ack_rx) = flume::bounded(1);
-        self.command_tx
-            .send(CompositorCommand::BindRespawnedPid {
-                instance_id: instance_id.clone(),
-                generation,
-                pid,
-                ack: ack_tx,
-            })
-            .map_err(|e| CompositorError::SendError(e.to_string()))?;
-        ack_rx
-            .recv_timeout(WIDGET_COMMAND_ACK_TIMEOUT)
-            .map_err(|e| CompositorError::ThreadError(format!("bind_respawned_pid ack: {e}")))
-    }
-
-    fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
-        self.command_tx
-            .send(CompositorCommand::UnregisterWidget {
-                instance_id: instance_id.clone(),
-            })
-            .map_err(|e| CompositorError::SendError(e.to_string()))
-    }
-
-    fn unregister_abandoned(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-    ) -> Result<(), CompositorError> {
-        self.command_tx
-            .send(CompositorCommand::UnregisterAbandoned {
-                instance_id: instance_id.clone(),
-                generation,
-            })
-            .map_err(|e| CompositorError::SendError(e.to_string()))
-    }
-
-    fn clear_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        self.command_tx
-            .send(CompositorCommand::ClearPid {
-                instance_id: instance_id.clone(),
-                generation,
-                expected_pid: pid,
-            })
-            .map_err(|e| CompositorError::SendError(e.to_string()))
-    }
-
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError> {
         self.command_tx
             .send(CompositorCommand::SetActiveScene { layout })
@@ -2994,9 +2798,8 @@ mod tests {
         ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
         GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
         TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
-        emit_lifecycle_transitions, emit_transition_incoming_batch, handle_clear_pid_command,
-        handle_command, process_protocol_events, transition_incoming_widget_ids,
-        transition_warm_up_ready,
+        emit_lifecycle_transitions, emit_transition_incoming_batch, handle_command,
+        process_protocol_events, transition_incoming_widget_ids, transition_warm_up_ready,
     };
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
@@ -3008,11 +2811,9 @@ mod tests {
     use bmc::compositor::{
         Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneCycling,
         SceneCyclingTransition, SceneLayout, Size, UpgradeDisplaySnapshot, UpgradeDisplayState,
-        UpgradeGeneration, UpgradeKind, WidgetConnectionMode, WidgetGeneration, WidgetInstanceKey,
-        WidgetPlacement, WidgetRegistration,
+        UpgradeGeneration, UpgradeKind, WidgetConnectionMode, WidgetInstanceKey, WidgetPlacement,
+        WidgetRegistration,
     };
-
-    const GEN: WidgetGeneration = WidgetGeneration(1);
     use bmc_platform::backlight::ScreenVisibility;
     use bmc_widget_protocol::{
         ActionPayload, ViewportShape, WidgetInitialConfig,
@@ -3028,7 +2829,7 @@ mod tests {
         os::unix::net::UnixStream,
         path::PathBuf,
         sync::{
-            Arc, Mutex,
+            Arc,
             atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -3100,7 +2901,7 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("BUG: test socket directory should be creatable");
         let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
         dir.join(format!(
-            "clear-pid-{timestamp}-{}-{socket_id}",
+            "compositor-{timestamp}-{}-{socket_id}",
             std::process::id()
         ))
     }
@@ -3216,7 +3017,7 @@ mod tests {
                     &handle,
                     2,
                     WidgetSurfaceUserData {
-                        instance_id: Arc::new(Mutex::new(instance_id.clone())),
+                        instance_id: instance_id.clone(),
                     },
                 )
                 .expect("BUG: test protocol surface should initialize");
@@ -3285,7 +3086,7 @@ mod tests {
                     handle,
                     2,
                     WidgetSurfaceUserData {
-                        instance_id: Arc::new(Mutex::new(instance_id.clone())),
+                        instance_id: instance_id.clone(),
                     },
                 )
                 .expect("BUG: test protocol surface should initialize");
@@ -3350,12 +3151,6 @@ mod tests {
 
     fn gen_nz(n: u64) -> std::num::NonZeroU64 {
         std::num::NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
-    }
-
-    fn lifecycle_map(
-        pairs: &[(InstanceId, LifecycleState)],
-    ) -> HashMap<InstanceId, LifecycleState> {
-        pairs.iter().cloned().collect()
     }
 
     fn test_scene(instance_id: &str) -> SceneLayout {
@@ -4338,48 +4133,6 @@ mod tests {
                 RecordedEvent::Flush(String::from("buffer-client")),
                 RecordedEvent::Send(String::from("b"), LifecycleState::Visible),
             ],
-        );
-    }
-
-    #[test]
-    fn stale_clear_pid_keeps_lifecycle_history_for_live_respawned_widget() {
-        let mut state = make_app_state();
-        let instance_id = String::from("alpha");
-        state.compositor.deck_widget_state.register_widget(
-            instance_id.clone(),
-            GEN,
-            make_widget_config(),
-        );
-        state
-            .compositor
-            .deck_widget_state
-            .set_widget_pid(&instance_id, GEN, 200);
-        let _ = state.compositor.deck_widget_state.drain_connected();
-
-        let _ = state.compositor.lifecycle.step(&lifecycle_map(&[(
-            instance_id.clone(),
-            LifecycleState::Visible,
-        )]));
-
-        handle_clear_pid_command(&mut state, &instance_id, GEN, 100);
-
-        assert!(
-            state
-                .compositor
-                .deck_widget_state
-                .drain_disconnected()
-                .is_empty(),
-            "stale clear must not unregister the live respawned widget",
-        );
-
-        let emission = state.compositor.lifecycle.step(&lifecycle_map(&[(
-            instance_id.clone(),
-            LifecycleState::Dormant,
-        )]));
-        assert_eq!(
-            emission.releases,
-            vec![(instance_id, LifecycleState::Dormant)],
-            "stale clear must preserve the last emitted lifecycle state so the next Dormant transition releases render targets",
         );
     }
 

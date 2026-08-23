@@ -171,7 +171,7 @@ pub fn connect_standalone(
 /// surface to [`run_render_loop`].
 pub fn connect_production() -> Result<(DeckWidgetSurfaceClient, bmc_widget::surface::InitialState)>
 {
-    let (surface, initial) = DeckWidgetSurfaceClient::connect_keyed()?;
+    let (surface, initial) = DeckWidgetSurfaceClient::connect()?;
     tracing::info!(
         "Connected to Wayland display (production mode): {}x{} viewport_shape={:?}",
         initial.width,

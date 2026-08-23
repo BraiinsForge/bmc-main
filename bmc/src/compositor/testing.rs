@@ -51,7 +51,6 @@ impl RecordingCompositor {
             .push(call);
     }
 
-    /// The widget pid and teardown calls, in the order they arrived.
     pub(crate) fn widget_calls(&self) -> Vec<String> {
         self.widget_calls
             .lock()
@@ -167,61 +166,6 @@ impl Compositor for RecordingCompositor {
             .remove(&key);
         self.record(format!("unregister_retained {key}"));
         Ok(self.widget_receipt("unregister widget"))
-    }
-
-    fn register_widget(
-        &self,
-        _instance_id: InstanceId,
-        _generation: WidgetGeneration,
-        _position: Position,
-        _size: Size,
-        _initial_config: WidgetInitialConfig,
-    ) -> Result<(), CompositorError> {
-        Ok(())
-    }
-
-    fn set_widget_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        self.record(format!("set_pid {instance_id} g{generation} {pid}"));
-        Ok(())
-    }
-
-    fn bind_respawned_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        self.record(format!("bind_respawned {instance_id} g{generation} {pid}"));
-        Ok(())
-    }
-
-    fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError> {
-        self.record(format!("unregister {instance_id}"));
-        Ok(())
-    }
-
-    fn unregister_abandoned(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-    ) -> Result<(), CompositorError> {
-        self.record(format!("unregister_abandoned {instance_id} g{generation}"));
-        Ok(())
-    }
-
-    fn clear_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError> {
-        self.record(format!("clear_pid {instance_id} g{generation} {pid}"));
-        Ok(())
     }
 
     fn set_active_scene(&self, _layout: SceneLayout) -> Result<(), CompositorError> {

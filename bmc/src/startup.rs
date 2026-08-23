@@ -295,7 +295,7 @@ where
         )
         .await;
 
-        let (widget_manager, _widget_events) =
+        let widget_manager =
             WidgetManager::init(config.widgets_paths.clone(), config.capture_widget_output).await;
         let widget_registry = widget_manager.registry();
         let widget_coordinator = Arc::new(Coordinator::new(
@@ -437,7 +437,6 @@ where
                     Ok(CompositorEvent::ScreenActivity) => {
                         screen_activity_for_touch.notify_waiters();
                     }
-                    Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         tracing::warn!(skipped = n, "compositor event receiver lagged");
                     }

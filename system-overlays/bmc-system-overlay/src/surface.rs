@@ -21,7 +21,7 @@
 //! wlr-layer-shell Wayland client for system overlays.
 //!
 //! Mirrors `bmc_widget`'s `deck_widget` surface client, swapping the
-//! `deck_widget_manager_v1` surface for a `zwlr_layer_shell_v1` layer
+//! `deck_widget_manager_v2` surface for a `zwlr_layer_shell_v1` layer
 //! surface. Overlays self-pace their redraws off the framework's
 //! tick/`next_wake` schedule, so this client never requests a
 //! `wl_surface.frame` callback for redraw pacing. The one exception is a

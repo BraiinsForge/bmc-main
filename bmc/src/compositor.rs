@@ -47,24 +47,6 @@ impl From<crate::scene::WidgetId> for WidgetInstanceKey {
     }
 }
 
-/// Which registration of an instance id a widget command is addressed to.
-///
-/// An instance id outlives the process behind it: a crash, a scene edit
-/// or a reload re-registers the same id. The compositor then cannot separate
-/// a command left over from the previous registration
-/// from one meant for the current one — both find the record unbound.
-/// The coordinator therefore stamps each registration, and every command
-/// derived from it, so one that outlived its registration is refused
-/// instead of landing on its successor.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub struct WidgetGeneration(pub u64);
-
-impl std::fmt::Display for WidgetGeneration {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub x: u32,
@@ -267,7 +249,6 @@ pub struct UpgradeDisplaySnapshot {
 
 #[derive(Debug, Clone)]
 pub enum CompositorEvent {
-    WidgetReady { instance_id: InstanceId },
     ScreenActivity,
 }
 
@@ -363,89 +344,6 @@ pub trait Compositor: Send + Sync {
         &self,
         key: WidgetInstanceKey,
     ) -> Result<CompositorReceipt, CompositorError>;
-
-    /// Register a widget before spawning its process.
-    ///
-    /// Stores the widget's initial configuration (size, params) in the
-    /// compositor so that when the widget connects and requests a
-    /// `deck_widget_surface_v1`, the compositor can emit the matching
-    /// `configure` + `param_*` events. Must return before the caller
-    /// spawns the widget; otherwise a fast-starting widget could
-    /// `get_widget_surface` before the compositor knows what to send.
-    fn register_widget(
-        &self,
-        instance_id: InstanceId,
-        generation: WidgetGeneration,
-        position: Position,
-        size: Size,
-        initial_config: WidgetInitialConfig,
-    ) -> Result<(), CompositorError>;
-
-    /// Associate the spawned widget's process id with its instance.
-    ///
-    /// Called after `register_widget` and process spawn. The compositor
-    /// uses `SO_PEERCRED` at `get_widget_surface` time to map the Wayland
-    /// connection back to the registered instance.
-    ///
-    /// `generation` is the one `register_widget` was given.
-    fn set_widget_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError>;
-
-    /// Unregister a widget when its process stops.
-    fn unregister_widget(&self, instance_id: &InstanceId) -> Result<(), CompositorError>;
-
-    /// Clear pid association for a specific widget instance. Called when a
-    /// widget process exits so that a recycled pid cannot be mistaken for
-    /// the dead widget.
-    ///
-    /// Implementations must only disconnect when the instance currently maps
-    /// to `pid`; stale exit notifications for a prior spawn of the same
-    /// instance must be ignored.
-    ///
-    /// The instance stays registered — only the process is detached,
-    /// so a respawn re-binds through [`Compositor::bind_respawned_pid`].
-    /// Legacy PID-based registration is removed separately by
-    /// [`Compositor::unregister_widget`].
-    ///
-    /// `generation` is the registration the exited process belonged to.
-    fn clear_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError>;
-
-    /// End an instance supervision gave up on: its widget type has left
-    /// the registry.
-    ///
-    /// Guarded like `bind_respawned_pid` — an abandon that arrives after a
-    /// scene edit rebound the id must not tear down the live process.
-    fn unregister_abandoned(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-    ) -> Result<(), CompositorError>;
-
-    /// Bind a crash-respawned process to the instance `clear_pid` detached.
-    ///
-    /// Unlike `set_widget_pid`, this must take effect only while the instance
-    /// is still unbound *and* still on `generation`.
-    /// The respawn is announced asynchronously, so by the time it arrives
-    /// a scene edit or a reload may already have re-registered the instance.
-    /// Binding then points the record at a dead pid and strands
-    /// the live process's connection in the pending-connection buffer forever.
-    /// Unbound alone does not rule that out:
-    /// a fresh registration is unbound until its `set_widget_pid` lands.
-    fn bind_respawned_pid(
-        &self,
-        instance_id: &InstanceId,
-        generation: WidgetGeneration,
-        pid: u32,
-    ) -> Result<(), CompositorError>;
 
     /// Set the active scene layout (visible widgets and positions).
     fn set_active_scene(&self, layout: SceneLayout) -> Result<(), CompositorError>;
@@ -571,9 +469,8 @@ pub trait Compositor: Send + Sync {
     /// `led_request_status` events on the matching widget surface.
     fn request_status_sender(&self) -> mpsc::UnboundedSender<LedRequestStatusEvent>;
 
-    /// Subscribe to the compositor event stream (`WidgetReady`,
-    /// `ScreenActivity`). Authoritative scene/connection state is on the
-    /// `watch` channels below, not here.
+    /// This stream carries screen activity only;
+    /// scene and connection state use watch receivers.
     fn subscribe_events(&self) -> broadcast::Receiver<CompositorEvent>;
 
     /// Latest active scene as a `watch` channel; `None` means no scene is
