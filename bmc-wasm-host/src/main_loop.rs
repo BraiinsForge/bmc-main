@@ -33,7 +33,7 @@ use bmc_system_overlay::HostedOverlay;
 use crate::cache_gc;
 use crate::control::{ListenSocket, accept_and_load};
 use crate::host::SharedHost;
-use crate::slot::WidgetSlot;
+use crate::slot::{SlotSurface, WidgetSlot};
 
 /// Let a startup/scene burst settle before the next GC, per review.
 const GC_SETTLE_DELAY: Duration = Duration::from_secs(5);
@@ -250,6 +250,58 @@ fn overlay_wayland_error_kind(error: &wayland_client::backend::WaylandError) -> 
 
 pub type SlotId = u64;
 
+pub trait ControlFirstSlot {
+    fn dispatch_control(&mut self) -> anyhow::Result<()>;
+    fn shutdown_wayland(&self) -> anyhow::Result<()>;
+}
+
+impl<S: SlotSurface> ControlFirstSlot for WidgetSlot<S> {
+    fn dispatch_control(&mut self) -> anyhow::Result<()> {
+        self.dispatch_control_socket()
+    }
+
+    fn shutdown_wayland(&self) -> anyhow::Result<()> {
+        self.shutdown_wayland_connection()
+    }
+}
+
+pub fn process_control_sockets<'a, S: ControlFirstSlot + 'a>(
+    slots: impl IntoIterator<Item = (SlotId, &'a mut S)>,
+) -> Vec<SlotId> {
+    let mut disconnected = Vec::new();
+    for (id, slot) in slots {
+        let Err(control_error) = slot.dispatch_control() else {
+            continue;
+        };
+        tracing::info!(id, ?control_error, "slot control connection closed");
+        if let Err(error) = slot.shutdown_wayland() {
+            tracing::warn!(
+                id,
+                ?error,
+                "failed to shut down disconnected slot's Wayland transport"
+            );
+        }
+        disconnected.push(id);
+    }
+    disconnected
+}
+
+pub trait ControlFirstPostPoll {
+    type Error;
+
+    fn process_controls(&mut self) -> Result<(), Self::Error>;
+    fn process_listener(&mut self) -> Result<(), Self::Error>;
+    fn process_widgets(&mut self) -> Result<(), Self::Error>;
+}
+
+pub fn run_control_first_post_poll<State: ControlFirstPostPoll>(
+    state: &mut State,
+) -> Result<(), State::Error> {
+    state.process_controls()?;
+    state.process_listener()?;
+    state.process_widgets()
+}
+
 #[expect(missing_debug_implementations)]
 pub struct SlotTable {
     next: SlotId,
@@ -436,6 +488,147 @@ fn run_renderer_delivery_scope_if_ready<Guard>(
     Ok(gpu_accessed)
 }
 
+struct PostPollState<'a> {
+    shared: &'a mut SharedHost,
+    listener: &'a ListenSocket,
+    slots: &'a mut SlotTable,
+    pending_shutdown: &'a mut Vec<WidgetSlot>,
+    lifetime: &'a mut HostLifetime,
+    next_gc: &'a mut Instant,
+    listener_revents: i16,
+    renderer_ptr: NonNull<dyn Renderer>,
+    to_teardown: Vec<SlotId>,
+}
+
+impl ControlFirstPostPoll for PostPollState<'_> {
+    type Error = FatalError;
+
+    fn process_controls(&mut self) -> Result<(), FatalError> {
+        let disconnected =
+            process_control_sockets(self.slots.iter_mut().map(|(id, slot)| (*id, slot)));
+        for id in disconnected {
+            if let Some(slot) = self.slots.remove(&id) {
+                self.pending_shutdown.push(slot);
+            }
+        }
+        Ok(())
+    }
+
+    fn process_listener(&mut self) -> Result<(), FatalError> {
+        classify_listener_revents(self.listener_revents)?;
+        if (self.listener_revents & libc::POLLIN) != 0 {
+            drain_accept_burst(
+                self.listener,
+                self.slots,
+                self.shared,
+                self.lifetime,
+                self.next_gc,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn process_widgets(&mut self) -> Result<(), FatalError> {
+        for (id, slot) in self.slots.iter_mut() {
+            if slot.dispatch_wayland_events().is_err() {
+                self.to_teardown.push(*id);
+                continue;
+            }
+            slot.refresh_network();
+            if slot.has_retired_render_target_cleanup()
+                && let Err(error) =
+                    self.shared
+                        .with_gpu_render_lock("host_widget_target_reclaim", |shared| {
+                            slot.reclaim_retired_render_targets(shared);
+                            Ok(())
+                        })
+            {
+                tracing::error!(?error, "failed to reclaim retired widget GPU resources");
+            }
+            let now = Instant::now();
+            if slot.has_lifecycle_gpu_work(now) {
+                if let Err(error) =
+                    self.shared
+                        .with_gpu_render_lock("host_widget_lifecycle", |shared| {
+                            slot.apply_lifecycle(now, &shared.egl);
+                            Ok(())
+                        })
+                {
+                    tracing::error!(?error, "failed to apply widget GPU lifecycle work");
+                    continue;
+                }
+            } else {
+                slot.apply_lifecycle(now, &self.shared.egl);
+            }
+            slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
+            slot.runtime.stage_deliveries();
+            let renderer_delivery_ready = slot.runtime.has_staged_renderer_delivery();
+            #[cfg(feature = "profiling")]
+            let mut delivery_memory = None;
+            let delivery_result = run_renderer_delivery_scope_if_ready(
+                renderer_delivery_ready,
+                || self.shared.acquire_gpu_render_lock("host_widget_delivery"),
+                |require_gpu_access| {
+                    #[cfg(feature = "profiling")]
+                    {
+                        delivery_memory = Some(MemProbe::start());
+                    }
+                    slot.runtime
+                        .poll_staged_deliveries_with_renderer_and_gpu_access(
+                            self.renderer_ptr,
+                            require_gpu_access,
+                        )
+                },
+                || self.shared.flush_and_wait_gl(),
+            );
+            let renderer_accessed = match delivery_result {
+                Ok(renderer_accessed) => renderer_accessed,
+                Err(e) => {
+                    if self.shared.is_context_lost() {
+                        return Err(FatalError::EglContextLost);
+                    }
+                    tracing::error!(
+                        peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
+                        "widget delivery failed; tearing down slot"
+                    );
+                    self.to_teardown.push(*id);
+                    continue;
+                }
+            };
+            #[cfg(not(feature = "profiling"))]
+            let _ = renderer_accessed;
+            #[cfg(feature = "profiling")]
+            if renderer_accessed {
+                let memory = delivery_memory
+                    .expect("BUG: renderer access requires a ready delivery")
+                    .snapshot();
+                tracing::info!(
+                    target: RENDER_PROFILE_TARGET,
+                    instance_id = %slot.runtime.asset_namespace(),
+                    wasm = %slot.wasm_basename,
+                    vmrss_delta_kb = memory.vmrss_delta_kb,
+                    rss_anon_delta_kb = memory.rss_anon_delta_kb,
+                    rss_file_delta_kb = memory.rss_file_delta_kb,
+                    rss_shmem_delta_kb = memory.rss_shmem_delta_kb,
+                    mem_free_delta_kb = memory.mem_free_delta_kb,
+                    mem_available_delta_kb = memory.mem_available_delta_kb,
+                    cma_free_delta_kb = memory.cma_free_delta_kb,
+                    cma_free_kb = memory.cma_free_kb,
+                    mem_free_kb = memory.mem_free_kb,
+                    mem_available_kb = memory.mem_available_kb,
+                    delivery_us = memory.elapsed_us,
+                    "widget renderer delivery memory delta"
+                );
+            }
+            slot.refresh_next_runtime_frame_after_delivery(now);
+            if slot.flush_led_requests().is_err() {
+                self.to_teardown.push(*id);
+            }
+        }
+        Ok(())
+    }
+}
+
 #[expect(
     clippy::too_many_lines,
     reason = "the main loop body is a single coherent dispatch cycle; splitting would obscure the control flow"
@@ -549,110 +742,20 @@ fn run_loop(
             },
         }
 
-        classify_listener_revents(pollfds[LISTENER_INDEX].revents)?;
-
-        if (pollfds[LISTENER_INDEX].revents & libc::POLLIN) != 0 {
-            drain_accept_burst(listener, slots, shared, &mut lifetime, &mut next_gc)?;
-        }
-
-        let mut to_teardown: Vec<SlotId> = Vec::new();
-        for (id, slot) in slots.iter_mut() {
-            if slot.dispatch_wayland_events().is_err() {
-                to_teardown.push(*id);
-                continue;
-            }
-            slot.refresh_network();
-            if slot.has_retired_render_target_cleanup()
-                && let Err(error) =
-                    shared.with_gpu_render_lock("host_widget_target_reclaim", |shared| {
-                        slot.reclaim_retired_render_targets(shared);
-                        Ok(())
-                    })
-            {
-                tracing::error!(?error, "failed to reclaim retired widget GPU resources");
-            }
-            if slot.dispatch_control_socket().is_err() {
-                to_teardown.push(*id);
-                continue;
-            }
-            let now = Instant::now();
-            if slot.has_lifecycle_gpu_work(now) {
-                if let Err(error) = shared.with_gpu_render_lock("host_widget_lifecycle", |shared| {
-                    slot.apply_lifecycle(now, &shared.egl);
-                    Ok(())
-                }) {
-                    tracing::error!(?error, "failed to apply widget GPU lifecycle work");
-                    continue;
-                }
-            } else {
-                slot.apply_lifecycle(now, &shared.egl);
-            }
-            slot.advance_runtime_time(chrono::Local::now().fixed_offset(), now);
-            slot.runtime.stage_deliveries();
-            let renderer_delivery_ready = slot.runtime.has_staged_renderer_delivery();
-            #[cfg(feature = "profiling")]
-            let mut delivery_memory = None;
-            let delivery_result = run_renderer_delivery_scope_if_ready(
-                renderer_delivery_ready,
-                || shared.acquire_gpu_render_lock("host_widget_delivery"),
-                |require_gpu_access| {
-                    #[cfg(feature = "profiling")]
-                    {
-                        delivery_memory = Some(MemProbe::start());
-                    }
-                    slot.runtime
-                        .poll_staged_deliveries_with_renderer_and_gpu_access(
-                            renderer_ptr,
-                            require_gpu_access,
-                        )
-                },
-                || shared.flush_and_wait_gl(),
-            );
-            let renderer_accessed = match delivery_result {
-                Ok(renderer_accessed) => renderer_accessed,
-                Err(e) => {
-                    if shared.is_context_lost() {
-                        return Err(FatalError::EglContextLost);
-                    }
-                    tracing::error!(
-                        peer_pid = ?slot.peer_pid, wasm = %slot.wasm_basename, error = ?e,
-                        "widget delivery failed; tearing down slot"
-                    );
-                    to_teardown.push(*id);
-                    continue;
-                }
-            };
-            #[cfg(not(feature = "profiling"))]
-            let _ = renderer_accessed;
-            #[cfg(feature = "profiling")]
-            if renderer_accessed {
-                let memory = delivery_memory
-                    .expect("BUG: renderer access requires a ready delivery")
-                    .snapshot();
-                tracing::info!(
-                    target: RENDER_PROFILE_TARGET,
-                    instance_id = %slot.runtime.asset_namespace(),
-                    wasm = %slot.wasm_basename,
-                    vmrss_delta_kb = memory.vmrss_delta_kb,
-                    rss_anon_delta_kb = memory.rss_anon_delta_kb,
-                    rss_file_delta_kb = memory.rss_file_delta_kb,
-                    rss_shmem_delta_kb = memory.rss_shmem_delta_kb,
-                    mem_free_delta_kb = memory.mem_free_delta_kb,
-                    mem_available_delta_kb = memory.mem_available_delta_kb,
-                    cma_free_delta_kb = memory.cma_free_delta_kb,
-                    cma_free_kb = memory.cma_free_kb,
-                    mem_free_kb = memory.mem_free_kb,
-                    mem_available_kb = memory.mem_available_kb,
-                    delivery_us = memory.elapsed_us,
-                    "widget renderer delivery memory delta"
-                );
-            }
-            slot.refresh_next_runtime_frame_after_delivery(now);
-            if slot.flush_led_requests().is_err() {
-                to_teardown.push(*id);
-                continue;
-            }
-        }
+        let mut post_poll = PostPollState {
+            shared,
+            listener,
+            slots,
+            pending_shutdown,
+            lifetime: &mut lifetime,
+            next_gc: &mut next_gc,
+            listener_revents: pollfds[LISTENER_INDEX].revents,
+            renderer_ptr,
+            to_teardown: Vec::new(),
+        };
+        run_control_first_post_poll(&mut post_poll)?;
+        let mut to_teardown = std::mem::take(&mut post_poll.to_teardown);
+        drop(post_poll);
 
         for overlay in overlays.iter_mut() {
             if let Err(e) = overlay.dispatch_with_target_resize(

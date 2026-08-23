@@ -198,6 +198,13 @@ pub trait SlotSurface: WidgetSurface + LifecycleSurface {
     fn flush(&self) -> Result<()>;
     fn drain_released_buffers(&mut self) -> Vec<ReleasedBuffer>;
     fn fd(&self) -> std::os::fd::BorrowedFd<'_>;
+    fn shutdown_connection(&self) -> Result<()> {
+        use std::os::fd::AsRawFd as _;
+
+        nix::sys::socket::shutdown(self.fd().as_raw_fd(), nix::sys::socket::Shutdown::Both)
+            .context("shut down transferred Wayland connection")?;
+        Ok(())
+    }
 }
 
 impl SlotSurface for DeckWidgetSurfaceClient {
@@ -701,6 +708,10 @@ impl<S: SlotSurface> WidgetSlot<S> {
             )),
             ControlSocketStatus::Error(e) => Err(anyhow::Error::from(e)),
         }
+    }
+
+    pub fn shutdown_wayland_connection(&self) -> Result<()> {
+        self.surface.shutdown_connection()
     }
 
     #[must_use]
