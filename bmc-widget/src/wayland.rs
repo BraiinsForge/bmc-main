@@ -30,15 +30,16 @@
 //! `wl_seat`/`wl_touch`, and DMA-BUF buffer management.
 
 use bmc_widget_protocol::{
-    ActionPayload, NextAlarm, SettingUpdate, ViewportShape,
+    ActionPayload, NextAlarm, SettingUpdate, ViewportShape, WidgetInstanceKey,
     client::{
-        deck_widget_manager_v1::DeckWidgetManagerV1, deck_widget_surface_v1::DeckWidgetSurfaceV1,
+        deck_widget_manager_v2::DeckWidgetManagerV2, deck_widget_surface_v1::DeckWidgetSurfaceV1,
     },
     wayland_client::{
         Connection, Dispatch, EventQueue, QueueHandle,
         globals::{GlobalListContents, registry_queue_init},
         protocol::{wl_compositor::WlCompositor, wl_registry::WlRegistry, wl_surface::WlSurface},
     },
+    widget_key_from_env,
 };
 use std::os::fd::AsFd;
 use std::time::{Duration, Instant};
@@ -76,8 +77,11 @@ pub enum WaylandError {
     #[error("bind error: {0}")]
     Bind(#[from] bmc_widget_protocol::wayland_client::globals::BindError),
 
-    #[error("deck_widget_manager_v1 global not available")]
+    #[error("deck_widget_manager_v2 global not available")]
     ManagerNotAvailable,
+
+    #[error("invalid widget instance key: {0}")]
+    WidgetKey(#[from] bmc_widget_protocol::WidgetKeyEnvError),
 
     #[error("protocol dispatch error: {0}")]
     Dispatch(#[from] bmc_widget_protocol::wayland_client::DispatchError),
@@ -126,7 +130,8 @@ impl std::fmt::Debug for WidgetProtocolClient {
 
 struct WidgetState {
     compositor: Option<WlCompositor>,
-    manager: Option<DeckWidgetManagerV1>,
+    manager: Option<DeckWidgetManagerV2>,
+    widget_key: WidgetInstanceKey,
     wl_surface: Option<WlSurface>,
     widget_surface: Option<DeckWidgetSurfaceV1>,
     pending_events: Vec<WidgetEvent>,
@@ -149,14 +154,16 @@ enum WidgetEvent {
 }
 
 impl WidgetProtocolClient {
-    /// Connect to the Wayland display and bind to `deck_widget_manager_v1`.
+    /// Connect to the Wayland display and bind to `deck_widget_manager_v2`.
     pub fn connect() -> Result<Self, WaylandError> {
+        let widget_key = widget_key_from_env()?;
         let connection = Connection::connect_to_env()?;
         let (globals, event_queue) = registry_queue_init::<WidgetState>(&connection)?;
 
         let mut state = WidgetState {
             compositor: None,
             manager: None,
+            widget_key,
             wl_surface: None,
             widget_surface: None,
             pending_events: Vec::new(),
@@ -167,13 +174,9 @@ impl WidgetProtocolClient {
             pending_initial_settings: Vec::new(),
         };
 
-        // Bind to wl_compositor and deck_widget_manager_v1
         let qh = event_queue.handle();
         let compositor: WlCompositor = globals.bind(&qh, 1..=1, ())?;
-        // Range, not a pin: an older compositor still binds at 1,
-        // where the credential events simply never arrive
-        // and every slot reads unbound.
-        let manager: DeckWidgetManagerV1 = globals.bind(&qh, 1..=2, ())?;
+        let manager: DeckWidgetManagerV2 = globals.bind(&qh, 1..=2, ())?;
         state.compositor = Some(compositor);
         state.manager = Some(manager);
 
@@ -301,7 +304,7 @@ impl WidgetProtocolClient {
 
     /// Get a reference to the widget manager.
     #[must_use]
-    pub fn manager(&self) -> Option<&DeckWidgetManagerV1> {
+    pub fn manager(&self) -> Option<&DeckWidgetManagerV2> {
         self.state.manager.as_ref()
     }
 
@@ -381,8 +384,6 @@ impl WidgetProtocolClient {
     /// protocol events (configure, params, settings, shutdown); no
     /// rendering happens on it.
     ///
-    /// The compositor identifies this connection by its peer pid
-    /// (`SO_PEERCRED`) — no identity argument is needed on the wire.
     pub fn create_widget_surface(&mut self) {
         let compositor = self
             .state
@@ -395,7 +396,8 @@ impl WidgetProtocolClient {
         let wl_surface = compositor.create_surface(&qh, ());
         self.state.wl_surface = Some(wl_surface.clone());
 
-        let widget_surface = manager.get_widget_surface(&wl_surface, &qh, ());
+        let widget_surface =
+            manager.get_widget_surface(self.state.widget_key.to_string(), &wl_surface, &qh, ());
         self.state.widget_surface = Some(widget_surface);
     }
 }
@@ -624,11 +626,11 @@ impl Dispatch<WlSurface, ()> for WidgetState {
     }
 }
 
-impl Dispatch<DeckWidgetManagerV1, ()> for WidgetState {
+impl Dispatch<DeckWidgetManagerV2, ()> for WidgetState {
     fn event(
         _state: &mut Self,
-        _proxy: &DeckWidgetManagerV1,
-        _event: <DeckWidgetManagerV1 as bmc_widget_protocol::wayland_client::Proxy>::Event,
+        _proxy: &DeckWidgetManagerV2,
+        _event: <DeckWidgetManagerV2 as bmc_widget_protocol::wayland_client::Proxy>::Event,
         _data: &(),
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
@@ -852,6 +854,9 @@ mod tests {
         WidgetState {
             compositor: None,
             manager: None,
+            widget_key: "550e8400-e29b-41d4-a716-446655440000"
+                .parse()
+                .expect("BUG: test widget key must be canonical"),
             wl_surface: None,
             widget_surface: None,
             pending_events: Vec::new(),

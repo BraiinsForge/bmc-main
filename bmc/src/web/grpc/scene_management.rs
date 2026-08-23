@@ -47,6 +47,7 @@ use crate::scene;
 use crate::secret_store::SecretStoreHandle;
 use crate::web::grpc::GrpcError;
 use crate::web::grpc::shared::FieldViolations;
+use crate::widget::coordinator::ConfiguredSceneState;
 use crate::widget::{Coordinator, WidgetRegistry};
 
 pub(crate) struct PlatformDescriptor {
@@ -1132,10 +1133,13 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         if scene_enabled {
-            let config = self.config_handle.read().await;
-            if let Some(scene) = config.scenes().get(&scene_key) {
-                self.coordinator.spawn_scene_widgets(scene).await;
-            }
+            self.coordinator
+                .spawn_configured_scene_widgets(
+                    &self.config_handle,
+                    scene_key,
+                    ConfiguredSceneState::Enabled,
+                )
+                .await;
         }
         self.refresh_compositor_scenes().await;
 
@@ -1201,12 +1205,21 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         // Spawn/stop widgets based on enabled state change
         if was_enabled != req.enabled {
-            let config = self.config_handle.read().await;
-            if let Some(scene) = config.scenes().get(&scene_id_key) {
-                if req.enabled {
-                    self.coordinator.spawn_scene_widgets(scene).await;
-                } else {
-                    self.coordinator.stop_scene_widgets(scene).await;
+            if req.enabled {
+                self.coordinator
+                    .spawn_configured_scene_widgets(
+                        &self.config_handle,
+                        scene_id_key,
+                        ConfiguredSceneState::Enabled,
+                    )
+                    .await;
+            } else {
+                let scene = {
+                    let config = self.config_handle.read().await;
+                    config.scenes().get(&scene_id_key).cloned()
+                };
+                if let Some(scene) = scene {
+                    self.coordinator.stop_scene_widgets(&scene).await;
                 }
             }
         }
@@ -1283,10 +1296,13 @@ impl GrpcSceneManagementService for SceneManagementService {
         drop(config);
 
         if cloned_enabled {
-            let config = self.config_handle.read().await;
-            if let Some(scene) = config.scenes().get(&cloned_key) {
-                self.coordinator.spawn_scene_widgets(scene).await;
-            }
+            self.coordinator
+                .spawn_configured_scene_widgets(
+                    &self.config_handle,
+                    cloned_key,
+                    ConfiguredSceneState::Enabled,
+                )
+                .await;
         }
         self.refresh_compositor_scenes().await;
 
@@ -1316,7 +1332,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         }
 
         // Stop all widgets from the removed scene
-        self.coordinator.stop_scene_widgets(&removed_scene).await;
+        self.coordinator.delete_scene_widgets(&removed_scene).await;
         self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
@@ -1333,7 +1349,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
         let scene_id = scene::SceneId::from(id);
 
-        let scene_was_disabled = {
+        let (scene_was_disabled, scene) = {
             let mut preview = self.preview_scene_id.lock().await;
             if preview.is_some() {
                 return Err(Status::resource_exhausted("scene preview already active"));
@@ -1348,20 +1364,26 @@ impl GrpcSceneManagementService for SceneManagementService {
             *preview = Some(scene_id);
 
             let disabled = !scene.enabled;
-            if disabled {
-                self.coordinator.spawn_scene_widgets(scene).await;
-            }
-            self.coordinator.pin_preview_scene(scene);
-            self.led_coordinator.publish(
-                Layer::Preview,
-                Some(bmc_led::data::LedScene {
-                    effect: bmc_led::data::LedEffect::Solid(bmc_led::config::RGB_WHITE),
-                    period: None,
-                    duration: None,
-                }),
-            );
-            disabled
+            (disabled, scene.clone())
         };
+        if scene_was_disabled {
+            self.coordinator
+                .spawn_configured_scene_widgets(
+                    &self.config_handle,
+                    scene_id,
+                    ConfiguredSceneState::Preview(Arc::clone(&self.preview_scene_id)),
+                )
+                .await;
+        }
+        self.coordinator.pin_preview_scene(&scene);
+        self.led_coordinator.publish(
+            Layer::Preview,
+            Some(bmc_led::data::LedScene {
+                effect: bmc_led::data::LedEffect::Solid(bmc_led::config::RGB_WHITE),
+                period: None,
+                duration: None,
+            }),
+        );
 
         // Guard that clears the preview slot and reverts the compositor
         // back to the first enabled scene when the client drops the stream.
@@ -1382,13 +1404,16 @@ impl GrpcSceneManagementService for SceneManagementService {
                 let spawned = self.spawned_widgets;
                 tokio::spawn(async move {
                     let id = preview_scene_id.lock().await.take();
-                    let config = config_handle.read().await;
-                    if spawned
-                        && let Some(id) = id.as_ref()
-                        && let Some(scene) = config.scenes().get(id)
-                    {
-                        coordinator.stop_scene_widgets(scene).await;
+                    let scene = if spawned {
+                        let config = config_handle.read().await;
+                        id.as_ref().and_then(|id| config.scenes().get(id)).cloned()
+                    } else {
+                        None
+                    };
+                    if let Some(scene) = scene {
+                        coordinator.stop_scene_widgets(&scene).await;
                     }
+                    let config = config_handle.read().await;
                     coordinator.refresh_scene_cycling(config.scenes());
                 });
             }
@@ -1444,7 +1469,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             Self::save_config(&mut config).await?;
         }
 
-        self.coordinator.stop_widget(&instance_id).await;
+        self.coordinator.delete_widget(&instance_id).await;
         self.refresh_compositor_scenes().await;
 
         Ok(Response::new(()))
@@ -1578,14 +1603,21 @@ impl GrpcSceneManagementService for SceneManagementService {
             validate_widget_placement(scene, &widget, None)?;
 
             let showing = scene.enabled || preview_snapshot == Some(scene_id_key);
+            let configured_state = if scene.enabled {
+                ConfiguredSceneState::Enabled
+            } else {
+                ConfiguredSceneState::Preview(Arc::clone(&self.preview_scene_id))
+            };
             scene.widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
 
-            if showing { Some(widget) } else { None }
+            showing.then_some((widget, configured_state))
         };
 
-        if let Some(widget) = widget_to_spawn {
-            self.coordinator.spawn_widget(&scene_id_key, &widget).await;
+        if let Some((widget, state)) = widget_to_spawn {
+            self.coordinator
+                .spawn_configured_widget(&self.config_handle, scene_id_key, widget.id, state)
+                .await;
         }
         self.refresh_compositor_scenes().await;
 

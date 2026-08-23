@@ -84,6 +84,25 @@ pub trait DeckWidgetHandler {
         }
     }
 
+    fn attach_widget_surface(
+        &mut self,
+        instance_id: &InstanceId,
+        wl_surface: smithay::reexports::wayland_server::protocol::wl_surface::WlSurface,
+        protocol_surface: DeckWidgetSurfaceV1,
+    ) -> Option<ClientId> {
+        let new_client_id = protocol_surface.client().map(|client| client.id());
+        let replaced =
+            self.deck_widget_state()
+                .attach_surface(instance_id, wl_surface, protocol_surface);
+        if let Some(replaced) = replaced {
+            self.drop_widget_render_state(instance_id, replaced.pid);
+            self.forget_widget_lifecycle(instance_id);
+            return replaced
+                .client_id
+                .filter(|old_client_id| Some(old_client_id) != new_client_id.as_ref());
+        }
+        None
+    }
     /// Unregister legacy PID-based state before another command-loop
     /// registration can reuse the instance id.
     fn unregister_widget(&mut self, instance_id: &InstanceId) {
@@ -263,7 +282,7 @@ where
         resource: &DeckWidgetManagerV2,
         request: deck_widget_manager_v2::Request,
         _data: &WidgetManagerUserData,
-        _dhandle: &DisplayHandle,
+        dhandle: &DisplayHandle,
         data_init: &mut DataInit<'_, D>,
     ) {
         match request {
@@ -294,8 +313,17 @@ where
                         instance_id: instance_id_lock,
                     },
                 );
-                protocol_state.attach_surface(&instance_id, surface, widget_surface.clone());
-                protocol_state.emit_initial_state(&instance_id, &widget_surface);
+                if let Some(replaced_client) =
+                    state.attach_widget_surface(&instance_id, surface, widget_surface.clone())
+                {
+                    dhandle.backend_handle().kill_client(
+                        replaced_client,
+                        smithay::reexports::wayland_server::backend::DisconnectReason::ConnectionClosed,
+                    );
+                }
+                state
+                    .deck_widget_state()
+                    .emit_initial_state(&instance_id, &widget_surface);
             }
             deck_widget_manager_v2::Request::Destroy => {}
             other => tracing::warn!("Ignoring unknown keyed widget manager request: {other:?}"),
@@ -329,10 +357,23 @@ where
             tracing::warn!("Received request on unresolved widget surface; ignoring");
             return;
         }
+        let current_attachment = state.deck_widget_state().is_current_attachment(
+            &instance_id,
+            &client.id(),
+            &resource.id(),
+        );
         match request {
             deck_widget_surface_v1::Request::Destroy => {
                 state.detach_widget_surface(&instance_id, &client.id(), &resource.id());
                 tracing::info!("Widget surface destroyed for instance: {}", instance_id);
+            }
+            _ if !current_attachment => {
+                tracing::debug!(
+                    %instance_id,
+                    client = ?client.id(),
+                    surface = ?resource.id(),
+                    "ignoring request from stale widget attachment"
+                );
             }
             deck_widget_surface_v1::Request::PlaySound { sound } => {
                 let protocol_state = state.deck_widget_state();
@@ -458,6 +499,22 @@ where
             }
         }
     }
+
+    fn destroyed(
+        state: &mut D,
+        client_id: ClientId,
+        resource: &DeckWidgetSurfaceV1,
+        data: &WidgetSurfaceUserData,
+    ) {
+        let instance_id = data
+            .instance_id
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        if !instance_id.is_empty() {
+            state.detach_widget_surface(&instance_id, &client_id, &resource.id());
+        }
+    }
 }
 
 pub fn create_global<D>(display: &DisplayHandle)
@@ -470,7 +527,6 @@ where
         + DeckWidgetHandler
         + 'static,
 {
-    display.create_global::<D, DeckWidgetManagerV1, ()>(2, ());
     display.create_global::<D, DeckWidgetManagerV2, ()>(2, ());
 }
 

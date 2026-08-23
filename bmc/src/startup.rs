@@ -295,7 +295,7 @@ where
         )
         .await;
 
-        let (widget_manager, widget_events) =
+        let (widget_manager, _widget_events) =
             WidgetManager::init(config.widgets_paths.clone(), config.capture_widget_output).await;
         let widget_registry = widget_manager.registry();
         let widget_coordinator = Arc::new(Coordinator::new(
@@ -499,8 +499,6 @@ where
             );
         }
 
-        crate::widget::coordinator::start_widget_event_listener(compositor.clone(), widget_events);
-
         {
             let config_guard = config_handle.read().await;
             let localization = config_guard.localization_config();
@@ -514,9 +512,10 @@ where
             {
                 tracing::warn!(error = %err, "failed to configure scene cycling");
             }
+            drop(config_guard);
             widget_coordinator
                 .spawn_initial_widgets(
-                    config_guard.scenes(),
+                    &config_handle,
                     &localization,
                     &timezone,
                     night_mode_active,

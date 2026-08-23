@@ -1712,7 +1712,7 @@ mod keyed_widget_protocol_test {
         deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
     };
     use bmc_widget_protocol::{CredentialSecrets, ViewportShape, WidgetInitialConfig};
-    use smithay::reexports::wayland_server::Display;
+    use smithay::reexports::wayland_server::{Display, backend::ClientId};
     use wayland_client::protocol::{wl_compositor, wl_registry, wl_surface};
     use wayland_client::{Connection, Dispatch, EventQueue, Proxy as _, QueueHandle};
 
@@ -1857,10 +1857,10 @@ mod keyed_widget_protocol_test {
     fn connect_client(
         display: &mut Display<CompositorState>,
         compositor: &mut CompositorState,
-    ) -> (Connection, EventQueue<TestClient>, TestClient) {
+    ) -> (Connection, EventQueue<TestClient>, TestClient, ClientId) {
         let (server_stream, client_stream) =
             UnixStream::pair().expect("BUG: Unix socket pair should initialize");
-        display
+        let server_client = display
             .handle()
             .insert_client(server_stream, Arc::new(ClientState::default()))
             .expect("BUG: test client should register with the display");
@@ -1871,7 +1871,7 @@ mod keyed_widget_protocol_test {
         let mut client = TestClient::default();
         conn.display().get_registry(&qh, ());
         pump(display, compositor, &conn, &mut queue, &mut client);
-        (conn, queue, client)
+        (conn, queue, client, server_client.id())
     }
 
     fn request_keyed_surface(
@@ -1889,6 +1889,29 @@ mod keyed_widget_protocol_test {
             .expect("BUG: keyed manager global should be advertised");
         let surface = wl_compositor.create_surface(qh, ());
         manager.get_widget_surface(key, &surface, qh, ())
+    }
+
+    fn register_keyed_widget(
+        compositor: &mut CompositorState,
+        key: WidgetInstanceKey,
+        initial_config: WidgetInitialConfig,
+    ) {
+        compositor
+            .deck_widget_state
+            .register_retained_widget(WidgetRegistration {
+                key,
+                connection_mode: WidgetConnectionMode::Accepting,
+                placement: WidgetPlacement {
+                    instance_id: key.to_string(),
+                    position: Position { x: 0, y: 0 },
+                    size: Size {
+                        width: 100,
+                        height: 100,
+                    },
+                    visible: true,
+                },
+                initial_config,
+            });
     }
 
     fn pump_protocol_error(
@@ -1917,7 +1940,7 @@ mod keyed_widget_protocol_test {
     #[test]
     fn malformed_key_kills_only_its_client_with_invalid_key() {
         let (mut display, mut compositor) = new_server();
-        let (conn, mut queue, mut client) = connect_client(&mut display, &mut compositor);
+        let (conn, mut queue, mut client, _) = connect_client(&mut display, &mut compositor);
         let qh = queue.handle();
         request_keyed_surface(&client, &qh, "not-a-uuid".to_owned());
 
@@ -1931,7 +1954,7 @@ mod keyed_widget_protocol_test {
         assert_eq!(error.code, deck_widget_manager_v2::Error::InvalidKey as u32);
         assert_eq!(error.object_interface, "deck_widget_manager_v2");
 
-        let (survivor, _, survivor_state) = connect_client(&mut display, &mut compositor);
+        let (survivor, _, survivor_state, _) = connect_client(&mut display, &mut compositor);
         assert!(survivor.protocol_error().is_none());
         assert_eq!(
             survivor_state
@@ -1945,7 +1968,7 @@ mod keyed_widget_protocol_test {
     #[test]
     fn unregistered_canonical_key_is_rejected_as_unknown_widget() {
         let (mut display, mut compositor) = new_server();
-        let (conn, mut queue, mut client) = connect_client(&mut display, &mut compositor);
+        let (conn, mut queue, mut client, _) = connect_client(&mut display, &mut compositor);
         let qh = queue.handle();
         let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
         request_keyed_surface(&client, &qh, key.to_string());
@@ -1974,41 +1997,30 @@ mod keyed_widget_protocol_test {
         let credential_secrets = serde_json::json!({
             "weather": {"fields": {"token": "secret-value"}}
         });
-        compositor
-            .deck_widget_state
-            .register_retained_widget(WidgetRegistration {
-                key,
-                connection_mode: WidgetConnectionMode::Accepting,
-                placement: WidgetPlacement {
-                    instance_id: key.to_string(),
-                    position: Position { x: 0, y: 0 },
-                    size: Size {
-                        width: 100,
-                        height: 100,
-                    },
-                    visible: true,
-                },
-                initial_config: WidgetInitialConfig {
-                    width: 100,
-                    height: 100,
-                    viewport_shape: ViewportShape::Rectangular,
-                    display: bmc_widget_protocol::DisplayInfo::BMC100,
-                    params: serde_json::Map::new(),
-                    credentials: credentials
+        register_keyed_widget(
+            &mut compositor,
+            key,
+            WidgetInitialConfig {
+                width: 100,
+                height: 100,
+                viewport_shape: ViewportShape::Rectangular,
+                display: bmc_widget_protocol::DisplayInfo::BMC100,
+                params: serde_json::Map::new(),
+                credentials: credentials
+                    .as_object()
+                    .expect("BUG: credentials fixture must be an object")
+                    .clone(),
+                credential_secrets: CredentialSecrets::new(
+                    credential_secrets
                         .as_object()
-                        .expect("BUG: credentials fixture must be an object")
+                        .expect("BUG: credential secrets fixture must be an object")
                         .clone(),
-                    credential_secrets: CredentialSecrets::new(
-                        credential_secrets
-                            .as_object()
-                            .expect("BUG: credential secrets fixture must be an object")
-                            .clone(),
-                    ),
-                    token: "keyed-v2-test".to_owned(),
-                },
-            });
+                ),
+                token: "keyed-v2-test".to_owned(),
+            },
+        );
 
-        let (conn, mut queue, mut client) = connect_client(&mut display, &mut compositor);
+        let (conn, mut queue, mut client, _) = connect_client(&mut display, &mut compositor);
         let qh = queue.handle();
         let manager = client
             .manager
@@ -2050,6 +2062,68 @@ mod keyed_widget_protocol_test {
             )
             .expect("BUG: credential secrets event must contain JSON"),
             credential_secrets
+        );
+    }
+
+    #[test]
+    fn keyed_factory_disconnects_a_replaced_client() {
+        let (mut display, mut compositor) = new_server();
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        register_keyed_widget(
+            &mut compositor,
+            key,
+            WidgetInitialConfig {
+                width: 100,
+                height: 100,
+                viewport_shape: ViewportShape::Rectangular,
+                display: bmc_widget_protocol::DisplayInfo::BMC100,
+                params: serde_json::Map::new(),
+                credentials: serde_json::Map::new(),
+                credential_secrets: CredentialSecrets::default(),
+                token: "replacement-test".to_owned(),
+            },
+        );
+
+        let (first_conn, mut first_queue, mut first_client, first_client_id) =
+            connect_client(&mut display, &mut compositor);
+        let first_qh = first_queue.handle();
+        request_keyed_surface(&first_client, &first_qh, key.to_string());
+        pump(
+            &mut display,
+            &mut compositor,
+            &first_conn,
+            &mut first_queue,
+            &mut first_client,
+        );
+
+        let (second_conn, mut second_queue, mut second_client, _) =
+            connect_client(&mut display, &mut compositor);
+        let second_qh = second_queue.handle();
+        let second_surface = request_keyed_surface(&second_client, &second_qh, key.to_string());
+        second_surface.stop_sound();
+        pump(
+            &mut display,
+            &mut compositor,
+            &second_conn,
+            &mut second_queue,
+            &mut second_client,
+        );
+
+        assert!(
+            display
+                .handle()
+                .backend_handle()
+                .get_client_data(first_client_id)
+                .is_err(),
+            "replacing a registration must disconnect its previous client"
+        );
+        assert!(second_conn.protocol_error().is_none());
+        assert_eq!(
+            compositor.deck_widget_state.drain_actions(),
+            vec![(
+                key.to_string(),
+                bmc_widget_protocol::ActionPayload::StopSound {}
+            )]
         );
     }
 }

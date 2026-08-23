@@ -20,7 +20,7 @@
 
 //! A recording [`Compositor`] double, shared by the tests in this crate.
 
-use std::sync::Mutex;
+use std::{collections::BTreeMap, sync::Mutex};
 
 use bmc_platform::{HardwareProfile, Product};
 
@@ -39,6 +39,8 @@ pub(crate) struct RecordingCompositor {
     pub(crate) credential_pushes: Mutex<Vec<CredentialPush>>,
     pub(crate) connected: Mutex<BTreeSet<InstanceId>>,
     widget_calls: Mutex<Vec<String>>,
+    retained_modes: Mutex<BTreeMap<WidgetInstanceKey, WidgetConnectionMode>>,
+    held_widget_receipts: Mutex<Option<Vec<tokio::sync::oneshot::Sender<()>>>>,
 }
 
 impl RecordingCompositor {
@@ -55,6 +57,46 @@ impl RecordingCompositor {
             .lock()
             .expect("BUG: recording compositor lock must not be poisoned")
             .clone()
+    }
+
+    pub(crate) fn retained_mode(&self, key: WidgetInstanceKey) -> Option<WidgetConnectionMode> {
+        self.retained_modes
+            .lock()
+            .expect("BUG: retained-mode lock must not be poisoned")
+            .get(&key)
+            .copied()
+    }
+
+    pub(crate) fn hold_widget_receipts(&self) {
+        *self
+            .held_widget_receipts
+            .lock()
+            .expect("BUG: receipt gate lock must not be poisoned") = Some(Vec::new());
+    }
+
+    pub(crate) fn release_widget_receipts(&self) {
+        let receipts = self
+            .held_widget_receipts
+            .lock()
+            .expect("BUG: receipt gate lock must not be poisoned")
+            .take()
+            .expect("BUG: widget receipts were not held");
+        for receipt in receipts {
+            let _ = receipt.send(());
+        }
+    }
+
+    fn widget_receipt(&self, operation: &'static str) -> CompositorReceipt {
+        let mut held = self
+            .held_widget_receipts
+            .lock()
+            .expect("BUG: receipt gate lock must not be poisoned");
+        let Some(receipts) = held.as_mut() else {
+            return CompositorReceipt::completed(operation);
+        };
+        let (applied, receipt) = CompositorReceipt::pending(operation);
+        receipts.push(applied);
+        receipt
     }
 }
 
@@ -75,32 +117,56 @@ impl Compositor for RecordingCompositor {
         &self,
         registration: WidgetRegistration,
     ) -> Result<CompositorReceipt, CompositorError> {
+        self.retained_modes
+            .lock()
+            .expect("BUG: retained-mode lock must not be poisoned")
+            .insert(registration.key, registration.connection_mode);
         self.record(format!("register_retained {}", registration.key));
-        Ok(CompositorReceipt::completed("register widget"))
+        Ok(self.widget_receipt("register widget"))
     }
 
     fn enqueue_activate_widget(
         &self,
         key: WidgetInstanceKey,
     ) -> Result<CompositorReceipt, CompositorError> {
+        if let Some(mode) = self
+            .retained_modes
+            .lock()
+            .expect("BUG: retained-mode lock must not be poisoned")
+            .get_mut(&key)
+        {
+            *mode = WidgetConnectionMode::Accepting;
+        }
         self.record(format!("activate {key}"));
-        Ok(CompositorReceipt::completed("activate widget"))
+        Ok(self.widget_receipt("activate widget"))
     }
 
     fn enqueue_deactivate_widget(
         &self,
         key: WidgetInstanceKey,
     ) -> Result<CompositorReceipt, CompositorError> {
+        if let Some(mode) = self
+            .retained_modes
+            .lock()
+            .expect("BUG: retained-mode lock must not be poisoned")
+            .get_mut(&key)
+        {
+            *mode = WidgetConnectionMode::Inactive;
+        }
         self.record(format!("deactivate {key}"));
-        Ok(CompositorReceipt::completed("deactivate widget"))
+        Ok(self.widget_receipt("deactivate widget"))
     }
 
     fn enqueue_unregister_widget(
         &self,
         key: WidgetInstanceKey,
     ) -> Result<CompositorReceipt, CompositorError> {
+        self.retained_modes
+            .lock()
+            .expect("BUG: retained-mode lock must not be poisoned")
+            .remove(&key);
         self.record(format!("unregister_retained {key}"));
-        Ok(CompositorReceipt::completed("unregister widget"))
+        Ok(self.widget_receipt("unregister widget"))
     }
 
     fn register_widget(

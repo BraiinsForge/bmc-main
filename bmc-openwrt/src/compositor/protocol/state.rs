@@ -495,21 +495,37 @@ impl DeckWidgetProtocolState {
         instance_id: &InstanceId,
         wl_surface: WlSurface,
         protocol_surface: DeckWidgetSurfaceV1,
-    ) {
+    ) -> Option<DetachedWidget> {
         let Some(entry) = self.widgets.get_mut(instance_id) else {
             tracing::error!(
-                "attach_surface for {instance_id}: no widget record; dispatch resolved a pid that has no registered widget"
+                "attach_surface for {instance_id}: no registered widget for accepted key"
             );
             debug_assert!(
                 false,
                 "attach_surface called without a registered widget for {instance_id}"
             );
-            return;
+            return None;
         };
+        let replaced = (entry.protocol_surface.is_some()
+            || entry.wl_surface.is_some()
+            || entry.client_id.is_some())
+        .then(|| DetachedWidget {
+            client_id: entry.client_id.take(),
+            pid: entry.pid,
+        });
+        if replaced.is_some() {
+            self.purge_attachment_events(instance_id);
+            self.newly_disconnected.push(instance_id.clone());
+        }
+        let entry = self
+            .widgets
+            .get_mut(instance_id)
+            .expect("BUG: accepted widget disappeared while attaching its surface");
         entry.wl_surface = Some(wl_surface);
         entry.client_id = protocol_surface.client().map(|client| client.id());
         entry.protocol_surface = Some(protocol_surface);
         self.newly_connected.push(instance_id.clone());
+        replaced
     }
 
     /// Find instance_id for a surface, matching by PID. Accepts
@@ -523,7 +539,6 @@ impl DeckWidgetProtocolState {
             .find(|w| w.pid == Some(pid))
             .map(|w| &w.instance_id)
     }
-
     pub fn accepting_instance_id(&self, key: WidgetInstanceKey) -> Option<&InstanceId> {
         self.widgets
             .get(&key.to_string())
@@ -579,6 +594,25 @@ impl DeckWidgetProtocolState {
         self.purge_attachment_events(instance_id);
         self.newly_disconnected.push(instance_id.clone());
         SurfaceDetach::Detached { pid }
+    }
+
+    pub fn is_current_attachment(
+        &self,
+        instance_id: &InstanceId,
+        client_id: &ClientId,
+        protocol_surface_id: &ObjectId,
+    ) -> bool {
+        self.widgets.get(instance_id).is_some_and(|widget| {
+            widget.client_id.as_ref() == Some(client_id)
+                && widget.protocol_surface.as_ref().map(Resource::id)
+                    == Some(protocol_surface_id.clone())
+        })
+    }
+
+    pub fn has_attachment(&self, instance_id: &InstanceId) -> bool {
+        self.widgets
+            .get(instance_id)
+            .is_some_and(|widget| widget.protocol_surface.is_some())
     }
 
     fn purge_attachment_events(&mut self, instance_id: &InstanceId) {
@@ -1532,6 +1566,7 @@ mod tests {
 
         let mut state = DeckWidgetProtocolState::new();
         state.register_retained_widget(registration);
+        state.attach_protocol_surface_for_test(&instance_id, first_surface.clone());
         state.attach_protocol_surface_for_test(&instance_id, replacement_surface.clone());
 
         assert!(matches!(
@@ -1553,6 +1588,73 @@ mod tests {
             state.detach_surface(&instance_id, &second_client.id(), &replacement_surface.id()),
             SurfaceDetach::Detached { .. }
         ));
+    }
+
+    #[test]
+    fn replacement_and_stale_destruction_preserve_exact_attachment_intervals() {
+        let display =
+            Display::<CompositorState>::new().expect("BUG: test Wayland display should initialize");
+        let mut handle = display.handle();
+        let (socket, _peer) =
+            UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+        let client = handle
+            .insert_client(socket, Arc::new(ClientState::default()))
+            .expect("BUG: test Wayland client should register");
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let instance_id = registration.key.to_string();
+        let user_data = || WidgetSurfaceUserData {
+            instance_id: Arc::new(Mutex::new(instance_id.clone())),
+        };
+        let first_protocol = client
+            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .expect("BUG: first protocol surface should initialize");
+        let second_protocol = client
+            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .expect("BUG: second protocol surface should initialize");
+        let first_wl = client
+            .create_resource_from_objdata::<WlSurface, CompositorState>(
+                &handle,
+                6,
+                Arc::new(TestObjectData),
+            )
+            .expect("BUG: first wl_surface should initialize");
+        let second_wl = client
+            .create_resource_from_objdata::<WlSurface, CompositorState>(
+                &handle,
+                6,
+                Arc::new(TestObjectData),
+            )
+            .expect("BUG: second wl_surface should initialize");
+
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_retained_widget(registration);
+        assert!(
+            state
+                .attach_surface(&instance_id, first_wl, first_protocol.clone())
+                .is_none()
+        );
+        assert_eq!(state.drain_connected(), [instance_id.clone()]);
+        state.add_action(instance_id.clone(), ActionPayload::StopSound {});
+
+        let replaced = state
+            .attach_surface(&instance_id, second_wl, second_protocol.clone())
+            .expect("BUG: replacement must detach the first interval");
+        assert_eq!(replaced.client_id, Some(client.id()));
+        assert!(state.drain_actions().is_empty());
+        assert_eq!(state.drain_disconnected(), [instance_id.clone()]);
+        assert_eq!(state.drain_connected(), [instance_id.clone()]);
+        assert!(state.is_current_attachment(&instance_id, &client.id(), &second_protocol.id()));
+
+        assert!(matches!(
+            state.detach_surface(&instance_id, &client.id(), &first_protocol.id()),
+            SurfaceDetach::NoMatch
+        ));
+        assert!(state.drain_disconnected().is_empty());
+        assert!(matches!(
+            state.detach_surface(&instance_id, &client.id(), &second_protocol.id()),
+            SurfaceDetach::Detached { .. }
+        ));
+        assert_eq!(state.drain_disconnected(), [instance_id]);
     }
 
     fn register_with_pid(state: &mut DeckWidgetProtocolState, instance_id: &str, pid: u32) {

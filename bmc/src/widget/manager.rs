@@ -201,10 +201,10 @@ enum Command {
         reply: oneshot::Sender<TerminationHandle>,
     },
     Pause {
-        reply: oneshot::Sender<StopAllResult>,
+        reply: oneshot::Sender<StopAllHandle>,
     },
     Shutdown {
-        reply: oneshot::Sender<StopAllResult>,
+        reply: oneshot::Sender<StopAllHandle>,
     },
     Resume {
         reply: oneshot::Sender<ManagerMode>,
@@ -223,6 +223,18 @@ enum Command {
 
 type SpawnReply = Result<u32, StartError>;
 
+pub(crate) struct StartHandle {
+    reply: oneshot::Receiver<SpawnReply>,
+}
+
+impl StartHandle {
+    pub(crate) async fn join(self) -> SpawnReply {
+        self.reply
+            .await
+            .expect("BUG: widget child actor dropped a spawn reply")
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct TerminationHandle {
     done: watch::Receiver<bool>,
@@ -237,16 +249,24 @@ impl TerminationHandle {
     }
 }
 
-struct StopAllResult {
+pub(crate) struct StopAllHandle {
     instance_ids: Vec<String>,
     terminations: Vec<TerminationHandle>,
 }
 
+impl StopAllHandle {
+    pub(crate) fn instance_ids(&self) -> &[String] {
+        &self.instance_ids
+    }
+
+    pub(crate) async fn join(self) {
+        futures::future::join_all(self.terminations.into_iter().map(TerminationHandle::join)).await;
+    }
+}
+
 impl WidgetManager {
-    /// Returns the handle together with its lifecycle event stream.
-    /// Handing the stream out here, rather than fetching it later,
-    /// makes it impossible for a caller to forget: the events must be consumed
-    /// for the compositor's pid bookkeeping to stay in step with the processes.
+    /// Initialize the manager and return its compatibility lifecycle receiver.
+    /// The receiver is closed immediately because supervision emits no lifecycle events.
     pub async fn init(
         widgets_paths: Vec<PathBuf>,
         capture_widget_output: bool,
@@ -278,7 +298,7 @@ impl WidgetManager {
         policy: RestartPolicy,
     ) -> (Self, mpsc::UnboundedReceiver<WidgetEvent>) {
         let (cmd_tx, cmd_rx) = mpsc::channel(COMMAND_CHANNEL_CAPACITY);
-        let (events_tx, events_rx) = mpsc::unbounded_channel();
+        let (_events_tx, events_rx) = mpsc::unbounded_channel();
         let mode = Arc::new(AtomicU8::new(ManagerMode::Running as u8));
         let actor = Actor {
             registry: registry.clone(),
@@ -286,7 +306,6 @@ impl WidgetManager {
             children: HashMap::new(),
             mode: Arc::clone(&mode),
             next_restart_token: 0,
-            events_tx,
             policy,
         };
         tokio::spawn(actor.run(cmd_rx));
@@ -351,18 +370,26 @@ impl WidgetManager {
         Ok(())
     }
 
-    /// Spawn a widget process and return its OS pid. The compositor needs it
-    /// to correlate the eventual Wayland connection back to the widget's
-    /// registered instance id.
-    ///
+    /// Spawn a widget process and return its initial OS pid.
     /// A crashed widget is respawned automatically with backoff until it is
-    /// stopped or its type leaves the registry. Self-exits and respawns are
-    /// reported on the stream returned by [`Self::init`].
+    /// stopped or its type leaves the registry.
     pub(crate) async fn spawn_widget(
         &self,
         launch: WidgetLaunch,
         generation: WidgetGeneration,
     ) -> SpawnReply {
+        self.enqueue_spawn_widget(launch, generation)
+            .await
+            .join()
+            .await
+    }
+
+    /// Enqueue a widget start and return a handle for its initial spawn result.
+    pub(crate) async fn enqueue_spawn_widget(
+        &self,
+        launch: WidgetLaunch,
+        generation: WidgetGeneration,
+    ) -> StartHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Spawn {
@@ -372,9 +399,7 @@ impl WidgetManager {
             })
             .await
             .expect("BUG: widget child actor terminated");
-        reply_rx
-            .await
-            .expect("BUG: widget child actor dropped a spawn reply")
+        StartHandle { reply: reply_rx }
     }
 
     /// Request a stop and return a handle that joins the current child.
@@ -393,9 +418,9 @@ impl WidgetManager {
             .expect("BUG: widget child actor dropped a stop reply")
     }
 
-    /// Stop all widget processes and return the instance ids that were
-    /// stopped, so callers can run per-instance cleanup for each of them.
-    async fn transition_and_stop(&self, shutdown: bool) -> Vec<String> {
+    /// Begin a mode transition and return the affected instance IDs
+    /// together with handles for pending process terminations.
+    async fn begin_transition(&self, shutdown: bool) -> StopAllHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         let command = if shutdown {
             Command::Shutdown { reply: reply_tx }
@@ -406,14 +431,23 @@ impl WidgetManager {
             .send(command)
             .await
             .expect("BUG: widget child actor terminated");
-        let result = reply_rx
+        reply_rx
             .await
-            .expect("BUG: widget child actor dropped a mode-transition reply");
-        futures::future::join_all(result.terminations.into_iter().map(TerminationHandle::join))
-            .await;
-        result.instance_ids
+            .expect("BUG: widget child actor dropped a mode-transition reply")
     }
 
+    pub(crate) async fn begin_pause(&self) -> StopAllHandle {
+        self.begin_transition(false).await
+    }
+
+    async fn transition_and_stop(&self, shutdown: bool) -> Vec<String> {
+        let handle = self.begin_transition(shutdown).await;
+        let instance_ids = handle.instance_ids.clone();
+        handle.join().await;
+        instance_ids
+    }
+
+    #[cfg(test)]
     pub(crate) async fn pause(&self) -> Vec<String> {
         self.transition_and_stop(false).await
     }
@@ -589,7 +623,6 @@ struct Actor {
     children: HashMap<String, WidgetState>,
     mode: Arc<AtomicU8>,
     next_restart_token: u64,
-    events_tx: mpsc::UnboundedSender<WidgetEvent>,
     policy: RestartPolicy,
 }
 
@@ -846,7 +879,7 @@ impl Actor {
         termination
     }
 
-    fn transition_and_stop(&mut self, requested: ManagerMode) -> StopAllResult {
+    fn transition_and_stop(&mut self, requested: ManagerMode) -> StopAllHandle {
         let mode = if self.current_mode() == ManagerMode::ShuttingDown {
             ManagerMode::ShuttingDown
         } else {
@@ -872,7 +905,7 @@ impl Actor {
             }
             ids.push(id);
         }
-        StopAllResult {
+        StopAllHandle {
             instance_ids: ids,
             terminations,
         }
@@ -912,12 +945,6 @@ impl Actor {
             widget.pid, exit.pid,
             "BUG: current running child must be the only child able to exit"
         );
-
-        let _ = self.events_tx.send(WidgetEvent::Exited {
-            instance_id: exit.instance_id.clone(),
-            generation: widget.generation,
-            pid: exit.pid,
-        });
 
         if self.current_mode() != ManagerMode::Running {
             return;
@@ -1057,10 +1084,6 @@ impl Actor {
                 "widget type {} has left the registry; not respawning instance {}",
                 pending.launch.config_key.widget_uid, instance_id
             );
-            let _ = self.events_tx.send(WidgetEvent::Abandoned {
-                instance_id: instance_id.to_owned(),
-                generation: pending.generation,
-            });
             return;
         }
 
@@ -1070,13 +1093,7 @@ impl Actor {
             pending.backoff,
             internal_tx,
         ) {
-            Ok(pid) => {
-                let _ = self.events_tx.send(WidgetEvent::Respawned {
-                    instance_id: instance_id.to_owned(),
-                    generation: pending.generation,
-                    pid,
-                });
-            }
+            Ok(_) => {}
             Err((e, identity)) => {
                 warn!(
                     "failed to respawn widget {}: {}; retrying in {:?}",
@@ -1540,7 +1557,6 @@ mod tests {
     }
 
     fn bare_actor(uid: Uuid) -> Actor {
-        let (events_tx, _events_rx) = mpsc::unbounded_channel();
         Actor {
             registry: Arc::new(WidgetRegistry::new([test_widget_info(uid)])),
             spawner: Box::new(FakeSpawner {
@@ -1551,7 +1567,6 @@ mod tests {
             children: HashMap::new(),
             mode: Arc::new(AtomicU8::new(ManagerMode::Running as u8)),
             next_restart_token: 0,
-            events_tx,
             policy: RestartPolicy::default(),
         }
     }
@@ -1589,11 +1604,22 @@ mod tests {
         }
     }
 
-    async fn next_event(events: &mut mpsc::UnboundedReceiver<WidgetEvent>) -> WidgetEvent {
-        timeout(EVENT_TIMEOUT, events.recv())
-            .await
-            .expect("timed out waiting for a widget event")
-            .expect("BUG: widget event channel closed")
+    async fn wait_for_launch_count(launched: &LaunchLog, expected: usize) {
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        loop {
+            let count = launched
+                .lock()
+                .expect("BUG: launch log lock poisoned")
+                .len();
+            if count >= expected {
+                return;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "timed out waiting for launch {expected}"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
     }
 
     #[test]
@@ -1637,22 +1663,13 @@ mod tests {
     #[tokio::test]
     async fn a_repeat_crasher_keeps_being_respawned() {
         let uid = Uuid::new_v4();
-        let (manager, mut events) = manager_with_policy(uid, "true", &[], fast_policy());
+        let (manager, _events, launched) = manager_with_launch_log(uid, "true", &[], fast_policy());
         manager
             .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        for cycle in 0..4 {
-            assert!(
-                matches!(next_event(&mut events).await, WidgetEvent::Exited { .. }),
-                "cycle {cycle} must report the crash"
-            );
-            assert!(
-                matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
-                "cycle {cycle} must respawn — the ladder caps the delay, it never gives up"
-            );
-        }
+        wait_for_launch_count(&launched, 5).await;
     }
 
     /// A package replacement leaves affected widgets crash-looping
@@ -1675,29 +1692,21 @@ mod tests {
             max: Duration::from_secs(30),
             healthy_uptime: Duration::from_hours(1),
         };
-        let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
+        let (manager, _events, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
         let mut delay = policy.initial;
+        let mut launches = 1;
         while delay < CLIMBED {
-            assert!(matches!(
-                next_event(&mut events).await,
-                WidgetEvent::Exited { .. }
-            ));
-            assert!(matches!(
-                next_event(&mut events).await,
-                WidgetEvent::Respawned { .. }
-            ));
+            wait_for_pending_restart(&manager, "flapping").await;
+            launches += 1;
+            wait_for_launch_count(&launched, launches).await;
             delay = next_backoff(delay, policy.max);
         }
-        // This crash leaves a wait of at least CLIMBED pending.
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Exited { .. }
-        ));
+        wait_for_pending_restart(&manager, "flapping").await;
         let crashed_at = Instant::now();
 
         manager
@@ -1705,11 +1714,7 @@ mod tests {
             .await
             .expect("BUG: static registry refresh failed");
 
-        let respawn = timeout(EVENT_TIMEOUT, events.recv()).await;
-        assert!(
-            matches!(respawn, Ok(Some(WidgetEvent::Respawned { .. }))),
-            "a refresh must retry the pending respawn, got {respawn:?}"
-        );
+        wait_for_launch_count(&launched, launches + 1).await;
         // Timed from the crash, not from the refresh: a runner slow enough
         // that the climbed timer elapses on its own must fail here,
         // rather than certify a retry it never observed.
@@ -1738,48 +1743,31 @@ mod tests {
             max: CEILING,
             healthy_uptime: Duration::from_hours(1),
         };
-        let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
+        let (manager, _events, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
         let mut delay = INITIAL;
+        let mut launches = 1;
         while delay < CEILING {
-            assert!(matches!(
-                next_event(&mut events).await,
-                WidgetEvent::Exited { .. }
-            ));
-            assert!(matches!(
-                next_event(&mut events).await,
-                WidgetEvent::Respawned { .. }
-            ));
+            wait_for_pending_restart(&manager, "flapping").await;
+            launches += 1;
+            wait_for_launch_count(&launched, launches).await;
             delay = next_backoff(delay, CEILING);
         }
-        // This crash leaves a wait of CEILING pending.
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Exited { .. }
-        ));
+        wait_for_pending_restart(&manager, "flapping").await;
 
         manager
             .refresh()
             .await
             .expect("BUG: static registry refresh failed");
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
-            "the re-scan must buy a prompt attempt"
-        );
-
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Exited { .. }),
-            "the attempt must fail again, since nothing actually changed"
-        );
+        launches += 1;
+        wait_for_launch_count(&launched, launches).await;
+        wait_for_pending_restart(&manager, "flapping").await;
         let crashed_at = Instant::now();
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Respawned { .. }
-        ));
+        wait_for_launch_count(&launched, launches + 1).await;
         // A lower bound, so a loaded runner can only overshoot it.
         let waited = crashed_at.elapsed();
         assert!(
@@ -1805,51 +1793,35 @@ mod tests {
             max: CEILING,
             healthy_uptime: Duration::from_hours(1),
         };
-        let (manager, mut events) = manager_with_policy(uid, "true", &[], policy);
+        let (manager, _events, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "flapping"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
         let mut delay = INITIAL;
+        let mut launches = 1;
         while delay < CEILING {
-            assert!(matches!(
-                next_event(&mut events).await,
-                WidgetEvent::Exited { .. }
-            ));
-            assert!(matches!(
-                next_event(&mut events).await,
-                WidgetEvent::Respawned { .. }
-            ));
+            wait_for_pending_restart(&manager, "flapping").await;
+            launches += 1;
+            wait_for_launch_count(&launched, launches).await;
             delay = next_backoff(delay, CEILING);
         }
-        // This crash leaves a wait of CEILING pending.
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Exited { .. }
-        ));
+        wait_for_pending_restart(&manager, "flapping").await;
 
         let retried_at = Instant::now();
         manager.retry_pending(&instance_id("flapping")).await;
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
-            "the retry must respawn the instance"
-        );
+        launches += 1;
+        wait_for_launch_count(&launched, launches).await;
         let promptly = retried_at.elapsed();
         assert!(
             promptly < RUNG_THRESHOLD,
             "the push must be tried without waiting out the climbed delay, waited {promptly:?}"
         );
 
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Exited { .. }
-        ));
+        wait_for_pending_restart(&manager, "flapping").await;
         let crashed_at = Instant::now();
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Respawned { .. }
-        ));
+        wait_for_launch_count(&launched, launches + 1).await;
         let waited = crashed_at.elapsed();
         assert!(
             waited >= RUNG_THRESHOLD,
@@ -1934,46 +1906,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn crashed_widget_respawns_with_a_new_pid() {
+    async fn crashed_widget_respawns_without_waiting_for_external_coordination() {
         let uid = Uuid::new_v4();
-        let (manager, mut events) = manager_with(uid, "true", &[]);
-        let pid = manager
+        let (manager, _events, launched) = manager_with_launch_log(uid, "true", &[], fast_policy());
+        manager
             .spawn_widget(launch(uid, "crashy"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        match next_event(&mut events).await {
-            WidgetEvent::Exited {
-                instance_id: event_instance_id,
-                generation,
-                pid: exited_pid,
-            } => {
-                assert_eq!(event_instance_id, instance_id("crashy"));
-                assert_eq!(exited_pid, pid, "the exit must report the crashed pid");
-                assert_eq!(generation, GEN, "the exit must report the spawn's stamp");
-            }
-            WidgetEvent::Respawned { .. } | WidgetEvent::Abandoned { .. } => {
-                panic!("a crash must be reported before the respawn")
-            }
-        }
-
-        match next_event(&mut events).await {
-            WidgetEvent::Respawned {
-                instance_id: event_instance_id,
-                generation,
-                pid: new_pid,
-            } => {
-                assert_eq!(event_instance_id, instance_id("crashy"));
-                assert_ne!(new_pid, pid, "the respawn must carry the new pid");
-                assert_eq!(
-                    generation, GEN,
-                    "a respawn stays on the registration it was spawned for"
-                );
-            }
-            WidgetEvent::Exited { .. } | WidgetEvent::Abandoned { .. } => {
-                panic!("expected a respawn after the crash")
-            }
-        }
+        wait_for_launch_count(&launched, 2).await;
     }
 
     /// A package replacement lands while the widget is crash-looping,
@@ -1992,28 +1933,22 @@ mod tests {
             max: RESPAWN_DELAY,
             healthy_uptime: Duration::from_hours(1),
         };
-        let (manager, mut events, launched) = manager_with_launch_log(uid, "true", &[], policy);
+        let (manager, _events, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "upgraded"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Exited { .. }),
-            "the crash must be reported first"
-        );
+        wait_for_pending_restart(&manager, "upgraded").await;
         manager.registry().replace(test_widget_build(
             test_widget_info(uid).manifest,
             "/test/widgets/test-widget-v2",
         ));
 
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Respawned { .. }),
-            "the widget must come back on the replaced build"
-        );
+        wait_for_launch_count(&launched, 2).await;
         let observation = snapshot_widget(&manager, "upgraded").await;
         assert!(
-            matches!(&observation, Some(ManagedWidgetSnapshot { identity, state: ManagedWidgetState::Running, .. })
+            matches!(&observation, Some(ManagedWidgetSnapshot { identity, .. })
                 if identity.canonical_dir == Path::new("/test/widgets/test-widget-v2")),
             "the respawn must report the build it was launched from, got {observation:?}"
         );
@@ -2034,29 +1969,18 @@ mod tests {
     #[tokio::test]
     async fn a_widget_type_gone_from_the_registry_ends_supervision() {
         let uid = Uuid::new_v4();
-        let (manager, mut events) = manager_with(uid, "true", &[]);
+        let (manager, _events) = manager_with(uid, "true", &[]);
         manager
             .spawn_widget(launch(uid, "skipped"), GEN)
             .await
             .expect("BUG: test spawn failed");
 
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Exited { .. }),
-            "the crash must be reported first"
-        );
+        wait_for_pending_restart(&manager, "skipped").await;
         manager.registry().remove(&uid);
-
-        match next_event(&mut events).await {
-            WidgetEvent::Abandoned {
-                instance_id: event_instance_id,
-                generation,
-            } => {
-                assert_eq!(event_instance_id, instance_id("skipped"));
-                assert_eq!(generation, GEN, "the abandon must name the registration");
-            }
-            WidgetEvent::Exited { .. } | WidgetEvent::Respawned { .. } => {
-                panic!("a widget type gone from the registry must end supervision")
-            }
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        while snapshot_widget(&manager, "skipped").await.is_some() {
+            assert!(Instant::now() < deadline, "supervision did not end");
+            tokio::time::sleep(Duration::from_millis(5)).await;
         }
     }
 
@@ -2122,10 +2046,7 @@ mod tests {
             .await
             .expect("BUG: test spawn failed");
 
-        assert!(
-            matches!(next_event(&mut events).await, WidgetEvent::Exited { .. }),
-            "the crash must be reported first"
-        );
+        wait_for_pending_restart(&manager, "flappy").await;
         manager
             .stop_widget(&instance_id("flappy"))
             .await
@@ -2282,7 +2203,7 @@ mod tests {
     async fn transient_explicit_spawn_failure_recovers_without_registry_activity() {
         let uid = Uuid::new_v4();
         let registry = Arc::new(WidgetRegistry::new([test_widget_info(uid)]));
-        let (manager, mut events) = WidgetManager::with_parts(
+        let (manager, _events) = WidgetManager::with_parts(
             registry,
             Box::new(FailOnceSpawner {
                 fail_next: std::sync::atomic::AtomicBool::new(true),
@@ -2294,17 +2215,20 @@ mod tests {
             manager.spawn_widget(launch(uid, "recovering"), GEN).await,
             Err(StartError::PendingRestart(_))
         ));
-        assert!(matches!(
-            next_event(&mut events).await,
-            WidgetEvent::Respawned { instance_id: id, .. } if id == instance_id("recovering")
-        ));
-        assert!(matches!(
-            snapshot_widget(&manager, "recovering").await,
-            Some(ManagedWidgetSnapshot {
-                state: ManagedWidgetState::Running,
-                ..
-            })
-        ));
+        let deadline = Instant::now() + EVENT_TIMEOUT;
+        loop {
+            if matches!(
+                snapshot_widget(&manager, "recovering").await,
+                Some(ManagedWidgetSnapshot {
+                    state: ManagedWidgetState::Running,
+                    ..
+                })
+            ) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "widget did not recover");
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
         manager.shutdown().await;
     }
 

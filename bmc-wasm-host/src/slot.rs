@@ -345,8 +345,9 @@ impl WidgetSlot {
             wasm = %wasm_path.display(),
             "connecting widget Wayland fd"
         );
-        let (surface, initial) = DeckWidgetSurfaceClient::connect_with_fd(wayland_fd)
-            .context("DeckWidgetSurfaceClient::connect_with_fd")?;
+        let (surface, initial) =
+            DeckWidgetSurfaceClient::connect_with_fd_keyed(wayland_fd, widget_key)
+                .context("DeckWidgetSurfaceClient::connect_with_fd_keyed")?;
         tracing::info!(
             ?peer_pid,
             wasm = %wasm_path.display(),

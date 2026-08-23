@@ -2394,6 +2394,10 @@ fn emit_active_scene_changed_if_changed(
 fn process_protocol_events(state: &mut AppState) {
     let mut connected_set_changed = false;
     let connected = state.compositor.deck_widget_state.drain_connected();
+    let disconnected = state.compositor.deck_widget_state.drain_disconnected();
+    for instance_id in &disconnected {
+        tracing::info!("Widget disconnected: {}", instance_id);
+    }
     if !connected.is_empty() {
         let mut lifecycle_states = state.compositor.widgets.lifecycle_states();
         if state.compositor.neighbors_suppressed() {
@@ -2401,16 +2405,16 @@ fn process_protocol_events(state: &mut AppState) {
         }
         let mut connect_clients: Vec<ClientId> = Vec::new();
 
-        for instance_id in connected {
+        for instance_id in &connected {
             let lifecycle_state = clamp_initial_lifecycle(
                 lifecycle_states
-                    .get(&instance_id)
+                    .get(instance_id)
                     .copied()
                     .unwrap_or(LifecycleState::Dormant),
             );
             match state
                 .compositor
-                .send_initial_lifecycle(&instance_id, lifecycle_state)
+                .send_initial_lifecycle(instance_id, lifecycle_state)
             {
                 Some(client_id) => {
                     if !connect_clients.contains(&client_id) {
@@ -2426,12 +2430,9 @@ fn process_protocol_events(state: &mut AppState) {
             }
 
             tracing::info!("Widget connected: {}", instance_id);
-            if state.connected_widgets.insert(instance_id.clone()) {
-                connected_set_changed = true;
-            }
-            let _ = state
-                .event_tx
-                .send(CompositorEvent::WidgetReady { instance_id });
+            let _ = state.event_tx.send(CompositorEvent::WidgetReady {
+                instance_id: instance_id.clone(),
+            });
         }
         let mut sink = AppStateLifecycleSink {
             deck_widget_state: &mut state.compositor.deck_widget_state,
@@ -2442,13 +2443,21 @@ fn process_protocol_events(state: &mut AppState) {
         flush_lifecycle_clients(&mut sink, &connect_clients);
     }
 
-    // Drained after the connects: a detach and a re-attach in the same pass
-    // must leave the instance marked disconnected.
-    // The reverse order strands a dead widget in the set,
-    // its LED effects never swept.
-    for instance_id in state.compositor.deck_widget_state.drain_disconnected() {
-        tracing::info!("Widget disconnected: {}", instance_id);
-        if state.connected_widgets.remove(&instance_id) {
+    let affected = connected
+        .into_iter()
+        .chain(disconnected)
+        .collect::<BTreeSet<_>>();
+    for instance_id in affected {
+        let changed = if state
+            .compositor
+            .deck_widget_state
+            .has_attachment(&instance_id)
+        {
+            state.connected_widgets.insert(instance_id)
+        } else {
+            state.connected_widgets.remove(&instance_id)
+        };
+        if changed {
             connected_set_changed = true;
         }
     }
@@ -3252,6 +3261,70 @@ mod tests {
             assert!(action_rx.try_recv().is_err());
             assert!(event_rx.try_recv().is_err());
         }
+    }
+
+    #[test]
+    fn replacement_pass_keeps_connected_watch_and_emits_successor_lifecycle() {
+        let mut state = make_app_state();
+        let registration = retained_registration();
+        let key = registration.key;
+        let instance_id = key.to_string();
+        state
+            .compositor
+            .deck_widget_state
+            .register_retained_widget(registration.clone());
+        let mut handle = state.display.handle();
+        let make_surface = |handle: &mut smithay::reexports::wayland_server::DisplayHandle| {
+            let (socket, peer) =
+                UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+            let client = handle
+                .insert_client(socket, Arc::new(ClientState::default()))
+                .expect("BUG: test Wayland client should register");
+            let surface = client
+                .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+                    handle,
+                    2,
+                    WidgetSurfaceUserData {
+                        instance_id: Arc::new(Mutex::new(instance_id.clone())),
+                    },
+                )
+                .expect("BUG: test protocol surface should initialize");
+            (surface, peer)
+        };
+        let (predecessor, _predecessor_peer) = make_surface(&mut handle);
+        state
+            .compositor
+            .deck_widget_state
+            .attach_protocol_surface_for_test(&instance_id, predecessor);
+        let connected_rx = state.connected_widgets_tx.subscribe();
+        state
+            .compositor
+            .deck_widget_state
+            .queue_connected_for_test(instance_id.clone());
+        process_protocol_events(&mut state);
+
+        state.compositor.deck_widget_state.deactivate_widget(key);
+        state
+            .compositor
+            .deck_widget_state
+            .register_retained_widget(registration);
+        let (successor, _successor_peer) = make_surface(&mut handle);
+        state
+            .compositor
+            .deck_widget_state
+            .attach_protocol_surface_for_test(&instance_id, successor);
+        state
+            .compositor
+            .deck_widget_state
+            .queue_connected_for_test(instance_id.clone());
+        process_protocol_events(&mut state);
+
+        assert!(connected_rx.borrow().contains(&instance_id));
+        assert_eq!(
+            state.compositor.lifecycle.last_state(&instance_id),
+            Some(LifecycleState::Dormant),
+            "replacement must receive its initial lifecycle in the same pass"
+        );
     }
 
     #[test]
