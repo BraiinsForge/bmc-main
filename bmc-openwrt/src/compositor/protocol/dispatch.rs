@@ -29,10 +29,11 @@ use bmc_widget_protocol::server::{
 };
 use smithay::reexports::wayland_server::{
     Client, DataInit, Dispatch, DisplayHandle, GlobalDispatch, New, Resource,
+    backend::{ClientId, ObjectId},
 };
 
 use super::conversions::{led_effect_from_protocol, led_scope_from_protocol};
-use super::state::DeckWidgetProtocolState;
+use super::state::{DeckWidgetProtocolState, SurfaceDetach};
 
 fn rgb_from_protocol(
     widget: &str,
@@ -65,11 +66,25 @@ pub trait DeckWidgetHandler {
     /// this cleanup running against its fresh state.
     fn drop_widget_render_state(&mut self, _instance_id: &InstanceId, _pid: Option<u32>) {}
 
-    /// Unregister a widget and drop its render-side state in one
-    /// step. Wayland-dispatch `Destroy` and command-loop unregister
-    /// paths go through this method so cleanup happens before any
-    /// re-register can populate fresh entries under the same
-    /// instance id.
+    fn forget_widget_lifecycle(&mut self, _instance_id: &InstanceId) {}
+
+    fn detach_widget_surface(
+        &mut self,
+        instance_id: &InstanceId,
+        client_id: &ClientId,
+        protocol_surface_id: &ObjectId,
+    ) {
+        if let SurfaceDetach::Detached { pid } =
+            self.deck_widget_state()
+                .detach_surface(instance_id, client_id, protocol_surface_id)
+        {
+            self.drop_widget_render_state(instance_id, pid);
+            self.forget_widget_lifecycle(instance_id);
+        }
+    }
+
+    /// Unregister legacy PID-based state before another command-loop
+    /// registration can reuse the instance id.
     fn unregister_widget(&mut self, instance_id: &InstanceId) {
         let pid = self.deck_widget_state().unregister_widget(instance_id);
         if pid.is_some() {
@@ -225,8 +240,8 @@ where
     )]
     fn request(
         state: &mut D,
-        _client: &Client,
-        _resource: &DeckWidgetSurfaceV1,
+        client: &Client,
+        resource: &DeckWidgetSurfaceV1,
         request: deck_widget_surface_v1::Request,
         data: &WidgetSurfaceUserData,
         _dhandle: &DisplayHandle,
@@ -243,7 +258,7 @@ where
         }
         match request {
             deck_widget_surface_v1::Request::Destroy => {
-                state.unregister_widget(&instance_id);
+                state.detach_widget_surface(&instance_id, &client.id(), &resource.id());
                 tracing::info!("Widget surface destroyed for instance: {}", instance_id);
             }
             deck_widget_surface_v1::Request::PlaySound { sound } => {

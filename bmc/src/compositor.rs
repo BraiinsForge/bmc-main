@@ -28,6 +28,7 @@ use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, watch};
+use uuid::Uuid;
 
 pub use crate::data::{SceneCycling, SceneCyclingTransition};
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
@@ -40,6 +41,33 @@ pub use bmc_widget_protocol::{
 pub(crate) mod testing;
 
 pub type InstanceId = String;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WidgetInstanceKey(Uuid);
+
+impl WidgetInstanceKey {
+    #[must_use]
+    pub const fn new(value: Uuid) -> Self {
+        Self(value)
+    }
+
+    #[must_use]
+    pub const fn as_uuid(self) -> Uuid {
+        self.0
+    }
+}
+
+impl std::fmt::Display for WidgetInstanceKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl From<crate::scene::WidgetId> for WidgetInstanceKey {
+    fn from(value: crate::scene::WidgetId) -> Self {
+        Self(value.as_uuid())
+    }
+}
 
 /// Which registration of an instance id a widget command is addressed to.
 ///
@@ -78,6 +106,51 @@ pub struct WidgetPlacement {
     pub size: Size,
     pub visible: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidgetConnectionMode {
+    Accepting,
+    Inactive,
+}
+
+#[derive(Debug, Clone)]
+pub struct WidgetRegistration {
+    pub key: WidgetInstanceKey,
+    pub connection_mode: WidgetConnectionMode,
+    pub placement: WidgetPlacement,
+    pub initial_config: WidgetInitialConfig,
+}
+
+#[derive(Debug)]
+pub struct CompositorReceipt {
+    operation: &'static str,
+    applied: tokio::sync::oneshot::Receiver<()>,
+}
+
+impl CompositorReceipt {
+    #[must_use]
+    pub fn pending(operation: &'static str) -> (tokio::sync::oneshot::Sender<()>, Self) {
+        let (applied_tx, applied) = tokio::sync::oneshot::channel();
+        (applied_tx, Self { operation, applied })
+    }
+
+    #[must_use]
+    pub fn completed(operation: &'static str) -> Self {
+        let (applied_tx, receipt) = Self::pending(operation);
+        let _ = applied_tx.send(());
+        receipt
+    }
+
+    pub async fn wait(self) -> Result<(), CompositorError> {
+        match tokio::time::timeout(WIDGET_COMMAND_ACK_TIMEOUT, self.applied).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(_)) => Err(CompositorError::ReceiptDropped(self.operation)),
+            Err(_) => Err(CompositorError::ReceiptTimeout(self.operation)),
+        }
+    }
+}
+
+pub const WIDGET_COMMAND_ACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SceneLayout {
@@ -260,6 +333,10 @@ pub enum CompositorError {
     SendError(String),
     #[error("compositor thread error: {0}")]
     ThreadError(String),
+    #[error("compositor dropped the {0} receipt before applying it")]
+    ReceiptDropped(&'static str),
+    #[error("compositor did not apply {0} within the acknowledgement timeout")]
+    ReceiptTimeout(&'static str),
 }
 
 /// Trait for compositor implementations.
@@ -288,6 +365,26 @@ pub trait Compositor: Send + Sync {
     fn set_upgrade_state(&self, _state: UpgradeDisplaySnapshot) -> Result<(), CompositorError> {
         Ok(())
     }
+
+    fn enqueue_register_widget(
+        &self,
+        registration: WidgetRegistration,
+    ) -> Result<CompositorReceipt, CompositorError>;
+
+    fn enqueue_activate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError>;
+
+    fn enqueue_deactivate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError>;
+
+    fn enqueue_unregister_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError>;
 
     /// Register a widget before spawning its process.
     ///
@@ -333,7 +430,8 @@ pub trait Compositor: Send + Sync {
     ///
     /// The instance stays registered — only the process is detached,
     /// so a respawn re-binds through [`Compositor::bind_respawned_pid`].
-    /// `unregister_widget` is what ends an instance.
+    /// Legacy PID-based registration is removed separately by
+    /// [`Compositor::unregister_widget`].
     ///
     /// `generation` is the registration the exited process belonged to.
     fn clear_pid(
@@ -575,7 +673,9 @@ pub(crate) async fn run_night_mode_cycling_task(
 
 #[cfg(test)]
 mod tests {
-    use super::{SceneLayout, ScenePlaceholder, WidgetPlacement};
+    use super::{
+        CompositorError, CompositorReceipt, SceneLayout, ScenePlaceholder, WidgetPlacement,
+    };
 
     fn placement() -> WidgetPlacement {
         WidgetPlacement {
@@ -623,5 +723,26 @@ mod tests {
             ..SceneLayout::default()
         };
         assert_eq!(layout.placeholder(), ScenePlaceholder::LogoWithCaption);
+    }
+
+    #[tokio::test]
+    async fn dropped_receipt_is_reported_without_waiting_for_timeout() {
+        let (applied, receipt) = CompositorReceipt::pending("register widget");
+        drop(applied);
+
+        assert!(matches!(
+            receipt.wait().await,
+            Err(CompositorError::ReceiptDropped("register widget"))
+        ));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn receipt_wait_has_the_widget_command_timeout() {
+        let (_applied, receipt) = CompositorReceipt::pending("deactivate widget");
+
+        assert!(matches!(
+            receipt.wait().await,
+            Err(CompositorError::ReceiptTimeout("deactivate widget"))
+        ));
     }
 }

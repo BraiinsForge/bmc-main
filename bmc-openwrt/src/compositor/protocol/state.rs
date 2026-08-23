@@ -22,13 +22,15 @@
 
 use std::sync::{Arc, Mutex};
 
-use bmc::compositor::{InstanceId, WidgetGeneration};
+use bmc::compositor::{
+    InstanceId, WidgetConnectionMode, WidgetGeneration, WidgetInstanceKey, WidgetRegistration,
+};
 use bmc_widget_protocol::server::deck_widget_surface_v1::DeckWidgetSurfaceV1;
 use bmc_widget_protocol::{
     ActionPayload, LedRequestId, LedRequestStatus, SettingUpdate, WidgetInitialConfig,
 };
 use smithay::reexports::wayland_server::Resource;
-use smithay::reexports::wayland_server::backend::ClientId;
+use smithay::reexports::wayland_server::backend::{ClientId, ObjectId};
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use std::collections::HashMap;
 
@@ -42,11 +44,12 @@ use crate::compositor::widget_tracker::LifecycleState;
 #[derive(Debug, Clone)]
 pub struct WidgetData {
     pub instance_id: InstanceId,
-    /// Which registration of `instance_id` this record is.
-    generation: WidgetGeneration,
+    generation: Option<WidgetGeneration>,
+    pub connection_mode: WidgetConnectionMode,
     pub config: WidgetInitialConfig,
     pub protocol_surface: Option<DeckWidgetSurfaceV1>,
     pub wl_surface: Option<WlSurface>,
+    pub client_id: Option<ClientId>,
     /// PID of the widget process. Used to (1) match a Wayland connection
     /// back to the registered instance via `SO_PEERCRED` at
     /// `get_widget_surface` time, and (2) match Slint render surfaces from
@@ -55,6 +58,17 @@ pub struct WidgetData {
     /// A pid whose exit was reported before anything bound it,
     /// so that a later bind cannot take it.
     exited_before_bind: Option<u32>,
+}
+
+#[derive(Debug)]
+pub struct DetachedWidget {
+    pub client_id: Option<ClientId>,
+    pub pid: Option<u32>,
+}
+
+pub enum SurfaceDetach {
+    NoMatch,
+    Detached { pid: Option<u32> },
 }
 
 /// A widget connection that arrived before `set_widget_pid` registered
@@ -203,14 +217,86 @@ impl DeckWidgetProtocolState {
             instance_id.clone(),
             WidgetData {
                 instance_id,
-                generation,
+                generation: Some(generation),
+                connection_mode: WidgetConnectionMode::Accepting,
                 config,
                 protocol_surface: None,
                 wl_surface: None,
+                client_id: None,
                 pid: None,
                 exited_before_bind: None,
             },
         );
+    }
+
+    pub fn register_retained_widget(&mut self, registration: WidgetRegistration) {
+        let instance_id = registration.key.to_string();
+        if let Some(widget) = self.widgets.get_mut(&instance_id) {
+            widget.config = registration.initial_config;
+            return;
+        }
+        self.widgets.insert(
+            instance_id.clone(),
+            WidgetData {
+                instance_id,
+                generation: None,
+                connection_mode: registration.connection_mode,
+                config: registration.initial_config,
+                protocol_surface: None,
+                wl_surface: None,
+                client_id: None,
+                pid: None,
+                exited_before_bind: None,
+            },
+        );
+    }
+
+    pub fn activate_widget(&mut self, key: WidgetInstanceKey) {
+        if let Some(widget) = self.widgets.get_mut(&key.to_string()) {
+            widget.connection_mode = WidgetConnectionMode::Accepting;
+        }
+    }
+
+    pub fn deactivate_widget(&mut self, key: WidgetInstanceKey) -> Option<DetachedWidget> {
+        let instance_id = key.to_string();
+        let (client_id, pid, had_attachment) = {
+            let widget = self.widgets.get_mut(&instance_id)?;
+            widget.connection_mode = WidgetConnectionMode::Inactive;
+            let client_id = widget.client_id.take();
+            let protocol_surface = widget.protocol_surface.take();
+            let wl_surface = widget.wl_surface.take();
+            let had_attachment =
+                protocol_surface.is_some() || wl_surface.is_some() || client_id.is_some();
+            let pid = widget.pid.take();
+            (client_id, pid, had_attachment)
+        };
+        if let Some(pid) = pid {
+            self.purge_pending_connections(&instance_id, pid);
+        }
+        self.purge_attachment_events(&instance_id);
+        if had_attachment {
+            self.newly_disconnected.push(instance_id);
+        }
+        Some(DetachedWidget { client_id, pid })
+    }
+
+    pub fn unregister_retained_widget(&mut self, key: WidgetInstanceKey) -> Option<DetachedWidget> {
+        let instance_id = key.to_string();
+        let widget = self.widgets.remove(&instance_id)?;
+        if let Some(pid) = widget.pid {
+            self.purge_pending_connections(&instance_id, pid);
+        }
+        self.purge_attachment_events(&instance_id);
+        let had_attachment = widget.protocol_surface.is_some()
+            || widget.wl_surface.is_some()
+            || widget.client_id.is_some();
+        if had_attachment {
+            self.newly_disconnected.push(widget.instance_id.clone());
+        }
+        Some(DetachedWidget {
+            client_id: widget.client_id,
+            pid: widget.pid,
+        })
     }
 
     /// Associate a spawned process pid with an instance so that
@@ -228,7 +314,15 @@ impl DeckWidgetProtocolState {
         if self
             .widgets
             .get(instance_id)
-            .is_some_and(|widget| widget.generation != generation)
+            .is_some_and(|widget| widget.connection_mode == WidgetConnectionMode::Inactive)
+        {
+            self.purge_pending_connections(instance_id, pid);
+            return;
+        }
+        if self
+            .widgets
+            .get(instance_id)
+            .is_some_and(|widget| widget.generation != Some(generation))
         {
             tracing::debug!(
                 "set_widget_pid for {instance_id}: generation {generation} has been re-registered; dropping the bind of pid={pid}"
@@ -300,7 +394,7 @@ impl DeckWidgetProtocolState {
         let current = self
             .widgets
             .get(instance_id)
-            .map(|widget| widget.generation);
+            .and_then(|widget| widget.generation);
         if current != Some(generation) {
             tracing::warn!(
                 "bind_respawned_pid: generation {generation} of {instance_id} is gone (now {current:?}); pid={pid} is left with nothing to resolve it"
@@ -341,7 +435,7 @@ impl DeckWidgetProtocolState {
         let current = self
             .widgets
             .get(instance_id)
-            .map(|widget| widget.generation);
+            .and_then(|widget| widget.generation);
         if current != Some(generation) {
             tracing::debug!(
                 "unregister_abandoned: generation {generation} of {instance_id} is already gone (now {current:?})"
@@ -413,6 +507,7 @@ impl DeckWidgetProtocolState {
             return;
         };
         entry.wl_surface = Some(wl_surface);
+        entry.client_id = protocol_surface.client().map(|client| client.id());
         entry.protocol_surface = Some(protocol_surface);
         self.newly_connected.push(instance_id.clone());
     }
@@ -452,6 +547,61 @@ impl DeckWidgetProtocolState {
         pid
     }
 
+    pub fn detach_surface(
+        &mut self,
+        instance_id: &InstanceId,
+        client_id: &ClientId,
+        protocol_surface_id: &ObjectId,
+    ) -> SurfaceDetach {
+        let Some(widget) = self.widgets.get_mut(instance_id) else {
+            return SurfaceDetach::NoMatch;
+        };
+        let Some(stored_surface) = widget.protocol_surface.as_ref().map(Resource::id) else {
+            return SurfaceDetach::NoMatch;
+        };
+        let Some(stored_client) = widget.client_id.as_ref() else {
+            return SurfaceDetach::NoMatch;
+        };
+        if stored_client != client_id || stored_surface != *protocol_surface_id {
+            return SurfaceDetach::NoMatch;
+        }
+        widget.client_id = None;
+        widget.protocol_surface = None;
+        widget.wl_surface = None;
+        let pid = widget.pid;
+        self.purge_attachment_events(instance_id);
+        self.newly_disconnected.push(instance_id.clone());
+        SurfaceDetach::Detached { pid }
+    }
+
+    fn purge_attachment_events(&mut self, instance_id: &InstanceId) {
+        self.pending_actions
+            .retain(|(queued_instance_id, _)| queued_instance_id != instance_id);
+        self.newly_connected
+            .retain(|queued_instance_id| queued_instance_id != instance_id);
+        self.newly_disconnected
+            .retain(|queued_instance_id| queued_instance_id != instance_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queue_connected_for_test(&mut self, instance_id: InstanceId) {
+        self.newly_connected.push(instance_id);
+    }
+
+    #[cfg(test)]
+    pub(crate) fn attach_protocol_surface_for_test(
+        &mut self,
+        instance_id: &InstanceId,
+        protocol_surface: DeckWidgetSurfaceV1,
+    ) {
+        let widget = self
+            .widgets
+            .get_mut(instance_id)
+            .expect("BUG: test attachment requires a registration");
+        widget.client_id = protocol_surface.client().map(|client| client.id());
+        widget.protocol_surface = Some(protocol_surface);
+    }
+
     /// Synthesize a disconnect for an exited widget process,
     /// keeping the instance registered.
     ///
@@ -474,7 +624,7 @@ impl DeckWidgetProtocolState {
         let current = self
             .widgets
             .get(instance_id)
-            .map(|widget| widget.generation);
+            .and_then(|widget| widget.generation);
         if current != Some(generation) {
             tracing::debug!(
                 "clear_pid_for_instance: ignoring stale clear for generation {generation} of {instance_id} (now {current:?}, expected_pid={expected_pid})"
@@ -504,6 +654,7 @@ impl DeckWidgetProtocolState {
         widget.pid = None;
         widget.wl_surface = None;
         widget.protocol_surface = None;
+        widget.client_id = None;
 
         self.purge_pending_connections(instance_id, expected_pid);
         self.newly_disconnected.push(instance_id.clone());
@@ -1043,10 +1194,63 @@ impl RecordedEvents {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::compositor::{
+        protocol::WidgetSurfaceUserData,
+        state::{ClientState, CompositorState},
+    };
+    use bmc::compositor::WidgetPlacement;
     use bmc_widget_protocol::CredentialSecrets;
+    use smithay::reexports::wayland_server::{
+        Display, Resource,
+        backend::{Handle, ObjectData, protocol::Message},
+        protocol::wl_surface::WlSurface,
+    };
+    use std::os::fd::OwnedFd;
+    use std::os::unix::net::UnixStream;
+
+    struct TestObjectData;
+
+    impl ObjectData<CompositorState> for TestObjectData {
+        fn request(
+            self: Arc<Self>,
+            _: &Handle,
+            _: &mut CompositorState,
+            _: ClientId,
+            _: Message<ObjectId, OwnedFd>,
+        ) -> Option<Arc<dyn ObjectData<CompositorState>>> {
+            None
+        }
+
+        fn destroyed(
+            self: Arc<Self>,
+            _: &Handle,
+            _: &mut CompositorState,
+            _: ClientId,
+            _: ObjectId,
+        ) {
+        }
+    }
 
     const GEN: WidgetGeneration = WidgetGeneration(1);
     const NEXT_GEN: WidgetGeneration = WidgetGeneration(2);
+
+    fn retained_registration(mode: WidgetConnectionMode) -> WidgetRegistration {
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        WidgetRegistration {
+            key,
+            connection_mode: mode,
+            placement: WidgetPlacement {
+                instance_id: key.to_string(),
+                position: bmc::compositor::Position { x: 5, y: 7 },
+                size: bmc::compositor::Size {
+                    width: 100,
+                    height: 100,
+                },
+                visible: true,
+            },
+            initial_config: make_config(),
+        }
+    }
 
     fn make_config() -> WidgetInitialConfig {
         WidgetInitialConfig {
@@ -1059,6 +1263,275 @@ mod tests {
             credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
             token: "test-instance-2x1".to_owned(),
         }
+    }
+
+    #[test]
+    fn retained_registration_updates_detached_initial_batch() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let instance_id = registration.key.to_string();
+        state.register_retained_widget(registration.clone());
+
+        let mut updated = registration;
+        updated.initial_config.params.insert(
+            "label".to_owned(),
+            serde_json::Value::String("current".to_owned()),
+        );
+        state.register_retained_widget(updated);
+
+        let stored = state
+            .widget_config(&instance_id)
+            .expect("BUG: retained registration must remain present");
+        assert_eq!(
+            stored.params.get("label"),
+            Some(&serde_json::Value::String("current".to_owned()))
+        );
+        assert!(state.test_emit_initial_state_events(&instance_id).is_some());
+    }
+
+    #[test]
+    fn retained_registration_update_does_not_detach_the_current_process() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let instance_id = registration.key.to_string();
+        state.register_widget(instance_id.clone(), GEN, make_config());
+        state.set_widget_pid(&instance_id, GEN, 123);
+
+        state.register_retained_widget(registration);
+
+        assert_eq!(state.widgets[&instance_id].pid, Some(123));
+        assert!(state.drain_disconnected().is_empty());
+    }
+
+    #[test]
+    fn activation_is_idempotent_and_cannot_create_a_registration() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Inactive);
+        let key = registration.key;
+
+        state.activate_widget(key);
+        assert!(!state.widgets.contains_key(&key.to_string()));
+
+        state.register_retained_widget(registration);
+        assert_eq!(
+            state.widgets[&key.to_string()].connection_mode,
+            WidgetConnectionMode::Inactive
+        );
+        state.set_widget_pid(&key.to_string(), GEN, 123);
+        assert_eq!(state.widgets[&key.to_string()].pid, None);
+        state.activate_widget(key);
+        state.activate_widget(key);
+        assert_eq!(
+            state.widgets[&key.to_string()].connection_mode,
+            WidgetConnectionMode::Accepting
+        );
+    }
+
+    #[test]
+    fn retained_reregistration_preserves_mode_while_updating_config() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let key = registration.key;
+        let instance_id = key.to_string();
+        state.register_retained_widget(registration);
+
+        let mut inactive_update = retained_registration(WidgetConnectionMode::Inactive);
+        inactive_update.key = key;
+        inactive_update
+            .placement
+            .instance_id
+            .clone_from(&instance_id);
+        inactive_update
+            .initial_config
+            .params
+            .insert("revision".to_owned(), serde_json::json!(1));
+        state.register_retained_widget(inactive_update);
+        assert_eq!(
+            state.widgets[&instance_id].connection_mode,
+            WidgetConnectionMode::Accepting
+        );
+        assert_eq!(
+            state.widgets[&instance_id].config.params["revision"],
+            serde_json::json!(1)
+        );
+
+        state.deactivate_widget(key);
+        let mut accepting_update = retained_registration(WidgetConnectionMode::Accepting);
+        accepting_update.key = key;
+        accepting_update
+            .placement
+            .instance_id
+            .clone_from(&instance_id);
+        accepting_update
+            .initial_config
+            .params
+            .insert("revision".to_owned(), serde_json::json!(2));
+        state.register_retained_widget(accepting_update);
+        assert_eq!(
+            state.widgets[&instance_id].connection_mode,
+            WidgetConnectionMode::Inactive
+        );
+        assert_eq!(
+            state.widgets[&instance_id].config.params["revision"],
+            serde_json::json!(2)
+        );
+    }
+
+    #[test]
+    fn lifecycle_cutoff_purges_queued_attachment_events() {
+        let mut state = DeckWidgetProtocolState::new();
+        let first = retained_registration(WidgetConnectionMode::Accepting);
+        let first_key = first.key;
+        let first_id = first_key.to_string();
+        state.register_retained_widget(first);
+        state.queue_connected_for_test(first_id.clone());
+        state.add_action(first_id.clone(), ActionPayload::StopSound {});
+
+        state.deactivate_widget(first_key);
+        assert!(state.drain_connected().is_empty());
+        assert!(state.drain_actions().is_empty());
+
+        let second = retained_registration(WidgetConnectionMode::Accepting);
+        let second_key = second.key;
+        let second_id = second_key.to_string();
+        state.register_retained_widget(second);
+        state.queue_connected_for_test(second_id.clone());
+        state.add_action(second_id, ActionPayload::StopSound {});
+
+        state.unregister_retained_widget(second_key);
+        assert!(state.drain_connected().is_empty());
+        assert!(state.drain_actions().is_empty());
+    }
+
+    #[test]
+    fn deactivation_clears_every_attachment_field() {
+        let display =
+            Display::<CompositorState>::new().expect("BUG: test Wayland display should initialize");
+        let mut handle = display.handle();
+        let (socket, _peer) =
+            UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+        let client = handle
+            .insert_client(socket, Arc::new(ClientState::default()))
+            .expect("BUG: test Wayland client should register");
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let key = registration.key;
+        let instance_id = key.to_string();
+        let protocol_surface = client
+            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+                &handle,
+                2,
+                WidgetSurfaceUserData {
+                    instance_id: Arc::new(Mutex::new(instance_id.clone())),
+                },
+            )
+            .expect("BUG: test protocol surface should initialize");
+        let wl_surface = client
+            .create_resource_from_objdata::<WlSurface, CompositorState>(
+                &handle,
+                6,
+                Arc::new(TestObjectData),
+            )
+            .expect("BUG: test wl_surface should initialize");
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_retained_widget(registration);
+        state.attach_surface(&instance_id, wl_surface, protocol_surface);
+
+        state.deactivate_widget(key);
+
+        let widget = &state.widgets[&instance_id];
+        assert!(widget.protocol_surface.is_none());
+        assert!(widget.wl_surface.is_none());
+        assert!(widget.client_id.is_none());
+    }
+
+    #[test]
+    fn deactivation_clears_legacy_pid_and_refuses_late_rebind() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let key = registration.key;
+        let instance_id = key.to_string();
+        state.register_widget(instance_id.clone(), GEN, make_config());
+        state.set_widget_pid(&instance_id, GEN, 123);
+        state.register_retained_widget(registration);
+
+        state.deactivate_widget(key);
+        state.set_widget_pid(&instance_id, GEN, 123);
+
+        assert_eq!(state.widgets[&instance_id].pid, None);
+    }
+
+    #[test]
+    fn repeated_deactivate_and_unregister_retain_then_remove_configuration() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let key = registration.key;
+        let instance_id = key.to_string();
+        state.register_retained_widget(registration);
+
+        assert!(state.deactivate_widget(key).is_some());
+        assert!(state.deactivate_widget(key).is_some());
+        assert_eq!(
+            state.widgets[&instance_id].connection_mode,
+            WidgetConnectionMode::Inactive
+        );
+        assert!(state.widget_config(&instance_id).is_some());
+
+        assert!(state.unregister_retained_widget(key).is_some());
+        assert!(state.unregister_retained_widget(key).is_none());
+        assert!(!state.widgets.contains_key(&instance_id));
+    }
+
+    #[test]
+    fn stale_attachment_identity_cannot_detach_a_replacement() {
+        let display =
+            Display::<CompositorState>::new().expect("BUG: test Wayland display should initialize");
+        let mut handle = display.handle();
+        let (first_socket, _first_peer) =
+            UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+        let first_client = handle
+            .insert_client(first_socket, Arc::new(ClientState::default()))
+            .expect("BUG: first test client should register");
+        let (second_socket, _second_peer) =
+            UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+        let second_client = handle
+            .insert_client(second_socket, Arc::new(ClientState::default()))
+            .expect("BUG: second test client should register");
+
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let instance_id = registration.key.to_string();
+        let user_data = || WidgetSurfaceUserData {
+            instance_id: Arc::new(Mutex::new(instance_id.clone())),
+        };
+        let first_surface = first_client
+            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .expect("BUG: first test protocol surface should initialize");
+        let replacement_surface = second_client
+            .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(&handle, 2, user_data())
+            .expect("BUG: replacement test protocol surface should initialize");
+
+        let mut state = DeckWidgetProtocolState::new();
+        state.register_retained_widget(registration);
+        state.attach_protocol_surface_for_test(&instance_id, replacement_surface.clone());
+
+        assert!(matches!(
+            state.detach_surface(&instance_id, &first_client.id(), &first_surface.id()),
+            SurfaceDetach::NoMatch
+        ));
+        assert!(matches!(
+            state.detach_surface(&instance_id, &second_client.id(), &first_surface.id()),
+            SurfaceDetach::NoMatch
+        ));
+        assert_eq!(
+            state.widgets[&instance_id]
+                .protocol_surface
+                .as_ref()
+                .map(Resource::id),
+            Some(replacement_surface.id())
+        );
+        assert!(matches!(
+            state.detach_surface(&instance_id, &second_client.id(), &replacement_surface.id()),
+            SurfaceDetach::Detached { .. }
+        ));
     }
 
     fn register_with_pid(state: &mut DeckWidgetProtocolState, instance_id: &str, pid: u32) {

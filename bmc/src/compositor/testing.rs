@@ -71,6 +71,38 @@ impl Compositor for RecordingCompositor {
         HardwareProfile::for_product(Product::Bmc100).capabilities()
     }
 
+    fn enqueue_register_widget(
+        &self,
+        registration: WidgetRegistration,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        self.record(format!("register_retained {}", registration.key));
+        Ok(CompositorReceipt::completed("register widget"))
+    }
+
+    fn enqueue_activate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        self.record(format!("activate {key}"));
+        Ok(CompositorReceipt::completed("activate widget"))
+    }
+
+    fn enqueue_deactivate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        self.record(format!("deactivate {key}"));
+        Ok(CompositorReceipt::completed("deactivate widget"))
+    }
+
+    fn enqueue_unregister_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        self.record(format!("unregister_retained {key}"));
+        Ok(CompositorReceipt::completed("unregister widget"))
+    }
+
     fn register_widget(
         &self,
         _instance_id: InstanceId,

@@ -37,8 +37,9 @@ use super::{
 };
 use bmc::compositor::{
     ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, InstanceId,
-    LedRequestStatusEvent, Position, SceneLayout, SettingsCommand, Size, WidgetAction,
-    WidgetGeneration,
+    LedRequestStatusEvent, Position, SceneLayout, SettingsCommand, Size,
+    WIDGET_COMMAND_ACK_TIMEOUT, WidgetAction, WidgetGeneration, WidgetInstanceKey,
+    WidgetRegistration,
 };
 use bmc_platform::TouchTransform;
 use bmc_platform::backlight::ScreenVisibility;
@@ -133,12 +134,6 @@ const TOUCH_DISCOVERY_BACKOFFS: &[Duration] = &[
 /// `start()`. Bounded so a stuck GPU init does not hang the whole
 /// control process.
 const COMPOSITOR_READY_TIMEOUT: Duration = Duration::from_secs(10);
-
-/// Maximum time to wait for the compositor thread to acknowledge a
-/// widget-lifecycle command. These acks are processed synchronously
-/// inside the compositor event loop, so the deadline only protects
-/// against the loop being wedged.
-const WIDGET_COMMAND_ACK_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RedrawState {
@@ -2148,6 +2143,34 @@ fn handle_set_scene_cycling_config_command(
 #[expect(clippy::too_many_lines, reason = "command dispatch")]
 fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
     match cmd {
+        CompositorCommand::RegisterRetainedWidget {
+            registration,
+            applied,
+        } => {
+            state
+                .compositor
+                .deck_widget_state
+                .register_retained_widget(registration);
+            let _ = applied.send(());
+        }
+        CompositorCommand::ActivateWidget { key, applied } => {
+            state.compositor.deck_widget_state.activate_widget(key);
+            let _ = applied.send(());
+        }
+        CompositorCommand::DeactivateWidget { key, applied } => {
+            let instance_id = key.to_string();
+            if state.compositor.deactivate_retained_widget(key) {
+                reconcile_widget_cutoff(state, &instance_id);
+            }
+            let _ = applied.send(());
+        }
+        CompositorCommand::UnregisterRetainedWidget { key, applied } => {
+            let instance_id = key.to_string();
+            if state.compositor.unregister_retained_widget(key) {
+                reconcile_widget_cutoff(state, &instance_id);
+            }
+            let _ = applied.send(());
+        }
         CompositorCommand::RegisterWidget {
             instance_id,
             generation,
@@ -2331,6 +2354,14 @@ fn handle_command(state: &mut AppState, cmd: CompositorCommand) {
             state.compositor.alarm.stop();
             state.cancel_alarm_fallback();
         }
+    }
+}
+
+fn reconcile_widget_cutoff(state: &mut AppState, instance_id: &InstanceId) {
+    if state.connected_widgets.remove(instance_id) {
+        let _ = state
+            .connected_widgets_tx
+            .send(state.connected_widgets.clone());
     }
 }
 
@@ -2602,6 +2633,53 @@ impl Compositor for EglCompositor {
         self.command_tx
             .send(CompositorCommand::SetUpgradeState { state })
             .map_err(|e| CompositorError::SendError(e.to_string()))
+    }
+
+    fn enqueue_register_widget(
+        &self,
+        registration: WidgetRegistration,
+    ) -> Result<bmc::compositor::CompositorReceipt, CompositorError> {
+        let (applied, receipt) = bmc::compositor::CompositorReceipt::pending("register widget");
+        self.command_tx
+            .send(CompositorCommand::RegisterRetainedWidget {
+                registration,
+                applied,
+            })
+            .map_err(|error| CompositorError::SendError(error.to_string()))?;
+        Ok(receipt)
+    }
+
+    fn enqueue_activate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<bmc::compositor::CompositorReceipt, CompositorError> {
+        let (applied, receipt) = bmc::compositor::CompositorReceipt::pending("activate widget");
+        self.command_tx
+            .send(CompositorCommand::ActivateWidget { key, applied })
+            .map_err(|error| CompositorError::SendError(error.to_string()))?;
+        Ok(receipt)
+    }
+
+    fn enqueue_deactivate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<bmc::compositor::CompositorReceipt, CompositorError> {
+        let (applied, receipt) = bmc::compositor::CompositorReceipt::pending("deactivate widget");
+        self.command_tx
+            .send(CompositorCommand::DeactivateWidget { key, applied })
+            .map_err(|error| CompositorError::SendError(error.to_string()))?;
+        Ok(receipt)
+    }
+
+    fn enqueue_unregister_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<bmc::compositor::CompositorReceipt, CompositorError> {
+        let (applied, receipt) = bmc::compositor::CompositorReceipt::pending("unregister widget");
+        self.command_tx
+            .send(CompositorCommand::UnregisterRetainedWidget { key, applied })
+            .map_err(|error| CompositorError::SendError(error.to_string()))?;
+        Ok(receipt)
     }
 
     fn register_widget(
@@ -2904,37 +2982,45 @@ impl Compositor for EglCompositor {
 #[cfg(test)]
 mod tests {
     use super::{
-        ALARM_FALLBACK_GRACE, AppState, CompositorState, Emission, GestureConfig, GestureState,
-        LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
+        ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
+        GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
         TransitionWarmUp, clamp_initial_lifecycle, dispatch_timeout, emit_lifecycle_batches,
         emit_lifecycle_transitions, emit_transition_incoming_batch, handle_clear_pid_command,
-        handle_command, transition_incoming_widget_ids, transition_warm_up_ready,
+        handle_command, process_protocol_events, transition_incoming_widget_ids,
+        transition_warm_up_ready,
     };
-    use crate::compositor::CompositorCommand;
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
         PRE_TRANSITION_DURATION, SceneCyclingRuntimeConfig,
     };
+    use crate::compositor::{
+        CompositorCommand, protocol::WidgetSurfaceUserData, state::ClientState,
+    };
     use bmc::compositor::{
-        CompositorEvent, InstanceId, Position, SceneCycling, SceneCyclingTransition, SceneLayout,
-        Size, UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
-        WidgetGeneration, WidgetPlacement,
+        Compositor, CompositorError, CompositorEvent, InstanceId, Position, SceneCycling,
+        SceneCyclingTransition, SceneLayout, Size, UpgradeDisplaySnapshot, UpgradeDisplayState,
+        UpgradeGeneration, UpgradeKind, WidgetConnectionMode, WidgetGeneration, WidgetInstanceKey,
+        WidgetPlacement, WidgetRegistration,
     };
 
     const GEN: WidgetGeneration = WidgetGeneration(1);
     use bmc_platform::backlight::ScreenVisibility;
-    use bmc_widget_protocol::{ViewportShape, WidgetInitialConfig};
+    use bmc_widget_protocol::{
+        ActionPayload, ViewportShape, WidgetInitialConfig,
+        server::deck_widget_surface_v1::DeckWidgetSurfaceV1,
+    };
     use smithay::reexports::{
         calloop::EventLoop,
         input as libinput,
-        wayland_server::{Display, ListeningSocket},
+        wayland_server::{Display, ListeningSocket, Resource},
     };
     use std::{
         collections::{HashMap, HashSet},
+        os::unix::net::UnixStream,
         path::PathBuf,
         sync::{
-            Arc,
-            atomic::{AtomicBool, Ordering},
+            Arc, Mutex,
+            atomic::{AtomicBool, AtomicU64, Ordering},
         },
         time::{Duration, Instant, SystemTime, UNIX_EPOCH},
     };
@@ -2996,13 +3082,18 @@ mod tests {
     }
 
     fn make_test_socket_path() -> PathBuf {
+        static NEXT_SOCKET_ID: AtomicU64 = AtomicU64::new(0);
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .expect("BUG: system time should be after Unix epoch")
             .as_nanos();
         let dir = std::env::temp_dir().join("bmc-openwrt-tests");
         std::fs::create_dir_all(&dir).expect("BUG: test socket directory should be creatable");
-        dir.join(format!("clear-pid-{timestamp}-{}", std::process::id()))
+        let socket_id = NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed);
+        dir.join(format!(
+            "clear-pid-{timestamp}-{}-{socket_id}",
+            std::process::id()
+        ))
     }
 
     fn make_app_state() -> AppState {
@@ -3074,6 +3165,114 @@ mod tests {
             last_neighbors_suppressed: false,
             last_modal_overlay_active: false,
         }
+    }
+
+    fn retained_registration() -> WidgetRegistration {
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        WidgetRegistration {
+            key,
+            connection_mode: WidgetConnectionMode::Accepting,
+            placement: WidgetPlacement {
+                instance_id: key.to_string(),
+                position: Position { x: 0, y: 0 },
+                size: Size {
+                    width: 100,
+                    height: 100,
+                },
+                visible: true,
+            },
+            initial_config: make_widget_config(),
+        }
+    }
+
+    #[test]
+    fn lifecycle_receipt_follows_queued_event_and_connected_watch_cutoff() {
+        for unregister in [false, true] {
+            let mut state = make_app_state();
+            let registration = retained_registration();
+            let key = registration.key;
+            let instance_id = key.to_string();
+            state
+                .compositor
+                .deck_widget_state
+                .register_retained_widget(registration);
+            let mut handle = state.display.handle();
+            let (socket, _peer) =
+                UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+            let client = handle
+                .insert_client(socket, Arc::new(ClientState::default()))
+                .expect("BUG: test Wayland client should register");
+            let protocol_surface = client
+                .create_resource::<DeckWidgetSurfaceV1, _, CompositorState>(
+                    &handle,
+                    2,
+                    WidgetSurfaceUserData {
+                        instance_id: Arc::new(Mutex::new(instance_id.clone())),
+                    },
+                )
+                .expect("BUG: test protocol surface should initialize");
+            state
+                .compositor
+                .deck_widget_state
+                .attach_protocol_surface_for_test(&instance_id, protocol_surface.clone());
+            state
+                .compositor
+                .lifecycle
+                .record_initial(&instance_id, LifecycleState::Visible);
+            state
+                .compositor
+                .deck_widget_state
+                .queue_connected_for_test(instance_id.clone());
+            state
+                .compositor
+                .deck_widget_state
+                .add_action(instance_id.clone(), ActionPayload::StopSound {});
+            state.connected_widgets.insert(instance_id.clone());
+            let _ = state
+                .connected_widgets_tx
+                .send(state.connected_widgets.clone());
+            let connected_rx = state.connected_widgets_tx.subscribe();
+            let (action_tx, mut action_rx) = mpsc::unbounded_channel();
+            state.action_tx = action_tx;
+            let mut event_rx = state.event_tx.subscribe();
+            let (applied, mut receipt) = tokio::sync::oneshot::channel();
+
+            let command = if unregister {
+                CompositorCommand::UnregisterRetainedWidget { key, applied }
+            } else {
+                CompositorCommand::DeactivateWidget { key, applied }
+            };
+            handle_command(&mut state, command);
+
+            assert_eq!(receipt.try_recv(), Ok(()));
+            assert!(!protocol_surface.is_alive());
+            assert_eq!(state.compositor.lifecycle.last_state(&instance_id), None);
+            assert!(!connected_rx.borrow().contains(&instance_id));
+            process_protocol_events(&mut state);
+            assert!(action_rx.try_recv().is_err());
+            assert!(event_rx.try_recv().is_err());
+        }
+    }
+
+    #[test]
+    fn closed_command_channel_reports_enqueue_failure_before_a_receipt_exists() {
+        let compositor = EglCompositor::new(
+            bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100),
+            true,
+        );
+        drop(
+            compositor
+                .command_channel
+                .lock()
+                .expect("BUG: command channel lock poisoned")
+                .take(),
+        );
+
+        assert!(matches!(
+            compositor
+                .enqueue_activate_widget(WidgetInstanceKey::from(bmc::scene::WidgetId::generate())),
+            Err(CompositorError::SendError(_))
+        ));
     }
 
     fn gen_nz(n: u64) -> std::num::NonZeroU64 {

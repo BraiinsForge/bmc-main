@@ -20,12 +20,28 @@
 
 use bmc::compositor::{
     CompositorEvent, InstanceId, Position, SceneCycling, SceneLayout, Size, UpgradeDisplaySnapshot,
-    WidgetAction, WidgetGeneration,
+    WidgetAction, WidgetGeneration, WidgetInstanceKey, WidgetRegistration,
 };
 use bmc_widget_protocol::{SettingUpdate, WidgetInitialConfig};
 
 #[derive(Debug)]
 pub enum CompositorCommand {
+    RegisterRetainedWidget {
+        registration: WidgetRegistration,
+        applied: tokio::sync::oneshot::Sender<()>,
+    },
+    ActivateWidget {
+        key: WidgetInstanceKey,
+        applied: tokio::sync::oneshot::Sender<()>,
+    },
+    DeactivateWidget {
+        key: WidgetInstanceKey,
+        applied: tokio::sync::oneshot::Sender<()>,
+    },
+    UnregisterRetainedWidget {
+        key: WidgetInstanceKey,
+        applied: tokio::sync::oneshot::Sender<()>,
+    },
     RegisterWidget {
         instance_id: InstanceId,
         generation: WidgetGeneration,

@@ -307,6 +307,36 @@ fn should_complete_frame_callback(
 }
 
 impl CompositorState {
+    pub fn deactivate_retained_widget(&mut self, key: bmc::compositor::WidgetInstanceKey) -> bool {
+        let instance_id = key.to_string();
+        let Some(detached) = self.deck_widget_state.deactivate_widget(key) else {
+            return false;
+        };
+        self.lifecycle.forget(&instance_id);
+        self.drop_widget_render_state(&instance_id, detached.pid);
+        if let Some(client_id) = detached.client_id {
+            self.display_handle
+                .backend_handle()
+                .kill_client(client_id, DisconnectReason::ConnectionClosed);
+        }
+        true
+    }
+
+    pub fn unregister_retained_widget(&mut self, key: bmc::compositor::WidgetInstanceKey) -> bool {
+        let instance_id = key.to_string();
+        let Some(detached) = self.deck_widget_state.unregister_retained_widget(key) else {
+            return false;
+        };
+        self.drop_widget_render_state(&instance_id, detached.pid);
+        self.lifecycle.forget(&instance_id);
+        if let Some(client_id) = detached.client_id {
+            self.display_handle
+                .backend_handle()
+                .kill_client(client_id, DisconnectReason::ConnectionClosed);
+        }
+        true
+    }
+
     #[must_use]
     #[expect(
         clippy::too_many_arguments,
@@ -1004,6 +1034,10 @@ impl DeckWidgetHandler for CompositorState {
         self.drop_widget_render_surface(instance_id);
         self.drop_widget_buffers(instance_id);
     }
+
+    fn forget_widget_lifecycle(&mut self, instance_id: &InstanceId) {
+        self.lifecycle.forget(instance_id);
+    }
 }
 
 impl CompositorHandler for CompositorState {
@@ -1420,16 +1454,102 @@ wl::delegate_dispatch!(
 #[cfg(test)]
 mod tests {
     use super::{
-        OutputDamage, OutputDamageTracker, remove_destroyed_widget_buffers,
-        should_complete_frame_callback,
+        ClientState, CompositorState, OutputDamage, OutputDamageTracker, PendingFrameCallback,
+        remove_destroyed_widget_buffers, should_complete_frame_callback,
     };
+    use bmc::compositor::{
+        Position, Size, WidgetConnectionMode, WidgetGeneration, WidgetInstanceKey, WidgetPlacement,
+        WidgetRegistration,
+    };
+    use bmc_widget_protocol::{DisplayInfo, ViewportShape, WidgetInitialConfig};
     use std::collections::HashMap;
     use std::num::NonZeroU64;
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
 
-    use smithay::reexports::wayland_server::backend::ObjectId;
+    use smithay::reexports::wayland_server::{
+        Display, backend::ObjectId, protocol::wl_callback::WlCallback,
+    };
 
     fn gen_n(n: u64) -> NonZeroU64 {
         NonZeroU64::new(n).expect("BUG: test generation must be non-zero")
+    }
+
+    #[test]
+    fn lifecycle_cutoff_removes_unresolved_callback_by_prebind_pid() {
+        for unregister in [false, true] {
+            let display = Display::<CompositorState>::new()
+                .expect("BUG: test Wayland display should initialize");
+            let mut handle = display.handle();
+            let (socket, _peer) =
+                UnixStream::pair().expect("BUG: test Wayland socket pair should initialize");
+            let client = handle
+                .insert_client(socket, Arc::new(ClientState::default()))
+                .expect("BUG: test Wayland client should register");
+            let callback = client
+                .create_resource::<WlCallback, _, CompositorState>(&handle, 1, ())
+                .expect("BUG: test callback should initialize");
+            let mut state = CompositorState::new(
+                &display,
+                480,
+                1280,
+                480,
+                1280,
+                60_000,
+                "test-seat",
+                crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+            );
+            let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+            let instance_id = key.to_string();
+            let config = WidgetInitialConfig {
+                width: 100,
+                height: 100,
+                viewport_shape: ViewportShape::Rectangular,
+                display: DisplayInfo::BMC100,
+                params: serde_json::Map::new(),
+                credentials: serde_json::Map::new(),
+                credential_secrets: bmc_widget_protocol::CredentialSecrets::default(),
+                token: instance_id.clone(),
+            };
+            state.deck_widget_state.register_widget(
+                instance_id.clone(),
+                WidgetGeneration(1),
+                config.clone(),
+            );
+            state
+                .deck_widget_state
+                .set_widget_pid(&instance_id, WidgetGeneration(1), 123);
+            state
+                .deck_widget_state
+                .register_retained_widget(WidgetRegistration {
+                    key,
+                    connection_mode: WidgetConnectionMode::Accepting,
+                    placement: WidgetPlacement {
+                        instance_id,
+                        position: Position { x: 0, y: 0 },
+                        size: Size {
+                            width: 100,
+                            height: 100,
+                        },
+                        visible: true,
+                    },
+                    initial_config: config,
+                });
+            state.pending_frame_callbacks.push(PendingFrameCallback {
+                callback,
+                instance_id: None,
+                client_pid: Some(123),
+                generation: None,
+            });
+
+            if unregister {
+                state.unregister_retained_widget(key);
+            } else {
+                state.deactivate_retained_widget(key);
+            }
+
+            assert!(state.pending_frame_callbacks.is_empty());
+        }
     }
 
     #[test]

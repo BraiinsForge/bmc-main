@@ -22,13 +22,14 @@
 //!
 //! Logs all compositor operations instead of rendering to a display.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use bmc::compositor::{
-    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CredentialSecrets,
-    HardwareCapabilities, InstanceId, LedRequestStatusEvent, Position, SceneCycling, SceneLayout,
-    SettingUpdate, SettingsCommand, Size, UpgradeDisplaySnapshot, WidgetAction, WidgetGeneration,
-    WidgetInitialConfig,
+    ActiveScene, AlarmCommand, Compositor, CompositorError, CompositorEvent, CompositorReceipt,
+    CredentialSecrets, HardwareCapabilities, InstanceId, LedRequestStatusEvent, Position,
+    SceneCycling, SceneLayout, SettingUpdate, SettingsCommand, Size, UpgradeDisplaySnapshot,
+    WidgetAction, WidgetConnectionMode, WidgetGeneration, WidgetInitialConfig, WidgetInstanceKey,
+    WidgetRegistration,
 };
 use bmc_platform::{HardwareProfile, Product};
 use tokio::sync::{broadcast, mpsc, watch};
@@ -108,6 +109,7 @@ pub struct MockCompositor {
     product: Product,
     scene_state: std::sync::Mutex<MockSceneState>,
     upgrade_state: std::sync::Mutex<Option<UpgradeDisplaySnapshot>>,
+    registrations: std::sync::Mutex<HashMap<WidgetInstanceKey, WidgetRegistration>>,
 }
 
 impl MockCompositor {
@@ -142,6 +144,7 @@ impl MockCompositor {
             product,
             scene_state: std::sync::Mutex::new(MockSceneState::default()),
             upgrade_state: std::sync::Mutex::new(None),
+            registrations: std::sync::Mutex::new(HashMap::new()),
         }
     }
 
@@ -213,6 +216,65 @@ impl Compositor for MockCompositor {
             .lock()
             .expect("BUG: upgrade_state lock poisoned") = Some(state);
         Ok(())
+    }
+
+    fn enqueue_register_widget(
+        &self,
+        registration: WidgetRegistration,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        tracing::info!(key = %registration.key, "MockCompositor: retain widget registration");
+        let mut registrations = self
+            .registrations
+            .lock()
+            .expect("BUG: registrations lock poisoned");
+        if let Some(stored) = registrations.get_mut(&registration.key) {
+            stored.placement = registration.placement;
+            stored.initial_config = registration.initial_config;
+        } else {
+            registrations.insert(registration.key, registration);
+        }
+        Ok(CompositorReceipt::completed("register widget"))
+    }
+
+    fn enqueue_activate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        if let Some(registration) = self
+            .registrations
+            .lock()
+            .expect("BUG: registrations lock poisoned")
+            .get_mut(&key)
+        {
+            registration.connection_mode = WidgetConnectionMode::Accepting;
+        }
+        Ok(CompositorReceipt::completed("activate widget"))
+    }
+
+    fn enqueue_deactivate_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        if let Some(registration) = self
+            .registrations
+            .lock()
+            .expect("BUG: registrations lock poisoned")
+            .get_mut(&key)
+        {
+            registration.connection_mode = WidgetConnectionMode::Inactive;
+        }
+        Ok(CompositorReceipt::completed("deactivate widget"))
+    }
+
+    fn enqueue_unregister_widget(
+        &self,
+        key: WidgetInstanceKey,
+    ) -> Result<CompositorReceipt, CompositorError> {
+        self.registrations
+            .lock()
+            .expect("BUG: registrations lock poisoned")
+            .remove(&key);
+        Ok(CompositorReceipt::completed("unregister widget"))
     }
 
     fn register_widget(
@@ -372,25 +434,46 @@ impl Compositor for MockCompositor {
     ) -> Result<(), CompositorError> {
         tracing::info!(
             "MockCompositor: update_widget_params {instance_id}: {}",
-            serde_json::Value::Object(params)
+            serde_json::Value::Object(params.clone())
         );
+        if let Some(registration) = self
+            .registrations
+            .lock()
+            .expect("BUG: registrations lock poisoned")
+            .values_mut()
+            .find(|registration| registration.key.to_string() == *instance_id)
+        {
+            registration.initial_config.params = params;
+        }
         Ok(())
     }
 
-    /// Always reports a change: the mock stores no resolution to compare against,
-    /// and over-reporting only costs a redundant respawn retry.
     fn update_widget_credentials(
         &self,
         instance_id: &InstanceId,
         credentials: serde_json::Map<String, serde_json::Value>,
-        _secrets: CredentialSecrets,
+        secrets: CredentialSecrets,
     ) -> Result<bool, CompositorError> {
         // The view names accounts but carries no secret, so logging it is safe.
         tracing::info!(
             "MockCompositor: update_widget_credentials {instance_id}: {}",
-            serde_json::Value::Object(credentials)
+            serde_json::Value::Object(credentials.clone())
         );
-        Ok(true)
+        let mut registrations = self
+            .registrations
+            .lock()
+            .expect("BUG: registrations lock poisoned");
+        let Some(registration) = registrations
+            .values_mut()
+            .find(|registration| registration.key.to_string() == *instance_id)
+        else {
+            return Ok(true);
+        };
+        let changed = registration.initial_config.credentials != credentials
+            || registration.initial_config.credential_secrets != secrets;
+        registration.initial_config.credentials = credentials;
+        registration.initial_config.credential_secrets = secrets;
+        Ok(changed)
     }
 
     fn action_receiver(&self) -> mpsc::UnboundedReceiver<WidgetAction> {
@@ -442,13 +525,134 @@ impl Compositor for MockCompositor {
 #[cfg(test)]
 mod tests {
     use bmc::compositor::{
-        ActiveScene, Compositor, Position, SceneLayout, Size, UpgradeDisplaySnapshot,
-        UpgradeDisplayState, UpgradeGeneration, UpgradeKind, WidgetPlacement,
+        ActiveScene, Compositor, CredentialSecrets, Position, SceneLayout, Size,
+        UpgradeDisplaySnapshot, UpgradeDisplayState, UpgradeGeneration, UpgradeKind,
+        WidgetConnectionMode, WidgetInitialConfig, WidgetInstanceKey, WidgetPlacement,
+        WidgetRegistration,
     };
     use bmc::scene::SceneId;
     use bmc_platform::{DisplayShape, Product};
 
     use super::MockCompositor;
+
+    fn registration(mode: WidgetConnectionMode) -> WidgetRegistration {
+        let key = WidgetInstanceKey::from(bmc::scene::WidgetId::generate());
+        WidgetRegistration {
+            key,
+            connection_mode: mode,
+            placement: WidgetPlacement {
+                instance_id: key.to_string(),
+                position: Position { x: 0, y: 0 },
+                size: Size {
+                    width: 100,
+                    height: 100,
+                },
+                visible: true,
+            },
+            initial_config: serde_json::from_value::<WidgetInitialConfig>(serde_json::json!({
+                "width": 100,
+                "height": 100,
+                "token": key.to_string(),
+            }))
+            .expect("BUG: test widget config should deserialize"),
+        }
+    }
+
+    #[tokio::test]
+    async fn retained_reregistration_preserves_connection_mode() {
+        let compositor = MockCompositor::new(Product::Bmc100);
+        let accepting = registration(WidgetConnectionMode::Accepting);
+        let key = accepting.key;
+        compositor
+            .enqueue_register_widget(accepting)
+            .expect("BUG: mock registration enqueue must succeed")
+            .wait()
+            .await
+            .expect("BUG: mock registration receipt must complete");
+
+        compositor
+            .enqueue_register_widget(registration_for_key(key, WidgetConnectionMode::Inactive))
+            .expect("BUG: mock re-registration enqueue must succeed");
+        assert_eq!(
+            compositor
+                .registrations
+                .lock()
+                .expect("BUG: registrations lock poisoned")[&key]
+                .connection_mode,
+            WidgetConnectionMode::Accepting
+        );
+
+        compositor
+            .enqueue_deactivate_widget(key)
+            .expect("BUG: mock deactivation enqueue must succeed");
+        compositor
+            .enqueue_register_widget(registration_for_key(key, WidgetConnectionMode::Accepting))
+            .expect("BUG: mock re-registration enqueue must succeed");
+        assert_eq!(
+            compositor
+                .registrations
+                .lock()
+                .expect("BUG: registrations lock poisoned")[&key]
+                .connection_mode,
+            WidgetConnectionMode::Inactive
+        );
+    }
+
+    #[tokio::test]
+    async fn new_inactive_registration_stays_inactive_until_activation() {
+        let compositor = MockCompositor::new(Product::Bmc100);
+        let registration = registration(WidgetConnectionMode::Inactive);
+        let key = registration.key;
+
+        compositor
+            .enqueue_register_widget(registration)
+            .expect("BUG: mock registration enqueue must succeed");
+        assert_eq!(
+            compositor
+                .registrations
+                .lock()
+                .expect("BUG: registrations lock poisoned")[&key]
+                .connection_mode,
+            WidgetConnectionMode::Inactive
+        );
+
+        compositor
+            .enqueue_activate_widget(key)
+            .expect("BUG: mock activation enqueue must succeed");
+        assert_eq!(
+            compositor
+                .registrations
+                .lock()
+                .expect("BUG: registrations lock poisoned")[&key]
+                .connection_mode,
+            WidgetConnectionMode::Accepting
+        );
+    }
+
+    fn registration_for_key(
+        key: WidgetInstanceKey,
+        mode: WidgetConnectionMode,
+    ) -> WidgetRegistration {
+        let mut registration = registration(mode);
+        registration.key = key;
+        registration.placement.instance_id = key.to_string();
+        registration.initial_config.token = key.to_string();
+        registration
+    }
+
+    #[tokio::test]
+    async fn legacy_credential_update_still_reports_a_change_without_retained_state() {
+        let compositor = MockCompositor::new(Product::Bmc100);
+        assert!(
+            compositor
+                .update_widget_credentials(
+                    &"legacy".to_owned(),
+                    serde_json::Map::new(),
+                    CredentialSecrets::default(),
+                )
+                .expect("BUG: mock credential update must succeed")
+        );
+    }
 
     #[tokio::test]
     async fn mock_retains_the_latest_upgrade_snapshot() {
