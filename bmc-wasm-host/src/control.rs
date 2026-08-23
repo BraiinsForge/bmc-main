@@ -31,6 +31,12 @@ use crate::host::SharedHost;
 use crate::render_target::EglRenderTargetFactory;
 use crate::slot::WidgetSlot;
 
+fn parse_widget_key(value: &str) -> anyhow::Result<bmc_widget_protocol::WidgetInstanceKey> {
+    value
+        .parse()
+        .map_err(|err| anyhow::anyhow!("invalid widget key: {err}"))
+}
+
 #[derive(Debug)]
 pub struct ListenSocket {
     listener: UnixListener,
@@ -103,9 +109,13 @@ pub fn accept_and_load(
     client.set_read_timeout(None).map_err(anyhow::Error::from)?;
 
     let HelloMsg::Load {
+        widget_key,
         wasm_path,
         asset_root,
     } = msg;
+    let widget_key = parse_widget_key(&widget_key).inspect_err(|err| {
+        let _ = write_ack(&client, &AckMsg::Err(err.to_string()));
+    })?;
     let path = PathBuf::from(&wasm_path);
     let asset_root = asset_root.map(PathBuf::from);
     tracing::info!(
@@ -128,6 +138,7 @@ pub fn accept_and_load(
         WidgetSlot::from_handshake(
             &path,
             asset_root.as_deref(),
+            widget_key,
             shared,
             wayland_fd,
             client.try_clone()?,
@@ -158,4 +169,16 @@ fn peer_pid_of(client: &UnixStream) -> Option<libc::pid_t> {
     getsockopt(client, PeerCredentials)
         .ok()
         .map(|creds| creds.pid())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_widget_key;
+
+    #[test]
+    fn malformed_control_key_is_rejected_before_slot_setup() {
+        assert!(parse_widget_key("not-a-uuid").is_err());
+        assert!(parse_widget_key("550E8400-E29B-41D4-A716-446655440000").is_err());
+        assert!(parse_widget_key("550e8400-e29b-41d4-a716-446655440000").is_ok());
+    }
 }

@@ -23,11 +23,11 @@ widgets.
 
 ## Protocol
 
-Touch events flow through standard Wayland `wl_seat`/`wl_touch`, not the custom `deck_widget_v1` extension. The
-compositor performs hit-testing, computes surface-relative coordinates, and sends `wl_touch.cancel` when it recognizes a
+Touch events flow through standard Wayland `wl_seat`/`wl_touch`, not the custom `deck_widget` extension. The compositor
+performs hit-testing, computes surface-relative coordinates, and sends `wl_touch.cancel` when it recognizes a
 compositor-level gesture (scene navigation).
 
-Action requests (sound, LED) flow through `deck_widget_v1`:
+Action requests (sound, LED) flow through `deck_widget`:
 
 - **Widget to compositor:** `request_action(action_type, payload)`
 

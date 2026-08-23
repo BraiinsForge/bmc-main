@@ -236,7 +236,7 @@ returns cleanly if no new slot arrived.
 - `bmc-wasm-host/src/lifecycle.rs` - lifecycle state machine and allocation retry behavior.
 - `bmc-wasm-host/src/render_target.rs` - per-slot render target allocation and destruction.
 - `bmc-wasm-host/src/host.rs` - shared EGL, scratch FBO, and font cache.
-- `bmc-widget-protocol/protocol/deck-widget-v1.xml` - lifecycle protocol contract.
+- `bmc-widget-protocol/protocol/deck-widget.xml` - lifecycle protocol contract.
 - `bmc-openwrt/src/compositor/widget_tracker.rs` - compositor-side lifecycle derivation.
 - `bmc-openwrt/src/compositor/lifecycle_emitter.rs` - release/acquire transition batching.
 - `bmc-openwrt/src/compositor/egl_compositor.rs` - lifecycle emission and client flush ordering.

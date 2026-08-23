@@ -18,6 +18,7 @@ tracing = { workspace = true }
 
 bmc-log = { workspace = true }
 bmc-wasm-thin-protocol = { path = "../bmc-wasm-thin-protocol" }
+bmc-widget-protocol = { workspace = true }
 
 [dev-dependencies]
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }

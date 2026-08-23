@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<protocol name="deck_widget_v1">
+<protocol name="deck_widget">
   <copyright>
     Copyright (C) 2026  Braiins Forge s.r.o.
     SPDX-License-Identifier: MIT
@@ -34,6 +34,39 @@
     <enum name="error">
       <entry name="role" value="0" summary="surface already has a role"/>
       <entry name="unknown_client" value="1" summary="compositor has no initial config for this client"/>
+    </enum>
+  </interface>
+
+  <interface name="deck_widget_manager_v2" version="2">
+    <description summary="keyed Deck widget manager">
+      Global interface for creating a widget surface identified by its
+      configured widget instance key.
+
+      The global must be advertised at version 2 because get_widget_surface
+      creates a surface at the manager resource version. Surface version 2
+      carries credential state.
+    </description>
+
+    <request name="destroy" type="destructor">
+      <description summary="destroy the manager">
+        Destroy the widget manager. Does not affect existing widget surfaces.
+      </description>
+    </request>
+
+    <request name="get_widget_surface">
+      <description summary="create a keyed widget surface">
+        Create a deck_widget_surface_v1 for the given wl_surface and canonical
+        configured-widget UUID. The wl_surface must not already have a role.
+      </description>
+      <arg name="id" type="new_id" interface="deck_widget_surface_v1"/>
+      <arg name="widget_instance_key" type="string" summary="canonical configured-widget UUID"/>
+      <arg name="surface" type="object" interface="wl_surface"/>
+    </request>
+
+    <enum name="error">
+      <entry name="role" value="0" summary="surface already has a role"/>
+      <entry name="invalid_key" value="1" summary="widget instance key is not canonical"/>
+      <entry name="unknown_widget" value="2" summary="widget instance is not accepting connections"/>
     </enum>
   </interface>
 

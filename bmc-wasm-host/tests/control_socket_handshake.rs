@@ -74,6 +74,7 @@ fn handshake_with_nonwayland_fd_returns_err_ack() {
     send_hello_with_fd(
         &client,
         &HelloMsg::Load {
+            widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/nonexistent/widget.wasm".into(),
             asset_root: Some("/nonexistent/assets".into()),
         },

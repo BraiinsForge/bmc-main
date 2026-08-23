@@ -5,7 +5,7 @@
 
 ## Decision
 
-Use `deck_widget_v1` only for scene widgets.
+Use `deck_widget` only for scene widgets.
 
 Use Wayland shell and input protocols for non-widget UI components:
 
@@ -22,7 +22,7 @@ ready-made server implementation.
 
 ## Rationale
 
-`deck_widget_v1` is the widget protocol. It carries widget surface registration, compositor-provided size and viewport
+`deck_widget` is the widget protocol. It carries widget surface registration, compositor-provided size and viewport
 configuration, widget params, settings delivery, and widget action requests. Scene placement itself stays owned by the
 scene configuration and compositor, not by the protocol. Shell components still need different semantics: stacking above
 the active scene, edge or corner anchoring, exclusive zones, explicit input regions, keyboard focus policy, and

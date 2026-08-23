@@ -121,6 +121,7 @@ fn hello_with_fd_round_trip() {
     send_hello_with_fd(
         &a,
         &HelloMsg::Load {
+            widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/path/to/widget.wasm".into(),
             asset_root: Some("/path/to/assets".into()),
         },
@@ -133,9 +134,11 @@ fn hello_with_fd_round_trip() {
     let (msg, recovered_fd) = recv_hello_with_fd(&b).expect("BUG: test fixture expects recv_hello_with_fd to decode bytes written by send_hello_with_fd");
     match msg {
         HelloMsg::Load {
+            widget_key,
             wasm_path,
             asset_root,
         } => {
+            assert_eq!(widget_key, "550e8400-e29b-41d4-a716-446655440000");
             assert_eq!(wasm_path, "/path/to/widget.wasm");
             assert_eq!(asset_root.as_deref(), Some("/path/to/assets"));
         }
@@ -201,6 +204,7 @@ fn hello_without_scm_rights_is_protocol_error() {
     let frame = build_frame_bytes(
         PROTOCOL_VERSION,
         &HelloMsg::Load {
+            widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/x".into(),
             asset_root: None,
         },
@@ -241,6 +245,7 @@ fn too_many_fds_are_rejected_without_leaking_received_fd() {
     let payload = build_frame_bytes(
         PROTOCOL_VERSION,
         &HelloMsg::Load {
+            widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/x".into(),
             asset_root: None,
         },
@@ -306,6 +311,7 @@ fn hello_with_wrong_version_is_rejected_before_payload() {
     let frame = build_frame_bytes(
         0xFFFF,
         &HelloMsg::Load {
+            widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
             wasm_path: "/tmp/x.wasm".into(),
             asset_root: None,
         },

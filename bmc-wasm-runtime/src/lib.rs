@@ -170,7 +170,7 @@ pub enum ParseParamsError {
     },
 }
 
-/// Parse the wayland `deck_widget_v1.credentials` map into the typed view.
+/// Parse the wayland `deck_widget.credentials` map into the typed view.
 ///
 /// Unlike [`parse_params_json`] a malformed entry is skipped
 /// instead of rejecting the whole map: to the widget an unreadable slot
@@ -202,7 +202,7 @@ pub fn parse_credentials_json(
     CredentialView::new(slots)
 }
 
-/// Parse the wayland `deck_widget_v1.params` map into the typed `BTreeMap` shape
+/// Parse the wayland `deck_widget.params` map into the typed `BTreeMap` shape
 /// that [`WasmWidgetRuntime::set_params`] expects.
 ///
 /// On the first invalid entry the entire map is rejected with [`ParseParamsError`]

@@ -1,8 +1,8 @@
-# Widget hardware actions via `deck_widget_v1`
+# Widget hardware actions via `deck_widget`
 
 ## Description
 
-Widgets request system-level effects — playing a sound, driving the LED strip — through the `deck_widget_v1` Wayland
+Widgets request system-level effects — playing a sound, driving the LED strip — through the `deck_widget` Wayland
 protocol. They have no direct hardware access; every effect a widget asks for travels over the wire and is realised by
 the system on the widget's behalf.
 
@@ -25,7 +25,7 @@ superseded). Sound requests are fire-and-forget.
 ┌─ wasm host runtime ───────────────────────────────────────────────┐
 │  decode effect byte; allocate request_id (LED only)               │
 └──────────────────────────┬────────────────────────────────────────┘
-                           │  deck_widget_v1 requests
+                           │  deck_widget requests
                            ▼  ▲  led_request_status events
                            │  │
                        ── system ──
@@ -70,7 +70,7 @@ StopLed      { request_id: LedRequestId }
 ```
 
 `LedEffect` on the wire is unit-typed; the color travels separately. The wire enum discriminants are pinned by
-`deck-widget-v1.xml`: `chase=0, knight_rider=1, scan=2, snake=3, breathe=4, solid=5`. `period_ms` controls per-effect
+`deck-widget.xml`: `chase=0, knight_rider=1, scan=2, snake=3, breathe=4, solid=5`. `period_ms` controls per-effect
 animation speed; `0` means "use the effect's default". Effects without a notion of period (e.g. `Solid`) ignore the
 value.
 
@@ -189,7 +189,7 @@ wait for the previous clip to finish. `stop_sound` cancels the active clip witho
 must match an entry in the system's known sounds set; unknown names are silently dropped.
 
 WASM widgets typically use the runtime's audio path (register a sample, then `audio_play(id, volume)`), which plays
-locally in the widget runtime rather than emitting `play_sound` over `deck_widget_v1`. The wire-level
+locally in the widget runtime rather than emitting `play_sound` over `deck_widget`. The wire-level
 `PlaySound`/`StopSound` surface is shared with non-WASM widgets and remains available for system-sound playback.
 
 ### LED disabled at gRPC

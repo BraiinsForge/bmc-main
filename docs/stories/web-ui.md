@@ -105,14 +105,13 @@ firmware rebuild.
 > As a user, I want to change timezone, night mode, and localization from the browser, and have every widget on the
 > device pick up the change without a restart.
 
-- Timezone, night mode, and locale-related settings broadcast to every running widget via the `deck_widget_v1` Wayland
+- Timezone, night mode, and locale-related settings broadcast to every running widget via the `deck_widget` Wayland
   protocol. Locale is delivered as separate events per field (date format, time format, number format, temperature unit,
   first day of week) rather than a single bundled "localization" event, so new locale fields can be added later without
   a breaking protocol change.
 - Brightness is configured via the `ConfigurationService` gRPC API, not the Wayland broadcast — widgets don't see
   brightness as a setting event.
-- Changes apply immediately — no widget restart required (settings delivery is handled by the `deck_widget_v1`
-  protocol).
+- Changes apply immediately — no widget restart required (settings delivery is handled by the `deck_widget` protocol).
 
 ## Constraints
 

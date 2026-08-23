@@ -86,7 +86,7 @@ Physical display is 480x1280 (portrait). Widgets are separate processes acting a
 composites their surfaces into the final frame and presents it on the panel.
 
 1. Widget processes connect to the compositor's Wayland socket and submit dmabuf or shm surfaces, configured via the
-   custom `deck_widget_v1` protocol (see `bmc-widget-protocol/protocol/deck-widget-v1.xml`).
+   custom `deck_widget` protocol (see `bmc-widget-protocol/protocol/deck-widget.xml`).
 2. The compositor imports each surface as a GLES texture and composites the active scene with Smithay's `GlesRenderer`
    into a GBM-backed buffer (`XRGB8888`, double-buffered in `compositor/render/buffer_pool.rs`).
 3. The composited buffer is attached to the DRM CRTC; presentation is driven by DRM atomic page-flip on vblank

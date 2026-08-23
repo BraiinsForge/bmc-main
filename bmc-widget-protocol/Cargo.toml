@@ -9,7 +9,7 @@ description = "Wayland protocol extension for Deck widget communication"
 # Wayland protocol XML read by wayland_scanner proc macros; the nix source
 # filter keeps only rust/toml/lock unless a crate opts extra files in here.
 [package.metadata.nix]
-include = ["protocol/deck-widget-v1.xml"]
+include = ["protocol/deck-widget.xml"]
 
 [dependencies]
 bmc-shared-time.workspace = true
@@ -17,6 +17,7 @@ bmc-shared-utils.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+uuid.workspace = true
 wayland-backend.workspace = true
 wayland-client.workspace = true
 wayland-protocols.workspace = true

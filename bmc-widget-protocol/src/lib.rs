@@ -20,7 +20,7 @@
 
 //! Wayland protocol extension for Deck widget communication.
 //!
-//! This crate provides generated Rust bindings for the `deck_widget_v1` Wayland protocol,
+//! This crate provides generated Rust bindings for the `deck_widget` Wayland protocol,
 //! which enables communication between the compositor and widget processes.
 //!
 //! The protocol handles:
@@ -39,7 +39,7 @@
 // after the version bump. `include_str!` puts the file's
 // content into dep-info, so an XML change misses the cache
 // like any source edit.
-const _TRACK_PROTOCOL_XML: &str = include_str!("../protocol/deck-widget-v1.xml");
+const _TRACK_PROTOCOL_XML: &str = include_str!("../protocol/deck-widget.xml");
 
 /// Server-side protocol bindings (for the compositor).
 pub mod server {
@@ -55,12 +55,12 @@ pub mod server {
 
     pub mod __interfaces {
         use wayland_server::protocol::__interfaces::*;
-        wayland_scanner::generate_interfaces!("./protocol/deck-widget-v1.xml");
+        wayland_scanner::generate_interfaces!("./protocol/deck-widget.xml");
     }
 
     use self::__interfaces::*;
 
-    wayland_scanner::generate_server_code!("./protocol/deck-widget-v1.xml");
+    wayland_scanner::generate_server_code!("./protocol/deck-widget.xml");
 }
 
 /// Client-side protocol bindings (for widgets).
@@ -77,12 +77,12 @@ pub mod client {
 
     pub mod __interfaces {
         use wayland_client::protocol::__interfaces::*;
-        wayland_scanner::generate_interfaces!("./protocol/deck-widget-v1.xml");
+        wayland_scanner::generate_interfaces!("./protocol/deck-widget.xml");
     }
 
     use self::__interfaces::*;
 
-    wayland_scanner::generate_client_code!("./protocol/deck-widget-v1.xml");
+    wayland_scanner::generate_client_code!("./protocol/deck-widget.xml");
 }
 
 mod types;
@@ -95,7 +95,66 @@ pub use bmc_shared_utils::unit_system::UnitSystem;
 pub use client::deck_widget_surface_v1::LifecycleState;
 pub use types::{
     ActionPayload, CredentialSecrets, DeclaredSlot, DisplayInfo, DisplayShape, LED_REQUEST_ID_ALL,
-    LedEffect, LedRequestId, LedRequestStatus, LedScope, Localization, NextAlarm, RgbColor,
-    SecretsShapeError, SettingUpdate, Settings, ViewportShape, WidgetInitialConfig,
+    LedEffect, LedRequestId, LedRequestStatus, LedScope, Localization, NextAlarm,
+    ParseWidgetInstanceKeyError, RgbColor, SecretsShapeError, SettingUpdate, Settings,
+    ViewportShape, WidgetInitialConfig, WidgetInstanceKey,
 };
 pub use wayland_client;
+
+pub const BMC_WIDGET_KEY_ENV: &str = "BMC_WIDGET_KEY";
+
+#[derive(Debug, thiserror::Error)]
+pub enum WidgetKeyEnvError {
+    #[error("{BMC_WIDGET_KEY_ENV} is not set")]
+    Missing,
+    #[error("{BMC_WIDGET_KEY_ENV} is not valid Unicode")]
+    NotUnicode,
+    #[error("{BMC_WIDGET_KEY_ENV} is not a canonical widget instance UUID")]
+    Invalid(#[source] ParseWidgetInstanceKeyError),
+}
+
+fn parse_widget_key_env(
+    value: Result<String, std::env::VarError>,
+) -> Result<WidgetInstanceKey, WidgetKeyEnvError> {
+    let value = match value {
+        Ok(value) => value,
+        Err(std::env::VarError::NotPresent) => return Err(WidgetKeyEnvError::Missing),
+        Err(std::env::VarError::NotUnicode(_)) => return Err(WidgetKeyEnvError::NotUnicode),
+    };
+    value.parse().map_err(WidgetKeyEnvError::Invalid)
+}
+
+/// Reads the canonical configured-widget UUID provided to a widget process.
+///
+/// # Errors
+///
+/// Returns an error if the variable is missing, not valid Unicode,
+/// or not a canonical lowercase hyphenated UUID.
+pub fn widget_key_from_env() -> Result<WidgetInstanceKey, WidgetKeyEnvError> {
+    parse_widget_key_env(std::env::var(BMC_WIDGET_KEY_ENV))
+}
+
+#[cfg(test)]
+mod widget_key_env_tests {
+    use super::*;
+
+    #[test]
+    fn launch_key_must_exist_and_use_canonical_uuid_spelling() {
+        assert!(matches!(
+            parse_widget_key_env(Err(std::env::VarError::NotPresent)),
+            Err(WidgetKeyEnvError::Missing)
+        ));
+        assert!(matches!(
+            parse_widget_key_env(Ok("not-a-uuid".to_owned())),
+            Err(WidgetKeyEnvError::Invalid(_))
+        ));
+        assert!(matches!(
+            parse_widget_key_env(Ok("550E8400-E29B-41D4-A716-446655440000".to_owned())),
+            Err(WidgetKeyEnvError::Invalid(_))
+        ));
+
+        let key = parse_widget_key_env(Ok("550e8400-e29b-41d4-a716-446655440000".to_owned()))
+            .expect("BUG: canonical test UUID must parse from the launch environment");
+        assert_eq!(key.to_string(), "550e8400-e29b-41d4-a716-446655440000");
+    }
+}

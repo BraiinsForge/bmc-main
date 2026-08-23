@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! deck_widget_v1 Wayland protocol handlers.
+//! deck_widget Wayland protocol handlers.
 
 mod conversions;
 mod dispatch;

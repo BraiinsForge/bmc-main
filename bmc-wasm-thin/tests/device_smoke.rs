@@ -24,11 +24,14 @@ fn device_smoke_thin_receives_ack_ok() {
     use std::process::{Command, Stdio};
     use std::time::{Duration, Instant};
 
+    use bmc_widget_protocol::BMC_WIDGET_KEY_ENV;
+
     let wasm = std::env::var("BMC_STAGE6_TEST_WASM")
         .expect("BUG: set BMC_STAGE6_TEST_WASM to a device-local .wasm path");
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bmc-wasm-thin"));
     cmd.arg("--wasm")
         .arg(wasm)
+        .env(BMC_WIDGET_KEY_ENV, "550e8400-e29b-41d4-a716-446655440000")
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
     if let Ok(socket) = std::env::var("BMC_STAGE6_TEST_HOST_SOCKET") {

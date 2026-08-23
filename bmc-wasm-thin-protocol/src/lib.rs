@@ -26,7 +26,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
-pub const PROTOCOL_VERSION: u16 = 2;
+pub const PROTOCOL_VERSION: u16 = 3;
 const FRAME_HEADER_LEN: usize = 6; // u16 version + u32 frame_len, both little-endian
 pub const MAX_FRAME_LEN: u32 = 128 * 1024; // upper bound that bounds peer memory commitment
 
@@ -125,6 +125,7 @@ pub fn derive_image_decode_lock_path(socket_path: &std::path::Path) -> std::path
 #[derive(Debug, Clone, PartialEq, Eq, bincode::Encode, bincode::Decode)]
 pub enum HelloMsg {
     Load {
+        widget_key: String,
         wasm_path: String,
         asset_root: Option<String>,
     },

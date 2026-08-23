@@ -352,7 +352,7 @@ fn parse_alarm_id(field: &str, input: &str) -> ParseOutput<AlarmId> {
 /// Maximum operator-typed alarm name length, in UTF-8 bytes.
 ///
 /// Matched verbatim by the wayland `next_alarm.name` arg's documented
-/// cap (`bmc-widget-protocol/protocol/deck-widget-v1.xml`) and enforced
+/// cap (`bmc-widget-protocol/protocol/deck-widget.xml`) and enforced
 /// belt-and-braces in the compositor's setting-broadcast relay
 /// (`bmc-openwrt/src/compositor/protocol/state.rs`).
 ///

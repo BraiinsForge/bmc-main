@@ -271,7 +271,7 @@ pub enum WidgetEvent {
 
 /// Common interface for widget surface clients.
 ///
-/// Abstracts over XDG toplevel (standalone) and `deck_widget_v1` (production)
+/// Abstracts over XDG toplevel (standalone) and `deck_widget` (production)
 /// backends so widget render loops can work with either.
 pub trait WidgetSurface {
     /// Whether the event loop should keep running.

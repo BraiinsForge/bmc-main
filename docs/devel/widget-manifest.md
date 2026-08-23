@@ -19,7 +19,7 @@ from the rustdoc, and red-squiggles on structurally-invalid values.
 Each widget is distributed as a Nix package containing:
 
 - `manifest.json` — the manifest (this specification's subject).
-- Binary executable — Wayland client that talks the `deck_widget_v1` protocol.
+- Binary executable — Wayland client that talks the `deck_widget` protocol.
 - Assets — optional files referenced by the widget implementation or package.
 
 The main Deck application scans widget directories, reads manifests, and presents available widgets to users. When a
@@ -121,7 +121,7 @@ When the compositor loads a widget instance:
    `BTreeMap<ParamKey, ParamValue>` — every declared key has a value (the operator's, the manifest's default, or `Null`
    for optional keys without a default).
 4. The widget binary is spawned as a Wayland client.
-5. The compositor sends viewport/display geometry and the full params object as JSON via the `deck_widget_v1` initial
+5. The compositor sends viewport/display geometry and the full params object as JSON via the `deck_widget` initial
    configure batch.
 6. Geometry-stable params changes re-emit the complete params object on the existing widget surface. The wasm host
    runtime exposes params via `bmc_wasm_sdk::params::current()` / `previous()` and the `on_params_update` lifecycle

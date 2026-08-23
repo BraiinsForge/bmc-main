@@ -42,7 +42,7 @@ use bmc_widget_protocol::{
 use serde_json::{Map, Value};
 
 // The wasm runtime allocates `LedRequestId`s on the guest's behalf and
-// forwards them as `deck_widget_v1` actions over Wayland. The two crates
+// forwards them as `deck_widget` actions over Wayland. The two crates
 // don't share a type definition; this assert guarantees the all-stop
 // sentinel value stays equal across the boundary, so a runtime stop
 // emitted as `LedRequest::Stop { request_id: 0 }` lands on the protocol
@@ -266,6 +266,7 @@ pub struct WidgetSlot<S = DeckWidgetSurfaceClient> {
     pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     pub peer_pid: Option<libc::pid_t>,
     pub wasm_basename: String,
+    pub widget_key: Option<bmc_widget_protocol::WidgetInstanceKey>,
     /// Asset-cache bucket token, published to the host's GC-root file so the
     /// cross-host cache GC keeps this bucket alive. `None` if no cache identity.
     pub cache_token: Option<String>,
@@ -282,7 +283,7 @@ pub struct WidgetSlot<S = DeckWidgetSurfaceClient> {
     /// dropped because the widget does not export `on_touch`.
     pub touch_drop_logged: bool,
     /// Receiver for LED requests the runtime emits on the guest's behalf;
-    /// drained each loop iteration and forwarded as `deck_widget_v1` actions.
+    /// drained each loop iteration and forwarded as `deck_widget` actions.
     led_rx: mpsc::Receiver<LedRequest>,
 }
 
@@ -294,6 +295,7 @@ struct SlotIdentity {
     credential_secrets: bmc_widget_protocol::CredentialSecrets,
     peer_pid: Option<libc::pid_t>,
     wasm_basename: String,
+    widget_key: Option<bmc_widget_protocol::WidgetInstanceKey>,
     cache_token: Option<String>,
 }
 
@@ -324,9 +326,14 @@ fn release_runtime_and_module(runtime: WasmWidgetRuntime, module_lease: &mut Opt
 }
 
 impl WidgetSlot {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "the handshake transfers independent resources with distinct ownership"
+    )]
     pub(crate) fn from_handshake(
         wasm_path: &Path,
         asset_root: Option<&Path>,
+        widget_key: bmc_widget_protocol::WidgetInstanceKey,
         shared: &SharedHost,
         wayland_fd: std::os::fd::OwnedFd,
         control_socket: UnixStream,
@@ -424,6 +431,7 @@ impl WidgetSlot {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
+            widget_key: Some(widget_key),
             cache_token: Some(token),
         };
         Ok(WidgetSlot::from_parts_with_identity(
@@ -488,6 +496,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
             credential_secrets: identity.credential_secrets,
             peer_pid: identity.peer_pid,
             wasm_basename: identity.wasm_basename,
+            widget_key: identity.widget_key,
             cache_token: identity.cache_token,
             control_socket,
             next_frame_due_at: None,
@@ -499,7 +508,7 @@ impl<S: SlotSurface> WidgetSlot<S> {
     }
 
     /// Drain LED requests from the runtime and forward each one as a
-    /// `deck_widget_v1` action on this slot's surface.
+    /// `deck_widget` action on this slot's surface.
     pub fn flush_led_requests(&mut self) -> Result<()> {
         while let Ok(req) = self.led_rx.try_recv() {
             let action = led_request_to_action(&req);
@@ -1222,7 +1231,7 @@ fn wayland_touch_xy(x: f64, y: f64) -> (f32, f32) {
     (x as f32, y as f32)
 }
 
-/// Map a `LedRequest` from the wasm runtime to the `deck_widget_v1`
+/// Map a `LedRequest` from the wasm runtime to the `deck_widget`
 /// action shape used by `DeckWidgetSurfaceClient::request_action`.
 ///
 /// Six-variant `LedEffect` (runtime side) and `bmc_widget_protocol::

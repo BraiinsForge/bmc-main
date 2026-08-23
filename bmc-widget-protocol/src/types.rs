@@ -24,6 +24,39 @@ use bmc_shared_utils::number_format::NumberFormat;
 use bmc_shared_utils::temperature::TemperatureUnit;
 use bmc_shared_utils::unit_system::UnitSystem;
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct WidgetInstanceKey(Uuid);
+
+impl WidgetInstanceKey {
+    #[must_use]
+    pub const fn new(value: Uuid) -> Self {
+        Self(value)
+    }
+}
+
+impl std::fmt::Display for WidgetInstanceKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("widget instance key must be a canonical lowercase hyphenated UUID")]
+pub struct ParseWidgetInstanceKeyError;
+
+impl std::str::FromStr for WidgetInstanceKey {
+    type Err = ParseWidgetInstanceKeyError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let uuid = Uuid::parse_str(value).map_err(|_| ParseWidgetInstanceKeyError)?;
+        if uuid.to_string() != value {
+            return Err(ParseWidgetInstanceKeyError);
+        }
+        Ok(Self(uuid))
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -342,7 +375,7 @@ pub struct Settings {
 
 /// One atomic setting change broadcast from the compositor to widgets.
 ///
-/// Each variant maps 1:1 to a typed event in the `deck_widget_v1`
+/// Each variant maps 1:1 to a typed event in the `deck_widget`
 /// protocol. Splitting the previously-bundled `Localization` variant into
 /// per-field ones lets us add new locale fields later without breaking
 /// existing widgets — old widgets simply ignore unknown events.
@@ -452,7 +485,7 @@ pub enum LedRequestStatus {
 
 /// One typed action a widget can request from the compositor.
 ///
-/// Each variant maps 1:1 to a typed request in the `deck_widget_v1`
+/// Each variant maps 1:1 to a typed request in the `deck_widget`
 /// protocol (no JSON envelope).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "name", content = "payload", rename_all = "snake_case")]
@@ -578,6 +611,28 @@ mod editable_shape_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn widget_instance_key_accepts_only_canonical_uuid_spelling() {
+        let canonical = "550e8400-e29b-41d4-a716-446655440000";
+        let key: WidgetInstanceKey = canonical
+            .parse()
+            .expect("BUG: canonical test UUID must parse");
+        assert_eq!(key.to_string(), canonical);
+
+        for invalid in [
+            "550E8400-E29B-41D4-A716-446655440000",
+            "550e8400e29b41d4a716446655440000",
+            "{550e8400-e29b-41d4-a716-446655440000}",
+            "urn:uuid:550e8400-e29b-41d4-a716-446655440000",
+            "not-a-uuid",
+        ] {
+            assert!(
+                invalid.parse::<WidgetInstanceKey>().is_err(),
+                "noncanonical key {invalid:?} must be rejected"
+            );
+        }
+    }
 
     fn secrets_of(slot: &str, field: &str, value: &str) -> CredentialSecrets {
         let mut slots = serde_json::Map::new();

@@ -28,6 +28,7 @@ pub mod spawn;
 pub mod wayland_fd;
 
 use anyhow::Result;
+use bmc_widget_protocol::widget_key_from_env;
 
 use crate::args::Config;
 
@@ -36,6 +37,7 @@ use crate::args::Config;
     reason = "ownership transfer is intentional; later tasks move config fields into idle loop"
 )]
 pub fn run(config: Config) -> Result<()> {
+    let widget_key = widget_key_from_env()?;
     tracing::info!(
         wasm = %config.wasm.display(),
         asset_root = ?config.asset_root,
@@ -55,6 +57,7 @@ pub fn run(config: Config) -> Result<()> {
         control,
         &config.wasm,
         config.asset_root.as_deref(),
+        widget_key,
         wayland,
         config.ack_wait,
     )?;

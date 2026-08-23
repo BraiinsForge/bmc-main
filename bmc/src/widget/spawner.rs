@@ -54,7 +54,10 @@ impl WaylandSpawner {
         let mut cmd = Command::new(&widget.binary_path);
 
         cmd.env("WAYLAND_DISPLAY", &env.wayland_display)
-            .env("BMC_WIDGET_KEY", widget_key.to_string())
+            .env(
+                bmc_widget_protocol::BMC_WIDGET_KEY_ENV,
+                widget_key.to_string(),
+            )
             .env("XDG_RUNTIME_DIR", xdg_runtime_dir);
 
         let (stdout, stderr) = if self.capture_output {

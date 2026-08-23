@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Decode widget-specific params from the `deck_widget_v1` configure batch.
+//! Decode widget-specific params from the `deck_widget` configure batch.
 //!
 //! The compositor delivers every piece of initial state as typed
 //! protocol events on surface creation. This module turns the relevant

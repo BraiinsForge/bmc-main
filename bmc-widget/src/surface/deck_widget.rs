@@ -33,9 +33,12 @@ use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
 
 use bmc_widget_protocol::client::{
     deck_widget_manager_v1::DeckWidgetManagerV1,
+    deck_widget_manager_v2::DeckWidgetManagerV2,
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
-use bmc_widget_protocol::{ActionPayload, NextAlarm, SettingUpdate, ViewportShape};
+use bmc_widget_protocol::{
+    ActionPayload, NextAlarm, SettingUpdate, ViewportShape, WidgetInstanceKey, widget_key_from_env,
+};
 use wayland_client::WEnum;
 
 use crate::egl::DmaBufInfo;
@@ -56,7 +59,7 @@ use super::{WidgetEvent, WidgetSurface};
 /// misconfigured compositor.
 const CONFIGURE_TIMEOUT: Duration = Duration::from_secs(10);
 
-/// Events from the compositor to a `deck_widget_v1` widget.
+/// Events from the compositor to a `deck_widget` widget.
 #[derive(Debug, Clone)]
 pub enum DeckWidgetEvent {
     /// A system setting changed at runtime.
@@ -134,11 +137,11 @@ pub struct InitialState {
     pub token: String,
 }
 
-/// Surface state for a `deck_widget_v1` widget with DMA-BUF support.
+/// Surface state for a `deck_widget` widget with DMA-BUF support.
 ///
 /// Tracks compositor globals, surface lifecycle, frame scheduling, and
 /// pending protocol events. Mirrors [`crate::surface::XdgSurfaceState`] but
-/// uses the `deck_widget_v1` protocol instead of XDG shell.
+/// uses the `deck_widget` protocol instead of XDG shell.
 pub struct DeckWidgetSurfaceState {
     /// Whether the event loop should keep running.
     pub running: bool,
@@ -154,6 +157,7 @@ pub struct DeckWidgetSurfaceState {
     // -- Wayland objects (internal) --
     compositor: Option<wl_compositor::WlCompositor>,
     widget_manager: Option<DeckWidgetManagerV1>,
+    keyed_widget_manager: Option<DeckWidgetManagerV2>,
     linux_dmabuf: Option<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1>,
     seat: Option<wl_seat::WlSeat>,
     touch: Option<wl_touch::WlTouch>,
@@ -262,10 +266,10 @@ impl fmt::Debug for DeckWidgetSurfaceState {
     }
 }
 
-/// Single-connection Wayland client for `deck_widget_v1` widgets with DMA-BUF.
+/// Single-connection Wayland client for `deck_widget` widgets with DMA-BUF.
 ///
 /// Handles connection, global binding, surface creation, frame callbacks, and
-/// slot-based buffer submission using the `deck_widget_v1` protocol.
+/// slot-based buffer submission using the `deck_widget` protocol.
 pub struct DeckWidgetSurfaceClient {
     conn: Connection,
     queue: EventQueue<DeckWidgetSurfaceState>,
@@ -296,6 +300,20 @@ impl DeckWidgetSurfaceClient {
     /// environment. Used by the multi-widget host to give each slot its own
     /// dedicated Wayland connection over a pre-created socket pair.
     pub fn connect_with_fd(wayland_fd: std::os::fd::OwnedFd) -> Result<(Self, InitialState)> {
+        Self::connect_with_fd_inner(wayland_fd, None)
+    }
+
+    pub fn connect_with_fd_keyed(
+        wayland_fd: std::os::fd::OwnedFd,
+        widget_key: WidgetInstanceKey,
+    ) -> Result<(Self, InitialState)> {
+        Self::connect_with_fd_inner(wayland_fd, Some(widget_key))
+    }
+
+    fn connect_with_fd_inner(
+        wayland_fd: std::os::fd::OwnedFd,
+        widget_key: Option<WidgetInstanceKey>,
+    ) -> Result<(Self, InitialState)> {
         use std::os::unix::net::UnixStream;
         let stream = UnixStream::from(wayland_fd);
         let backend = wayland_backend::client::Backend::connect(stream)
@@ -316,6 +334,7 @@ impl DeckWidgetSurfaceClient {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
+            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -341,17 +360,25 @@ impl DeckWidgetSurfaceClient {
             .compositor
             .as_ref()
             .context("wl_compositor not available")?;
-        let widget_manager = state
-            .widget_manager
-            .as_ref()
-            .context("deck_widget_manager_v1 not available")?;
         anyhow::ensure!(
             state.linux_dmabuf.is_some(),
             "zwp_linux_dmabuf_v1 not available"
         );
 
         let surface = compositor.create_surface(&qh, ());
-        let widget_surface = widget_manager.get_widget_surface(&surface, &qh, ());
+        let widget_surface = if let Some(widget_key) = widget_key {
+            state
+                .keyed_widget_manager
+                .as_ref()
+                .context("deck_widget_manager_v2 not available")?
+                .get_widget_surface(widget_key.to_string(), &surface, &qh, ())
+        } else {
+            state
+                .widget_manager
+                .as_ref()
+                .context("deck_widget_manager_v1 not available")?
+                .get_widget_surface(&surface, &qh, ())
+        };
 
         surface.commit();
 
@@ -420,6 +447,15 @@ impl DeckWidgetSurfaceClient {
     /// params, and any runtime settings the compositor already knew about
     /// at spawn time.
     pub fn connect() -> Result<(Self, InitialState)> {
+        Self::connect_inner(None)
+    }
+
+    pub fn connect_keyed() -> Result<(Self, InitialState)> {
+        let widget_key = widget_key_from_env()?;
+        Self::connect_inner(Some(widget_key))
+    }
+
+    fn connect_inner(widget_key: Option<WidgetInstanceKey>) -> Result<(Self, InitialState)> {
         let conn = Connection::connect_to_env().context("Failed to connect to Wayland display")?;
         let mut queue = conn.new_event_queue();
         let qh = queue.handle();
@@ -435,6 +471,7 @@ impl DeckWidgetSurfaceClient {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
+            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -460,17 +497,25 @@ impl DeckWidgetSurfaceClient {
             .compositor
             .as_ref()
             .context("wl_compositor not available")?;
-        let widget_manager = state
-            .widget_manager
-            .as_ref()
-            .context("deck_widget_manager_v1 not available")?;
         anyhow::ensure!(
             state.linux_dmabuf.is_some(),
             "zwp_linux_dmabuf_v1 not available"
         );
 
         let surface = compositor.create_surface(&qh, ());
-        let widget_surface = widget_manager.get_widget_surface(&surface, &qh, ());
+        let widget_surface = if let Some(widget_key) = widget_key {
+            state
+                .keyed_widget_manager
+                .as_ref()
+                .context("deck_widget_manager_v2 not available")?
+                .get_widget_surface(widget_key.to_string(), &surface, &qh, ())
+        } else {
+            state
+                .widget_manager
+                .as_ref()
+                .context("deck_widget_manager_v1 not available")?
+                .get_widget_surface(&surface, &qh, ())
+        };
 
         surface.commit();
 
@@ -709,7 +754,7 @@ impl DeckWidgetSurfaceClient {
         poll_dispatch(&self.conn, &mut self.queue, &mut self.state, timeout_ms)
     }
 
-    /// Forward a typed widget action as a `deck_widget_v1` request.
+    /// Forward a typed widget action as a `deck_widget` request.
     /// No-ops if the surface hasn't been created yet.
     pub fn request_action(&self, action: &ActionPayload) -> Result<()> {
         let Some(ref surface) = self.state.widget_surface else {
@@ -874,6 +919,12 @@ impl Dispatch<wl_registry::WlRegistry, ()> for DeckWidgetSurfaceState {
                     tracing::debug!("Bound deck_widget_manager_v1 v{}", version.min(2));
                     state.widget_manager = Some(widget_manager);
                 }
+                "deck_widget_manager_v2" => {
+                    let widget_manager =
+                        registry.bind::<DeckWidgetManagerV2, _, _>(name, version.min(2), qh, ());
+                    tracing::debug!("Bound deck_widget_manager_v2 v{}", version.min(2));
+                    state.keyed_widget_manager = Some(widget_manager);
+                }
                 "zwp_linux_dmabuf_v1" => {
                     let dmabuf = registry.bind::<zwp_linux_dmabuf_v1::ZwpLinuxDmabufV1, _, _>(
                         name,
@@ -900,6 +951,18 @@ impl Dispatch<DeckWidgetManagerV1, ()> for DeckWidgetSurfaceState {
         _: &mut Self,
         _: &DeckWidgetManagerV1,
         _: <DeckWidgetManagerV1 as wayland_client::Proxy>::Event,
+        (): &(),
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+impl Dispatch<DeckWidgetManagerV2, ()> for DeckWidgetSurfaceState {
+    fn event(
+        _: &mut Self,
+        _: &DeckWidgetManagerV2,
+        _: <DeckWidgetManagerV2 as wayland_client::Proxy>::Event,
         (): &(),
         _: &Connection,
         _: &QueueHandle<Self>,
@@ -1298,6 +1361,7 @@ mod tests {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
+            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -1447,6 +1511,7 @@ mod tests {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
+            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,
@@ -1483,6 +1548,7 @@ mod tests {
             frame_count: 0,
             compositor: None,
             widget_manager: None,
+            keyed_widget_manager: None,
             linux_dmabuf: None,
             seat: None,
             touch: None,

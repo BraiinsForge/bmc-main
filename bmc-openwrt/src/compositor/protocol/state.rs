@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Protocol state management for deck_widget_v1.
+//! Protocol state management for deck_widget.
 
 use std::sync::{Arc, Mutex};
 
@@ -137,7 +137,7 @@ trait WidgetSurface {
 }
 
 /// Interface version that introduced the two credential events.
-/// Mirrors `since="2"` in `deck-widget-v1.xml`.
+/// Mirrors `since="2"` in `deck-widget.xml`.
 const CREDENTIAL_EVENTS_SINCE: u32 = 2;
 
 impl WidgetSurface for DeckWidgetSurfaceV1 {
@@ -522,6 +522,13 @@ impl DeckWidgetProtocolState {
             .values()
             .find(|w| w.pid == Some(pid))
             .map(|w| &w.instance_id)
+    }
+
+    pub fn accepting_instance_id(&self, key: WidgetInstanceKey) -> Option<&InstanceId> {
+        self.widgets
+            .get(&key.to_string())
+            .filter(|widget| widget.connection_mode == WidgetConnectionMode::Accepting)
+            .map(|widget| &widget.instance_id)
     }
 
     pub fn instance_id_for_surface(&self, surface: &WlSurface) -> Option<&InstanceId> {
@@ -1325,6 +1332,20 @@ mod tests {
             state.widgets[&key.to_string()].connection_mode,
             WidgetConnectionMode::Accepting
         );
+    }
+
+    #[test]
+    fn keyed_admission_accepts_only_a_retained_accepting_registration() {
+        let mut state = DeckWidgetProtocolState::new();
+        let registration = retained_registration(WidgetConnectionMode::Accepting);
+        let key = registration.key;
+
+        assert!(state.accepting_instance_id(key).is_none());
+        state.register_retained_widget(registration);
+        let instance_id = key.to_string();
+        assert_eq!(state.accepting_instance_id(key), Some(&instance_id));
+        state.deactivate_widget(key);
+        assert!(state.accepting_instance_id(key).is_none());
     }
 
     #[test]

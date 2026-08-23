@@ -76,7 +76,7 @@ proxy modes, the `BMC_INDEX_URL` device override, and the example `index.v1.json
 
 ### [Widget Runtime Configuration](widget-runtime-configuration.md)
 
-How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget_v1`
+How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget`
 Wayland protocol. Covers the spawn-environment contract (no BMC-specific env vars), identity resolution via
 `SO_PEERCRED` on the Wayland socket, the configure-batch handshake widgets use to fetch viewport/display geometry and
 initial state, and the runtime hot-reload path that pushes fresh params on the existing surface for geometry-stable
@@ -107,8 +107,8 @@ gates combined-scene controls and RPCs.
 
 ### [Widget Hardware Actions](widget-hardware-actions.md)
 
-How widget action requests (sound, LED) travel from the wasm guest SDK through the host runtime, onto `deck_widget_v1`,
-and into the compositor's action handler. Covers the guest-side surface (`set_effect` / `set_effect_global` / `stop`,
+How widget action requests (sound, LED) travel from the wasm guest SDK through the host runtime, onto `deck_widget`, and
+into the compositor's action handler. Covers the guest-side surface (`set_effect` / `set_effect_global` / `stop`,
 `play_sound` / `stop_sound`), the two-tier LED model (local always wins; global fills in when nothing local is playing),
 endless-slot supersession and temporary-queue serialization within each tier, scene-change drop-and-expire of the active
 temp, the sound manager's cancellable playback task, and discriminant pinning across the wasm-FFI, wayland, and

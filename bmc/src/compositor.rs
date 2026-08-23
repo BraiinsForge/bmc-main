@@ -28,13 +28,12 @@ use std::sync::Arc;
 
 use thiserror::Error;
 use tokio::sync::{broadcast, mpsc, watch};
-use uuid::Uuid;
 
 pub use crate::data::{SceneCycling, SceneCyclingTransition};
 pub use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
 pub use bmc_widget_protocol::{
     ActionPayload, CredentialSecrets, LedRequestId, LedRequestStatus, SettingUpdate,
-    WidgetInitialConfig,
+    WidgetInitialConfig, WidgetInstanceKey,
 };
 
 #[cfg(test)]
@@ -42,30 +41,9 @@ pub(crate) mod testing;
 
 pub type InstanceId = String;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct WidgetInstanceKey(Uuid);
-
-impl WidgetInstanceKey {
-    #[must_use]
-    pub const fn new(value: Uuid) -> Self {
-        Self(value)
-    }
-
-    #[must_use]
-    pub const fn as_uuid(self) -> Uuid {
-        self.0
-    }
-}
-
-impl std::fmt::Display for WidgetInstanceKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.0.fmt(f)
-    }
-}
-
 impl From<crate::scene::WidgetId> for WidgetInstanceKey {
     fn from(value: crate::scene::WidgetId) -> Self {
-        Self(value.as_uuid())
+        Self::new(value.as_uuid())
     }
 }
 

@@ -26,15 +26,18 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context as _, Result, bail};
 use bmc_wasm_thin_protocol::{AckDecoder, AckMsg, HelloMsg, send_hello_with_fd};
+use bmc_widget_protocol::WidgetInstanceKey;
 
 pub fn send_load_and_wait_ack(
     control: UnixStream,
     wasm: &Path,
     asset_root: Option<&Path>,
+    widget_key: WidgetInstanceKey,
     wayland: UnixStream,
     ack_wait: Duration,
 ) -> Result<UnixStream> {
     let msg = HelloMsg::Load {
+        widget_key: widget_key.to_string(),
         wasm_path: wasm.display().to_string(),
         asset_root: asset_root.map(|path| path.display().to_string()),
     };

@@ -26,6 +26,13 @@ use std::time::{Duration, Instant};
 
 use bmc_wasm_thin::host_client::send_load_and_wait_ack;
 use bmc_wasm_thin_protocol::{AckMsg, HelloMsg, recv_hello_with_fd, write_ack};
+use bmc_widget_protocol::WidgetInstanceKey;
+
+fn widget_key() -> WidgetInstanceKey {
+    "550e8400-e29b-41d4-a716-446655440000"
+        .parse()
+        .expect("BUG: canonical widget key must parse")
+}
 
 fn socketpair() -> (UnixStream, UnixStream) {
     UnixStream::pair().expect("BUG: UnixStream::pair must work in Unix tests")
@@ -40,9 +47,11 @@ fn sends_hello_with_one_wayland_fd_and_reads_ok_ack() {
             recv_hello_with_fd(&control_server).expect("BUG: fake host should receive Hello");
         match msg {
             HelloMsg::Load {
+                widget_key,
                 wasm_path,
                 asset_root,
             } => {
+                assert_eq!(widget_key, "550e8400-e29b-41d4-a716-446655440000");
                 assert_eq!(wasm_path, "/tmp/widget.wasm");
                 assert_eq!(asset_root.as_deref(), Some("/tmp/assets"));
             }
@@ -55,6 +64,7 @@ fn sends_hello_with_one_wayland_fd_and_reads_ok_ack() {
         control_client,
         Path::new("/tmp/widget.wasm"),
         Some(Path::new("/tmp/assets")),
+        widget_key(),
         wayland_client,
         Duration::from_secs(1),
     )
@@ -77,6 +87,7 @@ fn ack_err_is_a_load_error() {
         control_client,
         Path::new("/tmp/bad.wasm"),
         None,
+        widget_key(),
         wayland_client,
         Duration::from_secs(1),
     )
@@ -99,6 +110,7 @@ fn silent_host_times_out_without_busy_looping() {
         control_client,
         Path::new("/tmp/widget.wasm"),
         None,
+        widget_key(),
         wayland_client,
         Duration::from_millis(50),
     )
@@ -120,6 +132,7 @@ fn eof_before_ack_is_startup_error() {
         control_client,
         Path::new("/tmp/widget.wasm"),
         None,
+        widget_key(),
         wayland_client,
         Duration::from_secs(1),
     )

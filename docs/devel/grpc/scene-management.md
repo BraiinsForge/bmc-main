@@ -3,7 +3,7 @@
 ## Scope
 
 This document covers the gRPC API contract used by the frontend to manage scenes/widgets and drive live preview.
-Widget-runtime protocol details (`deck_widget_v1`) are documented separately in
+Widget-runtime protocol details (`deck_widget`) are documented separately in
 [`widget-runtime-configuration.md`](../widget-runtime-configuration.md).
 
 Primary sources:

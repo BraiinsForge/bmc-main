@@ -7,7 +7,7 @@ carries the `.xml` and generates both server and client bindings with `wayland_s
 `generate_client_code!`), matching the `bmc-widget-protocol` convention.
 
 The first two are forks with deliberately renamed interfaces; the alarm and upgrade protocols are Deck-owned. The
-`deck_` prefix follows the `deck_widget_v1` precedent of not impersonating someone else's protocol: the contracts differ
+`deck_` prefix follows the `deck_widget` precedent of not impersonating someone else's protocol: the contracts differ
 from their upstreams, so keeping the upstream interface names would mislead the next reader into assuming upstream
 semantics. The compositor-side dispatch for all four is in [`compositor-integration.md`](compositor-integration.md); the
 client-side binding is in [`framework.md`](framework.md).

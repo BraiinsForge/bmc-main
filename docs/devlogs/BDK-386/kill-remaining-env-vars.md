@@ -2,7 +2,7 @@
 
 ## Context
 
-The earlier BDK-386 work moved *settings* (timezone, night mode, localization) from env vars to typed `deck_widget_v1`
+The earlier BDK-386 work moved *settings* (timezone, night mode, localization) from env vars to typed `deck_widget`
 events. It left five env vars on every widget spawn — the pieces of state the widget needed synchronously at `main()`
 entry, before it could do the first Wayland roundtrip:
 
@@ -27,8 +27,8 @@ XDG_RUNTIME_DIR=/tmp/runtime-xxxx
 
 Verified on a Deck with `cat /proc/$(pgrep bmc-widget-flip-clock)/environ`. Zero `DECK_*` left.
 
-Every piece of per-widget state is delivered via typed `deck_widget_v1` events emitted on `get_widget_surface`,
-terminated by a new `configure_done` sentinel.
+Every piece of per-widget state is delivered via typed `deck_widget` events emitted on `get_widget_surface`, terminated
+by a new `configure_done` sentinel.
 
 ## Protocol shape
 
@@ -157,7 +157,7 @@ with an `anyhow::Error` and the spawner restarts it.
 
 **Protocol** (`bmc-widget-protocol`):
 
-- `protocol/deck-widget-v1.xml` — new events + enum, removed `instance_id` arg and `invalid_instance` error.
+- `protocol/deck-widget.xml` — new events + enum, removed `instance_id` arg and `invalid_instance` error.
 - `src/types.rs` — new `WidgetInitialConfig { size, width, height, params }`.
 
 **Compositor** (`bmc-openwrt/src/compositor/`):

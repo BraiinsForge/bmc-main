@@ -49,7 +49,7 @@ pub enum LedEffect {
 
 /// Bare-discriminant view of [`LedEffect`] used as the wire-format kind byte
 /// between the wasm SDK guest and the host. Pinned with `repr(u8)` so the
-/// discriminants match `deck_widget_v1.led_effect`.
+/// discriminants match `deck_widget.led_effect`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum LedEffectKind {
@@ -78,7 +78,7 @@ impl TryFrom<u8> for LedEffectKind {
 }
 
 /// LED request scope — which arbitration tier a request lands on.
-/// Pinned with `repr(u8)` to match `deck_widget_v1.led_scope`.
+/// Pinned with `repr(u8)` to match `deck_widget.led_scope`.
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum LedScope {
@@ -142,7 +142,7 @@ mod tests {
     use super::*;
 
     // These bytes are the guest↔host wasm wire format. They are also kept
-    // equal to `deck_widget_v1.led_effect` by hand — bmc-led can't import the
+    // equal to `deck_widget.led_effect` by hand — bmc-led can't import the
     // protocol crate to assert that here, so this only pins the values stable.
     #[test]
     fn effect_kind_wire_bytes_are_stable() {

@@ -5,7 +5,7 @@
 Timezone, night mode, and localization were delivered to widgets through two channels:
 
 - **Spawn-time env vars** (`DECK_TIMEZONE`, `DECK_NIGHT_MODE`, `DECK_LOCALIZATION`) read once by the widget during boot.
-- **Runtime Wayland events** via `deck_widget_v1`'s `setting` message, delivered whenever a user changes a setting.
+- **Runtime Wayland events** via `deck_widget`'s `setting` message, delivered whenever a user changes a setting.
 
 Two code paths, one data model — easy to drift out of sync, and widgets had to read the env var and register the Wayland
 handler to cover both first-frame and live updates.
@@ -15,7 +15,7 @@ handler to cover both first-frame and live updates.
 Drop the env-var channel. Settings arrive exclusively through the Wayland `setting` event, sent on two occasions:
 
 1. **On connect.** The compositor caches the current `SettingUpdate` values and calls `send_setting_to_widget()`
-   immediately when a widget binds `deck_widget_v1` — before the widget renders its first frame.
+   immediately when a widget binds `deck_widget` — before the widget renders its first frame.
 2. **On change.** The coordinator broadcasts updated settings through `CompositorCommand::BroadcastSetting`, same as
    before.
 
@@ -44,7 +44,7 @@ startup
 
 widget spawn
   spawner → exec widget (with identity/geometry env only)
-    → widget binds deck_widget_v1
+    → widget binds deck_widget
       → compositor.send_setting_to_widget(instance_id, cached)
         → widget.setting(type, value) for each cached setting
 

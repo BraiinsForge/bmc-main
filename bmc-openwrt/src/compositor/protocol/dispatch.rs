@@ -18,13 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Wayland dispatch implementations for deck_widget_v1.
+//! Wayland dispatch implementations for deck_widget.
 
 use std::sync::{Arc, Mutex};
 
-use bmc::compositor::{InstanceId, WidgetGeneration};
+use bmc::compositor::{InstanceId, WidgetGeneration, WidgetInstanceKey};
 use bmc_widget_protocol::server::{
     deck_widget_manager_v1::{self, DeckWidgetManagerV1},
+    deck_widget_manager_v2::{self, DeckWidgetManagerV2},
     deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
 };
 use smithay::reexports::wayland_server::{
@@ -230,6 +231,78 @@ where
     }
 }
 
+impl<D> GlobalDispatch<DeckWidgetManagerV2, (), D> for DeckWidgetProtocolState
+where
+    D: GlobalDispatch<DeckWidgetManagerV2, (), D>
+        + Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D>
+        + DeckWidgetHandler
+        + 'static,
+{
+    fn bind(
+        _state: &mut D,
+        _handle: &DisplayHandle,
+        _client: &Client,
+        resource: New<DeckWidgetManagerV2>,
+        _global_data: &(),
+        data_init: &mut DataInit<'_, D>,
+    ) {
+        data_init.init(resource, WidgetManagerUserData);
+    }
+}
+
+impl<D> Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D> for DeckWidgetProtocolState
+where
+    D: Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D>
+        + Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D>
+        + DeckWidgetHandler
+        + 'static,
+{
+    fn request(
+        state: &mut D,
+        _client: &Client,
+        resource: &DeckWidgetManagerV2,
+        request: deck_widget_manager_v2::Request,
+        _data: &WidgetManagerUserData,
+        _dhandle: &DisplayHandle,
+        data_init: &mut DataInit<'_, D>,
+    ) {
+        match request {
+            deck_widget_manager_v2::Request::GetWidgetSurface {
+                id,
+                widget_instance_key,
+                surface,
+            } => {
+                let Ok(key) = widget_instance_key.parse::<WidgetInstanceKey>() else {
+                    resource.post_error(
+                        deck_widget_manager_v2::Error::InvalidKey,
+                        format!("noncanonical widget instance key {widget_instance_key:?}"),
+                    );
+                    return;
+                };
+                let protocol_state = state.deck_widget_state();
+                let Some(instance_id) = protocol_state.accepting_instance_id(key).cloned() else {
+                    resource.post_error(
+                        deck_widget_manager_v2::Error::UnknownWidget,
+                        format!("widget instance {key} is not accepting connections"),
+                    );
+                    return;
+                };
+                let instance_id_lock = Arc::new(Mutex::new(instance_id.clone()));
+                let widget_surface = data_init.init(
+                    id,
+                    WidgetSurfaceUserData {
+                        instance_id: instance_id_lock,
+                    },
+                );
+                protocol_state.attach_surface(&instance_id, surface, widget_surface.clone());
+                protocol_state.emit_initial_state(&instance_id, &widget_surface);
+            }
+            deck_widget_manager_v2::Request::Destroy => {}
+            other => tracing::warn!("Ignoring unknown keyed widget manager request: {other:?}"),
+        }
+    }
+}
+
 impl<D> Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D> for DeckWidgetProtocolState
 where
     D: Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D> + DeckWidgetHandler + 'static,
@@ -391,11 +464,14 @@ pub fn create_global<D>(display: &DisplayHandle)
 where
     D: GlobalDispatch<DeckWidgetManagerV1, (), D>
         + Dispatch<DeckWidgetManagerV1, WidgetManagerUserData, D>
+        + GlobalDispatch<DeckWidgetManagerV2, (), D>
+        + Dispatch<DeckWidgetManagerV2, WidgetManagerUserData, D>
         + Dispatch<DeckWidgetSurfaceV1, WidgetSurfaceUserData, D>
         + DeckWidgetHandler
         + 'static,
 {
     display.create_global::<D, DeckWidgetManagerV1, ()>(2, ());
+    display.create_global::<D, DeckWidgetManagerV2, ()>(2, ());
 }
 
 #[cfg(test)]

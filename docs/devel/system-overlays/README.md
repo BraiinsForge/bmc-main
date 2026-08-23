@@ -2,8 +2,8 @@
 
 System overlays are privileged, full-screen-or-corner UI surfaces that live *outside* the scene-widget model: WiFi setup
 progress, an offline indicator, a swipe-from-top quick-settings panel, a full-screen firing-alarm screen,
-upgrade-progress surfaces, and later notifications. They are `wlr-layer-shell` clients, not `deck_widget_v1` widgets,
-and they stack above the active scene.
+upgrade-progress surfaces, and later notifications. They are `wlr-layer-shell` clients, not `deck_widget` widgets, and
+they stack above the active scene.
 
 The protocol rationale — why these are layer-shell surfaces rather than widgets, and why two small Wayland extensions
 are vendored — is recorded in
@@ -12,7 +12,7 @@ This directory documents how the framework, compositor support, protocols, and c
 
 ## Why not widgets
 
-`deck_widget_v1` carries widget semantics: surface registration, compositor-provided size and viewport, per-instance
+`deck_widget` carries widget semantics: surface registration, compositor-provided size and viewport, per-instance
 params, settings delivery, action requests, and a lifecycle tied to scene cycling. Scene placement itself is not in the
 protocol — it stays owned by the scene configuration and the compositor. Overlays are not placed in scenes at all and
 need z-ordering above scenes, edge anchoring, exclusive zones, and explicit input regions — exactly what

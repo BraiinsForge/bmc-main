@@ -238,7 +238,7 @@ to `Dormant` and then forgets it.
 
 ## Code Map
 
-- `bmc-widget-protocol/protocol/deck-widget-v1.xml` - lifecycle event and enum contract.
+- `bmc-widget-protocol/protocol/deck-widget.xml` - lifecycle event and enum contract.
 - `bmc-openwrt/src/compositor/widget_tracker.rs` - derives lifecycle state from scene cycling and drag state.
 - `bmc-openwrt/src/compositor/lifecycle_emitter.rs` - computes release/acquire batches from previous and next state.
 - `bmc-openwrt/src/compositor/egl_compositor.rs` - sends lifecycle events, flushes clients, and handles initial

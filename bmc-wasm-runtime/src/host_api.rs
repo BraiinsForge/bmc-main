@@ -896,7 +896,7 @@ pub(crate) struct HostState {
     /// Used for deferred timer checks and wasm_delta computation.
     pub monotonic_ms: u64,
 
-    /// Per-instance widget parameters, materialised from the wayland `deck_widget_v1.params`
+    /// Per-instance widget parameters, materialised from the wayland `deck_widget.params`
     /// event (compositor) or applied directly from the manifest defaults (testbed).
     ///
     /// Order is alphabetical-by-key (the inner `BTreeMap` inside [`ParamsSnapshot`]) so the
