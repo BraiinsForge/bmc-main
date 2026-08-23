@@ -345,6 +345,7 @@ nix = { version = "0.30.1", default-features = false, features = ["socket", "uio
 nonzero_ext = "0.3.0"
 notify = "8"
 owo-colors = "4.3.0"
+packed_struct = "0.10.1"
 palette = { version = "0.7.6", default-features = false, features = ["libm"] }
 parking_lot = "0.12.3"
 pcap-file = "3.0.0-rc1"

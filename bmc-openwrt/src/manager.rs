@@ -37,6 +37,7 @@ use bmc::{
     BmcManager,
     manager::{NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic},
 };
+use bmc_platform::serial_number::BoardSerial;
 use bmc_platform::{BmcInfo, BosPlatform, BosVersion};
 use bmc_shared_ii_net::MacAddr;
 use bmc_shared_ii_net::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
@@ -60,6 +61,8 @@ use tracing::{debug, error, info, trace, warn};
 #[expect(clippy::struct_field_names)]
 pub struct Manager {
     bmc_info: Arc<Option<BmcInfo>>,
+    /// Factory-burned OTP serial, `None` when it is unavailable or invalid.
+    board_serial: Option<BoardSerial>,
     platform_override: Option<BosPlatform>,
     pub session_manager: OpenwrtSessionManager,
     timezone_sender: tokio::sync::watch::Sender<Timezone>,
@@ -97,6 +100,7 @@ impl Manager {
         timezone: Timezone,
         wifi_manager: Arc<OpenwrtWifiManager>,
         platform_override: Option<BosPlatform>,
+        board_serial: Option<BoardSerial>,
     ) -> Self {
         let (timezone_sender, _) = tokio::sync::watch::channel(timezone);
         let (wifi_event_sender, _) = tokio::sync::broadcast::channel(Self::WIFI_EVENTS_CAPACITY);
@@ -122,6 +126,7 @@ impl Manager {
 
         let manager = Self {
             bmc_info: Arc::new(bmc_info),
+            board_serial,
             platform_override,
             session_manager,
             timezone_sender,
@@ -143,6 +148,11 @@ impl Manager {
         let _ = manager.wifi_reconfig_sender.send(setup_ap_active);
 
         manager
+    }
+
+    #[must_use]
+    pub fn board_serial(&self) -> Option<BoardSerial> {
+        self.board_serial
     }
 
     async fn run_sysupgrade(

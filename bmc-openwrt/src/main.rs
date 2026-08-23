@@ -36,12 +36,13 @@ use bmc_openwrt::{button_driver::UEventButtons, manager::Manager, session::Openw
 use bmc_openwrt::{cli::Args, log::build_panic_hook_with_tracing};
 use bmc_platform::backlight::{BacklightVisibility, DisplayBacklightDriver};
 use bmc_platform::generic_backlight_driver::GenericBacklightDriver;
+use bmc_platform::serial_number::BoardSerial;
 use bmc_platform::{BmcInfo, BosPlatform, HardwareProfile, HardwareProfileSelection};
 use bmc_shared_ii_net_drv::wifi::OpenwrtWifiManager;
 use bmc_shared_time::time::Timezone;
 use bmc_upgrade::packages::{NixUpgradeConfig, PackageUpgrader};
 use tokio::sync::Mutex;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 /// Pick the first WiFi syspath candidate that exists, falling back to the
 /// primary candidate when none is present yet (the radio may enumerate shortly
@@ -111,6 +112,17 @@ async fn main() -> Result<()> {
             }
         };
 
+    let board_serial = match BoardSerial::load_stm32mp157() {
+        Ok(serial) => {
+            info!("Board serial: {serial}");
+            Some(serial)
+        }
+        Err(err) => {
+            warn!(?err, "cannot read the board serial from OTP");
+            None
+        }
+    };
+
     // BMC_WIFI_SYSPATH overrides the platform path (x86 QEMU with mac80211_hwsim).
     // Otherwise take the platform's candidate list and pick the first path that
     // exists, which selects between BMC100's hubbed and hubless revisions.
@@ -146,6 +158,7 @@ async fn main() -> Result<()> {
         current_timezone,
         wifi_manager,
         platform_override,
+        board_serial,
     )
     .await;
 
