@@ -10,7 +10,7 @@ root_justfile := repo / "justfile"
 default:
     @just --justfile {{ source_file() }} --list
 
-# Widget + sim + watch in mprocs. SCENARIO: race, sprint, quali, practice, idle, off-season, cold-start, warming, stale.
+# Widget + sim + watch in mprocs. SCENARIO: race, sprint, quali, practice, idle, off-season, cold-start, warming, race-eve, stale.
 dev SCENARIO="race":
     @just --justfile {{ root_justfile }} wasm::prebuild formula-1
     mprocs \
@@ -39,9 +39,10 @@ sim-args SCENARIO:
         stale)      port=20106 ;;
         sprint)     port=20107 ;;
         warming)    port=20108 ;;
+        race-eve)   port=20109 ;;
         *)
             echo "unknown scenario '{{ SCENARIO }}' (race | sprint | quali | practice |" \
-                 "idle | off-season | cold-start | warming | stale)" >&2
+                 "idle | off-season | cold-start | warming | race-eve | stale)" >&2
             exit 1
             ;;
     esac

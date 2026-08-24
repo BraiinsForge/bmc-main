@@ -28,6 +28,7 @@ pub mod announce;
 pub mod blueprint;
 pub mod build;
 pub mod cache;
+pub mod calendar_day;
 pub mod devices;
 pub mod diag;
 pub mod http_status;

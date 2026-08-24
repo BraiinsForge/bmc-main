@@ -28,11 +28,18 @@
 //! every driver runs laps whose times derive from both,
 //! and positions, gaps, sectors and pit stops all fall out of those
 //! sums — so overtakes happen, and every rerun replays them identically.
+//!
+//! The calendar is the exception, and deliberately so: the weekend
+//! and the debut seasons follow the real date, which is what makes
+//! a scenario opened any week announce that week. `today` pins it
+//! where a run needs the same answer twice, or a day
+//! the wall clock will not supply.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use chrono::NaiveDate;
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{Value as Json, json};
@@ -40,6 +47,7 @@ use serde_json::{Value as Json, json};
 use crate::blueprint::{
     EndpointSpec, RequestCtx, ResourceSpec, Response, ResponseData, ResponseSpec,
 };
+use crate::calendar_day::CalendarDay;
 use crate::http_status::HttpStatus;
 
 /// One lap of the simulated circuit, seconds.
@@ -458,9 +466,9 @@ impl Session {
 }
 
 /// Tunables for a simulated Nexus Formula 1 deployment.
-// Strict, unlike persisted state: a blueprint is hand-authored, so a
-// mistyped key is a fault that would silently never fire rather than a
-// forward-compatible field to skip over.
+// Strict, unlike persisted state: a blueprint is hand-authored,
+// so a mistyped key is a fault that would silently never fire,
+// not a forward-compatible field to skip over.
 #[derive(Debug, Clone, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 #[schemars(rename = "Formula1Params")]
@@ -472,11 +480,11 @@ pub struct Params {
     /// Gaps, tyre ages, pit stops and retirements accumulate over a race,
     /// so a session opened at its first lap shows a widget almost nothing.
     ///
-    /// A scenario names the lap whose state it exists to show. Note that a
-    /// race board seats only its leading rows, so whatever sorts to the tail
-    /// — a retirement, an exclusion, a car a lap down — is visible on the
-    /// full-field board alone.
-    pub start_lap: u32,
+    /// A scenario names the lap whose state it exists to show.
+    /// Note that a race board seats only its leading rows,
+    /// so whatever sorts to the tail — a retirement, an exclusion,
+    /// a car a lap down — is visible on the full-field board alone.
+    pub start_lap: usize,
     /// `false` scripts the off-season: no next race, empty standings.
     pub season_underway: bool,
     /// Whether the weekend runs a sprint, which replaces two practices
@@ -502,6 +510,11 @@ pub struct Params {
     /// `logos/<NN>.png` and `flags/<country>.png`, beside `circuit.png`.
     /// Omitted, nothing is served and every image URL 404s onto the widget's placeholders.
     pub image_dir: Option<PathBuf>,
+    /// The day the calendar is drawn around; omitted, the real one.
+    ///
+    /// The weekend is the one following it,
+    /// and the debut seasons count back from its year.
+    pub today: Option<CalendarDay>,
 }
 
 /// When a resource comes up, and what it answers with once it has.
@@ -559,6 +572,7 @@ impl Default for Params {
             careers_status: HttpStatus::OK,
             careers_warmup_secs: 0,
             image_dir: None,
+            today: None,
         }
     }
 }
@@ -567,6 +581,11 @@ impl Params {
     #[must_use]
     pub fn resource(&self, name: &str, port: u16) -> ResourceSpec {
         let home = format!("127.0.0.1:{port}");
+
+        // Read once, so every resource this run serves
+        // agrees on the day even if the run spans midnight.
+        let today = CalendarDay::or_today(self.today);
+
         let mut endpoints = vec![
             self.endpoint(
                 &home,
@@ -574,14 +593,14 @@ impl Params {
                 self.always(),
                 standings(self.season_underway),
             ),
-            self.endpoint(&home, "driver-stats", self.careers(), driver_stats()),
+            self.endpoint(&home, "driver-stats", self.careers(), driver_stats(today)),
             self.endpoint(&home, "drivers", self.careers(), drivers_index()),
             self.endpoint(&home, "teams", self.always(), teams()),
             self.endpoint(
                 &home,
                 "next-race",
                 self.always(),
-                next_race(self.season_underway, self.sprint),
+                next_race(self.season_underway, self.sprint, today),
             ),
         ];
         for (index, driver) in GRID.iter().enumerate() {
@@ -589,7 +608,7 @@ impl Params {
                 &home,
                 &format!("driver/{}", driver.slug),
                 self.careers(),
-                driver_card(index),
+                driver_card(index, today),
             ));
         }
         for (resource, session) in [
@@ -836,22 +855,22 @@ fn standings(season_underway: bool) -> Json {
     Json::Array(rows)
 }
 
-/// One row of the statistics table, shared with the per-driver cards.
 /// The season a driver of `age` first raced in, taken from their age
 /// rather than invented beside it.
 ///
 /// Two independent formulas over the same index put nineteen-year-olds on
 /// the grid since 2001. A debut follows an eighteenth birthday, so it is
 /// the years raced that vary, never the arithmetic joining the pair.
-fn debut_year(index: usize, age: usize) -> i32 {
+fn debut_year(index: usize, age: usize, today: NaiveDate) -> i32 {
     use chrono::Datelike as _;
 
     let debut_age = 18 + index % 4;
     let raced = age.saturating_sub(debut_age);
-    chrono::Utc::now().year() - i32::try_from(raced).unwrap_or(0)
+    today.year() - i32::try_from(raced).unwrap_or(0)
 }
 
-fn driver_row(index: usize) -> Json {
+/// One row of the statistics table, shared with the per-driver cards.
+fn driver_row(index: usize, today: NaiveDate) -> Json {
     let driver = &GRID[index];
     let team = &TEAMS[driver.team];
     let age = 19 + (index * 7) % 27;
@@ -861,8 +880,8 @@ fn driver_row(index: usize) -> Json {
         ENGINEERS[index % ENGINEERS.len()].to_owned()
     };
     json!({
-        // Required on every row since BDK-335, so a card joins its table
-        // row on a key rather than on a car number.
+        // Mandatory on every row, so a card joins its table row
+        // on a key rather than on a car number.
         "jolpica_id": driver.slug,
         "name": driver.name,
         "number": driver.number,
@@ -880,20 +899,24 @@ fn driver_row(index: usize) -> Json {
         "weight_kg": 63 + (index * 5) % 16,
         "height_cm": 167 + (index * 3) % 20,
         "race_engineer": engineer,
-        "debut_year": debut_year(index, age),
+        "debut_year": debut_year(index, age, today),
     })
 }
 
-fn driver_stats() -> Json {
-    Json::Array((0..GRID.len()).map(driver_row).collect())
+fn driver_stats(today: NaiveDate) -> Json {
+    Json::Array(
+        (0..GRID.len())
+            .map(|index| driver_row(index, today))
+            .collect(),
+    )
 }
 
 /// The per-driver resource: who the driver is, without the season's
-/// figures. BDK-335 added the join key here rather than copying the
-/// whole statistics row in, so a card is only ever half the screen —
-/// the other half arrives by joining on `jolpica_id`.
-fn driver_card(index: usize) -> Json {
-    let mut card = driver_row(index);
+/// figures. The card carries a join key rather than a copy
+/// of its statistics row, so it is only ever half the screen
+/// — the other half arrives by joining on `jolpica_id`.
+fn driver_card(index: usize, today: NaiveDate) -> Json {
+    let mut card = driver_row(index, today);
     for derived in ["ranking", "points", "gp_wins", "world_titles"] {
         card.as_object_mut()
             .expect("BUG: a driver row is an object")
@@ -957,19 +980,18 @@ fn teams() -> Json {
 /// practices for a sprint and its own qualifying. Real calendars hold a
 /// handful a year, so scripting it is the only way to seat that schedule
 /// on demand.
-fn next_race(season_underway: bool, sprint: bool) -> Json {
+fn next_race(season_underway: bool, sprint: bool, today: NaiveDate) -> Json {
     if !season_underway {
         return json!({});
     }
-    let now = chrono::Utc::now();
     // The race lands on the upcoming Sunday, the weekend opening two days
     // before it. On a Sunday that is the next one rather than today, which
     // would otherwise announce a weekend already run.
-    let to_sunday = match 7 - chrono::Datelike::weekday(&now).number_from_monday() {
+    let to_sunday = match 7 - chrono::Datelike::weekday(&today).number_from_monday() {
         0 => 7,
         days => days,
     };
-    let sunday = now.date_naive() + chrono::Days::new(u64::from(to_sunday));
+    let sunday = today + chrono::Days::new(u64::from(to_sunday));
     let friday = sunday - chrono::Days::new(2);
     let saturday = sunday - chrono::Days::new(1);
     // UTC, as the deployment sends it. Zandvoort runs two hours ahead over
@@ -1347,8 +1369,9 @@ fn field_at(session: Session, t_s: f64, seed: u64) -> (Vec<Progress>, u32) {
     (field, lead_lap)
 }
 
-fn board(session: Session, ctx: &RequestCtx, start_lap: u32) -> Json {
-    let elapsed = f64::from(start_lap).mul_add(LAP_SECS, ctx.t_s);
+fn board(session: Session, ctx: &RequestCtx, start_lap: usize) -> Json {
+    #[expect(clippy::cast_precision_loss, reason = "a lap count is a few dozen")]
+    let elapsed = (start_lap as f64).mul_add(LAP_SECS, ctx.t_s);
     let (field, lead_lap) = field_at(session, elapsed, ctx.seed);
     // Where the clock judges the session a stopped driver's lap still
     // counts, so the board cannot hand the fastest lap to a driver
@@ -1565,6 +1588,13 @@ mod tests {
         }
     }
 
+    /// A Wednesday, so the weekend it opens onto is wholly ahead of it.
+    fn today() -> NaiveDate {
+        "2026-08-19"
+            .parse()
+            .expect("BUG: that is a day written YYYY-MM-DD")
+    }
+
     #[test]
     fn every_widget_resource_is_served() {
         let spec = Params::default().resource("f1", 20_100);
@@ -1697,7 +1727,7 @@ mod tests {
     }
 
     /// The lap `sim-blueprint.json5` opens practice at.
-    const PRACTICE_START_LAP: u32 = 53;
+    const PRACTICE_START_LAP: usize = 53;
 
     /// Practice ranks on the best lap, so the driver leaving the pits need
     /// not land in the rows a frame seats — and unseated is unshown.
@@ -1705,7 +1735,7 @@ mod tests {
     fn the_practice_scenario_seats_a_driver_on_an_out_lap() {
         // What the narrowest frame carrying the column seats.
         const SEATS: usize = 5;
-        let seats_one = |start_lap: u32| {
+        let seats_one = |start_lap: usize| {
             let reply = board(Session::Practice, &ctx(0.0), start_lap);
             reply["entries"].as_array().expect("entries")[..SEATS]
                 .iter()
@@ -1725,8 +1755,8 @@ mod tests {
     fn no_driver_debuts_before_they_were_old_enough_to_drive() {
         use chrono::Datelike as _;
 
-        let season = i64::from(chrono::Utc::now().year());
-        for entry in driver_stats().as_array().expect("rows") {
+        let season = i64::from(today().year());
+        for entry in driver_stats(today()).as_array().expect("rows") {
             let age = entry["age"].as_i64().expect("an age");
             let debut = entry["debut_year"].as_i64().expect("a debut");
             let age_at_debut = age - (season - debut);
@@ -1913,7 +1943,7 @@ mod tests {
 
     #[test]
     fn the_rookie_quirk_ships_the_literal_null_text() {
-        let stats = driver_stats();
+        let stats = driver_stats(today());
         let lindblad = stats
             .as_array()
             .expect("rows")
@@ -1944,7 +1974,7 @@ mod tests {
     #[test]
     fn the_off_season_empties_the_calendar_and_the_table() {
         assert_eq!(standings(false), serde_json::json!([]));
-        assert_eq!(next_race(false, false), serde_json::json!({}));
+        assert_eq!(next_race(false, false, today()), serde_json::json!({}));
     }
 
     /// Reply from the endpoint serving `resource`, as `host` reached it.
@@ -2089,39 +2119,63 @@ mod tests {
     /// the same screen as a working one.
     #[test]
     fn a_driver_card_leaves_the_seasons_figures_to_the_table() {
-        let card = driver_card(0);
+        let card = driver_card(0, today());
         assert_eq!(card["jolpica_id"], json!(GRID[0].slug));
         for derived in ["ranking", "points", "gp_wins", "world_titles"] {
             assert!(card[derived].is_null(), "the card carries no {derived}");
         }
-        let row = driver_row(0);
+        let row = driver_row(0, today());
         for shared in ["jolpica_id", "name", "number", "team"] {
             assert_eq!(card[shared], row[shared], "{shared} differs from the table");
         }
     }
 
+    /// Without this the calendar is whatever week the run happens on.
+    #[test]
+    fn a_named_day_decides_the_weekend_the_wall_clock_otherwise_would() {
+        let spec = Params {
+            today: Some(CalendarDay::from(today())),
+            ..Params::default()
+        }
+        .resource("f1", 20_100);
+
+        let race = reply(&spec, "next-race", None);
+        assert_eq!(race["data"]["date_start"], json!("2026-08-21"));
+        assert_eq!(race["data"]["date_end"], json!("2026-08-23"));
+    }
+
+    /// Walked across a whole week rather than run against one day:
+    /// the weekend is derived from the day it is asked about, so asking
+    /// on the day it was derived from is a question with a built-in answer.
     #[test]
     fn the_weekend_falls_on_the_days_it_is_named_for() {
         use chrono::Datelike as _;
 
-        let race = next_race(true, false);
-        let day = |field: &str| {
-            race[field]
-                .as_str()
-                .expect("a weekend date")
-                .parse::<chrono::NaiveDate>()
-                .expect("BUG: a weekend date is written YYYY-MM-DD")
-        };
-        assert_eq!(day("date_start").weekday(), chrono::Weekday::Fri);
-        assert_eq!(day("date_end").weekday(), chrono::Weekday::Sun);
-
-        // The race is the coming Sunday, so from Friday on the weekend
-        // is already under way — which a deployment reports the same way.
-        // Only a weekend whose race has been run is wrong.
-        assert!(
-            day("date_end") >= chrono::Utc::now().date_naive(),
-            "the weekend is upcoming or under way, never one already run"
-        );
+        for offset in 0..7 {
+            let asked = today() + chrono::Days::new(offset);
+            let race = next_race(true, false, asked);
+            let day = |field: &str| {
+                race[field]
+                    .as_str()
+                    .expect("a weekend date")
+                    .parse::<NaiveDate>()
+                    .expect("BUG: a weekend date is written YYYY-MM-DD")
+            };
+            assert_eq!(day("date_start").weekday(), chrono::Weekday::Fri);
+            assert_eq!(day("date_end").weekday(), chrono::Weekday::Sun);
+            assert_eq!(
+                day("date_end") - day("date_start"),
+                chrono::TimeDelta::days(2),
+                "a weekend opens on the Friday before its race",
+            );
+            // Whichever day it is asked on, the race is still to come —
+            // a Sunday asks about the next one rather than about itself.
+            assert!(
+                day("date_end") > asked,
+                "asked on {asked}, it named a weekend ending {}",
+                day("date_end"),
+            );
+        }
     }
 
     /// A handful of weekends a year run a sprint, so the schedule it seats
@@ -2137,7 +2191,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(
-            names(&next_race(true, true)),
+            names(&next_race(true, true, today())),
             [
                 "Practice 1",
                 "Sprint Qualifying",
@@ -2147,14 +2201,14 @@ mod tests {
             ]
         );
         assert!(
-            names(&next_race(true, false)).contains(&"Practice 3".to_owned()),
+            names(&next_race(true, false, today())).contains(&"Practice 3".to_owned()),
             "an ordinary weekend keeps all three practices"
         );
     }
 
     #[test]
     fn a_session_start_is_an_instant_under_the_weekends_date_key() {
-        let race = next_race(true, false);
+        let race = next_race(true, false, today());
         let session = &race["sessions"][0];
         assert!(
             session["starts_at"].is_null(),

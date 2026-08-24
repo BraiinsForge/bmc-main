@@ -160,6 +160,12 @@
       },
       "additionalProperties": false
     },
+    "CalendarDay": {
+      "description": "The day the profile treats as today, e.g. 2026-08-21",
+      "type": "string",
+      "format": "date",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
     "Celsius": {
       "description": "A temperature in degrees Celsius, above absolute zero",
       "type": "number",
@@ -210,15 +216,26 @@
           "minimum": 0
         },
         "start_lap": {
-          "description": "The lap the session is already on when the simulator starts.\n\nGaps, tyre ages, pit stops and retirements accumulate over a race,\nso a session opened at its first lap shows a widget almost nothing.\n\nA scenario names the lap whose state it exists to show. Note that a\nrace board seats only its leading rows, so whatever sorts to the tail\n— a retirement, an exclusion, a car a lap down — is visible on the\nfull-field board alone.",
+          "description": "The lap the session is already on when the simulator starts.\n\nGaps, tyre ages, pit stops and retirements accumulate over a race,\nso a session opened at its first lap shows a widget almost nothing.\n\nA scenario names the lap whose state it exists to show.\nNote that a race board seats only its leading rows,\nso whatever sorts to the tail — a retirement, an exclusion,\na car a lap down — is visible on the full-field board alone.",
           "type": "integer",
-          "format": "uint32",
+          "format": "uint",
           "default": 0,
           "minimum": 0
         },
         "status": {
           "description": "HTTP status every endpoint returns.",
           "$ref": "#/$defs/HttpStatus"
+        },
+        "today": {
+          "description": "The day the calendar is drawn around; omitted, the real one.\n\nThe weekend is the one following it,\nand the debut seasons count back from its year.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CalendarDay"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false
