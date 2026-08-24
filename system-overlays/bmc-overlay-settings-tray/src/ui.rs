@@ -102,7 +102,7 @@ const STEP_GAP_LARGE: f32 = 12.0;
 /// Fixed text-block widths on the Large tier so caption swaps never shift
 /// the centered-row math (bmc-render cannot ellipsize; strings are fitted).
 const LARGE_PAIR_W: f32 = 236.0;
-const LARGE_SINGLE_W: f32 = 160.0;
+const LARGE_SINGLE_W: f32 = 180.0;
 
 /// Stable geometry of the Large tier's top info section: panel top padding,
 /// left inset, and the right inset keeping the section clear of the close
@@ -800,7 +800,7 @@ fn control_groups(
             press_fill(p),
             press_tint(p),
             Some(controls.wifi_reconfig.progress),
-            "Reset WiFi",
+            "Reconfigure WiFi",
             "hold 3 seconds",
         ));
     }
@@ -850,7 +850,7 @@ fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<Tr
     let raw = if let Some(c) = controls.restart.and_then(|r| r.caption) {
         Some(format!("Restart: {c}"))
     } else if let Some(c) = controls.wifi_reconfig.caption {
-        Some(format!("Reset WiFi: {c}"))
+        Some(format!("Reconfigure WiFi: {c}"))
     } else if !tier.large_text
         && let Some(n) = controls.night_mode
         && let Some(until) = n.until
@@ -1844,7 +1844,7 @@ mod tests {
             "restart beats the wifi caption"
         );
         assert!(
-            !all_texts.iter().any(|t| t.starts_with("Reset WiFi:")),
+            !all_texts.iter().any(|t| t.starts_with("Reconfigure WiFi:")),
             "the losing caption must not render alongside the winner"
         );
 
@@ -1855,7 +1855,7 @@ mod tests {
         assert!(
             caption_texts(narrow_panel(), wifi_only)
                 .iter()
-                .any(|t| t == "Reset WiFi: Keep holding…"),
+                .any(|t| t == "Reconfigure WiFi: Keep holding…"),
             "reconfigure surfaces its own caption when it is the only hold"
         );
 
