@@ -1,9 +1,17 @@
 # Glyph Cache Performance Envelope
 
 `bmc-render` owns an evictable Gray8 glyph atlas instead of femtovg's unbounded RGBA one: 10 normal 512×512 pages plus
-one scratch page (2.75 MiB GPU cap), an app-owned metadata ceiling of 3 MiB, and a direct rasterization path for glyphs
+one scratch page (2.75 MiB GPU cap), a glyph-cache metadata ceiling of 3 MiB, and a direct rasterization path for glyphs
 above 92 px. Eviction is LRU under either cap; misses rasterize with swash and upload into the atlas during the draw.
 This document records the measured envelope on hardware and the one accepted degenerate case.
+
+The 3 MiB metadata figure covers only `GlyphCache::metadata_capacity_bytes`: the glyph cache's containers plus the
+etagere and swash estimates. The paragraph layout cache is bounded separately to 448 entries and 12 288 resident glyphs.
+At roughly 72 bytes per `PositionedGlyphInfo`, its glyph records consume about 864 KiB at the limit; line vectors,
+entries, and hash-table storage bring the resident layout cache allowance to approximately 1 MiB. The two resident text
+caches therefore allow approximately 4 MiB of app-owned metadata in total. A single layout larger than the resident
+glyph limit is kept only as the current transient result, so its input-dependent allocation is outside that resident
+estimate.
 
 The `glyph-bench` harness is a separate, low-priority follow-up that will land after the cache itself. Until then, this
 document records its results, but the `glyph-bench` feature is not available in-tree. The measurements use a quiesced
