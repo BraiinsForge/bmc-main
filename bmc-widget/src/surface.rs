@@ -37,5 +37,6 @@ pub use common::{
 };
 pub use deck_widget::{
     DeckWidgetEvent, DeckWidgetSurfaceClient, DeckWidgetSurfaceState, InitialState,
+    PendingDeckWidgetSurfaceAdvance, PendingDeckWidgetSurfaceClient,
 };
 pub use xdg::{XdgSurfaceClient, XdgSurfaceState};

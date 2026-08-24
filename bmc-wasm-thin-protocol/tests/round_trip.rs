@@ -18,15 +18,15 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::mem::size_of;
 use std::os::fd::{AsFd, AsRawFd};
 use std::os::unix::net::UnixStream;
 use std::path::Path;
 
 use bmc_wasm_thin_protocol::{
-    AckDecoder, AckMsg, HelloMsg, MAX_FRAME_LEN, PROTOCOL_VERSION, recv_hello_with_fd,
-    send_hello_with_fd, write_ack,
+    AckDecoder, AckMsg, HelloMsg, HelloReceiveStatus, HelloReceiver, MAX_FRAME_LEN,
+    PROTOCOL_VERSION, recv_hello_with_fd, send_hello_with_fd, write_ack,
 };
 use serial_test::serial;
 
@@ -112,6 +112,22 @@ fn raw_sendmsg_with_fd(sender: &UnixStream, payload: &[u8], fd: std::os::fd::Bor
     }
 }
 
+#[cfg(target_os = "linux")]
+fn fd_target(fd: i32) -> std::path::PathBuf {
+    std::fs::read_link(format!("/proc/self/fd/{fd}"))
+        .expect("BUG: linux test fixture expects fd links in /proc/self/fd")
+}
+
+#[cfg(target_os = "linux")]
+fn open_fd_count_for_target(target: &Path) -> usize {
+    std::fs::read_dir("/proc/self/fd")
+        .expect("BUG: linux test fixture expects /proc/self/fd")
+        .filter_map(Result::ok)
+        .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+        .filter(|link| link == target)
+        .count()
+}
+
 #[test]
 #[serial]
 fn hello_with_fd_round_trip() {
@@ -146,6 +162,106 @@ fn hello_with_fd_round_trip() {
     assert!(
         recovered_fd.as_raw_fd() >= 0,
         "fd should be a valid kernel handle"
+    );
+}
+
+#[test]
+fn nonblocking_receiver_reports_pending_without_input() {
+    let (_sender, receiver) = pair();
+    let mut decoder = HelloReceiver::new();
+
+    assert!(matches!(
+        decoder
+            .try_recv(&receiver)
+            .expect("BUG: an empty connected socket must not fail"),
+        HelloReceiveStatus::Pending
+    ));
+}
+
+#[test]
+fn nonblocking_receiver_retains_fd_across_fragmented_header_and_body() {
+    let (mut sender, receiver) = pair();
+    let (wayland, _wayland_peer) = pair();
+    let expected = HelloMsg::Load {
+        widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
+        wasm_path: "/path/to/widget.wasm".into(),
+        asset_root: Some("/path/to/assets".into()),
+    };
+    let frame = build_frame_bytes(PROTOCOL_VERSION, &expected);
+    let mut decoder = HelloReceiver::new();
+
+    raw_sendmsg_with_fd(&sender, &frame[..3], wayland.as_fd());
+    assert!(matches!(
+        decoder
+            .try_recv(&receiver)
+            .expect("BUG: a partial header with an fd must remain pending"),
+        HelloReceiveStatus::Pending
+    ));
+
+    sender
+        .write_all(&frame[3..8])
+        .expect("BUG: fragmented header and body write must succeed");
+    assert!(matches!(
+        decoder
+            .try_recv(&receiver)
+            .expect("BUG: a partial body must remain pending"),
+        HelloReceiveStatus::Pending
+    ));
+
+    sender
+        .write_all(&frame[8..])
+        .expect("BUG: final body write must succeed");
+    match decoder
+        .try_recv(&receiver)
+        .expect("BUG: the complete fragmented frame must decode")
+    {
+        HelloReceiveStatus::Complete(actual, fd) => {
+            assert_eq!(actual, expected);
+            assert!(fd.as_raw_fd() >= 0, "the retained fd must remain valid");
+        }
+        HelloReceiveStatus::Pending => panic!("complete fragmented frame remained pending"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn eof_mid_frame_closes_the_retained_fd() {
+    let (sender, receiver) = pair();
+    let (wayland, _wayland_peer) = pair();
+    let target = fd_target(wayland.as_raw_fd());
+    let baseline = open_fd_count_for_target(&target);
+    let frame = build_frame_bytes(
+        PROTOCOL_VERSION,
+        &HelloMsg::Load {
+            widget_key: "550e8400-e29b-41d4-a716-446655440000".into(),
+            wasm_path: "/path/to/widget.wasm".into(),
+            asset_root: None,
+        },
+    );
+    let mut decoder = HelloReceiver::new();
+
+    raw_sendmsg_with_fd(&sender, &frame[..FRAME_HEADER_LEN], wayland.as_fd());
+    assert!(matches!(
+        decoder
+            .try_recv(&receiver)
+            .expect("BUG: a header-only frame must remain pending"),
+        HelloReceiveStatus::Pending
+    ));
+    assert_eq!(
+        open_fd_count_for_target(&target),
+        baseline + 1,
+        "the pending decoder must own the received fd"
+    );
+
+    drop(sender);
+    let error = decoder
+        .try_recv(&receiver)
+        .expect_err("EOF before the body must reject the frame");
+    assert_eq!(error.kind(), std::io::ErrorKind::UnexpectedEof);
+    assert_eq!(
+        open_fd_count_for_target(&target),
+        baseline,
+        "terminal EOF must release the decoder's received fd"
     );
 }
 
@@ -222,20 +338,6 @@ fn hello_without_scm_rights_is_protocol_error() {
 #[test]
 #[serial]
 fn too_many_fds_are_rejected_without_leaking_received_fd() {
-    fn fd_target(fd: i32) -> std::path::PathBuf {
-        std::fs::read_link(format!("/proc/self/fd/{fd}"))
-            .expect("BUG: linux test fixture expects fd links in /proc/self/fd")
-    }
-
-    fn open_fd_count_for_target(target: &Path) -> usize {
-        std::fs::read_dir("/proc/self/fd")
-            .expect("BUG: linux test fixture expects /proc/self/fd")
-            .filter_map(Result::ok)
-            .filter_map(|entry| std::fs::read_link(entry.path()).ok())
-            .filter(|link| link == target)
-            .count()
-    }
-
     let (sender, receiver) = pair();
     let (fd_a, _fd_b) = pair();
     let (extra_a, _extra_b) = pair();

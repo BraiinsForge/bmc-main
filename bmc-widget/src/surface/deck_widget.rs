@@ -224,6 +224,33 @@ fn sync_touch_capability<T: ReleasableTouch>(
 }
 
 impl DeckWidgetSurfaceState {
+    fn new() -> Self {
+        Self {
+            running: true,
+            width: 0,
+            height: 0,
+            needs_render: false,
+            frame_count: 0,
+            compositor: None,
+            widget_manager: None,
+            linux_dmabuf: None,
+            seat: None,
+            touch: None,
+            surface: None,
+            widget_surface: None,
+            configure_done: false,
+            pending_size: None,
+            pending_display: None,
+            pending_params: serde_json::Map::new(),
+            pending_credentials: serde_json::Map::new(),
+            pending_secrets: serde_json::Map::new(),
+            pending_initial_settings: Vec::new(),
+            pending_events: Vec::new(),
+            buffer_slots: BufferSlotMap::new(),
+            released_buffers: ReleasedBufferSet::new(),
+        }
+    }
+
     /// Drain all pending protocol events.
     pub fn drain_events(&mut self) -> std::vec::Drain<'_, DeckWidgetEvent> {
         self.pending_events.drain(..)
@@ -277,6 +304,121 @@ pub struct DeckWidgetSurfaceClient {
     cached_buffers: Vec<Option<wl_buffer::WlBuffer>>,
 }
 
+#[expect(missing_debug_implementations)]
+pub struct PendingDeckWidgetSurfaceClient {
+    conn: Connection,
+    queue: EventQueue<DeckWidgetSurfaceState>,
+    state: DeckWidgetSurfaceState,
+    widget_key: WidgetInstanceKey,
+    surface_requested: bool,
+    deadline: Instant,
+}
+
+#[expect(missing_debug_implementations)]
+pub enum PendingDeckWidgetSurfaceAdvance {
+    Pending(PendingDeckWidgetSurfaceClient),
+    Ready(DeckWidgetSurfaceClient, InitialState),
+}
+
+impl PendingDeckWidgetSurfaceClient {
+    pub fn start_with_fd_and_key(
+        wayland_fd: std::os::fd::OwnedFd,
+        widget_key: WidgetInstanceKey,
+    ) -> Result<Self> {
+        use std::os::unix::net::UnixStream;
+
+        let stream = UnixStream::from(wayland_fd);
+        let backend = wayland_backend::client::Backend::connect(stream)
+            .map_err(|e| anyhow::anyhow!("wayland_backend::Backend::connect: {e}"))?;
+        let conn = Connection::from_backend(backend);
+        let queue = conn.new_event_queue();
+        conn.display().get_registry(&queue.handle(), ());
+
+        Ok(Self {
+            conn,
+            queue,
+            state: DeckWidgetSurfaceState::new(),
+            widget_key,
+            surface_requested: false,
+            deadline: Instant::now() + CONFIGURE_TIMEOUT,
+        })
+    }
+
+    #[must_use]
+    pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
+        use std::os::fd::AsFd as _;
+
+        self.conn.as_fd()
+    }
+
+    #[must_use]
+    pub fn remaining(&self, now: Instant) -> Duration {
+        self.deadline.saturating_duration_since(now)
+    }
+
+    pub fn advance(mut self) -> Result<PendingDeckWidgetSurfaceAdvance> {
+        poll_dispatch(&self.conn, &mut self.queue, &mut self.state, 0)
+            .context("Wayland dispatch while awaiting configure_done")?;
+
+        if !self.surface_requested
+            && let (Some(compositor), Some(widget_manager), Some(_)) = (
+                self.state.compositor.as_ref(),
+                self.state.widget_manager.as_ref(),
+                self.state.linux_dmabuf.as_ref(),
+            )
+        {
+            let qh = self.queue.handle();
+            let surface = compositor.create_surface(&qh, ());
+            let widget_surface =
+                widget_manager.get_widget_surface(self.widget_key.to_string(), &surface, &qh, ());
+            surface.commit();
+            self.conn
+                .flush()
+                .context("Wayland flush after keyed surface request")?;
+            self.state.surface = Some(surface);
+            self.state.widget_surface = Some(widget_surface);
+            self.surface_requested = true;
+        }
+
+        if self.state.configure_done {
+            let (viewport_shape, width, height, token) = self
+                .state
+                .pending_size
+                .take()
+                .context("configure_done without prior configure event")?;
+            self.state.width = width;
+            self.state.height = height;
+            let initial = take_initial_state(&mut self.state, viewport_shape, width, height, token);
+            tracing::info!(
+                "Deck widget surface ready (fd): {}x{} viewport_shape={:?} params={} settings={}",
+                width,
+                height,
+                viewport_shape,
+                initial.params.len(),
+                initial.settings.len(),
+            );
+            return Ok(PendingDeckWidgetSurfaceAdvance::Ready(
+                DeckWidgetSurfaceClient {
+                    conn: self.conn,
+                    queue: self.queue,
+                    state: self.state,
+                    cached_buffers: Vec::new(),
+                },
+                initial,
+            ));
+        }
+
+        if Instant::now() >= self.deadline {
+            anyhow::bail!(
+                "timed out after {:?} waiting for configure_done",
+                CONFIGURE_TIMEOUT
+            );
+        }
+
+        Ok(PendingDeckWidgetSurfaceAdvance::Pending(self))
+    }
+}
+
 impl fmt::Debug for DeckWidgetSurfaceClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let cached = self.cached_buffers.iter().filter(|b| b.is_some()).count();
@@ -291,116 +433,6 @@ impl fmt::Debug for DeckWidgetSurfaceClient {
 }
 
 impl DeckWidgetSurfaceClient {
-    pub fn connect_with_fd_and_key(
-        wayland_fd: std::os::fd::OwnedFd,
-        widget_key: WidgetInstanceKey,
-    ) -> Result<(Self, InitialState)> {
-        use std::os::unix::net::UnixStream;
-        let stream = UnixStream::from(wayland_fd);
-        let backend = wayland_backend::client::Backend::connect(stream)
-            .map_err(|e| anyhow::anyhow!("wayland_backend::Backend::connect: {e}"))?;
-        let conn = Connection::from_backend(backend);
-
-        let mut queue = conn.new_event_queue();
-        let qh = queue.handle();
-
-        let display = conn.display();
-        display.get_registry(&qh, ());
-
-        let mut state = DeckWidgetSurfaceState {
-            running: true,
-            width: 0,
-            height: 0,
-            needs_render: false,
-            frame_count: 0,
-            compositor: None,
-            widget_manager: None,
-            linux_dmabuf: None,
-            seat: None,
-            touch: None,
-            surface: None,
-            widget_surface: None,
-            configure_done: false,
-            pending_size: None,
-            pending_display: None,
-            pending_params: serde_json::Map::new(),
-            pending_credentials: serde_json::Map::new(),
-            pending_secrets: serde_json::Map::new(),
-            pending_initial_settings: Vec::new(),
-            pending_events: Vec::new(),
-            buffer_slots: BufferSlotMap::new(),
-            released_buffers: ReleasedBufferSet::new(),
-        };
-
-        queue
-            .roundtrip(&mut state)
-            .context("Failed to roundtrip for globals")?;
-
-        let compositor = state
-            .compositor
-            .as_ref()
-            .context("wl_compositor not available")?;
-        anyhow::ensure!(
-            state.linux_dmabuf.is_some(),
-            "zwp_linux_dmabuf_v1 not available"
-        );
-
-        let surface = compositor.create_surface(&qh, ());
-        let widget_surface = state
-            .widget_manager
-            .as_ref()
-            .context("deck_widget_manager_v2 not available")?
-            .get_widget_surface(widget_key.to_string(), &surface, &qh, ());
-
-        surface.commit();
-
-        state.surface = Some(surface);
-        state.widget_surface = Some(widget_surface);
-
-        let deadline = Instant::now() + CONFIGURE_TIMEOUT;
-        while !state.configure_done {
-            let remaining = deadline.saturating_duration_since(Instant::now());
-            let remaining_ms = i32::try_from(remaining.as_millis()).unwrap_or(i32::MAX);
-            match poll_dispatch(&conn, &mut queue, &mut state, remaining_ms)
-                .context("Wayland dispatch while awaiting configure_done")?
-            {
-                PollOutcome::Events => {}
-                PollOutcome::Timeout => anyhow::bail!(
-                    "timed out after {:?} waiting for configure_done",
-                    CONFIGURE_TIMEOUT
-                ),
-            }
-        }
-
-        let (viewport_shape, width, height, token) = state
-            .pending_size
-            .take()
-            .context("configure_done without prior configure event")?;
-        state.width = width;
-        state.height = height;
-
-        let initial = take_initial_state(&mut state, viewport_shape, width, height, token);
-
-        tracing::info!(
-            "Deck widget surface ready (fd): {}x{} viewport_shape={:?} params={} settings={}",
-            width,
-            height,
-            viewport_shape,
-            initial.params.len(),
-            initial.settings.len(),
-        );
-
-        Ok((
-            Self {
-                conn,
-                queue,
-                state,
-                cached_buffers: Vec::new(),
-            },
-            initial,
-        ))
-    }
-
     /// Returns the file descriptor that the Wayland event queue polls on.
     #[must_use]
     pub fn fd(&self) -> std::os::fd::BorrowedFd<'_> {
@@ -425,30 +457,7 @@ impl DeckWidgetSurfaceClient {
         let display = conn.display();
         display.get_registry(&qh, ());
 
-        let mut state = DeckWidgetSurfaceState {
-            running: true,
-            width: 0,
-            height: 0,
-            needs_render: false,
-            frame_count: 0,
-            compositor: None,
-            widget_manager: None,
-            linux_dmabuf: None,
-            seat: None,
-            touch: None,
-            surface: None,
-            widget_surface: None,
-            configure_done: false,
-            pending_size: None,
-            pending_display: None,
-            pending_params: serde_json::Map::new(),
-            pending_credentials: serde_json::Map::new(),
-            pending_secrets: serde_json::Map::new(),
-            pending_initial_settings: Vec::new(),
-            pending_events: Vec::new(),
-            buffer_slots: BufferSlotMap::new(),
-            released_buffers: ReleasedBufferSet::new(),
-        };
+        let mut state = DeckWidgetSurfaceState::new();
 
         queue
             .roundtrip(&mut state)

@@ -22,7 +22,7 @@
 
 #![deny(unsafe_op_in_unsafe_fn)]
 
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 
@@ -186,106 +186,210 @@ pub fn send_hello_with_fd(
     sendmsg_with_fd(sock, &frame, wayland_fd)
 }
 
-pub fn recv_hello_with_fd(sock: &UnixStream) -> io::Result<(HelloMsg, OwnedFd)> {
-    use nix::cmsg_space;
-    use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
-    use std::io::IoSliceMut;
+#[derive(Debug)]
+pub enum HelloReceiveStatus {
+    Pending,
+    Complete(HelloMsg, OwnedFd),
+}
 
-    let mut header = [0_u8; FRAME_HEADER_LEN];
-    let mut iov = [IoSliceMut::new(&mut header)];
-    let mut cmsg_buf = cmsg_space!([std::os::fd::RawFd; 1]);
+#[derive(Debug, Default)]
+pub struct HelloReceiver {
+    frame: Vec<u8>,
+    expected: Option<usize>,
+    wayland_fd: Option<OwnedFd>,
+}
 
-    let msg = recvmsg::<()>(
-        sock.as_raw_fd(),
-        &mut iov,
-        Some(&mut cmsg_buf),
-        MsgFlags::MSG_CMSG_CLOEXEC,
-    )
-    .map_err(io::Error::from)?;
+impl HelloReceiver {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    let mut received: Vec<OwnedFd> = Vec::new();
-    for cmsg in msg.cmsgs().map_err(io::Error::from)? {
-        #[expect(
-            clippy::wildcard_enum_match_arm,
-            reason = "any non-ScmRights cmsg on this socket is a protocol violation"
-        )]
-        match cmsg {
-            ControlMessageOwned::ScmRights(fds) => {
-                for raw in fds {
-                    // SAFETY: `raw` is a fresh kernel-owned fd delivered via SCM_RIGHTS;
-                    // nix has already validated the cmsg shape. Wrapping immediately
-                    // means every early-return path below closes it via OwnedFd::drop.
-                    let owned = unsafe { OwnedFd::from_raw_fd(raw) };
-                    received.push(owned);
+    pub fn try_recv(&mut self, sock: &UnixStream) -> io::Result<HelloReceiveStatus> {
+        self.recv_with_flags(sock, nix::sys::socket::MsgFlags::MSG_DONTWAIT)
+    }
+
+    fn recv_blocking(&mut self, sock: &UnixStream) -> io::Result<HelloReceiveStatus> {
+        self.recv_with_flags(sock, nix::sys::socket::MsgFlags::empty())
+    }
+
+    fn recv_with_flags(
+        &mut self,
+        sock: &UnixStream,
+        flags: nix::sys::socket::MsgFlags,
+    ) -> io::Result<HelloReceiveStatus> {
+        let result = self.recv_inner(sock, flags);
+        if result.is_err() {
+            self.reset();
+        }
+        result
+    }
+
+    fn recv_inner(
+        &mut self,
+        sock: &UnixStream,
+        flags: nix::sys::socket::MsgFlags,
+    ) -> io::Result<HelloReceiveStatus> {
+        loop {
+            if let Some(complete) = self.decode_complete()? {
+                return Ok(complete);
+            }
+
+            let target = self.expected.unwrap_or(FRAME_HEADER_LEN);
+            let remaining = target
+                .checked_sub(self.frame.len())
+                .expect("BUG: complete frames are decoded before receiving more bytes");
+            if remaining == 0 {
+                self.decode_header()?;
+                continue;
+            }
+
+            match self.recv_chunk(sock, flags, remaining) {
+                Ok(()) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    return Ok(HelloReceiveStatus::Pending);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    fn recv_chunk(
+        &mut self,
+        sock: &UnixStream,
+        flags: nix::sys::socket::MsgFlags,
+        remaining: usize,
+    ) -> io::Result<()> {
+        use nix::cmsg_space;
+        use nix::sys::socket::{ControlMessageOwned, MsgFlags, recvmsg};
+        use std::io::IoSliceMut;
+
+        let mut bytes = vec![0_u8; remaining];
+        let (received_bytes, received_flags, mut received) = {
+            let mut iov = [IoSliceMut::new(&mut bytes)];
+            let mut cmsg_buf = cmsg_space!([std::os::fd::RawFd; 1]);
+            let msg = recvmsg::<()>(
+                sock.as_raw_fd(),
+                &mut iov,
+                Some(&mut cmsg_buf),
+                flags | MsgFlags::MSG_CMSG_CLOEXEC,
+            )
+            .map_err(io::Error::from)?;
+
+            let mut received: Vec<OwnedFd> = Vec::new();
+            for cmsg in msg.cmsgs().map_err(io::Error::from)? {
+                #[expect(
+                    clippy::wildcard_enum_match_arm,
+                    reason = "any non-ScmRights cmsg on this socket is a protocol violation"
+                )]
+                match cmsg {
+                    ControlMessageOwned::ScmRights(fds) => {
+                        for raw in fds {
+                            // SAFETY: `raw` is a fresh kernel-owned fd delivered via SCM_RIGHTS;
+                            // nix has already validated the cmsg shape. Wrapping immediately
+                            // means subsequent early-return paths close it via OwnedFd::drop.
+                            let owned = unsafe { OwnedFd::from_raw_fd(raw) };
+                            received.push(owned);
+                        }
+                    }
+                    _ => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "unexpected control message",
+                        ));
+                    }
                 }
             }
+            (msg.bytes, msg.flags, received)
+        };
+
+        if received_flags.contains(MsgFlags::MSG_CTRUNC) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "SCM_RIGHTS control message truncated",
+            ));
+        }
+
+        if received_bytes == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "peer closed"));
+        }
+
+        match (self.wayland_fd.is_some(), received.len()) {
+            (false, 1) => {
+                self.wayland_fd = received.pop();
+            }
+            (false, 0) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "missing or malformed SCM_RIGHTS",
+                ));
+            }
+            (true, 0) => {}
             _ => {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    "unexpected control message",
+                    "more than one fd in SCM_RIGHTS",
                 ));
             }
         }
+
+        self.frame.extend_from_slice(&bytes[..received_bytes]);
+        Ok(())
     }
 
-    if msg.flags.contains(MsgFlags::MSG_CTRUNC) {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "SCM_RIGHTS control message truncated",
-        ));
-    }
-
-    if msg.bytes == 0 {
-        return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "peer closed"));
-    }
-    if msg.bytes < FRAME_HEADER_LEN {
-        return Err(io::Error::new(
-            io::ErrorKind::UnexpectedEof,
-            "short read: frame header truncated",
-        ));
-    }
-
-    let fd = match received.len() {
-        1 => received
-            .into_iter()
-            .next()
-            .expect("BUG: len == 1 implies one element"),
-        0 => {
+    fn decode_header(&mut self) -> io::Result<()> {
+        let version = u16::from_le_bytes([self.frame[0], self.frame[1]]);
+        if version != PROTOCOL_VERSION {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "missing or malformed SCM_RIGHTS",
+                format!("protocol version mismatch: expected {PROTOCOL_VERSION}, got {version}"),
             ));
         }
-        _ => {
+        let frame_len =
+            u32::from_le_bytes([self.frame[2], self.frame[3], self.frame[4], self.frame[5]]);
+        if frame_len > MAX_FRAME_LEN {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,
-                "more than one fd in SCM_RIGHTS",
+                "frame_len exceeds MAX_FRAME_LEN",
             ));
         }
-    };
-
-    let version = u16::from_le_bytes([header[0], header[1]]);
-    if version != PROTOCOL_VERSION {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("protocol version mismatch: expected {PROTOCOL_VERSION}, got {version}"),
-        ));
-    }
-    let frame_len = u32::from_le_bytes([header[2], header[3], header[4], header[5]]);
-    if frame_len > MAX_FRAME_LEN {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidData,
-            "frame_len exceeds MAX_FRAME_LEN",
-        ));
+        self.expected = Some(FRAME_HEADER_LEN + frame_len as usize);
+        Ok(())
     }
 
-    let mut body = vec![0_u8; frame_len as usize];
-    let mut sock_r: &UnixStream = sock;
-    sock_r.read_exact(&mut body)?;
-    let (msg, _consumed) = bincode::decode_from_slice::<HelloMsg, _>(&body, bincode_config())
-        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    fn decode_complete(&mut self) -> io::Result<Option<HelloReceiveStatus>> {
+        let Some(expected) = self.expected else {
+            return Ok(None);
+        };
+        if self.frame.len() < expected {
+            return Ok(None);
+        }
 
-    Ok((msg, fd))
+        let body = &self.frame[FRAME_HEADER_LEN..expected];
+        let (msg, _consumed) = bincode::decode_from_slice::<HelloMsg, _>(body, bincode_config())
+            .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+        let fd = self
+            .wayland_fd
+            .take()
+            .expect("BUG: a complete Hello frame retains its SCM_RIGHTS fd");
+        self.frame.clear();
+        self.expected = None;
+        Ok(Some(HelloReceiveStatus::Complete(msg, fd)))
+    }
+
+    fn reset(&mut self) {
+        self.frame.clear();
+        self.expected = None;
+        self.wayland_fd = None;
+    }
+}
+
+pub fn recv_hello_with_fd(sock: &UnixStream) -> io::Result<(HelloMsg, OwnedFd)> {
+    let mut receiver = HelloReceiver::new();
+    match receiver.recv_blocking(sock)? {
+        HelloReceiveStatus::Complete(msg, fd) => Ok((msg, fd)),
+        HelloReceiveStatus::Pending => Err(io::Error::from(io::ErrorKind::WouldBlock)),
+    }
 }
 
 pub fn write_ack(sock: &UnixStream, msg: &AckMsg) -> io::Result<()> {

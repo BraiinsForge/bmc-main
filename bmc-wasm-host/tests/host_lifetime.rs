@@ -27,30 +27,30 @@ fn bootstrap_idle_waits_indefinitely() {
 }
 
 #[test]
-fn first_accept_flips_ever_had_slot() {
+fn first_loaded_admission_marks_bootstrap_handled() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(1, 0, 1);
+    lt.note_admission_outcomes(1, 0, 1);
     assert!(lt.should_continue(1, false));
 }
 
 #[test]
 fn exits_immediately_after_last_disconnect() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(1, 0, 1);
+    lt.note_admission_outcomes(1, 0, 1);
     assert!(!lt.should_continue(0, false));
 }
 
 #[test]
 fn lone_failed_load_exits_immediately() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(0, 1, 0);
+    lt.note_admission_outcomes(0, 1, 0);
     assert!(!lt.should_continue(0, false));
 }
 
 #[test]
-fn rejection_among_healthy_siblings_keeps_host_alive() {
+fn rejection_among_active_admissions_keeps_host_alive() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(2, 1, 2);
+    lt.note_admission_outcomes(2, 1, 2);
     assert!(lt.should_continue(2, false));
     assert!(!lt.should_continue(0, false));
 }
@@ -58,22 +58,32 @@ fn rejection_among_healthy_siblings_keeps_host_alive() {
 #[test]
 fn rejection_after_prior_slots_does_not_force_exit_while_slots_live() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(1, 0, 1);
-    lt.note_accept_burst(0, 1, 1);
+    lt.note_admission_outcomes(1, 0, 1);
+    lt.note_admission_outcomes(0, 1, 1);
     assert!(lt.should_continue(1, false));
 }
 
 #[test]
 fn empty_burst_leaves_bootstrap_waiting() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(0, 0, 0);
+    lt.note_admission_outcomes(0, 0, 0);
     assert!(lt.should_continue(0, false));
 }
 
 #[test]
 fn active_overlay_keeps_host_alive_without_slots() {
     let mut lt = HostLifetime::new();
-    lt.note_accept_burst(1, 0, 1);
+    lt.note_admission_outcomes(1, 0, 1);
     assert!(lt.should_continue(0, true));
+    assert!(!lt.should_continue(0, false));
+}
+
+#[test]
+fn rejection_does_not_isolate_a_pending_sibling() {
+    let mut lt = HostLifetime::new();
+    lt.note_admission_outcomes(0, 1, 1);
+    assert!(lt.should_continue(1, false));
+
+    lt.note_admission_outcomes(0, 1, 0);
     assert!(!lt.should_continue(0, false));
 }

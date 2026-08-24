@@ -34,7 +34,9 @@ use bmc_wasm_runtime::{
     RenderStatus, RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
-use bmc_widget::surface::{DeckWidgetSurfaceClient, ReleasedBuffer, WidgetEvent, WidgetSurface};
+use bmc_widget::surface::{
+    DeckWidgetSurfaceClient, InitialState, ReleasedBuffer, WidgetEvent, WidgetSurface,
+};
 use bmc_widget_protocol::{
     ActionPayload, LedEffect as ProtoEffect, LedScope as ProtoScope, NextAlarm as WireNextAlarm,
     RgbColor, SettingUpdate,
@@ -266,7 +268,6 @@ pub struct WidgetSlot<S = DeckWidgetSurfaceClient> {
     pub credential_secrets: bmc_widget_protocol::CredentialSecrets,
     pub peer_pid: Option<libc::pid_t>,
     pub wasm_basename: String,
-    pub widget_key: Option<bmc_widget_protocol::WidgetInstanceKey>,
     /// Asset-cache bucket token, published to the host's GC-root file so the
     /// cross-host cache GC keeps this bucket alive. `None` if no cache identity.
     pub cache_token: Option<String>,
@@ -295,7 +296,6 @@ struct SlotIdentity {
     credential_secrets: bmc_widget_protocol::CredentialSecrets,
     peer_pid: Option<libc::pid_t>,
     wasm_basename: String,
-    widget_key: Option<bmc_widget_protocol::WidgetInstanceKey>,
     cache_token: Option<String>,
 }
 
@@ -328,26 +328,18 @@ fn release_runtime_and_module(runtime: WasmWidgetRuntime, module_lease: &mut Opt
 impl WidgetSlot {
     #[expect(
         clippy::too_many_arguments,
-        reason = "the handshake transfers independent resources with distinct ownership"
+        reason = "the configured admission transfers independent resources with distinct ownership"
     )]
-    pub(crate) fn from_handshake(
+    pub(crate) fn from_configured(
         wasm_path: &Path,
         asset_root: Option<&Path>,
-        widget_key: bmc_widget_protocol::WidgetInstanceKey,
         shared: &SharedHost,
-        wayland_fd: std::os::fd::OwnedFd,
+        surface: DeckWidgetSurfaceClient,
+        initial: InitialState,
         control_socket: UnixStream,
         peer_pid: Option<libc::pid_t>,
         factory: Rc<dyn RenderTargetFactory>,
     ) -> Result<Self> {
-        tracing::info!(
-            ?peer_pid,
-            wasm = %wasm_path.display(),
-            "connecting widget Wayland fd"
-        );
-        let (surface, initial) =
-            DeckWidgetSurfaceClient::connect_with_fd_and_key(wayland_fd, widget_key)
-                .context("DeckWidgetSurfaceClient::connect_with_fd_and_key")?;
         tracing::info!(
             ?peer_pid,
             wasm = %wasm_path.display(),
@@ -432,7 +424,6 @@ impl WidgetSlot {
                 .file_name()
                 .map(|s| s.to_string_lossy().into_owned())
                 .unwrap_or_default(),
-            widget_key: Some(widget_key),
             cache_token: Some(token),
         };
         Ok(WidgetSlot::from_parts_with_identity(
@@ -497,7 +488,6 @@ impl<S: SlotSurface> WidgetSlot<S> {
             credential_secrets: identity.credential_secrets,
             peer_pid: identity.peer_pid,
             wasm_basename: identity.wasm_basename,
-            widget_key: identity.widget_key,
             cache_token: identity.cache_token,
             control_socket,
             next_frame_due_at: None,

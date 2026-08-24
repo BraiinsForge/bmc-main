@@ -33,7 +33,9 @@ use bmc_wasm_host::main_loop::{
 enum Event {
     Control(&'static str),
     Disconnect(&'static str),
+    PendingControl,
     Accept,
+    PendingAdmission,
     Request(&'static str),
     Commit(&'static str),
 }
@@ -126,7 +128,7 @@ impl TestPostPoll {
 impl ControlFirstPostPoll for TestPostPoll {
     type Error = FatalError;
 
-    fn process_controls(&mut self) -> Result<(), Self::Error> {
+    fn process_established_controls(&mut self) -> Result<(), Self::Error> {
         let disconnected =
             process_control_sockets(self.slots.iter_mut().map(|(id, slot)| (*id, slot)));
         self.slots.retain(|(id, _)| !disconnected.contains(id));
@@ -134,8 +136,18 @@ impl ControlFirstPostPoll for TestPostPoll {
         Ok(())
     }
 
+    fn process_pending_controls(&mut self) -> Result<(), Self::Error> {
+        self.events.borrow_mut().push(Event::PendingControl);
+        Ok(())
+    }
+
     fn process_listener(&mut self) -> Result<(), Self::Error> {
         self.events.borrow_mut().push(Event::Accept);
+        Ok(())
+    }
+
+    fn process_pending_admissions(&mut self) -> Result<(), Self::Error> {
+        self.events.borrow_mut().push(Event::PendingAdmission);
         Ok(())
     }
 
@@ -169,7 +181,9 @@ fn predecessor_eof_precedes_successor_accept_and_wayland_work() {
             Event::Control("predecessor"),
             Event::Disconnect("predecessor"),
             Event::Control("sibling"),
+            Event::PendingControl,
             Event::Accept,
+            Event::PendingAdmission,
             Event::Request("sibling"),
             Event::Commit("sibling"),
         ],
@@ -212,7 +226,9 @@ fn eof_closes_only_its_exact_wayland_connection_before_request_and_commit() {
             Event::Control("predecessor"),
             Event::Disconnect("predecessor"),
             Event::Control("sibling"),
+            Event::PendingControl,
             Event::Accept,
+            Event::PendingAdmission,
             Event::Request("sibling"),
             Event::Commit("sibling"),
         ],
