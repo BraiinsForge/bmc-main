@@ -76,17 +76,16 @@ proxy modes, the `BMC_INDEX_URL` device override, and the example `index.v1.json
 
 ### [Widget Runtime Configuration](widget-runtime-configuration.md)
 
-How a widget process receives its geometry, per-instance params, and current system settings over the `deck_widget`
-Wayland protocol. Covers the spawn-environment contract (no BMC-specific env vars), identity resolution via
-`SO_PEERCRED` on the Wayland socket, the configure-batch handshake widgets use to fetch viewport/display geometry and
-initial state, and the runtime hot-reload path that pushes fresh params on the existing surface for geometry-stable
-updates.
+How a widget process receives its stable routing key through `BMC_WIDGET_KEY`, then receives geometry, per-instance
+params, credentials, and current system settings over the `deck_widget` Wayland protocol. Covers keyed compositor
+registration and attachment, the configure-batch handshake, runtime parameter and credential updates, process restart,
+and upgrade/shutdown ordering.
 
 ### [Widget Lifecycle](widget-lifecycle.md)
 
-How the compositor derives widget lifecycle state from scene cycling and drag state, then sends
-`deck_widget_surface_v1.lifecycle` events over Wayland. Covers initial lifecycle emission after the configure batch,
-release/acquire batching, client flush ordering, valid transitions, and client-side event delivery.
+How configuration membership owns retained compositor registrations while activation controls connection/process
+eligibility and the manager owns child supervision. Covers start/stop ordering, crash retry, upgrade pause/resume,
+terminal shutdown, and the scene lifecycle events delivered over Wayland.
 
 ### [Frontend](frontend.md)
 

@@ -1,15 +1,17 @@
-# Widget runtime configuration via `deck_widget_v1`
+# Widget runtime configuration via `deck_widget_manager_v2`
 
 ## Description
 
-A widget process receives everything it needs to run — its geometry, its per-instance params, and the current system
-settings — over the `deck_widget_v1` Wayland protocol. Nothing BMC-specific appears in the child's environment.
+A widget process receives its geometry, per-instance params, credentials, and current system settings over
+`deck_widget_surface_v1`. It identifies the configured instance when creating that surface through the keyed
+`deck_widget_manager_v2` factory.
 
 A widget process's environment is:
 
 ```
 WAYLAND_DISPLAY=<socket>
 XDG_RUNTIME_DIR=<dir>
+BMC_WIDGET_KEY=<canonical configured-widget UUID>
 ```
 
 plus the coordinator's own environment passed through unchanged (`PATH`, `HOME`, locale, `RUST_LOG`, and anything else
@@ -17,14 +19,20 @@ the init system set up for BMC).
 
 ### Identity
 
-Each widget process is associated with its scene-level `instance_id` by the compositor using the peer credentials of the
-Wayland connection (`SO_PEERCRED`). The coordinator tells the compositor "pid X is instance Y" immediately after
-spawning; the compositor resolves the connection to its instance when the widget's first `get_widget_surface` request
-arrives.
+`BMC_WIDGET_KEY` is the scene-level widget UUID. The manager keeps it as `WidgetConfigKey.instance_id`, separately from
+`WidgetEnv`, which contains only the Wayland display. At each spawn, `WaylandSpawner` receives that UUID as its
+`widget_key` argument and serializes it into `BMC_WIDGET_KEY`. The client supplies it to `get_widget_surface`. The
+compositor accepts only when the key names an `Accepting` retained registration. The key is routing identity, not a
+secret or an authentication boundary: all native widget components currently run as root and may read or reuse it.
 
-Connections that arrive before the coordinator registers the pid are buffered in the compositor and resolved as soon as
-the registration lands. When a widget process exits the coordinator clears the pid association so a recycled OS pid
-cannot be mistaken for the dead widget.
+The coordinator registers a configured instance before spawning its process. That registration survives child crashes,
+ordinary stops, and upgrade pauses, and holds the latest placement and initial configuration. A registration is either
+`Accepting` or `Inactive`. Deactivation closes the exact attached client but keeps the record; activation permits a
+successor to attach. Deletion unregisters the record entirely. There is no PID association, generation stamp, or queue
+of connections waiting for later registration. PID remains useful only for supervision and logs.
+
+This is an intentionally breaking native protocol change. The compositor advertises only `deck_widget_manager_v2`, and
+bundled clients require it; older clients using the former manager interface are not supported.
 
 ### Parameters
 
@@ -43,19 +51,23 @@ though, showing something is usually preferable to nothing at all, the user will
 On `get_widget_surface` the compositor emits a batch of events terminated by `configure_done`:
 
 ```
-configure(width, height, viewport_shape)
+configure(width, height, viewport_shape, token)
 display_info(width, height, shape, dpi)
 params(json)
+credentials(json) / credential_secrets(json)
 timezone / night_mode / date_format / time_format /
   number_format / temperature_unit / first_day_of_week
 configure_done
 ```
 
-- `configure` carries the widget viewport's pixel dimensions and viewport shape.
+- `configure` carries the widget viewport's pixel dimensions, viewport shape, and an opaque per-instance token for
+  namespacing resources such as caches.
 - `display_info` carries the active logical display's pixel dimensions, display shape, and DPI. DPI is each platform's
   real display density and is advisory for layout.
 - `params` carries the widget's per-instance params as a JSON-encoded object, exactly as stored in the scene config. The
   compositor passes it through as-is; the widget owns its manifest and is authoritative on what values are valid.
+- `credentials` carries the resolved slot-to-account view, while `credential_secrets` carries the corresponding native
+  process secrets and egress policy. Guest WASM never receives the secret event.
 - Setting events carry the current system-wide values. The compositor keeps these cached so every newly connected widget
   starts with a fully populated state. Each locale-related field (date / time / number format, temperature unit, first
   day of week) is a separate event rather than a single bundled "localization" event, so new locale fields can be added
@@ -80,9 +92,10 @@ Runtime param pushes are full replacements of the widget params map (not partial
 ### Shutdown
 
 When the compositor itself is exiting it broadcasts a `shutdown` event to every connected widget so they can exit
-gracefully. The widget client surfaces this as a `Shutdown` event. When the widget is being removed from the scene, it
-is killed by SIGTERM; if it does not exit within 10 seconds, it is force-killed with SIGKILL. The `shutdown` event is
-sent only when the whole compositor shuts down.
+gracefully. The widget client surfaces this as a `Shutdown` event. Ordinary disable or replacement instead deactivates
+the retained registration, closes its exact connection, and sends SIGTERM to the child. Deletion unregisters the record.
+A child that does not exit within 10 seconds is force-killed with SIGKILL. The `shutdown` event is sent only when the
+whole compositor shuts down.
 
 #### Live previews
 
@@ -97,63 +110,95 @@ fetches or other expensive operations that are caused by parameter changes.
 
 The widget manager owns every widget child process in a dedicated actor task and awaits its exit directly. A process
 that exits on its own is respawned automatically: the delay starts at 1 second, doubles per crash up to 5 minutes, and
-restarts from 1 second once a process stays up for 60 seconds. The instance's compositor registration and stored
-configuration survive the crash, so the respawned process attaches through the same configure replay as the first spawn;
-its new pid is re-bound via `bind_respawned_pid`, and a connection racing past that registration is buffered as usual.
-That bind takes effect only while the instance is still unbound *and* still on the registration the respawn belongs to —
-a scene edit or a widget reload can re-register and re-bind the instance while the respawn announcement is still queued,
-and binding then would point the record at a dead pid and leave the live process's buffered connection with nothing to
-resolve it.
+restarts from 1 second once a process stays up for 60 seconds. The compositor registration and stored configuration
+survive the crash, so the successor supplies the same widget key and receives the latest initial batch. Process exit
+does not produce a compositor registration update.
 
-Both halves of that condition are needed, because unbound on its own is ambiguous. Widget commands reach the compositor
-over one channel fed by two independent senders — the synchronous scene-edit path, and the listener draining the
-manager's event stream — so their relative order is not guaranteed, and an instance id outlives the process behind it.
-"Registered but unbound" is the state a crash leaves behind *and* the state every fresh registration passes through
-between `register_widget` and `set_widget_pid`. Every registration therefore carries a generation, stamped by the
-coordinator and echoed on each lifecycle event, and `set_widget_pid`, `clear_pid`, `bind_respawned_pid` and
-`unregister_abandoned` refuse a command whose stamp names a registration that is gone. `unregister_widget` needs no
-stamp: one task both ends an instance and re-registers it, so it cannot overtake a later registration.
-
-The 5-minute delay is a ceiling, not a give-up: supervision retries for as long as the instance exists. A restart budget
-would be unsafe here because widget failures are correlated — a crashed `bmc-wasm-host` drops the control socket of
+The 5-minute delay is a ceiling, not a restart budget. Supervision keeps retrying while the matching installed build is
+available; if the type leaves the registry, the pending attempt ends and a later coordinator reload can start it again.
+A budget would be unsafe because widget failures are correlated — a crashed `bmc-wasm-host` drops the control socket of
 every thin at once, so one host fault exits the whole wasm fleet together, and a per-widget budget would be spent by a
 fault no individual widget caused. The 60-second healthy threshold sits above the thin's own startup budget
 (`DEFAULT_HOST_WAIT` + `DEFAULT_ACK_WAIT`), so a widget that never once reached its host cannot be mistaken for a
 healthy one and keep resetting the ladder.
 
-An external stop always wins: stopping a widget (scene edit, upgrade preparation, shutdown) cancels a pending respawn,
-and a stopped widget is never respawned. A widget whose type has left the registry is not respawned either — the manager
-emits `Abandoned` so the coordinator ends the registration that a crash deliberately leaves standing, and the grid cell
-stays empty as if it had never spawned. Nothing on the device uninstalls a package, so the way a type leaves is
-discovery skipping it on the next re-scan: an apply can install a widget whose manifest this firmware cannot accept (an
-unknown credential slot type, a missing or non-executable binary), and the same apply is what makes widgets crash-loop
-in the first place. Ending the instance is guarded on the compositor side by the same stamp — an abandon that arrives
-after a scene edit has re-registered the id is dropped rather than blanking that cell, whether or not the new
-registration has bound its process yet.
+Each instance is exactly one of `Running`, `Stopping`, or `PendingRestart`. Pending state stores the launch record,
+installed build identity, earned backoff rung, and an internal timer token. Replacing or removing that state aborts the
+timer; a timer event already queued is harmless unless its token still names the current pending entry. Before spawning,
+the manager also checks that it is `Running` and that the registry still exposes the same build identity. A registry
+identity mismatch preserves the pending launch for the coordinator's guarded reload path; it never starts a new build
+through state prepared for the old one.
 
-A registry re-scan buys one prompt attempt. A package upgrade replaces widget files while the processes are still
-running, so affected widgets crash and start climbing delays against binaries that are being swapped out from under them
-— and the reload that follows the install hands every instance that is not running to supervision rather than replacing
-it. After `refresh()` those pending respawns are retried at 1 second instead of whatever rung they had reached, so a
-widget upgrade does not leave a cell blank for tens of seconds after the install reports success. The ladder itself is
-not forgiven: a widget the upgrade did not fix crashes again and waits out the rung it had already earned, so repeated
-unrelated installs cannot grind a genuine crash-looper back down to a 1-second tempo. The reload then restarts an
-instance only where the build it is *running* differs from the installed one, so a widget that supervision has already
-brought back on the new files is left alone rather than blinking a second time.
+An external stop cancels pending state. A running child becomes `Stopping` until its exit is consumed, and a successor
+cannot start over it. Disable, preview teardown, deletion, upgrade pause, and terminal shutdown all use this path. A
+later enable or preview open therefore starts fresh; a stale timer cannot revive the previous run.
 
-A configuration push buys the same prompt attempt. Changing a widget's params, or re-resolving its credentials after a
-scene or account edit, updates the stored configuration even while the instance is between processes — the compositor
-keeps the registration a crash deliberately leaves standing, so the change is cached for the respawn to replay. Left
-alone, a crash-looping widget would sit out the rest of its climbed delay before trying the very change that may fix it,
-so a push that carries a real change asks supervision to retry now. It is the same operation the re-scan performs,
-scoped to one instance: the rung survives, so a stream of edits cannot forgive the ladder either, and an instance that
-is running or has been stopped is left exactly as it is.
+A registry re-scan brings pending timers forward to 1 second but preserves every earned rung. The timer still requires
+the stored build identity to match the installed entry; the coordinator handles a build change with its normal
+stop-before-start replacement. A widget the upgrade did not fix therefore continues from the backoff it already earned.
 
-A real change is what counts, not the edit that prompted the push. The credential listener wakes on a bare hint — any
-scene save, any account save — and re-resolves every widget, so an unrelated edit would otherwise re-arm every
-crash-looping widget at the initial delay. The compositor already holds the previous resolution, so it reports whether
-the push changed anything and only a genuine change brings the respawn forward. The ladder bounds the attempt tempo, and
-an unrelated edit must not reset it.
+A semantic parameter change updates the retained configuration even when no child is attached. A successful parameter
+enqueue asks only that instance to retry promptly. Widget binding and account changes wake the broad credential
+listener. The listener re-resolves every configured widget. Credential updates have a bounded receipt whose result says
+whether the retained view or secrets actually changed; only a changed result accelerates that instance. The earned rung
+survives either acceleration, and running, stopping, or absent instances are untouched.
+
+A coordinator start that observes a matching `PendingRestart` is already satisfied and leaves its timer alone. This is
+important for repeated reload and enable work: duplicate starts do not continually bring a crash loop forward. Only the
+explicit targeted retry paths and registry refresh reschedule a pending timer. If the manager deliberately receives a
+new validated start for a pending instance, it cancels the old timer and attempts that launch immediately; a second
+failure preserves the earned rung and leaves exactly one replacement timer.
+
+### Mutation and receipt ordering
+
+The compositor retains registration state independently of the child. Registering an existing key updates that record;
+it does not disconnect an attachment. Operations that require a restart explicitly deactivate and stop first, then
+register the current configuration, activate, and start the successor.
+
+Registration and activation are synchronously enqueued under the authoritative configuration source locks. Their
+receipts are awaited only after those locks are released, and configuration is revalidated before the manager start is
+sent. Before activation, the coordinator obtains an actor-owned permit scoped to the expected manager mode and passes it
+to the later `Spawn`. Deactivation and unregister use the same rule: enqueue the compositor cutoff and manager stop
+under the source lock, then await the receipt and child reap without that lock. Every stop invalidates the instance's
+permit, so an earlier start cannot cross the later cutoff even when both operations used configuration read locks. A
+two-second receipt timeout is reported, but never prevents stopping and reaping the child.
+
+The complete lock order is preview source before configuration before secrets. A path takes only the suffix it needs;
+code holding a secret-store lock never reaches back for configuration or preview. Parameter and credential updates are
+enqueued while their authoritative values are locked. FIFO ordering either updates an existing retained record or lets a
+following registration carry the same values. No compositor receipt or child termination is awaited while holding
+configuration or secret-store locks. Preview teardown retains the preview lock through the compositor cutoff receipt and
+child termination, then restores scene cycling before releasing the slot. This can serialize preview reopening, widget
+starts, upgrade resume, and scene or widget configuration RPCs for the child's ten-second graceful shutdown period, but
+prevents a successor preview from being overwritten by the preceding teardown.
+
+The broad credential listener subscribes to scene and account changes. After either notification it coalesces queued
+notifications, takes configuration then secret-store read locks, and resolves every distinct configured widget from one
+snapshot. It enqueues updates for all resolvable retained records, including inactive or detached ones, then drops both
+locks before awaiting the bounded receipts concurrently. The compositor reports whether each retained credential view or
+secret set changed semantically, and only that result accelerates the corresponding pending widget. An unavailable
+manifest skips that widget rather than trusting stale bindings; it does not stop refreshes for siblings.
+
+Account persistence runs in a detached task, so request cancellation cannot interrupt an accepted save or deletion.
+Successful non-idempotent account saves notify the listener. Idempotent updates return before saving and do not emit a
+notification. Handlers do not select an affected subset, and no persistent credential retry queue is added.
+
+### Upgrade pause and resume
+
+Firmware upgrade first moves the manager to `Paused`. This rejects new starts, cancels every pending restart, and makes
+later exit reports unable to schedule successors. Under the configuration write lock, the coordinator enqueues
+deactivation for every configured or supervised instance. It then releases the lock and concurrently waits for all
+deactivation receipts and child terminations; a compositor timeout cannot leave a widget process running.
+
+Resume is the one flow allowed to enqueue activation while the manager remains `Paused`. It takes the preview lock and
+then the configuration read lock, derives the supported shown set (`enabled || actively previewed`), and enqueues only
+activation for those retained records after preparing start permits scoped to `Paused`. It neither rebuilds
+registrations nor takes the secret-store lock. After awaiting activation receipts without source locks, it reacquires
+preview then configuration read locks. It revalidates the same shown set, spawn prerequisites, installed build
+identities, and `Paused` mode. Only then does it move the manager to `Running`, preserving the paused permits, and
+enqueue current starts with them before releasing the locks. Stop, pause, and shutdown invalidate prepared permits; each
+Spawn consumes only its exact match. A failed or cancelled upgrade uses this same guarded resume. Terminal
+`ShuttingDown` absorbs a late resume, so it cannot activate or spawn widgets after application shutdown has begun.
 
 ### What supervision observes — and what it does not
 
@@ -165,10 +210,11 @@ Detection is a chain of four edge-triggered hops, with no polling at any layer:
 2. The host tears the slot down. `WidgetSlot` owns the thin's control socket, so dropping the slot closes that fd.
 3. The thin, parked in `poll(2)` on the control socket and a signal pipe, wakes on `POLLHUP` and exits 0.
 4. The kernel raises `SIGCHLD` in bmc, the thin's direct parent; `child.wait()` returns and the actor treats the exit as
-   a crash if the instance is still `Running` under the same pid.
+   a crash if the instance is still `Running`. PID is checked only against the actor-owned child state.
 
 "Crash" is therefore never detected, only inferred: it means *the process died and we never asked it to*. An external
-stop removes the map entry before signalling, so the later exit matches nothing.
+stop moves the instance to `Stopping` before signalling, so the later exit completes termination instead of scheduling a
+restart.
 
 Two consequences worth knowing:
 
@@ -180,30 +226,13 @@ Two consequences worth knowing:
   resolves, re-rendering a stale frame — is indistinguishable from a healthy one. Neither the Wayland connection state
   nor any heartbeat feeds supervision.
 
-### Where recovery stops
-
-Two gaps sit on the recovery side rather than the detection side. Both are known and deliberate, and both need an
-unusual sequence to reach.
-
-- **A widget abandoned when its type left the registry does not return when the type does.** A discovery skip while one
-  of its instances is waiting out a respawn ends supervision for that instance, which is right — there is no build left
-  to run. A later apply that makes the manifest acceptable again does not undo it: the reload that follows an install
-  skips every instance that is not running, which is correct for one waiting on a respawn and wrong for one nothing
-  supervises any more. The cell stays empty until the scene is edited or bmc restarts.
-- **A respawn checks that the widget type is in the registry, not that it still fits the slot.** A widget whose upgraded
-  manifest no longer supports its current viewport is deliberately left alone by the reload path, which logs and moves
-  on. Supervision knows nothing about viewports, so the next crash brings that widget back on the new build, into the
-  slot the reload declined. A viewport-narrowing upgrade is therefore caught on the reload path and not on the crash
-  path.
-
 ## Constraints
 
 - The widget process must block on `configure_done` before rendering; without `configure`, `width` and `height` are
   unknown and the renderer can't be sized. A 10 s timeout guards against a dead compositor.
 
-- `register_widget` and `set_widget_pid` are synchronous (flume ack); the coordinator waits on them so the compositor
-  has the record before it's asked to resolve a connection. A connection that still races past the pid registration is
-  buffered rather than dropped.
+- Registration and activation receipts must complete before spawning a child, so a fast client can never reach the
+  compositor before its accepting retained record exists. A failed or timed-out receipt prevents that spawn.
 
 - On-disk config (`/etc/bmc_config.json`) is unchanged. The widget instances carry their params in the scene config; the
   compositor serves them over the protocol.
