@@ -25,7 +25,7 @@
 use std::time::{Duration, Instant};
 
 /// Hold duration to confirm a WiFi action.
-const HOLD: Duration = Duration::from_secs(3);
+const HOLD: Duration = Duration::from_secs(5);
 /// Max wait after firing reconfigure before giving up and showing the error.
 const PENDING_TIMEOUT: Duration = Duration::from_secs(10);
 /// How long the transient failure message stays up.
@@ -166,8 +166,6 @@ impl ButtonState {
     }
 }
 
-/// Hold duration to confirm a restart — deliberately longer than the WiFi
-/// hold: it is the most destructive action in the tray.
 const RESTART_HOLD: Duration = Duration::from_secs(5);
 
 /// Hold-to-confirm state machine for the restart button. Restart is
@@ -349,12 +347,13 @@ mod tests {
     use std::time::{Duration, Instant};
 
     #[test]
-    fn hold_three_seconds_sends_reconfigure() {
+    fn hold_five_seconds_sends_reconfigure() {
         let t0 = Instant::now();
         let mut b = ButtonState::default();
         assert_eq!(b.tick(true, t0), FsmAction::None);
+        assert_eq!(b.tick(true, t0 + Duration::from_secs(4)), FsmAction::None);
         assert_eq!(
-            b.tick(true, t0 + Duration::from_secs(3)),
+            b.tick(true, t0 + Duration::from_secs(5)),
             FsmAction::SendReconfigure
         );
     }
@@ -373,8 +372,8 @@ mod tests {
         let t0 = Instant::now();
         let mut b = ButtonState::default();
         b.tick(true, t0);
-        b.tick(true, t0 + Duration::from_secs(3)); // -> Pending
-        b.tick(true, t0 + Duration::from_secs(13)); // 10s pending timeout
+        b.tick(true, t0 + Duration::from_secs(5));
+        b.tick(true, t0 + Duration::from_secs(15));
         assert!(matches!(
             b,
             ButtonState::Idle {
@@ -388,11 +387,11 @@ mod tests {
         let t0 = Instant::now();
         let mut b = ButtonState::default();
         b.tick(true, t0);
-        b.tick(true, t0 + Duration::from_secs(3)); // -> Pending
+        b.tick(true, t0 + Duration::from_secs(5));
         b.on_wifi_ap(true);
         assert!(matches!(b, ButtonState::Active));
-        b.on_wifi_ap(false); // setup ended
-        b.tick(false, t0 + Duration::from_secs(4));
+        b.on_wifi_ap(false);
+        b.tick(false, t0 + Duration::from_secs(6));
         assert!(matches!(b, ButtonState::Idle { .. }));
     }
 
@@ -404,7 +403,7 @@ mod tests {
         assert_eq!(
             r.tick(true, t0 + Duration::from_secs(4)),
             RestartAction::None,
-            "the 3s WiFi hold must not fire a restart"
+            "the five-second hold must not fire early"
         );
         assert_eq!(
             r.tick(true, t0 + Duration::from_secs(5)),
@@ -518,9 +517,9 @@ mod tests {
         assert_close(b.progress(t0), 0.0, "idle");
         b.tick(true, t0);
         assert_close(
-            b.progress(t0 + Duration::from_millis(1500)),
+            b.progress(t0 + Duration::from_millis(2500)),
             0.5,
-            "half of 3s hold",
+            "half of five-second hold",
         );
         assert_close(b.progress(t0 + Duration::from_secs(10)), 1.0, "clamped");
 
@@ -540,9 +539,9 @@ mod tests {
         assert_eq!(b.caption(), None);
         b.tick(true, t0);
         assert_eq!(b.caption(), Some("Keep holding…"));
-        b.tick(true, t0 + Duration::from_secs(3));
+        b.tick(true, t0 + Duration::from_secs(5));
         assert_eq!(b.caption(), Some("Starting WiFi setup…"));
-        b.tick(true, t0 + Duration::from_secs(13));
+        b.tick(true, t0 + Duration::from_secs(15));
         assert_eq!(
             b.caption(),
             Some("Couldn't start WiFi setup"),

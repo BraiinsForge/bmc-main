@@ -801,7 +801,7 @@ fn control_groups(
             press_tint(p),
             Some(controls.wifi_reconfig.progress),
             "Reconfigure WiFi",
-            "hold 3 seconds",
+            "hold 5 seconds",
         ));
     }
     (pairs, singles)
