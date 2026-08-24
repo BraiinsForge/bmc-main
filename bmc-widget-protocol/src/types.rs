@@ -375,10 +375,10 @@ pub struct Settings {
 
 /// One atomic setting change broadcast from the compositor to widgets.
 ///
-/// Each variant maps 1:1 to a typed event in the `deck_widget`
-/// protocol. Splitting the previously-bundled `Localization` variant into
-/// per-field ones lets us add new locale fields later without breaking
-/// existing widgets — old widgets simply ignore unknown events.
+/// Each variant maps 1:1 to a typed event in the `deck_widget_v1` protocol.
+/// One variant per locale field, rather than a single bundled `Localization`,
+/// lets us add new locale fields later without breaking existing widgets —
+/// old widgets simply ignore unknown events.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "key", content = "value", rename_all = "camelCase")]
 pub enum SettingUpdate {

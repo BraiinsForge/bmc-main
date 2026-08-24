@@ -29,7 +29,7 @@ use anyhow::Result;
 use glow::HasContext;
 
 pub use bmc_widget::egl::DmaBufInfo;
-use bmc_widget::egl::{Depth, DoubleBufferedEglState, SlotReleaseState};
+use bmc_widget::egl::{Attachment, DoubleBufferedEglState, SlotReleaseState};
 
 /// EGL state for the flip-clock's direct-FBO rendering pipeline.
 ///
@@ -45,7 +45,11 @@ impl EglState {
     /// Create EGL context and prepare for rendering at the given dimensions.
     pub fn new(width: u32, height: u32) -> Result<Self> {
         Ok(Self {
-            egl: DoubleBufferedEglState::new(width, height, Depth::Enabled)?,
+            // No stencil: this pipeline renders 3D meshes into the export FBO
+            // directly, with no femtovg, so nothing here needs one — and GLES 2.0
+            // has no portable way to carry a separate depth and a separate
+            // stencil at once. The GC400 rejects that pair outright.
+            egl: DoubleBufferedEglState::new(width, height, Attachment::Depth)?,
             release_state: SlotReleaseState::new(),
         })
     }

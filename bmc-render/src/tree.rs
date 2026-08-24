@@ -142,7 +142,7 @@ pub struct HostAnimationDef {
 /// The transition state map keys on `(canvas_index, id_hash)`
 /// so transition state follows the logical draw across
 /// tree-shape changes — adding or removing a sibling
-/// no longer reshuffles state into the wrong draws.
+/// does not reshuffle state into the wrong draws.
 #[derive(Debug, Clone)]
 pub struct HostTransitionDef {
     pub id_hash: u32,
@@ -1560,7 +1560,9 @@ use crate::components::notification::{
 };
 use crate::components::progress_bar::{ProgressBarData, render_progress_bar};
 use crate::components::skeleton::{SkeletonData, render_skeleton};
-use crate::components::switcher::{SwitcherData, SwitcherTabData, render_switcher, switcher_size};
+use crate::components::switcher::{
+    SwitcherData, SwitcherTabData, register_switcher_hits, render_switcher, switcher_size,
+};
 use crate::components::tag::{TAG_PAD_VERT, TagData, render_tag, tag_content_padding, tag_theme};
 use crate::components::{ButtonSize, ButtonStyle, draw_button_with_target};
 use crate::interaction::InteractionState;
@@ -1586,6 +1588,25 @@ pub enum EmitMode {
     StaticOnly,
     /// Emit only nodes tagged dynamic, to composite over a cached layer.
     DynamicOnly,
+}
+
+/// What a frame does with the renderer's cached static layer.
+///
+/// Capturing and reusing are alternatives, not flags: a frame either rebuilds
+/// the layer or paints the stored one. Only meaningful under [`EmitMode::All`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum LayerUse {
+    /// Leave the layer alone and emit the whole tree. The fallback for a
+    /// caller with no layer of its own — overlays, the gallery.
+    #[default]
+    Ignore,
+    /// Re-render the static half into the layer, then emit the dynamic half
+    /// over it. For a frame whose static content has changed, or the first one.
+    Capture,
+    /// Blit the stored layer instead of rasterising the static half again.
+    /// This is what makes a guest frame cost close to a cached one. Falls back
+    /// to a full pass if the blit fails.
+    Reuse,
 }
 
 impl EmitMode {
@@ -1763,9 +1784,7 @@ pub struct ProcessContext<'a> {
     /// Which half of the static/dynamic partition to emit; see [`EmitMode`].
     /// [`EmitMode::All`] reproduces a full frame.
     pub emit: EmitMode,
-    /// Re-render the static half into the renderer's cached layer. Only
-    /// meaningful with [`EmitMode::All`]; the layer is what other frames blit.
-    pub capture_static: bool,
+
     /// Regions to repaint, in logical pixels, when the frame can reuse what the
     /// target already holds. Empty means repaint everything.
     ///
@@ -1774,11 +1793,8 @@ pub struct ProcessContext<'a> {
     /// the damage has to be known before the layer is composited rather than
     /// after the walk that would discover it.
     pub damage_rects: &'a [Rect],
-    /// Permit blitting the existing layer instead of emitting the static half.
-    /// Set when the caller knows the layer is still valid — a cached frame, or
-    /// a guest frame whose static half hashed unchanged. Ignored if the blit
-    /// fails, which falls back to a full pass.
-    pub reuse_static_layer: bool,
+    /// What this frame does with the cached static layer; see [`LayerUse`].
+    pub static_layer: LayerUse,
     /// Identifies whose static layer to capture and blit. One renderer serves
     /// every widget slot, so callers that share a renderer must pass distinct
     /// keys or they overwrite each other's cached layer. Use the caller's asset
@@ -1923,14 +1939,6 @@ fn layout_and_render_inner(
     let resolver = resolver.map(RefCell::new);
     let mut target = RenderTarget::new(renderer, resolver.as_ref());
 
-    // A frame that refreshes the cached layer renders in the same shape as one
-    // that reuses it: static into the layer, blit, dynamic on top. Emitting the
-    // full tree to the screen and *then* capturing the static half meant
-    // rendering static content twice on every guest frame — about a quarter of
-    // a ~220 ms guest frame against ~54 ms cached ones.
-    //
-    // Falls back to a single full pass whenever the layer is unavailable, which
-    // is also what non-capturing callers (overlay, storybook) always take.
     render_tree(
         root_id,
         width,
@@ -1939,8 +1947,7 @@ fn layout_and_render_inner(
         ctx.taffy,
         ctx.interaction,
         ctx.scroll_states,
-        ctx.capture_static,
-        ctx.reuse_static_layer,
+        ctx.static_layer,
         ctx.static_layer_key,
         ctx.damage_rects,
         &mut result,
@@ -2075,10 +2082,9 @@ fn render_modal_overlays(
 /// is refreshing the cached layer.
 ///
 /// A refreshing frame renders in the same shape as one reusing the layer:
-/// static into the layer, blit, dynamic on top. Emitting the full tree to the
-/// screen and *then* capturing the static half rendered static content twice on
-/// every guest frame — a sizeable slice of a ~220 ms guest frame against ~54 ms
-/// cached ones.
+/// static into the layer, blit, dynamic on top — so static content is
+/// rasterised once per guest frame rather than once for the screen and again
+/// for the layer.
 ///
 /// Falls back to one full pass whenever the layer is unavailable, which is also
 /// what non-capturing callers (system overlay, storybook) always take.
@@ -2096,8 +2102,7 @@ fn render_tree(
     taffy: &TaffyTree<NodeContext>,
     interaction: &mut InteractionState,
     scroll_states: &mut HashMap<String, ScrollState>,
-    capture_static: bool,
-    reuse_static_layer: bool,
+    static_layer: LayerUse,
     static_layer_key: &str,
     damage_rects: &[Rect],
     result: &mut TreeResult,
@@ -2112,13 +2117,13 @@ fn render_tree(
     }
 
     let split = anim_ctx.emit == EmitMode::All
-        && capture_static
+        && static_layer == LayerUse::Capture
         && renderer.begin_static_layer(static_layer_key, width as u32, height as u32);
 
     // Nothing static changed since the layer was captured, so paint it rather
     // than rasterising the same content again. This is what makes a guest frame
     // cost close to a cached one: re-capturing was most of its GPU time.
-    if !split && anim_ctx.emit == EmitMode::All && reuse_static_layer {
+    if !split && anim_ctx.emit == EmitMode::All && static_layer == LayerUse::Reuse {
         // Repaint only the damaged regions when the caller supplied them; the
         // rest of the target still holds a correct earlier frame.
         let blitted = if damage_rects.is_empty() {
@@ -2162,6 +2167,10 @@ fn render_tree(
         anim_ctx.emit = EmitMode::DynamicOnly;
         anim_ctx.draw_counter = 0;
         anim_ctx.canvas_index = 0;
+        // Emission is per pass, but the scroll container's offset advances
+        // inside the walk and belongs to the frame.
+        // The pass above already spent this drag.
+        interaction.clear_scroll_delta();
     }
     render_taffy_node(
         taffy,
@@ -3187,7 +3196,12 @@ pub(crate) fn render_taffy_node(
         }
     }
 
-    if let Some(ctx) = taffy.get_node_context(node_id)
+    // Gated like every other paint site. An ungated one paints into the layer
+    // on a capture frame, again over the blit, and again on every frame that
+    // reuses it — and being static, nothing repaints underneath,
+    // so the copies blend onto each other.
+    if emits
+        && let Some(ctx) = taffy.get_node_context(node_id)
         && let Some(ref notif) = ctx.notification
     {
         render_notification(notif, x, y, w, h, renderer);
@@ -3196,10 +3210,16 @@ pub(crate) fn render_taffy_node(
     if let Some(ctx) = taffy.get_node_context(node_id)
         && let Some(ref sw) = ctx.switcher
     {
-        render_switcher(sw, x, y, w, h, renderer, interaction, result);
+        if emits {
+            render_switcher(sw, x, y, w, h, renderer);
+        }
+        // Ungated, like the canvas hit-testing below: a pass that paints
+        // nothing still owns its share of the frame's hit regions.
+        register_switcher_hits(sw, x, y, w, h, interaction, result);
     }
 
-    if let Some(ctx) = taffy.get_node_context(node_id)
+    if emits
+        && let Some(ctx) = taffy.get_node_context(node_id)
         && let Some(ref sk) = ctx.skeleton
     {
         render_skeleton(&mut *renderer, sk, x, y, w, h);
@@ -3715,7 +3735,7 @@ mod intrinsic_button_width_tests {
 mod frame_pass_tests {
     use std::collections::HashMap;
 
-    use super::{ProcessContext, TreeNode, layout_and_render};
+    use super::{LayerUse, ProcessContext, TreeNode, layout_and_render};
     use crate::FrameTimings;
     use crate::interaction::InteractionState;
     use crate::renderer::Renderer;
@@ -4100,8 +4120,7 @@ mod frame_pass_tests {
             delta_ms: 16,
             now_unix_secs: 0,
             emit: super::EmitMode::All,
-            capture_static: true,
-            reuse_static_layer: false,
+            static_layer: LayerUse::Capture,
             static_layer_key: key,
             damage_rects: &[],
         };
@@ -4172,9 +4191,9 @@ mod frame_pass_tests {
         let tree = modal_tree_with_body_text("are you sure?");
 
         // First frame captures the layer, so the second can reuse it.
-        render_with(&mut state, &mut renderer, &tree, true, false);
+        render_with(&mut state, &mut renderer, &tree, LayerUse::Capture);
         renderer.paragraphs.clear();
-        render_with(&mut state, &mut renderer, &tree, false, true);
+        render_with(&mut state, &mut renderer, &tree, LayerUse::Reuse);
 
         assert!(
             renderer.calls.iter().any(|(call, _)| *call == "blit"),
@@ -4192,8 +4211,7 @@ mod frame_pass_tests {
         state: &mut SlotState,
         renderer: &mut KeyRecordingRenderer,
         tree: &TreeNode,
-        capture_static: bool,
-        reuse_static_layer: bool,
+        static_layer: LayerUse,
     ) {
         let mut ctx = ProcessContext {
             interaction: &mut state.interaction,
@@ -4206,8 +4224,7 @@ mod frame_pass_tests {
             delta_ms: 16,
             now_unix_secs: 0,
             emit: super::EmitMode::All,
-            capture_static,
-            reuse_static_layer,
+            static_layer,
             static_layer_key: "modal-test",
             damage_rects: &[],
         };
@@ -4234,8 +4251,7 @@ mod frame_pass_tests {
             delta_ms: 16,
             now_unix_secs: 0,
             emit: super::EmitMode::DynamicOnly,
-            capture_static: false,
-            reuse_static_layer: true,
+            static_layer: LayerUse::Reuse,
             static_layer_key: "damage-test",
             damage_rects: damage,
         };
@@ -4260,8 +4276,7 @@ mod frame_pass_tests {
             delta_ms: 16,
             now_unix_secs: 0,
             emit: super::EmitMode::All,
-            capture_static: false,
-            reuse_static_layer: false,
+            static_layer: LayerUse::Ignore,
             static_layer_key: "modal-test",
             damage_rects: &[],
         };
@@ -4269,6 +4284,141 @@ mod frame_pass_tests {
         let (result, _) = layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
             .expect("BUG: layout_and_render must succeed for a modal tree");
         result
+    }
+
+    /// `render_once` with the static layer live, so the frame splits into
+    /// a capture pass and a dynamic pass — every scrolling frame's shape.
+    fn capture_once(
+        state: &mut SlotState,
+        renderer: &mut KeyRecordingRenderer,
+        tree: &TreeNode,
+    ) -> super::TreeResult {
+        let mut ctx = ProcessContext {
+            interaction: &mut state.interaction,
+            modal_states: &mut state.modal_states,
+            scroll_states: &mut state.scroll_states,
+            animation_states: &mut state.animation_states,
+            transition_states: &mut state.transition_states,
+            taffy: &mut state.taffy,
+            frame_counter: 1,
+            delta_ms: 16,
+            now_unix_secs: 0,
+            emit: super::EmitMode::All,
+            static_layer: LayerUse::Capture,
+            static_layer_key: "scroll-test",
+            damage_rects: &[],
+        };
+        let mut timings = FrameTimings::default();
+        let (result, _) = layout_and_render(tree, 100.0, 100.0, renderer, &mut timings, &mut ctx)
+            .expect("BUG: layout_and_render must succeed for a scroll tree");
+        result
+    }
+
+    /// A scroll container holding static content, so the frame both
+    /// splits and scrolls — 200 px of children in a 100 px viewport.
+    fn scrolling_tree() -> TreeNode {
+        let child = |y: f32| TreeNode::Canvas {
+            props: PropsData {
+                width: 100.0,
+                height: 100.0,
+                ..PropsData::default()
+            },
+            touch_key: None,
+            draws: vec![super::DrawCommand::Rect {
+                x: 0.0,
+                y,
+                w: 100.0,
+                h: 100.0,
+                fill: Fill::Solid(Color::from_rgb(9, 9, 9)),
+            }],
+        };
+        TreeNode::Scroll {
+            scroll_key: "list".to_owned(),
+            props: PropsData::default(),
+            children: vec![child(0.0), child(100.0)],
+        }
+    }
+
+    /// A capture frame walks the tree twice. The scroll offset advances inside
+    /// that walk, so without a gate the second pass adds the same drag again:
+    /// content runs at twice the finger and the captured half lags a delta
+    /// behind the dynamic one for the whole gesture.
+    #[test]
+    fn a_capture_frame_applies_a_scroll_drag_once() {
+        use crate::interaction::TouchEvent;
+
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        // First frame registers the scroll region the drag hit-tests against.
+        capture_once(&mut state, &mut renderer, &scrolling_tree());
+
+        state
+            .interaction
+            .push_event(TouchEvent::Down { x: 50.0, y: 50.0 });
+        state
+            .interaction
+            .push_event(TouchEvent::Move { x: 50.0, y: 30.0 });
+        // The host drains the queue here, hit-testing against the regions
+        // that the frame above registered.
+        state.interaction.begin_frame();
+        capture_once(&mut state, &mut renderer, &scrolling_tree());
+
+        let offset = state
+            .scroll_states
+            .get("list")
+            .expect("BUG: the scroll container must record state")
+            .scroll_offset;
+        assert!(
+            (offset - 20.0).abs() < f32::EPSILON,
+            "a 20 px drag must move the content 20 px, got {offset}"
+        );
+    }
+
+    /// A skeleton's bar is a distinctive height, so it can be counted among
+    /// the other draws a frame makes.
+    const SKELETON_BAR_H: f32 = 7.0;
+
+    fn skeleton_beside_animation() -> TreeNode {
+        TreeNode::Column(
+            PropsData::default(),
+            vec![
+                moving_dot(0.0),
+                TreeNode::Skeleton(crate::components::skeleton::SkeletonData {
+                    kind: bmc_wasm_protocol::SkeletonKind::Placeholder,
+                    chars: 0.0,
+                    font_size: 0.0,
+                    width: 40.0,
+                    height: SKELETON_BAR_H,
+                    color: Color::from_rgb(9, 9, 9),
+                }),
+            ],
+        )
+    }
+
+    /// Every paint site is gated on the emission mode. An ungated one paints
+    /// into the layer on the capture pass, then again over the blit on the
+    /// dynamic pass — and being static, nothing repaints underneath, so each
+    /// frame blends another copy onto the last. Translucent fills darken,
+    /// and edges thicken over a few seconds of cached frames.
+    #[test]
+    fn a_skeleton_paints_once_on_a_capture_frame() {
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        capture_once(&mut state, &mut renderer, &skeleton_beside_animation());
+
+        let bars = renderer
+            .draws
+            .iter()
+            .filter(|r| (r.h - SKELETON_BAR_H).abs() < f32::EPSILON)
+            .count();
+        assert_eq!(
+            bars, 1,
+            "the capture pass paints the bar into the layer; the dynamic pass \
+             must not paint it again, got {:?}",
+            renderer.draws
+        );
     }
 
     /// A canvas whose one draw animates, so the walk tags it dynamic and the

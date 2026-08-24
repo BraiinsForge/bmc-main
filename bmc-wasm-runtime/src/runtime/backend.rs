@@ -852,8 +852,8 @@ pub struct WasmWidgetRuntime {
     on_credentials_update_func: Option<wasmi::TypedFunc<(), ()>>,
     /// Optional guest export fired once per Wayland drain that delivered touch
     /// activity. A widget that wants to respond to touch must export this and
-    /// call `request_frame()` from it — the host no longer force-renders on
-    /// touch, so without the hook the widget's touch is dropped.
+    /// call `request_frame()` from it — the host never force-renders on touch,
+    /// so without the hook the widget's touch is dropped.
     on_touch_func: Option<wasmi::TypedFunc<(), ()>>,
     /// Optional guest export fired when the Deck's own SSID or IP changed.
     /// The widget re-reads `network::info()` and calls `request_frame()`
@@ -1398,11 +1398,16 @@ impl WasmWidgetRuntime {
             delta_ms,
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
-            capture_static: stale_assets && state.static_layer_useful,
             // Matches the guest frame's decision: a tree with no static half
             // has no layer to reuse, and blitting the empty one is a wasted
             // full-screen pass.
-            reuse_static_layer: state.static_layer_useful && !stale_assets,
+            static_layer: if !state.static_layer_useful {
+                bmc_render::tree::LayerUse::Ignore
+            } else if stale_assets {
+                bmc_render::tree::LayerUse::Capture
+            } else {
+                bmc_render::tree::LayerUse::Reuse
+            },
             damage_rects: &damage,
             static_layer_key: &state.instance_id,
         };
@@ -1752,10 +1757,8 @@ impl WasmWidgetRuntime {
 
     /// Drop the cached static layer for the duration of dormancy.
     ///
-    /// It is the largest thing a dormant instance holds — a full-surface RGBA8
-    /// texture, 4 bytes per pixel of slot area against the 8 the export buffers
-    /// take, and those the slot releases already. It is also pure cache: the
-    /// tree it was rasterised from is still in hand, so waking re-captures it.
+    /// Pure cache: the tree it was rasterised from is still in hand, so waking
+    /// re-captures it.
     ///
     /// Clearing the hash alongside is what makes that happen. Left set, the
     /// first guest frame back hashes the same tree, concludes the layer is
@@ -2249,10 +2252,9 @@ impl WasmWidgetRuntime {
 
     /// Test-only escape hatch: call an arbitrary `() -> i32` export by name.
     ///
-    /// Used by `tests/lifecycle.rs` to read observation counters out of hand-rolled
-    /// WAT probe widgets without exposing the full `Store<HostState>` to test code.
-    /// Returns `None` if the widget doesn't export `name` or the call traps —
-    /// the test then fails with a clear "missing export X" assertion at the call site.
+    /// Reads counters out of hand-rolled WAT probe widgets without exposing the
+    /// full `Store<HostState>` to test code. `None` when the widget does not
+    /// export `name`, or the call traps.
     ///
     /// Marked `#[doc(hidden)]` because it is not part of the supported runtime API.
     /// `#[cfg(test)]` is not viable here because integration tests in `tests/` see

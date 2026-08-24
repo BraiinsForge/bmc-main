@@ -25,7 +25,7 @@
 
 use anyhow::Context as _;
 use bmc_widget::egl::{
-    Depth, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, Stencil,
+    Attachment, DmaBufInfo, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch,
     TwoSlotBufferCache, WidgetExportBuffer,
 };
 use bmc_widget::surface::ReleasedBuffer;
@@ -73,7 +73,12 @@ impl OverlayRenderTarget {
     /// `ensure_current`.
     pub fn new(_egl: &EglContext, w: u32, h: u32) -> anyhow::Result<Self> {
         Ok(Self {
-            buffers: DoubleBufferState::new_with_format(w, h, Depth::Disabled, ExportFormat::Alpha),
+            buffers: DoubleBufferState::new_with_format(
+                w,
+                h,
+                Attachment::Stencil,
+                ExportFormat::Alpha,
+            ),
             wl_buffers: TwoSlotBufferCache::new(),
             panel_cache: None,
         })
@@ -128,7 +133,7 @@ impl OverlayRenderTarget {
                 egl.destroy_widget_export_buffer(old);
             }
             self.panel_cache = Some(
-                egl.allocate_widget_export_buffer(w, panel_h, Depth::Disabled, Stencil::Disabled)
+                egl.allocate_widget_export_buffer(w, panel_h, Attachment::None)
                     .context("allocate overlay panel cache")?,
             );
         }

@@ -204,5 +204,3 @@ pub(super) fn date_draw(ws: WidgetSize, date_str: &str) -> Node {
         )],
     )
 }
-
-// The stale indicator now uses the shared `with_stale_overlay` (SDK).

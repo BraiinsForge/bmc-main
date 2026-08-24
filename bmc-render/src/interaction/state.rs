@@ -260,6 +260,17 @@ impl InteractionState {
         }
     }
 
+    /// Drop the scroll delta once a tree walk has applied it.
+    ///
+    /// A capture frame walks the tree twice, and the scroll container
+    /// advances its own offset inside the walk. Left in place, the second
+    /// walk adds the same drag again: content moves at twice the finger,
+    /// and the layer captured on the first pass sits one delta above the
+    /// dynamic half.
+    pub fn clear_scroll_delta(&mut self) {
+        self.drag_delta_y = 0.0;
+    }
+
     /// Get the scroll delta if the wheel event landed inside `bounds`.
     #[must_use]
     pub fn get_global_scroll_delta(&self) -> f32 {

@@ -182,14 +182,12 @@ pub trait Coalesce {
 }
 
 impl Coalesce for Vec<Rect> {
-    /// Works in place.
     fn coalesce(self) -> Self {
         Rect::coalesce(self)
     }
 }
 
 pub trait CoalesceIterExt: Iterator<Item = Rect> + Sized {
-    /// Allocates Vec<Rect> for N rects.
     fn coalesce(self) -> Vec<Rect> {
         let rects: Vec<Rect> = self.collect();
         Rect::coalesce(rects)

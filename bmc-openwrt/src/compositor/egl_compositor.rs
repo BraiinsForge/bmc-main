@@ -527,7 +527,7 @@ impl EglCompositor {
                 SceneCyclingRuntimeConfig::default(),
             ),
             pending_transition_warm_up: None,
-            last_scene_change: None,
+            destinations_emptied_at: None,
             scene_cycling_timer_generation: 0,
             alarm_fallback_generation: 0,
             alarm_no_overlay_since: None,
@@ -739,17 +739,14 @@ impl EglCompositor {
             // neighbors are demoted to `Dormant` when a blocker maps or an
             // edge reveals, then restored to `Prepared` when it goes away.
             let suppressed = app_state.compositor.neighbors_suppressed();
-            if suppressed != app_state.last_neighbors_suppressed {
-                app_state.last_neighbors_suppressed = suppressed;
-                emit_lifecycle_transitions(&mut app_state);
-            }
+            app_state.apply_neighbors_suppressed(suppressed, Instant::now());
 
             // A modal full-screen overlay (alarm, startup) mapping or unmapping
             // is not a scene command either, so — like the suppression check
             // above — detect the edge here and tell the settings-tray to retract
             // via `deck_settings_v1.preempted`. Generic: any full-screen
             // preempting overlay drives this, so new modal overlays need no
-            // wiring, and the tray no longer binds `deck_alarm_v1`.
+            // wiring and the tray binds no overlay-specific protocol.
             let modal_active = app_state.compositor.modal_overlay_active();
             if modal_active != app_state.last_modal_overlay_active {
                 app_state.last_modal_overlay_active = modal_active;
@@ -912,10 +909,10 @@ impl EglCompositor {
 
             // Dispatch timeout: sleep until the next event unless we can render right now.
             //
-            // IMPORTANT: `RedrawState` already encodes whether a flip is pending.
+            // `RedrawState` already encodes whether a flip is pending, and
             // `dispatch_timeout` returns `Some(ZERO)` only for `Queued` — never
-            // while waiting for vblank — so we avoid the ~1600 Hz busy-spin that
-            // used to waste a full CPU core when polling with ZERO during flip.
+            // while waiting for vblank. Polling with ZERO during a flip busy-spins
+            // at ~1600 Hz and costs a full core.
             let timeout = dispatch_timeout(app_state.redraw_state);
             ii_stopwatch::stopwatch_start!(dispatch_w);
             if event_loop.dispatch(timeout, &mut app_state).is_err() {
@@ -1016,22 +1013,29 @@ struct AppState {
     pending_lifecycle_emission: bool,
     automatic_cycling: AutomaticCycling,
     pending_transition_warm_up: Option<TransitionWarmUp>,
-    /// Blocks the *next* scene drag until the scenes it could reach have
-    /// committed a frame of their own.
+    /// When the drag destinations were last left without buffers, bounding how
+    /// long a drag can be refused while one has nothing to show.
     ///
     /// A scene arriving from dormancy allocates its export buffers fresh and
     /// re-rasterises whatever it had cached, and that work lands on the frame
-    /// it becomes visible — competing with the slide for the GPU. Swiping again
+    /// it becomes visible, competing with the slide for the GPU. Swiping again
     /// before it finishes queues another one behind it, which reads as a
-    /// freeze. Armed on every committed change with the new neighbours'
-    /// When the active scene last changed, bounding how long a drag can be
-    /// refused while the destination has nothing to show.
+    /// freeze. So [`AppState::scene_settled`] refuses the drag
+    /// until the destination holds a buffer.
+    ///
+    /// Two events empty the destinations, and the clock follows both:
+    /// a committed scene change, and the end of neighbour suppression.
+    /// A full-screen blocker or an edge reveal demotes the neighbours
+    /// to `Dormant`, releasing their buffers with no scene change in sight.
+    /// Timing from the scene change alone leaves the ceiling long expired
+    /// by the time they come back, admitting the next swipe onto an empty
+    /// destination.
     ///
     /// A widget that never commits must stay reachable, and the renderer
     /// already has an answer for a scene with no buffers — `ScenePlaceholder` —
     /// so past the ceiling the swipe goes through and shows that rather than
     /// locking the direction for good.
-    last_scene_change: Option<Instant>,
+    destinations_emptied_at: Option<Instant>,
     scene_cycling_timer_generation: u64,
     /// Generation guard for the alarm no-overlay fallback watchdog timer; a
     /// bump invalidates any in-flight timer (mirrors `scene_cycling_timer_generation`).
@@ -1126,6 +1130,25 @@ impl AppState {
     /// from the buffers each widget currently holds: they are dropped per
     /// instance on sleep and reappear on the first commit after waking, so no
     /// snapshot has to be armed at the scene change and no generation compared.
+    /// Re-emit lifecycle when the neighbour-suppression predicate flips,
+    /// and restart the drag ceiling when it clears.
+    ///
+    /// Suppression releases the neighbours' buffers without a scene change.
+    /// The moment it ends they are `Prepared` again and owe a buffer each.
+    /// [`Self::scene_settled`] measures the wait from here; timed from the last
+    /// scene change instead, a long-settled scene leaves the ceiling already
+    /// expired and the next drag lands on an empty destination.
+    fn apply_neighbors_suppressed(&mut self, suppressed: bool, now: Instant) {
+        if suppressed == self.last_neighbors_suppressed {
+            return;
+        }
+        self.last_neighbors_suppressed = suppressed;
+        emit_lifecycle_transitions(self);
+        if !suppressed {
+            self.destinations_emptied_at = Some(now);
+        }
+    }
+
     fn scene_settled(&mut self, now: Instant) -> bool {
         let Some(drag) = self.gesture.drag_info() else {
             return true;
@@ -1141,7 +1164,7 @@ impl AppState {
             return true;
         }
         if self
-            .last_scene_change
+            .destinations_emptied_at
             .is_none_or(|at| now.saturating_duration_since(at) >= TRANSITION_WARM_UP_TIMEOUT)
         {
             return true;
@@ -2116,7 +2139,7 @@ fn clamp_initial_lifecycle(state: LifecycleState) -> LifecycleState {
 fn after_scene_change(state: &mut AppState) {
     state.compositor.mark_full_output_damage();
     state.pending_lifecycle_emission = true;
-    state.last_scene_change = Some(Instant::now());
+    state.destinations_emptied_at = Some(Instant::now());
 }
 
 /// Drag-in-progress variant of [`after_scene_change`]: damage the output and
@@ -2894,10 +2917,11 @@ mod tests {
     use super::{
     ALARM_FALLBACK_GRACE, AppState, CompositorState, EglCompositor, Emission, GestureConfig,
     GestureState, LibinputInputBackend, LifecycleSink, LifecycleState, RedrawState, TouchSlot,
-    TransitionWarmUp, WidgetTracker, clamp_initial_lifecycle, dispatch_timeout,
-    emit_lifecycle_batches, emit_lifecycle_transitions, emit_transition_incoming_batch,
-    handle_command, process_protocol_events, scene_buffers_committed, scene_settle_warm_up,
-    transition_incoming_widget_ids, transition_warm_up_ready,
+    TRANSITION_WARM_UP_TIMEOUT, TransitionWarmUp, clamp_initial_lifecycle,
+    dispatch_timeout, emit_lifecycle_batches, emit_lifecycle_transitions,
+    emit_transition_incoming_batch, handle_command, process_protocol_events,
+    scene_buffers_committed, transition_incoming_widget_ids,
+    transition_warm_up_ready,
     };
     use crate::compositor::scene_cycling::{
         AUTOMATIC_TRANSITION_DURATION, AutomaticCycling, AutomaticCyclingPhase,
@@ -3067,7 +3091,7 @@ mod tests {
                 SceneCyclingRuntimeConfig::default(),
             ),
             pending_transition_warm_up: None,
-            last_scene_change: None,
+            destinations_emptied_at: None,
             scene_cycling_timer_generation: 0,
             alarm_fallback_generation: 0,
             alarm_no_overlay_since: None,
@@ -4133,6 +4157,48 @@ mod tests {
             transition_incoming_widget_ids(&scene),
             vec![String::from("visible")]
         );
+    }
+
+    /// The ceiling stands in for "the destination has had time to commit",
+    /// and suppression empties the destinations without a scene change.
+    /// Left timed from the scene change, a blocker mapping over a
+    /// long-settled scene leaves it already expired, and the next swipe
+    /// is admitted onto a destination with nothing to show.
+    #[test]
+    fn the_drag_ceiling_restarts_when_neighbour_suppression_ends() {
+        let mut state = make_app_state();
+        let long_ago = Instant::now()
+            .checked_sub(TRANSITION_WARM_UP_TIMEOUT * 4)
+            .expect("BUG: the test clock must reach four ceilings back");
+        state.destinations_emptied_at = Some(long_ago);
+        state.last_neighbors_suppressed = true;
+
+        state.apply_neighbors_suppressed(false, Instant::now());
+
+        let restarted = state
+            .destinations_emptied_at
+            .expect("BUG: the ceiling must still be armed");
+        assert!(
+            restarted > long_ago,
+            "the neighbours owe a buffer each from here, not from the last scene change"
+        );
+    }
+
+    /// Only the end of suppression restarts it. While a blocker is up the
+    /// drag is refused outright, and moving the clock then would only delay
+    /// the ceiling that starts when the neighbours come back.
+    #[test]
+    fn entering_neighbour_suppression_leaves_the_drag_ceiling_alone() {
+        let mut state = make_app_state();
+        let armed = Instant::now()
+            .checked_sub(TRANSITION_WARM_UP_TIMEOUT / 2)
+            .expect("BUG: the test clock must reach half a ceiling back");
+        state.destinations_emptied_at = Some(armed);
+        state.last_neighbors_suppressed = false;
+
+        state.apply_neighbors_suppressed(true, Instant::now());
+
+        assert_eq!(state.destinations_emptied_at, Some(armed));
     }
 
     #[test]

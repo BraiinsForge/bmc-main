@@ -85,8 +85,7 @@
 //!
 //! ## What NOT to do
 //!
-//! These mistakes were found in the testbed and caused excessive CPU usage on
-//! both desktop and the real device:
+//! Each of these costs a core on desktop and on the device:
 //!
 //! - **Rendering unconditionally** — rendering every vsync even when the widget
 //!   is idle wastes 100% of a core.
@@ -138,7 +137,7 @@ pub mod stack_profile;
 pub mod unified_fixture;
 
 pub use bmc_led::data::{LedEffectKind as LedEffect, LedScope, Rgb};
-pub use host_api::{FixtureEvent, FixtureEventKind, FixtureEventState};
+pub use host_api::{EXPORT_BUFFERS, FixtureEvent, FixtureEventKind, FixtureEventState};
 pub use led_request::{LED_REQUEST_ID_ALL, LedRequest, LedRequestId, LedRequestIdAllocator};
 pub use network::NetworkInfo;
 pub use runtime::{

@@ -102,11 +102,17 @@ fn compose_fence() -> bool {
 /// wasm host paints straight into the exported buffer instead of blitting
 /// through a staging surface.
 ///
-/// `zwp_linux_buffer_params_v1::Flags::YInvert` is the obvious signal and is
-/// deliberately *not* used: smithay negates the texture matrix's Y without the
-/// offset a `y' = 1 - y` flip needs, so coordinates land outside the texture and
-/// the surface samples garbage. Folding the flip into the transform routes it
-/// through `build_texture_mat`, the path display rotation already uses.
+/// `zwp_linux_buffer_params_v1::Flags::YInvert` is the obvious signal, and it is
+/// unusable: smithay's `render_texture_from_to` negates the texture matrix's Y
+/// without the offset a `v' = 1 - v` flip needs.
+/// `gles/mod.rs:2716` is unchanged from our pinned c114b88 to master 92ba0e9.
+/// `build_texture_mat` normalises into UV space last,
+/// so the negation drops `v` into `[-1, 0]` and CLAMP_TO_EDGE then samples
+/// one edge row across the whole quad.
+/// The flag is read at import and stamped onto the `GlesTexture`,
+/// so a flagged buffer stays broken whatever transform we pass at draw time.
+/// Folding the flip into the transform instead routes it through
+/// `build_texture_mat`, the path display rotation already uses.
 ///
 /// The rotation comes from [`scanout_transform`] and [`with_row_flip`] mirrors
 /// it, so the two cannot drift apart. Only `Deg270` (Bmc100) has been seen on
@@ -115,12 +121,14 @@ fn compose_fence() -> bool {
 ///
 /// ⚠ Applied to every widget surface, wasm or native, so it assumes all of them
 /// submit bottom-up buffers. That holds for anything painting straight into its
-/// export buffer, which is both the wasm host after this change and
-/// `widgets/flip-clock` (direct FBO, no staging). A widget that blits through a
-/// staging surface instead gets a Y flip from that blit's own UVs and would be
-/// inverted here; none does today, and distinguishing them would need a
-/// per-surface signal that does not exist. **Verified on hardware for the wasm
-/// path only** — put a native widget on screen before trusting this for it.
+/// export buffer — both the wasm host and `widgets/flip-clock`, which draws to
+/// a direct FBO with no staging. A widget that blits through a staging surface
+/// instead gets a Y flip from that blit's own UVs and would be inverted here;
+/// none does today, and telling them apart would need an orientation signal the
+/// buffer does not carry — `create_buffer_from_dmabuf` sends `Flags::empty()`,
+/// and the flag that could carry it is the broken one above.
+/// **Verified on hardware for the wasm path only** — put a native widget on
+/// screen before trusting this for it.
 fn widget_transform(profile: DisplayTransform) -> Transform {
     with_row_flip(scanout_transform(profile))
 }

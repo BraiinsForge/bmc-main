@@ -599,11 +599,6 @@ impl ControlFirstPostPoll for PostPollState<'_> {
             } else {
                 slot.apply_lifecycle(now, &self.shared.egl)
             };
-            // The layer is the largest thing a dormant slot would keep, and the
-            // renderer that owns it lives here rather than on the slot. Dropping
-            // it deletes a texture, so it takes the GPU lock like any other
-            // renderer mutation. Waking pre-warms a render, so the re-capture
-            // this costs happens before the scene is on screen.
             if hook == Some(LifecycleHook::Sleep)
                 && let Err(error) =
                     self.shared

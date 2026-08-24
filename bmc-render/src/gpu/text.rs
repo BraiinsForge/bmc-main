@@ -1683,9 +1683,7 @@ pub(crate) const DEFAULT_MIN_AUTOFIT: u32 = 12;
 /// Inclusive `[lower, upper]` font-size search range for an autofit command.
 /// `target_height` bounds growth when `max_size` is unset: a line at size S is
 /// `S * line_height` px tall, so a fitting size never exceeds
-/// `target_height / line_height`. Pure.
-///
-/// `pub(crate)` so the GPU renderer (sibling `gpu::renderer` module) can call it.
+/// `target_height / line_height`.
 pub(crate) fn autofit_bounds(
     size: u32,
     min_size: u32,

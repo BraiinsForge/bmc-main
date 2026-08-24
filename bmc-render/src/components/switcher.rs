@@ -70,11 +70,23 @@ pub fn switcher_size(data: &SwitcherData) -> (f32, f32) {
 
 // ── Rendering ────────────────────────────────────────────────────────
 
-/// Draw the pill; each tab also becomes a hit region.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "position, size, and the render sinks each need their own arg"
-)]
+/// Width of one tab, and the left edge of the tab at `index`.
+fn tab_bounds(x: f32, w: f32, tabs: usize, index: usize) -> (f32, f32) {
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a switcher carries a handful of tabs"
+    )]
+    let tab_w = w / tabs.max(1) as f32;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "a switcher carries a handful of tabs"
+    )]
+    let tx = x + index as f32 * tab_w;
+    (tx, tab_w)
+}
+
+/// Draw the pill and its tabs. The hit regions come from
+/// [`register_switcher_hits`], which runs on passes this one skips.
 pub(crate) fn render_switcher(
     data: &SwitcherData,
     x: f32,
@@ -82,8 +94,6 @@ pub(crate) fn render_switcher(
     w: f32,
     h: f32,
     renderer: &mut RenderTarget<'_, '_, '_>,
-    interaction: &mut InteractionState,
-    result: &mut TreeResult,
 ) {
     let dim = |c: Color| {
         if data.disabled {
@@ -95,9 +105,8 @@ pub(crate) fn render_switcher(
 
     renderer.fill_rounded_rect(x, y, w, h, RADIUS, dim(PILL_BG));
 
-    let tab_w = w / data.tabs.len().max(1) as f32;
     for (i, tab) in data.tabs.iter().enumerate() {
-        let tx = x + i as f32 * tab_w;
+        let (tx, tab_w) = tab_bounds(x, w, data.tabs.len(), i);
         let active = i == data.active;
 
         if active {
@@ -117,11 +126,29 @@ pub(crate) fn render_switcher(
                 &[],
             );
         }
+    }
+}
 
-        if data.disabled {
-            continue;
-        }
-
+/// Register each tab's hit region and collect the clicks landing on them.
+///
+/// Split from the paint because the two run on different passes. Hit regions
+/// are rebuilt every frame and tested against the previous frame's set,
+/// so a pass that paints nothing still has to register.
+/// A cached frame that skipped it would swallow the next tap.
+pub(crate) fn register_switcher_hits(
+    data: &SwitcherData,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+    interaction: &mut InteractionState,
+    result: &mut TreeResult,
+) {
+    if data.disabled {
+        return;
+    }
+    for (i, tab) in data.tabs.iter().enumerate() {
+        let (tx, tab_w) = tab_bounds(x, w, data.tabs.len(), i);
         let (clicked, pos) = interaction.button_with_pos(&tab.click_id, Rect::new(tx, y, tab_w, h));
         if clicked && let Some((lx, ly)) = pos {
             result.clicks.insert(

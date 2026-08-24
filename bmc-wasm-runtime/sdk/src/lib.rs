@@ -85,8 +85,8 @@
 //! restore persisted state, kick-off fetches whose response will populate the
 //! first frame. (The SDK auto-installs the panic hook — no widget setup needed.)
 //!
-//! Viewport dimensions are no longer passed as arguments — call [`widget_size`]
-//! from anywhere (in `init`, in `render`, in helpers) and you get the same `WidgetSize`
+//! Viewport dimensions are not arguments — call [`widget_size`] from anywhere
+//! (in `init`, in `render`, in helpers) and you get the same `WidgetSize`
 //! on every call. Most widgets don't need a thread-local copy at all.
 //!
 //! The initial params snapshot is already staged by the time `init` runs
@@ -316,9 +316,8 @@ pub extern "C" fn __bmc_sdk_init() -> u64 {
 /// path is meaningless for out-of-tree widgets and the host adds the widget name.
 /// Without it, `panic = "abort"` traps as a bare `unreachable`.
 ///
-/// Verified on-device — a missing-param panic that was previously an opaque
-/// `unreachable` trap now reads in the host log (widget name supplied by the
-/// host's per-widget tracing span):
+/// Verified on-device — a missing-param panic reads in the host log
+/// (widget name supplied by the host's per-widget tracing span):
 ///
 /// ```text
 /// ERROR widget{wasm="weather.wasm"}: widget panic at typed.rs:52: BUG: required param `location` missing from snapshot

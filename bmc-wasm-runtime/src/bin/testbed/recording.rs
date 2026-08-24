@@ -103,21 +103,11 @@ impl RecordingState {
     /// and, when `auto_capture` is on, attach a debounced auto-`Capture`
     /// 500 ms later so each settled state yields one baseline frame.
     ///
-    /// # Debounce
+    /// Debounced by sliding the pending auto-`Capture` forward instead of
+    /// appending another, so a slider drag yields one `Capture` per cluster of
+    /// changes 500 ms apart rather than one per intermediate value.
     ///
-    /// Slider drags, text typing, and rapid system mutations produce
-    /// one delivery per intermediate value (dozens per second).
-    ///
-    /// A naive "Capture 500 ms after every delivery" rule would mint hundreds
-    /// of nearly-identical frames. Instead, when a new delivery arrives
-    /// and the most-recently-pushed auto-Capture's `at_ms` is still
-    /// in the future relative to the new delivery, slide that Capture
-    /// forward to `at_ms + 500` rather than appending another.
-    ///
-    /// Net effect: one Capture per cluster of changes ≤500 ms apart,
-    /// fired 500 ms after the cluster's last delivery.
-    ///
-    /// The one it slides is remembered, not recognised: an operator's Capture
+    /// The one it slides is remembered, not recognised: an operator's `Capture`
     /// is the same shape, and a gesture's carries a duration.
     fn record_delivery(&mut self, make_event: impl FnOnce() -> UnifiedEvent) {
         let at_ms = self.clock.now_ms();

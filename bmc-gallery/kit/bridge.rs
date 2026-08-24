@@ -460,11 +460,8 @@ fn staged_tree(
                 frame_counter: state.frame_counter,
                 delta_ms,
                 now_unix_secs,
-                // The gallery renders every frame in full: it has no export
-                // buffer to preserve and no guest to skip.
                 emit: bmc_render::tree::EmitMode::All,
-                capture_static: false,
-                reuse_static_layer: false,
+                static_layer: bmc_render::tree::LayerUse::Ignore,
                 static_layer_key: "gallery",
                 damage_rects: &[],
             };
@@ -553,7 +550,7 @@ fn deck_stage(
         let loader = ctx
             .gl_loader()
             .expect("BUG: the Deck kit renders through the glow backend");
-        // The FBO is inert here — see `init_renderer`.
+        // The FBO is inert here — see `init_renderer_with`.
         init_renderer_with(&loader, target, 0);
     }
     let mut grew = false;

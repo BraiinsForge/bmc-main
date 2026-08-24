@@ -68,9 +68,6 @@ pub enum ResolveAllFromIndexError {
 /// intentionally ignored — store paths are realised through
 /// configured Nix substituters.
 ///
-/// This is used by `bmc-nix-cli build-profile` and `reset-profile`
-/// when packages are already present in the local Nix store.
-///
 /// # Errors
 ///
 /// Returns [`ResolveAllFromIndexError::MissingSystemPackages`] when a
@@ -522,9 +519,8 @@ fn select_primary_indexes(
 
 /// Fetch the top-level fetch set: the enabled configured servers reduced
 /// via [`select_primary_indexes`], then the ad-hoc references. Ad-hoc
-/// references are reduced separately from the configured servers: any
-/// ad-hoc fetch failure is fatal, matching the required synthetic entries
-/// they used to be.
+/// references are reduced separately from the configured servers:
+/// any ad-hoc fetch failure is fatal.
 async fn fetch_primary_indexes(
     client: &reqwest::Client,
     enabled_servers: &[&ServerEntry],

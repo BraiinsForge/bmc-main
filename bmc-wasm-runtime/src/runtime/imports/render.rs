@@ -208,6 +208,20 @@ fn register_button_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
+/// What this frame does with the cached static layer.
+///
+/// A widget with no static half has no layer to reuse, and blitting an empty
+/// one is a wasted full-screen pass; otherwise the layer is painted when the
+/// static half hashed unchanged and rebuilt when it did not.
+fn layer_use(layered: bool, static_unchanged: bool) -> bmc_render::tree::LayerUse {
+    use bmc_render::tree::LayerUse;
+    match (layered, static_unchanged) {
+        (false, _) => LayerUse::Ignore,
+        (true, true) => LayerUse::Reuse,
+        (true, false) => LayerUse::Capture,
+    }
+}
+
 fn submit_tree(
     mut caller: Caller<'_, HostState>,
     ptr: u32,
@@ -271,8 +285,7 @@ fn submit_tree(
             delta_ms,
             now_unix_secs,
             emit: bmc_render::tree::EmitMode::All,
-            capture_static: layered && !static_unchanged,
-            reuse_static_layer: layered && static_unchanged,
+            static_layer: layer_use(layered, static_unchanged),
             static_layer_key: &state.instance_id,
             damage_rects: &[],
         };

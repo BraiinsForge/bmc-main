@@ -290,8 +290,7 @@ fn view_placement(cli: &CliArgs) -> ViewPlacement {
 /// Where a view built right now renders: recording pins it inline,
 /// since the recorder's hit-test and event drain are synchronous queries
 /// only an inline view answers. Recording also pins the canvas to one
-/// platform, so every view that exists during a take is pinned by this —
-/// `--record`'s old whole-run pin, scoped to the mode instead.
+/// platform, so every view that exists during a take is pinned by this.
 fn placement_for_build(configured: ViewPlacement, recording: bool) -> ViewPlacement {
     if recording {
         ViewPlacement::UiThread
@@ -996,9 +995,8 @@ fn setup_watcher(path: &Path) -> Result<(RecommendedWatcher, std::sync::mpsc::Re
 
 /// Translate egui pointer events on a tile rect into `TouchEvent`s sent to the view.
 ///
-/// Click / drag semantics mirror what the prior winit-based testbed forwarded:
-/// a quick click fires `Down` then `Up`; a drag fires `Down` on start,
-/// `Move` on each frame the pointer moved, and `Up` on release.
+/// A quick click fires `Down` then `Up`; a drag fires `Down` on start, `Move`
+/// on each frame the pointer moved, and `Up` on release.
 ///
 /// When `recording` is `Some`, also tracks the gesture (start/current pos + start element)
 /// so the recording-side gesture classifier can turn it into a Click / Scroll / Drag
@@ -1359,12 +1357,8 @@ impl TestbedApp {
             Some(hot::spawn(root.clone(), workspace, &hot_status))
         });
 
-        // Starting system snapshot for the testbed.
-        // The real-device path populates this from the wayland `SettingUpdate` stream;
-        // the testbed bootstraps with defaults plus a sensible non-empty timezone
-        // so the demo cells aren't blank on first paint.
-        //
-        // Operator changes go through `apply_system_update` and propagate to every tile.
+        // A non-empty timezone, so the demo cells are not blank on first paint;
+        // the device fills this from the wayland `SettingUpdate` stream instead.
         let pending_system = SystemSnapshot {
             settings: bmc_wasm_runtime::SystemSettings {
                 timezone: "Europe/Prague".to_owned(),
@@ -1374,8 +1368,6 @@ impl TestbedApp {
             night_mode: false,
         };
 
-        // Recording no longer pins here: `enter_recording` below saves
-        // this set as what Save/Cancel restores, then pins to the take's platform.
         let pinned = cli.platform_id.is_some();
         let open_platforms = startup_platforms(active_platform, pinned, &manifest);
 
@@ -2676,8 +2668,6 @@ impl TestbedApp {
 
         // Chrome claims its edges before the CentralPanel takes the rest:
         // toolbar first, then the sidebar's 320 px slice off the right.
-        // Sidebar changes propagate to all tile runtimes and (when recording)
-        // append `ParamDelivery` / `SystemDelivery` events to the timeline.
         // The watcher's thread has no window of its own to wake.
         self.hot_reload.status.wake_with(&ctx);
         self.hot_reload.status.settle();

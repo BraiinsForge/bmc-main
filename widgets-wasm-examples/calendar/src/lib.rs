@@ -215,7 +215,7 @@ fn toggle_theme() {
     request_frame();
 }
 
-/// Re-render in response to touch — the host no longer renders on touch by
+/// Re-render in response to touch — the host never renders on touch by
 /// itself, so an interactive widget must ask for the frame here.
 #[unsafe(no_mangle)]
 pub extern "C" fn on_touch() {

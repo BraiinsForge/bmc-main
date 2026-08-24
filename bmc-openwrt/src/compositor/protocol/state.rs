@@ -429,8 +429,7 @@ impl DeckWidgetProtocolState {
 
     /// Emit the initial configure batch on the given surface for the
     /// given instance: `configure` → `display_info` → `params` → setting events →
-    /// `configure_done`. Called by the dispatch handler right after the
-    /// surface role is assigned.
+    /// `configure_done`.
     pub fn emit_initial_state(&self, instance_id: &InstanceId, surface: &DeckWidgetSurfaceV1) {
         self.emit_initial_state_into(instance_id, surface);
     }

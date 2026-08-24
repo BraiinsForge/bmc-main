@@ -380,7 +380,7 @@ pub extern "C" fn render(delta_ms: u32) {
     DERIVED.with(|cell| {
         let mut cell = cell.borrow_mut();
         // The fold runs on its own interval, not per render,
-        // so poll `seq` churn no longer re-folds the whole fleet every frame.
+        // so poll `seq` churn does not re-fold the whole fleet every frame.
         // The first frame and params changes still derive immediately.
         let stale = match cell.as_ref() {
             None => true,

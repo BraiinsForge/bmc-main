@@ -1302,8 +1302,7 @@ class View extends Component<Props, State> {
         }
     };
 
-    // Firmware download + apply used to be two RPCs;
-    // the backend now drives the whole thing through a single `StartUpgrade` progress stream
+    // The backend drives download + apply through a single `StartUpgrade` progress stream
     // (download → phases → done), arbitrating firmware vs. packages behind one upgrade id.
     #confirmAndRunUpgrade = async (upgradeId: string): Promise<void> => {
         const { formatMessage } = this.props.intl;

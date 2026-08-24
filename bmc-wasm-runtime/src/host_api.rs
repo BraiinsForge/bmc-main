@@ -764,9 +764,8 @@ pub use bmc_render::FrameTimings;
 /// Whether to render at all ([`Self::wants_next_frame`]), how long to wait
 /// ([`Self::effective_delay_ms`]) and whether the next frame can skip WASM
 /// ([`Self::is_animation_only_frame`]) are all *derived* on query rather
-/// than stored. Storing them was the source of a last-writer-wins bug where
-/// the widget's `request_frame_after` could clobber a runtime-imposed
-/// clamp set earlier in the same frame.
+/// than stored, so no writer can clobber a clamp another set earlier in the
+/// same frame.
 pub(crate) struct FrameScheduleState {
     /// Widget's requested delay before the next render. `Some(0)` ≡
     /// `request_frame()`; `Some(n)` ≡ `request_frame_after(n)`; `None` means
@@ -846,8 +845,7 @@ impl FrameScheduleState {
     /// frame clears [`Self::widget_delay_ms`] without the guest running to
     /// re-request it, so once the animations it was rendering settle, the
     /// widget's own `request_frame_after` deadline is the only thing left
-    /// wanting a frame. Omitting it stalled every widget whose animations
-    /// finish — the clock froze mid-second until an unrelated event woke it.
+    /// wanting a frame.
     pub fn wants_next_frame(&self, now: u64) -> bool {
         self.widget_delay_ms.is_some()
             || self.has_active_animations
@@ -868,10 +866,9 @@ impl FrameScheduleState {
     /// the cached path. A deferred request (`request_frame_after(n)`, `n > 0`)
     /// must not: the widget asked to run again in `n` ms, not on every frame in
     /// between, and [`Self::deferred_wasm_render_at_ms`] already forces the full
-    /// WASM run once that deadline elapses. Blocking on any `Some` made the
-    /// cached path unreachable for every widget that calls `request_frame_after`
-    /// from `render` — which is all of them — so animations re-ran the whole
-    /// interpreted guest each frame instead of replaying the tree.
+    /// WASM run once that deadline elapses. Blocking on any `Some` would make
+    /// the cached path unreachable for every widget that calls
+    /// `request_frame_after` from `render`, which is all of them.
     pub fn is_animation_only_frame(&self) -> bool {
         (self.has_active_animations || self.host_frame_delay_ms.is_some())
             && !self.interaction_pending
@@ -945,6 +942,13 @@ impl StagedGuestDeliveries {
 }
 
 /// Host-side state accessible to WASM via host functions.
+#[cfg_attr(
+    feature = "testing",
+    expect(
+        clippy::struct_excessive_bools,
+        reason = "the `testing` feature adds `unload_ran`, taking the count past the threshold"
+    )
+)]
 pub(crate) struct HostState {
     /// Renderer parked by `WasmWidgetRuntime::with_renderer` for the duration of a
     /// render scope. `None` outside a render scope; host imports that read this must
@@ -1023,7 +1027,7 @@ pub(crate) struct HostState {
     /// render target at all (`bmc_wasm_host::lifecycle::has_render_target`), so
     /// every buffer is newly allocated and holds nothing. Repainting only the
     /// damage over one of those leaves the rest of the surface black.
-    pub stale_export_buffers: u8,
+    pub stale_export_buffers: usize,
 
     /// Cached deserialized tree for animation-only frames (tree, width, height).
     pub cached_tree: Option<(bmc_render::tree::TreeNode, f32, f32)>,
@@ -1418,10 +1422,6 @@ impl HostState {
     /// (version 0). The runtime constructor stages the operator-supplied
     /// initial snapshots via `.replace(...)` to bump both to version 1
     /// before `init()` runs.
-    ///
-    /// The renderer is owned by the caller of [`crate::WasmWidgetRuntime::new`]
-    /// and installed on `renderer_ptr` per-frame via
-    /// `WasmWidgetRuntime::with_renderer`.
     #[expect(
         clippy::too_many_lines,
         reason = "constructor initializes every independent host service and runtime registry"
@@ -1566,10 +1566,7 @@ impl HostState {
     /// Evict every host-side audio asset (sample + matching playback sinks)
     /// whose tag starts with `prefix`. Returns the number of evicted entries.
     ///
-    /// Renderer-side eviction is the caller's responsibility — the host
-    /// import (`host_evict_prefix`) reaches the `FemtoVgRenderer` through
-    /// `WasmWidgetRuntime::with_renderer` and adds its count on top of
-    /// this one.
+    /// Renderer-side eviction is the caller's responsibility.
     pub fn evict_audio_prefix(&mut self, prefix: &str) -> usize {
         self.audio.evict_prefix(prefix)
     }
@@ -1630,10 +1627,15 @@ impl HostState {
     }
 }
 
-/// Export buffers the host rotates through per slot — `DoubleBufferState` in
-/// `bmc_wasm_host::render_target`. Frames that must reach every buffer, rather
-/// than the one they paint, repeat this many times.
-pub(crate) const EXPORT_BUFFERS: u8 = 2;
+/// Export buffers the host rotates through per slot.
+///
+/// Frames that must reach every buffer, rather than only the one they paint,
+/// repeat this many times. The host owns the real count — `EXPORT_BUFFER_SLOTS`
+/// in `bmc_widget::egl` — and this has to match it or every
+/// `stale_export_buffers` count is short. `bmc-wasm-host` sees both crates and
+/// asserts they agree at compile time; nothing here can check it, which is why
+/// the assertion lives there rather than in this crate.
+pub const EXPORT_BUFFERS: usize = 2;
 
 impl HostState {
     /// Damage for the frame about to render, or empty to repaint everything.

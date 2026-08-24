@@ -36,6 +36,15 @@ use bmc_wasm_runtime::{
     RenderStatus, RuntimeConfig, SystemSnapshot, TargetContents, WasmWidgetRuntime,
 };
 use bmc_wasm_thin_protocol::{WIDGET_CACHE_BUCKET_MAX_BYTES, WIDGET_CACHE_DIR};
+
+/// The runtime counts how many frames must repaint in full after a buffer goes
+/// stale, and it cannot see how many buffers there are. This crate sees both,
+/// so a host that started triple-buffering fails to compile here rather than
+/// silently under-counting and bringing back the flicker of BDK-707/708.
+const _: () = assert!(
+    bmc_widget::egl::EXPORT_BUFFER_SLOTS == bmc_wasm_runtime::EXPORT_BUFFERS,
+    "bmc-widget rotates a different number of export buffers than bmc-wasm-runtime assumes"
+);
 use bmc_widget::surface::{
     DeckWidgetSurfaceClient, InitialState, ReleasedBuffer, WidgetEvent, WidgetSurface,
 };
@@ -1231,8 +1240,6 @@ impl<S: SlotSurface> WidgetSlot<S> {
 /// `bmc_shared_utils::*`, `bmc_widget_protocol::*`) and the wasmi-wire
 /// enums (`bmc_wasm_protocol::system::*`).
 ///
-/// The wasm runtime intentionally does not depend on the bmc-shared crates,
-/// so the translation lives here.
 /// Narrow Wayland touch pixel coordinates to the `f32` the render interaction
 /// layer uses. The values are screen-pixel positions, so the precision loss is
 /// inconsequential.
@@ -1581,12 +1588,6 @@ impl HostRenderProfiling {
     }
 }
 
-/// Point the renderer at the slot's current export buffer and start its frame.
-///
-/// Painting straight into the exported buffer is what removes the staging copy;
-/// the buffer carries a stencil attachment for femtovg's fills. femtovg renders
-/// bottom-up to a framebuffer, so the compositor flips these buffers via its
-/// scanout transform.
 /// What the upcoming frame will find in its target.
 ///
 /// One answer drives both the clear and the runtime's damage decision: derive
@@ -1608,6 +1609,12 @@ fn target_contents(
     }
 }
 
+/// Point the renderer at the slot's current export buffer and start its frame.
+///
+/// Painting straight into the exported buffer is what removes the staging copy;
+/// the buffer carries a stencil attachment for femtovg's fills. femtovg renders
+/// bottom-up to a framebuffer, so the compositor flips these buffers via its
+/// scanout transform.
 fn bind_export_target_for_frame(
     shared: &SharedHost,
     buffers: &mut bmc_widget::egl::DoubleBufferState,
@@ -1642,7 +1649,10 @@ fn bind_export_target_for_frame(
         shared.scratch.retarget_to(
             &shared.egl,
             export.texture(),
-            export.stencil_rb(),
+            export.stencil_rb().expect(
+                "BUG: the wasm host allocates its export buffers with Attachment::Stencil, \
+                 which femtovg's fills require",
+            ),
             width,
             height,
             !preserve,

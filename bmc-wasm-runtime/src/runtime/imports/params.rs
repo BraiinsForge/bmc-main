@@ -85,7 +85,7 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
          -> std::result::Result<u32, wasmi::Error> {
             // Lazy-encoded cache lives on `HostState`; invalidated atomically when params change.
             // A misbehaving guest spinning on `host_params_snapshot` re-uses the cached bytes
-            // until the next `replace_params` call instead of forcing a fresh encode every time.
+            // until the next `params.replace` call instead of forcing a fresh encode every time.
             // `.to_vec()` releases the `&mut HostState` borrow before the wasm-memory write below.
             let bytes = caller.data_mut().params.encoded().to_vec();
             let needed = bytes.len() as u32;
@@ -126,14 +126,13 @@ fn register_params_snapshot(linker: &mut Linker<HostState>) -> Result<()> {
 /// (both the trait and the map are foreign to `bmc-wasm-runtime`); the newtype is local
 /// and side-steps that without changing how the map itself is constructed.
 ///
-/// Mutation lives upstream on `HostState` (only path is `replace_params`); the inner field
-/// is private here so the cache invalidation invariant can't be sidestepped via direct map
-/// access through the wrapper.
+/// Mutation lives upstream on `HostState::params`, whose only path is
+/// `VersionedSnapshotCache::replace`; the inner field is private here so the cache
+/// invalidation invariant can't be sidestepped via direct map access through the wrapper.
 pub struct ParamsSnapshot(std::collections::BTreeMap<ParamKey, ParamValue>);
 
 impl ParamsSnapshot {
-    /// Wrap an owned params map. Used by `HostState::replace_params`
-    /// when staging an update into the [`VersionedSnapshotCache`].
+    /// Wrap an owned params map, staged into the [`VersionedSnapshotCache`].
     pub fn new(params: std::collections::BTreeMap<ParamKey, ParamValue>) -> Self {
         Self(params)
     }

@@ -104,24 +104,13 @@ struct ShadowFboPool {
     blurred: femtovg::ImageId,
 }
 
-/// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
-///
-/// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
-/// paragraph layout cache. Created once per runtime lifetime.
-/// Cached rasterisation of the static half of a widget tree.
-///
-/// Geometry is recorded so a resize can be detected — the texture is the wrong
-/// shape then and must be reallocated rather than reused.
 /// A textured-quad program: two triangles, one `texture2D`, nothing else.
 ///
 /// Compositing the static layer is a straight copy, and femtovg's own fast path
-/// still costs ~27 ms for a full screen on the Deck against ~13 ms for this —
-/// same texture, same destination, same pixels, so the difference is the shader
-/// it selects. Worth 14 ms a frame on a static-heavy widget.
-///
-/// The write dominates what remains: a constant-colour quad of the same size,
-/// reading no texture at all, still costs ~5 ms. That is close to this GPU's
-/// fill rate, so the way past it is drawing fewer pixels, not cheaper ones.
+/// selects a costlier shader for it — same texture, same destination, same
+/// pixels. What remains is dominated by the write itself, close to this GPU's
+/// fill rate, so the way past it is drawing fewer pixels rather than cheaper
+/// ones.
 struct RawBlit {
     program: glow::Program,
     vbo: glow::Buffer,
@@ -221,6 +210,10 @@ void main() {
     }
 }
 
+/// Cached rasterisation of the static half of a widget tree.
+///
+/// Geometry is recorded so a resize can be detected — the texture is the wrong
+/// shape then and must be reallocated rather than reused.
 struct StaticLayer {
     image: femtovg::ImageId,
     width: u32,
@@ -252,6 +245,10 @@ pub enum RenderTargetProbe {
     GlError(u32),
 }
 
+/// GPU-accelerated renderer backed by FemtoVG (OpenGL ES 2.0+).
+///
+/// Owns the FemtoVG canvas, font IDs, cosmic-text `FontSystem`, and a
+/// paragraph layout cache. Created once per runtime lifetime.
 pub struct FemtoVgRenderer {
     gl: glow::Context,
     canvas: Canvas<OpenGl>,
@@ -1019,8 +1016,7 @@ impl FemtoVgRenderer {
     /// a `discard` for every fragment — the discard being especially unkind to a
     /// tile-based GPU. Tinting a 1x1 texture instead selects
     /// `ShaderType::TextureCopyUnclipped`, which samples once, multiplies by the
-    /// tint and returns before any of that. Measured at ~1.7x cheaper per pixel
-    /// on the Deck.
+    /// tint and returns before any of that.
     ///
     /// Turning anti-aliasing off alone does **not** get there: it only sets the
     /// stroke threshold so the discard never fires, while the shader still runs
@@ -1048,8 +1044,7 @@ impl FemtoVgRenderer {
     ///   position animation steps rather than slides.
     ///
     /// Gating on an axis-aligned transform would close the first; closing the
-    /// second needs whole-device-pixel placement too, over a narrower set than
-    /// the 1.7x was measured across.
+    /// second needs whole-device-pixel placement too.
     fn solid_paint(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) -> Paint {
         let Some(texture) = self.solid_texture() else {
             return Paint::color(to_femtovg_color(color.to_u32()));

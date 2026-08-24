@@ -212,13 +212,10 @@ pub(crate) fn centre_icon(
 ///   hour-hand → minute-hand → centre_white → second-hand + centre_orange
 ///   (gated on `second_angle`) → centre_black → centre_stroke.
 ///
-/// **No drop shadows.** The minute hand and centre disc used to cast them, and
-/// each one renders through a canvas-sized offscreen FBO and a Gaussian blur:
-/// on the Deck's Vivante GC400 that measured ~400 ms/frame in the rect dial
-/// (2026-05-22) and 470 ms in the round one (2026-08-17), against 6.6 ms
-/// without. At ~2 fps the second hand cannot even show its 200 ms transition,
-/// so it appeared to snap between positions. Restoring them needs a shadow that
-/// does not blur a full canvas per draw.
+/// **No drop shadows.** Each one renders through a canvas-sized offscreen FBO
+/// and a Gaussian blur, which on the Deck's GC400 costs the frame budget many
+/// times over. Restoring them needs a shadow that does not blur a full canvas
+/// per draw.
 #[expect(
     clippy::too_many_arguments,
     reason = "flat geometry helper that must forward all hand/centre parameters without bundling unrelated concerns"

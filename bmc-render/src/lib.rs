@@ -173,7 +173,7 @@ pub struct TransitionState {
 /// `Draw::transition(id, ...)` argument. Keying on the widget-supplied
 /// id (instead of the draw's position within the canvas) lets transition
 /// state follow the logical draw across tree-shape changes — an optional
-/// sibling appearing or disappearing no longer reshuffles state into
+/// sibling appearing or disappearing does not reshuffle state into
 /// the wrong draws.
 pub type TransitionStateKey = (u16, u32);
 

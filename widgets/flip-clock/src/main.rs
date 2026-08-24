@@ -79,9 +79,6 @@ fn run_standalone(mode: AnimationMode) -> Result<()> {
 }
 
 fn run_with_protocol() -> Result<()> {
-    // Connect first, then decode widget-specific state from the initial
-    // configure batch. Previously this was reversed (read env vars, then
-    // connect with known geometry).
     let (surface, initial) = wayland::connect_production()?;
     let mode = widget_protocol::animation_mode_from_params(&initial.params)?;
     let timezone_override = widget_protocol::timezone_override_from_params(&initial.params)?;

@@ -73,28 +73,27 @@ type EglDestroyImageKhr = unsafe extern "C" fn(dpy: *mut c_void, image: *mut c_v
 
 type GlEglImageTargetTexture2DOes = unsafe extern "C" fn(target: u32, image: *mut c_void);
 
-/// Whether an export buffer's FBO has a depth renderbuffer attached.
+/// The non-colour attachment an export FBO carries, if any.
 ///
-/// Required by widgets that use `GL_DEPTH_TEST` (e.g. 3D flip-clock); a
-/// `DEPTH_COMPONENT16` renderbuffer costs ~1.3 MB per buffer at the
-/// compositor's render size, so widgets that don't need depth opt out.
+/// One choice rather than two flags, because GLES 2.0 permits a driver to
+/// reject a framebuffer holding a separate depth *and* a separate stencil
+/// renderbuffer — and the GC400 does, with `GL_FRAMEBUFFER_UNSUPPORTED`
+/// (0x8CDD). Carrying both would need `GL_OES_packed_depth_stencil`: one
+/// `DEPTH24_STENCIL8_OES` renderbuffer bound to both attachment points. A
+/// `Both` variant is where that goes if it is ever needed; nothing wants it
+/// today.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Depth {
-    Enabled,
-    Disabled,
-}
-
-/// Whether a [`WidgetExportBuffer`]'s FBO gets a stencil attachment.
-///
-/// femtovg's fills need one, so a target it paints into wants [`Self::Enabled`],
-/// which borrows the shared renderbuffer for that size rather than allocating.
-/// A target used only as a blit source or destination wants [`Self::Disabled`]:
-/// a colour-only framebuffer is complete, and an `STENCIL_INDEX8` request costs
-/// ~4 bytes a pixel on this driver rather than the 1 it asks for.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Stencil {
-    Enabled,
-    Disabled,
+pub enum Attachment {
+    /// `DEPTH_COMPONENT16`, for a widget using `GL_DEPTH_TEST` — the 3D
+    /// flip-clock. Costs ~1.3 MB per buffer at the compositor's render size.
+    Depth,
+    /// `STENCIL_INDEX8`, which femtovg's fills need. Borrowed from the
+    /// context's size pool rather than allocated per buffer.
+    Stencil,
+    /// Colour only. A target used as a blit source or destination needs
+    /// neither, and an `STENCIL_INDEX8` request costs ~4 bytes a pixel on this
+    /// driver rather than the 1 it asks for.
+    None,
 }
 
 /// Pixel format used for DMA-BUF export buffers.
@@ -303,9 +302,9 @@ impl EglContext {
         &self,
         width: u32,
         height: u32,
-        depth: Depth,
+        attachment: Attachment,
     ) -> Result<ExportBuffer> {
-        self.allocate_export_buffer_with_format(width, height, depth, ExportFormat::Opaque)
+        self.allocate_export_buffer_with_format(width, height, attachment, ExportFormat::Opaque)
     }
 
     /// Allocate an export buffer using an explicit DMA-BUF pixel format.
@@ -315,7 +314,7 @@ impl EglContext {
         &self,
         width: u32,
         height: u32,
-        depth: Depth,
+        attachment: Attachment,
         format: ExportFormat,
     ) -> Result<ExportBuffer> {
         anyhow::ensure!(
@@ -424,14 +423,14 @@ impl EglContext {
         // give back the EGLImage and texture created above — an allocation that
         // half-succeeded and leaked would make the next attempt likelier to fail
         // for the same reason.
-        let (fbo, depth_rb, stencil_rb) = match self.make_export_fbo(texture, width, height, depth)
-        {
-            Ok(attachments) => attachments,
-            Err(error) => {
-                unsafe { self.release_image_texture(egl_image, texture) };
-                return Err(error);
-            }
-        };
+        let (fbo, depth_rb, stencil_rb) =
+            match self.make_export_fbo(texture, width, height, attachment) {
+                Ok(attachments) => attachments,
+                Err(error) => {
+                    unsafe { self.release_image_texture(egl_image, texture) };
+                    return Err(error);
+                }
+            };
 
         let cached_stride = bo.stride();
 
@@ -464,11 +463,11 @@ impl EglContext {
         texture: glow::Texture,
         width: u32,
         height: u32,
-        depth: Depth,
+        attachment: Attachment,
     ) -> Result<(
         glow::Framebuffer,
         Option<glow::Renderbuffer>,
-        glow::Renderbuffer,
+        Option<glow::Renderbuffer>,
     )> {
         unsafe {
             let fbo = self
@@ -484,21 +483,26 @@ impl EglContext {
                 0,
             );
 
-            let stencil_rb = match self.shared_stencil(width, height) {
-                Ok(rb) => rb,
-                Err(error) => {
-                    self.gl.delete_framebuffer(fbo);
-                    return Err(error);
-                }
+            let stencil_rb = if attachment == Attachment::Stencil {
+                let rb = match self.shared_stencil(width, height) {
+                    Ok(rb) => rb,
+                    Err(error) => {
+                        self.gl.delete_framebuffer(fbo);
+                        return Err(error);
+                    }
+                };
+                self.gl.framebuffer_renderbuffer(
+                    glow::FRAMEBUFFER,
+                    glow::STENCIL_ATTACHMENT,
+                    glow::RENDERBUFFER,
+                    Some(rb),
+                );
+                Some(rb)
+            } else {
+                None
             };
-            self.gl.framebuffer_renderbuffer(
-                glow::FRAMEBUFFER,
-                glow::STENCIL_ATTACHMENT,
-                glow::RENDERBUFFER,
-                Some(stencil_rb),
-            );
 
-            let depth_rb = if depth == Depth::Enabled {
+            let depth_rb = if attachment == Attachment::Depth {
                 match self.make_renderbuffer(glow::DEPTH_COMPONENT16, width, height) {
                     Ok(rb) => {
                         self.gl.framebuffer_renderbuffer(
@@ -553,28 +557,28 @@ impl EglContext {
         &self,
         width: u32,
         height: u32,
-        depth: Depth,
-        stencil: Stencil,
+        attachment: Attachment,
     ) -> Result<WidgetExportBuffer> {
         anyhow::ensure!(
             width > 0 && height > 0,
             "widget export buffer dimensions must be non-zero"
         );
 
-        tracing::debug!("Allocating {width}x{height} widget export buffer (depth={depth:?})");
+        tracing::debug!("Allocating {width}x{height} widget export buffer ({attachment:?})");
 
         let texture = self.make_staging_texture(width, height)?;
-        let stencil_rbo = match stencil {
-            Stencil::Enabled => match self.shared_stencil(width, height) {
+        let stencil_rbo = if attachment == Attachment::Stencil {
+            match self.shared_stencil(width, height) {
                 Ok(rbo) => Some(rbo),
                 Err(e) => {
                     unsafe { self.gl.delete_texture(texture) };
                     return Err(e.context("Failed to create stencil RBO"));
                 }
-            },
-            Stencil::Disabled => None,
+            }
+        } else {
+            None
         };
-        let depth_rbo = if depth == Depth::Enabled {
+        let depth_rbo = if attachment == Attachment::Depth {
             match self.make_renderbuffer(glow::DEPTH_COMPONENT16, width, height) {
                 Ok(rbo) => Some(rbo),
                 Err(e) => {
@@ -856,13 +860,13 @@ pub struct ExportBuffer {
     pub fbo: glow::Framebuffer,
     /// GL depth renderbuffer (only allocated when [`Depth::Enabled`]).
     depth_rb: Option<glow::Renderbuffer>,
-    /// Stencil renderbuffer (`STENCIL_INDEX8`). Always allocated: femtovg
-    /// paints straight into this FBO and its fill algorithms need stencil.
-    /// Borrowed from the context's size pool, so destroying this buffer must
-    /// not free it: femtovg needs the attachment but keeps nothing in it between
-    /// frames, and the cross-process GPU lock serialises renders, so no two
-    /// buffers hold it attached at once.
-    stencil_rb: glow::Renderbuffer,
+    /// Stencil renderbuffer (`STENCIL_INDEX8`), when the caller asked for one:
+    /// femtovg paints straight into this FBO and its fills need it, a widget
+    /// rendering its own 3D does not. Borrowed from the context's size pool, so
+    /// destroying this buffer must not free it — femtovg keeps nothing in it
+    /// between frames, and the cross-process GPU lock serialises renders, so no
+    /// two buffers hold it attached at once.
+    stencil_rb: Option<glow::Renderbuffer>,
     /// Buffer width in pixels.
     pub width: u32,
     /// Buffer height in pixels.
@@ -904,7 +908,7 @@ impl ExportBuffer {
     /// a framebuffer whose attachments disagree on size, so the two travel
     /// together.
     #[must_use]
-    pub fn stencil_rb(&self) -> glow::Renderbuffer {
+    pub fn stencil_rb(&self) -> Option<glow::Renderbuffer> {
         self.stencil_rb
     }
 }
@@ -1119,12 +1123,20 @@ impl<B> Default for TwoSlotBufferCache<B> {
 /// Manages two lazily-allocated [`ExportBuffer`]s with ping-pong swap.
 /// Widgets compose this with [`EglContext`] and their own rendering pipeline
 /// (direct FBO, staging+blit, etc.).
+/// Export buffers a slot rotates through.
+///
+/// The compositor samples one while the widget paints the other, so a frame
+/// that must reach every buffer — seeding a fresh one, repainting after a
+/// wake — repeats this many times. `bmc_wasm_runtime`'s `EXPORT_BUFFERS`
+/// mirrors it for its damage bookkeeping; `bmc-wasm-host` asserts the two agree.
+pub const EXPORT_BUFFER_SLOTS: usize = 2;
+
 pub struct DoubleBufferState {
-    buffers: [Option<ExportBuffer>; 2],
+    buffers: [Option<ExportBuffer>; EXPORT_BUFFER_SLOTS],
     current_buffer: usize,
     width: u32,
     height: u32,
-    depth: Depth,
+    attachment: Attachment,
     format: ExportFormat,
 }
 
@@ -1134,7 +1146,7 @@ impl fmt::Debug for DoubleBufferState {
             .field("current_buffer", &self.current_buffer)
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("depth", &self.depth)
+            .field("attachment", &self.attachment)
             .field("format", &self.format)
             .finish_non_exhaustive()
     }
@@ -1144,20 +1156,25 @@ impl DoubleBufferState {
     /// Create empty state at the given dimensions. Buffers are allocated lazily
     /// on the first call to [`Self::ensure_current`].
     #[must_use]
-    pub fn new(width: u32, height: u32, depth: Depth) -> Self {
-        Self::new_with_format(width, height, depth, ExportFormat::Opaque)
+    pub fn new(width: u32, height: u32, attachment: Attachment) -> Self {
+        Self::new_with_format(width, height, attachment, ExportFormat::Opaque)
     }
 
     /// Create empty state at the given dimensions with an explicit export
     /// format. Buffers are allocated lazily on first use.
     #[must_use]
-    pub fn new_with_format(width: u32, height: u32, depth: Depth, format: ExportFormat) -> Self {
+    pub fn new_with_format(
+        width: u32,
+        height: u32,
+        attachment: Attachment,
+        format: ExportFormat,
+    ) -> Self {
         Self {
-            buffers: [None, None],
+            buffers: [const { None }; EXPORT_BUFFER_SLOTS],
             current_buffer: 0,
             width,
             height,
-            depth,
+            attachment,
             format,
         }
     }
@@ -1209,7 +1226,7 @@ impl DoubleBufferState {
             self.buffers[idx] = Some(ctx.allocate_export_buffer_with_format(
                 self.width,
                 self.height,
-                self.depth,
+                self.attachment,
                 self.format,
             )?);
             seed = self.buffers[1 - idx].as_ref().map(ExportBuffer::texture);
@@ -1229,8 +1246,8 @@ impl DoubleBufferState {
     }
 
     #[must_use]
-    pub fn allocated_slots(&self) -> [bool; 2] {
-        [self.buffers[0].is_some(), self.buffers[1].is_some()]
+    pub fn allocated_slots(&self) -> [bool; EXPORT_BUFFER_SLOTS] {
+        std::array::from_fn(|slot| self.buffers[slot].is_some())
     }
 
     #[must_use]
@@ -1324,10 +1341,10 @@ impl fmt::Debug for DoubleBufferedEglState {
 
 impl DoubleBufferedEglState {
     /// Create EGL context and empty double-buffer state at the given size.
-    pub fn new(width: u32, height: u32, depth: Depth) -> Result<Self> {
+    pub fn new(width: u32, height: u32, attachment: Attachment) -> Result<Self> {
         Ok(Self {
             ctx: EglContext::new()?,
-            buffers: DoubleBufferState::new(width, height, depth),
+            buffers: DoubleBufferState::new(width, height, attachment),
         })
     }
 
@@ -1362,7 +1379,7 @@ impl DoubleBufferedEglState {
     }
 
     #[must_use]
-    pub fn allocated_slots(&self) -> [bool; 2] {
+    pub fn allocated_slots(&self) -> [bool; EXPORT_BUFFER_SLOTS] {
         self.buffers.allocated_slots()
     }
 
@@ -1808,7 +1825,7 @@ impl SharedRenderScratch {
     /// the per-frame size.
     pub fn new(ctx: &EglContext, max_width: u32, max_height: u32) -> Result<Self> {
         let staging = ctx
-            .allocate_widget_export_buffer(max_width, max_height, Depth::Disabled, Stencil::Enabled)
+            .allocate_widget_export_buffer(max_width, max_height, Attachment::Stencil)
             .context("Failed to allocate SharedRenderScratch staging")?;
         let staging_stencil = staging
             .stencil_rb()
@@ -2107,9 +2124,9 @@ fn load_egl_proc<T>(name: &str) -> Result<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Depth, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch, SlotReleaseState,
-        Stencil, TwoSlotBufferCache, UvSampling, WidgetExportBuffer, offset_panel_ndc_rect,
-        shared_scratch_uv_scale,
+        Attachment, DoubleBufferState, EglContext, ExportFormat, SharedRenderScratch,
+        SlotReleaseState, TwoSlotBufferCache, UvSampling, WidgetExportBuffer,
+        offset_panel_ndc_rect, shared_scratch_uv_scale,
     };
     use drm_fourcc::DrmFourcc;
 
@@ -2246,10 +2263,10 @@ mod tests {
         let ctx = EglContext::new().expect("BUG: EGL context creation should succeed in test env");
 
         let a: WidgetExportBuffer = ctx
-            .allocate_widget_export_buffer(640, 480, Depth::Disabled, Stencil::Enabled)
+            .allocate_widget_export_buffer(640, 480, Attachment::Stencil)
             .expect("BUG: first WidgetExportBuffer should allocate");
         let b: WidgetExportBuffer = ctx
-            .allocate_widget_export_buffer(320, 240, Depth::Disabled, Stencil::Enabled)
+            .allocate_widget_export_buffer(320, 240, Attachment::Stencil)
             .expect("BUG: second WidgetExportBuffer should allocate");
 
         assert_eq!(a.width, 640);
@@ -2264,7 +2281,7 @@ mod tests {
 
     #[test]
     fn double_buffer_state_starts_empty_on_slot_zero() {
-        let state = DoubleBufferState::new(640, 480, Depth::Disabled);
+        let state = DoubleBufferState::new(640, 480, Attachment::Stencil);
 
         assert_eq!(state.width(), 640);
         assert_eq!(state.height(), 480);
@@ -2276,9 +2293,9 @@ mod tests {
 
     #[test]
     fn double_buffer_state_keeps_alpha_export_format_explicit() {
-        let opaque = DoubleBufferState::new(640, 480, Depth::Disabled);
+        let opaque = DoubleBufferState::new(640, 480, Attachment::Stencil);
         let alpha =
-            DoubleBufferState::new_with_format(640, 480, Depth::Disabled, ExportFormat::Alpha);
+            DoubleBufferState::new_with_format(640, 480, Attachment::Stencil, ExportFormat::Alpha);
 
         assert_eq!(opaque.export_format().drm_fourcc(), DrmFourcc::Xrgb8888);
         assert_eq!(alpha.export_format().drm_fourcc(), DrmFourcc::Argb8888);
@@ -2299,8 +2316,8 @@ mod tests {
         let scratch = SharedRenderScratch::new(&ctx, 480, 480)
             .expect("BUG: SharedRenderScratch should allocate at display max");
 
-        let mut slot_a = DoubleBufferState::new(320, 240, Depth::Disabled);
-        let mut slot_b = DoubleBufferState::new(480, 480, Depth::Disabled);
+        let mut slot_a = DoubleBufferState::new(320, 240, Attachment::Stencil);
+        let mut slot_b = DoubleBufferState::new(480, 480, Attachment::Stencil);
 
         // Each slot allocates its own export buffer against the shared ctx;
         // their FBOs are distinct GL names.

@@ -301,11 +301,11 @@ impl RenderTargetFactory for EglRenderTargetFactory {
         width: u32,
         height: u32,
     ) -> Result<RenderTarget, RenderTargetError> {
-        use bmc_widget::egl::{Depth, DoubleBufferState};
+        use bmc_widget::egl::{Attachment, DoubleBufferState};
 
         let egl = egl.as_egl_context();
 
-        let mut buffers = DoubleBufferState::new(width, height, Depth::Disabled);
+        let mut buffers = DoubleBufferState::new(width, height, Attachment::Stencil);
         buffers
             .ensure_current(egl)
             .map_err(RenderTargetError::Egl)?;
