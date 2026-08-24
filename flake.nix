@@ -274,6 +274,8 @@
           # is the gate over it.
           builtins.removeAttrs self.packages.${localSystem} [
             "workspace-deps-armv7"
+            "workspace-deps-armv7-musl"
+            "bmc-nix-cli-armv7-release"
             "nextest-armv7"
             "wasm-regression-report"
           ]

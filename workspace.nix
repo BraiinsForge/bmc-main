@@ -453,12 +453,29 @@ let
     };
   }));
 
+  armv7MuslDeps = bmc.profiles.armv7-musl-release.deps.overrideAttrs (old: {
+    # Cargo reports "cannot produce cdylib" for these fixtures:
+    # armv7-unknown-linux-musleabihf does not support that crate type.
+    # TODO(BDK-734): let nix-lib accept dependency-build Cargo flags instead of rewriting this phase.
+    buildPhase =
+      let
+        rewritten = builtins.replaceStrings
+          [ " --all-targets" ]
+          [ " --workspace --all-targets --exclude bmc-wasm-assets-linker-widget --exclude bmc-wasm-assets-macro-widget" ]
+          old.buildPhase;
+      in
+      assert pkgs.lib.assertMsg (rewritten != old.buildPhase)
+        "armv7MuslDeps: nix-lib build phase no longer contains --all-targets";
+      rewritten;
+  });
+
   specialPackages = {
     gallery-deps = bmc.profiles.gallery.deps;
     workspace-deps = bmc.profiles.fast.deps;
     workspace-deps-wasm-widgets = bmc.profiles.wasm-widgets-debug.deps;
     inherit (bmc.profiles.ci) build clippy test nextest;
     workspace-deps-armv7 = bmc.profiles.armv7-glibc-release.deps;
+    workspace-deps-armv7-musl = armv7MuslDeps;
     nextest-armv7 = bmc.profiles.armv7-glibc-release.nextest;
   } // (
     # bmc-openwrt + bmc-virt helper packages for x86_64 and aarch64.
@@ -656,7 +673,12 @@ in
     bmc-mock = bmc.profiles.fast.buildCrate bmc.crates.bmc-mock { };
     bmc-nix-cli = bmc.profiles.fast.buildCrate bmc.crates.bmc-nix-cli { };
     bmc-nix-cli-armv7-release =
-      bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { };
+      let package = bmc.profiles.armv7-musl-release.buildCrate bmc.crates.bmc-nix-cli { };
+      in package.overrideAttrs (old: {
+        cargoArtifacts = old.cargoArtifacts.overrideAttrs (_: {
+          cargoArtifacts = armv7MuslDeps;
+        });
+      });
     gallery-build = bmc.profiles.gallery.build;
     gallery-clippy = bmc.profiles.gallery.clippy;
 
