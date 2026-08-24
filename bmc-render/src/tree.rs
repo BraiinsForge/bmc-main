@@ -20,11 +20,7 @@
 
 //! Tree deserialization and layout computation.
 
-#![expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_precision_loss,
-    clippy::cast_lossless
-)]
+#![expect(clippy::cast_precision_loss, clippy::cast_lossless)]
 #![allow(clippy::wildcard_imports)]
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -1548,6 +1544,7 @@ pub fn deserialize_tree(data: &[u8]) -> Result<TreeNode> {
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+#[cfg(feature = "frame-timings")]
 use std::time::Instant;
 
 use taffy::prelude::*;
@@ -1816,9 +1813,13 @@ pub fn process_tree(
     let mut timings = FrameTimings::default();
 
     // Phase 1: Deserialize
+    #[cfg(feature = "frame-timings")]
     let t0 = Instant::now();
     let tree_node = deserialize_tree(data)?;
-    timings.deserialize_us = t0.elapsed().as_micros() as u32;
+    #[cfg(feature = "frame-timings")]
+    {
+        timings.deserialize_us = elapsed_us(t0);
+    }
 
     let (result, has_active) =
         layout_and_render(&tree_node, width, height, renderer, &mut timings, ctx)?;
@@ -1871,6 +1872,7 @@ fn layout_and_render_inner(
     ctx: &mut ProcessContext<'_>,
 ) -> Result<(TreeResult, bool)> {
     // Phase 2: Build Taffy tree + compute layout
+    #[cfg(feature = "frame-timings")]
     let t1 = Instant::now();
 
     let mut result = TreeResult::default();
@@ -1886,41 +1888,33 @@ fn layout_and_render_inner(
         &mut modals,
     )?;
 
-    // Override root size per-axis: a non-zero value pins that axis, and zero
-    // keeps the node's own style so its content sizes it.
-    if let Ok(style) = ctx.taffy.style(root_id) {
-        let mut new_style = style.clone();
-        if width > 0.0 {
-            new_style.size.width = length(width);
-        }
-        if height > 0.0 {
-            new_style.size.height = length(height);
-        }
-        if width > 0.0 || height > 0.0 {
-            ctx.taffy.set_style(root_id, new_style)?;
-        }
+    pin_root_size(ctx.taffy, root_id, width, height)?;
+
+    #[cfg(feature = "frame-timings")]
+    {
+        timings.taffy_build_us = elapsed_us(t1);
     }
 
-    timings.taffy_build_us = t1.elapsed().as_micros() as u32;
-
+    #[cfg(feature = "frame-timings")]
     let t_compute = Instant::now();
     compute_taffy_layout(ctx.taffy, root_id, renderer)?;
-    timings.taffy_compute_us = t_compute.elapsed().as_micros() as u32;
-    let (misses, entries) = renderer.paragraph_cache_stats();
-    timings.paragraph_misses = misses;
-    timings.paragraph_entries = entries as u32;
-
-    // Extract actual content extent from the root's layout.
-    if let Ok(root_layout) = ctx.taffy.layout(root_id) {
-        result.content_size = (
-            root_layout.content_size.width,
-            root_layout.content_size.height,
-        );
+    #[cfg(feature = "frame-timings")]
+    {
+        timings.taffy_compute_us = elapsed_us(t_compute);
+        let (misses, entries) = renderer.paragraph_cache_stats();
+        timings.paragraph_misses = misses;
+        timings.paragraph_entries = u32::try_from(entries).unwrap_or(u32::MAX);
     }
 
-    timings.layout_us = t1.elapsed().as_micros() as u32;
+    result.content_size = root_content_size(ctx.taffy, root_id);
+
+    #[cfg(feature = "frame-timings")]
+    {
+        timings.layout_us = elapsed_us(t1);
+    }
 
     // Phase 3: Render
+    #[cfg(feature = "frame-timings")]
     let t2 = Instant::now();
 
     let mut anim_ctx = AnimationContext {
@@ -1972,11 +1966,13 @@ fn layout_and_render_inner(
     record_modal_damage(ctx.modal_states, width, height, &mut result);
 
     sweep_stale_state(&mut anim_ctx, ctx.frame_counter, timings);
-    timings.hit_region_count = ctx.interaction.hit_region_count();
-    timings.dynamic_node_count = result.dynamic_node_count;
-    timings.dynamic_area_pct = dynamic_area_pct(result.dynamic_bounds, width, height);
-
-    timings.render_us = t2.elapsed().as_micros() as u32;
+    #[cfg(feature = "frame-timings")]
+    {
+        timings.hit_region_count = ctx.interaction.hit_region_count();
+        timings.dynamic_node_count = result.dynamic_node_count;
+        timings.dynamic_area_pct = dynamic_area_pct(result.dynamic_bounds, width, height);
+        timings.render_us = elapsed_us(t2);
+    }
 
     // Rebind rather than `drop`: `AnimationContext` holds no `Drop` impl, so
     // this is purely about ending its borrows of `ctx` before the capture below
@@ -2109,9 +2105,16 @@ fn render_tree(
     timings: &mut FrameTimings,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
+    // Nothing to record without `frame-timings`, and the parameter stays
+    // so callers need no cfg of their own.
+    #[cfg(not(feature = "frame-timings"))]
+    let _ = timings;
+
     // Drain whatever is already queued so the first measured pass is not
     // charged for work recorded before it.
+    #[cfg(feature = "frame-timings")]
     let pass_timing = gpu_pass_timing_enabled();
+    #[cfg(feature = "frame-timings")]
     if pass_timing {
         renderer.flush_and_fence_us();
     }
@@ -2132,6 +2135,7 @@ fn render_tree(
             renderer.blit_static_layer_rects(static_layer_key, damage_rects)
         };
         if blitted {
+            #[cfg(feature = "frame-timings")]
             if pass_timing {
                 timings.gpu_blit_us = renderer.flush_and_fence_us();
             }
@@ -2154,10 +2158,12 @@ fn render_tree(
             0,
         );
         renderer.end_static_layer(static_layer_key);
+        #[cfg(feature = "frame-timings")]
         if pass_timing {
             timings.gpu_capture_us = renderer.flush_and_fence_us();
         }
         renderer.blit_static_layer(static_layer_key);
+        #[cfg(feature = "frame-timings")]
         if pass_timing {
             timings.gpu_blit_us = renderer.flush_and_fence_us();
         }
@@ -2185,12 +2191,51 @@ fn render_tree(
         0,
     );
 
+    #[cfg(feature = "frame-timings")]
     if pass_timing {
         timings.gpu_dynamic_us = renderer.flush_and_fence_us();
     }
 }
 
+/// The root's laid-out content extent, or zero when layout produced none.
+fn root_content_size(taffy: &TaffyTree<NodeContext>, root_id: NodeId) -> (f32, f32) {
+    taffy.layout(root_id).map_or((0.0, 0.0), |layout| {
+        (layout.content_size.width, layout.content_size.height)
+    })
+}
+
+/// Override the root's size per axis: a non-zero value pins that axis, and zero
+/// keeps the node's own style so its content sizes it.
+fn pin_root_size(
+    taffy: &mut TaffyTree<NodeContext>,
+    root_id: NodeId,
+    width: f32,
+    height: f32,
+) -> Result<()> {
+    if width <= 0.0 && height <= 0.0 {
+        return Ok(());
+    }
+    if let Ok(style) = taffy.style(root_id) {
+        let mut new_style = style.clone();
+        if width > 0.0 {
+            new_style.size.width = length(width);
+        }
+        if height > 0.0 {
+            new_style.size.height = length(height);
+        }
+        taffy.set_style(root_id, new_style)?;
+    }
+    Ok(())
+}
+
+/// Microseconds since `start`, saturating rather than wrapping.
+#[cfg(feature = "frame-timings")]
+fn elapsed_us(start: Instant) -> u32 {
+    u32::try_from(start.elapsed().as_micros()).unwrap_or(u32::MAX)
+}
+
 /// Share of a `width` x `height` surface covered by `bounds`, in percent.
+#[cfg(feature = "frame-timings")]
 #[expect(
     clippy::cast_possible_truncation,
     clippy::cast_sign_loss,
@@ -2217,6 +2262,11 @@ fn sweep_stale_state(
     frame_counter: u64,
     timings: &mut FrameTimings,
 ) {
+    // Nothing to record without `frame-timings`, and the parameter stays
+    // so callers need no cfg of their own.
+    #[cfg(not(feature = "frame-timings"))]
+    let _ = timings;
+
     anim_ctx
         .animation_states
         .retain(|_, s| s.last_seen_frame >= frame_counter);
@@ -2224,8 +2274,11 @@ fn sweep_stale_state(
         .transition_states
         .retain(|_, s| s.last_seen_frame >= frame_counter);
 
-    timings.animation_state_count = anim_ctx.animation_states.len();
-    timings.transition_state_count = anim_ctx.transition_states.len();
+    #[cfg(feature = "frame-timings")]
+    {
+        timings.animation_state_count = anim_ctx.animation_states.len();
+        timings.transition_state_count = anim_ctx.transition_states.len();
+    }
 }
 
 /// Build the taffy node for `node` and tag it with its static/dynamic

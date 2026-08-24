@@ -1991,11 +1991,14 @@ mod tests {
 
     #[test]
     fn host_render_frame_context_carries_summary_dimensions_and_status() {
+        #[cfg(feature = "profiling")]
         let timings = FrameTimings {
             layout_us: 11,
             render_us: 22,
             ..FrameTimings::default()
         };
+        #[cfg(not(feature = "profiling"))]
+        let timings = FrameTimings::default();
         let context = HostRenderFrameContext::new(
             638,
             480,
@@ -2008,8 +2011,11 @@ mod tests {
         assert_eq!(context.target_height, 480);
         assert!(context.wants_immediate);
         assert_eq!(context.status, bmc_wasm_runtime::RenderStatus::Ok);
-        assert_eq!(context.timings.layout_us, 11);
-        assert_eq!(context.timings.render_us, 22);
+        #[cfg(feature = "profiling")]
+        {
+            assert_eq!(context.timings.layout_us, 11);
+            assert_eq!(context.timings.render_us, 22);
+        }
     }
 
     fn red() -> Rgb {

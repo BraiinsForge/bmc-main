@@ -101,8 +101,10 @@ wasm-encoder = { workspace = true, optional = true }
 [features]
 default = []
 testing = []
-perf-overlay = []
-profiling = ["ii-stopwatch/enabled", "bmc-render/profiling"]
+# The overlay's whole content is the timing breakdown.
+perf-overlay = ["frame-timings"]
+frame-timings = ["bmc-render/frame-timings"]
+profiling = ["ii-stopwatch/enabled", "bmc-render/profiling", "frame-timings"]
 audio = ["rodio"]
 host = ["glutin", "glutin-winit", "raw-window-handle", "tracing-subscriber", "winit"]
 fixtures = ["host", "base64", "bmc-wasm-assets", "flate2", "owo-colors", "tempfile", "toml", "toml_edit"]

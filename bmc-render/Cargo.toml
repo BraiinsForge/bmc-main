@@ -58,7 +58,10 @@ glutin = { workspace = true, optional = true }
 
 [features]
 default = []
-profiling = ["ii-stopwatch/enabled"]
+# Populate `FrameTimings`. Its own knob so a consumer can read the numbers
+# without also switching on stopwatch logging across the build.
+frame-timings = []
+profiling = ["ii-stopwatch/enabled", "frame-timings"]
 # Exposes `renderer::test_support` to downstream crates' tests.
 test-support = []
 # Reads back femtovg's own glyph atlas, which the cache exists to keep empty,

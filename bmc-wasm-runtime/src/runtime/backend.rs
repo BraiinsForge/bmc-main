@@ -1277,7 +1277,10 @@ impl WasmWidgetRuntime {
             Ok(()) => {
                 let wasm_us = wasm_t0.elapsed().as_micros() as u32;
                 let state = self.store.data_mut();
-                state.last_timings.wasm_us = wasm_us;
+                #[cfg(feature = "frame-timings")]
+                {
+                    state.last_timings.wasm_us = wasm_us;
+                }
                 if state.renderer_asset_failure.is_some() {
                     Self::draw_dead_overlay(state, DeadOverlayBackground::ReplaceFrame);
                     return Ok(RenderStatus::Dead);

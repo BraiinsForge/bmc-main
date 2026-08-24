@@ -24,6 +24,7 @@
 
 mod assets;
 
+#[cfg(feature = "frame-timings")]
 use std::time::Instant;
 
 use anyhow::Result;
@@ -236,6 +237,7 @@ fn submit_tree(
     let w = width as f32;
     let h = height as f32;
     super::with_renderer_and_state(&mut caller, |renderer, state| {
+        #[cfg(feature = "frame-timings")]
         let deserialize_started = Instant::now();
         let tree_node = match tree::deserialize_tree(&data) {
             Ok(tree_node) => tree_node,
@@ -244,6 +246,7 @@ fn submit_tree(
                 return;
             }
         };
+        #[cfg(feature = "frame-timings")]
         let deserialize_us =
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
         // Hashed before rendering: when the static half matches the previous
@@ -270,10 +273,11 @@ fn submit_tree(
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
         let now_unix_secs = state.system_time.timestamp();
-        let mut timings = FrameTimings {
-            deserialize_us,
-            ..FrameTimings::default()
-        };
+        let mut timings = FrameTimings::default();
+        #[cfg(feature = "frame-timings")]
+        {
+            timings.deserialize_us = deserialize_us;
+        }
         let mut ctx = bmc_render::ProcessContext {
             interaction: &mut state.interaction,
             modal_states: &mut state.modal_states,

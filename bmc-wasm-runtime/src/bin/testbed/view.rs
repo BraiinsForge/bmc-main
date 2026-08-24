@@ -341,9 +341,11 @@ impl ViewCore {
     /// Takes `&mut self` because profiling sections are drained, not read: the
     /// guest accumulates them until someone collects.
     pub(crate) fn report(&mut self, profile: bool) -> ViewReport {
-        let timings = self.runtime.as_ref().map(|rt| bmc_render::FrameTimings {
-            flush_us: self.sched.last_flush_us,
-            ..rt.last_timings()
+        let timings = self.runtime.as_ref().map(|rt| {
+            Box::new(bmc_render::FrameTimings {
+                flush_us: self.sched.last_flush_us,
+                ..rt.last_timings()
+            })
         });
         let sections = profile
             .then(|| {
@@ -383,7 +385,9 @@ pub(crate) struct Rebind {
 /// What one tick leaves behind for the UI to paint.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ViewReport {
-    pub(crate) timings: Option<bmc_render::FrameTimings>,
+    /// Boxed: the breakdown is the widest thing here, and a report rides in
+    /// every tick's worker message whether or not the UI shows the numbers.
+    pub(crate) timings: Option<Box<bmc_render::FrameTimings>>,
     pub(crate) slip_ms: Option<u64>,
     pub(crate) led_scene: Option<bmc_led::data::LedScene>,
     /// Present only for a tick that asked to profile, so the other views do
@@ -555,7 +559,7 @@ impl DeviceView {
 
     /// Timings from the last render, for the status bar and view overlays.
     pub(crate) fn last_timings(&self) -> Option<bmc_render::FrameTimings> {
-        self.report.timings
+        self.report.timings.as_deref().copied()
     }
 
     /// How late the last deadline-driven render ran, in ms.
@@ -604,7 +608,7 @@ impl DeviceView {
         bmc_render::FrameTimings,
         std::collections::BTreeMap<String, u64>,
     )> {
-        let timings = self.report.timings?;
+        let timings = self.last_timings()?;
         Some((timings, self.report.sections.take()?))
     }
 

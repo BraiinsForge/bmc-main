@@ -194,6 +194,12 @@ pub struct ScrollState {
 }
 
 /// Per-frame timing breakdown (microseconds).
+///
+/// Diagnostic only, and gated on `frame-timings`, which `profiling` enables.
+/// Without that feature the fields go, and so do the clock reads that feed
+/// them: what is left is a zero-sized stand-in, and every per-frame message
+/// carrying one is 88 bytes lighter.
+#[cfg(feature = "frame-timings")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameTimings {
     /// Total WASM interpreter time (outer envelope, includes tree processing).
@@ -236,3 +242,15 @@ pub struct FrameTimings {
     /// FemtoVG canvas.flush().
     pub flush_us: u32,
 }
+
+/// Stand-in for [`FrameTimings`] without the `frame-timings` feature: same name
+/// and traits so every type that carries one still compiles, but no fields.
+#[cfg(not(feature = "frame-timings"))]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct FrameTimings {}
+
+#[cfg(not(feature = "frame-timings"))]
+const _: () = assert!(
+    std::mem::size_of::<FrameTimings>() == 0,
+    "the stand-in must cost nothing in the per-frame messages that carry it"
+);
