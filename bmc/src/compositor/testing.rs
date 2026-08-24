@@ -20,40 +20,47 @@
 
 //! A recording [`Compositor`] double, shared by the tests in this crate.
 
-use std::{collections::BTreeMap, sync::Mutex};
+use std::{
+    collections::BTreeMap,
+    sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
+};
 
 use bmc_platform::{HardwareProfile, Product};
 
 use super::*;
 
-pub(crate) type CredentialPush = (
-    InstanceId,
-    serde_json::Map<String, serde_json::Value>,
-    CredentialSecrets,
-);
-type RegistrationObserver = Box<dyn FnOnce() + Send>;
+#[derive(Clone)]
+pub(crate) struct CredentialPush {
+    pub(crate) instance_id: InstanceId,
+    pub(crate) changed: bool,
+}
 pub(crate) type ParameterPush = (InstanceId, serde_json::Map<String, serde_json::Value>);
 type RetainedCredentials = (
     serde_json::Map<String, serde_json::Value>,
     CredentialSecrets,
 );
 type HeldCredentialReceipt = (tokio::sync::oneshot::Sender<bool>, bool);
+type RegistrationObserver = Box<dyn FnOnce() + Send>;
 
 #[derive(Default)]
 pub(crate) struct RecordingCompositor {
     pub(crate) scene_cycling_configs: Mutex<Vec<SceneCycling>>,
     pub(crate) scene_cycling_lists: Mutex<Vec<Vec<SceneLayout>>>,
-    pub(crate) credential_pushes: Mutex<Vec<CredentialPush>>,
     pub(crate) parameter_pushes: Mutex<Vec<ParameterPush>>,
     pub(crate) connected: Mutex<BTreeSet<InstanceId>>,
+    credential_pushes: Mutex<Vec<CredentialPush>>,
     widget_calls: Mutex<Vec<String>>,
     retained_modes: Mutex<BTreeMap<WidgetInstanceKey, WidgetConnectionMode>>,
     retained_sizes: Mutex<BTreeMap<WidgetInstanceKey, Size>>,
     retained_params: Mutex<BTreeMap<WidgetInstanceKey, serde_json::Map<String, serde_json::Value>>>,
     retained_credentials: Mutex<BTreeMap<WidgetInstanceKey, RetainedCredentials>>,
     held_widget_receipts: Mutex<Option<Vec<tokio::sync::oneshot::Sender<()>>>>,
-    next_registration_observer: Mutex<Option<RegistrationObserver>>,
     held_credential_receipts: Mutex<Option<Vec<HeldCredentialReceipt>>>,
+    next_registration_observer: Mutex<Option<RegistrationObserver>>,
     next_credential_error: Mutex<Option<CompositorError>>,
     next_parameter_error: Mutex<Option<CompositorError>>,
     credential_update_attempts: AtomicUsize,
@@ -81,6 +88,42 @@ impl RecordingCompositor {
 
     pub(crate) fn credential_update_attempt_count(&self) -> usize {
         self.credential_update_attempts.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn credential_pushes(&self) -> Vec<CredentialPush> {
+        self.credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .clone()
+    }
+
+    pub(crate) fn clear_credential_pushes(&self) {
+        self.credential_pushes
+            .lock()
+            .expect("BUG: recording compositor lock must not be poisoned")
+            .clear();
+    }
+
+    pub(crate) async fn wait_for_credential_push_count(&self, expected: usize) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let actual = self
+                    .credential_pushes
+                    .lock()
+                    .expect("BUG: recording compositor lock must not be poisoned")
+                    .len();
+                assert!(
+                    actual <= expected,
+                    "credential push count exceeded {expected}: {actual}"
+                );
+                if actual == expected {
+                    return;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("credential refreshes must be enqueued");
     }
 
     pub(crate) fn retained_mode(&self, key: WidgetInstanceKey) -> Option<WidgetConnectionMode> {
@@ -225,10 +268,6 @@ impl Compositor for RecordingCompositor {
         Ok("test-display".to_owned())
     }
 
-    fn wayland_display(&self) -> Option<String> {
-        Some("test-display".to_owned())
-    }
-
     fn hardware_capabilities(&self) -> HardwareCapabilities {
         HardwareProfile::for_product(Product::Bmc100).capabilities()
     }
@@ -272,7 +311,8 @@ impl Compositor for RecordingCompositor {
         self.retained_modes
             .lock()
             .expect("BUG: retained-mode lock must not be poisoned")
-            .insert(registration.key, registration.connection_mode);
+            .entry(registration.key)
+            .or_insert(registration.connection_mode);
         self.record(format!("register_retained {}", registration.key));
         Ok(self.widget_receipt("register widget"))
     }
@@ -427,7 +467,10 @@ impl Compositor for RecordingCompositor {
         self.credential_pushes
             .lock()
             .expect("BUG: recording compositor lock must not be poisoned")
-            .push((key.to_string(), credentials, secrets));
+            .push(CredentialPush {
+                instance_id: key.to_string(),
+                changed,
+            });
         Ok(self.credential_receipt(changed))
     }
 
@@ -472,6 +515,73 @@ impl Compositor for RecordingCompositor {
     }
 
     fn shutdown(&self) -> Result<(), CompositorError> {
+        self.shutdown_calls.fetch_add(1, Ordering::Relaxed);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        Compositor, CredentialSecrets, RecordingCompositor, WidgetConnectionMode,
+        WidgetInitialConfig, WidgetInstanceKey, WidgetRegistration,
+    };
+
+    fn registration(key: WidgetInstanceKey) -> WidgetRegistration {
+        WidgetRegistration {
+            key,
+            connection_mode: WidgetConnectionMode::Inactive,
+            initial_config: WidgetInitialConfig {
+                width: 1280,
+                height: 480,
+                viewport_shape: bmc_widget_protocol::ViewportShape::Rectangular,
+                display: bmc_widget_protocol::DisplayInfo::BMC100,
+                params: serde_json::Map::new(),
+                credentials: serde_json::Map::new(),
+                credential_secrets: CredentialSecrets::default(),
+                token: key.to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn shutdown_calls_are_counted() {
+        let compositor = RecordingCompositor::default();
+
+        compositor.shutdown().expect("BUG: recording shutdown");
+        compositor.shutdown().expect("BUG: recording shutdown");
+
+        assert_eq!(compositor.shutdown_call_count(), 2);
+    }
+
+    #[test]
+    fn reregistration_preserves_connection_mode() {
+        let compositor = RecordingCompositor::default();
+        let key = WidgetInstanceKey::new(uuid::Uuid::new_v4());
+
+        compositor
+            .enqueue_register_widget(registration(key))
+            .expect("BUG: initial registration");
+        compositor
+            .enqueue_activate_widget(key)
+            .expect("BUG: activate registration");
+        compositor
+            .enqueue_register_widget(registration(key))
+            .expect("BUG: refresh active registration");
+        assert_eq!(
+            compositor.retained_mode(key),
+            Some(WidgetConnectionMode::Accepting)
+        );
+
+        compositor
+            .enqueue_deactivate_widget(key)
+            .expect("BUG: deactivate registration");
+        compositor
+            .enqueue_register_widget(registration(key))
+            .expect("BUG: refresh inactive registration");
+        assert_eq!(
+            compositor.retained_mode(key),
+            Some(WidgetConnectionMode::Inactive)
+        );
     }
 }

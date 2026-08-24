@@ -2527,14 +2527,6 @@ impl Compositor for EglCompositor {
         Ok(socket_name)
     }
 
-    fn wayland_display(&self) -> Option<String> {
-        let display = self
-            .wayland_display
-            .lock()
-            .expect("BUG: wayland_display lock poisoned");
-        display.clone()
-    }
-
     fn hardware_capabilities(&self) -> bmc_platform::HardwareCapabilities {
         self.profile.capabilities()
     }
@@ -2975,15 +2967,6 @@ mod tests {
         WidgetRegistration {
             key,
             connection_mode: WidgetConnectionMode::Accepting,
-            placement: WidgetPlacement {
-                instance_id: key.to_string(),
-                position: Position { x: 0, y: 0 },
-                size: Size {
-                    width: 100,
-                    height: 100,
-                },
-                visible: true,
-            },
             initial_config: make_widget_config(),
         }
     }

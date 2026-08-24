@@ -42,6 +42,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
     package_backend: Arc<dyn PackageBackend>,
     buttons: Arc<Box<dyn bmc_button::Buttons + Send + Sync>>,
     compositor: Arc<dyn Compositor>,
+    wayland_display: Option<String>,
 ) -> Result<()> {
     let manager = Arc::new(manager);
     let session_manager = manager.session_manager();
@@ -56,6 +57,7 @@ pub async fn main<T: DisplayBacklightDriver, U: FirmwareIndex>(
         package_backend,
         buttons,
         compositor,
+        wayland_display,
     )
     .await?;
     app.run().await

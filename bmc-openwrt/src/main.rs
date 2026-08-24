@@ -207,6 +207,7 @@ async fn main() -> Result<()> {
         package_backend,
         Arc::new(Box::new(UEventButtons)),
         compositor,
+        Some(wayland_display),
     )
     .await?;
 

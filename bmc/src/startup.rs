@@ -240,6 +240,7 @@ where
         package_backend: Arc<dyn PackageBackend>,
         buttons: Arc<Box<dyn Buttons + Send + Sync>>,
         compositor: Arc<dyn Compositor>,
+        wayland_display: Option<String>,
     ) -> Result<Self> {
         // Captured here, not where the collection job is registered: the
         // startup floor measures the boot window, and registration happens
@@ -301,6 +302,7 @@ where
         let widget_coordinator = Arc::new(Coordinator::new(
             widget_manager,
             compositor.clone(),
+            wayland_display,
             widget_registry.clone(),
             hardware_capabilities,
             secret_store.clone(),
@@ -578,6 +580,7 @@ where
         tokio::spawn(self.button_manager.run());
 
         let widget_reload_task = self.widget_reload_task;
+        let widget_shutdown_config = Arc::clone(&self.config_handle);
         let server_result = WebService::new(
             self.manager,
             self.session_manager,
@@ -601,7 +604,14 @@ where
         // In case the app panics, this is not executed.
         // The children are SIGKILL'd thanks to kill_on_drop(true).
         widget_reload_task.abort();
-        self.widget_coordinator.stop_all().await;
+        if let Err(error) = widget_reload_task.await
+            && !error.is_cancelled()
+        {
+            warn!(%error, "widget reload task failed before shutdown");
+        }
+        self.widget_coordinator
+            .stop_all(&widget_shutdown_config)
+            .await;
         server_result?;
         Ok(())
     }

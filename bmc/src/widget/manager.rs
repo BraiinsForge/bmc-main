@@ -122,9 +122,14 @@ pub(crate) enum StartError {
     Mode(ManagerMode),
     #[error("widget registry changed before spawn")]
     RegistryChanged,
+    #[error("widget start was superseded by a later lifecycle operation")]
+    Superseded,
     #[error("widget process failed to spawn; restart remains pending: {0}")]
     PendingRestart(SpawnError),
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct StartPermit(u64);
 
 /// Each command is awaited for its reply, so the depth is based on the number
 /// of concurrent callers (not message rate).
@@ -163,9 +168,15 @@ pub struct WidgetManager {
 }
 
 enum Command {
+    PrepareStart {
+        instance_id: String,
+        expected_mode: ManagerMode,
+        reply: oneshot::Sender<Result<StartPermit, StartError>>,
+    },
     Spawn {
         launch: WidgetLaunch,
         identity: WidgetIdentity,
+        permit: StartPermit,
         reply: oneshot::Sender<SpawnReply>,
     },
     Stop {
@@ -183,7 +194,7 @@ enum Command {
     },
     RetryPending {
         instance_id: String,
-        reply: oneshot::Sender<()>,
+        reply: oneshot::Sender<bool>,
     },
     RegistryRefreshed {
         reply: oneshot::Sender<()>,
@@ -270,7 +281,9 @@ impl WidgetManager {
             registry: registry.clone(),
             spawner,
             children: HashMap::new(),
+            prepared_starts: HashMap::new(),
             mode: Arc::clone(&mode),
+            next_start_token: 0,
             next_restart_token: 0,
             policy,
         };
@@ -299,7 +312,7 @@ impl WidgetManager {
     /// Callers push something that may be the fix — new params, a re-resolved
     /// credential — and this asks the widget to try it now rather than sit out
     /// a delay it earned against the configuration that was just replaced.
-    pub(crate) async fn retry_pending(&self, instance_id: &str) {
+    pub(crate) async fn retry_pending(&self, instance_id: &str) -> bool {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::RetryPending {
@@ -310,7 +323,7 @@ impl WidgetManager {
             .expect("BUG: widget child actor terminated");
         reply_rx
             .await
-            .expect("BUG: widget child actor dropped a retry-pending reply");
+            .expect("BUG: widget child actor dropped a retry-pending reply")
     }
 
     /// Re-scan the widget discovery paths so newly-installed widgets become
@@ -344,10 +357,35 @@ impl WidgetManager {
         else {
             return Err(StartError::RegistryChanged);
         };
-        self.enqueue_spawn_widget(launch, identity)
+        let permit = self
+            .prepare_start(
+                &launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .await?;
+        self.enqueue_spawn_widget(launch, identity, permit)
             .await
             .join()
             .await
+    }
+
+    pub(crate) async fn prepare_start(
+        &self,
+        instance_id: &str,
+        expected_mode: ManagerMode,
+    ) -> Result<StartPermit, StartError> {
+        let (reply_tx, reply_rx) = oneshot::channel();
+        self.cmd_tx
+            .send(Command::PrepareStart {
+                instance_id: instance_id.to_owned(),
+                expected_mode,
+                reply: reply_tx,
+            })
+            .await
+            .expect("BUG: widget child actor terminated");
+        reply_rx
+            .await
+            .expect("BUG: widget child actor dropped a start-permit reply")
     }
 
     /// Enqueue a widget start and return a handle for its initial spawn result.
@@ -355,12 +393,14 @@ impl WidgetManager {
         &self,
         launch: WidgetLaunch,
         identity: WidgetIdentity,
+        permit: StartPermit,
     ) -> StartHandle {
         let (reply_tx, reply_rx) = oneshot::channel();
         self.cmd_tx
             .send(Command::Spawn {
                 launch,
                 identity,
+                permit,
                 reply: reply_tx,
             })
             .await
@@ -406,6 +446,11 @@ impl WidgetManager {
         self.begin_transition(false).await
     }
 
+    pub(crate) async fn begin_shutdown(&self) -> StopAllHandle {
+        self.begin_transition(true).await
+    }
+
+    #[cfg(test)]
     async fn transition_and_stop(&self, shutdown: bool) -> Vec<String> {
         let handle = self.begin_transition(shutdown).await;
         let instance_ids = handle.instance_ids.clone();
@@ -418,6 +463,7 @@ impl WidgetManager {
         self.transition_and_stop(false).await
     }
 
+    #[cfg(test)]
     pub(crate) async fn shutdown(&self) -> Vec<String> {
         self.transition_and_stop(true).await
     }
@@ -582,7 +628,9 @@ struct Actor {
     registry: Arc<WidgetRegistry>,
     spawner: Box<dyn WidgetSpawn>,
     children: HashMap<String, WidgetState>,
+    prepared_starts: HashMap<String, StartPermit>,
     mode: Arc<AtomicU8>,
+    next_start_token: u64,
     next_restart_token: u64,
     policy: RestartPolicy,
 }
@@ -610,18 +658,31 @@ impl Actor {
 
     fn handle_command(&mut self, cmd: Command, internal_tx: &mpsc::UnboundedSender<Internal>) {
         match cmd {
+            Command::PrepareStart {
+                instance_id,
+                expected_mode,
+                reply,
+            } => {
+                let _ = reply.send(self.prepare_start(instance_id, expected_mode));
+            }
             Command::Spawn {
                 launch,
                 identity,
+                permit,
                 reply,
             } => {
-                let _ = reply.send(self.start_expected(launch, &identity, internal_tx));
+                let _ = reply.send(self.start_expected(launch, &identity, permit, internal_tx));
             }
-            Command::Stop { instance_id, reply } => self.stop(&instance_id, reply),
+            Command::Stop { instance_id, reply } => {
+                self.prepared_starts.remove(&instance_id);
+                self.stop(&instance_id, reply);
+            }
             Command::Pause { reply } => {
+                self.prepared_starts.clear();
                 let _ = reply.send(self.transition_and_stop(ManagerMode::Paused));
             }
             Command::Shutdown { reply } => {
+                self.prepared_starts.clear();
                 let _ = reply.send(self.transition_and_stop(ManagerMode::ShuttingDown));
             }
             Command::Resume { reply } => {
@@ -634,8 +695,7 @@ impl Actor {
                 let _ = reply.send(mode);
             }
             Command::RetryPending { instance_id, reply } => {
-                self.retry_pending(&instance_id, internal_tx);
-                let _ = reply.send(());
+                let _ = reply.send(self.retry_pending(&instance_id, internal_tx));
             }
             Command::RegistryRefreshed { reply } => {
                 self.reset_restart_backoff(internal_tx);
@@ -655,12 +715,36 @@ impl Actor {
         self.mode.store(mode as u8, Ordering::Release);
     }
 
+    fn prepare_start(
+        &mut self,
+        instance_id: String,
+        expected_mode: ManagerMode,
+    ) -> Result<StartPermit, StartError> {
+        if self.current_mode() != expected_mode {
+            return Err(StartError::Mode(self.current_mode()));
+        }
+        let token = self.next_start_token;
+        self.next_start_token = self
+            .next_start_token
+            .checked_add(1)
+            .expect("BUG: widget start-permit token space exhausted");
+        let permit = StartPermit(token);
+        self.prepared_starts.insert(instance_id, permit);
+        Ok(permit)
+    }
+
     fn start_expected(
         &mut self,
         launch: WidgetLaunch,
         expected_identity: &WidgetIdentity,
+        permit: StartPermit,
         internal_tx: &mpsc::UnboundedSender<Internal>,
     ) -> SpawnReply {
+        let instance_id = launch.config_key.instance_id.to_string();
+        if self.prepared_starts.get(&instance_id) != Some(&permit) {
+            return Err(StartError::Superseded);
+        }
+        self.prepared_starts.remove(&instance_id);
         if self.current_mode() != ManagerMode::Running {
             return Err(StartError::Mode(self.current_mode()));
         }
@@ -671,7 +755,6 @@ impl Actor {
             return Err(StartError::RegistryChanged);
         }
 
-        let instance_id = launch.config_key.instance_id.to_string();
         let pending = match self.children.remove(&instance_id) {
             Some(WidgetState::PendingRestart(pending)) => Some(pending),
             Some(WidgetState::Running(widget)) => {
@@ -715,7 +798,11 @@ impl Actor {
             .get(&launch.config_key.widget_uid)
             .expect("BUG: test start requires an installed widget")
             .identity;
-        self.start_expected(launch, &identity, internal_tx)
+        let permit = self.prepare_start(
+            launch.config_key.instance_id.to_string(),
+            ManagerMode::Running,
+        )?;
+        self.start_expected(launch, &identity, permit, internal_tx)
     }
 
     fn spawn_selected_process(
@@ -1006,9 +1093,13 @@ impl Actor {
     /// Re-scheduling replaces the entry and orphans the old token,
     /// preventing the shortened delay from also firing.
     /// Running instances need nothing; stopped instances must stay stopped.
-    fn retry_pending(&mut self, instance_id: &str, internal_tx: &mpsc::UnboundedSender<Internal>) {
+    fn retry_pending(
+        &mut self,
+        instance_id: &str,
+        internal_tx: &mpsc::UnboundedSender<Internal>,
+    ) -> bool {
         let Some(WidgetState::PendingRestart(pending)) = self.children.get(instance_id) else {
-            return;
+            return false;
         };
         let respawn = Respawn {
             launch: pending.launch.clone(),
@@ -1016,6 +1107,7 @@ impl Actor {
         };
         let earned = pending.backoff;
         self.schedule_restart(respawn, self.policy.initial, earned, internal_tx);
+        true
     }
 
     fn handle_restart_due(
@@ -1512,7 +1604,9 @@ mod tests {
                 launched: LaunchLog::default(),
             }),
             children: HashMap::new(),
+            prepared_starts: HashMap::new(),
             mode: Arc::new(AtomicU8::new(ManagerMode::Running as u8)),
+            next_start_token: 0,
             next_restart_token: 0,
             policy: RestartPolicy::default(),
         }
@@ -1757,7 +1851,7 @@ mod tests {
         wait_for_pending_restart(&manager, "flapping").await;
 
         let retried_at = Instant::now();
-        manager.retry_pending(&instance_id("flapping")).await;
+        assert!(manager.retry_pending(&instance_id("flapping")).await);
         launches += 1;
         wait_for_launch_count(&launched, launches).await;
         let promptly = retried_at.elapsed();
@@ -1787,7 +1881,7 @@ mod tests {
             .await
             .expect("BUG: test spawn failed");
 
-        manager.retry_pending(&instance_id("healthy")).await;
+        assert!(!manager.retry_pending(&instance_id("healthy")).await);
         assert!(
             matches!(
                 snapshot_widget(&manager, "healthy").await,
@@ -1804,7 +1898,7 @@ mod tests {
             .await
             .join()
             .await;
-        manager.retry_pending(&instance_id("healthy")).await;
+        assert!(!manager.retry_pending(&instance_id("healthy")).await);
         assert_eq!(
             snapshot_widget(&manager, "healthy").await,
             None,
@@ -2232,8 +2326,10 @@ mod tests {
         );
 
         let manager = manager_with(uid, "sleep", &["30"]);
-        manager.shutdown().await;
+        let shutdown = manager.begin_shutdown().await;
+        assert_eq!(manager.mode(), ManagerMode::ShuttingDown);
         assert_eq!(manager.resume().await, ManagerMode::ShuttingDown);
+        shutdown.join().await;
         assert!(matches!(
             manager.spawn_widget(launch(uid, "stale")).await,
             Err(StartError::Mode(ManagerMode::ShuttingDown))
@@ -2290,10 +2386,162 @@ mod tests {
         let mut stale = actor.registry.get(&uid).expect("BUG: test widget").identity;
         stale.version = semver::Version::new(0, 0, 0);
         let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let launch = launch(uid, "stale-build");
+        let permit = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .expect("BUG: test actor is running");
 
         assert!(matches!(
-            actor.start_expected(launch(uid, "stale-build"), &stale, &internal_tx),
+            actor.start_expected(launch, &stale, permit, &internal_tx),
             Err(StartError::RegistryChanged)
+        ));
+        assert!(actor.children.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stale_start_does_not_consume_a_newer_permit() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let launch = launch(uid, "overlapping-starts");
+        let identity = actor.registry.get(&uid).expect("BUG: test widget").identity;
+        let stale = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .expect("BUG: test actor is running");
+        let current = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .expect("BUG: test actor is running");
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+
+        assert!(matches!(
+            actor.start_expected(launch.clone(), &identity, stale, &internal_tx),
+            Err(StartError::Superseded)
+        ));
+        assert!(
+            actor
+                .start_expected(launch, &identity, current, &internal_tx)
+                .is_ok(),
+            "the current permit must remain usable after rejecting its predecessor"
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_preserves_a_prepared_paused_start() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let launch = launch(uid, "upgrade-resume");
+        let identity = actor.registry.get(&uid).expect("BUG: test widget").identity;
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let (pause_reply, _pause_reply_rx) = oneshot::channel();
+        actor.handle_command(Command::Pause { reply: pause_reply }, &internal_tx);
+        let permit = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Paused,
+            )
+            .expect("BUG: test actor is paused");
+        let (resume_reply, _resume_reply_rx) = oneshot::channel();
+
+        actor.handle_command(
+            Command::Resume {
+                reply: resume_reply,
+            },
+            &internal_tx,
+        );
+
+        assert_eq!(actor.current_mode(), ManagerMode::Running);
+        assert!(
+            actor
+                .start_expected(launch, &identity, permit, &internal_tx)
+                .is_ok(),
+            "resume must preserve a start prepared while paused"
+        );
+    }
+
+    #[test]
+    fn stop_invalidates_a_prepared_start_without_a_child() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let launch = launch(uid, "stopped-before-spawn");
+        let identity = actor.registry.get(&uid).expect("BUG: test widget").identity;
+        let permit = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .expect("BUG: test actor is running");
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let (reply, _reply_rx) = oneshot::channel();
+
+        actor.handle_command(
+            Command::Stop {
+                instance_id: launch.config_key.instance_id.to_string(),
+                reply,
+            },
+            &internal_tx,
+        );
+
+        assert!(matches!(
+            actor.start_expected(launch, &identity, permit, &internal_tx),
+            Err(StartError::Superseded)
+        ));
+        assert!(actor.children.is_empty());
+    }
+
+    #[test]
+    fn pause_invalidates_prepared_running_starts() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let launch = launch(uid, "prepared-before-pause");
+        let identity = actor.registry.get(&uid).expect("BUG: test widget").identity;
+        let permit = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .expect("BUG: test actor is running");
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let (reply, _reply_rx) = oneshot::channel();
+
+        actor.handle_command(Command::Pause { reply }, &internal_tx);
+
+        assert_eq!(actor.current_mode(), ManagerMode::Paused);
+        assert!(matches!(
+            actor.start_expected(launch, &identity, permit, &internal_tx),
+            Err(StartError::Superseded)
+        ));
+        assert!(actor.children.is_empty());
+    }
+
+    #[test]
+    fn shutdown_invalidates_prepared_running_starts() {
+        let uid = Uuid::new_v4();
+        let mut actor = bare_actor(uid);
+        let launch = launch(uid, "prepared-before-shutdown");
+        let identity = actor.registry.get(&uid).expect("BUG: test widget").identity;
+        let permit = actor
+            .prepare_start(
+                launch.config_key.instance_id.to_string(),
+                ManagerMode::Running,
+            )
+            .expect("BUG: test actor is running");
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let (reply, _reply_rx) = oneshot::channel();
+
+        actor.handle_command(Command::Shutdown { reply }, &internal_tx);
+
+        assert_eq!(actor.current_mode(), ManagerMode::ShuttingDown);
+        assert!(matches!(
+            actor.start_expected(launch, &identity, permit, &internal_tx),
+            Err(StartError::Superseded)
         ));
         assert!(actor.children.is_empty());
     }

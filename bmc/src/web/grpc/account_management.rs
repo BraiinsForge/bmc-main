@@ -785,11 +785,7 @@ mod tests {
                 .await
                 .expect("BUG: seed credential receipt");
         }
-        compositor
-            .credential_pushes
-            .lock()
-            .expect("BUG: recording compositor lock must not be poisoned")
-            .clear();
+        compositor.clear_credential_pushes();
     }
 
     #[test]
@@ -910,6 +906,7 @@ mod tests {
         let widget_coordinator = Arc::new(Coordinator::new(
             manager,
             Arc::clone(&compositor) as Arc<dyn Compositor>,
+            Some("test-display".to_owned()),
             registry,
             HardwareCapabilities {
                 display: DisplayInfo {
@@ -949,14 +946,22 @@ mod tests {
 
     fn pushed_widget_ids(compositor: &RecordingCompositor) -> Vec<String> {
         let mut ids = compositor
-            .credential_pushes
-            .lock()
-            .expect("BUG: recording compositor lock must not be poisoned")
-            .iter()
-            .map(|(instance_id, _, _)| instance_id.clone())
+            .credential_pushes()
+            .into_iter()
+            .map(|push| push.instance_id)
             .collect::<Vec<_>>();
         ids.sort();
         ids
+    }
+
+    fn pushed_widget_changes(compositor: &RecordingCompositor) -> Vec<(String, bool)> {
+        let mut changes = compositor
+            .credential_pushes()
+            .into_iter()
+            .map(|push| (push.instance_id, push.changed))
+            .collect::<Vec<_>>();
+        changes.sort();
+        changes
     }
 
     fn sorted_widget_ids(widgets: &[&Widget]) -> Vec<String> {
@@ -968,6 +973,15 @@ mod tests {
         ids
     }
 
+    fn sorted_widget_changes(widgets: &[(&Widget, bool)]) -> Vec<(String, bool)> {
+        let mut changes = widgets
+            .iter()
+            .map(|(widget, changed)| (widget.id.to_string(), *changed))
+            .collect::<Vec<_>>();
+        changes.sort();
+        changes
+    }
+
     fn account_update_request(token: &str) -> Request<web::UpsertAccountRequest> {
         Request::new(web::UpsertAccountRequest {
             id: "acct-1".to_owned(),
@@ -976,35 +990,6 @@ mod tests {
             field_values: HashMap::from([("token".to_owned(), token.to_owned())]),
             allow_hosts: Vec::new(),
         })
-    }
-
-    async fn wait_for_credential_pushes(compositor: &RecordingCompositor, count: usize) {
-        tokio::time::timeout(Duration::from_secs(1), async {
-            loop {
-                if compositor
-                    .credential_pushes
-                    .lock()
-                    .expect("BUG: recording compositor lock must not be poisoned")
-                    .len()
-                    == count
-                {
-                    return;
-                }
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("credential refreshes must be enqueued");
-    }
-
-    async fn wait_for_retry_pending_calls(coordinator: &Coordinator, count: usize) {
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while coordinator.retry_pending_call_count() != count {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("changed credential refreshes must retry pending widgets");
     }
 
     fn replace_file_with_directory(path: &std::path::Path) {
@@ -1020,9 +1005,10 @@ mod tests {
         let first = widget_binding(&["acct-1", "acct-1"]);
         let second = widget_binding(&["acct-1"]);
         let other = widget_binding(&["acct-2"]);
-        let expected = sorted_widget_ids(&[&first, &second, &other]);
+        let expected_changes =
+            sorted_widget_changes(&[(&first, true), (&second, true), (&other, false)]);
         let scene = scene_of(SceneKind::Combined, vec![first, second, other]);
-        let (service, _config, _store, coordinator, compositor) =
+        let (service, _config, _store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
 
         let request = |name: &str, token: &str, allow_hosts: &[&str]| {
@@ -1039,27 +1025,17 @@ mod tests {
             .upsert_account(request("renamed", "s3cr3t", &[]))
             .await
             .expect("BUG: name update must succeed");
-        wait_for_credential_pushes(&compositor, 3).await;
-        wait_for_retry_pending_calls(&coordinator, 2).await;
-        assert_eq!(pushed_widget_ids(&compositor), expected);
-        compositor
-            .credential_pushes
-            .lock()
-            .expect("BUG: recording compositor lock must not be poisoned")
-            .clear();
+        compositor.wait_for_credential_push_count(3).await;
+        assert_eq!(pushed_widget_changes(&compositor), expected_changes);
+        compositor.clear_credential_pushes();
 
         service
             .upsert_account(request("renamed", "replacement", &[]))
             .await
             .expect("BUG: field update must succeed");
-        wait_for_credential_pushes(&compositor, 3).await;
-        wait_for_retry_pending_calls(&coordinator, 4).await;
-        assert_eq!(pushed_widget_ids(&compositor), expected);
-        compositor
-            .credential_pushes
-            .lock()
-            .expect("BUG: recording compositor lock must not be poisoned")
-            .clear();
+        compositor.wait_for_credential_push_count(3).await;
+        assert_eq!(pushed_widget_changes(&compositor), expected_changes);
+        compositor.clear_credential_pushes();
 
         service
             .upsert_account(request(
@@ -1069,9 +1045,8 @@ mod tests {
             ))
             .await
             .expect("BUG: host update must succeed");
-        wait_for_credential_pushes(&compositor, 3).await;
-        wait_for_retry_pending_calls(&coordinator, 6).await;
-        assert_eq!(pushed_widget_ids(&compositor), expected);
+        compositor.wait_for_credential_push_count(3).await;
+        assert_eq!(pushed_widget_changes(&compositor), expected_changes);
     }
 
     #[tokio::test]
@@ -1082,7 +1057,7 @@ mod tests {
         let first = widget_binding(&["acct-1"]);
         let second = widget_binding(&["acct-1"]);
         let scene = scene_of(SceneKind::Combined, vec![first, second]);
-        let (service, _config, _store, coordinator, compositor) =
+        let (service, _config, _store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         compositor.fail_next_credential_update();
 
@@ -1091,8 +1066,7 @@ mod tests {
             .await
             .expect("BUG: one widget enqueue failure must not fail the account update");
 
-        wait_for_credential_pushes(&compositor, 1).await;
-        wait_for_retry_pending_calls(&coordinator, 1).await;
+        compositor.wait_for_credential_push_count(1).await;
         assert_eq!(pushed_widget_ids(&compositor).len(), 1);
     }
 
@@ -1105,7 +1079,7 @@ mod tests {
         let installed = widget_binding(&["acct-1"]);
         let installed_id = installed.id.to_string();
         let scene = scene_of(SceneKind::Combined, vec![missing, installed]);
-        let (service, config, _store, coordinator, compositor) =
+        let (service, config, _store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         config
             .write()
@@ -1125,8 +1099,7 @@ mod tests {
             .await
             .expect("BUG: account update must succeed");
 
-        wait_for_credential_pushes(&compositor, 1).await;
-        wait_for_retry_pending_calls(&coordinator, 1).await;
+        compositor.wait_for_credential_push_count(1).await;
         assert_eq!(pushed_widget_ids(&compositor), vec![installed_id]);
     }
 
@@ -1136,7 +1109,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
-        let (service, config, store, coordinator, compositor) =
+        let (service, config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         compositor.hold_credential_receipts();
         let update = tokio::spawn(async move {
@@ -1144,7 +1117,7 @@ mod tests {
                 .upsert_account(account_update_request("replacement"))
                 .await
         });
-        wait_for_credential_pushes(&compositor, 1).await;
+        compositor.wait_for_credential_push_count(1).await;
 
         let config_guard = tokio::time::timeout(Duration::from_secs(1), config.write())
             .await
@@ -1160,7 +1133,6 @@ mod tests {
             .await
             .expect("BUG: account update task must not panic")
             .expect("BUG: a dropped widget receipt must not fail the account update");
-        assert_eq!(coordinator.retry_pending_call_count(), 0);
     }
 
     #[tokio::test]
@@ -1169,30 +1141,50 @@ mod tests {
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
-        let (service, _config, store, coordinator, compositor) =
+        let (service, _config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         compositor.hold_credential_receipts();
+        let store_guard = store.write().await;
         let update = tokio::spawn(async move {
             service
-                .upsert_account(account_update_request("replacement"))
+                .upsert_account(Request::new(web::UpsertAccountRequest {
+                    id: String::new(),
+                    type_id: credential::BuiltinType::GenericToken.id().to_owned(),
+                    name: "cancelled-create".to_owned(),
+                    field_values: HashMap::from([("token".to_owned(), "replacement".to_owned())]),
+                    allow_hosts: Vec::new(),
+                }))
                 .await
         });
-        wait_for_credential_pushes(&compositor, 1).await;
+        tokio::task::yield_now().await;
 
         update.abort();
+        assert!(
+            update
+                .await
+                .expect_err("account RPC must still be blocked on the secret store")
+                .is_cancelled(),
+            "account RPC must be cancelled while its detached update is pending"
+        );
+        drop(store_guard);
+        compositor.wait_for_credential_push_count(1).await;
         compositor.release_credential_receipts();
-        tokio::time::timeout(Duration::from_secs(1), async {
-            while coordinator.retry_pending_call_count() != 1 {
-                tokio::task::yield_now().await;
-            }
-        })
-        .await
-        .expect("detached refresh continuation must retry the changed widget");
+        store
+            .write()
+            .await
+            .save()
+            .await
+            .expect("BUG: listener barrier save must succeed");
+        compositor.wait_for_credential_push_count(2).await;
 
-        let id = AccountId::from_str("acct-1").expect("BUG: non-empty id");
-        assert_eq!(
-            store.read().await.accounts()[&id].field_values["token"],
-            "replacement"
+        assert!(
+            store
+                .read()
+                .await
+                .accounts()
+                .values()
+                .any(|account| account.name == "cancelled-create"),
+            "the detached account update must survive RPC cancellation"
         );
     }
 
@@ -1271,7 +1263,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let scene = scene_of(SceneKind::Fullscreen, vec![widget_binding(&["acct-1"])]);
-        let (service, _config, _store, coordinator, compositor) =
+        let (service, _config, _store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         let request = |id: &str, fields: HashMap<String, String>| {
             Request::new(web::UpsertAccountRequest {
@@ -1302,9 +1294,9 @@ mod tests {
             .await
             .expect("BUG: account creation must succeed");
 
-        wait_for_credential_pushes(&compositor, 1).await;
+        compositor.wait_for_credential_push_count(1).await;
         assert_eq!(pushed_widget_ids(&compositor).len(), 1);
-        assert_eq!(coordinator.retry_pending_call_count(), 0);
+        assert!(!compositor.credential_pushes()[0].changed);
     }
 
     #[tokio::test]
@@ -1315,9 +1307,10 @@ mod tests {
         let first = widget_binding(&["acct-1", "acct-1"]);
         let second = widget_binding(&["acct-1"]);
         let other = widget_binding(&["acct-2"]);
-        let expected = sorted_widget_ids(&[&first, &second, &other]);
+        let expected_changes =
+            sorted_widget_changes(&[(&first, true), (&second, true), (&other, false)]);
         let scene = scene_of(SceneKind::Combined, vec![first, second, other]);
-        let (service, config, store, coordinator, compositor) =
+        let (service, config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
 
         service
@@ -1325,9 +1318,8 @@ mod tests {
             .await
             .expect("BUG: bound account deletion must succeed");
 
-        wait_for_credential_pushes(&compositor, 3).await;
-        wait_for_retry_pending_calls(&coordinator, 2).await;
-        assert_eq!(pushed_widget_ids(&compositor), expected);
+        compositor.wait_for_credential_push_count(3).await;
+        assert_eq!(pushed_widget_changes(&compositor), expected_changes);
         let deleted = AccountId::from_str("acct-1").expect("BUG: non-empty id");
         assert!(!store.read().await.accounts().contains_key(&deleted));
         assert!(
@@ -1343,7 +1335,7 @@ mod tests {
         let tmp = tempfile::tempdir().expect("BUG: tempdir");
         let widget = widget_binding(&["acct-1"]);
         let scene = scene_of(SceneKind::Fullscreen, vec![widget]);
-        let (service, config, store, coordinator, compositor) =
+        let (service, config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1"]).await;
         replace_file_with_directory(&tmp.path().join("bmc-config.json"));
 
@@ -1359,9 +1351,9 @@ mod tests {
             "failed persistence must not commit cloned binding removal"
         );
         assert!(store.read().await.accounts().contains_key(&id));
-        wait_for_credential_pushes(&compositor, 1).await;
+        compositor.wait_for_credential_push_count(1).await;
         assert_eq!(pushed_widget_ids(&compositor).len(), 1);
-        assert_eq!(coordinator.retry_pending_call_count(), 0);
+        assert!(!compositor.credential_pushes()[0].changed);
     }
 
     #[tokio::test]
@@ -1377,7 +1369,7 @@ mod tests {
             SceneKind::Combined,
             vec![affected.clone(), unrelated.clone()],
         );
-        let (service, config, store, coordinator, compositor) =
+        let (service, config, store, _coordinator, compositor) =
             seeded_service(&tmp, vec![scene], &["acct-1", "acct-2"]).await;
         let unrelated_before = compositor
             .retained_credentials(unrelated_key)
@@ -1393,8 +1385,7 @@ mod tests {
         assert_eq!(error.code(), Code::Internal);
         assert!(!bindings_by_account(config.read().await.scenes()).contains_key(&id));
         assert!(store.read().await.accounts().contains_key(&id));
-        wait_for_credential_pushes(&compositor, 2).await;
-        wait_for_retry_pending_calls(&coordinator, 1).await;
+        compositor.wait_for_credential_push_count(2).await;
         assert_eq!(
             pushed_widget_ids(&compositor),
             sorted_widget_ids(&[&affected, &unrelated])

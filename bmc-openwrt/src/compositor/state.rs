@@ -1538,10 +1538,7 @@ mod keyed_widget_protocol_test {
     use std::os::unix::net::UnixStream;
     use std::sync::Arc;
 
-    use bmc::compositor::{
-        Position, Size, WidgetConnectionMode, WidgetInstanceKey, WidgetPlacement,
-        WidgetRegistration,
-    };
+    use bmc::compositor::{WidgetConnectionMode, WidgetInstanceKey, WidgetRegistration};
     use bmc_widget_protocol::client::{
         deck_widget_manager_v2::{self, DeckWidgetManagerV2},
         deck_widget_surface_v1::{self, DeckWidgetSurfaceV1},
@@ -1736,15 +1733,6 @@ mod keyed_widget_protocol_test {
             .register_retained_widget(WidgetRegistration {
                 key,
                 connection_mode: WidgetConnectionMode::Accepting,
-                placement: WidgetPlacement {
-                    instance_id: key.to_string(),
-                    position: Position { x: 0, y: 0 },
-                    size: Size {
-                        width: 100,
-                        height: 100,
-                    },
-                    visible: true,
-                },
                 initial_config,
             });
     }

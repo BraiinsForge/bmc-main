@@ -874,7 +874,6 @@ mod tests {
         protocol::WidgetSurfaceUserData,
         state::{ClientState, CompositorState},
     };
-    use bmc::compositor::WidgetPlacement;
     use bmc_widget_protocol::CredentialSecrets;
     use smithay::reexports::wayland_server::{
         Display, Resource,
@@ -921,15 +920,6 @@ mod tests {
         WidgetRegistration {
             key,
             connection_mode: mode,
-            placement: WidgetPlacement {
-                instance_id: key.to_string(),
-                position: bmc::compositor::Position { x: 5, y: 7 },
-                size: bmc::compositor::Size {
-                    width: 100,
-                    height: 100,
-                },
-                visible: true,
-            },
             initial_config: make_config(),
         }
     }
@@ -1078,10 +1068,6 @@ mod tests {
         let mut inactive_update = retained_registration(WidgetConnectionMode::Inactive);
         inactive_update.key = key;
         inactive_update
-            .placement
-            .instance_id
-            .clone_from(&instance_id);
-        inactive_update
             .initial_config
             .params
             .insert("revision".to_owned(), serde_json::json!(1));
@@ -1098,10 +1084,6 @@ mod tests {
         state.deactivate_widget(key);
         let mut accepting_update = retained_registration(WidgetConnectionMode::Accepting);
         accepting_update.key = key;
-        accepting_update
-            .placement
-            .instance_id
-            .clone_from(&instance_id);
         accepting_update
             .initial_config
             .params

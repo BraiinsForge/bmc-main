@@ -105,7 +105,6 @@ pub struct MockCompositor {
     status_tx: mpsc::UnboundedSender<LedRequestStatusEvent>,
     active_scene_tx: watch::Sender<Option<ActiveScene>>,
     connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
-    display_name: std::sync::Mutex<Option<String>>,
     product: Product,
     scene_state: std::sync::Mutex<MockSceneState>,
     upgrade_state: std::sync::Mutex<Option<UpgradeDisplaySnapshot>>,
@@ -140,7 +139,6 @@ impl MockCompositor {
             status_tx,
             active_scene_tx,
             connected_widgets_tx,
-            display_name: std::sync::Mutex::new(None),
             product,
             scene_state: std::sync::Mutex::new(MockSceneState::default()),
             upgrade_state: std::sync::Mutex::new(None),
@@ -191,18 +189,7 @@ impl Compositor for MockCompositor {
     fn start(&self) -> Result<String, CompositorError> {
         let name = "wayland-mock-0".to_owned();
         tracing::info!("MockCompositor: started (display={})", name);
-        *self
-            .display_name
-            .lock()
-            .expect("BUG: display_name lock poisoned") = Some(name.clone());
         Ok(name)
-    }
-
-    fn wayland_display(&self) -> Option<String> {
-        self.display_name
-            .lock()
-            .expect("BUG: display_name lock poisoned")
-            .clone()
     }
 
     fn hardware_capabilities(&self) -> HardwareCapabilities {
@@ -228,7 +215,6 @@ impl Compositor for MockCompositor {
             .lock()
             .expect("BUG: registrations lock poisoned");
         if let Some(stored) = registrations.get_mut(&registration.key) {
-            stored.placement = registration.placement;
             stored.initial_config = registration.initial_config;
         } else {
             registrations.insert(registration.key, registration);
@@ -439,15 +425,6 @@ mod tests {
         WidgetRegistration {
             key,
             connection_mode: mode,
-            placement: WidgetPlacement {
-                instance_id: key.to_string(),
-                position: Position { x: 0, y: 0 },
-                size: Size {
-                    width: 100,
-                    height: 100,
-                },
-                visible: true,
-            },
             initial_config: serde_json::from_value::<WidgetInitialConfig>(serde_json::json!({
                 "width": 100,
                 "height": 100,
@@ -534,7 +511,6 @@ mod tests {
     ) -> WidgetRegistration {
         let mut registration = registration(mode);
         registration.key = key;
-        registration.placement.instance_id = key.to_string();
         registration.initial_config.token = key.to_string();
         registration
     }

@@ -30,8 +30,6 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
-#[cfg(test)]
-use std::sync::atomic::{AtomicUsize, Ordering};
 use tokio::sync::{Mutex, RwLock, broadcast, watch};
 use tracing::{debug, error, info, warn};
 
@@ -49,8 +47,8 @@ use crate::scene::{Scene, SceneId, Widget, WidgetPosition};
 use crate::secret_store::SecretStoreHandle;
 use bmc_net::NetworkManager;
 
-use super::manager::{ManagedWidgetState, ManagerMode, StartError, WidgetLaunch};
-use super::{WidgetManager, WidgetRegistry};
+use super::manager::{ManagedWidgetState, ManagerMode, StartError, StartPermit, WidgetLaunch};
+use super::{WidgetInfo, WidgetManager, WidgetRegistry};
 
 #[must_use]
 pub(crate) fn fullscreen_descriptor_for_widget(
@@ -134,6 +132,21 @@ pub fn supported_scenes<'a>(
     scenes
         .values()
         .filter(|s| s.enabled && scene_supported_with_registry(registry, s, caps))
+        .collect()
+}
+
+fn supported_shown_scenes<'a>(
+    registry: &WidgetRegistry,
+    caps: &HardwareCapabilities,
+    scenes: &'a IndexMap<SceneId, Scene>,
+    preview_scene_id: Option<SceneId>,
+) -> Vec<&'a Scene> {
+    scenes
+        .values()
+        .filter(|scene| {
+            (scene.enabled || preview_scene_id == Some(scene.id))
+                && scene_supported_with_registry(registry, scene, caps)
+        })
         .collect()
 }
 
@@ -249,27 +262,21 @@ fn widget_spawn_prerequisites_unchanged(current: &Widget, expected: &Widget) -> 
         && current.credential_bindings == expected.credential_bindings
 }
 
-fn configured_scene_is_visible(scene: &Scene, preview_scene: Option<&Option<SceneId>>) -> bool {
-    scene.enabled || preview_scene.is_some_and(|current| *current == Some(scene.id))
+fn configured_scene_is_visible(scene: &Scene, preview_scene_id: Option<SceneId>) -> bool {
+    scene.enabled || preview_scene_id == Some(scene.id)
 }
 
 pub struct Coordinator {
     widget_manager: WidgetManager,
     compositor: Arc<dyn Compositor>,
+    wayland_display: Option<String>,
     widget_registry: Arc<WidgetRegistry>,
     hardware_capabilities: HardwareCapabilities,
+    preview_scene_id: Arc<Mutex<Option<SceneId>>>,
     /// Read on every spawn to resolve the widget's credential bindings.
     /// Lock order: config before secrets. A spawner takes the config lock
     /// first or not at all, and never takes it while holding this one.
     secret_store: Arc<RwLock<SecretStoreHandle>>,
-    #[cfg(test)]
-    retry_pending_calls: AtomicUsize,
-}
-
-#[derive(Clone)]
-pub(crate) enum ConfiguredSceneState {
-    Enabled,
-    PreviewOrEnabled(Arc<Mutex<Option<SceneId>>>),
 }
 
 #[derive(Clone, Copy)]
@@ -281,6 +288,11 @@ enum RetainedWidgetStop {
 pub(crate) struct WidgetStopBatch {
     receipts: Vec<Result<CompositorReceipt, CompositorError>>,
     terminations: Vec<super::manager::TerminationHandle>,
+}
+
+pub(crate) struct PendingWidgetRegistration {
+    widget_id: crate::scene::WidgetId,
+    receipt: Result<CompositorReceipt, CompositorError>,
 }
 
 struct PendingCredentialUpdate {
@@ -333,11 +345,7 @@ pub fn start_credential_listener(
 impl WidgetStopBatch {
     pub(crate) async fn wait(self) {
         let receipts = async {
-            for receipt in self.receipts {
-                let result = match receipt {
-                    Ok(receipt) => receipt.wait().await,
-                    Err(error) => Err(error),
-                };
+            for result in wait_for_compositor_receipts(self.receipts).await {
                 if let Err(error) = result {
                     warn!(%error, "failed to apply widget cutoff");
                 }
@@ -352,10 +360,37 @@ impl WidgetStopBatch {
     }
 }
 
+async fn wait_for_compositor_receipts(
+    receipts: Vec<Result<CompositorReceipt, CompositorError>>,
+) -> Vec<Result<(), CompositorError>> {
+    join_all(receipts.into_iter().map(|receipt| async {
+        match receipt {
+            Ok(receipt) => receipt.wait().await,
+            Err(error) => Err(error),
+        }
+    }))
+    .await
+}
+
+async fn wait_for_deactivations(
+    receipts: Vec<Result<CompositorReceipt, CompositorError>>,
+    phase: &'static str,
+) {
+    for result in wait_for_compositor_receipts(receipts).await {
+        if let Err(error) = result {
+            warn!(%error, phase, "failed to deactivate widget");
+        }
+    }
+}
+
 enum WidgetStartPreparation {
     Satisfied,
     Cutoff(WidgetStopBatch),
     WaitForTermination(super::manager::TerminationHandle),
+    Registered {
+        widget_id: crate::scene::WidgetId,
+        registration: CompositorReceipt,
+    },
     Ready(Box<PreparedWidgetStart>),
 }
 
@@ -363,8 +398,22 @@ struct PreparedWidgetStart {
     widget: Widget,
     launch: WidgetLaunch,
     identity: super::WidgetIdentity,
+    permit: StartPermit,
     registration: CompositorReceipt,
     activation: CompositorReceipt,
+}
+
+struct ResumeWidget {
+    scene_id: SceneId,
+    widget: Widget,
+    launch: WidgetLaunch,
+    identity: super::WidgetIdentity,
+    permit: StartPermit,
+}
+
+struct PendingResumeWidget {
+    widget: ResumeWidget,
+    activation: Result<CompositorReceipt, CompositorError>,
 }
 
 enum StartValidation {
@@ -586,6 +635,7 @@ impl Coordinator {
     pub fn new(
         widget_manager: WidgetManager,
         compositor: Arc<dyn Compositor>,
+        wayland_display: Option<String>,
         widget_registry: Arc<WidgetRegistry>,
         hardware_capabilities: HardwareCapabilities,
         secret_store: Arc<RwLock<SecretStoreHandle>>,
@@ -593,12 +643,16 @@ impl Coordinator {
         Self {
             widget_manager,
             compositor,
+            wayland_display,
             widget_registry,
             hardware_capabilities,
+            preview_scene_id: Arc::default(),
             secret_store,
-            #[cfg(test)]
-            retry_pending_calls: AtomicUsize::new(0),
         }
+    }
+
+    pub(crate) fn preview_scene_state(&self) -> Arc<Mutex<Option<SceneId>>> {
+        Arc::clone(&self.preview_scene_id)
     }
 
     /// Subscribe the coordinator to runtime setting changes and forward
@@ -711,7 +765,6 @@ impl Coordinator {
             config
                 .scenes()
                 .values()
-                .filter(|scene| scene.enabled)
                 .flat_map(|scene| {
                     scene
                         .widgets
@@ -741,22 +794,12 @@ impl Coordinator {
                 }
                 Some(_) => {
                     info!(%instance_id, widget_type = %widget.widget_type_id, "reloading changed widget");
-                    self.replace_configured_widget(
-                        config_handle,
-                        scene_id,
-                        widget.id,
-                        ConfiguredSceneState::Enabled,
-                    )
-                    .await;
+                    self.replace_configured_widget(config_handle, scene_id, widget.id)
+                        .await;
                 }
                 None => {
-                    self.spawn_configured_widget(
-                        config_handle,
-                        scene_id,
-                        widget.id,
-                        ConfiguredSceneState::Enabled,
-                    )
-                    .await;
+                    self.spawn_configured_widget(config_handle, scene_id, widget.id)
+                        .await;
                 }
             }
         }
@@ -794,7 +837,7 @@ impl Coordinator {
 
         self.spawn_all_configured_widgets(config_handle).await;
 
-        info!("all scene widgets spawned");
+        info!("finished initial widget reconciliation");
     }
 
     pub(crate) async fn spawn_all_configured_widgets(
@@ -803,22 +846,11 @@ impl Coordinator {
     ) {
         let scene_ids = {
             let config = config_handle.read().await;
-            supported_scenes(
-                &self.widget_registry,
-                &self.hardware_capabilities,
-                config.scenes(),
-            )
-            .into_iter()
-            .map(|scene| scene.id)
-            .collect::<Vec<_>>()
+            config.scenes().keys().copied().collect::<Vec<_>>()
         };
         for scene_id in scene_ids {
-            self.spawn_configured_scene_widgets(
-                config_handle,
-                scene_id,
-                ConfiguredSceneState::Enabled,
-            )
-            .await;
+            self.spawn_configured_scene_widgets(config_handle, scene_id)
+                .await;
         }
 
         let config = config_handle.read().await;
@@ -854,29 +886,16 @@ impl Coordinator {
         &self,
         config_handle: &Arc<RwLock<ConfigHandle>>,
         scene_id: SceneId,
-        state: ConfiguredSceneState,
     ) {
         let widget_ids = {
-            let preview = match &state {
-                ConfiguredSceneState::Enabled => None,
-                ConfiguredSceneState::PreviewOrEnabled(current_scene) => {
-                    Some(current_scene.lock().await)
-                }
-            };
             let config = config_handle.read().await;
             let Some(scene) = config.scenes().get(&scene_id) else {
                 return;
             };
-            if !configured_scene_is_visible(scene, preview.as_deref()) {
-                return;
-            }
-            if !self.scene_supported(scene) {
-                return;
-            }
             scene.widgets.keys().copied().collect::<Vec<_>>()
         };
         for widget_id in widget_ids {
-            self.spawn_configured_widget(config_handle, scene_id, widget_id, state.clone())
+            self.spawn_configured_widget(config_handle, scene_id, widget_id)
                 .await;
         }
     }
@@ -886,12 +905,11 @@ impl Coordinator {
         config_handle: &Arc<RwLock<ConfigHandle>>,
         scene_id: SceneId,
         widget_id: crate::scene::WidgetId,
-        state: ConfiguredSceneState,
     ) {
         let mut mismatch_attempt = 0;
         loop {
             let prepared = match self
-                .prepare_widget_start(config_handle, scene_id, widget_id, &state, mismatch_attempt)
+                .prepare_widget_start(config_handle, scene_id, widget_id, mismatch_attempt)
                 .await
             {
                 WidgetStartPreparation::Ready(prepared) => prepared,
@@ -903,6 +921,15 @@ impl Coordinator {
                 WidgetStartPreparation::WaitForTermination(termination) => {
                     termination.join().await;
                     continue;
+                }
+                WidgetStartPreparation::Registered {
+                    widget_id,
+                    registration,
+                } => {
+                    if let Err(error) = registration.wait().await {
+                        warn!(%scene_id, %widget_id, %error, "failed to apply widget registration");
+                    }
+                    return;
                 }
                 WidgetStartPreparation::Satisfied => return,
             };
@@ -918,10 +945,10 @@ impl Coordinator {
                 .enqueue_validated_start(
                     config_handle,
                     scene_id,
-                    &state,
                     &prepared.widget,
                     &prepared.launch,
                     &prepared.identity,
+                    prepared.permit,
                 )
                 .await
             {
@@ -957,30 +984,37 @@ impl Coordinator {
         }
     }
 
+    pub(crate) async fn finish_widget_registration(
+        &self,
+        config_handle: &Arc<RwLock<ConfigHandle>>,
+        scene_id: SceneId,
+        pending: PendingWidgetRegistration,
+    ) {
+        let widget_id = pending.widget_id;
+        let result = match pending.receipt {
+            Ok(receipt) => receipt.wait().await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = result {
+            warn!(%scene_id, %widget_id, %error, "failed to apply widget registration");
+            return;
+        }
+        self.spawn_configured_widget(config_handle, scene_id, widget_id)
+            .await;
+    }
+
     async fn prepare_widget_start(
         &self,
         config_handle: &Arc<RwLock<ConfigHandle>>,
         scene_id: SceneId,
         widget_id: crate::scene::WidgetId,
-        state: &ConfiguredSceneState,
         mismatch_attempt: usize,
     ) -> WidgetStartPreparation {
-        let preview_guard = match state {
-            ConfiguredSceneState::Enabled => None,
-            ConfiguredSceneState::PreviewOrEnabled(current_scene) => {
-                let preview = current_scene.lock().await;
-                Some(preview)
-            }
-        };
+        let preview = self.preview_scene_id.lock().await;
         let config = config_handle.read().await;
         let Some(scene) = config.scenes().get(&scene_id) else {
             return WidgetStartPreparation::Satisfied;
         };
-        if !configured_scene_is_visible(scene, preview_guard.as_deref())
-            || !self.scene_supported(scene)
-        {
-            return WidgetStartPreparation::Satisfied;
-        }
         let Some(widget) = scene.widgets.get(&widget_id).cloned() else {
             return WidgetStartPreparation::Satisfied;
         };
@@ -988,10 +1022,15 @@ impl Coordinator {
             return WidgetStartPreparation::Satisfied;
         };
         let identity = installed.identity.clone();
-        if self.widget_manager.mode() != ManagerMode::Running {
-            return WidgetStartPreparation::Satisfied;
+        let should_start = configured_scene_is_visible(scene, *preview)
+            && self.scene_supported(scene)
+            && self.widget_manager.mode() == ManagerMode::Running;
+        if !should_start {
+            return self
+                .prepare_inactive_registration(scene_id, widget, &installed.manifest, viewport)
+                .await;
         }
-        let Some(wayland_display) = self.compositor.wayland_display() else {
+        let Some(wayland_display) = self.wayland_display.clone() else {
             warn!(%scene_id, widget_id = %widget.id, "compositor not started, cannot spawn widget");
             return WidgetStartPreparation::Satisfied;
         };
@@ -1026,65 +1065,82 @@ impl Coordinator {
                 .await,
             );
         }
-        let (registration, activation) = {
-            let accounts = self.secret_store.read().await;
-            let registration = self.widget_registration_from_accounts(
-                &widget,
-                &installed.manifest,
-                viewport,
-                accounts.accounts(),
-            );
-            let registration = match self.compositor.enqueue_register_widget(registration) {
-                Ok(registration) => registration,
-                Err(error) => {
-                    warn!(%scene_id, widget_id = %widget.id, %error, "failed to enqueue widget registration");
-                    return WidgetStartPreparation::Satisfied;
-                }
-            };
-            let activation = match self
-                .compositor
-                .enqueue_activate_widget(WidgetInstanceKey::new(widget.id.as_uuid()))
-            {
-                Ok(activation) => activation,
-                Err(error) => {
-                    warn!(%scene_id, widget_id = %widget.id, %error, "failed to enqueue widget activation");
-                    return WidgetStartPreparation::Satisfied;
-                }
-            };
-            (registration, activation)
+        let Ok(permit) = self
+            .widget_manager
+            .prepare_start(&widget.id.to_string(), ManagerMode::Running)
+            .await
+        else {
+            return self
+                .prepare_inactive_registration(scene_id, widget, &installed.manifest, viewport)
+                .await;
+        };
+        let registration = match self
+            .enqueue_widget_registration(&widget, &installed.manifest, viewport)
+            .await
+        {
+            Ok(registration) => registration,
+            Err(error) => {
+                warn!(%scene_id, widget_id = %widget.id, %error, "failed to enqueue widget registration");
+                return WidgetStartPreparation::Satisfied;
+            }
+        };
+        let activation = match self
+            .compositor
+            .enqueue_activate_widget(WidgetInstanceKey::new(widget.id.as_uuid()))
+        {
+            Ok(activation) => activation,
+            Err(error) => {
+                warn!(%scene_id, widget_id = %widget.id, %error, "failed to enqueue widget activation");
+                return WidgetStartPreparation::Satisfied;
+            }
         };
         WidgetStartPreparation::Ready(Box::new(PreparedWidgetStart {
             widget,
             launch,
             identity,
+            permit,
             registration,
             activation,
         }))
+    }
+
+    async fn prepare_inactive_registration(
+        &self,
+        scene_id: SceneId,
+        widget: Widget,
+        manifest: &Manifest,
+        viewport: Size,
+    ) -> WidgetStartPreparation {
+        match self
+            .enqueue_widget_registration(&widget, manifest, viewport)
+            .await
+        {
+            Ok(registration) => WidgetStartPreparation::Registered {
+                widget_id: widget.id,
+                registration,
+            },
+            Err(error) => {
+                warn!(%scene_id, widget_id = %widget.id, %error, "failed to enqueue widget registration");
+                WidgetStartPreparation::Satisfied
+            }
+        }
     }
 
     async fn enqueue_validated_start(
         &self,
         config_handle: &Arc<RwLock<ConfigHandle>>,
         scene_id: SceneId,
-        state: &ConfiguredSceneState,
         expected: &Widget,
         launch: &WidgetLaunch,
         identity: &super::WidgetIdentity,
+        expected_permit: StartPermit,
     ) -> StartValidation {
-        let preview_guard = match state {
-            ConfiguredSceneState::Enabled => None,
-            ConfiguredSceneState::PreviewOrEnabled(current_scene) => {
-                let preview = current_scene.lock().await;
-                Some(preview)
-            }
-        };
+        let preview = self.preview_scene_id.lock().await;
         let config = config_handle.read().await;
         let Some(scene) = config.scenes().get(&scene_id) else {
             return StartValidation::Abort;
         };
-        if !configured_scene_is_visible(scene, preview_guard.as_deref())
-            || !self.scene_supported(scene)
-        {
+        if !configured_scene_is_visible(scene, *preview) || !self.scene_supported(scene) {
             return StartValidation::Abort;
         }
         let Some(current) = scene.widgets.get(&expected.id) else {
@@ -1105,15 +1161,12 @@ impl Coordinator {
         }
         StartValidation::Start(
             self.widget_manager
-                .enqueue_spawn_widget(launch.clone(), identity.clone())
+                .enqueue_spawn_widget(launch.clone(), identity.clone(), expected_permit)
                 .await,
         )
     }
 
-    fn widget_registration_prerequisites(
-        &self,
-        widget: &Widget,
-    ) -> Option<(WidgetInfo, Size)> {
+    fn widget_registration_prerequisites(&self, widget: &Widget) -> Option<(WidgetInfo, Size)> {
         if widget.widget_type_id.is_nil() {
             info!(widget_id = %widget.id, "skipping widget with nil widget_type_id");
             return None;
@@ -1137,17 +1190,10 @@ impl Coordinator {
         viewport: Size,
         accounts: &IndexMap<AccountId, Account>,
     ) -> WidgetRegistration {
-        let position = widget_to_position(&self.hardware_capabilities, widget);
         let resolved = Self::resolve_credentials_for(widget, manifest, accounts);
         WidgetRegistration {
             key: WidgetInstanceKey::new(widget.id.as_uuid()),
-            connection_mode: WidgetConnectionMode::Accepting,
-            placement: WidgetPlacement {
-                instance_id: widget.id.to_string(),
-                position,
-                size: viewport,
-                visible: true,
-            },
+            connection_mode: WidgetConnectionMode::Inactive,
             initial_config: WidgetInitialConfig {
                 width: viewport.width,
                 height: viewport.height,
@@ -1165,21 +1211,60 @@ impl Coordinator {
         }
     }
 
-    async fn widget_registration(
+    async fn enqueue_widget_registration(
         &self,
         widget: &Widget,
-    ) -> Option<(WidgetRegistration, super::WidgetIdentity)> {
-        let (installed, viewport) = self.widget_registration_prerequisites(widget)?;
+        manifest: &Manifest,
+        viewport: Size,
+    ) -> Result<CompositorReceipt, CompositorError> {
         let accounts = self.secret_store.read().await;
-        Some((
-            self.widget_registration_from_accounts(
+        self.compositor
+            .enqueue_register_widget(self.widget_registration_from_accounts(
                 widget,
-                &installed.manifest,
+                manifest,
                 viewport,
                 accounts.accounts(),
+            ))
+    }
+
+    pub(crate) fn enqueue_configured_widget_registration(
+        &self,
+        config: &ConfigHandle,
+        accounts: &IndexMap<AccountId, Account>,
+        scene_id: SceneId,
+        widget_id: crate::scene::WidgetId,
+    ) -> Option<PendingWidgetRegistration> {
+        let widget = config.scenes().get(&scene_id)?.widgets.get(&widget_id)?;
+        let (installed, viewport) = self.widget_registration_prerequisites(widget)?;
+        Some(PendingWidgetRegistration {
+            widget_id,
+            receipt: self.compositor.enqueue_register_widget(
+                self.widget_registration_from_accounts(
+                    widget,
+                    &installed.manifest,
+                    viewport,
+                    accounts,
+                ),
             ),
-            installed.identity,
-        ))
+        })
+    }
+
+    pub(crate) fn enqueue_configured_scene_registrations(
+        &self,
+        config: &ConfigHandle,
+        accounts: &IndexMap<AccountId, Account>,
+        scene_id: SceneId,
+    ) -> Vec<PendingWidgetRegistration> {
+        let Some(scene) = config.scenes().get(&scene_id) else {
+            return Vec::new();
+        };
+        scene
+            .widgets
+            .keys()
+            .filter_map(|widget_id| {
+                self.enqueue_configured_widget_registration(config, accounts, scene_id, *widget_id)
+            })
+            .collect()
     }
 
     async fn enqueue_widget_stop(
@@ -1246,26 +1331,12 @@ impl Coordinator {
         config_handle: &Arc<RwLock<ConfigHandle>>,
         scene_id: SceneId,
         widget_id: crate::scene::WidgetId,
-        state: ConfiguredSceneState,
     ) {
         let cutoff = {
-            let preview_guard = match &state {
-                ConfiguredSceneState::Enabled => None,
-                ConfiguredSceneState::PreviewOrEnabled(current_scene) => {
-                    let preview = current_scene.lock().await;
-                    Some(preview)
-                }
-            };
             let config = config_handle.read().await;
             let Some(scene) = config.scenes().get(&scene_id) else {
                 return;
             };
-            if !configured_scene_is_visible(scene, preview_guard.as_deref())
-                || !self.scene_supported(scene)
-                || self.widget_manager.mode() != ManagerMode::Running
-            {
-                return;
-            }
             let Some(widget) = scene.widgets.get(&widget_id) else {
                 return;
             };
@@ -1273,7 +1344,7 @@ impl Coordinator {
                 .await
         };
         cutoff.wait().await;
-        self.spawn_configured_widget(config_handle, scene_id, widget_id, state)
+        self.spawn_configured_widget(config_handle, scene_id, widget_id)
             .await;
     }
 
@@ -1288,15 +1359,8 @@ impl Coordinator {
 
     /// Ask a crash-looping widget to try the configuration just pushed to it,
     /// rather than sit out a delay earned against the configuration it replaced.
-    pub async fn retry_pending_widget(&self, instance_id: &str) {
-        #[cfg(test)]
-        self.retry_pending_calls.fetch_add(1, Ordering::Relaxed);
-        self.widget_manager.retry_pending(instance_id).await;
-    }
-
-    #[cfg(test)]
-    pub(crate) fn retry_pending_call_count(&self) -> usize {
-        self.retry_pending_calls.load(Ordering::Relaxed)
+    pub async fn retry_pending_widget(&self, instance_id: &str) -> bool {
+        self.widget_manager.retry_pending(instance_id).await
     }
 
     fn resolve_credentials_for(
@@ -1405,20 +1469,29 @@ impl Coordinator {
             .collect()
     }
 
-    async fn finish_credential_refreshes(&self, pending: Vec<PendingCredentialUpdate>) {
+    async fn finish_credential_refreshes(
+        &self,
+        pending: Vec<PendingCredentialUpdate>,
+    ) -> Vec<InstanceId> {
         let results = join_all(
             pending
                 .into_iter()
                 .map(|update| self.finish_widget_credentials_update(update)),
         )
         .await;
+        let mut retried = Vec::new();
         for result in results {
             match result {
-                Ok(Some(instance_id)) => self.retry_pending_widget(&instance_id).await,
+                Ok(Some(instance_id)) => {
+                    if self.retry_pending_widget(&instance_id).await {
+                        retried.push(instance_id);
+                    }
+                }
                 Ok(None) => {}
                 Err(error) => warn!(%error, "failed to finish widget credential refresh"),
             }
         }
+        retried
     }
 
     async fn refresh_configured_widget_credentials(
@@ -1438,9 +1511,11 @@ impl Coordinator {
     /// Widgets are stopped first (SIGTERM → 10s timeout → SIGKILL) because they
     /// need the Wayland display socket to clean up GPU resources (GEM/DMA-BUF).
     /// The compositor is shut down second.
-    pub async fn stop_all(&self) {
+    pub async fn stop_all(&self, config_handle: &Arc<RwLock<ConfigHandle>>) {
         info!("stopping all widgets and compositor");
-        self.widget_manager.shutdown().await;
+        let shutdown = self.widget_manager.begin_shutdown().await;
+        self.finish_lifecycle_stop(config_handle, shutdown, "shutdown")
+            .await;
         if let Err(e) = self.compositor.shutdown() {
             warn!(error = %e, "failed to shut down compositor");
         }
@@ -1450,20 +1525,23 @@ impl Coordinator {
     /// Stop every widget process while retaining inactive compositor registrations.
     pub async fn stop_all_widgets(&self, config_handle: &Arc<RwLock<ConfigHandle>>) {
         let pause = self.widget_manager.begin_pause().await;
-        let snapshot = self.widget_manager.snapshot().await;
-        let mut keys = pause
+        self.finish_lifecycle_stop(config_handle, pause, "upgrade pause")
+            .await;
+    }
+
+    async fn finish_lifecycle_stop(
+        &self,
+        config_handle: &Arc<RwLock<ConfigHandle>>,
+        stop: super::manager::StopAllHandle,
+        phase: &'static str,
+    ) {
+        let mut keys = stop
             .instance_ids()
             .iter()
             .filter_map(|instance_id| instance_id.parse::<WidgetInstanceKey>().ok())
             .collect::<BTreeSet<_>>();
-        keys.extend(
-            snapshot
-                .widgets
-                .iter()
-                .map(|widget| WidgetInstanceKey::new(widget.launch.config_key.instance_id)),
-        );
         let receipts = {
-            let config = config_handle.read().await;
+            let config = config_handle.write().await;
             keys.extend(config.scenes().values().flat_map(|scene| {
                 scene
                     .widgets
@@ -1474,17 +1552,159 @@ impl Coordinator {
                 .map(|key| self.compositor.enqueue_deactivate_widget(key))
                 .collect::<Vec<_>>()
         };
-        tokio::join!(pause.join(), async {
-            for receipt in receipts {
-                let result = match receipt {
+        tokio::join!(stop.join(), wait_for_deactivations(receipts, phase));
+    }
+
+    async fn prepare_resume_widgets(
+        &self,
+        config: &ConfigHandle,
+        preview_scene_id: Option<SceneId>,
+    ) -> Option<Vec<PendingResumeWidget>> {
+        let Some(wayland_display) = self.wayland_display.clone() else {
+            warn!("compositor not started, cannot resume widgets");
+            return None;
+        };
+        let mut pending = Vec::new();
+        for scene in supported_shown_scenes(
+            &self.widget_registry,
+            &self.hardware_capabilities,
+            config.scenes(),
+            preview_scene_id,
+        ) {
+            for widget in scene.widgets.values() {
+                let Some((installed, _)) = self.widget_registration_prerequisites(widget) else {
+                    continue;
+                };
+                let key = WidgetInstanceKey::new(widget.id.as_uuid());
+                let Ok(permit) = self
+                    .widget_manager
+                    .prepare_start(&widget.id.to_string(), ManagerMode::Paused)
+                    .await
+                else {
+                    return None;
+                };
+                pending.push(PendingResumeWidget {
+                    widget: ResumeWidget {
+                        scene_id: scene.id,
+                        widget: widget.clone(),
+                        launch: widget_launch(scene.id, widget, wayland_display.clone()),
+                        identity: installed.identity,
+                        permit,
+                    },
+                    activation: self.compositor.enqueue_activate_widget(key),
+                });
+            }
+        }
+        Some(pending)
+    }
+
+    fn resume_widgets_unchanged(
+        &self,
+        config: &ConfigHandle,
+        preview_scene_id: Option<SceneId>,
+        expected: &[(ResumeWidget, bool)],
+    ) -> bool {
+        let current = supported_shown_scenes(
+            &self.widget_registry,
+            &self.hardware_capabilities,
+            config.scenes(),
+            preview_scene_id,
+        )
+        .into_iter()
+        .flat_map(|scene| {
+            scene.widgets.values().filter_map(move |widget| {
+                let (installed, _) = self.widget_registration_prerequisites(widget)?;
+                Some((scene.id, widget, installed.identity))
+            })
+        })
+        .collect::<Vec<_>>();
+        current.len() == expected.len()
+            && current
+                .iter()
+                .zip(expected)
+                .all(|((scene_id, current, identity), (expected, _))| {
+                    *scene_id == expected.scene_id
+                        && widget_spawn_prerequisites_unchanged(current, &expected.widget)
+                        && *identity == expected.identity
+                })
+    }
+
+    pub(crate) async fn resume_all_widgets(&self, config_handle: &Arc<RwLock<ConfigHandle>>) {
+        loop {
+            let Some(pending) = ({
+                let preview = self.preview_scene_id.lock().await;
+                let config = config_handle.read().await;
+                if self.widget_manager.mode() != ManagerMode::Paused {
+                    return;
+                }
+                self.prepare_resume_widgets(&config, *preview).await
+            }) else {
+                return;
+            };
+            let prepared = futures::future::join_all(pending.into_iter().map(|pending| async {
+                let applied = match pending.activation {
                     Ok(receipt) => receipt.wait().await,
                     Err(error) => Err(error),
                 };
-                if let Err(error) = result {
-                    warn!(%error, "failed to deactivate widget during upgrade pause");
+                let applied = match applied {
+                    Ok(()) => true,
+                    Err(error) => {
+                        warn!(widget_id = %pending.widget.widget.id, %error, "failed to prepare widget resume");
+                        false
+                    }
+                };
+                (pending.widget, applied)
+            }))
+            .await;
+
+            let starts = {
+                let preview = self.preview_scene_id.lock().await;
+                let config = config_handle.read().await;
+                if self.widget_manager.mode() != ManagerMode::Paused {
+                    return;
+                }
+                if !self.resume_widgets_unchanged(&config, *preview, &prepared) {
+                    continue;
+                }
+                if self.widget_manager.resume().await != ManagerMode::Running {
+                    return;
+                }
+                self.refresh_scene_cycling(config.scenes());
+                if let Some(scene) = first_supported_active_scene(
+                    &self.widget_registry,
+                    &self.hardware_capabilities,
+                    config.scenes(),
+                ) {
+                    self.set_active_scene(scene);
+                }
+                let mut starts = Vec::new();
+                for (widget, applied) in prepared {
+                    if applied {
+                        starts.push((
+                            widget.scene_id,
+                            widget.widget.id,
+                            self.widget_manager
+                                .enqueue_spawn_widget(widget.launch, widget.identity, widget.permit)
+                                .await,
+                        ));
+                    }
+                }
+                starts
+            };
+            for (scene_id, widget_id, start) in starts {
+                match start.join().await {
+                    Ok(()) => {}
+                    Err(StartError::Occupied(_) | StartError::RegistryChanged) => {
+                        self.spawn_configured_widget(config_handle, scene_id, widget_id)
+                            .await;
+                    }
+                    Err(error) => {
+                        warn!(%widget_id, %error, "failed to resume widget");
+                    }
                 }
             }
-        });
+            return;
+        }
     }
 
     /// Sets the active scene layout on the compositor.
@@ -1562,6 +1782,7 @@ impl Coordinator {
 pub(crate) struct UpgradeWidgetLifecycle {
     coordinator: Arc<Coordinator>,
     config_handle: Arc<RwLock<ConfigHandle>>,
+    operations: Arc<Mutex<()>>,
 }
 
 impl UpgradeWidgetLifecycle {
@@ -1572,23 +1793,42 @@ impl UpgradeWidgetLifecycle {
         Self {
             coordinator,
             config_handle,
+            operations: Arc::new(Mutex::new(())),
         }
     }
+}
+
+async fn run_lifecycle_operation(
+    operations: Arc<Mutex<()>>,
+    operation: impl Future<Output = ()> + Send + 'static,
+) {
+    let operation_guard = operations.lock_owned().await;
+    let task = tokio::spawn(async move {
+        let _operation = operation_guard;
+        operation.await;
+    });
+    task.await
+        .expect("BUG: widget lifecycle operation task panicked");
 }
 
 #[async_trait::async_trait]
 impl crate::system_upgrade::WidgetLifecycle for UpgradeWidgetLifecycle {
     async fn stop_all_widgets(&self) {
-        self.coordinator.stop_all_widgets(&self.config_handle).await;
+        let coordinator = Arc::clone(&self.coordinator);
+        let config = Arc::clone(&self.config_handle);
+        run_lifecycle_operation(Arc::clone(&self.operations), async move {
+            coordinator.stop_all_widgets(&config).await;
+        })
+        .await;
     }
 
     async fn restart_widgets(&self) {
-        if self.coordinator.widget_manager.resume().await != ManagerMode::Running {
-            return;
-        }
-        self.coordinator
-            .spawn_all_configured_widgets(&self.config_handle)
-            .await;
+        let coordinator = Arc::clone(&self.coordinator);
+        let config = Arc::clone(&self.config_handle);
+        run_lifecycle_operation(Arc::clone(&self.operations), async move {
+            coordinator.resume_all_widgets(&config).await;
+        })
+        .await;
     }
 
     async fn refresh_widgets(&self) {
@@ -1664,6 +1904,7 @@ mod tests {
         let coordinator = Coordinator::new(
             manager,
             Arc::clone(&compositor) as Arc<dyn Compositor>,
+            Some("test-display".to_owned()),
             registry,
             bmc100_capabilities(),
             secret_store,
@@ -1746,11 +1987,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -1772,26 +2009,150 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cutoff_invalidates_a_start_waiting_for_activation() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let widget_id = scene
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: test scene must contain a widget")
+            .id;
+        let key = WidgetInstanceKey::new(widget_id.as_uuid());
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let coordinator = Arc::new(coordinator);
+        compositor.hold_widget_receipts();
+        let start = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            let config = Arc::clone(&config);
+            async move {
+                coordinator
+                    .spawn_configured_scene_widgets(&config, scene.id)
+                    .await;
+            }
+        });
+        wait_for_widget_calls(&compositor, 2).await;
+
+        let cutoff = coordinator.enqueue_widget_replacement(key).await;
+        wait_for_widget_calls(&compositor, 3).await;
+        compositor.release_widget_receipts();
+        tokio::join!(start, cutoff.wait())
+            .0
+            .expect("BUG: configured start task");
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Running);
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        assert_eq!(
+            compositor.retained_mode(key),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_widget_call_kinds(
+            &compositor,
+            &["register_retained", "activate", "deactivate"],
+            "a cutoff must invalidate the start prepared before it",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn disabled_configured_widget_is_registered_inactive_without_process() {
+        let (temp, coordinator, compositor, mut scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        scene.enabled = false;
+        let widget_key = WidgetInstanceKey::new(
+            scene
+                .widgets
+                .values()
+                .next()
+                .expect("BUG: test scene must contain a widget")
+                .id
+                .as_uuid(),
+        );
+        let config = config_with_scene(&temp, scene).await;
+
+        coordinator.spawn_all_configured_widgets(&config).await;
+
+        assert_widget_call_kinds(
+            &compositor,
+            &["register_retained"],
+            "configuration membership must create an inactive retained record",
+        );
+        assert_eq!(
+            compositor.retained_mode(widget_key),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn reload_refreshes_disabled_inactive_registration() {
+        let (temp, coordinator, compositor, mut scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        scene.enabled = false;
+        let widget_id = scene
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: test scene must contain a widget")
+            .id;
+        let config = config_with_scene(&temp, scene).await;
+        coordinator.spawn_all_configured_widgets(&config).await;
+        config
+            .write()
+            .await
+            .scenes_mut()
+            .values_mut()
+            .next()
+            .expect("BUG: configured scene")
+            .widgets
+            .get_mut(&widget_id)
+            .expect("BUG: configured widget")
+            .params
+            .insert(
+                ParamKey::try_new("current".to_owned()).expect("BUG: valid key"),
+                ParamValue::Integer(23),
+            );
+
+        coordinator.reload_changed_widgets(&config).await;
+
+        let key = WidgetInstanceKey::new(widget_id.as_uuid());
+        assert_eq!(
+            compositor
+                .retained_params(key)
+                .and_then(|params| params.get("current").cloned()),
+            Some(serde_json::json!(23))
+        );
+        assert_eq!(
+            compositor.retained_mode(key),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        assert_widget_call_kinds(
+            &compositor,
+            &["register_retained", "register_retained", "credentials"],
+            "reload must refresh inactive retained data without activation",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn preview_start_survives_handoff_to_enabled_while_receipts_are_pending() {
         let (temp, coordinator, compositor, mut scene) =
             coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
         scene.enabled = false;
         let scene_id = scene.id;
         let config = config_with_scene(&temp, scene).await;
-        let preview_scene = Arc::new(Mutex::new(Some(scene_id)));
         let coordinator = Arc::new(coordinator);
+        let preview_scene = coordinator.preview_scene_state();
+        *preview_scene.lock().await = Some(scene_id);
         compositor.hold_widget_receipts();
         let task = tokio::spawn({
             let coordinator = Arc::clone(&coordinator);
             let config = Arc::clone(&config);
-            let preview_scene = Arc::clone(&preview_scene);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene_id,
-                        ConfiguredSceneState::PreviewOrEnabled(preview_scene),
-                    )
+                    .spawn_configured_scene_widgets(&config, scene_id)
                     .await;
             }
         });
@@ -1827,11 +2188,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -1867,7 +2224,7 @@ mod tests {
         });
 
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         assert_eq!(coordinator.running_widget_count().await, 1);
@@ -1888,11 +2245,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -1928,7 +2281,7 @@ mod tests {
                 .is_empty()
         );
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         assert_eq!(
             compositor.widget_calls().len(),
@@ -1948,7 +2301,7 @@ mod tests {
             SceneId::from(uuid::Uuid::new_v4()),
             widget.id.as_uuid(),
             widget.widget_type_id,
-            compositor.wayland_display().expect("BUG: display name"),
+            "test-display".to_owned(),
         );
         coordinator
             .widget_manager
@@ -1957,13 +2310,7 @@ mod tests {
             .expect("BUG: spawn persistent mismatch");
 
         let prepared = coordinator
-            .prepare_widget_start(
-                &config,
-                scene.id,
-                widget.id,
-                &ConfiguredSceneState::Enabled,
-                1,
-            )
+            .prepare_widget_start(&config, scene.id, widget.id, 1)
             .await;
         assert!(matches!(prepared, WidgetStartPreparation::Satisfied));
         assert!(
@@ -1984,7 +2331,7 @@ mod tests {
             coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let widget = scene.widgets.values().next().expect("BUG: test widget");
         compositor.hold_widget_receipts();
@@ -2034,11 +2381,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -2076,7 +2419,7 @@ mod tests {
             coordinator_with_widget(Some("#!/definitely/missing/interpreter\n")).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
@@ -2128,6 +2471,69 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn only_applied_changed_credentials_retry_an_actual_pending_widget() {
+        let (temp, coordinator, _compositor, scene) =
+            coordinator_with_widget(Some("#!/definitely/missing/interpreter\n")).await;
+        let widget = scene
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: test scene must contain a widget");
+        let instance_id = widget.id.to_string();
+        let config = config_with_scene(&temp, scene.clone()).await;
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            let snapshot = coordinator.widget_manager.snapshot().await;
+            if matches!(snapshot.widgets.as_slice(), [managed]
+                if managed.state == ManagedWidgetState::PendingRestart)
+            {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "failed widget did not enter pending restart"
+            );
+            tokio::task::yield_now().await;
+        }
+
+        assert!(
+            coordinator
+                .finish_credential_refreshes(vec![PendingCredentialUpdate {
+                    instance_id: instance_id.clone(),
+                    receipt: CredentialUpdateReceipt::completed(false),
+                }])
+                .await
+                .is_empty()
+        );
+        let (changed, receipt) = CredentialUpdateReceipt::pending();
+        drop(changed);
+        assert!(
+            coordinator
+                .finish_credential_refreshes(vec![PendingCredentialUpdate {
+                    instance_id: instance_id.clone(),
+                    receipt,
+                }])
+                .await
+                .is_empty(),
+            "a dropped credential receipt must not retry the pending widget"
+        );
+        assert_eq!(
+            coordinator
+                .finish_credential_refreshes(vec![PendingCredentialUpdate {
+                    instance_id: instance_id.clone(),
+                    receipt: CredentialUpdateReceipt::completed(true),
+                }])
+                .await,
+            vec![instance_id]
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
     async fn parameter_update_during_registration_still_starts_with_current_params() {
         let (temp, coordinator, compositor, scene) =
             coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
@@ -2139,11 +2545,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -2198,7 +2600,7 @@ mod tests {
         let key = WidgetInstanceKey::new(widget.id.as_uuid());
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         assert_eq!(
             compositor
@@ -2215,14 +2617,14 @@ mod tests {
         let (temp, coordinator, _compositor, scene) = coordinator_with_widget(Some(&body)).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let stop = {
             let _config = config.read().await;
             coordinator.enqueue_scene_stop(&scene).await
         };
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         stop.wait().await;
         assert!(matches!(
@@ -2245,13 +2647,10 @@ mod tests {
         scene.enabled = false;
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
-        let preview_scene = Arc::new(Mutex::new(Some(scene.id)));
+        let preview_scene = coordinator.preview_scene_state();
+        *preview_scene.lock().await = Some(scene.id);
         coordinator
-            .spawn_configured_scene_widgets(
-                &config,
-                scene.id,
-                ConfiguredSceneState::PreviewOrEnabled(Arc::clone(&preview_scene)),
-            )
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
         while !ready.exists() {
@@ -2291,11 +2690,7 @@ mod tests {
                 drop(config_guard);
                 drop(preview);
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::PreviewOrEnabled(preview_scene),
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -2345,11 +2740,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .spawn_configured_scene_widgets(
-                        &config,
-                        scene.id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .spawn_configured_scene_widgets(&config, scene.id)
                     .await;
             }
         });
@@ -2391,6 +2782,662 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn upgrade_pause_blocks_reload_until_authorized_resume() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let coordinator = Arc::new(coordinator);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        coordinator.stop_all_widgets(&config).await;
+
+        std::fs::write(
+            temp.path().join("widget-package/manifest.json"),
+            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
+        )
+        .expect("BUG: replace widget manifest");
+        coordinator.reload_changed_widgets(&config).await;
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Paused);
+        assert!(
+            coordinator
+                .widget_manager
+                .snapshot()
+                .await
+                .widgets
+                .is_empty()
+        );
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "register_retained",
+                "credentials",
+            ],
+            "registry reload must refresh retained state without resuming a paused widget",
+        );
+
+        let resume_baseline = compositor.widget_calls().len();
+        compositor.hold_widget_receipts();
+        let restart = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            let config = Arc::clone(&config);
+            async move {
+                let lifecycle = UpgradeWidgetLifecycle::new(coordinator, config);
+                crate::system_upgrade::WidgetLifecycle::restart_widgets(&lifecycle).await;
+            }
+        });
+        wait_for_widget_calls(&compositor, resume_baseline + 1).await;
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Paused);
+        assert!(
+            coordinator
+                .widget_manager
+                .snapshot()
+                .await
+                .widgets
+                .is_empty()
+        );
+        assert!(
+            !restart.is_finished(),
+            "authorized resume must wait for retained activation"
+        );
+
+        compositor.release_widget_receipts();
+        restart.await.expect("BUG: upgrade resume task");
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Running);
+        assert_eq!(coordinator.running_widget_count().await, 1);
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "register_retained",
+                "credentials",
+                "activate",
+            ],
+            "authorized resume must reuse and reactivate the retained registration",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn upgrade_resume_restores_disabled_active_preview() {
+        let (temp, coordinator, compositor, mut scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        scene.enabled = false;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let preview_scene = coordinator.preview_scene_state();
+        *preview_scene.lock().await = Some(scene.id);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+
+        coordinator.stop_all_widgets(&config).await;
+        coordinator.resume_all_widgets(&config).await;
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Running);
+        assert_eq!(coordinator.running_widget_count().await, 1);
+        assert_widget_call_kinds(
+            &compositor,
+            &["register_retained", "activate", "deactivate", "activate"],
+            "upgrade resume must reactivate the retained disabled preview",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn preview_teardown_during_upgrade_resume_prevents_start() {
+        let (temp, coordinator, compositor, mut scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        scene.enabled = false;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let coordinator = Arc::new(coordinator);
+        let preview_scene = coordinator.preview_scene_state();
+        *preview_scene.lock().await = Some(scene.id);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        coordinator.stop_all_widgets(&config).await;
+        let paused_calls = compositor.widget_calls().len();
+
+        compositor.hold_widget_receipts();
+        let resume = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            let config = Arc::clone(&config);
+            async move { coordinator.resume_all_widgets(&config).await }
+        });
+        wait_for_widget_calls(&compositor, paused_calls + 1).await;
+        let teardown = {
+            let mut preview = preview_scene.lock().await;
+            assert_eq!(preview.take(), Some(scene.id));
+            let _config = config.read().await;
+            coordinator.enqueue_scene_stop(&scene).await
+        };
+        wait_for_widget_calls(&compositor, paused_calls + 2).await;
+
+        compositor.release_widget_receipts();
+        tokio::join!(teardown.wait(), resume)
+            .1
+            .expect("BUG: resume task");
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Running);
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        assert_eq!(
+            compositor.retained_mode(WidgetInstanceKey::new(scene.widgets[0].id.as_uuid())),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "activate",
+                "deactivate",
+            ],
+            "preview teardown must be FIFO-final and suppress the resumed child",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn package_reload_replaces_disabled_active_preview() {
+        let (temp, coordinator, compositor, mut scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        scene.enabled = false;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let preview_scene = coordinator.preview_scene_state();
+        *preview_scene.lock().await = Some(scene.id);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        std::fs::write(
+            temp.path().join("widget-package/manifest.json"),
+            r#"{"uid":"550e8400-e29b-41d4-a716-446655440000","version":"2.0.0","name":"coordinator-test","description":"coordinator test","binary":"widget","supported_viewports":[{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}]}"#,
+        )
+        .expect("BUG: replace widget manifest");
+
+        coordinator.reload_changed_widgets(&config).await;
+
+        assert!(matches!(
+            coordinator.widget_manager.snapshot().await.widgets.as_slice(),
+            [managed]
+                if managed.state == ManagedWidgetState::Running
+                    && managed.identity.version == semver::Version::new(2, 0, 0)
+        ));
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "register_retained",
+                "activate",
+                "credentials",
+            ],
+            "reload must replace the shown preview without losing its activation",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn replacement_refreshes_registration_after_preview_teardown() {
+        let body = slow_termination_widget(None, Duration::from_millis(100));
+        let (temp, coordinator, compositor, mut scene) = coordinator_with_widget(Some(&body)).await;
+        scene.enabled = false;
+        let widget = scene
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: test scene must contain a widget")
+            .clone();
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let preview_scene = coordinator.preview_scene_state();
+        *preview_scene.lock().await = Some(scene.id);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        config
+            .write()
+            .await
+            .scenes_mut()
+            .get_mut(&scene.id)
+            .expect("BUG: configured scene")
+            .widgets
+            .get_mut(&widget.id)
+            .expect("BUG: configured widget")
+            .params
+            .insert(
+                ParamKey::try_new("current".to_owned()).expect("BUG: valid key"),
+                ParamValue::Integer(17),
+            );
+
+        *preview_scene.lock().await = None;
+        let teardown = coordinator.enqueue_scene_stop(&scene).await;
+        let replacement = coordinator.replace_configured_widget(&config, scene.id, widget.id);
+        tokio::join!(teardown.wait(), replacement);
+
+        assert_eq!(
+            compositor
+                .retained_params(WidgetInstanceKey::new(widget.id.as_uuid()))
+                .and_then(|params| params.get("current").cloned()),
+            Some(serde_json::json!(17))
+        );
+        assert_eq!(
+            compositor.retained_mode(WidgetInstanceKey::new(widget.id.as_uuid())),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "deactivate",
+                "register_retained",
+            ],
+            "preview teardown must not suppress the retained replacement update",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn replacement_refreshes_registration_while_paused() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let widget = scene
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: test scene must contain a widget")
+            .clone();
+        let config = config_with_scene(&temp, scene.clone()).await;
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        coordinator.stop_all_widgets(&config).await;
+
+        coordinator
+            .replace_configured_widget(&config, scene.id, widget.id)
+            .await;
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Paused);
+        assert_eq!(
+            compositor.retained_mode(WidgetInstanceKey::new(widget.id.as_uuid())),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "deactivate",
+                "register_retained",
+            ],
+            "pause must not suppress the retained replacement update",
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn widget_added_while_paused_is_registered_without_activation() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        coordinator.stop_all_widgets(&config).await;
+        let baseline = compositor.widget_calls().len();
+
+        let added = scene
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: test scene must contain a widget")
+            .clone_with_new_id();
+        let added_id = added.id;
+        config
+            .write()
+            .await
+            .scenes_mut()
+            .get_mut(&scene.id)
+            .expect("BUG: configured scene")
+            .widgets
+            .insert(added.id, added);
+
+        coordinator
+            .spawn_configured_widget(&config, scene.id, added_id)
+            .await;
+
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "deactivate",
+                "register_retained",
+            ],
+            "paused configuration addition must only create an inactive retained record",
+        );
+        assert_eq!(compositor.widget_calls().len(), baseline + 1);
+        assert_eq!(
+            compositor.retained_mode(WidgetInstanceKey::new(added_id.as_uuid())),
+            Some(WidgetConnectionMode::Inactive)
+        );
+        assert_eq!(coordinator.running_widget_count().await, 0);
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn cancelled_lifecycle_waiter_preserves_operation_order() {
+        let operations = Arc::new(Mutex::new(()));
+        let mode = Arc::new(std::sync::Mutex::new(ManagerMode::Running));
+        let (first_started_tx, first_started_rx) = tokio::sync::oneshot::channel();
+        let (release_first_tx, release_first_rx) = tokio::sync::oneshot::channel();
+        let first = tokio::spawn(run_lifecycle_operation(Arc::clone(&operations), {
+            let mode = Arc::clone(&mode);
+            async move {
+                first_started_tx.send(()).expect("BUG: first waiter alive");
+                release_first_rx
+                    .await
+                    .expect("BUG: release first operation");
+                *mode.lock().expect("BUG: lifecycle mode lock") = ManagerMode::Paused;
+            }
+        }));
+        first_started_rx
+            .await
+            .expect("BUG: first lifecycle operation must start");
+        first.abort();
+        assert!(
+            first
+                .await
+                .expect_err("cancelled lifecycle waiter must stop")
+                .is_cancelled()
+        );
+
+        let (second_started_tx, mut second_started_rx) = tokio::sync::oneshot::channel();
+        let second = tokio::spawn(run_lifecycle_operation(Arc::clone(&operations), {
+            let mode = Arc::clone(&mode);
+            async move {
+                second_started_tx
+                    .send(())
+                    .expect("BUG: second waiter alive");
+                let mut mode = mode.lock().expect("BUG: lifecycle mode lock");
+                assert_eq!(*mode, ManagerMode::Paused);
+                *mode = ManagerMode::Running;
+            }
+        }));
+        tokio::task::yield_now().await;
+        assert!(
+            second_started_rx.try_recv().is_err(),
+            "second lifecycle operation must wait for the cancelled first waiter’s work"
+        );
+
+        release_first_tx
+            .send(())
+            .expect("BUG: first lifecycle operation alive");
+        second.await.expect("BUG: second lifecycle waiter");
+        second_started_rx
+            .await
+            .expect("BUG: second lifecycle operation must start");
+        assert_eq!(
+            *mode.lock().expect("BUG: lifecycle mode lock"),
+            ManagerMode::Running
+        );
+    }
+
+    #[tokio::test]
+    async fn resume_skips_widget_whose_manifest_rejects_its_viewport() {
+        let (temp, coordinator, compositor, fullscreen) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let widget_type_id = fullscreen
+            .widgets
+            .values()
+            .next()
+            .expect("BUG: fullscreen fixture widget")
+            .widget_type_id;
+        let mut scene = Scene::combined();
+        let widget = Widget::new(
+            widget_type_id,
+            BTreeMap::new(),
+            crate::scene::WidgetPosition { row: 0, col: 0 },
+            crate::scene::WidgetPlacement::SlotSpan(crate::scene::SlotSpan {
+                columns: 1,
+                rows: 1,
+            }),
+        );
+        scene.widgets.insert(widget.id, widget);
+        let config = config_with_scene(&temp, scene).await;
+        coordinator.stop_all_widgets(&config).await;
+        let paused_calls = compositor.widget_calls();
+
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            coordinator.resume_all_widgets(&config),
+        )
+        .await
+        .expect("unsupported retained widget must not prevent upgrade recovery");
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::Running);
+        assert!(
+            coordinator
+                .widget_manager
+                .snapshot()
+                .await
+                .widgets
+                .is_empty()
+        );
+        assert_eq!(
+            compositor.widget_calls(),
+            paused_calls,
+            "resume must not enqueue unsupported registration repeatedly"
+        );
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn upgrade_pause_reaps_all_children_when_deactivation_receipts_time_out() {
+        let (temp, coordinator, compositor, mut scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let second = scene.widgets[0].clone_with_new_id();
+        scene.widgets.insert(second.id, second);
+        let config = config_with_scene(&temp, scene.clone()).await;
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        assert_eq!(coordinator.running_widget_count().await, 2);
+
+        compositor.hold_widget_receipts();
+        coordinator.stop_all_widgets(&config).await;
+
+        let snapshot = coordinator.widget_manager.snapshot().await;
+        assert_eq!(snapshot.mode, ManagerMode::Paused);
+        assert!(
+            snapshot.widgets.is_empty(),
+            "every child must be reaped even when each deactivation times out"
+        );
+        assert_widget_call_kinds(
+            &compositor,
+            &[
+                "register_retained",
+                "activate",
+                "register_retained",
+                "activate",
+                "deactivate",
+                "deactivate",
+            ],
+            "upgrade pause must attempt deactivation for every retained child",
+        );
+        compositor.release_widget_receipts();
+        coordinator.widget_manager.shutdown().await;
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn deactivation_receipt_timeouts_run_concurrently() {
+        let (_first, first) = CompositorReceipt::pending("first deactivation");
+        let (_second, second) = CompositorReceipt::pending("second deactivation");
+        let started = tokio::time::Instant::now();
+
+        wait_for_deactivations(vec![Ok(first), Ok(second)], "test").await;
+
+        assert_eq!(
+            started.elapsed(),
+            crate::compositor::WIDGET_COMMAND_ACK_TIMEOUT,
+            "all deactivation timeouts must elapse concurrently"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_shutdown_absorbs_upgrade_resume() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let coordinator = Arc::new(coordinator);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        coordinator.stop_all_widgets(&config).await;
+        coordinator.stop_all(&config).await;
+        let terminal_calls = compositor.widget_calls();
+
+        let lifecycle = UpgradeWidgetLifecycle::new(Arc::clone(&coordinator), Arc::clone(&config));
+        crate::system_upgrade::WidgetLifecycle::restart_widgets(&lifecycle).await;
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::ShuttingDown);
+        assert!(
+            coordinator
+                .widget_manager
+                .snapshot()
+                .await
+                .widgets
+                .is_empty()
+        );
+        assert_eq!(
+            compositor.widget_calls(),
+            terminal_calls,
+            "an upgrade guard must not activate or start after terminal shutdown"
+        );
+    }
+
+    #[tokio::test]
+    async fn terminal_deactivation_follows_a_resume_waiting_for_receipts() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let coordinator = Arc::new(coordinator);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        coordinator.stop_all_widgets(&config).await;
+        let paused_call_count = compositor.widget_calls().len();
+
+        compositor.hold_widget_receipts();
+        let resume = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            let config = Arc::clone(&config);
+            async move { coordinator.resume_all_widgets(&config).await }
+        });
+        wait_for_widget_calls(&compositor, paused_call_count + 1).await;
+        let shutdown = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            let config = Arc::clone(&config);
+            async move { coordinator.stop_all(&config).await }
+        });
+        wait_for_widget_calls(&compositor, paused_call_count + 2).await;
+
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::ShuttingDown);
+        assert_eq!(compositor.shutdown_call_count(), 0);
+        let calls = compositor.widget_calls();
+        assert_eq!(
+            calls[calls.len() - 2..]
+                .iter()
+                .map(|call| call.split_whitespace().next().expect("BUG: recorded call"))
+                .collect::<Vec<_>>(),
+            ["activate", "deactivate"],
+            "terminal deactivation must be the final connection-mode command"
+        );
+
+        compositor.release_widget_receipts();
+        resume.await.expect("BUG: upgrade resume task");
+        shutdown.await.expect("BUG: terminal shutdown task");
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::ShuttingDown);
+        assert!(
+            coordinator
+                .widget_manager
+                .snapshot()
+                .await
+                .widgets
+                .is_empty()
+        );
+        assert_eq!(compositor.shutdown_call_count(), 1);
+    }
+
+    #[tokio::test]
+    async fn terminal_shutdown_waits_for_deactivation_and_child_reap() {
+        let (temp, coordinator, compositor, scene) =
+            coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
+        let ready = temp.path().join("ready");
+        std::fs::write(
+            temp.path().join("widget-package/widget"),
+            slow_termination_widget(Some(&ready), Duration::from_millis(100)),
+        )
+        .expect("BUG: write slow widget");
+        let config = config_with_scene(&temp, scene.clone()).await;
+        let coordinator = Arc::new(coordinator);
+        coordinator
+            .spawn_configured_scene_widgets(&config, scene.id)
+            .await;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        while !ready.exists() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "widget did not install its termination handler"
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+
+        let call_count = compositor.widget_calls().len();
+        compositor.hold_widget_receipts();
+        let shutdown = tokio::spawn({
+            let coordinator = Arc::clone(&coordinator);
+            let config = Arc::clone(&config);
+            async move { coordinator.stop_all(&config).await }
+        });
+        wait_for_widget_calls(&compositor, call_count + 1).await;
+        assert_eq!(coordinator.widget_manager.mode(), ManagerMode::ShuttingDown);
+        assert_eq!(compositor.shutdown_call_count(), 0);
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while !coordinator
+                .widget_manager
+                .snapshot()
+                .await
+                .widgets
+                .is_empty()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("terminal shutdown must reap children independently of compositor receipts");
+        assert_eq!(compositor.shutdown_call_count(), 0);
+
+        compositor.release_widget_receipts();
+        shutdown.await.expect("BUG: terminal shutdown task");
+        assert_eq!(compositor.shutdown_call_count(), 1);
+    }
+
+    #[tokio::test]
     async fn unsupported_configured_scene_never_registers_or_starts() {
         let (temp, coordinator, compositor, mut scene) =
             coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
@@ -2400,7 +3447,7 @@ mod tests {
         let config = config_with_scene(&temp, scene.clone()).await;
 
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         assert!(compositor.widget_calls().is_empty());
@@ -2430,7 +3477,7 @@ mod tests {
         .expect("BUG: respawn fixture must be writable");
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
         loop {
@@ -2463,7 +3510,7 @@ mod tests {
             coordinator_with_widget(Some("not an executable\n")).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         let calls = compositor.widget_calls();
@@ -2517,11 +3564,11 @@ mod tests {
         let config = config_with_scene(&temp, scene.clone()).await;
 
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let calls = compositor.widget_calls();
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         assert_eq!(compositor.widget_calls(), calls);
@@ -2539,7 +3586,7 @@ mod tests {
             coordinator_with_widget(Some("#!/bin/sh\nwhile :; do sleep 30; done\n")).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         let stop = {
@@ -2548,7 +3595,7 @@ mod tests {
         };
         stop.wait().await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         assert!(matches!(
@@ -2572,7 +3619,7 @@ mod tests {
             coordinator_with_widget(Some("#!/bin/sh\nexec sleep 30\n")).await;
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
 
         let mut replacement = scene.clone();
@@ -2585,7 +3632,7 @@ mod tests {
                 .insert(replacement.id, replacement.clone());
         }
         coordinator
-            .spawn_configured_scene_widgets(&config, replacement.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, replacement.id)
             .await;
 
         assert!(matches!(
@@ -2610,7 +3657,7 @@ mod tests {
         let config = config_with_scene(&temp, scene.clone()).await;
 
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         assert!(compositor.widget_calls().is_empty());
 
@@ -2655,7 +3702,7 @@ mod tests {
         .expect("BUG: replace widget executable");
         let config = config_with_scene(&temp, scene.clone()).await;
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
         while !ready.exists() {
@@ -2709,7 +3756,7 @@ mod tests {
         let config = config_with_scene(&temp, scene.clone()).await;
         let coordinator = Arc::new(coordinator);
         coordinator
-            .spawn_configured_scene_widgets(&config, scene.id, ConfiguredSceneState::Enabled)
+            .spawn_configured_scene_widgets(&config, scene.id)
             .await;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
         while !ready.exists() {
@@ -2725,12 +3772,7 @@ mod tests {
             let config = Arc::clone(&config);
             async move {
                 coordinator
-                    .replace_configured_widget(
-                        &config,
-                        scene.id,
-                        scene.widgets[0].id,
-                        ConfiguredSceneState::Enabled,
-                    )
+                    .replace_configured_widget(&config, scene.id, scene.widgets[0].id)
                     .await;
             }
         });

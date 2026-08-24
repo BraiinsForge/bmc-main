@@ -77,7 +77,6 @@ pub enum WidgetConnectionMode {
 pub struct WidgetRegistration {
     pub key: WidgetInstanceKey,
     pub connection_mode: WidgetConnectionMode,
-    pub placement: WidgetPlacement,
     pub initial_config: WidgetInitialConfig,
 }
 
@@ -346,9 +345,6 @@ pub enum CompositorError {
 pub trait Compositor: Send + Sync {
     /// Start the compositor and return the Wayland display socket name.
     fn start(&self) -> Result<String, CompositorError>;
-
-    /// Get the Wayland display socket name. Returns `None` if not started.
-    fn wayland_display(&self) -> Option<String>;
 
     /// Hardware-neutral display and feature capabilities for the active
     /// product, mapped from the hardware profile by the compositor.

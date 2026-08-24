@@ -233,23 +233,107 @@ fn clear_pending_install(install: &[String], path: &std::path::Path) {
     }
 }
 
+async fn apply_firmware_upgrade<U: BmcManager>(
+    bmc_manager: &U,
+    upgrade_image_path: &std::path::Path,
+    tx: &tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
+    state_service: &StateService,
+    install: &[String],
+    pending_install_path: &std::path::Path,
+    widget_guard: &mut WidgetRestartGuard,
+) -> bool {
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service.clone());
+    let reader = task::spawn(async move {
+        while let Some(line) = line_rx.recv().await {
+            bmc_nix::progress::feed_line(&line, &adapter);
+        }
+    });
+
+    let result = bmc_manager
+        .upgrade(true, upgrade_image_path, Some(line_tx))
+        .await;
+    finish_firmware_upgrade(
+        result,
+        reader,
+        tx,
+        install,
+        pending_install_path,
+        widget_guard,
+    )
+    .await
+}
+
+async fn finish_firmware_upgrade(
+    result: Result<(), crate::UpgradeError>,
+    reader: task::JoinHandle<()>,
+    tx: &tokio::sync::mpsc::UnboundedSender<UpgradeRunState>,
+    install: &[String],
+    pending_install_path: &std::path::Path,
+    widget_guard: &mut WidgetRestartGuard,
+) -> bool {
+    if result.is_ok() {
+        widget_guard.disarm();
+    }
+    // `upgrade` consumed the only sender, so the reader drains the backlog
+    // and exits; awaiting it keeps every `Package*` event
+    // ahead of the terminal Phase/Failed event.
+    _ = reader.await;
+    match result {
+        Ok(()) => true,
+        Err(err) => {
+            error!(error = %err, "Firmware upgrade failed");
+            // The only failure point after the handoff was written.
+            clear_pending_install(install, pending_install_path);
+            let failure = match err {
+                crate::UpgradeError::InvalidImage => SystemUpgradeError::InvalidImage,
+                crate::UpgradeError::Failed(_) => SystemUpgradeError::UpgradeFailed,
+            };
+            _ = tx.send(UpgradeRunState::Failed(failure));
+            false
+        }
+    }
+}
+
 /// Restarts the widgets when dropped, unless disarmed. A firmware run stops
 /// them before downloading the image (which lands on tmpfs) to free RAM, so
 /// every failure path from that point must bring them back; running the
 /// restart on drop covers each early return without repeating the call. The
-/// success path disarms the guard, since the reboot starts widgets fresh.
+/// success path disarms the guard, since the reboot starts widgets fresh. The
+/// upgrade run gate stays owned until recovery finishes or reboot takes over.
 struct WidgetRestartGuard {
     widget_lifecycle: Option<Arc<dyn WidgetLifecycle>>,
+    run_gate: Option<tokio::sync::OwnedMutexGuard<()>>,
 }
 
 impl WidgetRestartGuard {
-    fn new(widget_lifecycle: Arc<dyn WidgetLifecycle>) -> Self {
+    fn new(
+        widget_lifecycle: Arc<dyn WidgetLifecycle>,
+        run_gate: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Self {
         Self {
             widget_lifecycle: Some(widget_lifecycle),
+            run_gate: Some(run_gate),
         }
     }
 
-    fn disarm(mut self) {
+    async fn stop_widgets(
+        widget_lifecycle: Arc<dyn WidgetLifecycle>,
+        run_gate: tokio::sync::OwnedMutexGuard<()>,
+    ) -> Self {
+        let guard = Self::new(Arc::clone(&widget_lifecycle), run_gate);
+        widget_lifecycle.stop_all_widgets().await;
+        guard
+    }
+
+    async fn restart(mut self) {
+        if let Some(widget_lifecycle) = self.widget_lifecycle.as_ref().map(Arc::clone) {
+            widget_lifecycle.restart_widgets().await;
+            self.widget_lifecycle = None;
+        }
+    }
+
+    fn disarm(&mut self) {
         self.widget_lifecycle = None;
     }
 }
@@ -257,9 +341,14 @@ impl WidgetRestartGuard {
 impl Drop for WidgetRestartGuard {
     fn drop(&mut self) {
         if let Some(widget_lifecycle) = self.widget_lifecycle.take() {
+            let run_gate = self
+                .run_gate
+                .take()
+                .expect("BUG: armed widget recovery must own the upgrade run gate");
             // `restart_widgets` is async and `drop` is not, so spawn it.
             task::spawn(async move {
                 widget_lifecycle.restart_widgets().await;
+                drop(run_gate);
             });
         }
     }
@@ -912,7 +1001,6 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
         let state_service = self.state_service.clone();
         let pending_install_path = self.pending_install_path.clone();
         task::spawn(async move {
-            let _gate = gate;
             let upgrader = firmware_upgrader.lock().await;
             let release = &detail.latest_release;
             let total_bytes = release.file_size as u64;
@@ -922,106 +1010,93 @@ impl<T: FirmwareIndex, U: BmcManager> SystemUpgradeService<T, U> {
                 total_mb: Some(bytes_to_mb(total_bytes)),
             });
             // Stop widgets before the download starts: the image lands on tmpfs
-            // (RAM), so freeing their memory first leaves room for it. The guard
-            // restarts them on any failure return below.
-            widget_lifecycle.stop_all_widgets().await;
-            let widget_guard = WidgetRestartGuard::new(widget_lifecycle);
-            let mut download_rx =
-                upgrader.download_firmware(release.url.clone(), release.hash.clone(), total_bytes);
-            let mut download_finished = false;
-            let mut throttle = ProgressThrottle::default();
-            while let Some(event) = download_rx.recv().await {
-                match event {
-                    UpgraderDownloadState::Progress { downloaded_mb, .. } => {
-                        if !throttle.admit(Instant::now()) {
-                            continue;
+            // (RAM), so freeing their memory first leaves room for it. Arm recovery
+            // before entering the cancellable stop.
+            let mut widget_guard = WidgetRestartGuard::stop_widgets(widget_lifecycle, gate).await;
+            let handoff_accepted = async {
+                let mut download_rx = upgrader.download_firmware(
+                    release.url.clone(),
+                    release.hash.clone(),
+                    total_bytes,
+                );
+                let mut download_finished = false;
+                let mut throttle = ProgressThrottle::default();
+                while let Some(event) = download_rx.recv().await {
+                    match event {
+                        UpgraderDownloadState::Progress { downloaded_mb, .. } => {
+                            if !throttle.admit(Instant::now()) {
+                                continue;
+                            }
+                            #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let downloaded_bytes = (f64::from(downloaded_mb) * 1_000_000.0) as u64;
+                            _ = tx.send(UpgradeRunState::Progress {
+                                downloaded_bytes,
+                                total_bytes: Some(total_bytes),
+                            });
                         }
-                        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        let downloaded_bytes = (f64::from(downloaded_mb) * 1_000_000.0) as u64;
-                        _ = tx.send(UpgradeRunState::Progress {
-                            downloaded_bytes,
-                            total_bytes: Some(total_bytes),
-                        });
-                    }
-                    UpgraderDownloadState::Finished { hash } => {
-                        state_service.notify(SystemUpgradeState::DownloadFinished {
-                            hash: Some(hash),
-                            total_mb: Some(bytes_to_mb(total_bytes)),
-                        });
-                        download_finished = true;
-                    }
-                    UpgraderDownloadState::Failed(err) => {
-                        error!(error = %err, "Firmware download failed");
-                        _ = tx.send(UpgradeRunState::Failed(err.into()));
-                        return;
+                        UpgraderDownloadState::Finished { hash } => {
+                            state_service.notify(SystemUpgradeState::DownloadFinished {
+                                hash: Some(hash),
+                                total_mb: Some(bytes_to_mb(total_bytes)),
+                            });
+                            download_finished = true;
+                        }
+                        UpgraderDownloadState::Failed(err) => {
+                            error!(error = %err, "Firmware download failed");
+                            _ = tx.send(UpgradeRunState::Failed(err.into()));
+                            return false;
+                        }
                     }
                 }
-            }
-            if !download_finished {
-                error!("Firmware download ended without completing");
-                _ = tx.send(UpgradeRunState::Failed(
-                    SystemUpgradeError::FailedToDownload("download ended unexpectedly".to_owned()),
-                ));
-                return;
-            }
-
-            _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareVerifying));
-            if let Err(err) = upgrader.verify_firmware(&release.hash).await {
-                warn!(error = %err, "Failed to verify downloaded firmware");
-                _ = tx.send(UpgradeRunState::Failed(err.into()));
-                return;
-            }
-
-            // Written after verify so an earlier download/verify failure can
-            // never leave a stale handoff behind. A successful upgrade
-            // writes-then-consumes it within the `bmc_manager.upgrade` call
-            // below; a write failure here aborts and the guard restarts widgets.
-            if !install.is_empty()
-                && let Err(err) = record_pending_install(&install, &pending_install_path)
-            {
-                _ = tx.send(UpgradeRunState::Failed(err));
-                return;
-            }
-
-            let (line_tx, mut line_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-            let adapter = ChannelUpgradeProgress::new(tx.clone(), state_service);
-            let reader = task::spawn(async move {
-                while let Some(line) = line_rx.recv().await {
-                    bmc_nix::progress::feed_line(&line, &adapter);
+                if !download_finished {
+                    error!("Firmware download ended without completing");
+                    _ = tx.send(UpgradeRunState::Failed(
+                        SystemUpgradeError::FailedToDownload(
+                            "download ended unexpectedly".to_owned(),
+                        ),
+                    ));
+                    return false;
                 }
-            });
 
-            let result = bmc_manager
-                .upgrade(true, upgrader.upgrade_image_path(), Some(line_tx))
-                .await;
-            // `upgrade` consumed the only sender, so the reader drains its
-            // backlog and exits; awaiting it keeps every `Package*` event
-            // ahead of the terminal Phase/Failed event.
-            _ = reader.await;
-            match result {
-                Ok(()) => {
-                    // Handoff accepted; sysupgrade has staged the image and the
-                    // reboot follows within the shutdown-grace window. The
-                    // reboot starts widgets fresh, so cancel the restart.
-                    info!("Firmware upgrade handoff accepted");
-                    widget_guard.disarm();
-                    _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareApplying));
-                    // Drop the sender to end the stream with a clean OK trailer,
-                    // then park so the run gate stays held until the reboot.
-                    drop(tx);
-                    std::future::pending::<()>().await;
+                _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareVerifying));
+                if let Err(err) = upgrader.verify_firmware(&release.hash).await {
+                    warn!(error = %err, "Failed to verify downloaded firmware");
+                    _ = tx.send(UpgradeRunState::Failed(err.into()));
+                    return false;
                 }
-                Err(err) => {
-                    // `widget_guard` restarts the widgets when this arm returns.
-                    error!(error = %err, "Firmware upgrade failed");
-                    // The only failure point after the handoff was written.
-                    clear_pending_install(&install, &pending_install_path);
-                    let failure = match err {
-                        crate::UpgradeError::InvalidImage => SystemUpgradeError::InvalidImage,
-                        crate::UpgradeError::Failed(_) => SystemUpgradeError::UpgradeFailed,
-                    };
-                    _ = tx.send(UpgradeRunState::Failed(failure));
+
+                // Verification must precede the handoff,
+                // so a failed download cannot leave stale state.
+                // The upgrade attempt consumes a successful write;
+                // a write failure aborts while the guard can still restart widgets.
+                if !install.is_empty()
+                    && let Err(err) = record_pending_install(&install, &pending_install_path)
+                {
+                    _ = tx.send(UpgradeRunState::Failed(err));
+                    return false;
                 }
+
+                apply_firmware_upgrade(
+                    bmc_manager.as_ref(),
+                    upgrader.upgrade_image_path(),
+                    &tx,
+                    &state_service,
+                    &install,
+                    &pending_install_path,
+                    &mut widget_guard,
+                )
+                .await
+            }
+            .await;
+            if handoff_accepted {
+                info!("Firmware upgrade handoff accepted");
+                _ = tx.send(UpgradeRunState::Phase(UpgradePhase::FirmwareApplying));
+                // Drop the sender to end the stream with a clean OK trailer,
+                // then park so the run gate stays held until the reboot.
+                drop(tx);
+                std::future::pending::<()>().await;
+            } else {
+                widget_guard.restart().await;
             }
         });
         UpgradeRunStream { rx }
@@ -1657,6 +1732,225 @@ mod tests {
             self.refreshed
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
+    }
+
+    #[derive(Debug, Default)]
+    struct GatedStopLifecycle {
+        stop_entered: tokio::sync::Notify,
+        restart_entered: tokio::sync::Notify,
+        release_restart: tokio::sync::Notify,
+        restarted: std::sync::atomic::AtomicUsize,
+        restart_completions: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WidgetLifecycle for GatedStopLifecycle {
+        async fn stop_all_widgets(&self) {
+            self.stop_entered.notify_one();
+            std::future::pending::<()>().await;
+        }
+
+        async fn restart_widgets(&self) {
+            self.restarted
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.restart_entered.notify_one();
+            self.release_restart.notified().await;
+            self.restart_completions
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        async fn refresh_widgets(&self) {}
+    }
+
+    #[derive(Debug, Default)]
+    struct GatedRestartLifecycle {
+        restart_entered: tokio::sync::Notify,
+        release_restart: tokio::sync::Notify,
+        restart_calls: std::sync::atomic::AtomicUsize,
+        restart_completions: std::sync::atomic::AtomicUsize,
+    }
+
+    #[async_trait::async_trait]
+    impl WidgetLifecycle for GatedRestartLifecycle {
+        async fn stop_all_widgets(&self) {}
+
+        async fn restart_widgets(&self) {
+            self.restart_calls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.restart_entered.notify_one();
+            self.release_restart.notified().await;
+            self.restart_completions
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+
+        async fn refresh_widgets(&self) {}
+    }
+
+    #[tokio::test]
+    async fn successful_handoff_disarms_recovery_before_progress_drain() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(GatedRestartLifecycle::default());
+        let mut guard = WidgetRestartGuard::new(lifecycle.clone(), gate);
+        let reader = tokio::spawn(std::future::pending::<()>());
+        let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+        let mut finish = Box::pin(finish_firmware_upgrade(
+            Ok(()),
+            reader,
+            &tx,
+            &[],
+            std::path::Path::new("/nonexistent/pending-install"),
+            &mut guard,
+        ));
+
+        assert!(
+            futures::poll!(finish.as_mut()).is_pending(),
+            "progress draining must remain cancellable after handoff"
+        );
+        drop(finish);
+        drop(guard);
+        tokio::task::yield_now().await;
+
+        assert_eq!(
+            lifecycle
+                .restart_calls
+                .load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "accepted handoff must not restart widgets when progress drain is cancelled"
+        );
+        assert!(run_gate.try_lock().is_ok());
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_stopping_widgets_still_restarts_them_once() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(GatedStopLifecycle::default());
+        let task = tokio::spawn({
+            let lifecycle = Arc::clone(&lifecycle);
+            async move {
+                WidgetRestartGuard::stop_widgets(lifecycle, gate).await;
+            }
+        });
+        lifecycle.stop_entered.notified().await;
+        task.abort();
+        let _ = task.await;
+
+        lifecycle.restart_entered.notified().await;
+        assert!(
+            run_gate.try_lock().is_err(),
+            "cancelled stop recovery must retain the upgrade run gate"
+        );
+        lifecycle.release_restart.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while lifecycle
+                .restart_completions
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+            while run_gate.try_lock().is_err() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("widget restart and its upgrade gate handoff must complete");
+        assert_eq!(
+            lifecycle
+                .restarted
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn cancellation_while_restarting_widgets_retries_recovery() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(GatedRestartLifecycle::default());
+        let task = tokio::spawn({
+            let lifecycle = Arc::clone(&lifecycle);
+            async move {
+                WidgetRestartGuard::stop_widgets(lifecycle, gate)
+                    .await
+                    .restart()
+                    .await;
+            }
+        });
+        lifecycle.restart_entered.notified().await;
+        task.abort();
+        let _ = task.await;
+
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while lifecycle
+                .restart_calls
+                .load(std::sync::atomic::Ordering::SeqCst)
+                < 2
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("cancelled widget recovery must be retried by the guard");
+        assert!(
+            run_gate.try_lock().is_err(),
+            "retried recovery must retain the upgrade run gate"
+        );
+        lifecycle.release_restart.notify_one();
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while lifecycle
+                .restart_completions
+                .load(std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
+                tokio::task::yield_now().await;
+            }
+            while run_gate.try_lock().is_err() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("retried widget recovery must complete");
+        assert_eq!(
+            lifecycle
+                .restart_completions
+                .load(std::sync::atomic::Ordering::SeqCst),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn run_gate_stays_held_until_widget_restart_finishes() {
+        let run_gate = Arc::new(Mutex::new(()));
+        let gate = Arc::clone(&run_gate)
+            .try_lock_owned()
+            .expect("BUG: fresh gate is lockable");
+        let lifecycle = Arc::new(GatedRestartLifecycle::default());
+        let run = tokio::spawn({
+            let lifecycle = Arc::clone(&lifecycle);
+            async move {
+                WidgetRestartGuard::stop_widgets(lifecycle, gate)
+                    .await
+                    .restart()
+                    .await;
+            }
+        });
+
+        lifecycle.restart_entered.notified().await;
+        assert!(
+            run_gate.try_lock().is_err(),
+            "a new upgrade must not overlap recovery from the previous run"
+        );
+        lifecycle.release_restart.notify_one();
+        run.await.expect("BUG: guarded restart task");
+        assert!(run_gate.try_lock().is_ok());
     }
 
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
