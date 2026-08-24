@@ -9,7 +9,7 @@ description = "Device-info overlay: first-boot setup, WiFi reconfiguration, and 
 # Icon SVGs are compiled in via include_svg!; the nix source filter keeps
 # only rust/toml/lock otherwise.
 [package.metadata.nix]
-include = ["assets/*"]
+include = ["assets/*", "../../assets/icons/close.svg"]
 
 [lib]
 path = "src/lib.rs"

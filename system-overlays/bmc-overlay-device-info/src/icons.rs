@@ -38,6 +38,8 @@ const DESKTOP_CLOCK: Svg = include_svg!("assets/desktop_clock.svg");
 /// Carried over from the upgrade overlay rather than the legacy init-setup set,
 /// which has no icon for a failure that is not about WiFi.
 const ERROR: Svg = include_svg!("assets/error.svg");
+/// Resolves to the repo-root `assets/`, shared with the settings tray.
+const CLOSE: Svg = include_svg!("assets/icons/close.svg");
 
 /// A registered icon and the viewBox it was authored at.
 /// The host scales X and Y independently,
@@ -58,6 +60,7 @@ pub struct DeviceInfoIcons {
     pub refresh: Icon,
     pub desktop_clock: Icon,
     pub error: Icon,
+    pub close: Icon,
 }
 
 #[must_use]
@@ -80,5 +83,6 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> DeviceInfoIcons {
         refresh: reg(&REFRESH),
         desktop_clock: reg(&DESKTOP_CLOCK),
         error: reg(&ERROR),
+        close: reg(&CLOSE),
     }
 }

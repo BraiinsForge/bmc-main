@@ -134,6 +134,12 @@ const QR_SIZE_COLUMN: f32 = 224.0;
 /// Modules of white border around the QR (the legacy white plate).
 const QR_QUIET_ZONE: u8 = 4;
 const DEV_DECK_ICON_MARGIN: f32 = 30.0;
+/// Tap target around the close glyph, and the glyph inside it.
+/// Both match the settings tray, which is the other overlay a touch closes.
+const CLOSE_TARGET: f32 = 48.0;
+const CLOSE_GLYPH: f32 = 24.0;
+/// Keeps the target off the panel's top-right corner.
+const CLOSE_INSET: f32 = 24.0;
 /// Breathing room above the first line of a screen, and between its blocks.
 const SCREEN_TOP_INSET: f32 = 40.0;
 const SCREEN_GAP: f32 = 20.0;
@@ -282,6 +288,69 @@ fn screen(columns: Vec<TreeNode>) -> TreeNode {
         },
         columns,
     )
+}
+
+/// The close glyph in the top-right, absolutely positioned so it sits outside
+/// the column layout and shifts nothing.
+///
+/// It carries no touch key: the whole screen already dismisses, and a target
+/// that swallowed the touch would make the rest of the screen do nothing.
+/// It is here so the screen says it can be closed.
+fn close_affordance(icon_id: Icon) -> TreeNode {
+    let glyph_inset = (CLOSE_TARGET - CLOSE_GLYPH) / 2.0;
+    TreeNode::Canvas {
+        props: PropsData {
+            width: CLOSE_TARGET,
+            height: CLOSE_TARGET,
+            inset_top: CLOSE_INSET,
+            inset_right: CLOSE_INSET,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: vec![DrawCommand::Svg {
+            x: glyph_inset,
+            y: glyph_inset,
+            w: CLOSE_GLYPH,
+            h: CLOSE_GLYPH,
+            color: TRANSPARENT,
+            icon_id: icon_id.id,
+            anti_alias: true,
+            fills: Vec::new(),
+        }],
+    }
+}
+
+/// Whether a touch anywhere on `view` closes it, which is what the close glyph
+/// advertises.
+///
+/// The setup screens ignore touch, and the post-upgrade screen hands over
+/// to the connect flow rather than closing, so on either an X would promise
+/// something that does not happen. Kept beside the screens
+/// rather than derived from the FSM so adding a view forces an answer here.
+fn dismisses_on_touch(view: &DeviceInfoView) -> bool {
+    match view {
+        DeviceInfoView::Connecting { .. }
+        | DeviceInfoView::Success { .. }
+        | DeviceInfoView::Failed { .. } => true,
+        DeviceInfoView::SetupStart { .. }
+        | DeviceInfoView::SetupConnecting { .. }
+        | DeviceInfoView::SetupConnected { .. }
+        | DeviceInfoView::SetupConnectInfo { .. }
+        | DeviceInfoView::SetupCompleted
+        | DeviceInfoView::SetupError
+        | DeviceInfoView::SetupFatal { .. }
+        | DeviceInfoView::UpgradeSuccess
+        | DeviceInfoView::Done => false,
+    }
+}
+
+/// Put the close glyph on a screen, outside its column layout.
+fn dismissable(tree: TreeNode, icon_id: Icon) -> TreeNode {
+    let TreeNode::Row(props, mut columns) = tree else {
+        panic!("BUG: every screen is rooted in a row");
+    };
+    columns.push(close_affordance(icon_id));
+    TreeNode::Row(props, columns)
 }
 
 /// One full-height column of a screen: its blocks packed under the top inset,
@@ -558,7 +627,7 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
             true,
             icons.success,
             "Braiins Deck is ready!",
-            vec![content("Login to continue.", TextAlign::Center)],
+            vec![content("Login to continue", TextAlign::Center)],
         ),
         DeviceInfoView::SetupError => template_tree(
             Justify::Start,
@@ -569,9 +638,9 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
         ),
         DeviceInfoView::SetupFatal { restarting } => {
             let (icon_id, line) = if *restarting {
-                (icons.refresh, "Restarting Braiins Deck.")
+                (icons.refresh, "Restarting Braiins Deck...")
             } else {
-                (icons.error, "Restart Braiins Deck to try again.")
+                (icons.error, "Restart Braiins Deck to try again")
             };
             template_tree(
                 Justify::Center,
@@ -609,7 +678,11 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
         }
         DeviceInfoView::Done => return None,
     };
-    Some(tree)
+    Some(if dismisses_on_touch(view) {
+        dismissable(tree, icons.close)
+    } else {
+        tree
+    })
 }
 
 pub fn render_device_info(
@@ -629,5 +702,109 @@ pub fn render_device_info(
     };
     if let Err(err) = state.tree.render(&tree, size, delta_ms, r) {
         tracing::error!("device-info tree render failed: {err}");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AccessPoint, DeviceInfoView, build_device_info_tree, dismisses_on_touch};
+    use crate::icons::DeviceInfoIcons;
+    use bmc_render::tree::TreeNode;
+    use std::net::Ipv4Addr;
+
+    /// Every view the gallery has a cell for, `Done` included.
+    fn all_views() -> Vec<DeviceInfoView> {
+        vec![
+            DeviceInfoView::SetupStart { ap: None },
+            DeviceInfoView::SetupStart {
+                ap: Some(AccessPoint {
+                    ssid: "Deck setup".to_owned(),
+                    setup_url: "http://10.0.0.21/".to_owned(),
+                }),
+            },
+            DeviceInfoView::SetupConnecting { ssid: None },
+            DeviceInfoView::SetupConnected { ssid: None },
+            DeviceInfoView::SetupConnectInfo {
+                ip: Some(Ipv4Addr::new(10, 0, 0, 5)),
+                ssid: None,
+            },
+            DeviceInfoView::SetupConnectInfo {
+                ip: None,
+                ssid: None,
+            },
+            DeviceInfoView::SetupCompleted,
+            DeviceInfoView::SetupError,
+            DeviceInfoView::SetupFatal { restarting: true },
+            DeviceInfoView::SetupFatal { restarting: false },
+            DeviceInfoView::UpgradeSuccess,
+            DeviceInfoView::Connecting { ssid: None },
+            DeviceInfoView::Success {
+                ip: Ipv4Addr::new(10, 0, 0, 5),
+            },
+            DeviceInfoView::Failed { ssid: None },
+            DeviceInfoView::Done,
+        ]
+    }
+
+    /// The close glyph is the only absolutely positioned node on a screen.
+    fn has_close(tree: &TreeNode) -> bool {
+        let TreeNode::Row(_, columns) = tree else {
+            panic!("BUG: every screen is rooted in a row");
+        };
+        columns.iter().any(
+            |node| matches!(node, TreeNode::Canvas { props, .. } if props.inset_right.is_finite()),
+        )
+    }
+
+    #[test]
+    fn every_view_but_done_builds_a_tree() {
+        for view in all_views() {
+            let tree = build_device_info_tree(&view, DeviceInfoIcons::default());
+            assert_eq!(
+                tree.is_some(),
+                view != DeviceInfoView::Done,
+                "view {view:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_close_glyph_follows_dismissability() {
+        for view in all_views() {
+            let Some(tree) = build_device_info_tree(&view, DeviceInfoIcons::default()) else {
+                continue;
+            };
+            assert_eq!(
+                has_close(&tree),
+                dismisses_on_touch(&view),
+                "a screen offers a close exactly when a touch closes it: {view:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_post_upgrade_screen_offers_no_close() {
+        // A touch there hands over to the connect flow instead of closing.
+        assert!(!dismisses_on_touch(&DeviceInfoView::UpgradeSuccess));
+    }
+
+    #[test]
+    fn the_setup_screens_offer_no_close() {
+        // They hold until bmc moves them on,
+        // so an X would be a button that does nothing.
+        for view in [
+            DeviceInfoView::SetupStart { ap: None },
+            DeviceInfoView::SetupConnecting { ssid: None },
+            DeviceInfoView::SetupConnected { ssid: None },
+            DeviceInfoView::SetupConnectInfo {
+                ip: None,
+                ssid: None,
+            },
+            DeviceInfoView::SetupCompleted,
+            DeviceInfoView::SetupError,
+            DeviceInfoView::SetupFatal { restarting: false },
+        ] {
+            assert!(!dismisses_on_touch(&view), "view {view:?}");
+        }
     }
 }
