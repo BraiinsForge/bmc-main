@@ -83,6 +83,10 @@ struct Layout {
     split_stats: bool,
     stat_font: u32,
     labels: LabelWeight,
+    /// What a stat's value seats beside its label.
+    /// The team and the race engineer are the server's
+    /// own strings, and the longest of them barely fits.
+    value_chars: usize,
 }
 
 fn layout(bucket: SizeBucket) -> Layout {
@@ -92,24 +96,28 @@ fn layout(bucket: SizeBucket) -> Layout {
             split_stats: true,
             stat_font: font::TITLE,
             labels: LabelWeight::Muted,
+            value_chars: 20,
         },
         SizeBucket::Large => Layout {
             portrait: Portrait::Named,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
+            value_chars: 22,
         },
         SizeBucket::Medium => Layout {
             portrait: Portrait::Photo,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
+            value_chars: 18,
         },
         SizeBucket::Small => Layout {
             portrait: Portrait::Absent,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Strong,
+            value_chars: 14,
         },
     }
 }
@@ -122,32 +130,38 @@ fn year(value: Option<u16>) -> String {
     value.map_or_else(|| UNKNOWN.to_owned(), |value| fmt!("{}", value))
 }
 
-fn stat(label: &str, value: String, layout: Layout) -> Node {
-    parts::stat_row(label, value, layout.stat_font, layout.labels)
+fn stat(label: &str, value: &str, layout: Layout) -> Node {
+    parts::stat_row(
+        label,
+        value,
+        layout.value_chars,
+        layout.stat_font,
+        layout.labels,
+    )
 }
 
 /// Who the driver drives as — the name block already says this
 /// wherever a frame draws one.
 fn naming_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
     vec![
-        stat("Team", driver.team.clone(), layout),
-        stat("Number", fmt!("#{}", driver.number.get()), layout),
+        stat("Team", &driver.team, layout),
+        stat("Number", &fmt!("#{}", driver.number.get()), layout),
     ]
 }
 
 /// Where the driver stands this season.
 fn season_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
     vec![
-        stat("Ranking", fmt!("#{}", driver.ranking), layout),
-        stat("Points", fmt!("{}", driver.points), layout),
+        stat("Ranking", &fmt!("#{}", driver.ranking), layout),
+        stat("Points", &fmt!("{}", driver.points), layout),
     ]
 }
 
 /// What the driver has won.
 fn record_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
     vec![
-        stat("Grand Prix Wins", count(driver.gp_wins), layout),
-        stat("World Titles", count(driver.world_titles), layout),
+        stat("Grand Prix Wins", &count(driver.gp_wins), layout),
+        stat("World Titles", &count(driver.world_titles), layout),
     ]
 }
 
@@ -164,12 +178,12 @@ fn person_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
         .clone()
         .unwrap_or_else(|| UNKNOWN.to_owned());
     vec![
-        stat("Age", count(driver.age), layout),
-        stat("Weight", weight, layout),
-        stat("Height", height, layout),
+        stat("Age", &count(driver.age), layout),
+        stat("Weight", &weight, layout),
+        stat("Height", &height, layout),
         nationality_row(driver, layout),
-        stat("Race Engineer", engineer, layout),
-        stat("F1 Debut", year(driver.debut_year), layout),
+        stat("Race Engineer", &engineer, layout),
+        stat("F1 Debut", &year(driver.debut_year), layout),
     ]
 }
 
@@ -191,7 +205,7 @@ fn nationality_row(driver: &DriverStats, layout: Layout) -> Node {
                 props!(gap: space::GAP, cross_align: CrossAlign::Center),
                 [
                     text(
-                        driver.nationality.as_str(),
+                        parts::truncate(&driver.nationality, layout.value_chars),
                         style!(size: layout.stat_font, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
                     ),
                     parts::flag(FLAG, &driver.nationality_flag_url),
@@ -241,14 +255,17 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
                 (PHOTO_LARGE, PHOTO_LARGE, font::TITLE)
             };
             let mut named = vec![text(
-                fmt!("{} #{}", driver.name, driver.number.get()),
+                parts::truncate(
+                    &fmt!("{} #{}", driver.name, driver.number.get()),
+                    layout.value_chars,
+                ),
                 style!(size: name_size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
             )];
             // The widest frame names the team in the header's mark
             // instead, so only the frame below it repeats the team here.
             if !layout.split_stats {
                 named.push(text(
-                    driver.team.as_str(),
+                    parts::truncate(&driver.team, layout.value_chars),
                     style!(size: font::ROW, color: color::TEXT_MUTED),
                 ));
             }
@@ -355,13 +372,42 @@ pub fn driver_view(view: &DriverViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, parts::space};
+    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, parts, parts::space};
     use crate::model::SizeBucket;
+    use crate::screens::fixtures;
 
     /// What sits under the photo on the frames that name the team there:
     /// `GAP * 2`, [`super::font::TITLE`], `GAP / 2`, then
     /// [`super::font::ROW`].
     const PHOTO_CAPTION: f32 = 64.0;
+
+    /// A race engineer's name is the longest value the screen draws, and
+    /// nothing in the tree shrinks text — so the budget is what keeps a
+    /// long one from pushing the column off the frame.
+    #[test]
+    fn the_wider_frames_seat_the_longest_engineer_and_the_rest_cut_it() {
+        let longest = fixtures::drivers()
+            .into_iter()
+            .filter_map(|driver| driver.race_engineer)
+            .max_by_key(|name| name.chars().count())
+            .expect("BUG: the fixtures name at least one engineer");
+
+        for bucket in [SizeBucket::Full, SizeBucket::Large] {
+            let chars = layout(bucket).value_chars;
+            assert_eq!(
+                parts::truncate(&longest, chars),
+                longest,
+                "{bucket:?} seats {chars} and should read `{longest}` whole",
+            );
+        }
+        for bucket in [SizeBucket::Medium, SizeBucket::Small] {
+            let chars = layout(bucket).value_chars;
+            assert!(
+                parts::truncate(&longest, chars).ends_with('\u{2026}'),
+                "{bucket:?} seats only {chars}, so `{longest}` must be cut",
+            );
+        }
+    }
 
     /// The stats column stretches to the portrait beside it,
     /// so a portrait past the frame puts the last stat outside it —

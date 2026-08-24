@@ -163,6 +163,9 @@ pub fn title(label: &str) -> Node {
 }
 
 /// What the screen is showing — a date range, a Grand Prix, a country.
+///
+/// Every caller names something the server chose, so the label is cut to
+/// what the frame seats rather than trusted to fit.
 #[must_use]
 pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
     let size = match bucket {
@@ -171,9 +174,19 @@ pub fn subtitle(label: &str, bucket: SizeBucket) -> Node {
         SizeBucket::Small => font::SUBTITLE_SMALL,
     };
     text(
-        label,
+        truncate(label, subtitle_chars(bucket)),
         style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
     )
+}
+
+/// What a subtitle seats, sharing its row with the screen's own name.
+fn subtitle_chars(bucket: SizeBucket) -> usize {
+    match bucket {
+        SizeBucket::Full => 46,
+        SizeBucket::Large => 28,
+        SizeBucket::Medium => 30,
+        SizeBucket::Small => 22,
+    }
 }
 
 #[must_use]
@@ -191,8 +204,18 @@ pub enum LabelWeight {
 }
 
 /// A label and its value, pushed to opposite edges of the row.
+///
+/// `value_chars` cuts the value, which every caller sources from the
+/// server. `TextOverflow::Ellipsis` reads like it would do this, but the
+/// renderer only takes it to mean "do not wrap" — see [`truncate`].
 #[must_use]
-pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> Node {
+pub fn stat_row(
+    label: &str,
+    value: &str,
+    value_chars: usize,
+    size: u32,
+    weight: LabelWeight,
+) -> Node {
     // Both halves stay on one line.
     // A flex item will not shrink below its own content, so either half
     // wrapping would floor the row at two lines,
@@ -217,7 +240,7 @@ pub fn stat_row(label: &str, value: String, size: u32, weight: LabelWeight) -> N
         [
             label,
             text(
-                value,
+                truncate(value, value_chars),
                 style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
             ),
         ],

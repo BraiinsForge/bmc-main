@@ -47,6 +47,12 @@ const UNKNOWN: &str = "N/A";
 const COLUMN_GAP: f32 = 40.0;
 /// The Grand Prix name, the largest type on the widget.
 const GP_NAME: u32 = 32;
+/// What the Grand Prix block seats, on the two frames that draw one.
+/// Both lines run the full width, so one budget covers the pair.
+const GP_NAME_CHARS: usize = 30;
+/// The circuit's name, which stands in for its outline until that lands
+/// and is bounded by the map's own panel rather than the frame.
+const CIRCUIT_NAME_CHARS: usize = 24;
 /// What the design floats the Grand Prix block off the header, past
 /// the frame's own gap.
 const GP_BLOCK_LEAD: f32 = 12.0;
@@ -76,6 +82,9 @@ struct Layout {
     track_map: bool,
     info_font: u32,
     labels: LabelWeight,
+    /// What an info value seats beside its label; the tyre compounds are
+    /// the server's own string.
+    value_chars: usize,
 }
 
 fn layout(bucket: SizeBucket) -> Layout {
@@ -87,6 +96,7 @@ fn layout(bucket: SizeBucket) -> Layout {
             track_map: true,
             info_font: font::TITLE,
             labels: LabelWeight::Muted,
+            value_chars: 18,
         },
         SizeBucket::Large => Layout {
             stripe: true,
@@ -98,6 +108,7 @@ fn layout(bucket: SizeBucket) -> Layout {
             // size a sprint's session names cost more than the column has.
             info_font: font::ROW,
             labels: LabelWeight::Muted,
+            value_chars: 16,
         },
         SizeBucket::Medium => Layout {
             stripe: false,
@@ -106,6 +117,7 @@ fn layout(bucket: SizeBucket) -> Layout {
             track_map: false,
             info_font: font::ROW,
             labels: LabelWeight::Muted,
+            value_chars: 16,
         },
         SizeBucket::Small => Layout {
             stripe: false,
@@ -114,6 +126,7 @@ fn layout(bucket: SizeBucket) -> Layout {
             track_map: false,
             info_font: font::ROW,
             labels: LabelWeight::Strong,
+            value_chars: 12,
         },
     }
 }
@@ -140,23 +153,27 @@ fn session_time(at: Option<LocalDateTime>) -> String {
     )
 }
 
-fn info_row(label: &str, value: String, layout: Layout) -> Node {
-    parts::stat_row(label, value, layout.info_font, layout.labels)
+fn info_row(label: &str, value: &str, layout: Layout) -> Node {
+    parts::stat_row(
+        label,
+        value,
+        layout.value_chars,
+        layout.info_font,
+        layout.labels,
+    )
 }
 
 fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
     vec![
-        info_row("Number of Laps", count(race.total_laps), layout),
-        info_row("Circuit Length", distance(race.track_length, 3), layout),
-        info_row("Race Distance", distance(race.race_distance, 1), layout),
-        info_row("DRS Zones", count(race.drs_zones.map(u16::from)), layout),
+        info_row("Number of Laps", &count(race.total_laps), layout),
+        info_row("Circuit Length", &distance(race.track_length, 3), layout),
+        info_row("Race Distance", &distance(race.race_distance, 1), layout),
+        info_row("DRS Zones", &count(race.drs_zones.map(u16::from)), layout),
         // Printed as it arrives. The order is the upstream's own;
         // softest-first belongs to the design rather than to the data.
         info_row(
             "S / M / H Tires",
-            race.tire_compounds
-                .clone()
-                .unwrap_or_else(|| UNKNOWN.to_owned()),
+            race.tire_compounds.as_deref().unwrap_or(UNKNOWN),
             layout,
         ),
     ]
@@ -181,14 +198,14 @@ fn schedule_rows(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Vec<Nod
     if let (Schedule::DatedSessions, Some(start)) = (layout.schedule, race.date_start) {
         rows.push(info_row(
             "Date",
-            parts::date_range(start, race.date_end),
+            &parts::date_range(start, race.date_end),
             layout,
         ));
     }
     for session in &race.sessions {
         rows.push(info_row(
             &parts::truncate(&session.name, session_chars(bucket)),
-            session_time(session.starts_at),
+            &session_time(session.starts_at),
             layout,
         ));
     }
@@ -203,14 +220,14 @@ fn gp_block(race: &NextRace) -> Node {
                 props!(gap: 10.0, cross_align: CrossAlign::Center),
                 [
                     text(
-                        race.gp_name.as_str(),
+                        parts::truncate(&race.gp_name, GP_NAME_CHARS),
                         style!(size: GP_NAME, weight: FontWeight::SEMIBOLD, color: color::TEXT, line_height: 1.0),
                     ),
                     parts::flag(22.4, &race.country_flag_url),
                 ],
             ),
             text(
-                race.country_name.as_str(),
+                parts::truncate(&race.country_name, GP_NAME_CHARS),
                 style!(size: font::TITLE, color: color::TEXT_MUTED),
             ),
         ],
@@ -240,7 +257,7 @@ fn track_map(race: &NextRace, bucket: SizeBucket) -> Node {
         width,
         height,
         text(
-            race.circuit_name.as_str(),
+            parts::truncate(&race.circuit_name, CIRCUIT_NAME_CHARS),
             style!(size: font::ROW, color: color::TEXT_MUTED, align: TextAlign::Center),
         ),
     );
