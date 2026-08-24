@@ -72,13 +72,13 @@ pub(crate) struct ParagraphLayoutEntry {
     pub(crate) lines: Vec<LineGlyphs>,
     pub(crate) width: f32,
     pub(crate) height: f32,
-    last_used_frame: u64,
+    last_used_access: u64,
 }
 
 /// Capacity-bounded paragraph layout cache.
 pub struct ParagraphLayoutCache {
     entries: HashMap<u64, ParagraphLayoutEntry>,
-    frame_counter: u64,
+    access_counter: u64,
     /// Distinguishes a cache hit from a reshape that replaces the same entry,
     /// which entry count and width stability both survive.
     counters: LayoutCacheCounters,
@@ -127,7 +127,7 @@ impl std::fmt::Debug for ParagraphLayoutCache {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ParagraphLayoutCache")
             .field("entries", &self.entries.len())
-            .field("frame_counter", &self.frame_counter)
+            .field("access_counter", &self.access_counter)
             .field("counters", &self.counters)
             .field("profiling_enabled", &self.profile.is_some())
             .finish()
@@ -139,7 +139,7 @@ impl ParagraphLayoutCache {
     pub fn new() -> Self {
         Self {
             entries: HashMap::new(),
-            frame_counter: 0,
+            access_counter: 0,
             counters: LayoutCacheCounters::default(),
             profile: None,
         }
@@ -207,9 +207,8 @@ impl ParagraphLayoutCache {
         }
     }
 
-    /// Advance the frame counter used for LRU ordering.
-    pub fn begin_frame(&mut self, frame_counter: u64) {
-        self.frame_counter = frame_counter;
+    /// Clear frame-local profiling state.
+    pub fn begin_frame(&mut self) {
         if let Some(profile) = self.profile.as_mut() {
             profile.keys_this_frame.clear();
             profile.shaped_this_frame.clear();
@@ -220,6 +219,14 @@ impl ParagraphLayoutCache {
         }
     }
 
+    fn next_access(&mut self) -> u64 {
+        self.access_counter = self
+            .access_counter
+            .checked_add(1)
+            .expect("BUG: layout cache access sequence exhausted");
+        self.access_counter
+    }
+
     /// Evict the least recently used entry to make room for `key`.
     fn evict_for(&mut self, key: u64) {
         if self.entries.len() >= LAYOUT_CACHE_CAPACITY
@@ -227,7 +234,7 @@ impl ParagraphLayoutCache {
             && let Some(&oldest) = self
                 .entries
                 .iter()
-                .min_by_key(|(_, e)| e.last_used_frame)
+                .min_by_key(|(_, entry)| entry.last_used_access)
                 .map(|(k, _)| k)
         {
             self.entries.remove(&oldest);
@@ -367,7 +374,7 @@ impl ParagraphLayoutCache {
         phase: LookupPhase,
     ) -> &ParagraphLayoutEntry {
         let key = cache_key(base_style, spans, max_width);
-        let frame = self.frame_counter;
+        let access = self.next_access();
         self.evict_for(key);
         self.record_lookup(key, LayoutDomain::Paragraph, phase);
 
@@ -382,13 +389,13 @@ impl ParagraphLayoutCache {
                 lines,
                 width,
                 height,
-                last_used_frame: frame,
+                last_used_access: access,
             }
         };
         if self.profile.is_some() {
             {
                 let entry = self.entries.entry(key).or_insert_with(make_entry);
-                entry.last_used_frame = frame;
+                entry.last_used_access = access;
             }
             self.record_profiled_entry(key, LayoutDomain::Paragraph);
             return self
@@ -397,7 +404,7 @@ impl ParagraphLayoutCache {
                 .expect("BUG: profiling must not remove the looked-up layout");
         }
         let entry = self.entries.entry(key).or_insert_with(make_entry);
-        entry.last_used_frame = frame;
+        entry.last_used_access = access;
         entry
     }
 
@@ -431,7 +438,7 @@ impl ParagraphLayoutCache {
         phase: LookupPhase,
     ) -> &ParagraphLayoutEntry {
         let key = single_line_cache_key(style, text);
-        let frame = self.frame_counter;
+        let access = self.next_access();
         self.evict_for(key);
         self.record_lookup(key, LayoutDomain::SingleLine, phase);
 
@@ -442,13 +449,13 @@ impl ParagraphLayoutCache {
                 lines,
                 width,
                 height,
-                last_used_frame: frame,
+                last_used_access: access,
             }
         };
         if self.profile.is_some() {
             {
                 let entry = self.entries.entry(key).or_insert_with(make_entry);
-                entry.last_used_frame = frame;
+                entry.last_used_access = access;
             }
             self.record_profiled_entry(key, LayoutDomain::SingleLine);
             return self
@@ -457,7 +464,7 @@ impl ParagraphLayoutCache {
                 .expect("BUG: profiling must not remove the looked-up layout");
         }
         let entry = self.entries.entry(key).or_insert_with(make_entry);
-        entry.last_used_frame = frame;
+        entry.last_used_access = access;
         entry
     }
 
@@ -2318,11 +2325,11 @@ mod line_layout_tests {
         let mut cache = ParagraphLayoutCache::new();
         let style = line_style(24.0, false);
 
-        cache.begin_frame(1);
+        cache.begin_frame();
         cache.layout_single_line(&mut font_system, style, "widget A");
-        cache.begin_frame(2);
+        cache.begin_frame();
         cache.layout_single_line(&mut font_system, style, "widget B");
-        cache.begin_frame(3);
+        cache.begin_frame();
         cache.layout_single_line(&mut font_system, style, "widget A");
 
         let counters = cache.counters();
@@ -2332,18 +2339,15 @@ mod line_layout_tests {
     }
 
     #[test]
-    fn layout_cache_evicts_the_least_recently_used_entry() {
+    fn same_frame_hit_makes_layout_most_recently_used() {
         let mut font_system = font_system();
         let mut cache = ParagraphLayoutCache::new();
         let style = line_style(24.0, false);
 
+        cache.begin_frame();
         for index in 0..LAYOUT_CACHE_CAPACITY {
-            cache.begin_frame(u64::try_from(index).expect("test cache index fits in u64"));
             cache.layout_single_line(&mut font_system, style, &index.to_string());
         }
-        cache.begin_frame(
-            u64::try_from(LAYOUT_CACHE_CAPACITY).expect("test cache capacity fits in u64"),
-        );
         cache.layout_single_line(&mut font_system, style, "0");
         cache.layout_single_line(&mut font_system, style, &LAYOUT_CACHE_CAPACITY.to_string());
 
@@ -2372,7 +2376,7 @@ mod line_layout_tests {
         let mut cache = ParagraphLayoutCache::new();
         let style = line_style(24.0, false);
         cache.enable_profiling();
-        cache.begin_frame(1);
+        cache.begin_frame();
 
         cache.measure_single_line(&mut font_system, style, "measured");
         cache.measure_single_line(&mut font_system, style, "measured");
@@ -2402,12 +2406,12 @@ mod line_layout_tests {
         let key = single_line_cache_key(style, "measured");
         cache.enable_profiling();
 
-        cache.begin_frame(1);
+        cache.begin_frame();
         cache.measure_single_line(&mut font_system, style, "measured");
         cache.entries.remove(&key);
         cache.layout_single_line(&mut font_system, style, "measured");
 
-        cache.begin_frame(2);
+        cache.begin_frame();
         cache.entries.remove(&key);
         cache.layout_single_line(&mut font_system, style, "measured");
 
@@ -2431,7 +2435,7 @@ mod line_layout_tests {
             strikethrough: false,
         }];
         cache.enable_profiling();
-        cache.begin_frame(1);
+        cache.begin_frame();
 
         cache.layout(&mut font_system, &style, &spans, Some(200.0));
         cache.layout(&mut font_system, &style, &spans, Some(200.0));

@@ -143,7 +143,6 @@ pub struct FemtoVgRenderer {
     /// on the window.
     frame_target: RenderTarget,
     shadow_fbo_pool: Option<ShadowFboPool>,
-    frame_counter: u64,
     #[cfg(feature = "profiling")]
     glyph_report_every: ii_stopwatch::Every,
 }
@@ -153,7 +152,6 @@ impl std::fmt::Debug for FemtoVgRenderer {
         f.debug_struct("FemtoVgRenderer")
             .field("width", &self.width)
             .field("height", &self.height)
-            .field("frame_counter", &self.frame_counter)
             .finish_non_exhaustive()
     }
 }
@@ -356,7 +354,6 @@ impl FemtoVgRenderer {
         self.width = width as f32;
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
-        self.frame_counter += 1;
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let (pw, ph) = (
             (width as f32 * dpi_scale) as u32,
@@ -372,7 +369,7 @@ impl FemtoVgRenderer {
         self.canvas
             .clear_rect(0, 0, pw, ph, femtovg::Color::rgbaf(0.0, 0.0, 0.0, 0.0));
         self.scale_to_logical(dpi_scale);
-        self.paragraph_cache.begin_frame(self.frame_counter);
+        self.paragraph_cache.begin_frame();
     }
 
     /// Put the canvas back into logical coordinates for the frame ahead.
@@ -530,7 +527,6 @@ impl FemtoVgRenderer {
             dpi_scale: 1.0,
             frame_target: RenderTarget::Screen,
             shadow_fbo_pool: None,
-            frame_counter: 0,
             #[cfg(feature = "profiling")]
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
         })
@@ -1698,7 +1694,6 @@ impl Renderer for FemtoVgRenderer {
         self.width = width as f32;
         self.height = height as f32;
         self.dpi_scale = dpi_scale;
-        self.frame_counter += 1;
         // FemtoVG's `set_render_target(Screen)` skips the SetRenderTarget command
         // when the Canvas already thinks it's targeting Screen (the default).
         // This means flush() never calls glBindFramebuffer. We must bind the
@@ -1722,7 +1717,7 @@ impl Renderer for FemtoVgRenderer {
         };
         self.canvas.clear_rect(0, 0, pw, ph, clear);
         self.scale_to_logical(dpi_scale);
-        self.paragraph_cache.begin_frame(self.frame_counter);
+        self.paragraph_cache.begin_frame();
     }
 
     fn flush(&mut self) {
