@@ -158,6 +158,15 @@ workspace-deps-armv7:
   script:
     - nix build .#workspace-deps-armv7 --no-link
 
+workspace-deps-armv7-musl:
+  stage: dependencies
+  needs: []
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - when: never
+  script:
+    - nix build .#workspace-deps-armv7-musl --no-link
+
 gallery-deps:
   stage: dependencies
   needs: []
@@ -312,10 +321,26 @@ frontend:
 
 init-tarball:
   extends: .app
+  needs:
+    - workspace-deps
+    - workspace-deps-armv7
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success
+    - when: manual
+      allow_failure: true
   script:
     - nix build .#init-tarball-armv7
 
 bmc-nix-cli:
   extends: .app
+  needs:
+    - job: workspace-deps-armv7-musl
+      optional: true
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      when: on_success
+    - when: manual
+      allow_failure: true
   script:
     - nix build .#bmc-nix-cli-armv7-release
