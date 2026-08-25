@@ -778,11 +778,11 @@ impl ConfigHandle {
             .unwrap_or(self.default_sound_volume_pct)
     }
 
-    pub fn alarms(&self) -> Vec<AlarmData> {
+    pub(crate) fn alarms(&self) -> Vec<AlarmData> {
         self.alarms.clone().unwrap_or_default()
     }
 
-    pub fn add_alarm(&mut self, alarm: AlarmData) {
+    pub(crate) fn add_alarm(&mut self, alarm: AlarmData) {
         self.alarms.get_or_insert_default().push(alarm);
     }
 
@@ -797,7 +797,7 @@ impl ConfigHandle {
         }
     }
 
-    pub fn set_alarm(&mut self, alarm: AlarmData) {
+    pub(crate) fn set_alarm(&mut self, alarm: AlarmData) {
         if let Some(item) = self
             .alarms
             .as_mut()
