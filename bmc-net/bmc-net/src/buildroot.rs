@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+use std::sync::Arc;
 
 use anyhow::{Result, anyhow};
 use async_trait::async_trait;
@@ -35,6 +36,7 @@ use bmc_net_types::network::{
     IfaceData, NetworkInfo, NetworkProtocol, NetworkProtocolConfig, NetworkProtocolConfigStatic,
 };
 use tokio::io::AsyncWriteExt;
+use tokio::sync::Notify;
 
 use crate::command::call_command;
 use crate::provisioning::{NoProvisioning, ProvisioningState};
@@ -65,6 +67,9 @@ pub struct BuildrootNetworkManager {
     /// concurrent `&self` setters reached from the gRPC server, so two edits
     /// cannot interleave or lose an update.
     config_lock: tokio::sync::Mutex<()>,
+    /// Signalled after every successful hostname write; see
+    /// [`NetworkConfig::hostname_change_notifier`].
+    hostname_changed: Arc<Notify>,
 }
 
 impl BuildrootNetworkManager {
@@ -74,6 +79,7 @@ impl BuildrootNetworkManager {
             interface_name,
             provisioning: NoProvisioning::default(),
             config_lock: tokio::sync::Mutex::new(()),
+            hostname_changed: Arc::new(Notify::new()),
         }
     }
 
@@ -218,6 +224,7 @@ impl NetworkConfig for BuildrootNetworkManager {
         if let Some(config) = config {
             current.protocol = config;
         }
+        let hostname_changing = new_hostname.is_some();
         if let Some(new_hostname) = new_hostname {
             current.hostname = Some(new_hostname);
         }
@@ -226,7 +233,11 @@ impl NetworkConfig for BuildrootNetworkManager {
         if current.hostname.is_none() {
             current.hostname = Some(hostname().unwrap_or_else(|| DEFAULT_HOSTNAME.into()));
         }
-        self.store_config(&current).await
+        self.store_config(&current).await?;
+        if hostname_changing {
+            self.hostname_changed.notify_one();
+        }
+        Ok(())
     }
 
     async fn network_info(&self) -> Result<NetworkInfo> {
@@ -273,6 +284,10 @@ impl NetworkConfig for BuildrootNetworkManager {
             .or_else(NetworkInterface::find_default)
             .map(|iface| iface.iface_data())
             .unwrap_or_default()
+    }
+
+    fn hostname_change_notifier(&self) -> Arc<Notify> {
+        self.hostname_changed.clone()
     }
 }
 

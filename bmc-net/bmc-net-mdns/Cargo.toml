@@ -8,9 +8,13 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [dependencies]
+bmc-net.workspace = true
+bmc-net-types.workspace = true
 log.workspace = true
 mdns-sd.workspace = true
-tokio = { workspace = true, features = ["time"] }
+rand.workspace = true
+tokio = { workspace = true, features = ["macros", "sync", "time"] }
+tokio-util.workspace = true
 
 [dev-dependencies]
 bmc-log.workspace = true

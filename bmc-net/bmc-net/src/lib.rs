@@ -35,9 +35,11 @@
 //! can distinguish "unsupported" from a connection failure.
 
 use std::net::IpAddr;
+use std::sync::Arc;
 
 use anyhow::bail;
 use async_trait::async_trait;
+use tokio::sync::Notify;
 
 pub mod buildroot;
 mod command;
@@ -112,6 +114,10 @@ pub trait NetworkConfig: Send + Sync + std::fmt::Debug {
     ///
     /// Blocking `getifaddrs(3)` walk; avoid on latency-sensitive async paths.
     fn eth_data(&self) -> IfaceData;
+    /// Notified after every successful hostname write, so consumers that
+    /// advertise the hostname (the mDNS responder) follow renames without
+    /// polling and without every caller having to remember to signal.
+    fn hostname_change_notifier(&self) -> Arc<Notify>;
 }
 
 /// Optional WiFi capability: station scan/connect, the setup access point, and

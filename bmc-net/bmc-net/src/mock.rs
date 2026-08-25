@@ -21,7 +21,7 @@
 // contact us at opensource@braiins.com.
 
 use std::net::{IpAddr, Ipv4Addr};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use bmc_net_types::network::{
@@ -29,7 +29,7 @@ use bmc_net_types::network::{
     WifiNetworkConfig,
 };
 use bmc_net_types::wifi::{EncryptionType, WifiScanItem, WifiStatus};
-use tokio::sync::broadcast;
+use tokio::sync::{Notify, broadcast};
 
 use crate::provisioning::{MockProvisioningState, ProvisioningState};
 use crate::{NetworkConfig, NetworkManager, WifiControl};
@@ -49,6 +49,9 @@ pub struct MockNetworkManager {
     /// handler falling back to the request's own `Host` header, which does not
     /// exercise the redirect; bmc-mock sets its own `localhost:<port>`.
     captive_portal_host: Mutex<Option<String>>,
+    /// Signalled after every successful hostname write; see
+    /// [`NetworkConfig::hostname_change_notifier`].
+    hostname_changed: Arc<Notify>,
 }
 
 /// Capacity of the mock WiFi event channel: enough for a scan's
@@ -65,6 +68,7 @@ impl Default for MockNetworkManager {
             wifi_event_sender: broadcast::channel(WIFI_EVENTS_CAPACITY).0,
             provisioning: MockProvisioningState::default(),
             captive_portal_host: Mutex::new(None),
+            hostname_changed: Arc::new(Notify::new()),
         }
     }
 }
@@ -119,6 +123,7 @@ impl NetworkConfig for MockNetworkManager {
     async fn set_hostname(&self, hostname: String) -> anyhow::Result<()> {
         crate::validate_hostname(&hostname)?;
         *lock(&self.hostname) = Some(hostname);
+        self.hostname_changed.notify_one();
         Ok(())
     }
 
@@ -132,6 +137,10 @@ impl NetworkConfig for MockNetworkManager {
 
     fn eth_data(&self) -> IfaceData {
         IfaceData::default()
+    }
+
+    fn hostname_change_notifier(&self) -> Arc<Notify> {
+        self.hostname_changed.clone()
     }
 }
 

@@ -33,7 +33,7 @@ use bmc_net_types::network::{
     NetworkProtocolConfigStatic, WifiData, WifiEvent, WifiNetworkConfig,
 };
 use bmc_net_types::wifi::{EncryptionType, WifiMode, WifiScanItem, WifiStatus};
-use tokio::sync::broadcast;
+use tokio::sync::{Notify, broadcast};
 use tracing::info;
 
 use crate::command::{
@@ -99,6 +99,9 @@ pub struct UciNetworkManager {
     wifi_event_sender: broadcast::Sender<WifiEvent>,
     /// Device provisioning state machine (factory-default/setup/reconfig flags).
     provisioning: Arc<dyn ProvisioningState>,
+    /// Signalled after every successful hostname write; see
+    /// [`NetworkConfig::hostname_change_notifier`].
+    hostname_changed: Arc<Notify>,
 }
 
 impl UciNetworkManager {
@@ -118,6 +121,7 @@ impl UciNetworkManager {
             product_name,
             wifi_event_sender,
             provisioning: Arc::new(UciProvisioningState::new().await),
+            hostname_changed: Arc::new(Notify::new()),
         }
     }
 
@@ -369,7 +373,11 @@ impl NetworkConfig for UciNetworkManager {
         // a `system reload` alone updates the kernel hostname but leaves the
         // active DHCP lease on the old name, so the restart is required for the
         // rename to actually take effect.
-        call_command(INIT_SCRIPT_NETWORK, &["restart"]).await
+        call_command(INIT_SCRIPT_NETWORK, &["restart"]).await?;
+        if hostname.is_some() {
+            self.hostname_changed.notify_one();
+        }
+        Ok(())
     }
 
     async fn network_info(&self) -> Result<NetworkInfo> {
@@ -395,6 +403,10 @@ impl NetworkConfig for UciNetworkManager {
         primary_iface(&self.interface_name)
             .map(|iface| iface.iface_data())
             .unwrap_or_default()
+    }
+
+    fn hostname_change_notifier(&self) -> Arc<Notify> {
+        self.hostname_changed.clone()
     }
 }
 

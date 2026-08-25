@@ -983,9 +983,13 @@ name = "bmc-net-mdns"
 version = "0.1.0"
 dependencies = [
  "bmc-log",
+ "bmc-net",
+ "bmc-net-types",
  "log",
  "mdns-sd",
+ "rand 0.9.1",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

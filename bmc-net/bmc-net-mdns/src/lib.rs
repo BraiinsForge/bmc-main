@@ -76,6 +76,7 @@
 //! [`MdnsAdvertiser::rename`].
 
 pub mod name;
+pub mod service;
 
 use std::fmt;
 use std::time::Duration;
