@@ -415,7 +415,7 @@ pub use format::{
 };
 pub use host::*;
 #[cfg(target_arch = "wasm32")]
-pub use json::JsonDoc;
+pub use json::{JsonDoc, JsonKind};
 pub use json_str::JsonStr;
 #[cfg(target_arch = "wasm32")]
 pub use led::LedEffect;

@@ -229,8 +229,9 @@ impl WasmWidgetRuntime {
 
         {
             let state = self.store.data_mut();
-            for resp in &responses {
-                let Some(key) = state.fetch_keys.remove(&resp.request_id) else {
+            for settled in &responses {
+                let resp = &settled.response;
+                let Some(key) = &settled.key else {
                     continue;
                 };
                 if let Some(ref observer) = state.fetch_observer {
@@ -248,7 +249,7 @@ impl WasmWidgetRuntime {
                 }
 
                 match state.fetch_log_limiter.record(
-                    &key,
+                    key,
                     resp.status,
                     &resp.context,
                     state.monotonic_ms,
@@ -315,8 +316,8 @@ impl WasmWidgetRuntime {
             .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_fetch_response");
         let Ok(on_response) = on_response else {
             let state = self.store.data_mut();
-            for response in &responses {
-                state.fetch_body_refs.remove(&response.request_id);
+            for settled in &responses {
+                state.fetch_body_refs.remove(&settled.response.request_id);
             }
             tracing::warn!("widget missing __on_fetch_response export");
             return false;
@@ -326,7 +327,7 @@ impl WasmWidgetRuntime {
             let state = self.store.data_mut();
             responses
                 .iter()
-                .map(|response| state.fetch_body_refs.remove(&response.request_id))
+                .map(|settled| state.fetch_body_refs.remove(&settled.response.request_id))
                 .collect::<Vec<_>>()
         };
         let alloc_func = self
@@ -337,7 +338,8 @@ impl WasmWidgetRuntime {
             tracing::warn!("widget missing __alloc export");
         }
 
-        for (resp, retained) in responses.into_iter().zip(retained) {
+        for (settled, retained) in responses.into_iter().zip(retained) {
+            let mut resp = settled.response;
             let request_id = resp.request_id;
             let status = resp.status;
             let callback_args = if retained {
@@ -374,11 +376,14 @@ impl WasmWidgetRuntime {
                     .remove(&request_id);
                 continue;
             }
+            self.store.data_mut().delivering_fetch_content_type = resp
+                .content_type
+                .take()
+                .map(|content_type| (request_id, content_type));
             let result = on_response.call(&mut self.store, callback_args);
-            self.store
-                .data_mut()
-                .active_fetch_bodies
-                .remove(&request_id);
+            let state = self.store.data_mut();
+            state.delivering_fetch_content_type = None;
+            state.active_fetch_bodies.remove(&request_id);
             if let Err(e) = result {
                 self.record_guest_trap("__on_fetch_response", &e);
                 break;
@@ -1449,30 +1454,29 @@ impl WasmWidgetRuntime {
         for (method, url, headers, body, timeout, request_id) in ready {
             tracing::debug!(request_id = request_id.to_wire(), %method, %url, "firing HTTP fetch");
             let key = FetchRequestKey::new(&method, &url);
-            state.fetch_keys.insert(request_id, key.clone());
-            let settle = state.fetches.accept(request_id);
+            let settle = state.fetches.accept(request_id, key.clone());
 
             let intercepted = state
                 .fetch_interceptor
                 .as_ref()
                 .and_then(|f| f(&method, &url));
             if let Some((status, body)) = intercepted {
-                let _ = settle.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch::host_decided(
                     request_id,
                     status,
                     body,
-                    context: FetchCompletionContext::Normal,
-                });
+                    FetchCompletionContext::Normal,
+                ));
                 continue;
             }
 
             if state.refuse_live_io("fetch", &key.joined()) {
-                let _ = settle.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch::host_decided(
                     request_id,
-                    status: FetchOutcome::Network.to_wire(),
-                    body: Vec::new(),
-                    context: FetchCompletionContext::HermeticRefusal,
-                });
+                    FetchOutcome::Network.to_wire(),
+                    Vec::new(),
+                    FetchCompletionContext::HermeticRefusal,
+                ));
                 continue;
             }
 
@@ -1482,12 +1486,12 @@ impl WasmWidgetRuntime {
             let spent = match super::imports::credentials::spend(state, &url, &headers, body) {
                 Ok(spent) => spent,
                 Err(refusal) => {
-                    let _ = settle.send(CompletedFetch {
+                    let _ = settle.send(CompletedFetch::host_decided(
                         request_id,
-                        status: FetchOutcome::Refused.to_wire(),
-                        body: Vec::new(),
-                        context: FetchCompletionContext::CredentialRefusal(refusal),
-                    });
+                        FetchOutcome::Refused.to_wire(),
+                        Vec::new(),
+                        FetchCompletionContext::CredentialRefusal(refusal),
+                    ));
                     continue;
                 }
             };
@@ -1502,7 +1506,7 @@ impl WasmWidgetRuntime {
             let tx = settle;
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
-                let (status, resp_body) = do_fetch(
+                let reply = do_fetch(
                     &agent,
                     &method,
                     &resolved,
@@ -1513,8 +1517,9 @@ impl WasmWidgetRuntime {
                 );
                 let _ = tx.send(CompletedFetch {
                     request_id,
-                    status,
-                    body: resp_body,
+                    status: reply.status,
+                    content_type: reply.content_type,
+                    body: reply.body,
                     context: FetchCompletionContext::Normal,
                 });
             });

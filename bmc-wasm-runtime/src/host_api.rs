@@ -171,8 +171,17 @@ pub enum FetchCompletionContext {
 pub struct CompletedFetch {
     pub request_id: FetchRequestId,
     pub status: u32,
+    /// Absent for every host-decided outcome.
+    pub content_type: Option<String>,
     pub body: Vec<u8>,
     pub context: FetchCompletionContext,
+}
+
+/// `key` is absent only for a settlement no `accept` preceded,
+/// which nothing but the testing sender can produce.
+pub struct SettledFetch {
+    pub key: Option<FetchRequestKey>,
+    pub response: CompletedFetch,
 }
 
 /// The fetches a widget has outstanding, and the accounting that bounds them.
@@ -191,9 +200,10 @@ pub struct FetchState {
     settle_rx: mpsc::Receiver<CompletedFetch>,
     /// Queued by `host_fetch_after`, still waiting for its firing time.
     delayed: Vec<DelayedFetch>,
-    /// Accepted and not yet drained. Held by id, not counted: a cancel names
-    /// one request, and only the ids can say whether it names a real one.
-    in_flight: HashSet<FetchRequestId>,
+    /// Accepted and not yet drained. The key lives here and nowhere else:
+    /// a settle thread holds the post-spend URL, so rebuilding it there
+    /// would put a secret where only the placeholder form belongs.
+    in_flight: HashMap<FetchRequestId, FetchRequestKey>,
     /// In-flight requests the widget cancelled: their settlements are
     /// rewritten to [`FetchOutcome::Aborted`], never delivered as data.
     /// In-flight only, so the fetch limit bounds this set too.
@@ -219,7 +229,7 @@ impl FetchState {
             settle_tx,
             settle_rx,
             delayed: Vec::new(),
-            in_flight: HashSet::new(),
+            in_flight: HashMap::new(),
             cancelled: HashSet::new(),
         }
     }
@@ -227,14 +237,18 @@ impl FetchState {
     /// Record a request the host has accepted, and hand back its settling
     /// channel. Dropping that channel without sending holds the slot until
     /// the runtime goes away.
-    pub fn accept(&mut self, request_id: FetchRequestId) -> mpsc::Sender<CompletedFetch> {
-        self.in_flight.insert(request_id);
+    pub fn accept(
+        &mut self,
+        request_id: FetchRequestId,
+        key: FetchRequestKey,
+    ) -> mpsc::Sender<CompletedFetch> {
+        self.in_flight.insert(request_id, key);
         self.settle_tx.clone()
     }
 
     /// Whether a request is queued or in flight.
     pub fn contains(&self, request_id: FetchRequestId) -> bool {
-        self.in_flight.contains(&request_id)
+        self.in_flight.contains_key(&request_id)
             || self
                 .delayed
                 .iter()
@@ -242,15 +256,16 @@ impl FetchState {
     }
 
     /// Settlements delivered since the last drain, each releasing its slot.
-    pub fn drain_settled(&mut self) -> Vec<CompletedFetch> {
+    pub fn drain_settled(&mut self) -> Vec<SettledFetch> {
         let mut settled = Vec::new();
         while let Ok(mut response) = self.settle_rx.try_recv() {
-            self.in_flight.remove(&response.request_id);
+            let key = self.in_flight.remove(&response.request_id);
             if self.cancelled.remove(&response.request_id) {
                 response.status = FetchOutcome::Aborted.to_wire();
+                response.content_type = None;
                 response.body.clear();
             }
-            settled.push(response);
+            settled.push(SettledFetch { key, response });
         }
         settled
     }
@@ -263,7 +278,7 @@ impl FetchState {
         if self.delayed.len() != before {
             return CancelDisposition::Stopped;
         }
-        if self.in_flight.contains(&request_id) {
+        if self.in_flight.contains_key(&request_id) {
             self.cancelled.insert(request_id);
             return CancelDisposition::WillAbort;
         }
@@ -356,13 +371,31 @@ pub struct CompletedImageDecode {
     pub decode_us: u64,
 }
 
-#[cfg(feature = "testing")]
 impl CompletedFetch {
+    /// An outcome the host decided without hearing the origin out,
+    /// so it carries no content type.
+    pub(crate) fn host_decided(
+        request_id: FetchRequestId,
+        status: u32,
+        body: Vec<u8>,
+        context: FetchCompletionContext,
+    ) -> Self {
+        Self {
+            request_id,
+            status,
+            content_type: None,
+            body,
+            context,
+        }
+    }
+
+    #[cfg(feature = "testing")]
     pub fn test_sentinel() -> Self {
         Self {
             request_id: bmc_wasm_protocol::FetchRequestId::from_wire(1)
                 .expect("BUG: 1 is non-zero so from_wire returns Some"),
             status: bmc_wasm_protocol::FetchOutcome::Network.to_wire(),
+            content_type: None,
             body: Vec::new(),
             context: FetchCompletionContext::Normal,
         }
@@ -832,7 +865,7 @@ struct RendererGpuAccess {
 
 #[derive(Default)]
 pub(crate) struct StagedGuestDeliveries {
-    pub fetch_responses: Vec<CompletedFetch>,
+    pub fetch_responses: Vec<SettledFetch>,
     pub image_decodes: Vec<CompletedImageDecode>,
     pub websocket_events: Vec<(WebsocketId, WsEvent)>,
     pub socket_events: Vec<(SocketId, SocketEvent)>,
@@ -1040,10 +1073,11 @@ pub(crate) struct HostState {
     /// Called when a fetch response is delivered. Use for recording/logging.
     pub fetch_observer: Option<crate::runtime::FetchObserver>,
 
-    /// Maps each request to the guest-visible method and URL used for logging.
-    pub fetch_keys: HashMap<FetchRequestId, FetchRequestKey>,
-
     pub(crate) fetch_log_limiter: FetchLogLimiter,
+
+    /// The content type of the response being delivered right now,
+    /// held only for the span of its `__on_fetch_response` call.
+    pub(crate) delivering_fetch_content_type: Option<(FetchRequestId, String)>,
 
     #[cfg(feature = "testing")]
     pub(crate) fetch_log_probe: FetchLogProbe,
@@ -1360,8 +1394,8 @@ impl HostState {
             url_rewrites: Vec::new(),
             hermetic: None,
             fetch_observer: None,
-            fetch_keys: HashMap::new(),
             fetch_log_limiter: FetchLogLimiter::default(),
+            delivering_fetch_content_type: None,
             #[cfg(feature = "testing")]
             fetch_log_probe: FetchLogProbe::default(),
             fetch_agent: crate::runtime::build_fetch_agent(),
@@ -1500,10 +1534,11 @@ mod tests {
     use std::fs::OpenOptions;
 
     use super::{
-        CancelDisposition, DecodedImage, DelayedFetch, FetchRequestKey, FetchState,
-        FrameScheduleState, HermeticRun, HostState, MAX_FETCH_URL_BYTES, RendererAssetGate,
+        CancelDisposition, CompletedFetch, DecodedImage, DelayedFetch, FetchCompletionContext,
+        FetchRequestKey, FetchState, FrameScheduleState, HermeticRun, HostState,
+        MAX_FETCH_URL_BYTES, RendererAssetGate,
     };
-    use bmc_wasm_protocol::FetchRequestId;
+    use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
     use crate::image_decode_lock::ImageDecodePermit;
     use crate::runtime_limits::RuntimeResourceLimits;
@@ -1630,7 +1665,7 @@ mod tests {
         let mut counter = 1;
         let mut fetches = FetchState::new();
         let real = FetchRequestId::alloc(&mut counter);
-        let _settle = fetches.accept(real);
+        let _settle = fetches.accept(real, FetchRequestKey::new("GET", "https://example.test/"));
 
         let unknown = FetchRequestId::alloc(&mut counter);
         assert_eq!(
@@ -1686,6 +1721,63 @@ mod tests {
         );
     }
 
+    /// The cancel rewrite must leave nothing of the origin's answer:
+    /// a body or a content type on an abort would read as delivered data.
+    #[test]
+    fn a_settlement_returns_its_key_and_a_cancelled_one_is_stripped_bare() {
+        let mut counter = 1;
+        let mut fetches = FetchState::new();
+        let kept = FetchRequestId::alloc(&mut counter);
+        let cancelled = FetchRequestId::alloc(&mut counter);
+        let key = FetchRequestKey::new("GET", "https://example.test/kept");
+        let settles = [
+            (fetches.accept(kept, key.clone()), kept),
+            (
+                fetches.accept(
+                    cancelled,
+                    FetchRequestKey::new("GET", "https://example.test/gone"),
+                ),
+                cancelled,
+            ),
+        ];
+        assert_eq!(fetches.cancel(cancelled), CancelDisposition::WillAbort);
+
+        for (settle, request_id) in settles {
+            settle
+                .send(CompletedFetch {
+                    request_id,
+                    status: FetchOutcome::Http(200).to_wire(),
+                    content_type: Some("application/json".to_owned()),
+                    body: b"{}".to_vec(),
+                    context: FetchCompletionContext::Normal,
+                })
+                .expect("BUG: the drain receiver lives in `fetches`");
+        }
+
+        let settled = fetches.drain_settled();
+        let by_id = |id| {
+            settled
+                .iter()
+                .find(|s| s.response.request_id == id)
+                .expect("BUG: both settlements were sent above")
+        };
+        assert_eq!(
+            by_id(kept).key.as_ref().map(FetchRequestKey::joined),
+            Some(key.joined()),
+            "a settlement comes back with the key its acceptance recorded"
+        );
+        let aborted = by_id(cancelled);
+        assert_eq!(
+            FetchOutcome::from_wire(aborted.response.status),
+            Some(FetchOutcome::Aborted)
+        );
+        assert!(aborted.response.body.is_empty());
+        assert_eq!(
+            aborted.response.content_type, None,
+            "an abort must not carry the origin's content type"
+        );
+    }
+
     #[test]
     fn renderer_asset_gate_tracks_committed_renderability() {
         let mut state = HostState::new(
@@ -1721,7 +1813,10 @@ mod tests {
         assert!(!fetches.has_in_flight());
 
         let accepted = FetchRequestId::alloc(&mut counter);
-        let _settle = fetches.accept(accepted);
+        let _settle = fetches.accept(
+            accepted,
+            FetchRequestKey::new("GET", "https://example.test/accepted"),
+        );
         assert!(fetches.has_in_flight());
     }
 

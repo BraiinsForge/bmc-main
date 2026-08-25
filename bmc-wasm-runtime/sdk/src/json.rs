@@ -50,6 +50,8 @@ unsafe extern "C" {
     fn host_json_get_i64(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i64;
     fn host_json_get_f64(doc_id: u32, path_ptr: *const u8, path_len: u32) -> f64;
     fn host_json_get_bool(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
+    fn host_json_kind(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
+    fn host_json_len(doc_id: u32, path_ptr: *const u8, path_len: u32) -> i32;
     fn host_json_free(doc_id: u32);
 }
 
@@ -151,6 +153,50 @@ impl JsonDoc {
             0 => Some(false),
             1 => Some(true),
             _ => None, // -1 = missing
+        }
+    }
+
+    /// What the value at the path is, or `None` where there is none.
+    ///
+    /// This is how absence is told apart from emptiness:
+    ///  - an empty array answers `Some(Array)`,
+    ///  - a missing key answers `None` — where the typed getters answer `None` for both.
+    #[must_use]
+    pub fn kind(&self, path: &str) -> Option<JsonKind> {
+        let id = self.0?.to_wire();
+        JsonKind::from_wire(unsafe { host_json_kind(id, path.as_ptr(), path.len() as u32) })
+    }
+
+    /// Element count of the array or object at the path,
+    /// `None` for anything that has none.
+    #[must_use]
+    pub fn len(&self, path: &str) -> Option<usize> {
+        let id = self.0?.to_wire();
+        usize::try_from(unsafe { host_json_len(id, path.as_ptr(), path.len() as u32) }).ok()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonKind {
+    Null,
+    Bool,
+    Number,
+    String,
+    Array,
+    Object,
+}
+
+impl JsonKind {
+    /// The host's tag: `0` null through `5` object, negative for absent.
+    fn from_wire(tag: i32) -> Option<Self> {
+        match tag {
+            0 => Some(Self::Null),
+            1 => Some(Self::Bool),
+            2 => Some(Self::Number),
+            3 => Some(Self::String),
+            4 => Some(Self::Array),
+            5 => Some(Self::Object),
+            _ => None,
         }
     }
 }

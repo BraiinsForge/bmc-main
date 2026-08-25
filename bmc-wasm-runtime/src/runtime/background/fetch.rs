@@ -54,9 +54,16 @@ impl Redirects {
     }
 }
 
-/// Perform an HTTP request, returning a [`FetchOutcome`] wire value and a body.
-/// For host-decided outcomes the body carries a reason string; it is empty when
-/// the origin never answered.
+pub(in crate::runtime) struct FetchedReply {
+    /// A [`FetchOutcome`] wire value.
+    pub status: u32,
+    pub content_type: Option<String>,
+    /// For host-decided outcomes this carries a reason string instead,
+    /// empty when the origin never answered.
+    pub body: Vec<u8>,
+}
+
+/// Perform an HTTP request.
 ///
 /// `timeout` is the per-call global cap on every ureq operation (DNS, connect,
 /// send, recv). ureq 3.x defaults to no timeout, so without this a stalled peer
@@ -69,7 +76,7 @@ pub(in crate::runtime) fn do_fetch(
     body: Option<&[u8]>,
     timeout: Duration,
     redirects: Redirects,
-) -> (u32, Vec<u8>) {
+) -> FetchedReply {
     // Zero returns the 3xx unfollowed rather than erroring,
     // so refusing costs a redirect the guest cannot use, not the request.
     let max_redirects = match redirects {
@@ -111,24 +118,38 @@ pub(in crate::runtime) fn do_fetch(
             req.call()
         }
     };
+    let failed = |status: FetchOutcome, body: Vec<u8>| FetchedReply {
+        status: status.to_wire(),
+        content_type: None,
+        body,
+    };
     match result {
         Ok(response) => {
             let status = FetchOutcome::Http(response.status().as_u16()).to_wire();
+            let content_type = response
+                .headers()
+                .get(ureq::http::header::CONTENT_TYPE)
+                .and_then(|value| value.to_str().ok())
+                .map(str::to_owned);
             let mut body = response.into_body();
             match body.with_config().limit(MAX_FETCH_BODY_BYTES).read_to_vec() {
-                Ok(body) => (status, body),
-                Err(ureq::Error::BodyExceedsLimit(limit)) => (
-                    FetchOutcome::BodyTooLarge.to_wire(),
+                Ok(body) => FetchedReply {
+                    status,
+                    content_type,
+                    body,
+                },
+                Err(ureq::Error::BodyExceedsLimit(limit)) => failed(
+                    FetchOutcome::BodyTooLarge,
                     format!("response body exceeds the {limit} byte limit").into_bytes(),
                 ),
-                Err(e) => (
-                    FetchOutcome::Network.to_wire(),
+                Err(e) => failed(
+                    FetchOutcome::Network,
                     format!("body read error: {e}").into_bytes(),
                 ),
             }
         }
-        Err(ureq::Error::StatusCode(code)) => (FetchOutcome::Http(code).to_wire(), Vec::new()),
-        Err(_) => (FetchOutcome::Network.to_wire(), Vec::new()),
+        Err(ureq::Error::StatusCode(code)) => failed(FetchOutcome::Http(code), Vec::new()),
+        Err(_) => failed(FetchOutcome::Network, Vec::new()),
     }
 }
 
@@ -157,7 +178,7 @@ mod tests {
         let agent = build_fetch_agent();
         let url = format!("http://{addr}/");
         let start = Instant::now();
-        let (status, body) = do_fetch(
+        let reply = do_fetch(
             &agent,
             "GET",
             &url,
@@ -169,11 +190,11 @@ mod tests {
         let elapsed = start.elapsed();
 
         assert_eq!(
-            FetchOutcome::from_wire(status),
+            FetchOutcome::from_wire(reply.status),
             Some(FetchOutcome::Network),
             "stalled fetch must surface as a network error"
         );
-        assert!(body.is_empty());
+        assert!(reply.body.is_empty());
         assert!(
             elapsed < Duration::from_secs(5),
             "per-call timeout must trip before any OS-level timeout, took {elapsed:?}"
@@ -204,7 +225,7 @@ mod tests {
 
         let agent = build_fetch_agent();
         let url = format!("http://{addr}/");
-        let (status, body) = do_fetch(
+        let reply = do_fetch(
             &agent,
             "GET",
             &url,
@@ -215,14 +236,48 @@ mod tests {
         );
 
         assert_eq!(
-            FetchOutcome::from_wire(status),
+            FetchOutcome::from_wire(reply.status),
             Some(FetchOutcome::BodyTooLarge),
             "an oversized body must not look like a network error"
         );
-        let reason = String::from_utf8(body).expect("BUG: reason string is UTF-8");
+        let reason = String::from_utf8(reply.body).expect("BUG: reason string is UTF-8");
         assert!(
             reason.contains(&MAX_FETCH_BODY_BYTES.to_string()),
             "the reason must name the limit, got {reason:?}"
         );
+    }
+
+    #[test]
+    fn the_content_type_survives_to_the_reply() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let _serve = std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut buf = [0_u8; 1024];
+                let _ = sock.read(&mut buf);
+                let _ = sock.write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}",
+                );
+            }
+        });
+
+        let agent = build_fetch_agent();
+        let url = format!("http://{addr}/");
+        let reply = do_fetch(
+            &agent,
+            "GET",
+            &url,
+            &[],
+            None,
+            Duration::from_secs(5),
+            Redirects::Follow,
+        );
+
+        assert_eq!(
+            FetchOutcome::from_wire(reply.status),
+            Some(FetchOutcome::Http(200))
+        );
+        assert_eq!(reply.content_type.as_deref(), Some("application/json"));
+        assert_eq!(reply.body, b"{}");
     }
 }

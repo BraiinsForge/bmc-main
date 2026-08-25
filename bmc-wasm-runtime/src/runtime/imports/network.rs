@@ -44,13 +44,16 @@ use super::super::background::{
     mdns_browse_thread, ssdp_search_thread, tcp_background_thread, udp_broadcast_thread,
     ws_background_thread,
 };
-use super::super::memory::{parse_headers, read_bytes, read_optional_bytes, read_string};
+use super::super::memory::{
+    parse_headers, read_bytes, read_optional_bytes, read_string, write_to_wasm,
+};
 
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_fetch_now_import(linker)?;
     register_fetch_after_import(linker)?;
     register_fetch_body_ref_import(linker)?;
     register_fetch_cancel_import(linker)?;
+    register_fetch_content_type_import(linker)?;
     register_websocket_imports(linker)?;
     register_socket_connect_imports(linker)?;
     register_socket_io_imports(linker)?;
@@ -160,32 +163,31 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             }
             let request_id = FetchRequestId::alloc(&mut state.next_request_id);
-            let settle = state.fetches.accept(request_id);
             let key = FetchRequestKey::new(&method, &url);
+            let settle = state.fetches.accept(request_id, key.clone());
             tracing::debug!(request_id = request_id.to_wire(), %method, %url, "starting HTTP fetch");
-            state.fetch_keys.insert(request_id, key.clone());
 
             let intercepted = state
                 .fetch_interceptor
                 .as_ref()
                 .and_then(|f| f(&method, &url));
             if let Some((status, body)) = intercepted {
-                let _ = settle.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch::host_decided(
                     request_id,
                     status,
                     body,
-                    context: FetchCompletionContext::Normal,
-                });
+                    FetchCompletionContext::Normal,
+                ));
                 return request_id.to_wire();
             }
 
             if state.refuse_live_io("fetch", &key.joined()) {
-                let _ = settle.send(CompletedFetch {
+                let _ = settle.send(CompletedFetch::host_decided(
                     request_id,
-                    status: FetchOutcome::Network.to_wire(),
-                    body: Vec::new(),
-                    context: FetchCompletionContext::HermeticRefusal,
-                });
+                    FetchOutcome::Network.to_wire(),
+                    Vec::new(),
+                    FetchCompletionContext::HermeticRefusal,
+                ));
                 return request_id.to_wire();
             }
 
@@ -195,12 +197,12 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             let spent = match super::credentials::spend(state, &url, &headers, body) {
                 Ok(spent) => spent,
                 Err(refusal) => {
-                    let _ = settle.send(CompletedFetch {
+                    let _ = settle.send(CompletedFetch::host_decided(
                         request_id,
-                        status: FetchOutcome::Refused.to_wire(),
-                        body: Vec::new(),
-                        context: FetchCompletionContext::CredentialRefusal(refusal),
-                    });
+                        FetchOutcome::Refused.to_wire(),
+                        Vec::new(),
+                        FetchCompletionContext::CredentialRefusal(refusal),
+                    ));
                     return request_id.to_wire();
                 }
             };
@@ -215,7 +217,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
             let tx = settle;
             let agent = state.fetch_agent.clone();
             std::thread::spawn(move || {
-                let (status, resp_body) = do_fetch(
+                let reply = do_fetch(
                     &agent,
                     &method,
                     &url,
@@ -226,8 +228,9 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 );
                 let _ = tx.send(CompletedFetch {
                     request_id,
-                    status,
-                    body: resp_body,
+                    status: reply.status,
+                    content_type: reply.content_type,
+                    body: reply.body,
                     context: FetchCompletionContext::Normal,
                 });
             });
@@ -304,7 +307,6 @@ fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
             let state = caller.data_mut();
             match state.fetches.cancel(request_id) {
                 CancelDisposition::Stopped => {
-                    state.fetch_keys.remove(&request_id);
                     state.fetch_body_refs.remove(&request_id);
                     1
                 }
@@ -321,6 +323,27 @@ fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
                     0
                 }
             }
+        },
+    )?;
+
+    Ok(())
+}
+
+fn register_fetch_content_type_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_fetch_content_type",
+        |mut caller: Caller<'_, HostState>, request_id: u32, out_ptr: u32, out_cap: u32| -> i32 {
+            let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+                return -1;
+            };
+            let content_type = match &caller.data().delivering_fetch_content_type {
+                Some((delivering, content_type)) if *delivering == request_id => {
+                    content_type.clone()
+                }
+                Some(_) | None => return -1,
+            };
+            write_to_wasm(&mut caller, &content_type, out_ptr, out_cap)
         },
     )?;
 

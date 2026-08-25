@@ -44,6 +44,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_json_string_import(linker)?;
     register_json_numeric_imports(linker)?;
     register_json_bool_import(linker)?;
+    register_json_shape_imports(linker)?;
     register_date_imports(linker)?;
     register_xml_imports(linker)?;
     register_number_format_import(linker)?;
@@ -541,6 +542,66 @@ fn register_json_bool_import(linker: &mut Linker<HostState>) -> Result<()> {
                 Some(false) => 0,
                 None => -1,
             }
+        },
+    )?;
+
+    Ok(())
+}
+
+/// `-1` is absent — an unknown document counts,
+/// so a failed parse and a missing pointer read the same.
+fn json_kind_impl(doc: Option<&serde_json::Value>, path: &str) -> i32 {
+    let Some(val) = doc.and_then(|doc| doc.pointer(path)) else {
+        return -1;
+    };
+    match val {
+        serde_json::Value::Null => 0,
+        serde_json::Value::Bool(_) => 1,
+        serde_json::Value::Number(_) => 2,
+        serde_json::Value::String(_) => 3,
+        serde_json::Value::Array(_) => 4,
+        serde_json::Value::Object(_) => 5,
+    }
+}
+
+/// - `-1` for anything without a length
+/// - empty container reads `0`
+/// - absent one reads `-1`.
+fn json_len_impl(doc: Option<&serde_json::Value>, path: &str) -> i32 {
+    let len = match doc.and_then(|doc| doc.pointer(path)) {
+        Some(serde_json::Value::Array(items)) => items.len(),
+        Some(serde_json::Value::Object(entries)) => entries.len(),
+        Some(_) | None => return -1,
+    };
+    i32::try_from(len).unwrap_or(i32::MAX)
+}
+
+fn register_json_shape_imports(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_json_kind",
+        |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i32 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
+                return -1;
+            };
+            json_kind_impl(caller.data().json_docs.get(&doc_id), &path)
+        },
+    )?;
+
+    linker.func_wrap(
+        "env",
+        "host_json_len",
+        |caller: Caller<'_, HostState>, doc_id: u32, path_ptr: u32, path_len: u32| -> i32 {
+            let Some(path) = read_string(&caller, path_ptr, path_len) else {
+                return -1;
+            };
+            let Some(doc_id) = JsonId::from_wire(doc_id) else {
+                return -1;
+            };
+            json_len_impl(caller.data().json_docs.get(&doc_id), &path)
         },
     )?;
 
@@ -1150,7 +1211,7 @@ mod tests {
 
     use crate::xml::XmlDocumentIndex;
 
-    use super::{kv_disk_path, validate_kv_key, xml_lookup_text};
+    use super::{json_kind_impl, json_len_impl, kv_disk_path, validate_kv_key, xml_lookup_text};
 
     const XML_WIDGET_FEED: &str = r#"
         <rss>
@@ -1164,6 +1225,49 @@ mod tests {
             </channel>
         </rss>
     "#;
+
+    #[test]
+    fn json_kind_tells_every_shape_apart_and_absence_from_all_of_them() {
+        let doc = serde_json::json!({
+            "resource": "formula-1/standings",
+            "data": [],
+            "flag": true,
+            "count": 3,
+            "nothing": null,
+            "nested": { "entries": [1, 2] },
+        });
+        let kind = |path: &str| json_kind_impl(Some(&doc), path);
+
+        assert_eq!(kind("/nothing"), 0);
+        assert_eq!(kind("/flag"), 1);
+        assert_eq!(kind("/count"), 2);
+        assert_eq!(kind("/resource"), 3);
+        assert_eq!(kind("/data"), 4, "an empty array is still an array");
+        assert_eq!(kind("/nested"), 5);
+        assert_eq!(kind("/absent"), -1);
+        assert_eq!(
+            json_kind_impl(None, "/data"),
+            -1,
+            "an unknown doc is absent"
+        );
+    }
+
+    #[test]
+    fn json_len_counts_containers_and_refuses_everything_else() {
+        let doc = serde_json::json!({
+            "empty": [],
+            "rows": [1, 2, 3],
+            "object": { "a": 1, "b": 2 },
+            "scalar": "x",
+        });
+        let len = |path: &str| json_len_impl(Some(&doc), path);
+
+        assert_eq!(len("/empty"), 0, "empty is a length, absence is not");
+        assert_eq!(len("/rows"), 3);
+        assert_eq!(len("/object"), 2);
+        assert_eq!(len("/scalar"), -1);
+        assert_eq!(len("/absent"), -1);
+    }
 
     #[test]
     fn kv_key_validation_rejects_path_traversal_sequences() {

@@ -75,6 +75,7 @@ pub struct FetchResponse {
     pub status: u32,
     /// Request ID returned by [`FetchRequest::send`], for correlating responses.
     pub request_id: FetchRequestId,
+    content_type: Option<String>,
     body: FetchResponseBody,
 }
 
@@ -115,6 +116,13 @@ impl FetchResponse {
     #[must_use]
     pub fn outcome(&self) -> Option<FetchOutcome> {
         FetchOutcome::from_wire(self.status)
+    }
+
+    /// The origin's `Content-Type`, absent when it sent none — or when
+    /// the outcome was the host's own rather than an origin's answer.
+    #[must_use]
+    pub fn content_type(&self) -> Option<&str> {
+        self.content_type.as_deref()
     }
 
     /// Response body as bytes, or an empty slice when [`Self::body_ref`] owns it.
@@ -197,6 +205,7 @@ unsafe extern "C" {
     ) -> u32;
     fn host_fetch_cancel(request_id: u32) -> u32;
     fn host_fetch_response_body_ref(request_id: u32) -> u32;
+    fn host_fetch_content_type(request_id: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
 }
 
 type Callback = fn(&FetchResponse);
@@ -474,6 +483,35 @@ fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
     }
 }
 
+/// The delivered response's `Content-Type`, readable only
+/// while its own `__on_fetch_response` runs.
+fn read_content_type(request_id: FetchRequestId) -> Option<String> {
+    let mut buf = vec![0_u8; 128];
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "buffer lengths fit u32 on wasm32"
+    )]
+    let actual = unsafe {
+        host_fetch_content_type(request_id.to_wire(), buf.as_mut_ptr(), buf.len() as u32)
+    };
+    let actual = usize::try_from(actual).ok()?;
+    if actual > buf.len() {
+        buf = vec![0_u8; actual];
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "buffer lengths fit u32 on wasm32"
+        )]
+        let again = unsafe {
+            host_fetch_content_type(request_id.to_wire(), buf.as_mut_ptr(), buf.len() as u32)
+        };
+        if usize::try_from(again).ok()? != actual {
+            return None;
+        }
+    }
+    buf.truncate(actual);
+    String::from_utf8(buf).ok()
+}
+
 /// Called by the host when a fetch response is ready.
 ///
 /// Guest-delivered bodies arrive through `__alloc`; opted-in bodies remain
@@ -506,6 +544,7 @@ pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u3
     let response = FetchResponse {
         status,
         request_id,
+        content_type: read_content_type(request_id),
         body,
     };
 
@@ -527,6 +566,7 @@ mod tests {
         FetchResponse {
             status: 200,
             request_id: FetchRequestId::from_wire(1).expect("BUG: one is a valid request ID"),
+            content_type: None,
             body,
         }
     }
