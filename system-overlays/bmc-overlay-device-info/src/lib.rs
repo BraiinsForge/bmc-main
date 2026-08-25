@@ -52,6 +52,11 @@ const WAIT_FOR_IP: Duration = Duration::from_secs(20);
 /// Reconfiguration AP screen auto-hide; the AP stays up (legacy
 /// `WIFI_RECONFIG_TIMEOUT`). A later setup event revives the flow.
 const RECONFIG_SCREEN_TIMEOUT: Duration = Duration::from_mins(8);
+/// How long an unresolved setup failure holds a device that has scenes behind
+/// it. Long enough to read and act on, and no longer:
+/// the tray also shows a setup AP that is still up,
+/// so this screen is not the only record of the failure.
+const FATAL_SCREEN_TIMEOUT: Duration = Duration::from_mins(1);
 /// Snapshot re-read (wake) cadence while a screen depends on prober state.
 const POLL: Duration = Duration::from_secs(1);
 
@@ -82,6 +87,19 @@ enum Mode {
     Operational,
 }
 
+impl Mode {
+    /// Whether unmapping leaves the user somewhere useful.
+    /// A configured device falls back to its scenes;
+    /// one still being set up has nothing behind the overlay,
+    /// so a screen there has to hold rather than step aside.
+    fn has_fallback(self) -> bool {
+        match self {
+            Mode::WifiReconfiguration | Mode::Operational => true,
+            Mode::FactoryDefault | Mode::SetupPending | Mode::Unknown => false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Screen {
     /// Lifecycle unknown yet — stay unmapped rather than guess a flow.
@@ -108,10 +126,13 @@ enum Screen {
     SetupError {
         since: Instant,
     },
-    /// Sticky setup failure. `restarting` says whether bmc resolves it
-    /// by restarting the device, which is all the screen does differently.
-    /// Both hold until something outside the overlay moves the device on.
+    /// Setup failure the overlay cannot resolve.
+    /// `restarting` says whether bmc resolves it by restarting the device.
+    /// A restart is worth waiting out, so that variant holds.
+    /// The other steps aside once the user has had time to read it,
+    /// but only where there are scenes to step aside to (`Mode::has_fallback`).
     SetupFatal {
+        since: Instant,
         restarting: bool,
     },
     OpConnecting {
@@ -133,7 +154,16 @@ enum Screen {
 }
 
 impl Screen {
-    fn in_setup_flow(self) -> bool {
+    /// True while a setup flow is live on screen. `on_device_state` uses it to
+    /// leave that screen alone: the same setup state can arrive again mid-flow,
+    /// and jumping back to `SetupStart` would drop the progress on show.
+    /// False means the next setup state starts the flow over.
+    ///
+    /// A dismissible fatal is false — that flow died there, and re-entering
+    /// setup from the tray has to bring the screens back. A restarting fatal
+    /// is true: bmc is rebooting the device, and this is the last thing the
+    /// user sees before it does.
+    fn setup_in_progress(self) -> bool {
         matches!(
             self,
             Screen::SetupStart { .. }
@@ -142,7 +172,10 @@ impl Screen {
                 | Screen::SetupConnectInfo { .. }
                 | Screen::SetupCompleted { .. }
                 | Screen::SetupError { .. }
-                | Screen::SetupFatal { .. }
+                | Screen::SetupFatal {
+                    restarting: true,
+                    ..
+                }
         )
     }
 
@@ -238,6 +271,12 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         Screen::SetupConnectInfo { ip: shown } => Screen::SetupConnectInfo {
             ip: station_ip.or(shown),
         },
+        Screen::SetupFatal {
+            since,
+            restarting: false,
+        } if mode.has_fallback() && now.duration_since(since) >= FATAL_SCREEN_TIMEOUT => {
+            Screen::Done
+        }
         Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => screen,
     };
     let changed = next != screen;
@@ -276,6 +315,12 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         | Screen::OpConnecting { .. }
         | Screen::OpSuccess { .. } => Some(NextWake::Poll),
         Screen::OpFailed { since } => Some(NextWake::At(since + FAILURE_VISIBLE_FOR)),
+        Screen::SetupFatal {
+            since,
+            restarting: false,
+        } => mode
+            .has_fallback()
+            .then_some(NextWake::At(since + FATAL_SCREEN_TIMEOUT)),
         Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => None,
     }
 }
@@ -343,6 +388,19 @@ impl DeviceInfoOverlay {
             .or_else(|| self.station_ssid.clone())
     }
 
+    /// Whether the current fatal screen can be sent away,
+    /// by touch or by its own timeout. Both paths ask this one question,
+    /// so the close glyph never advertises a dismissal the touch handler refuses.
+    fn fatal_dismissible(&self) -> bool {
+        matches!(
+            self.screen,
+            Screen::SetupFatal {
+                restarting: false,
+                ..
+            }
+        ) && self.mode.has_fallback()
+    }
+
     #[must_use]
     fn view(&self) -> DeviceInfoView {
         match self.screen {
@@ -362,7 +420,10 @@ impl DeviceInfoOverlay {
             },
             Screen::SetupCompleted { .. } => DeviceInfoView::SetupCompleted,
             Screen::SetupError { .. } => DeviceInfoView::SetupError,
-            Screen::SetupFatal { restarting } => DeviceInfoView::SetupFatal { restarting },
+            Screen::SetupFatal { restarting, .. } => DeviceInfoView::SetupFatal {
+                restarting,
+                dismissible: self.fatal_dismissible(),
+            },
             Screen::OpUpgraded { .. } => DeviceInfoView::UpgradeSuccess,
             Screen::OpConnecting { .. } => DeviceInfoView::Connecting {
                 ssid: self.station_ssid.clone(),
@@ -425,14 +486,14 @@ impl SystemOverlay for DeviceInfoOverlay {
         self.dirty = true;
         match self.mode {
             Mode::FactoryDefault | Mode::WifiReconfiguration => {
-                if !self.screen.in_setup_flow() {
+                if !self.screen.setup_in_progress() {
                     self.screen = Screen::SetupStart {
                         since: Instant::now(),
                     };
                 }
             }
             Mode::SetupPending => {
-                if !self.screen.in_setup_flow() {
+                if !self.screen.setup_in_progress() {
                     self.screen = Screen::SetupConnecting;
                 }
             }
@@ -471,7 +532,10 @@ impl SystemOverlay for DeviceInfoOverlay {
             },
             SetupStep::WifiConnectionFailed => Screen::SetupError { since: now },
             SetupStep::DeviceSetupSuccess => Screen::SetupCompleted { since: now },
-            SetupStep::UnexpectedError { restarting } => Screen::SetupFatal { restarting },
+            SetupStep::UnexpectedError { restarting } => Screen::SetupFatal {
+                since: now,
+                restarting,
+            },
         };
         self.dirty = true;
     }
@@ -532,10 +596,13 @@ impl SystemOverlay for DeviceInfoOverlay {
         if !matches!(event, TouchEvent::Down { .. }) {
             return;
         }
-        // Touch acts on the operational flow only. The setup screens stay:
-        // dismissing SetupStart would leave a blank screen
-        // with the AP up and the user mid-wizard.
-        if matches!(self.screen, Screen::OpUpgraded { .. }) {
+        // Touch acts on the operational flow,
+        // and on a fatal screen the user can do nothing about.
+        // The rest of the setup screens stay: dismissing SetupStart
+        // would leave a blank screen with the AP up and the user mid-wizard.
+        if self.fatal_dismissible() {
+            self.screen = Screen::Done;
+        } else if matches!(self.screen, Screen::OpUpgraded { .. }) {
             // An interstitial rather than the end of the flow,
             // so skipping it goes on to connect instead of back to the scenes.
             self.screen = Screen::OpConnecting {
@@ -823,15 +890,16 @@ mod tests {
     }
 
     #[test]
-    fn unexpected_error_is_sticky() {
-        // Both variants wait for something outside the overlay: the device
-        // restarting, or the user restarting it.
+    fn a_fatal_screen_with_nothing_behind_it_is_sticky() {
+        // Mid-setup there are no scenes to step aside to, so both variants
+        // wait for something outside the overlay: the device restarting,
+        // or the user restarting it.
         for restarting in [true, false] {
             let mut overlay = overlay_with_ip(None);
             overlay.on_device_state(DeviceState::SetupPending, false);
             overlay.on_setup_progress(SetupStep::UnexpectedError { restarting }, "");
-            let tick = overlay.tick(t0() + HOLD + HOLD);
-            assert_eq!(overlay.screen, Screen::SetupFatal { restarting });
+            let tick = overlay.tick(t0() + FATAL_SCREEN_TIMEOUT + HOLD);
+            assert!(matches!(overlay.screen, Screen::SetupFatal { .. }));
             assert!(tick.visible, "restarting={restarting}");
             assert_eq!(tick.next_wake, None, "restarting={restarting}");
 
@@ -848,20 +916,122 @@ mod tests {
     }
 
     #[test]
+    fn a_pending_restart_is_waited_out_even_with_scenes_behind_it() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: true }, "");
+        let tick = overlay.tick(t0() + FATAL_SCREEN_TIMEOUT + HOLD);
+        assert!(matches!(overlay.screen, Screen::SetupFatal { .. }));
+        assert!(tick.visible, "the restart is worth waiting for");
+        assert_eq!(tick.next_wake, None);
+    }
+
+    #[test]
+    fn re_entering_setup_over_a_dismissible_fatal_brings_the_screens_back() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
+
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+    }
+
+    #[test]
+    fn re_entering_setup_leaves_a_pending_restart_on_screen() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: true }, "");
+
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        assert!(matches!(overlay.screen, Screen::SetupFatal { .. }));
+    }
+
+    #[test]
+    fn a_fatal_screen_over_scenes_times_out() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
+        // After the event, so the screen's own `since` cannot be later.
+        let start = t0();
+
+        let tick = overlay.tick(start);
+        assert!(tick.visible, "the user still has to read it");
+        assert!(tick.next_wake.is_some(), "a timeout is armed");
+
+        let tick = overlay.tick(start + FATAL_SCREEN_TIMEOUT);
+        assert_eq!(overlay.screen, Screen::Done);
+        assert!(!tick.visible, "the device goes back to its scenes");
+    }
+
+    #[test]
+    fn a_touch_dismisses_a_fatal_screen_that_has_scenes_behind_it() {
+        let mut overlay = overlay_with_ip(None);
+        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
+        overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
+        overlay.on_touch(TouchEvent::Down {
+            id: 0,
+            x: 0.0,
+            y: 0.0,
+        });
+        assert_eq!(overlay.screen, Screen::Done);
+    }
+
+    #[test]
     fn the_fatal_screen_says_whether_a_restart_is_coming() {
         let mut overlay = overlay_with_ip(None);
         overlay.on_device_state(DeviceState::WifiReconfiguration, false);
         overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
         assert_eq!(
             overlay.view(),
-            DeviceInfoView::SetupFatal { restarting: false }
+            DeviceInfoView::SetupFatal {
+                restarting: false,
+                dismissible: true,
+            }
         );
 
         overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: true }, "");
         assert_eq!(
             overlay.view(),
-            DeviceInfoView::SetupFatal { restarting: true }
+            DeviceInfoView::SetupFatal {
+                restarting: true,
+                dismissible: false,
+            }
         );
+    }
+
+    #[test]
+    fn the_close_glyph_never_outlives_the_touch_that_backs_it() {
+        // The view's flag is what draws the X, and `on_touch` is what honours
+        // it; a screen offering one that does nothing is the failure here.
+        for (state, dismissible) in [
+            (DeviceState::WifiReconfiguration, true),
+            (DeviceState::Operational, true),
+            (DeviceState::FactoryDefault, false),
+            (DeviceState::SetupPending, false),
+        ] {
+            let mut overlay = overlay_with_ip(None);
+            overlay.on_device_state(state, false);
+            overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
+            assert_eq!(
+                overlay.view(),
+                DeviceInfoView::SetupFatal {
+                    restarting: false,
+                    dismissible,
+                },
+                "{state:?}"
+            );
+
+            overlay.on_touch(TouchEvent::Down {
+                id: 0,
+                x: 0.0,
+                y: 0.0,
+            });
+            assert_eq!(
+                overlay.screen == Screen::Done,
+                dismissible,
+                "the touch must agree with the glyph: {state:?}"
+            );
+        }
     }
 
     #[test]

@@ -267,9 +267,10 @@ async fn run_setup_pending_watchdog<T: BmcManager>(
 ///
 /// With nothing to fall back to the device is unusable until setup completes,
 /// so it reboots after a dwell long enough to read the screen.
-/// A device that merely opened setup mode keeps running instead.
-/// It still has its scenes and its settings tray, so restarting it unprompted
-/// would cost more than the failed access point does.
+/// A device that merely opened setup mode keeps running instead:
+/// restarting it unprompted would cost more than the failed access point does.
+/// Its screen steps aside on its own once the failure has been read,
+/// so the report does not cost the device its scenes.
 async fn fail_setup<T: BmcManager>(compositor: &dyn Compositor, manager: &T, state: BmcState) {
     let restarting = match state {
         BmcState::FactoryDefault | BmcState::SetupPending => true,

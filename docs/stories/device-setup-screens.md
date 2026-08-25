@@ -45,7 +45,10 @@ factory-reset device can be set up from a phone without knowing anything about i
 
 - When the device resolves the problem itself, the screen says it is restarting and the device restarts.
 - When it cannot, the screen says the device needs to be restarted, and it waits rather than pretending to recover.
-- Either way the screen stays until the situation changes: it never hides a live setup network or an unfinished wizard.
+- A device that was already set up gets its clock back: that screen closes on a tap, or on its own after a minute, since
+  there is something to go back to and the settings tray still shows the setup network is up.
+- A device still being set up keeps the screen, because there is nothing behind it: it never hides a live setup network
+  or an unfinished wizard.
 - A device that has WiFi credentials but never obtains an address is reset back into setup, so it lands on a screen with
   a way forward instead of a blank one.
 
@@ -77,7 +80,8 @@ factory-reset device can be set up from a phone without knowing anything about i
   tray's, and a tap anywhere on the screen closes them.
 - Tapping the update confirmation moves on to the connect screens instead of closing, because the sequence is not
   finished yet.
-- The setup screens carry no close glyph and ignore taps, so a tap cannot hide a live setup network.
+- The setup screens carry no close glyph and ignore taps, so a tap cannot hide a live setup network. The one exception
+  is a failure on an already-configured device, which offers the same close glyph as the boot screens.
 - Once dismissed, the boot screens stay dismissed for that boot.
 
 ## Constraints

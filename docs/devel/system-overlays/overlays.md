@@ -53,12 +53,15 @@ actually coming; the same failure during WiFi reconfiguration leaves the running
 - **WiFi reconfiguration**: the same setup flow, entered when `device_state` flips to `wifi_reconfiguration`; on
   `wifi_reconfig_success` the connected screen shows 5 s and unmaps straight to scenes (no connect-info). The
   setup-start screen auto-hides after 8 minutes with the AP left up; a later setup event revives the flow.
-- **Unexpected error**: a sticky full-screen failure, in two variants that differ in what happens next rather than in
-  how bad the failure is. `unexpected_error_restarting` means bmc is restarting or resetting the device, so the screen
-  says so and simply waits it out. `unexpected_error` means bmc takes no action — the device keeps running, but stuck in
-  whatever state the failure left it — so the screen asks the user to restart it instead. Both ignore touch: the
-  condition is unresolved either way, and dismissing would hide it (after a failed reconfiguration exit, for instance,
-  the setup AP is still broadcasting).
+- **Unexpected error**: a full-screen failure, in two variants that differ in what happens next rather than in how bad
+  the failure is. `unexpected_error_restarting` means bmc is restarting or resetting the device, so the screen says so,
+  waits it out, and ignores touch — the restart is coming and there is nothing to dismiss it *to*. `unexpected_error`
+  means bmc takes no action, so the screen asks the user to restart it instead. That one steps aside after
+  `FATAL_SCREEN_TIMEOUT` (1 min) or on a touch, but **only where the device has scenes behind it**
+  (`Mode::has_fallback`: a reconfiguration or an operational device). Mid-setup there is nothing behind the overlay, so
+  it stays put rather than strand the user on an empty screen. Dismissing it does not hide the underlying condition: a
+  setup AP still broadcasting after a failed reconfiguration exit shows on the settings-tray button, which reads
+  `wifi_ap` from `deck_settings_v1`.
 
 Both connect-info screens hold the last-known address through a transient DHCP loss rather than reading the prober live.
 On the operational screen that stops a flicker; on the setup screen it matters more, since falling back to the

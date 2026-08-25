@@ -192,6 +192,7 @@ device_info_render_states!(
     DI_SETUP_ERROR,
     DI_SETUP_FATAL_RESTARTING,
     DI_SETUP_FATAL,
+    DI_SETUP_FATAL_DISMISSIBLE,
     DI_UPGRADE_SUCCESS,
     DI_CONNECTING,
     DI_SUCCESS,
@@ -505,7 +506,10 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         ui,
         "SetupFatal (restarting)",
         "bmc restarts or resets the device",
-        DeviceInfoView::SetupFatal { restarting: true },
+        DeviceInfoView::SetupFatal {
+            restarting: true,
+            dismissible: false,
+        },
         &DI_SETUP_FATAL_RESTARTING,
         flat,
     );
@@ -513,9 +517,24 @@ fn device_info(ctx: &mut SceneCtx, ui: &mut Ui) {
         ctx,
         ui,
         "SetupFatal",
-        "bmc takes no action; the user has to restart",
-        DeviceInfoView::SetupFatal { restarting: false },
+        "mid-setup: nothing behind it, so no way out",
+        DeviceInfoView::SetupFatal {
+            restarting: false,
+            dismissible: false,
+        },
         &DI_SETUP_FATAL,
+        flat,
+    );
+    device_info_stage(
+        ctx,
+        ui,
+        "SetupFatal (dismissible)",
+        "scenes behind it: closes on touch or after a minute",
+        DeviceInfoView::SetupFatal {
+            restarting: false,
+            dismissible: true,
+        },
+        &DI_SETUP_FATAL_DISMISSIBLE,
         flat,
     );
     device_info_stage(

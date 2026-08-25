@@ -60,11 +60,14 @@ pub enum DeviceInfoView {
     },
     SetupCompleted,
     SetupError,
-    /// Setup failure that only something outside the overlay can clear.
-    /// `restarting` says whether bmc is restarting the device, i.e. whether
-    /// the screen waits it out or asks the user to act.
+    /// Setup failure the overlay cannot clear on its own.
+    /// `restarting` says whether bmc is restarting the device,
+    /// i.e. whether the screen waits it out or asks the user to act.
+    /// `dismissible` says whether there are scenes behind it,
+    /// which is what decides the close glyph.
     SetupFatal {
         restarting: bool,
+        dismissible: bool,
     },
     /// Post-firmware-upgrade success, the operational flow's opening screen.
     UpgradeSuccess,
@@ -332,13 +335,15 @@ fn dismisses_on_touch(view: &DeviceInfoView) -> bool {
         DeviceInfoView::Connecting { .. }
         | DeviceInfoView::Success { .. }
         | DeviceInfoView::Failed { .. } => true,
+        // Only where the device has scenes to go back to; the FSM decides,
+        // since the answer turns on a lifecycle state no view carries.
+        DeviceInfoView::SetupFatal { dismissible, .. } => *dismissible,
         DeviceInfoView::SetupStart { .. }
         | DeviceInfoView::SetupConnecting { .. }
         | DeviceInfoView::SetupConnected { .. }
         | DeviceInfoView::SetupConnectInfo { .. }
         | DeviceInfoView::SetupCompleted
         | DeviceInfoView::SetupError
-        | DeviceInfoView::SetupFatal { .. }
         | DeviceInfoView::UpgradeSuccess
         | DeviceInfoView::Done => false,
     }
@@ -636,7 +641,7 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
             "Could not connect. Please try again.",
             Vec::new(),
         ),
-        DeviceInfoView::SetupFatal { restarting } => {
+        DeviceInfoView::SetupFatal { restarting, .. } => {
             let (icon_id, line) = if *restarting {
                 (icons.refresh, "Restarting Braiins Deck...")
             } else {
@@ -734,8 +739,18 @@ mod tests {
             },
             DeviceInfoView::SetupCompleted,
             DeviceInfoView::SetupError,
-            DeviceInfoView::SetupFatal { restarting: true },
-            DeviceInfoView::SetupFatal { restarting: false },
+            DeviceInfoView::SetupFatal {
+                restarting: true,
+                dismissible: false,
+            },
+            DeviceInfoView::SetupFatal {
+                restarting: false,
+                dismissible: false,
+            },
+            DeviceInfoView::SetupFatal {
+                restarting: false,
+                dismissible: true,
+            },
             DeviceInfoView::UpgradeSuccess,
             DeviceInfoView::Connecting { ssid: None },
             DeviceInfoView::Success {
@@ -802,9 +817,28 @@ mod tests {
             },
             DeviceInfoView::SetupCompleted,
             DeviceInfoView::SetupError,
-            DeviceInfoView::SetupFatal { restarting: false },
+            DeviceInfoView::SetupFatal {
+                restarting: false,
+                dismissible: false,
+            },
         ] {
             assert!(!dismisses_on_touch(&view), "view {view:?}");
+        }
+    }
+
+    #[test]
+    fn only_a_dismissible_fatal_screen_offers_a_close() {
+        // A pending restart is waited out whatever is behind the screen.
+        for (restarting, dismissible, expected) in [
+            (false, true, true),
+            (false, false, false),
+            (true, false, false),
+        ] {
+            let view = DeviceInfoView::SetupFatal {
+                restarting,
+                dismissible,
+            };
+            assert_eq!(dismisses_on_touch(&view), expected, "view {view:?}");
         }
     }
 }
