@@ -41,6 +41,7 @@ The backend is organized as a Cargo workspace with the following main components
   - **`bmc-net-types`**: dependency-light value types (`MacAddr`, network protocol config, WiFi status/scan).
   - **`bmc-net-drv`**: interface enumeration plus the `WifiDriver` backends (`nl80211`, `esp32`).
   - **`bmc-net-dns`**: the `IiResolver` DNS/NTP resolver.
+  - **`bmc-net-mdns`**: mDNS/DNS-SD advertisement of the device web UI and API.
   - **`bmc-net-observe`**: synchronous, read-only connectivity probes for OS-driven overlays.
   - **`bmc-net-diag`**: network diagnostics for the support archive (ifconfig, public IP, ping, pcap).
 

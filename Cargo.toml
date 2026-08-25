@@ -191,6 +191,7 @@ bmc-net = { path = "bmc-net/bmc-net" }
 bmc-net-diag = { path = "bmc-net/bmc-net-diag" }
 bmc-net-dns = { path = "bmc-net/bmc-net-dns" }
 bmc-net-drv = { path = "bmc-net/bmc-net-drv" }
+bmc-net-mdns = { path = "bmc-net/bmc-net-mdns" }
 bmc-net-observe = { path = "bmc-net/bmc-net-observe" }
 bmc-net-types = { path = "bmc-net/bmc-net-types" }
 bmc-nix = { path = "bmc-nix" }
@@ -337,7 +338,7 @@ log = "0.4.27"
 lyon = "1.0"
 markdown = "1.0.0-alpha.23"
 maud = "0.27.0"
-mdns-sd = "0.18.2"
+mdns-sd = "0.21.0"
 memmap2 = "0.9.4"
 merge-streams = "0.1.2"
 mime_guess = "2.0.5"

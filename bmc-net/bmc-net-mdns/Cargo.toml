@@ -1,0 +1,17 @@
+[package]
+name = "bmc-net-mdns"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[dependencies]
+log.workspace = true
+mdns-sd.workspace = true
+tokio = { workspace = true, features = ["time"] }
+
+[dev-dependencies]
+bmc-log.workspace = true
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

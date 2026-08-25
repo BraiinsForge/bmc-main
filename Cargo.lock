@@ -180,9 +180,9 @@ dependencies = [
 
 [[package]]
 name = "anstyle"
-version = "1.0.10"
+version = "1.0.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "55cc3b69f167a1ef2e161439aa98aed94e6028e5f9a59be9a6ffb47aef1651f9"
+checksum = "940b3a0ca603d1eade50a4846a2afffd5ef57a9feac2c0e2ec2e14f9ead76000"
 
 [[package]]
 name = "anstyle-parse"
@@ -979,6 +979,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bmc-net-mdns"
+version = "0.1.0"
+dependencies = [
+ "bmc-log",
+ "log",
+ "mdns-sd",
+ "tokio",
+]
+
+[[package]]
 name = "bmc-net-observe"
 version = "0.1.0"
 dependencies = [
@@ -1074,7 +1084,7 @@ dependencies = [
  "deck-settings-v1",
  "deck-upgrade-v1",
  "drm",
- "flume",
+ "flume 0.11.1",
  "futures",
  "get_if_addrs",
  "gpiod",
@@ -1755,7 +1765,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "234113d19d0d7d613b40e86fb654acf958910802bcceab913a4f9e7cda03b1a4"
 dependencies = [
  "memchr",
- "regex-automata 0.4.14",
+ "regex-automata 0.4.18",
  "serde",
 ]
 
@@ -3008,8 +3018,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e1e1dacd0d2082dfcf1351c4bdd566bbe89a2b263235a2b50058f1e130a47277"
 dependencies = [
  "bit-set 0.8.0",
- "regex-automata 0.4.14",
- "regex-syntax 0.8.5",
+ "regex-automata 0.4.18",
+ "regex-syntax 0.8.11",
 ]
 
 [[package]]
@@ -3020,9 +3030,9 @@ checksum = "dd2e7510819d6fbf51a5545c8f922716ecfb14df168a3242f7d33e0239efe6a1"
 
 [[package]]
 name = "fastrand"
-version = "2.3.0"
+version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
 
 [[package]]
 name = "fax"
@@ -3141,6 +3151,15 @@ name = "flume"
 version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
+dependencies = [
+ "spin",
+]
+
+[[package]]
+name = "flume"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
 dependencies = [
  "futures-core",
  "futures-sink",
@@ -4733,7 +4752,7 @@ dependencies = [
  "percent-encoding",
  "referencing",
  "regex",
- "regex-syntax 0.8.5",
+ "regex-syntax 0.8.11",
  "serde",
  "serde_json",
  "unicode-general-category",
@@ -4837,9 +4856,9 @@ checksum = "2c4a545a15244c7d945065b5d392b2d2d7f21526fba56ce51467b06ed445e8f7"
 
 [[package]]
 name = "libc"
-version = "0.2.183"
+version = "0.2.189"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b5b646652bf6661599e1da8901b3b9522896f01e736bad5f723fe7a3a27f899d"
+checksum = "3eaf3ede3fee6db1a4c2ee091bf8a8b4dccdc6d17f656fb07896ee72867612f2"
 
 [[package]]
 name = "libloading"
@@ -5054,15 +5073,15 @@ dependencies = [
 
 [[package]]
 name = "mdns-sd"
-version = "0.18.2"
+version = "0.21.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d797ab3274a16f4940f9650a29838e940223aeff31773df5c2827ad82150182f"
+checksum = "ba97b4c886eea3c2823388120d92063c011ac866919ffc4200a0e4b1642a54a5"
 dependencies = [
  "fastrand",
- "flume",
+ "flume 0.12.0",
  "if-addrs",
  "log",
- "mio 1.1.1",
+ "mio 1.2.2",
  "socket-pktinfo",
  "socket2 0.6.0",
 ]
@@ -5162,9 +5181,9 @@ dependencies = [
 
 [[package]]
 name = "mio"
-version = "1.1.1"
+version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a69bcab0ad47271a0234d9422b131806bf3968021e5dc9328caf2d4cd58557fc"
+checksum = "30d65c71f1ce40ab09135ce117d742b9f8a19ff91a41a8b57ed50bc2de59c427"
 dependencies = [
  "libc",
  "log",
@@ -5430,7 +5449,7 @@ dependencies = [
  "kqueue",
  "libc",
  "log",
- "mio 1.1.1",
+ "mio 1.2.2",
  "notify-types",
  "walkdir",
  "windows-sys 0.60.2",
@@ -6453,7 +6472,7 @@ dependencies = [
  "rand 0.9.1",
  "rand_chacha 0.9.0",
  "rand_xorshift",
- "regex-syntax 0.8.5",
+ "regex-syntax 0.8.11",
  "rusty-fork",
  "tempfile",
  "unarray",
@@ -6787,14 +6806,14 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.11.1"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b544ef1b4eac5dc2db33ea63606ae9ffcfac26c1416a2806ae0bf5f56b201191"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-automata 0.4.14",
- "regex-syntax 0.8.5",
+ "regex-automata 0.4.18",
+ "regex-syntax 0.8.11",
 ]
 
 [[package]]
@@ -6808,13 +6827,13 @@ dependencies = [
 
 [[package]]
 name = "regex-automata"
-version = "0.4.14"
+version = "0.4.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e1dd4122fc1595e8162618945476892eefca7b88c52820e74af6262213cae8f"
+checksum = "ad8553b9b26413251cbf30e620595c7a41b3887f03da04579c0e6b0d6a06b4b2"
 dependencies = [
  "aho-corasick",
  "memchr",
- "regex-syntax 0.8.5",
+ "regex-syntax 0.8.11",
 ]
 
 [[package]]
@@ -6825,9 +6844,9 @@ checksum = "f162c6dd7b008981e4d40210aca20b4bd0f9b60ca9271061b07f78537722f2e1"
 
 [[package]]
 name = "regex-syntax"
-version = "0.8.5"
+version = "0.8.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
+checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "renderdoc-sys"
@@ -7694,13 +7713,13 @@ checksum = "9676b89cd56310a87b93dec47b11af744f34d5fc9f367b829474eec0a891350d"
 
 [[package]]
 name = "socket-pktinfo"
-version = "0.3.2"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "927136cc2ae6a1b0e66ac6b1210902b75c3f726db004a73bc18686dcd0dcd22f"
+checksum = "612942246d0cc239cfd83af1dfd39be47f649208a3524e5e9da651910128e0ac"
 dependencies = [
  "libc",
  "socket2 0.6.0",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8226,7 +8245,7 @@ dependencies = [
  "bytes",
  "io-uring",
  "libc",
- "mio 1.1.1",
+ "mio 1.2.2",
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
