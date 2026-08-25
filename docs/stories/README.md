@@ -115,6 +115,13 @@ On-device feedback for firmware and package upgrades. A firmware upgrade takes o
 progress overlay; a package-only upgrade shows a passive corner card while widgets keep running. Both end in a clear
 success or failure screen, including after the restart that finishes an upgrade.
 
+### [Device Setup & Connect Screens](device-setup-screens.md)
+
+The full-screen messages the Deck shows on its own display when it needs setting up or has just booted: the WiFi network
+to join and a QR code to the setup wizard on a factory-default device, the progress of a WiFi join, and the address the
+web UI is reachable at after every boot. Also covers re-running WiFi setup from the device and the confirmation shown
+after a firmware update restarts.
+
 ### Audio & Alarms
 
 See [Clock Alarm](alarm.md) for the whole alarm feature — configuring alarms from the web app (time, repeat days, label,
