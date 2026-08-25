@@ -127,10 +127,15 @@ async fn main() -> Result<()> {
                     );
                 })?,
         };
-        let chip = HardwareProfile::for_product(platform.product())
-            .locate_wifi_chip(board_serial.as_ref());
-        info!(?chip, "located WiFi chip");
-        chip.syspath().to_string_lossy().into_owned()
+        if let Some(chip) =
+            HardwareProfile::for_product(platform.product()).locate_wifi_chip(board_serial.as_ref())
+        {
+            info!(?chip, "located WiFi chip");
+            chip.syspath().to_string_lossy().into_owned()
+        } else {
+            info!(?platform, "board carries no WiFi radio");
+            String::new()
+        }
     };
 
     info!("Using WiFi device path: {wifi_path}");

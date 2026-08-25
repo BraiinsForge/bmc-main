@@ -243,7 +243,7 @@ pub struct HardwareCapabilities {
     pub slot_grid: Option<SlotGrid>,
 }
 
-/// ESP32 WiFi over SDIO (BMM100/BMM101): a mac80211 device on the STM32 SD/MMC controller.
+/// ESP32 WiFi over SDIO (BMM101): a mac80211 device on the STM32 SD/MMC controller.
 const WIFI_SDIO_ESP32: &str =
     "/sys/devices/platform/soc/48004000.sdmmc/mmc_host/mmc2/mmc2:0001/mmc2:0001:1";
 /// Realtek USB WiFi behind the on-board USB hub (BMC100 hubbed revision and BFM100).
@@ -261,7 +261,7 @@ const BMC100_FIRST_HUBBED_VERSION: PcbVersion = PcbVersion::new(0, 0x02, 0);
 pub enum WifiChip {
     /// USB-attached nl80211 radio (BMC100, BFM100).
     UsbNl80211 { syspath: PathBuf },
-    /// ESP32 companion radio on SDIO (BMM10x).
+    /// ESP32 companion radio on SDIO (BMM101).
     SdioEsp32 { syspath: PathBuf },
 }
 
@@ -431,24 +431,25 @@ impl HardwareProfile {
         }
     }
 
-    /// The board's WiFi radio.
+    /// The board's WiFi radio, or `None` when the board carries no radio at all —
+    /// not merely one that has yet to enumerate.
     ///
     /// A Deck serial pins BMC100 to the hubbed or hubless syspath
     /// by PCB revision; without one the candidates are probed for existence,
     /// falling back to the primary when the radio has not enumerated yet;
     /// the syspath is opened lazily.
     #[must_use]
-    pub fn locate_wifi_chip(&self, serial: Option<&BoardSerial>) -> WifiChip {
-        self.wifi_location(serial).locate_with(Path::exists)
+    pub fn locate_wifi_chip(&self, serial: Option<&BoardSerial>) -> Option<WifiChip> {
+        Some(self.wifi_location(serial)?.locate_with(Path::exists))
     }
 
-    fn wifi_location(&self, serial: Option<&BoardSerial>) -> WifiLocation {
+    fn wifi_location(&self, serial: Option<&BoardSerial>) -> Option<WifiLocation> {
         match self.product {
             Product::Bmc100 => {
                 let deck_version = serial
                     .filter(|serial| serial.product() == serial_number::PRODUCT_DECK)
                     .map(BoardSerial::pcb_version);
-                match deck_version {
+                Some(match deck_version {
                     Some(version) if version >= BMC100_FIRST_HUBBED_VERSION => {
                         WifiLocation::Fixed(WifiChip::usb(WIFI_USB_HUBBED))
                     }
@@ -457,12 +458,13 @@ impl HardwareProfile {
                         WifiChip::usb(WIFI_USB_HUBBED),
                         WifiChip::usb(WIFI_USB_HUBLESS),
                     ]),
-                }
+                })
             }
-            Product::Bmm100 | Product::Bmm101 => WifiLocation::Fixed(WifiChip::SdioEsp32 {
+            Product::Bmm100 => None,
+            Product::Bmm101 => Some(WifiLocation::Fixed(WifiChip::SdioEsp32 {
                 syspath: PathBuf::from(WIFI_SDIO_ESP32),
-            }),
-            Product::Bfm100 => WifiLocation::Fixed(WifiChip::usb(WIFI_USB_HUBBED)),
+            })),
+            Product::Bfm100 => Some(WifiLocation::Fixed(WifiChip::usb(WIFI_USB_HUBBED))),
         }
     }
 
@@ -722,20 +724,28 @@ mod test {
         for (version_yy, expected) in cases {
             let chip = HardwareProfile::for_product(Product::Bmc100)
                 .locate_wifi_chip(Some(&deck_serial(version_yy)));
-            assert_eq!(chip, usb_chip(expected), "version yy={version_yy:#04x}");
+            assert_eq!(
+                chip,
+                Some(usb_chip(expected)),
+                "version yy={version_yy:#04x}"
+            );
         }
     }
 
     #[test]
     fn bmc100_without_serial_probes_first_existing_candidate() {
-        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(None);
+        let location = HardwareProfile::for_product(Product::Bmc100)
+            .wifi_location(None)
+            .expect("BUG: BMC100 carries a WiFi radio");
         let chip = location.locate_with(|path| path == Path::new(WIFI_USB_HUBLESS));
         assert_eq!(chip, usb_chip(WIFI_USB_HUBLESS));
     }
 
     #[test]
     fn bmc100_probe_falls_back_to_hubbed_when_nothing_exists() {
-        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(None);
+        let location = HardwareProfile::for_product(Product::Bmc100)
+            .wifi_location(None)
+            .expect("BUG: BMC100 carries a WiFi radio");
         let chip = location.locate_with(|_| false);
         assert_eq!(
             chip,
@@ -746,7 +756,9 @@ mod test {
 
     #[test]
     fn bmc100_probe_prefers_hubbed_when_both_exist() {
-        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(None);
+        let location = HardwareProfile::for_product(Product::Bmc100)
+            .wifi_location(None)
+            .expect("BUG: BMC100 carries a WiFi radio");
         let chip = location.locate_with(|_| true);
         assert_eq!(chip, usb_chip(WIFI_USB_HUBBED), "hubbed outranks hubless");
     }
@@ -758,7 +770,9 @@ mod test {
         ];
         raw[2] = 0x02;
         let foreign = BoardSerial::parse(raw).expect("BUG: product 0002 serial must parse");
-        let location = HardwareProfile::for_product(Product::Bmc100).wifi_location(Some(&foreign));
+        let location = HardwareProfile::for_product(Product::Bmc100)
+            .wifi_location(Some(&foreign))
+            .expect("BUG: BMC100 carries a WiFi radio");
         let chip = location.locate_with(|path| path == Path::new(WIFI_USB_HUBLESS));
         assert_eq!(
             chip,
@@ -769,19 +783,27 @@ mod test {
 
     #[test]
     fn fixed_products_ignore_the_serial() {
-        let esp32 = WifiChip::SdioEsp32 {
-            syspath: PathBuf::from(WIFI_SDIO_ESP32),
-        };
         let cases = [
-            (Product::Bmm100, esp32.clone()),
-            (Product::Bmm101, esp32),
+            (
+                Product::Bmm101,
+                WifiChip::SdioEsp32 {
+                    syspath: PathBuf::from(WIFI_SDIO_ESP32),
+                },
+            ),
             (Product::Bfm100, usb_chip(WIFI_USB_HUBBED)),
         ];
         for (product, expected) in cases {
             let chip =
                 HardwareProfile::for_product(product).locate_wifi_chip(Some(&deck_serial(0x01)));
-            assert_eq!(chip, expected, "{product:?}");
+            assert_eq!(chip, Some(expected), "{product:?}");
         }
+    }
+
+    #[test]
+    fn bmm100_carries_no_wifi_radio() {
+        let profile = HardwareProfile::for_product(Product::Bmm100);
+        assert_eq!(profile.locate_wifi_chip(None), None);
+        assert_eq!(profile.locate_wifi_chip(Some(&deck_serial(0x01))), None);
     }
 
     #[test]
