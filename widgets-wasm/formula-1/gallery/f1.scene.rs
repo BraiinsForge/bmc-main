@@ -153,6 +153,38 @@ fn standings(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
+/// A card whose payload named no championship rank.
+#[scene]
+fn driver_unranked(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || driver::driver_view(&fixtures::driver_unranked(bucket))
+    });
+}
+
+/// Cars a lap down: `+1 LAP`, the widest gap text the server sends.
+#[scene]
+fn live_lapped(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || live::race_view(&fixtures::live_lapped(bucket))
+    });
+}
+
+/// A race whose payload named no places and no lap count.
+#[scene]
+fn live_unranked(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || live::race_view(&fixtures::live_unranked(bucket))
+    });
+}
+
+/// Rows the payload gave no place, which zero cannot stand in for.
+#[scene]
+fn standings_unranked(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || standings::standings_view(&fixtures::standings_unranked(bucket))
+    });
+}
+
 /// Nothing stored yet: first reply outstanding, or a cold server 503ing.
 #[scene]
 fn standings_empty(ctx: &mut SceneCtx, ui: &mut Ui) {

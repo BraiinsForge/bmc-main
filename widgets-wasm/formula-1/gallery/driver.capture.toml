@@ -114,6 +114,14 @@ frames = 24
 Size = "BMM"
 
 [[shot]]
+name = "driver-unranked-full"
+scene = "bmc_gallery::f1::Driver Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
 name = "ruler-20-deck-small"
 scene = "bmc_gallery::f1::Driver Widest"
 frames = 24

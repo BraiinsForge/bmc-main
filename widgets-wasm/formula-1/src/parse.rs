@@ -119,6 +119,12 @@ fn medium(json: &JsonDoc, path: &str) -> u16 {
         .clamp(0, i64::from(u16::MAX)) as u16
 }
 
+/// A count the payload may not name, where zero would read as a real one:
+/// there is no zeroth place and no zeroth lap.
+fn counted<T: TryFrom<i64>>(json: &JsonDoc, path: &str) -> Option<T> {
+    T::try_from(json.i64(path)?).ok()
+}
+
 pub fn standings(json: &JsonDoc) -> Result<Vec<StandingsRow>, Malformed> {
     if json.kind(wire::DATA) != Some(JsonKind::Array) {
         return Err(Malformed);
@@ -127,7 +133,7 @@ pub fn standings(json: &JsonDoc) -> Result<Vec<StandingsRow>, Malformed> {
     each_row(json, "driver_name", |index| {
         let at = |field: &str| wire::row(index, field);
         rows.push(StandingsRow {
-            position: small(json, &at("position")),
+            position: counted(json, &at("position")),
             driver_name: text(json, &at("driver_name")),
             driver_code: text(json, &at("driver_code")),
             team_name: text(json, &at("team_name")),
@@ -153,7 +159,7 @@ fn driver_stats_at(json: &JsonDoc, at: &impl Fn(&str) -> String) -> DriverStats 
         headshot_url: image(json, &at("headshot_url")),
         team: text(json, &at("team")),
         team_color: color(json, &at("team_color")),
-        ranking: small(json, &at("ranking")),
+        ranking: counted(json, &at("ranking")),
         points: medium(json, &at("points")),
         nationality: text(json, &at("nationality")),
         nationality_flag_url: image(json, &at("nationality_flag_url")),
@@ -332,7 +338,7 @@ pub fn live_board(json: &JsonDoc) -> Result<LiveBoard, Malformed> {
             reason = "a position change is a small signed wire integer"
         )]
         rows.push(TimingRow {
-            position: small(json, &entry("position")),
+            position: counted(json, &entry("position")),
             driver_code: text(json, &entry("driver_code")),
             driver_name: text(json, &entry("driver_name")),
             team_logo_url: image(json, &entry("team_logo_url")),
@@ -369,8 +375,8 @@ pub fn live_board(json: &JsonDoc) -> Result<LiveBoard, Malformed> {
         session_label: text(json, &wire::field("session_label")),
         gp_name: text(json, &wire::field("gp_name")),
         country_flag_url: image(json, &wire::field("country_flag_url")),
-        current_lap: medium(json, &wire::field("current_lap")),
-        total_laps: medium(json, &wire::field("total_laps")),
+        current_lap: counted(json, &wire::field("current_lap")),
+        total_laps: counted(json, &wire::field("total_laps")),
         rows,
     }))
 }

@@ -126,6 +126,38 @@ Size = "Deck small"
 # design size it was drawn at. Qualifying seats the whole field, so it is
 # the board that fits the least.
 [[shot]]
+name = "live-lapped-small"
+scene = "bmc_gallery::f1::Live Lapped"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "live-lapped-bmm-narrow"
+scene = "bmc_gallery::f1::Live Lapped"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "live-unranked-full"
+scene = "bmc_gallery::f1::Live Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "live-unranked-medium"
+scene = "bmc_gallery::f1::Live Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
 name = "live-race-bmm"
 scene = "bmc_gallery::f1::Live Race"
 frames = 24

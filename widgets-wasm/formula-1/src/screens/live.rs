@@ -283,14 +283,19 @@ fn sector_time(seconds: f32) -> String {
     fmt!("{}.{}{}", whole, lead, millis)
 }
 
+/// One line per cell: `+1 LAP` would otherwise break at its space and
+/// take the row's baseline with it. The renderer reads this as no-wrap.
 fn plain(content: impl Into<String>, size: u32, tone: Color) -> Node {
-    text(content, style!(size: size, color: tone, line_height: 1.0))
+    text(
+        content,
+        style!(size: size, color: tone, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+    )
 }
 
 fn value(content: impl Into<String>, size: u32, tone: Color) -> Node {
     text(
         content,
-        style!(size: size, color: tone, align: TextAlign::Right, line_height: 1.0),
+        style!(size: size, color: tone, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
     )
 }
 
@@ -424,7 +429,10 @@ fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
         color::TEXT
     };
     match which {
-        Cell::Position => plain(fmt!("{}", row_data.position), size, identity),
+        Cell::Position => match row_data.position {
+            Some(place) => plain(fmt!("{}", place), size, identity),
+            None => plain(parts::NO_ORDINAL, size, parts::color::TEXT_MUTED),
+        },
         Cell::TeamLogo => parts::remote_image(
             ImageKind::TeamLogo,
             &row_data.team_logo_url,
@@ -451,7 +459,7 @@ fn cell(which: Cell, row_data: &TimingRow, bucket: SizeBucket) -> Node {
         Cell::Tire => tire_cell(row_data),
         Cell::Compound => compound_badge(row_data.tire_compound),
         Cell::PracticeGap => {
-            if row_data.position == 1 {
+            if row_data.position == Some(1) {
                 value("LEADER", size, color::TEXT)
             } else {
                 timing(&row_data.gap_to_leader, size, color::TEXT)
@@ -546,10 +554,18 @@ fn timing_row(row_data: &TimingRow, cols: &Columns, bucket: SizeBucket) -> Node 
             }
         }
     }
+
+    // The wide gap overflows a narrow row, and the engine then squeezes
+    // the fixed cells by a per-row amount — columns land at different x.
+    let cell_gap = match bucket {
+        SizeBucket::Small => space::GAP,
+        SizeBucket::Medium | SizeBucket::Large | SizeBucket::Full => space::GAP * 2.0,
+    };
+
     // Stretch, not centre: the rules take their height from the row,
     // and every cell holds its own content at the middle instead.
     row(
-        props!(flex: 1.0, gap: space::GAP * 2.0, cross_align: CrossAlign::Stretch),
+        props!(flex: 1.0, gap: cell_gap, cross_align: CrossAlign::Stretch),
         cells,
     )
 }
@@ -570,7 +586,11 @@ fn header(
     bucket: SizeBucket,
 ) -> Node {
     let info = match board {
-        Board::Race => fmt!("LAP {}/{}", data.current_lap, data.total_laps),
+        // A half-known count reads as a wrong one, so the header drops it.
+        Board::Race => match (data.current_lap, data.total_laps) {
+            (Some(lap), Some(total)) => fmt!("LAP {}/{}", lap, total),
+            _ => String::new(),
+        },
         Board::Quali | Board::Practice => data.session_label.clone(),
     };
     let mut content = Vec::new();

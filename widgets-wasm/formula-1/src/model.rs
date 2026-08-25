@@ -266,7 +266,8 @@ pub struct Sector {
 /// A championship standings row.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct StandingsRow {
-    pub position: u8,
+    /// Absent where the payload named none.
+    pub position: Option<u8>,
     pub driver_name: String,
     pub driver_code: String,
     pub team_name: String,
@@ -291,7 +292,8 @@ pub struct DriverStats {
     pub headshot_url: ImageUrl,
     pub team: String,
     pub team_color: Color,
-    pub ranking: u8,
+    /// Absent where the payload named none.
+    pub ranking: Option<u8>,
     pub points: u16,
     pub nationality: String,
     pub nationality_flag_url: ImageUrl,
@@ -339,7 +341,8 @@ pub struct NextRace {
 /// practice no interval.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct TimingRow {
-    pub position: u8,
+    /// Absent where the payload named none.
+    pub position: Option<u8>,
     pub driver_code: String,
     pub driver_name: String,
     pub team_logo_url: ImageUrl,
@@ -366,8 +369,9 @@ pub struct TimingBoard {
     pub session_label: String,
     pub gp_name: String,
     pub country_flag_url: ImageUrl,
-    pub current_lap: u16,
-    pub total_laps: u16,
+    /// Absent outside a race, and before one starts.
+    pub current_lap: Option<u16>,
+    pub total_laps: Option<u16>,
     pub rows: Vec<TimingRow>,
 }
 

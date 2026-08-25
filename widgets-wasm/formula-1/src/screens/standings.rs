@@ -133,6 +133,14 @@ fn plain(content: impl Into<String>) -> Node {
     )
 }
 
+/// A cell the payload left empty, dimmed so a reader's eye passes it.
+fn muted(content: impl Into<String>) -> Node {
+    text(
+        content,
+        style!(size: font::ROW, color: color::TEXT_MUTED, line_height: 1.0),
+    )
+}
+
 /// A fixed-width column, so the cell below it starts at the same x.
 fn cell(width: f32, child: Node) -> Node {
     col(
@@ -143,7 +151,13 @@ fn cell(width: f32, child: Node) -> Node {
 
 fn standings_row(entry: &StandingsRow, cols: Columns) -> Node {
     let mut cells = vec![
-        cell(POSITION, plain(fmt!("{}.", entry.position))),
+        cell(
+            POSITION,
+            match entry.position {
+                Some(place) => plain(fmt!("{}.", place)),
+                None => muted(parts::NO_ORDINAL),
+            },
+        ),
         cell(
             cols.name,
             name(truncate(&entry.driver_name, cols.name_chars)),

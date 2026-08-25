@@ -143,6 +143,22 @@ frames = 24
 [shot.knobs]
 Size = "BMM Narrow"
 
+[[shot]]
+name = "standings-unranked-full"
+scene = "bmc_gallery::f1::Standings Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "standings-unranked-small"
+scene = "bmc_gallery::f1::Standings Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+
 # The small frame drops the team column outright, so only the name is cut.
 [[shot]]
 name = "ruler-17-deck-small"

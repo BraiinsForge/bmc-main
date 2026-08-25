@@ -49,6 +49,9 @@ pub mod color {
     pub const PLACEHOLDER: Color = GRAY_90;
 }
 
+/// What an ordinal reads as when the payload named none.
+pub const NO_ORDINAL: &str = "—";
+
 pub mod font {
     pub const TITLE: u32 = 24;
     /// Every table row, at every frame.
@@ -58,15 +61,13 @@ pub mod font {
     pub const SUBTITLE_SMALL: u32 = 18;
 }
 
-/// How far below its own box's middle a glyph renders, as a share of
-/// the font's size, so artwork set beside text drops by this much to
-/// meet the letters.
+/// How far below its own box's middle a glyph renders, as a share of the font's size,
+/// so artwork set beside text drops by this much to meet the letters.
 ///
-/// Measured by eye against the testbed rather than derived: the
-/// renderer's line box is not symmetric about the letters, and nothing
-/// in the tree reports where a baseline landed. Text drawn onto a
-/// canvas needs none of this — `Draw::text` takes a `valign` the
-/// renderer resolves to the font's own baseline.
+/// Measured by eye against the testbed rather than derived:
+/// the renderer's line box is not symmetric about the letters, and nothing in the tree
+/// reports where a baseline landed. Text drawn onto a canvas needs none of this
+/// — `Draw::text` takes a `valign` the renderer resolves to the font's own baseline.
 pub const GLYPH_DROP: f32 = 0.04;
 
 pub mod space {

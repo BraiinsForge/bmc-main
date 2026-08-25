@@ -248,7 +248,7 @@ pub fn standings_rows() -> Vec<StandingsRow> {
         .enumerate()
         .map(
             |(index, (driver, country, team, livery, points))| StandingsRow {
-                position: u8::try_from(index + 1).unwrap_or(u8::MAX),
+                position: u8::try_from(index + 1).ok(),
                 driver_name: (*driver).to_owned(),
                 driver_code: driver
                     .split_whitespace()
@@ -279,6 +279,15 @@ pub fn standings(bucket: SizeBucket) -> StandingsViewData {
     }
 }
 
+#[must_use]
+pub fn standings_unranked(bucket: SizeBucket) -> StandingsViewData {
+    let mut view = standings(bucket);
+    for row in &mut view.rows {
+        row.position = None;
+    }
+    view
+}
+
 /// Nothing stored yet: first reply outstanding, or a cold server 503ing.
 #[must_use]
 pub fn standings_empty(bucket: SizeBucket) -> StandingsViewData {
@@ -298,10 +307,11 @@ pub fn standings_season_start(bucket: SizeBucket) -> StandingsViewData {
     view
 }
 
-/// The longest names on the grid against three-digit scores. The server
-/// names a constructor plainly — `Red Bull Racing`, never the sponsors
-/// in front of it — so this is as wide as the columns are ever asked to
-/// be. Rows differ so the eye can tell which column is losing.
+/// The longest names on the grid against three-digit scores.
+/// The server names a constructor plainly — `Red Bull Racing`,
+/// never the sponsors in front of it — so this is as wide
+/// as the columns are ever asked to be.
+/// Rows differ so the eye can tell which column is losing.
 const LONGEST: [(&str, &str); 10] = [
     ("Gabriel Bortoleto", "Red Bull Racing"),
     ("Franco Colapinto", "Aston Martin"),
@@ -321,18 +331,18 @@ pub fn standings_widest(bucket: SizeBucket) -> StandingsViewData {
     for (row, (driver, team)) in view.rows.iter_mut().zip(LONGEST) {
         driver.clone_into(&mut row.driver_name);
         team.clone_into(&mut row.team_name);
-        row.points = 400 + u16::from(row.position);
+        row.points = 400 + row.position.map_or(0, u16::from);
     }
     view
 }
 
-/// The weekend below opens on Friday the 21st of August 2026 and runs to
-/// Sunday the 23rd, so each day advances the weekday by one.
+/// The weekend below opens on Friday the 21st of August 2026 and runs
+/// to Sunday the 23rd, so each day advances the weekday by one.
 const OPENING_DAY: u8 = 21;
 const FRIDAY: u8 = 4;
 
-/// A day of that weekend, carrying the weekday the host would have
-/// resolved for it.
+/// A day of that weekend, carrying the weekday
+/// the host would have resolved for it.
 #[must_use]
 pub fn weekend_day(day: u8) -> CalendarDate {
     CalendarDate {
@@ -365,8 +375,8 @@ fn session(name: &str, day: u8, hour: u8, minute: u8) -> Session {
     }
 }
 
-/// Zandvoort as the server sends it — a sprint weekend, so the schedule
-/// is the longest the screens have to seat.
+/// Zandvoort as the server sends it — a sprint weekend,
+/// so the schedule is the longest the screens have to seat.
 #[must_use]
 pub fn next_race_weekend() -> NextRace {
     NextRace {
@@ -407,8 +417,8 @@ pub fn next_race_unavailable(bucket: SizeBucket) -> NextRaceViewData {
     NextRaceViewData { bucket, race: None }
 }
 
-/// A weekend the upstream knows of but has no detail for yet — every
-/// stat null, no session times published.
+/// A weekend the upstream knows of but has no detail for yet
+/// — every stat null, no session times published.
 #[must_use]
 pub fn next_race_sparse(bucket: SizeBucket) -> NextRaceViewData {
     let mut view = next_race(bucket);
@@ -833,7 +843,7 @@ pub fn drivers() -> Vec<DriverStats> {
             headshot_url: headshot_url(driver.name),
             team: driver.team.to_owned(),
             team_color: team_color(driver.livery),
-            ranking: driver.ranking,
+            ranking: Some(driver.ranking),
             points: driver.points,
             nationality: driver.nationality.to_owned(),
             nationality_flag_url: flag_url(driver.nationality),
@@ -900,6 +910,16 @@ pub fn driver_widest(bucket: SizeBucket, value: &str) -> DriverViewData {
     value.clone_into(&mut driver.team);
     value.clone_into(&mut driver.nationality);
     driver.race_engineer = Some(value.to_owned());
+    driver_card(bucket, Some(driver))
+}
+
+#[must_use]
+pub fn driver_unranked(bucket: SizeBucket) -> DriverViewData {
+    let mut driver = drivers()
+        .into_iter()
+        .next()
+        .expect("BUG: fixtures name a driver");
+    driver.ranking = None;
     driver_card(bucket, Some(driver))
 }
 
@@ -993,7 +1013,7 @@ fn timing_row(index: usize, behind: f64) -> TimingRow {
         })
     };
     TimingRow {
-        position: u8::try_from(index + 1).unwrap_or(u8::MAX),
+        position: u8::try_from(index + 1).ok(),
         driver_code: code,
         driver_name: entry.name.to_owned(),
         team_logo_url: logo_url(entry.team),
@@ -1059,8 +1079,8 @@ pub fn timing_board(label: &str) -> TimingBoard {
         session_label: label.to_owned(),
         gp_name: "Dutch GP".to_owned(),
         country_flag_url: flag_url("Netherlands"),
-        current_lap: 12,
-        total_laps: 72,
+        current_lap: Some(12),
+        total_laps: Some(72),
         rows,
     }
 }
@@ -1071,6 +1091,33 @@ pub fn live(bucket: SizeBucket, label: &str) -> LiveViewData {
     LiveViewData {
         bucket,
         board: LiveBoard::from_board(timing_board(label)),
+    }
+}
+
+#[must_use]
+pub fn live_lapped(bucket: SizeBucket) -> LiveViewData {
+    let mut board = timing_board("Race");
+    for row in board.rows.iter_mut().skip(3) {
+        row.gap_to_leader = TimingText::from("+1 LAP".to_owned());
+        row.interval = TimingText::from("+1 LAP".to_owned());
+    }
+    LiveViewData {
+        bucket,
+        board: LiveBoard::from_board(board),
+    }
+}
+
+#[must_use]
+pub fn live_unranked(bucket: SizeBucket) -> LiveViewData {
+    let mut board = timing_board("Race");
+    board.current_lap = None;
+    board.total_laps = None;
+    for row in &mut board.rows {
+        row.position = None;
+    }
+    LiveViewData {
+        bucket,
+        board: LiveBoard::from_board(board),
     }
 }
 

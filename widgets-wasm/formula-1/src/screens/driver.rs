@@ -152,7 +152,13 @@ fn naming_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
 /// Where the driver stands this season.
 fn season_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
     vec![
-        stat("Ranking", &fmt!("#{}", driver.ranking), layout),
+        stat(
+            "Ranking",
+            &driver
+                .ranking
+                .map_or_else(|| parts::NO_ORDINAL.to_owned(), |rank| fmt!("#{}", rank)),
+            layout,
+        ),
         stat("Points", &fmt!("{}", driver.points), layout),
     ]
 }
