@@ -90,6 +90,15 @@ impl DeckSize {
         }
     }
 
+    /// Frame height in pixels; a content-driven one is staged at the device's.
+    #[must_use]
+    pub fn height(self) -> usize {
+        match self.div_height() {
+            DivHeight::Px(h) => h,
+            DivHeight::Auto => DEVICE_HEIGHT,
+        }
+    }
+
     #[must_use]
     pub fn is_auto_width(self) -> bool {
         matches!(self, Self::Auto)
@@ -152,3 +161,58 @@ impl From<(usize, DivHeight)> for DeckSize {
         Self::Custom(w, h)
     }
 }
+
+/// One frame a shipped device hands a widget.
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceViewport {
+    /// Platform and viewport, as a stage heading reads it.
+    pub label: &'static str,
+    pub size: DeckSize,
+}
+
+impl DeviceViewport {
+    /// Width and height, as a widget's own size rules take them.
+    #[must_use]
+    pub fn pixels(self) -> (u32, u32) {
+        let fits =
+            |side: usize| u32::try_from(side).expect("BUG: a device frame is a few hundred pixels");
+        (fits(self.size.width()), fits(self.size.height()))
+    }
+}
+
+/// Every frame a shipped device hands to a widget, which is what
+/// a layout has to survive — not the design sizes it was drawn at.
+///
+/// Held by hand against `bmc-wasm-runtime`'s platform catalog.
+/// Reading that directly would put the wasm runtime in every
+/// scene build, for data that changes when a device ships.
+pub const DEVICE_VIEWPORTS: [DeviceViewport; 7] = [
+    DeviceViewport {
+        label: "Deck fullscreen",
+        size: DeckSize::Custom(1_280, DivHeight::Px(480)),
+    },
+    DeviceViewport {
+        label: "Deck large",
+        size: DeckSize::Custom(638, DivHeight::Px(480)),
+    },
+    DeviceViewport {
+        label: "Deck medium",
+        size: DeckSize::Custom(638, DivHeight::Px(238)),
+    },
+    DeviceViewport {
+        label: "Deck small",
+        size: DeckSize::Custom(317, DivHeight::Px(238)),
+    },
+    DeviceViewport {
+        label: "BMM",
+        size: DeckSize::Custom(480, DivHeight::Px(320)),
+    },
+    DeviceViewport {
+        label: "BMM Narrow",
+        size: DeckSize::Custom(320, DivHeight::Px(240)),
+    },
+    DeviceViewport {
+        label: "BFM",
+        size: DeckSize::Round(480),
+    },
+];

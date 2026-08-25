@@ -30,8 +30,8 @@ pub use gallery::prelude::*;
 pub use crate::kit::DeckSize::{Auto, Full, Large, Medium, Page, Round, Small};
 pub use crate::kit::DivHeight::Auto as AutoH;
 pub use crate::kit::{
-    AUTO_HEIGHT_MAX, ActionEvent, CustomRenderFn, DEVICE_HEIGHT, DEVICE_WIDTH, DeckSceneCtx,
-    DeckSize, DivHeight, Fired, RodioSink, deck_settings, seed_image,
+    AUTO_HEIGHT_MAX, ActionEvent, CustomRenderFn, DEVICE_HEIGHT, DEVICE_VIEWPORTS, DEVICE_WIDTH,
+    DeckSceneCtx, DeckSize, DeviceViewport, DivHeight, Fired, RodioSink, deck_settings, seed_image,
 };
 
 pub use bmc_wasm_sdk::tree::*;
