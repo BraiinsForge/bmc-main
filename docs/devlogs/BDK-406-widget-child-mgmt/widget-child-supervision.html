@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Widget lifecycle coordination</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --ground: #f4f6f8;
+    --surface: #fff;
+    --surface-2: #e9edf2;
+    --ink: #171c22;
+    --muted: #52606d;
+    --rule: #d6dbe2;
+    --accent: #2f5d9e;
+    --accent-soft: #e3ebf7;
+    --ok: #23735a;
+    --ok-soft: #dcefe6;
+    --wait: #8a5a12;
+    --wait-soft: #f6ecd8;
+    --serif: Charter, "Bitstream Charter", Cambria, Georgia, serif;
+    --sans: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+    --mono: ui-monospace, SFMono-Regular, "Cascadia Mono", monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --ground: #0f1216;
+      --surface: #171b21;
+      --surface-2: #232a33;
+      --ink: #e3e8ee;
+      --muted: #a5b0bc;
+      --rule: #303944;
+      --accent: #83abe4;
+      --accent-soft: #1b2a3d;
+      --ok: #74c7a1;
+      --ok-soft: #172b23;
+      --wait: #dbab52;
+      --wait-soft: #2d2517;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font: 17px/1.62 var(--serif);
+  }
+  main { max-width: 68rem; margin: 0 auto; padding: 0 1.5rem 5rem; }
+  header { padding: 3.5rem 0 2.25rem; border-bottom: 1px solid var(--rule); margin-bottom: 3rem; }
+  h1, h2, h3, .eyebrow, .facts, .label, dt { font-family: var(--sans); }
+  h1 {
+    max-width: 48rem;
+    margin: .5rem 0 1rem;
+    font-size: clamp(2.2rem, 5vw, 3.3rem);
+    line-height: 1.05;
+    letter-spacing: -.025em;
+  }
+  h2 { margin: 0; font-size: 1.55rem; line-height: 1.2; }
+  h3 { margin: 0 0 .5rem; font-size: 1rem; }
+  p { margin: 0 0 1rem; }
+  p:last-child { margin-bottom: 0; }
+  code {
+    padding: .08em .3em;
+    border-radius: 3px;
+    background: var(--surface-2);
+    font: .85em var(--mono);
+  }
+  .eyebrow {
+    margin: 0;
+    color: var(--muted);
+    font: .72rem var(--mono);
+    letter-spacing: .14em;
+    text-transform: uppercase;
+  }
+  .standfirst { max-width: 44rem; color: var(--muted); font-size: 1.18rem; }
+  .facts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .5rem 2rem;
+    color: var(--muted);
+    font: .78rem var(--mono);
+  }
+  .facts b { color: var(--ink); font-weight: 500; }
+  section { display: grid; gap: 1.25rem; padding-bottom: 3.5rem; }
+  .section-head {
+    display: grid;
+    gap: .35rem;
+    padding-top: .65rem;
+    border-top: 1px solid var(--rule);
+  }
+  .prose { max-width: 43rem; }
+  .cards, .invariants {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+    gap: 1rem;
+  }
+  .card, .sequence, .invariant, .code-map {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+  .card, .invariant { padding: 1rem 1.1rem; }
+  .card p, .invariant span { color: var(--muted); font-size: .92rem; }
+  .owner {
+    display: inline-block;
+    margin-bottom: .65rem;
+    padding: .15rem .5rem;
+    border-radius: 999px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font: .72rem var(--mono);
+  }
+  .flow {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(7rem, 1fr));
+    gap: .65rem;
+  }
+  .flow-step {
+    position: relative;
+    min-height: 7.5rem;
+    padding: .9rem;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    background: var(--surface);
+  }
+  .flow-step:not(:last-child)::after {
+    content: "→";
+    position: absolute;
+    top: 50%;
+    right: -.56rem;
+    z-index: 1;
+    width: 1rem;
+    color: var(--accent);
+    background: var(--ground);
+    text-align: center;
+  }
+  .label {
+    display: block;
+    margin-bottom: .3rem;
+    color: var(--accent);
+    font-size: .76rem;
+    font-weight: 650;
+    text-transform: uppercase;
+  }
+  .flow-step p { color: var(--muted); font-size: .86rem; line-height: 1.45; }
+  .sequence { overflow: hidden; }
+  .sequence-row {
+    display: grid;
+    grid-template-columns: 2.3rem 10rem 1fr;
+    gap: 1rem;
+    padding: .85rem 1rem;
+    border-bottom: 1px solid var(--rule);
+  }
+  .sequence-row:last-child { border-bottom: 0; }
+  .number {
+    display: grid;
+    width: 1.75rem;
+    height: 1.75rem;
+    place-items: center;
+    border-radius: 50%;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font: .75rem var(--mono);
+  }
+  .actor { font: .82rem var(--mono); }
+  .action { color: var(--muted); font-size: .94rem; }
+  .states {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: .5rem;
+    align-items: center;
+  }
+  .state {
+    padding: .8rem;
+    border-radius: 7px;
+    text-align: center;
+    font: .82rem var(--mono);
+  }
+  .state.run { background: var(--ok-soft); color: var(--ok); }
+  .state.wait { background: var(--wait-soft); color: var(--wait); }
+  .arrow { color: var(--muted); text-align: center; }
+  .invariants { grid-template-columns: repeat(auto-fit, minmax(17rem, 1fr)); gap: .8rem; }
+  .invariant strong { display: block; font-family: var(--sans); font-size: .92rem; }
+  .code-map { padding: .35rem 1rem; }
+  .code-map div { padding: .75rem 0; border-bottom: 1px solid var(--rule); }
+  .code-map div:last-child { border-bottom: 0; }
+  .code-map dt { font: .8rem var(--mono); }
+  .code-map dd { margin: .2rem 0 0; color: var(--muted); font-size: .9rem; }
+  footer {
+    padding-top: 1.25rem;
+    border-top: 1px solid var(--rule);
+    color: var(--muted);
+    font-size: .82rem;
+  }
+  @media (max-width: 800px) {
+    .flow { grid-template-columns: 1fr; }
+    .flow-step { min-height: 0; }
+    .flow-step:not(:last-child)::after { content: "↓"; top: auto; right: 50%; bottom: -.62rem; }
+    .sequence-row { grid-template-columns: 2.3rem 1fr; }
+    .action { grid-column: 2; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <p class="eyebrow">BDK-406 · BDK-747 · architecture note</p>
+    <h1>Widget lifecycle coordination</h1>
+    <p class="standfirst">
+      The coordinator brings process supervision and display state together without coupling them. It sends commands
+      to the widget manager and compositor, while each component remains the sole owner of its own state.
+    </p>
+    <div class="facts">
+      <span>identity <b>instance key</b></span>
+      <span>process owner <b>widget manager</b></span>
+      <span>display owner <b>compositor</b></span>
+      <span>policy owner <b>coordinator</b></span>
+    </div>
+  </header>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Design goal</p>
+      <h2>Keep the relationship simple</h2>
+    </div>
+    <div class="prose">
+      <p>
+        The widget manager does not call the compositor, forward compositor results, or report child PIDs for routing.
+        The compositor does not drive process supervision. The coordinator decides what should happen and issues the
+        corresponding command to each owner.
+      </p>
+      <p>
+        The one shared startup detail is the Wayland display name passed to a widget process. After launch, the widget
+        identifies itself to the compositor with its canonical instance key. Per-widget spawn, restart, and reconnect
+        no longer require manager–compositor handoffs.
+      </p>
+    </div>
+    <div class="cards">
+      <article class="card">
+        <span class="owner">coordinator</span>
+        <h3>Own policy and ordering</h3>
+        <p>Interpret configuration changes, gate initial spawn on compositor receipts, and direct stop, upgrade, and shutdown transitions.</p>
+      </article>
+      <article class="card">
+        <span class="owner">widget manager</span>
+        <h3>Own child processes</h3>
+        <p>Spawn, stop, observe, and restart widget children. Keep restart backoff and pending work local to process supervision.</p>
+      </article>
+      <article class="card">
+        <span class="owner">compositor</span>
+        <h3>Own display state</h3>
+        <p>Register instance keys, accept or reject connections, retain configuration, and attach Wayland clients and surfaces.</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Initial start</p>
+      <h2>Registration is complete before spawn</h2>
+    </div>
+    <div class="flow" aria-label="Initial widget start sequence">
+      <div class="flow-step"><span class="label">1 · prepare</span><p>Validate config, package identity, and viewport; obtain a start permit from the manager.</p></div>
+      <div class="flow-step"><span class="label">2 · register</span><p>Create or update the compositor record for the canonical widget instance key.</p></div>
+      <div class="flow-step"><span class="label">3 · activate</span><p>Mark the instance as accepting connections. Both compositor commands return receipts.</p></div>
+      <div class="flow-step"><span class="label">4 · await</span><p>Wait for both receipts and revalidate that the requested widget is still current.</p></div>
+      <div class="flow-step"><span class="label">5 · spawn</span><p>Spend the permit and ask the manager to launch the child.</p></div>
+    </div>
+    <div class="prose">
+      <p>
+        A compositor error prevents a pointless process spawn. The receipt is an ordering boundary, not data passed to
+        the manager: the coordinator consumes it and independently decides whether the manager may proceed.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Connection identity</p>
+      <h2>The widget announces its instance key, not its PID</h2>
+    </div>
+    <div class="sequence">
+      <div class="sequence-row"><span class="number">1</span><span class="actor">widget child</span><span class="action">Connect to the startup Wayland display and request a widget surface with the canonical instance key.</span></div>
+      <div class="sequence-row"><span class="number">2</span><span class="actor">compositor</span><span class="action">Parse the key and accept it only when the corresponding record exists and is active.</span></div>
+      <div class="sequence-row"><span class="number">3</span><span class="actor">compositor</span><span class="action">Attach the client and surfaces, replacing an obsolete client for the same instance when necessary.</span></div>
+      <div class="sequence-row"><span class="number">4</span><span class="actor">compositor</span><span class="action">Send retained parameters, credentials, viewport, and lifecycle state to the newly attached client.</span></div>
+    </div>
+    <div class="prose">
+      <p>
+        There is no pending PID connection table, peer-credential lookup, generation handoff, or manager event stream.
+        The compositor resolves the announced key directly against the registration it already owns.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Crash recovery</p>
+      <h2>Respawn stays inside the manager</h2>
+    </div>
+    <div class="states" aria-label="Widget manager restart states">
+      <div class="state run">Running</div><div class="arrow">child exits →</div>
+      <div class="state wait">PendingRestart</div><div class="arrow">timer + registry →</div>
+      <div class="state run">Running</div>
+    </div>
+    <div class="prose">
+      <p>
+        The manager observes child exit, schedules backoff, rereads the package registry, and launches the replacement.
+        The compositor registration remains active, so the replacement reconnects under the same instance key and
+        receives the retained state. The coordinator is not on this per-crash path.
+      </p>
+      <p>
+        If the WASM host dies, its control connections close and all affected thin processes exit. The manager applies
+        the same supervision independently to each instance; each replacement reconnects directly to the compositor.
+      </p>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Configuration changes</p>
+      <h2>One decision, commands to both owners</h2>
+    </div>
+    <div class="cards">
+      <article class="card">
+        <span class="owner">credentials</span>
+        <h3>Apply before retry</h3>
+        <p>The coordinator waits for the compositor credential receipt. Only a changed result triggers the manager to retry that instance if it is pending.</p>
+      </article>
+      <article class="card">
+        <span class="owner">package registry</span>
+        <h3>Wake pending starts</h3>
+        <p>A registry refresh is reported directly to the manager, which rechecks pending instances against the packages it uses to launch them.</p>
+      </article>
+      <article class="card">
+        <span class="owner">delete or replace</span>
+        <h3>Stop both sides</h3>
+        <p>The coordinator deactivates or unregisters compositor state and separately asks the manager to stop the process.</p>
+      </article>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Global transitions</p>
+      <h2>Upgrade and shutdown close the start gate</h2>
+    </div>
+    <div class="sequence">
+      <div class="sequence-row"><span class="number">1</span><span class="actor">coordinator</span><span class="action">Pause or shut down the manager so no new child can cross the start boundary.</span></div>
+      <div class="sequence-row"><span class="number">2</span><span class="actor">coordinator</span><span class="action">Tell the compositor to deactivate retained widget instances and wait for the relevant work to finish.</span></div>
+      <div class="sequence-row"><span class="number">3</span><span class="actor">coordinator</span><span class="action">On resume, prepare compositor registrations and return the manager to running only for configuration that is still valid.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Review invariants</p>
+      <h2>What must remain true</h2>
+    </div>
+    <div class="invariants">
+      <div class="invariant"><strong>No PID routing</strong><span>Widget identity at the Wayland boundary is the canonical instance key.</span></div>
+      <div class="invariant"><strong>No manager–compositor channel</strong><span>Neither component sends lifecycle results or events to the other.</span></div>
+      <div class="invariant"><strong>Receipts gate initial spawn</strong><span>Register and activate must succeed before the process is useful.</span></div>
+      <div class="invariant"><strong>Crash recovery is local</strong><span>The manager can respawn without coordinator or compositor round trips.</span></div>
+      <div class="invariant"><strong>Changed credentials target retries</strong><span>Only an applied change wakes the matching pending instance.</span></div>
+      <div class="invariant"><strong>Modes prevent races</strong><span>Pause and shutdown invalidate starts before broader transitions proceed.</span></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="section-head">
+      <p class="eyebrow">Code map</p>
+      <h2>Where the responsibilities live</h2>
+    </div>
+    <dl class="code-map">
+      <div><dt>bmc/src/widget/coordinator.rs</dt><dd>Configuration policy, compositor receipts, and commands to both lifecycle owners.</dd></div>
+      <div><dt>bmc/src/widget/manager.rs</dt><dd>Child state, start permits, exit observation, restart backoff, and manager modes.</dd></div>
+      <div><dt>bmc/src/compositor.rs</dt><dd>The compositor command boundary and receipt types.</dd></div>
+      <div><dt>bmc-openwrt/src/compositor/protocol/state.rs</dt><dd>Registered instances, connection mode, retained data, and client attachment.</dd></div>
+      <div><dt>bmc-openwrt/src/compositor/protocol/dispatch.rs</dt><dd>Direct instance-key Wayland surface requests.</dd></div>
+      <div><dt>bmc-tui/bmc_tui/procedures/widget_restart_e2e.py</dt><dd>Device-level proof that baseline, thin-process, and host-process recovery reconnect to the compositor.</dd></div>
+    </dl>
+  </section>
+
+  <footer>Architecture snapshot for the BDK-406 widget supervision and BDK-747 instance-announcement work.</footer>
+</main>
+</body>
+</html>
