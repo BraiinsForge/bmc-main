@@ -223,10 +223,10 @@ pub fn start() {
     reconcile();
 }
 
-/// Re-fetch the per-driver resource after the operator picks
-/// another driver; its URL carries the slug,
-/// so the held payload is stale the moment the param changes.
+/// Drop the held card and re-fetch: the reply may never come, and the
+/// old person's card must not sit under the new setting until it does.
 pub fn invalidate_driver() {
+    DATA.with(|data| data.borrow_mut().driver = None);
     invalidate(Resource::Driver);
 }
 
