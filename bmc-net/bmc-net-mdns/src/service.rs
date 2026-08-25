@@ -113,8 +113,21 @@ impl MdnsService {
     /// notification costs nothing; `shutdown` drives the goodbye directly
     /// because on reboot the process is killed inside the web server's drain
     /// window and the goodbye must not wait for it.
-    pub fn spawn(self, enabled: watch::Receiver<bool>, shutdown: CancellationToken) {
-        tokio::spawn(self.run(enabled, shutdown));
+    ///
+    /// The goodbye is emitted only after cancellation, on this task — so a
+    /// caller that lets its runtime drop right after cancelling kills the task
+    /// mid-goodbye and leaves peers with a stale advertisement until its
+    /// records age out. Await the returned handle to order the packets before
+    /// process exit; bound the wait, as the goodbye path itself waits on the
+    /// backend for up to a few seconds (see the crate's shutdown timeouts) and
+    /// a reconcile step in flight can add its own hostname read on top.
+    #[must_use]
+    pub fn spawn(
+        self,
+        enabled: watch::Receiver<bool>,
+        shutdown: CancellationToken,
+    ) -> tokio::task::JoinHandle<()> {
+        tokio::spawn(self.run(enabled, shutdown))
     }
 
     /// A dropped enablement sender means the application is tearing down, so
@@ -275,5 +288,27 @@ mod tests {
     #[test]
     fn missing_mac_yields_no_suffix() {
         assert_eq!(suffix_from_mac(None), "");
+    }
+
+    /// The task must be joinable, or a caller has no way to order the goodbye
+    /// before process exit. Kept disabled so the assertion is about the handle
+    /// alone: with an advertisement actually on the air the join would depend
+    /// on a real responder and on link timing.
+    #[tokio::test]
+    async fn awaiting_the_handle_observes_the_task_finishing() {
+        let network = Arc::new(bmc_net::mock::MockNetworkManager::default());
+        let shutdown = CancellationToken::new();
+        let (_enabled_tx, enabled) = watch::channel(false);
+        let handle = MdnsService::new(
+            network,
+            ServiceIdentity {
+                port: 80,
+                txt_values: TxtValues::default(),
+            },
+            Duration::ZERO,
+        )
+        .spawn(enabled, shutdown.clone());
+        shutdown.cancel();
+        handle.await.expect("BUG: mDNS task must not panic");
     }
 }
