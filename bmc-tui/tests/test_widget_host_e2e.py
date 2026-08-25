@@ -52,7 +52,7 @@ def _clock(values: Sequence[float]) -> Iterator[float]:
 
 
 def test_snapshot_parses_typed_processes_and_selects_blockheight() -> None:
-    snapshot = e2e._parse_snapshot(_HEALTHY)
+    snapshot = e2e.parse_snapshot(_HEALTHY)
     assert snapshot.compositor.identity == (10, 100)
     assert snapshot.host.identity == (20, 110)
     assert [thin.widget for thin in snapshot.thins] == ["blockheight", "clock"]
@@ -73,7 +73,7 @@ def test_snapshot_parses_typed_processes_and_selects_blockheight() -> None:
 )
 def test_snapshot_rejects_malformed_or_unhealthy_process_sets(raw: str, message: str) -> None:
     with pytest.raises(ValueError, match=message):
-        e2e._parse_snapshot(raw)
+        e2e.parse_snapshot(raw)
 
 
 def test_health_deadline_retries_until_expected_inventory_arrives() -> None:
@@ -149,13 +149,13 @@ def test_tracked_clean_gate_accepts_empty_status_and_rejects_changes() -> None:
 
 
 def test_legacy_baseline_requires_host_replacement() -> None:
-    snapshot = e2e._parse_snapshot(_HEALTHY)
+    snapshot = e2e.parse_snapshot(_HEALTHY)
     with pytest.raises(Abort, match="legacy wasm host"):
         e2e._require_baseline_transition(e2e._ProfileGeneration.LEGACY, snapshot, snapshot)
 
 
 def test_legacy_baseline_accepts_host_replacement() -> None:
-    before = e2e._parse_snapshot(_HEALTHY)
+    before = e2e.parse_snapshot(_HEALTHY)
     after = replace(before, host=replace(before.host, pid=21, starttime=130))
     e2e._require_baseline_transition(e2e._ProfileGeneration.LEGACY, before, after)
 
@@ -185,7 +185,7 @@ def test_profile_probe_strips_output_and_propagates_failure() -> None:
 
 @pytest.mark.parametrize("replace_host", [False, True])
 def test_current_baseline_places_no_constraint_on_host_identity(replace_host: bool) -> None:
-    before = e2e._parse_snapshot(_HEALTHY)
+    before = e2e.parse_snapshot(_HEALTHY)
     after = (
         replace(before, host=replace(before.host, pid=21, starttime=130))
         if replace_host
@@ -195,7 +195,7 @@ def test_current_baseline_places_no_constraint_on_host_identity(replace_host: bo
 
 
 def test_current_probe_records_baseline_pass_for_unchanged_host() -> None:
-    snapshot = e2e._parse_snapshot(_HEALTHY)
+    snapshot = e2e.parse_snapshot(_HEALTHY)
     passed: list[str] = []
     generation = e2e._profile_generation(lambda _command: "yes\n")
     e2e._complete_baseline(generation, snapshot, snapshot, passed.append)
@@ -203,7 +203,7 @@ def test_current_probe_records_baseline_pass_for_unchanged_host() -> None:
 
 
 def test_legacy_probe_rejects_unchanged_host_before_recording_pass() -> None:
-    snapshot = e2e._parse_snapshot(_HEALTHY)
+    snapshot = e2e.parse_snapshot(_HEALTHY)
     passed: list[str] = []
     generation = e2e._profile_generation(lambda _command: "no")
     with pytest.raises(Abort, match="legacy wasm host"):
@@ -228,7 +228,7 @@ def test_run_probes_legacy_profile_before_baseline_deploy(
             if command.startswith("if test -x "):
                 events.append("probe")
                 return "no"
-            assert command == e2e._SNAPSHOT_COMMAND
+            assert command == e2e.SNAPSHOT_COMMAND
             events.append("snapshot")
             return _HEALTHY
 
@@ -236,7 +236,7 @@ def test_run_probes_legacy_profile_before_baseline_deploy(
         def __init__(self, root: Path) -> None:
             self.root = root
 
-        def snapshot(self, name: str, _snapshot: e2e._Snapshot) -> None:
+        def snapshot(self, name: str, _snapshot: e2e.Snapshot) -> None:
             events.append(f"snapshot:{name}")
 
         def passed(self, scenario: str) -> None:
@@ -259,7 +259,7 @@ def test_run_probes_legacy_profile_before_baseline_deploy(
         events.append("deploy")
 
     monkeypatch.setattr(e2e, "Device", FakeDevice)
-    monkeypatch.setattr(e2e, "_Evidence", FakeEvidence)
+    monkeypatch.setattr(e2e, "Evidence", FakeEvidence)
     monkeypatch.setattr(e2e, "_VariantWorktrees", FakeVariants)
     monkeypatch.setattr(e2e, "_real_git", git)
     monkeypatch.setattr(e2e.WidgetHostE2e, "_deploy", deploy)

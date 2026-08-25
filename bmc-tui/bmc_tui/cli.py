@@ -32,6 +32,7 @@ from bmc_tui.procedures.register_server import RegisterServer
 from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
 from bmc_tui.procedures.widget_host_e2e import WidgetHostE2e
+from bmc_tui.procedures.widget_restart_e2e import WidgetRestartE2e
 from bmc_tui.stage import entrypoint
 
 
@@ -47,6 +48,7 @@ def main(
     | ImageFormats
     | E2eSysupgradeFaults
     | WidgetHostE2e
+    | WidgetRestartE2e
     | CheckCredentialEgress
     | RegisterServer,
 ) -> None:

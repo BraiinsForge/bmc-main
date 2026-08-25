@@ -32,6 +32,7 @@ from bmc_tui.procedures.init import Init
 from bmc_tui.procedures.sysupgrade import Sysupgrade
 from bmc_tui.procedures.upgrade_e2e import UpgradeE2e
 from bmc_tui.procedures.widget_host_e2e import WidgetHostE2e
+from bmc_tui.procedures.widget_restart_e2e import WidgetRestartE2e
 
 
 def test_init_parses_args() -> None:
@@ -97,3 +98,8 @@ def test_widget_host_e2e_parses_args() -> None:
     assert cmd.device == "h"
     assert cmd.profile == "debug"
     assert cmd.max_jobs == 2
+
+
+def test_widget_restart_e2e_parses_args() -> None:
+    cmd = tyro.cli(WidgetRestartE2e, args=["--device", "h"])
+    assert cmd.device == "h"

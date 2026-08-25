@@ -49,10 +49,11 @@ _PROCESS_FIELDS = 5
 _ONE_RESTART_PID_COUNT = 2
 _TRACKED_STATUS = ("status", "--porcelain", "--untracked-files=no")
 _COMPOSITOR_PID_FILE = "/var/run/bmc-compositor.pid"
-_SNAPSHOT_COMMAND = r"""
+PROCESS_STARTTIME_FIELD_AFTER_COMM = 20
+SNAPSHOT_COMMAND = rf"""
 for name in bmc-openwrt bmc-wasm-host bmc-wasm-thin; do
   for pid in $(pidof "$name" 2>/dev/null); do
-    start=$(awk '{print $22}' /proc/$pid/stat)
+    start=$(sed 's/.*) //' /proc/$pid/stat | awk '{{print ${PROCESS_STARTTIME_FIELD_AFTER_COMM}}}')
     exe=$(readlink /proc/$pid/exe)
     cmd=$(tr '\000' ' ' < /proc/$pid/cmdline)
     printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$pid" "$start" "$exe" "$cmd"
@@ -73,7 +74,7 @@ class _ProfileGeneration(StrEnum):
 
 
 @dataclass(frozen=True)
-class _Process:
+class Process:
     role: _Role
     pid: int
     starttime: int
@@ -101,13 +102,13 @@ class _Process:
 
 
 @dataclass(frozen=True)
-class _Snapshot:
-    compositor: _Process
-    host: _Process
-    thins: tuple[_Process, ...]
+class Snapshot:
+    compositor: Process
+    host: Process
+    thins: tuple[Process, ...]
 
     @property
-    def blockheight(self) -> tuple[_Process, ...]:
+    def blockheight(self) -> tuple[Process, ...]:
         return tuple(thin for thin in self.thins if thin.widget == _BLOCKHEIGHT)
 
     @property
@@ -115,8 +116,8 @@ class _Snapshot:
         return Counter(thin.widget for thin in self.thins)
 
 
-def _parse_snapshot(raw: str) -> _Snapshot:
-    found: dict[_Role, list[_Process]] = {role: [] for role in _Role}
+def parse_snapshot(raw: str) -> Snapshot:
+    found: dict[_Role, list[Process]] = {role: [] for role in _Role}
     for line in raw.splitlines():
         fields = line.split("\t", 4)
         if len(fields) != _PROCESS_FIELDS:
@@ -124,7 +125,7 @@ def _parse_snapshot(raw: str) -> _Snapshot:
         role_text, pid, starttime, executable, cmdline = fields
         try:
             role = _Role(role_text)
-            process = _Process(
+            process = Process(
                 role=role,
                 pid=int(pid),
                 starttime=int(starttime),
@@ -141,7 +142,7 @@ def _parse_snapshot(raw: str) -> _Snapshot:
         raise ValueError(f"expected one wasm host, found {len(found[_Role.HOST])}")
     if not found[_Role.THIN]:
         raise ValueError("expected at least one wasm thin")
-    return _Snapshot(
+    return Snapshot(
         compositor=found[_Role.COMPOSITOR][0],
         host=found[_Role.HOST][0],
         thins=tuple(found[_Role.THIN]),
@@ -155,12 +156,12 @@ def _wait_healthy(
     expected_thins: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
     clock: Callable[[], float] = time.monotonic,
-) -> _Snapshot:
+) -> Snapshot:
     deadline = clock() + timeout
     failure = "no process snapshot"
     while True:
         try:
-            snapshot = _parse_snapshot(read())
+            snapshot = parse_snapshot(read())
             if expected_thins is not None and len(snapshot.thins) != expected_thins:
                 raise ValueError(
                     f"expected {expected_thins} wasm thins, found {len(snapshot.thins)}"
@@ -278,7 +279,7 @@ def _profile_generation(read: Callable[[str], str]) -> _ProfileGeneration:
 
 
 def _require_baseline_transition(
-    generation: _ProfileGeneration, before: _Snapshot, after: _Snapshot
+    generation: _ProfileGeneration, before: Snapshot, after: Snapshot
 ) -> None:
     if generation == _ProfileGeneration.LEGACY:
         require(
@@ -289,8 +290,8 @@ def _require_baseline_transition(
 
 def _complete_baseline(
     generation: _ProfileGeneration,
-    before: _Snapshot,
-    after: _Snapshot,
+    before: Snapshot,
+    after: Snapshot,
     passed: Callable[[str], None],
 ) -> None:
     _require_baseline_transition(generation, before, after)
@@ -401,16 +402,16 @@ def _finish(
             cleanup()
 
 
-def _process_payload(process: _Process) -> dict[str, object]:
+def _process_payload(process: Process) -> dict[str, object]:
     return asdict(process)
 
 
-class _Evidence:
+class Evidence:
     def __init__(self, root: Path) -> None:
         self.root = root
         self.root.mkdir(parents=True, exist_ok=True)
 
-    def snapshot(self, name: str, snapshot: _Snapshot) -> None:
+    def snapshot(self, name: str, snapshot: Snapshot) -> None:
         payload = {
             "compositor": _process_payload(snapshot.compositor),
             "host": _process_payload(snapshot.host),
@@ -448,12 +449,12 @@ class WidgetHostE2e:
             ).run()
 
     @staticmethod
-    def _snapshot(dev: Device, expected_thins: int | None = None) -> _Snapshot:
-        return _wait_healthy(lambda: dev.read(_SNAPSHOT_COMMAND), expected_thins=expected_thins)
+    def _snapshot(dev: Device, expected_thins: int | None = None) -> Snapshot:
+        return _wait_healthy(lambda: dev.read(SNAPSHOT_COMMAND), expected_thins=expected_thins)
 
     def _deploy_traced(
         self, dev: Device, cwd: Path, packages: Sequence[str]
-    ) -> tuple[_Snapshot, tuple[frozenset[int], ...]]:
+    ) -> tuple[Snapshot, tuple[frozenset[int], ...]]:
         before = self._snapshot(dev)
         sampler = _PidSampler(dev)
         sampler.start()
@@ -465,15 +466,15 @@ class WidgetHostE2e:
         return after, _complete_trace(sampler.samples, after.compositor.pid)
 
     @staticmethod
-    def _require_inventory(reference: _Snapshot, current: _Snapshot) -> None:
+    def _require_inventory(reference: Snapshot, current: Snapshot) -> None:
         require(
             current.inventory == reference.inventory,
             f"widget inventory changed: {reference.inventory} -> {current.inventory}",
         )
 
     def _baseline(
-        self, dev: Device, repo: Path, evidence: _Evidence, pre_feature: _Snapshot
-    ) -> _Snapshot:
+        self, dev: Device, repo: Path, evidence: Evidence, pre_feature: Snapshot
+    ) -> Snapshot:
         self._deploy(repo, ())
         baseline = self._snapshot(dev, len(pre_feature.thins))
         require(bool(baseline.blockheight), "baseline has no Blockheight instance")
@@ -481,8 +482,8 @@ class WidgetHostE2e:
         return baseline
 
     def _widget_only(
-        self, dev: Device, path: Path, evidence: _Evidence, baseline: _Snapshot
-    ) -> _Snapshot:
+        self, dev: Device, path: Path, evidence: Evidence, baseline: Snapshot
+    ) -> Snapshot:
         widget, trace = self._deploy_traced(dev, path, _VARIANTS[0].packages)
         require(
             widget.compositor.identity == baseline.compositor.identity,
@@ -520,10 +521,10 @@ class WidgetHostE2e:
         self,
         dev: Device,
         path: Path,
-        evidence: _Evidence,
-        baseline: _Snapshot,
-        widget: _Snapshot,
-    ) -> _Snapshot:
+        evidence: Evidence,
+        baseline: Snapshot,
+        widget: Snapshot,
+    ) -> Snapshot:
         host, trace = self._deploy_traced(dev, path, _VARIANTS[1].packages)
         self._require_inventory(baseline, host)
         require(
@@ -555,9 +556,9 @@ class WidgetHostE2e:
         self,
         dev: Device,
         path: Path,
-        widget: _Snapshot,
-        host: _Snapshot,
-    ) -> tuple[_Snapshot, tuple[frozenset[int], ...]]:
+        widget: Snapshot,
+        host: Snapshot,
+    ) -> tuple[Snapshot, tuple[frozenset[int], ...]]:
         combined, trace = self._deploy_traced(dev, path, _VARIANTS[2].packages)
         self._require_inventory(host, combined)
         require(
@@ -588,9 +589,9 @@ class WidgetHostE2e:
     def _crash_respawn(
         self,
         dev: Device,
-        evidence: _Evidence,
-        baseline: _Snapshot,
-        combined: _Snapshot,
+        evidence: Evidence,
+        baseline: Snapshot,
+        combined: Snapshot,
     ) -> None:
         sampler = _PidSampler(dev)
         sampler.start()
@@ -624,7 +625,7 @@ class WidgetHostE2e:
         variants = _VariantWorktrees(repo, _TMP / "worktrees")
         paths = variants.create()
         dev = Device(self.device)
-        evidence = _Evidence(_TMP / time.strftime("run-%Y%m%d-%H%M%S"))
+        evidence = Evidence(_TMP / time.strftime("run-%Y%m%d-%H%M%S"))
         touched = False
 
         def scenarios() -> None:
