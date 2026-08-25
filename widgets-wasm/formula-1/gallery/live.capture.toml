@@ -14,7 +14,7 @@ scene = "bmc_gallery::f1::Live Race"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "live-race-large"
@@ -22,7 +22,7 @@ scene = "bmc_gallery::f1::Live Race"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "live-race-medium"
@@ -30,7 +30,7 @@ scene = "bmc_gallery::f1::Live Race"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "live-race-small"
@@ -38,7 +38,7 @@ scene = "bmc_gallery::f1::Live Race"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 # Qualifying's widest frame splits the whole field into two columns, which
 # no other board does — so every size earns a shot here.
@@ -48,7 +48,7 @@ scene = "bmc_gallery::f1::Live Quali"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "live-quali-large"
@@ -56,7 +56,7 @@ scene = "bmc_gallery::f1::Live Quali"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "live-quali-medium"
@@ -64,7 +64,7 @@ scene = "bmc_gallery::f1::Live Quali"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "live-quali-small"
@@ -72,7 +72,7 @@ scene = "bmc_gallery::f1::Live Quali"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 [[shot]]
 name = "live-practice-full"
@@ -80,7 +80,7 @@ scene = "bmc_gallery::f1::Live Practice"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "live-practice-large"
@@ -88,7 +88,7 @@ scene = "bmc_gallery::f1::Live Practice"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "live-practice-medium"
@@ -96,7 +96,7 @@ scene = "bmc_gallery::f1::Live Practice"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "live-practice-small"
@@ -104,7 +104,7 @@ scene = "bmc_gallery::f1::Live Practice"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 [[shot]]
 name = "live-idle-full"
@@ -112,7 +112,7 @@ scene = "bmc_gallery::f1::Live Idle"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "live-idle-small"
@@ -120,4 +120,55 @@ scene = "bmc_gallery::f1::Live Idle"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
+
+# The Mini Miner screens, whose widths sit inside a band rather than on the
+# design size it was drawn at. Qualifying seats the whole field, so it is
+# the board that fits the least.
+[[shot]]
+name = "live-race-bmm"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-race-bmm-narrow"
+scene = "bmc_gallery::f1::Live Race"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "live-quali-bmm"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-quali-bmm-narrow"
+scene = "bmc_gallery::f1::Live Quali"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "live-practice-bmm"
+scene = "bmc_gallery::f1::Live Practice"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "live-idle-bmm"
+scene = "bmc_gallery::f1::Live Idle"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"

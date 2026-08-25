@@ -17,7 +17,7 @@ scene = "bmc_gallery::f1::Standings"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "standings-large"
@@ -25,7 +25,7 @@ scene = "bmc_gallery::f1::Standings"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "standings-medium"
@@ -33,7 +33,7 @@ scene = "bmc_gallery::f1::Standings"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "standings-small"
@@ -41,7 +41,7 @@ scene = "bmc_gallery::f1::Standings"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 [[shot]]
 name = "standings-empty-full"
@@ -49,7 +49,7 @@ scene = "bmc_gallery::f1::Standings Empty"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "standings-empty-small"
@@ -57,7 +57,7 @@ scene = "bmc_gallery::f1::Standings Empty"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 [[shot]]
 name = "standings-season-start-full"
@@ -65,7 +65,7 @@ scene = "bmc_gallery::f1::Standings Season Start"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "standings-season-start-small"
@@ -73,7 +73,7 @@ scene = "bmc_gallery::f1::Standings Season Start"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 # The longest names and largest scores the columns have to seat, at every
 # size — the shots most likely to catch a column that stopped fitting.
@@ -83,7 +83,7 @@ scene = "bmc_gallery::f1::Standings Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "standings-widest-large"
@@ -91,7 +91,7 @@ scene = "bmc_gallery::f1::Standings Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "standings-widest-medium"
@@ -99,7 +99,7 @@ scene = "bmc_gallery::f1::Standings Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "standings-widest-small"
@@ -107,4 +107,38 @@ scene = "bmc_gallery::f1::Standings Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
+
+# The Mini Miner screens, whose widths sit inside a band rather than on the
+# design size it was drawn at.
+[[shot]]
+name = "standings-bmm"
+scene = "bmc_gallery::f1::Standings"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "standings-bmm-narrow"
+scene = "bmc_gallery::f1::Standings"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "standings-widest-bmm"
+scene = "bmc_gallery::f1::Standings Widest"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "standings-widest-bmm-narrow"
+scene = "bmc_gallery::f1::Standings Widest"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"

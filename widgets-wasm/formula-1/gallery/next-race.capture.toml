@@ -11,7 +11,7 @@ scene = "bmc_gallery::f1::Next Race"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "next-race-large"
@@ -19,7 +19,7 @@ scene = "bmc_gallery::f1::Next Race"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "next-race-medium"
@@ -27,7 +27,7 @@ scene = "bmc_gallery::f1::Next Race"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "next-race-small"
@@ -35,7 +35,7 @@ scene = "bmc_gallery::f1::Next Race"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 [[shot]]
 name = "next-race-unavailable-full"
@@ -43,7 +43,7 @@ scene = "bmc_gallery::f1::Next Race Unavailable"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "next-race-unavailable-small"
@@ -51,7 +51,7 @@ scene = "bmc_gallery::f1::Next Race Unavailable"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 [[shot]]
 name = "next-race-sparse-full"
@@ -59,7 +59,7 @@ scene = "bmc_gallery::f1::Next Race Sparse"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "next-race-sparse-small"
@@ -67,7 +67,7 @@ scene = "bmc_gallery::f1::Next Race Sparse"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 # A sprint weekend's longest names, which seat the most session rows.
 [[shot]]
@@ -76,7 +76,7 @@ scene = "bmc_gallery::f1::Next Race Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "next-race-widest-large"
@@ -84,7 +84,7 @@ scene = "bmc_gallery::f1::Next Race Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "next-race-widest-medium"
@@ -92,7 +92,7 @@ scene = "bmc_gallery::f1::Next Race Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "next-race-widest-small"
@@ -100,7 +100,7 @@ scene = "bmc_gallery::f1::Next Race Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 # The date format that lengthens the header's range — the one layout the
 # other shots never exercise, since they all take the default separator.
@@ -110,5 +110,39 @@ scene = "bmc_gallery::f1::Next Race Widest"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 Dates = "12/31/2026"
+
+# The Mini Miner screens, whose widths sit inside a band rather than on the
+# design size it was drawn at.
+[[shot]]
+name = "next-race-bmm"
+scene = "bmc_gallery::f1::Next Race"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "next-race-bmm-narrow"
+scene = "bmc_gallery::f1::Next Race"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "next-race-widest-bmm"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "next-race-widest-bmm-narrow"
+scene = "bmc_gallery::f1::Next Race Widest"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"

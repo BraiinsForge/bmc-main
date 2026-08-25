@@ -15,7 +15,7 @@ scene = "bmc_gallery::f1::Driver"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "driver-large"
@@ -23,7 +23,7 @@ scene = "bmc_gallery::f1::Driver"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "driver-medium"
@@ -31,7 +31,7 @@ scene = "bmc_gallery::f1::Driver"
 frames = 24
 
 [shot.knobs]
-Size = "Medium"
+Size = "Deck medium"
 
 [[shot]]
 name = "driver-small"
@@ -39,7 +39,7 @@ scene = "bmc_gallery::f1::Driver"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 # A rookie the upstream knows least about, so the rows that fall back to
 # `N/A` are the ones on show.
@@ -49,7 +49,7 @@ scene = "bmc_gallery::f1::Driver Sparse"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "driver-sparse-large"
@@ -57,7 +57,7 @@ scene = "bmc_gallery::f1::Driver Sparse"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 
 [[shot]]
 name = "driver-unavailable-full"
@@ -65,7 +65,7 @@ scene = "bmc_gallery::f1::Driver Unavailable"
 frames = 24
 
 [shot.knobs]
-Size = "Fullscreen"
+Size = "Deck fullscreen"
 
 [[shot]]
 name = "driver-unavailable-small"
@@ -73,7 +73,7 @@ scene = "bmc_gallery::f1::Driver Unavailable"
 frames = 24
 
 [shot.knobs]
-Size = "Small"
+Size = "Deck small"
 
 # Imperial units and a 12-hour clock, which the stat rows format against —
 # the widest values the driver frames have to seat.
@@ -83,6 +83,32 @@ scene = "bmc_gallery::f1::Driver"
 frames = 24
 
 [shot.knobs]
-Size = "Large"
+Size = "Deck large"
 Units = "Imperial"
 Clock = "12-hour"
+
+# The Mini Miner screens, whose widths sit inside a band rather than on the
+# design size it was drawn at.
+[[shot]]
+name = "driver-bmm"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+
+[[shot]]
+name = "driver-bmm-narrow"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "BMM Narrow"
+
+[[shot]]
+name = "driver-sparse-bmm"
+scene = "bmc_gallery::f1::Driver Sparse"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"

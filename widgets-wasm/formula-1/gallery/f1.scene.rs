@@ -22,17 +22,18 @@
 //! Every scene shows all four design sizes as stacked stages.
 
 use bmc_gallery::prelude::*;
-use formula_1::model::SizeBucket;
+use formula_1::model::{SizeBucket, size_bucket};
 use formula_1::screens::{driver, fixtures, live, next_race, standings};
 
 scene_meta! { title: "Widgets / Formula 1" }
 
-const BUCKETS: [(SizeBucket, &str); 4] = [
-    (SizeBucket::Full, "Fullscreen"),
-    (SizeBucket::Large, "Large"),
-    (SizeBucket::Medium, "Medium"),
-    (SizeBucket::Small, "Small"),
-];
+/// The device frames this widget is staged in: every one the gallery knows
+/// of, less the round face, which the manifest does not admit.
+fn viewports() -> impl Iterator<Item = DeviceViewport> {
+    DEVICE_VIEWPORTS
+        .into_iter()
+        .filter(|viewport| !viewport.size.is_round())
+}
 
 /// The artwork the scenes draw with, kept here rather than in the widget.
 /// The gallery alone compiles this file, so a sample image kept here has
@@ -107,23 +108,16 @@ fn seed_images() {
     }
 }
 
-/// Which design size to stage, `None` for every one of them.
+/// Which viewport to stage, as an index into [`viewports`],
+/// `None` for every one of them.
 ///
-/// Stacking all four is what a scene is worth looking at for,
+/// Stacking them all is what a scene is worth looking at for,
 /// so that is the default; a capture recipe pins one
-/// and gets a frame per shot rather than a column of four.
-fn only_size(ctx: &mut SceneCtx) -> Option<SizeBucket> {
-    match ctx.select(
-        "Size",
-        &["All", "Fullscreen", "Large", "Medium", "Small"],
-        0,
-    ) {
-        1 => Some(SizeBucket::Full),
-        2 => Some(SizeBucket::Large),
-        3 => Some(SizeBucket::Medium),
-        4 => Some(SizeBucket::Small),
-        _ => None,
-    }
+/// and gets a frame per shot rather than a column of six.
+fn only_size(ctx: &mut SceneCtx) -> Option<usize> {
+    let mut labels = vec!["All"];
+    labels.extend(viewports().map(|viewport| viewport.label));
+    ctx.select("Size", &labels, 0).checked_sub(1)
 }
 
 /// Each design size on its own stage, under whichever settings the knobs
@@ -141,13 +135,14 @@ fn size_stages<Build: FnOnce() -> Node>(
     let only = only_size(ctx);
     deck_settings(ctx);
     seed_images();
-    for (bucket, label) in BUCKETS {
-        if only.is_some_and(|wanted| wanted != bucket) {
+    for (index, viewport) in viewports().enumerate() {
+        if only.is_some_and(|wanted| wanted != index) {
             continue;
         }
-        let build = view(bucket);
-        ui.heading(label);
-        ctx.node_stage(ui, bucket.design_size(), build);
+        let (width, height) = viewport.pixels();
+        let build = view(size_bucket(width, height));
+        ui.heading(viewport.label);
+        ctx.node_stage(ui, viewport.size, build);
     }
 }
 
@@ -244,14 +239,16 @@ fn live_idle(ctx: &mut SceneCtx, ui: &mut Ui) {
     let only = only_size(ctx);
     deck_settings(ctx);
     seed_images();
-    for (bucket, label) in BUCKETS {
-        if only.is_some_and(|wanted| wanted != bucket) {
+    for (index, viewport) in viewports().enumerate() {
+        if only.is_some_and(|wanted| wanted != index) {
             continue;
         }
-        ui.heading(label);
+        let (width, height) = viewport.pixels();
+        let bucket = size_bucket(width, height);
+        ui.heading(viewport.label);
         ui.label("race, quali, practice");
         for view in [live::race_view, live::quali_view, live::practice_view] {
-            ctx.node_stage(ui, bucket.design_size(), move || {
+            ctx.node_stage(ui, viewport.size, move || {
                 view(&fixtures::live_idle(bucket))
             });
         }

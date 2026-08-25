@@ -49,13 +49,16 @@ impl SizeBucket {
     }
 }
 
-/// Which frame a viewport falls in. Thresholds sit between neighbouring
-/// design widths so each viewport snaps to its own band.
+/// Which frame a viewport falls in.
+///
+/// A box narrower than the medium design takes the small frame rather than
+/// the nearest band: the wider frames seat a second column, and one drawn
+/// for 638 px does not fit a Mini Miner's 480.
 #[must_use]
 pub fn size_bucket(width: u32, height: u32) -> SizeBucket {
     if width >= 900 {
         SizeBucket::Full
-    } else if width <= 450 {
+    } else if width < 638 {
         SizeBucket::Small
     } else if height <= 330 {
         SizeBucket::Medium
