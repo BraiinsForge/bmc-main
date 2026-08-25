@@ -29,6 +29,9 @@ NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "
 export FORCE_COLOR := "1"
 # Default tracing filter for `just wasm::dev` and friends; overridable by the caller's env.
 export RUST_LOG := env('RUST_LOG', 'bmc_wasm_runtime=debug,testbed=debug,bmc_gallery=info')
+# The package `cache-dir` configs alone still leave part of ruff's cache in a
+# cwd `.ruff_cache`; only the env var redirects all of it into the scratch dir.
+export RUFF_CACHE_DIR := justfile_directory() / ".tmp/ruff_cache"
 
 [private]
 default:

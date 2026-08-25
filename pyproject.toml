@@ -16,6 +16,7 @@ dev = [
 ]
 
 [tool.pytest.ini_options]
+cache_dir = ".tmp/pytest_cache"
 # importlib mode keeps the two same-named `tests` dirs from colliding.
 addopts = "--import-mode=importlib --cov --cov-report=term-missing --cov-report=xml"
 testpaths = [

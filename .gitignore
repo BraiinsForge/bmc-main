@@ -4,9 +4,7 @@ result**
 
 # Local scratch dirs
 .tmp
-.cache/
 .ai/scratch/
-.tmp/
 
 # AI
 .claude/*.local.*
@@ -14,10 +12,6 @@ result**
 
 # Per-user secrets (testbed --secrets)
 secrets.local.json
-
-# Scratch areas
-.ai/scratch/
-.cache/
 
 # IDE
 .idea

@@ -67,9 +67,9 @@ testbed WIDGET ARGS="":
     name=$({{ dir }}/tools/widget_root.py --dir {{ WIDGET }})
     target=$({{ target_dir_tool }} "$root")
     wasm_file="$target/{{ wasm_target }}/debug/$(echo "$name" | tr - _).wasm"
-    # Per-widget dev blob cache at the repo root (git-ignored), easy to find and
+    # Per-widget dev blob cache in the repo scratch dir, easy to find and
     # clear, so history survives a hot rebuild.
-    cache_dir="{{ parent_directory(dir) }}/.cache/testbed/$name"
+    cache_dir="{{ parent_directory(dir) }}/.tmp/testbed-cache/$name"
     mkdir -p "$cache_dir"
     exec cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --cache-dir "$cache_dir" {{ ARGS }}
 
