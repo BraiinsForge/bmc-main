@@ -455,3 +455,29 @@ fn register(
     daemon.register(info)?;
     Ok(fullname)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const FULLNAME: &str = "miner-a._http._tcp.local.";
+    const EFFECTIVE: &str = "miner-a";
+
+    #[test]
+    fn owns_matches_the_instance_and_host_records() {
+        assert!(owns_name(FULLNAME, EFFECTIVE, FULLNAME));
+        assert!(owns_name(FULLNAME, EFFECTIVE, "miner-a.local."));
+    }
+
+    #[test]
+    fn owns_rejects_other_names() {
+        assert!(!owns_name(FULLNAME, EFFECTIVE, "miner-b._http._tcp.local."));
+        assert!(!owns_name(FULLNAME, EFFECTIVE, "miner-b.local."));
+        // A report for the name this handle was renamed away from must not
+        // pass once the recorded names have moved on.
+        assert!(!owns_name("miner-b._http._tcp.local.", "miner-b", FULLNAME));
+        // The host record must be fully qualified.
+        assert!(!owns_name(FULLNAME, EFFECTIVE, "miner-a.local"));
+        assert!(!owns_name(FULLNAME, EFFECTIVE, "miner-a"));
+    }
+}

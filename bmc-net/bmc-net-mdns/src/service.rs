@@ -416,3 +416,37 @@ fn suffix_from_mac(mac: Option<MacAddr>) -> String {
     let octets: Vec<&str> = text.split(MacAddr::DELIMITER).collect();
     octets[octets.len().saturating_sub(SUFFIX_OCTETS)..].concat()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Platforms that default mDNS on use a zero jitter bound, so the
+    /// degenerate range must sample rather than panic.
+    #[test]
+    fn zero_boot_jitter_samples_zero() {
+        for _ in 0..100 {
+            assert_eq!(sample_boot_jitter(Duration::ZERO), Duration::ZERO);
+        }
+    }
+
+    /// The device measured for BOS-4004 reports MAC `1a:94:fe:18:ba:7a` and a
+    /// default hostname of `miner-18ba7a`, so the conflict suffix has to come
+    /// out as the same `18ba7a` the platform already derived.
+    #[test]
+    fn suffix_matches_the_platform_hostname_convention() {
+        let mac = MacAddr::from([0x1a, 0x94, 0xfe, 0x18, 0xba, 0x7a]);
+        assert_eq!(suffix_from_mac(Some(mac)), "18ba7a");
+    }
+
+    #[test]
+    fn suffix_pads_single_digit_octets() {
+        let mac = MacAddr::from([0, 0, 0, 0x01, 0x02, 0x03]);
+        assert_eq!(suffix_from_mac(Some(mac)), "010203");
+    }
+
+    #[test]
+    fn missing_mac_yields_no_suffix() {
+        assert_eq!(suffix_from_mac(None), "");
+    }
+}

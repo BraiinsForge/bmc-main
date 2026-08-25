@@ -121,3 +121,153 @@ fn slugify(name: &str) -> String {
         slug.to_owned()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const SUFFIX: &str = "3f9c2a";
+
+    #[test]
+    fn short_hostname_is_used_verbatim() {
+        assert_eq!(effective_hostname("Antminer", SUFFIX), "Antminer-3f9c2a");
+        assert_eq!(effective_hostname("miner-a", SUFFIX), "miner-a-3f9c2a");
+    }
+
+    #[test]
+    fn hostname_at_limit_is_kept() {
+        let hostname = "a".repeat(MAX_LABEL_BYTES - SUFFIX.len() - 1);
+        let name = effective_hostname(&hostname, SUFFIX);
+        assert_eq!(name.len(), MAX_LABEL_BYTES);
+        assert_eq!(name, format!("{hostname}-{SUFFIX}"));
+    }
+
+    #[test]
+    fn overlong_hostname_is_slugified_before_trimming() {
+        // Multibyte characters inflate the byte length; slugification alone
+        // brings the name back under the limit.
+        let hostname = format!("{}-Rack-7", "🦀".repeat(20));
+        assert_eq!(effective_hostname(&hostname, SUFFIX), "rack-7-3f9c2a");
+    }
+
+    #[test]
+    fn overlong_slug_is_trimmed_to_fit_with_suffix() {
+        let hostname = "b".repeat(200);
+        let name = effective_hostname(&hostname, SUFFIX);
+        assert_eq!(name.len(), MAX_LABEL_BYTES);
+        assert!(name.ends_with("-3f9c2a"));
+        assert!(name.starts_with("bbb"));
+    }
+
+    #[test]
+    fn trimming_does_not_leave_a_dangling_dash() {
+        let keep = MAX_LABEL_BYTES - SUFFIX.len() - 1;
+        let hostname = format!("{}--{}", "c".repeat(keep - 1), "d".repeat(100));
+        let name = effective_hostname(&hostname, SUFFIX);
+        assert!(!name.contains("--"), "unexpected dash run in {name}");
+        assert!(name.len() <= MAX_LABEL_BYTES);
+    }
+
+    #[test]
+    fn unicode_only_hostname_falls_back_to_stem() {
+        let hostname = "🦀".repeat(30);
+        assert_eq!(effective_hostname(&hostname, SUFFIX), "braiins-3f9c2a");
+    }
+
+    #[test]
+    fn degenerate_inputs_yield_valid_labels() {
+        assert_eq!(effective_hostname("", SUFFIX), "braiins-3f9c2a");
+        assert_eq!(effective_hostname("miner-a", ""), "miner-a");
+        assert_eq!(effective_hostname("", ""), "braiins");
+    }
+
+    #[test]
+    fn multibyte_suffix_is_clamped_to_label_bytes() {
+        let suffix = "é".repeat(60);
+        let name = effective_hostname("miner-a", &suffix);
+        assert!(name.len() <= MAX_LABEL_BYTES, "{} bytes", name.len());
+        assert!(!name.ends_with('-'));
+    }
+
+    #[test]
+    fn slugify_collapses_separator_runs() {
+        assert_eq!(slugify("My  Shiny__Miner!!"), "my-shiny-miner");
+        assert_eq!(slugify("---"), "braiins");
+        assert_eq!(slugify(""), "braiins");
+    }
+
+    #[test]
+    fn dotted_hostname_is_slugified() {
+        assert_eq!(
+            effective_hostname("dot.separated", SUFFIX),
+            "dot-separated-3f9c2a"
+        );
+        assert_eq!(effective_hostname("a.b.c", SUFFIX), "a-b-c-3f9c2a");
+    }
+
+    #[test]
+    fn non_ldh_characters_are_slugified() {
+        assert_eq!(effective_hostname("my@miner", SUFFIX), "my-miner-3f9c2a");
+        assert_eq!(effective_hostname("test_host", SUFFIX), "test-host-3f9c2a");
+        assert_eq!(effective_hostname("rack#7", SUFFIX), "rack-7-3f9c2a");
+    }
+
+    #[test]
+    fn ldh_hostname_is_preserved_verbatim() {
+        assert_eq!(effective_hostname("MyMiner", SUFFIX), "MyMiner-3f9c2a");
+        assert_eq!(effective_hostname("UPPERCASE", SUFFIX), "UPPERCASE-3f9c2a");
+        assert_eq!(effective_hostname("CamelCase", SUFFIX), "CamelCase-3f9c2a");
+    }
+
+    #[test]
+    fn malformed_suffix_is_normalised() {
+        assert_eq!(effective_hostname("miner", "ab.cd.ef"), "miner-ab-cd-ef");
+        assert_eq!(effective_hostname("miner", "abc123-"), "miner-abc123");
+        assert_eq!(effective_hostname("miner", "AB_CD"), "miner-ab-cd");
+        assert_eq!(effective_hostname("miner", "-"), "miner-braiins");
+        assert_eq!(effective_hostname("🦀🦀🦀", "-test-"), "braiins-test");
+    }
+
+    /// The advertised name is used as a DNS label with no further validation,
+    /// so no input may produce one that breaks the LDH or length rules.
+    #[test]
+    fn output_is_always_a_valid_label() {
+        let hostnames = [
+            String::new(),
+            "-".to_owned(),
+            "---".to_owned(),
+            "a".to_owned(),
+            "...".to_owned(),
+            "🦀🦀🦀".to_owned(),
+            "dot.separated".to_owned(),
+            "UPPER".to_owned(),
+            "\0\n\t".to_owned(),
+            "x".repeat(200),
+        ];
+        let suffixes = [
+            String::new(),
+            "-".to_owned(),
+            "abc".to_owned(),
+            "ab.cd".to_owned(),
+            "AB_CD".to_owned(),
+            "abc-".to_owned(),
+            "z".repeat(80),
+        ];
+        for hostname in &hostnames {
+            for suffix in &suffixes {
+                let label = effective_hostname(hostname, suffix);
+                assert!(
+                    is_valid_label(&label),
+                    "invalid label {label:?} from ({hostname:?}, {suffix:?})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn empty_suffix_produces_single_label() {
+        assert_eq!(effective_hostname("normal", ""), "normal");
+        assert_eq!(effective_hostname("dot.separated", ""), "dot-separated");
+        assert_eq!(effective_hostname("with@special", ""), "with-special");
+    }
+}
