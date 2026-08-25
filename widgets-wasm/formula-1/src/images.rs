@@ -191,7 +191,7 @@ pub fn wanted(data: &crate::model::Data) -> Vec<Wanted<'_>> {
     for row in &data.standings {
         want(ImageKind::TeamLogo, &row.team_logo_url);
         want(ImageKind::Flag, &row.country_flag_url);
-        want(ImageKind::Headshot, &row.headshot_url);
+        // No headshot in this view
     }
     images
 }
@@ -281,10 +281,13 @@ mod tests {
         };
 
         let swept: Vec<&str> = wanted(&data).iter().map(|want| want.url.as_str()).collect();
+        assert!(
+            !swept.contains(&"https://x.test/standings-face.png"),
+            "no standings screen draws a headshot, so none is fetched"
+        );
         for expected in [
             "https://x.test/standings-logo.png",
             "https://x.test/standings-flag.png",
-            "https://x.test/standings-face.png",
             "https://x.test/stats-face.png",
             "https://x.test/stats-flag.png",
             "https://x.test/driver-face.png",
