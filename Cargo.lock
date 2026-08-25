@@ -1088,7 +1088,7 @@ dependencies = [
  "deck-settings-v1",
  "deck-upgrade-v1",
  "drm",
- "flume 0.11.1",
+ "flume",
  "futures",
  "get_if_addrs",
  "gpiod",
@@ -3152,15 +3152,6 @@ dependencies = [
 
 [[package]]
 name = "flume"
-version = "0.11.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "da0e4dd2a88388a1f4ccc7c9ce104604dab68d9f408dc34cd45823d5a9069095"
-dependencies = [
- "spin",
-]
-
-[[package]]
-name = "flume"
 version = "0.12.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e139bc46ca777eb5efaf62df0ab8cc5fd400866427e56c68b22e414e53bd3be"
@@ -5082,7 +5073,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ba97b4c886eea3c2823388120d92063c011ac866919ffc4200a0e4b1642a54a5"
 dependencies = [
  "fastrand",
- "flume 0.12.0",
+ "flume",
  "if-addrs",
  "log",
  "mio 1.2.2",

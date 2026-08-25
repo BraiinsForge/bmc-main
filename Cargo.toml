@@ -266,7 +266,7 @@ fdlimit = "0.3.0"
 femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
 file-rotate = "0.7.6"
 flate2 = { version = "1.0.30", default-features = false }
-flume = { version = "0.11.1", default-features = false }
+flume = { version = "0.12.0", default-features = false }
 form_urlencoded = { version = "1.2", default-features = false, features = ["alloc"] }
 formato = "0.3.0"
 fs-err = { version = "3.1.0", features = ["tokio"] }
