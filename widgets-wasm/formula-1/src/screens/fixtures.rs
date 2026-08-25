@@ -868,6 +868,41 @@ pub fn driver(bucket: SizeBucket) -> DriverViewData {
     driver_card(bucket, drivers().into_iter().next())
 }
 
+/// Fills the name and team columns, the two the standings cut.
+#[must_use]
+pub fn standings_ruler(bucket: SizeBucket, value: &str) -> StandingsViewData {
+    let mut view = standings(bucket);
+    for row in &mut view.rows {
+        value.clone_into(&mut row.driver_name);
+        value.clone_into(&mut row.team_name);
+    }
+    view
+}
+
+/// Fills the tyre compounds, the only info value the server
+/// writes as text; the rest are figures this widget formats.
+#[must_use]
+pub fn next_race_ruler(bucket: SizeBucket, value: &str) -> NextRaceViewData {
+    let mut view = next_race(bucket);
+    if let Some(race) = view.race.as_mut() {
+        race.tire_compounds = Some(value.to_owned());
+    }
+    view
+}
+
+/// Fills every text field of the card.
+#[must_use]
+pub fn driver_widest(bucket: SizeBucket, value: &str) -> DriverViewData {
+    let mut driver = drivers()
+        .into_iter()
+        .next()
+        .expect("BUG: fixtures name a driver");
+    value.clone_into(&mut driver.team);
+    value.clone_into(&mut driver.nationality);
+    driver.race_engineer = Some(value.to_owned());
+    driver_card(bucket, Some(driver))
+}
+
 /// A rookie: no engineer named yet, no debut season, nothing won.
 #[must_use]
 pub fn driver_sparse(bucket: SizeBucket) -> DriverViewData {

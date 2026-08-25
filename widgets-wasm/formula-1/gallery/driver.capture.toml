@@ -112,3 +112,59 @@ frames = 24
 
 [shot.knobs]
 Size = "BMM"
+
+[[shot]]
+name = "ruler-20-deck-small"
+scene = "bmc_gallery::f1::Driver Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+Length = "20"
+
+[[shot]]
+name = "ruler-21-deck-small"
+scene = "bmc_gallery::f1::Driver Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+Length = "21"
+
+[[shot]]
+name = "ruler-20-bmm"
+scene = "bmc_gallery::f1::Driver Widest"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+Length = "20"
+
+[[shot]]
+name = "ruler-21-bmm"
+scene = "bmc_gallery::f1::Driver Widest"
+frames = 24
+
+[shot.knobs]
+Size = "BMM"
+Length = "21"
+
+# The medium frame keeps its value column beside the portrait rather than
+# under it, so it seats more than the narrower frames despite the photo.
+[[shot]]
+name = "ruler-24-deck-medium"
+scene = "bmc_gallery::f1::Driver Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+Length = "24"
+
+[[shot]]
+name = "ruler-25-deck-medium"
+scene = "bmc_gallery::f1::Driver Widest"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+Length = "25"

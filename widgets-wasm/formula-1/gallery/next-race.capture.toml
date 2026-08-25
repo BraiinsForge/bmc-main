@@ -146,3 +146,39 @@ frames = 24
 
 [shot.knobs]
 Size = "BMM Narrow"
+
+[[shot]]
+name = "ruler-12-deck-small"
+scene = "bmc_gallery::f1::Next Race Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+Length = "12"
+
+[[shot]]
+name = "ruler-13-deck-small"
+scene = "bmc_gallery::f1::Next Race Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+Length = "13"
+
+[[shot]]
+name = "ruler-16-deck-medium"
+scene = "bmc_gallery::f1::Next Race Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+Length = "16"
+
+[[shot]]
+name = "ruler-17-deck-medium"
+scene = "bmc_gallery::f1::Next Race Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+Length = "17"

@@ -142,3 +142,40 @@ frames = 24
 
 [shot.knobs]
 Size = "BMM Narrow"
+
+# The small frame drops the team column outright, so only the name is cut.
+[[shot]]
+name = "ruler-17-deck-small"
+scene = "bmc_gallery::f1::Standings Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+Length = "17"
+
+[[shot]]
+name = "ruler-18-deck-small"
+scene = "bmc_gallery::f1::Standings Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+Length = "18"
+
+[[shot]]
+name = "ruler-22-deck-medium"
+scene = "bmc_gallery::f1::Standings Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+Length = "22"
+
+[[shot]]
+name = "ruler-23-deck-medium"
+scene = "bmc_gallery::f1::Standings Ruler"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+Length = "23"

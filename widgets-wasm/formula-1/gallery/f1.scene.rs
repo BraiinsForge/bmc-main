@@ -270,6 +270,51 @@ fn driver_sparse(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
+/// Text of exactly `chars` characters. Cut from a constructor's name
+/// rather than filler, since a proportional font makes the glyph mix,
+/// not the count, decide what fits.
+fn ruler(chars: usize) -> String {
+    const SOURCE: &str = "Scuderia Ferrari Racing Team Alpha Romeo Sauber";
+    assert!(
+        chars <= SOURCE.chars().count(),
+        "a {chars}-character ruler needs a longer source than {SOURCE:?}",
+    );
+    SOURCE.chars().take(chars).collect()
+}
+
+fn ruler_length(ctx: &mut SceneCtx, lengths: &[&str]) -> usize {
+    lengths[ctx.select("Length", lengths, 0)]
+        .parse()
+        .expect("BUG: every ruler length is a number")
+}
+
+/// The value column at a chosen length, to see where it cuts.
+#[scene]
+fn driver_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let chars = ruler_length(ctx, &["20", "21", "24", "25"]);
+    size_stages(ctx, ui, move |bucket| {
+        move || driver::driver_view(&fixtures::driver_widest(bucket, &ruler(chars)))
+    });
+}
+
+/// The name and team columns at a chosen length.
+#[scene]
+fn standings_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let chars = ruler_length(ctx, &["17", "18", "22", "23"]);
+    size_stages(ctx, ui, move |bucket| {
+        move || standings::standings_view(&fixtures::standings_ruler(bucket, &ruler(chars)))
+    });
+}
+
+/// The info column at a chosen length.
+#[scene]
+fn next_race_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
+    let chars = ruler_length(ctx, &["12", "13", "16", "17"]);
+    size_stages(ctx, ui, move |bucket| {
+        move || next_race::next_race_view(&fixtures::next_race_ruler(bucket, &ruler(chars)))
+    });
+}
+
 /// Between seasons, or before the first reply has landed.
 #[scene]
 fn driver_unavailable(ctx: &mut SceneCtx, ui: &mut Ui) {

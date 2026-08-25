@@ -110,14 +110,14 @@ fn layout(bucket: SizeBucket) -> Layout {
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Muted,
-            value_chars: 18,
+            value_chars: 24,
         },
         SizeBucket::Small => Layout {
             portrait: Portrait::Absent,
             split_stats: false,
             stat_font: font::ROW,
             labels: LabelWeight::Strong,
-            value_chars: 14,
+            value_chars: 20,
         },
     }
 }
@@ -381,30 +381,48 @@ mod tests {
     /// [`super::font::ROW`].
     const PHOTO_CAPTION: f32 = 64.0;
 
-    /// A race engineer's name is the longest value the screen draws, and
-    /// nothing in the tree shrinks text — so the budget is what keeps a
-    /// long one from pushing the column off the frame.
+    /// Nothing in the tree shrinks text, so the budget is the only thing
+    /// keeping a long value from pushing the column off the frame. Each
+    /// was read off the gallery's `Driver Widest` ruler at the narrowest
+    /// frame of its band.
     #[test]
-    fn the_wider_frames_seat_the_longest_engineer_and_the_rest_cut_it() {
-        let longest = fixtures::drivers()
-            .into_iter()
-            .filter_map(|driver| driver.race_engineer)
+    fn every_frame_seats_the_longest_value_it_draws_and_cuts_what_overruns() {
+        let drivers = fixtures::drivers();
+        let longest_team = drivers
+            .iter()
+            .map(|driver| driver.team.as_str())
+            .max_by_key(|team| team.chars().count())
+            .expect("BUG: the fixtures name at least one team");
+        let longest_engineer = drivers
+            .iter()
+            .filter_map(|driver| driver.race_engineer.as_deref())
             .max_by_key(|name| name.chars().count())
             .expect("BUG: the fixtures name at least one engineer");
 
-        for bucket in [SizeBucket::Full, SizeBucket::Large] {
+        for bucket in [
+            SizeBucket::Full,
+            SizeBucket::Large,
+            SizeBucket::Medium,
+            SizeBucket::Small,
+        ] {
             let chars = layout(bucket).value_chars;
             assert_eq!(
-                parts::truncate(&longest, chars),
-                longest,
-                "{bucket:?} seats {chars} and should read `{longest}` whole",
+                parts::truncate(longest_team, chars),
+                longest_team,
+                "{bucket:?} seats {chars} and draws the team on every frame",
             );
-        }
-        for bucket in [SizeBucket::Medium, SizeBucket::Small] {
-            let chars = layout(bucket).value_chars;
+            // The narrow frames drop the engineer's row rather than cut it.
+            if matches!(bucket, SizeBucket::Full | SizeBucket::Large) {
+                assert_eq!(
+                    parts::truncate(longest_engineer, chars),
+                    longest_engineer,
+                    "{bucket:?} seats {chars} and should read `{longest_engineer}` whole",
+                );
+            }
+            let overrun = "x".repeat(chars + 1);
             assert!(
-                parts::truncate(&longest, chars).ends_with('\u{2026}'),
-                "{bucket:?} seats only {chars}, so `{longest}` must be cut",
+                parts::truncate(&overrun, chars).ends_with('\u{2026}'),
+                "{bucket:?} must still cut what overruns its {chars}",
             );
         }
     }
