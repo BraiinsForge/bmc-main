@@ -23,6 +23,8 @@
 
 use core::num::NonZeroU32;
 
+use super::lru::{LruQueue, LruStore};
+
 pub const PAGE_SIZE_PX: usize = 512;
 pub const MAX_NORMAL_PAGES: usize = 10;
 pub const MAX_RESIDENT_ENTRIES: usize = 8192;
@@ -229,66 +231,24 @@ impl EntrySlab {
     }
 }
 
-/// LRU order over slab entries, threaded through their `prev`/`next` links:
-/// `head` is the most recently used entry, `tail` the eviction candidate.
-/// Holding the links in the entries is what keeps promotion allocation-free.
-pub struct LruQueue {
-    head: Link,
-    tail: Link,
-}
-
-impl LruQueue {
-    pub fn new() -> Self {
-        Self {
-            head: None,
-            tail: None,
-        }
+impl LruStore<SlotId> for EntrySlab {
+    fn links(&self, index: SlotId) -> (Link, Link) {
+        let entry = self.get(index);
+        (entry.prev, entry.next)
     }
 
-    pub fn push_hot(&mut self, slab: &mut EntrySlab, index: SlotId) {
-        let old_head = self.head;
-        let entry = slab.get_mut(index);
-        entry.prev = None;
-        entry.next = old_head;
-
-        if let Some(old_head) = old_head {
-            slab.get_mut(old_head).prev = Some(index);
-        } else {
-            self.tail = Some(index);
-        }
-        self.head = Some(index);
+    fn set_links(&mut self, index: SlotId, prev: Link, next: Link) {
+        let entry = self.get_mut(index);
+        entry.prev = prev;
+        entry.next = next;
     }
 
-    pub fn unlink(&mut self, slab: &mut EntrySlab, index: SlotId) {
-        let entry = slab.get_mut(index);
-        let (prev, next) = (entry.prev, entry.next);
-        debug_assert!(
-            (prev.is_some() || self.head == Some(index))
-                && (next.is_some() || self.tail == Some(index)),
-            "BUG: unlinking an entry the queue does not hold"
-        );
-        entry.prev = None;
-        entry.next = None;
-
-        if let Some(prev) = prev {
-            slab.get_mut(prev).next = next;
-        } else {
-            self.head = next;
-        }
-        if let Some(next) = next {
-            slab.get_mut(next).prev = prev;
-        } else {
-            self.tail = prev;
-        }
+    fn set_prev(&mut self, index: SlotId, prev: Link) {
+        self.get_mut(index).prev = prev;
     }
 
-    pub fn promote(&mut self, slab: &mut EntrySlab, index: SlotId) {
-        self.unlink(slab, index);
-        self.push_hot(slab, index);
-    }
-
-    pub fn coldest(&self) -> Option<SlotId> {
-        self.tail
+    fn set_next(&mut self, index: SlotId, next: Link) {
+        self.get_mut(index).next = next;
     }
 }
 
@@ -655,7 +615,7 @@ pub struct GlyphCache<P: Copy + Eq + core::fmt::Debug> {
     pages: Vec<Page<P>>,
     map: hashbrown::HashMap<GlyphKey, SlotId>,
     slab: EntrySlab,
-    lru: LruQueue,
+    lru: LruQueue<SlotId>,
     negative: NegativeCache,
     /// Created on first need, then kept for the renderer's lifetime.
     /// A per-frame image would churn a GL texture that `glDeleteTextures`
@@ -1449,19 +1409,9 @@ mod tests {
         }
     }
 
-    fn push_entries(slab: &mut EntrySlab, lru: &mut LruQueue, count: usize) -> Vec<SlotId> {
-        (0..count)
-            .map(|i| {
-                let idx = slab.alloc(test_entry(i)).expect("BUG: slab full in test");
-                lru.push_hot(slab, idx);
-                idx
-            })
-            .collect()
-    }
-
-    fn hot_to_cold(slab: &EntrySlab, lru: &LruQueue) -> Vec<SlotId> {
+    fn hot_to_cold(slab: &EntrySlab, lru: &LruQueue<SlotId>) -> Vec<SlotId> {
         let mut order = Vec::new();
-        let mut cursor = lru.head;
+        let mut cursor = lru.hottest();
         while let Some(slot) = cursor {
             order.push(slot);
             cursor = slab.get(slot).next;
@@ -1469,88 +1419,15 @@ mod tests {
         order
     }
 
-    /// The same order read through the `prev` links: a botched unlink leaves
-    /// the two directions disagreeing, which the forward walk alone hides.
-    fn cold_to_hot(slab: &EntrySlab, lru: &LruQueue) -> Vec<SlotId> {
+    /// A reverse walk catches link corruption that the forward walk alone hides.
+    fn cold_to_hot(slab: &EntrySlab, lru: &LruQueue<SlotId>) -> Vec<SlotId> {
         let mut order = Vec::new();
-        let mut cursor = lru.tail;
+        let mut cursor = lru.coldest();
         while let Some(slot) = cursor {
             order.push(slot);
             cursor = slab.get(slot).prev;
         }
         order
-    }
-
-    #[test]
-    fn promotion_makes_the_next_entry_the_coldest() {
-        let mut slab = EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES);
-        let mut lru = LruQueue::new();
-        let idx = push_entries(&mut slab, &mut lru, 3);
-
-        assert_eq!(lru.coldest(), Some(idx[0]));
-        lru.promote(&mut slab, idx[0]);
-        assert_eq!(lru.coldest(), Some(idx[1]));
-        assert_eq!(hot_to_cold(&slab, &lru), vec![idx[0], idx[2], idx[1]]);
-    }
-
-    /// Promoting what is already hottest routes through the same unlink that
-    /// empties a one-entry queue, so both ends have to be re-established.
-    #[test]
-    fn promoting_the_hottest_entry_keeps_the_queue_intact() {
-        let mut slab = EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES);
-        let mut lru = LruQueue::new();
-        let solo = push_entries(&mut slab, &mut lru, 1);
-
-        lru.promote(&mut slab, solo[0]);
-        assert_eq!(hot_to_cold(&slab, &lru), solo);
-        assert_eq!(lru.coldest(), Some(solo[0]));
-
-        let rest = push_entries(&mut slab, &mut lru, 2);
-        lru.promote(&mut slab, rest[1]);
-        assert_eq!(hot_to_cold(&slab, &lru), vec![rest[1], rest[0], solo[0]]);
-        assert_eq!(lru.coldest(), Some(solo[0]));
-    }
-
-    #[test]
-    fn unlinking_from_any_position_keeps_the_rest_ordered() {
-        let mut slab = EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES);
-        let mut lru = LruQueue::new();
-        let idx = push_entries(&mut slab, &mut lru, 3);
-
-        lru.unlink(&mut slab, idx[1]);
-        assert_eq!(hot_to_cold(&slab, &lru), vec![idx[2], idx[0]]);
-
-        lru.unlink(&mut slab, idx[2]);
-        assert_eq!(hot_to_cold(&slab, &lru), vec![idx[0]]);
-        assert_eq!(lru.coldest(), Some(idx[0]));
-
-        lru.unlink(&mut slab, idx[0]);
-        assert!(hot_to_cold(&slab, &lru).is_empty());
-        assert_eq!(lru.coldest(), None);
-    }
-
-    #[test]
-    fn an_empty_queue_has_no_coldest_entry() {
-        assert_eq!(LruQueue::new().coldest(), None);
-    }
-
-    #[test]
-    fn millions_of_promotions_never_grow_the_queue() {
-        let mut slab = EntrySlab::with_capacity(MAX_RESIDENT_ENTRIES);
-        let mut lru = LruQueue::new();
-        let idx: Vec<SlotId> = (0..64)
-            .map(|i| {
-                let e = slab.alloc(test_entry(i)).expect("BUG: slab full in test");
-                lru.push_hot(&mut slab, e);
-                e
-            })
-            .collect();
-        let cap_before = slab.capacity();
-        for i in 0..2_000_000_usize {
-            lru.promote(&mut slab, idx[i % 64]);
-        }
-        assert_eq!(slab.capacity(), cap_before);
-        assert_eq!(slab.len(), 64);
     }
 
     #[test]
