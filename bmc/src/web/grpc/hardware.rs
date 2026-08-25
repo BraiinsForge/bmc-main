@@ -27,6 +27,11 @@ use tonic::{Request, Response, Status};
 pub(crate) fn caps_to_proto(caps: &HardwareCapabilities) -> web::HardwareCapabilities {
     web::HardwareCapabilities {
         combined_scenes_supported: caps.slot_grid.is_some(),
+        wifi_supported: caps.wifi_supported,
+        ethernet_supported: caps.ethernet_supported,
+        mining_supported: caps.mining_supported,
+        boser_managed: caps.boser_managed,
+        product_name: caps.product_name.to_owned(),
     }
 }
 
@@ -53,7 +58,9 @@ impl GrpcHardwareService for HardwareCapabilitiesService {
 #[cfg(test)]
 mod tests {
     use super::caps_to_proto;
-    use bmc_platform::{DisplayInfo, DisplayShape, HardwareCapabilities, SlotGrid};
+    use bmc_platform::{
+        DisplayInfo, DisplayShape, HardwareCapabilities, HardwareProfile, Product, SlotGrid,
+    };
 
     #[test]
     fn slot_grid_present_supports_combined_scenes() {
@@ -68,6 +75,7 @@ mod tests {
                 columns: 4,
                 rows: 2,
             }),
+            ..HardwareProfile::for_product(Product::Bmc100).capabilities()
         });
         assert!(proto.combined_scenes_supported);
     }
@@ -82,6 +90,7 @@ mod tests {
                 dpi: 1,
             },
             slot_grid: None,
+            ..HardwareProfile::for_product(Product::Bmc100).capabilities()
         });
         assert!(!proto.combined_scenes_supported);
     }

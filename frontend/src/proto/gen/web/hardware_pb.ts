@@ -14,7 +14,7 @@ import type { Message } from '@bufbuild/protobuf';
 export const file_web_hardware: GenFile =
     /*@__PURE__*/
     fileDesc(
-        'ChJ3ZWIvaGFyZHdhcmUucHJvdG8SD2JyYWlpbnMuYm1jLndlYiI5ChRIYXJkd2FyZUNhcGFiaWxpdGllcxIhChljb21iaW5lZF9zY2VuZXNfc3VwcG9ydGVkGAEgASgIMmsKD0hhcmR3YXJlU2VydmljZRJYChdHZXRIYXJkd2FyZUNhcGFiaWxpdGllcxIWLmdvb2dsZS5wcm90b2J1Zi5FbXB0eRolLmJyYWlpbnMuYm1jLndlYi5IYXJkd2FyZUNhcGFiaWxpdGllc2IGcHJvdG8z',
+        'ChJ3ZWIvaGFyZHdhcmUucHJvdG8SD2JyYWlpbnMuYm1jLndlYiK0AQoUSGFyZHdhcmVDYXBhYmlsaXRpZXMSIQoZY29tYmluZWRfc2NlbmVzX3N1cHBvcnRlZBgBIAEoCBIWCg53aWZpX3N1cHBvcnRlZBgCIAEoCBIaChJldGhlcm5ldF9zdXBwb3J0ZWQYAyABKAgSGAoQbWluaW5nX3N1cHBvcnRlZBgEIAEoCBIUCgxwcm9kdWN0X25hbWUYBSABKAkSFQoNYm9zZXJfbWFuYWdlZBgGIAEoCDJrCg9IYXJkd2FyZVNlcnZpY2USWAoXR2V0SGFyZHdhcmVDYXBhYmlsaXRpZXMSFi5nb29nbGUucHJvdG9idWYuRW1wdHkaJS5icmFpaW5zLmJtYy53ZWIuSGFyZHdhcmVDYXBhYmlsaXRpZXNiBnByb3RvMw',
         [file_google_protobuf_empty],
     );
 
@@ -26,6 +26,31 @@ export type HardwareCapabilities = Message<'braiins.bmc.web.HardwareCapabilities
      * @generated from field: bool combined_scenes_supported = 1;
      */
     combinedScenesSupported: boolean;
+
+    /**
+     * @generated from field: bool wifi_supported = 2;
+     */
+    wifiSupported: boolean;
+
+    /**
+     * @generated from field: bool ethernet_supported = 3;
+     */
+    ethernetSupported: boolean;
+
+    /**
+     * @generated from field: bool mining_supported = 4;
+     */
+    miningSupported: boolean;
+
+    /**
+     * @generated from field: string product_name = 5;
+     */
+    productName: string;
+
+    /**
+     * @generated from field: bool boser_managed = 6;
+     */
+    boserManaged: boolean;
 };
 
 /**

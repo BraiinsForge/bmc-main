@@ -3883,6 +3883,8 @@ mod tests {
                 dpi: 1,
             },
             slot_grid: grid,
+            ..bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                .capabilities()
         }
     }
 

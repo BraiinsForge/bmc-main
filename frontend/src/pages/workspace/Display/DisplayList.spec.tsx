@@ -27,6 +27,7 @@ import { HelmetProvider } from '@dr.pogodin/react-helmet';
 
 import DisplayList from './DisplayList';
 import * as pb from '@/proto';
+import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
 import { Toaster } from '@/lib/toast';
@@ -86,7 +87,7 @@ function installMocks(): void {
     });
 
     registerMocks(pb.services.HardwareService, {
-        getHardwareCapabilities: () => ({ combinedScenesSupported: false }),
+        getHardwareCapabilities: () => deckCapabilities({ combinedScenesSupported: false }),
     });
 
     registerMocks(pb.services.SystemService, {

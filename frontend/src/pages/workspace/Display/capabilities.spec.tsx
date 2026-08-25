@@ -26,23 +26,18 @@ import { CombinedSceneMenuAction } from './DisplayList';
 import { CombinedEditorCapabilityGate } from './DisplayCombined';
 import { URLS } from '@/constants';
 import type * as pb from '@/proto';
+import { deckCapabilities } from './capabilities.fixture';
 
 afterEach(cleanup);
 
 describe('combinedSceneAvailable', () => {
     test('true when backend reports combined scenes supported', () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: true,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: true });
         expect(combinedSceneAvailable(caps)).toBe(true);
     });
 
     test('false when backend reports combined scenes unsupported', () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: false,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: false });
         expect(combinedSceneAvailable(caps)).toBe(false);
     });
 
@@ -54,10 +49,7 @@ describe('combinedSceneAvailable', () => {
 describe('CombinedSceneMenuAction', () => {
     test('renders and calls the add handler when combined scenes are supported', () => {
         let clicked = false;
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: true,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: true });
         const view = render(
             <CombinedSceneMenuAction
                 capabilities={caps}
@@ -72,10 +64,7 @@ describe('CombinedSceneMenuAction', () => {
     });
 
     test('does not render when combined scenes are unsupported', () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: false,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: false });
         const view = render(
             <CombinedSceneMenuAction capabilities={caps} label="Combined Scene" onClick={() => undefined} />,
         );
@@ -103,18 +92,12 @@ function renderCombinedGate(caps: null | pb.HardwareCapabilities) {
 
 describe('combinedEditorRedirectTarget', () => {
     test('null (no redirect) when combined scenes are supported', () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: true,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: true });
         expect(combinedEditorRedirectTarget(caps)).toBeNull();
     });
 
     test('redirects to display list when combined scenes are unsupported', () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: false,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: false });
         expect(combinedEditorRedirectTarget(caps)).toBe(URLS.pages.display.list);
     });
 
@@ -125,20 +108,14 @@ describe('combinedEditorRedirectTarget', () => {
 
 describe('CombinedEditorCapabilityGate', () => {
     test('renders children when combined scenes are supported', () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: true,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: true });
         const view = renderCombinedGate(caps);
         expect(view.getByText('editor body')).toBeTruthy();
         expect(view.queryByText('display list')).toBeNull();
     });
 
     test('redirects through the router when combined scenes are unsupported', async () => {
-        const caps: pb.HardwareCapabilities = {
-            $typeName: 'braiins.bmc.web.HardwareCapabilities',
-            combinedScenesSupported: false,
-        };
+        const caps = deckCapabilities({ combinedScenesSupported: false });
         const view = renderCombinedGate(caps);
         expect(await view.findByText('display list')).toBeTruthy();
         expect(view.queryByText('editor body')).toBeNull();

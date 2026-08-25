@@ -18,21 +18,19 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-syntax = "proto3";
+import * as pb from '@/proto';
 
-package braiins.bmc.web;
-
-import "google/protobuf/empty.proto";
-
-message HardwareCapabilities {
-  bool combined_scenes_supported = 1;
-  bool wifi_supported = 2;
-  bool ethernet_supported = 3;
-  bool mining_supported = 4;
-  string product_name = 5;
-  bool boser_managed = 6;
-}
-
-service HardwareService {
-  rpc GetHardwareCapabilities(google.protobuf.Empty) returns (HardwareCapabilities);
+/** Deck hardware capabilities for specs; override only what the test is about. */
+export function deckCapabilities(
+    overrides: Partial<Omit<pb.HardwareCapabilities, '$typeName' | '$unknown'>> = {},
+): pb.HardwareCapabilities {
+    return pb.create(pb.HardwareCapabilitiesSchema, {
+        combinedScenesSupported: true,
+        wifiSupported: true,
+        ethernetSupported: false,
+        miningSupported: false,
+        boserManaged: false,
+        productName: 'Braiins Deck',
+        ...overrides,
+    });
 }

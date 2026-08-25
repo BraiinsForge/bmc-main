@@ -100,7 +100,7 @@ impl Product {
     pub fn display_name(self) -> &'static str {
         match self {
             Self::Bmc100 => "Braiins Deck",
-            Self::Bmm100 | Self::Bmm101 => "Mini Miner",
+            Self::Bmm100 | Self::Bmm101 => "Braiins Mini Miner",
             Self::Bfm100 => "Femto Miner",
         }
     }
@@ -246,9 +246,18 @@ pub struct LedStripProfile {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent per-product hardware capability flags, not a state machine"
+)]
 pub struct HardwareCapabilities {
     pub display: DisplayInfo,
     pub slot_grid: Option<SlotGrid>,
+    pub wifi_supported: bool,
+    pub ethernet_supported: bool,
+    pub mining_supported: bool,
+    pub boser_managed: bool,
+    pub product_name: &'static str,
 }
 
 /// ESP32 WiFi over SDIO (BMM101): a mac80211 device on the STM32 SD/MMC controller.
@@ -478,6 +487,12 @@ impl HardwareProfile {
 
     #[must_use]
     pub fn capabilities(&self) -> HardwareCapabilities {
+        let (wifi_supported, ethernet_supported, mining_supported, boser_managed) =
+            match self.product {
+                Product::Bmc100 => (true, false, false, false),
+                Product::Bmm100 => (false, true, true, true),
+                Product::Bmm101 | Product::Bfm100 => (true, true, true, true),
+            };
         HardwareCapabilities {
             display: DisplayInfo {
                 width: self.display.logical_width,
@@ -486,6 +501,11 @@ impl HardwareProfile {
                 dpi: self.display.dpi,
             },
             slot_grid: self.slot_grid,
+            wifi_supported,
+            ethernet_supported,
+            mining_supported,
+            boser_managed,
+            product_name: self.product.display_name(),
         }
     }
 }
@@ -649,6 +669,23 @@ mod test {
 
         let bfm = HardwareProfile::for_product(Product::Bfm100).capabilities();
         assert_eq!(bfm.display.shape, DisplayShape::Round);
+    }
+
+    #[test]
+    fn connectivity_and_mining_capabilities_per_product() {
+        let cases = [
+            (Product::Bmc100, true, false, false, false),
+            (Product::Bmm100, false, true, true, true),
+            (Product::Bmm101, true, true, true, true),
+            (Product::Bfm100, true, true, true, true),
+        ];
+        for (product, wifi, ethernet, mining, boser) in cases {
+            let caps = HardwareProfile::for_product(product).capabilities();
+            assert_eq!(caps.wifi_supported, wifi, "{product:?}: wifi");
+            assert_eq!(caps.ethernet_supported, ethernet, "{product:?}: ethernet");
+            assert_eq!(caps.mining_supported, mining, "{product:?}: mining");
+            assert_eq!(caps.boser_managed, boser, "{product:?}: boser");
+        }
     }
 
     #[test]

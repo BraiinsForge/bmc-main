@@ -919,6 +919,8 @@ mod tests {
                     columns: 4,
                     rows: 2,
                 }),
+                ..bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                    .capabilities()
             },
             Arc::clone(&secret_store),
         ));

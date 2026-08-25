@@ -1874,6 +1874,8 @@ mod tests {
                 columns: 4,
                 rows: 2,
             }),
+            ..bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                .capabilities()
         }
     }
 
@@ -3958,6 +3960,8 @@ mod support_tests {
                 dpi: 1,
             },
             slot_grid,
+            ..bmc_platform::HardwareProfile::for_product(bmc_platform::Product::Bmc100)
+                .capabilities()
         }
     }
 

@@ -29,6 +29,7 @@ import DisplayCombined from './DisplayCombined';
 import type { ServiceMocks } from '@/lib/proto';
 import { Toaster } from '@/lib/toast';
 import * as pb from '@/proto';
+import { deckCapabilities } from './capabilities.fixture';
 import { mocks } from '@/proto/transport';
 
 type AnyService = Parameters<typeof mocks.service>[0];
@@ -63,7 +64,7 @@ function installMocks(): void {
         },
     });
     registerMocks(pb.services.HardwareService, {
-        getHardwareCapabilities: () => ({ combinedScenesSupported: true }),
+        getHardwareCapabilities: () => deckCapabilities({ combinedScenesSupported: true }),
     });
     registerMocks(pb.services.AccountManagementService, { getAllAccounts: () => ({ accounts: [] }) });
     registerMocks(pb.services.CredentialManagementService, { getCredentialTypes: () => ({ credentialTypes: [] }) });
