@@ -31,12 +31,12 @@
 //! <name>.local.                A/AAAA  <per-interface address>
 //! ```
 //!
-//! `<name>` is the configured hostname, used as-is. The name is probed once,
-//! at announce time: when the backend's RFC 6762 §9 probing reports within
-//! the probe-verdict window that the name is already taken on the link, the
+//! `<name>` is the configured hostname, used as-is. The name is probed at
+//! announce time: when the backend's RFC 6762 §9 probing reports within the
+//! probe-verdict window that the name is already taken on the link, the
 //! advertiser re-registers as `<hostname>-<suffix>`, where the suffix is the
-//! caller-supplied device-unique tail (see [`Advertisement::conflict_suffix`])
-//! — no questions asked, the suffixed name is not probed again. Conflicts
+//! caller-supplied device-unique tail (see [`Advertisement::conflict_suffix`]);
+//! a conflict on the suffixed name is left to the backend. Conflicts
 //! after the window (a twin joining the link later) are deliberately not
 //! handled at all; the cost is two devices being hard to tell apart in a
 //! browse list. The advertised name is a discovery label, not a stable device
@@ -54,12 +54,14 @@
 //! the two operations must not overlap. Goodbye failures are logged rather
 //! than propagated.
 //!
-//! One goodbye gap is inherited from the backend: when the backend's probing
-//! auto-renames a record (`foo` → `foo (2)`), its unregister still builds the
-//! TTL=0 records from the original names, so peers that cached the renamed
-//! records only age them out. The escalation below replaces such an instance
-//! within the probe-verdict window, which keeps the stale entry's lifetime
-//! bounded by the record TTL rather than fixable here.
+//! One goodbye defect is inherited from the backend: when its probing
+//! auto-renames a record (`foo` → `foo (2)`), unregister still builds the TTL=0
+//! records from the original names. Withdrawing a name we lost the probe for
+//! therefore says goodbye on behalf of the device that won it, and since the
+//! PTR, SRV and TXT match that device's own records byte for byte, peers drop
+//! it from browse lists until it announces again. Fixed upstream by
+//! <https://github.com/keepsimple1/mdns-sd/pull/495>, unreleased as of
+//! mdns-sd 0.21.0; the dependency bump is tracked by BOS-4042.
 //!
 //! The async methods only ever await the backend's event channels — sending a
 //! command to the responder daemon is a non-blocking channel write — so they
@@ -81,8 +83,10 @@ pub mod service;
 use std::fmt;
 use std::time::Duration;
 
-use mdns_sd::{DaemonEvent, IfKind, Receiver, ServiceDaemon, ServiceInfo, UnregisterStatus};
-use tokio::time::{Instant, timeout, timeout_at};
+use mdns_sd::{
+    DaemonEvent, IfKind, Receiver, RecvError, ServiceDaemon, ServiceInfo, UnregisterStatus,
+};
+use tokio::time::timeout;
 
 /// Registering under the subtype also registers the base `_http._tcp` type.
 pub const BOS_SUBTYPE: &str = "_bos._sub._http._tcp.local.";
@@ -163,7 +167,7 @@ pub struct Advertisement {
 
 /// TXT payload values, all sourced from the live system.
 ///
-/// `bos_version` identifies the device as BOS per the BOS-4004 contract;
+/// `bos_version` identifies the device as BOS;
 /// when it is absent the advertiser emits the minimum accepted fallback
 /// `bos=1` instead, so the payload always distinguishes BOS from other
 /// `_http._tcp` devices.
@@ -186,12 +190,9 @@ pub struct MdnsAdvertiser {
     daemon: ServiceDaemon,
     advertisement: Advertisement,
     effective_hostname: String,
-    fullname: String,
-    /// Whether the names recorded above are actually registered with the
-    /// daemon. Cleared before a withdraw and set again only after the
-    /// replacement registration went through, so a failed rename cannot
-    /// leave the handle claiming an instance that is no longer advertised.
-    registered: bool,
+    /// Instance currently on the air; `None` between a withdraw and the
+    /// registration of its replacement (a failed rename parks here).
+    fullname: Option<String>,
 }
 
 impl fmt::Debug for MdnsAdvertiser {
@@ -204,116 +205,92 @@ impl fmt::Debug for MdnsAdvertiser {
 }
 
 impl MdnsAdvertiser {
-    /// Start the responder and announce the service on all up, non-loopback
-    /// interfaces, IPv4 and IPv6. Addresses are tracked automatically as
-    /// interfaces come and go.
+    /// One start covers the process lifetime of an advertisement: the
+    /// responder binds every up, non-loopback interface (IPv4 and IPv6) and
+    /// tracks addresses on its own, so callers never restart it for
+    /// interface churn — they come back only for [`rename`](Self::rename)
+    /// and [`shutdown`](Self::shutdown).
     pub async fn start(advertisement: Advertisement) -> Result<Self, Error> {
         let daemon = ServiceDaemon::new()?;
-        let started = Self::register_and_probe(daemon.clone(), advertisement).await;
-        if started.is_err() {
-            // The backend has no teardown on drop, so without this a failed
-            // start would leave the daemon thread running detached — and a
-            // retrying caller would stack up another one per attempt.
-            if let Err(error) = daemon.shutdown() {
-                log::warn!("mDNS: could not stop the daemon after a failed start: {error}");
-            }
-        }
-        started
-    }
-
-    async fn register_and_probe(
-        daemon: ServiceDaemon,
-        advertisement: Advertisement,
-    ) -> Result<Self, Error> {
-        daemon.disable_interface(vec![IfKind::LoopbackV4, IfKind::LoopbackV6])?;
-        // Subscribed before registering so the probe verdict for the very
-        // first name cannot be missed.
-        let monitor = daemon.monitor()?;
-
-        let effective_hostname = name::effective_hostname(&advertisement.hostname, "");
-        let fullname = register(&daemon, &advertisement, &effective_hostname)?;
-        log::info!("mDNS: advertising {fullname}");
-
         let mut advertiser = Self {
             daemon,
             advertisement,
-            effective_hostname,
-            fullname,
-            registered: true,
+            effective_hostname: String::new(),
+            fullname: None,
         };
-        advertiser.probe_verdict(&monitor).await?;
+        let announced = async {
+            advertiser
+                .daemon
+                .disable_interface(vec![IfKind::LoopbackV4, IfKind::LoopbackV6])?;
+            advertiser.announce().await
+        }
+        .await;
+        if let Err(error) = announced {
+            // The backend has no teardown on drop, so without this a failed
+            // start would leave the daemon thread running detached — and a
+            // retrying caller would stack up another one per attempt.
+            if let Err(shutdown_error) = advertiser.daemon.shutdown() {
+                log::warn!(
+                    "mDNS: could not stop the daemon after a failed start: {shutdown_error}"
+                );
+            }
+            return Err(error);
+        }
         Ok(advertiser)
     }
 
-    /// Give probing a bounded window to report that the plain hostname is
-    /// taken, so a conflicting name is replaced before the caller starts
-    /// telling users what the device is called. This is the only conflict
-    /// handling there is: a name that survives its probe window is kept for
-    /// the lifetime of the registration.
+    /// The single path onto the air, shared by start and rename: candidate
+    /// names are published in order of preference and the first that survives
+    /// its probe window — or the last one, taken or not — stays registered.
     ///
-    /// The common case returns early: the backend only announces the instance
-    /// under our own fullname once probing succeeded on an interface, so that
-    /// announce is a positive verdict and the window need not be waited out.
-    ///
-    /// `monitor` must be subscribed just before the name was registered: the
-    /// backend's event channels are bounded and drop events once full, so
-    /// only a fresh channel is guaranteed to still hold this name's verdict —
-    /// and cannot hold a stale verdict for a previous name.
-    async fn probe_verdict(&mut self, monitor: &Receiver<DaemonEvent>) -> Result<(), Error> {
-        let deadline = Instant::now() + PROBE_VERDICT_TIMEOUT;
-        // Wait out other events (address changes, announces of renamed or
-        // foreign instances) rather than taking the first one as the verdict.
-        loop {
-            match timeout_at(deadline, monitor.recv_async()).await {
-                Ok(Ok(DaemonEvent::NameChange(change)))
-                    if owns_name(&self.fullname, &self.effective_hostname, &change.original) =>
-                {
-                    return self.escalate(&change.new_name).await;
-                }
-                Ok(Ok(DaemonEvent::Announce(fullname, _))) if fullname == self.fullname => {
-                    return Ok(());
-                }
-                Ok(Ok(_)) => {}
-                // No verdict inside the window (or the daemon is gone); the
-                // name is treated as free.
-                Ok(Err(_)) | Err(_) => return Ok(()),
-            }
-        }
-    }
-
-    /// Re-register under `<hostname>-<conflict_suffix>`, without probing the
-    /// suffixed name again: the suffix is device-unique, so a collision on it
-    /// is not worth defending against and is left to the backend.
-    ///
-    /// `backend_name` is the name the backend picked on its own (`foo (2)` /
-    /// `foo-2`); it is only logged.
-    async fn escalate(&mut self, backend_name: &str) -> Result<(), Error> {
-        let effective_hostname = name::effective_hostname(
+    /// The bare hostname always comes first, even when renaming away
+    /// from a contested name: an old suffix is never carried along.
+    /// The suffixed fallback is a candidate only when the suffix actually
+    /// changes the name, so "no fallback available" is a one-element list
+    /// rather than a special case. A conflict on the final candidate is
+    /// left to the backend's own rename.
+    async fn announce(&mut self) -> Result<(), Error> {
+        let bare = name::effective_hostname(&self.advertisement.hostname, "");
+        let suffixed = name::effective_hostname(
             &self.advertisement.hostname,
             &self.advertisement.conflict_suffix,
         );
-        if effective_hostname == self.effective_hostname {
-            // No suffix to fall back to (or it does not change the name);
-            // the backend's own rename is all the resolution there is.
-            log::warn!(
-                "mDNS: '{}' is taken on this link and no conflict suffix is \
-                 available, leaving the backend's '{backend_name}'",
-                self.effective_hostname
-            );
-            return Ok(());
+        let fallback = (suffixed != bare).then_some(suffixed);
+        for candidate in std::iter::once(bare).chain(fallback) {
+            if !self.publish(&candidate).await? {
+                break;
+            }
         }
-
-        log::info!(
-            "mDNS: '{}' is taken on this link (backend chose '{backend_name}'), \
-             advertising as '{effective_hostname}' instead",
-            self.effective_hostname
-        );
-        self.registered = false;
-        withdraw(&self.daemon, &self.fullname).await;
-        self.fullname = register(&self.daemon, &self.advertisement, &effective_hostname)?;
-        self.registered = true;
-        self.effective_hostname = effective_hostname;
+        log::info!("mDNS: advertising as '{}'", self.effective_hostname);
         Ok(())
+    }
+
+    /// One publish attempt: withdraw whatever is on the air, register
+    /// `hostname`, and report whether probing said the name is taken
+    /// on the link. Withdraw comes first so the goodbye is emitted while
+    /// the old instance is still in a steady, announced state; a goodbye
+    /// raced by its own replacement can evict the fresh records from
+    /// peer caches.
+    ///
+    /// On error the old instance has already been withdrawn and nothing is
+    /// advertised — deliberately: re-registering the old name would race the
+    /// queued withdraw and resurrect an instance that is being retired.
+    /// Callers are expected to retry the whole announce.
+    async fn publish(&mut self, hostname: &str) -> Result<bool, Error> {
+        if let Some(retired) = self.fullname.take() {
+            withdraw(&self.daemon, &retired).await;
+        }
+        // Subscribed before registering so the probe verdict for this name
+        // cannot be missed: the backend's event channels are bounded and drop
+        // events once full, so only a fresh channel is guaranteed to still
+        // hold this name's verdict — and cannot hold a stale verdict for a
+        // previous name.
+        let monitor = self.daemon.monitor()?;
+        let fullname = register(&self.daemon, &self.advertisement, hostname)?;
+        hostname.clone_into(&mut self.effective_hostname);
+        let taken = name_taken(&monitor, &fullname, hostname).await;
+        self.fullname = Some(fullname);
+        Ok(taken)
     }
 
     #[must_use]
@@ -321,88 +298,107 @@ impl MdnsAdvertiser {
         &self.effective_hostname
     }
 
-    /// React to a hostname change: say goodbye as the old instance, then
-    /// announce the new one. When the effective name is unchanged the instance
-    /// is kept and only re-announced so the TXT `hostname` value stays current.
+    /// Every rename is a full goodbye-and-replace, even when the effective
+    /// name comes out unchanged (distinct hostnames can share one effective
+    /// name — slugify collapses separators): the replacement is what keeps
+    /// the TXT `hostname` value current, and treating every rename the same
+    /// keeps retries after a failure trivially idempotent.
     ///
     /// On error the old instance has already been withdrawn and nothing is
-    /// advertised; the handle keeps naming the most recently registered
-    /// instance, so retrying the call withdraws it again (harmlessly, as
-    /// `NotFound`) and registers the replacement from scratch. Callers are
-    /// expected to retry.
+    /// advertised (see [`publish`](Self::publish)); retrying the call simply
+    /// announces the replacement from scratch. Callers are expected to retry.
     pub async fn rename(&mut self, hostname: impl Into<String>) -> Result<(), Error> {
-        let hostname = hostname.into();
-        // The new hostname is tried bare, exactly as at start: a rename away
-        // from a contested name should not keep carrying its suffix.
-        let effective_hostname = name::effective_hostname(&hostname, "");
-        // The fast path is only valid while the recorded name is actually on
-        // the air: after a failed rename nothing is advertised, and a
-        // same-name retry must fall through to a full re-register.
-        if effective_hostname == self.effective_hostname && self.registered {
-            if hostname != self.advertisement.hostname {
-                // Distinct hostnames can share one effective name (slugify
-                // collapses separators); re-register the same instance to
-                // refresh the TXT records — mdns-sd updates in place.
-                let mut advertisement = self.advertisement.clone();
-                advertisement.hostname = hostname;
-                register(&self.daemon, &advertisement, &effective_hostname)?;
-                self.advertisement = advertisement;
-            }
-            return Ok(());
-        }
-
-        // Withdraw the old instance before registering the replacement, so its
-        // goodbye is emitted while it is still in a steady, announced state.
-        self.registered = false;
-        withdraw(&self.daemon, &self.fullname).await;
-
-        let mut advertisement = self.advertisement.clone();
-        advertisement.hostname = hostname;
-        // Deliberately no attempt to put the old instance back when this
-        // fails. The backend queues a command before it can report a failure,
-        // so an error here does not mean the withdraw above did not happen —
-        // re-registering the old name would race that queued withdraw and
-        // resurrect an instance that is being retired. Leaving nothing
-        // registered and letting the caller retry the whole rename converges
-        // instead.
-        let monitor = self.daemon.monitor()?;
-        let fullname = register(&self.daemon, &advertisement, &effective_hostname)?;
-
-        log::info!(
-            "mDNS: renamed {} -> {effective_hostname}",
-            self.effective_hostname
-        );
-        self.registered = true;
-        self.fullname = fullname;
-        self.advertisement = advertisement;
-        self.effective_hostname = effective_hostname;
-        self.probe_verdict(&monitor).await?;
+        let previous = self.effective_hostname.clone();
+        self.advertisement.hostname = hostname.into();
+        self.announce().await?;
+        log::info!("mDNS: renamed {previous} -> {}", self.effective_hostname);
         Ok(())
     }
 
-    /// Send goodbye packets (TTL=0) for the registered instance and stop the
-    /// responder, waiting until the daemon confirms so callers can order this
-    /// before taking the network down.
+    /// The goodbye (TTL=0) races process death and network teardown, so this
+    /// waits for the daemon's confirmation — callers can then order it
+    /// strictly before taking the network down instead of hoping the packets
+    /// made it out.
     pub async fn shutdown(self) -> Result<(), Error> {
         let receiver = self.daemon.shutdown()?;
         timeout(SHUTDOWN_TIMEOUT, receiver.recv_async())
             .await
             .map_err(|_| Error::ShutdownTimeout)?
             .map_err(|_| Error::ShutdownConfirmationLost)?;
-        log::info!("mDNS: said goodbye as {}", self.fullname);
+        log::info!(
+            "mDNS: said goodbye as {}",
+            self.fullname.as_deref().unwrap_or("<nothing advertised>")
+        );
         Ok(())
     }
 }
 
-/// Whether `original`, as reported by a backend name change, names the
-/// registration described by `fullname` (service instance) or
-/// `effective_hostname` (host record).
+/// Probing succeeds by silence (RFC 6762 §8.1): there is no positive
+/// "name is free" packet, so the answer is `true` only when the backend
+/// reports a conflict before the window closes — anything else, including
+/// the daemon dying, defaults to keeping the name.
+async fn name_taken(
+    monitor: &Receiver<DaemonEvent>,
+    fullname: &str,
+    effective_hostname: &str,
+) -> bool {
+    let window = tokio::time::sleep(PROBE_VERDICT_TIMEOUT);
+    tokio::pin!(window);
+    loop {
+        let event = tokio::select! {
+            // Silence is a verdict: probing had its window and reported
+            // no conflict.
+            () = &mut window => return false,
+            received = monitor.recv_async() => match received {
+                Ok(event) => event,
+                // The daemon is gone; nothing more will be reported and
+                // the failure surfaces on the next daemon call.
+                Err(RecvError::Disconnected) => return false,
+            },
+        };
+        if let Some(taken) = name_taken_from(event, fullname, effective_hostname) {
+            return taken;
+        }
+    }
+}
+
+/// The monitor channel is a firehose shared with interface changes and
+/// foreign instances, so most events say nothing about our name; `None`
+/// keeps the wait going rather than letting the first event decide.
+#[expect(clippy::wildcard_enum_match_arm)]
+fn name_taken_from(event: DaemonEvent, fullname: &str, effective_hostname: &str) -> Option<bool> {
+    match event {
+        DaemonEvent::NameChange(change)
+            if owns_name(fullname, effective_hostname, &change.original) =>
+        {
+            log::info!(
+                "mDNS: '{effective_hostname}' is taken on this link (backend chose '{}')",
+                change.new_name
+            );
+            Some(true)
+        }
+        // Our own announce only goes out once probing succeeded on an
+        // interface — a positive verdict ahead of the window.
+        DaemonEvent::Announce(announced, _) if announced == fullname => Some(false),
+        DaemonEvent::Error(error) => {
+            log::debug!("mDNS: daemon reported an error during the probe window: {error}");
+            None
+        }
+        // Foreign instances' renames and announces, interface changes
+        // and query responses say nothing about our name — and neither
+        // can an event added by a future backend (the enum is
+        // `#[non_exhaustive]`, hence wildcard).
+        _ => None,
+    }
+}
+
+/// A conflict can be reported against either the service instance record
+/// (`fullname`) or the host record (`effective_hostname` under `.local.`),
+/// and the two differ in shape, so both spellings must count as ours.
 fn owns_name(fullname: &str, effective_hostname: &str, original: &str) -> bool {
     original == fullname || original.strip_suffix(".local.") == Some(effective_hostname)
 }
 
-/// Withdraw `fullname`, emitting goodbye packets (TTL=0) for it.
-///
 /// Failures are logged and never propagated: the caller is mid-rename and must
 /// go on to register the replacement, and a transient backend error can be
 /// reported even after the command was queued.
