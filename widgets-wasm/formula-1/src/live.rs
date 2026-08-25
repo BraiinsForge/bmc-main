@@ -30,7 +30,8 @@ use std::time::Duration;
 use bmc_wasm_sdk::*;
 
 use crate::api::{
-    LIVE_INTERVAL_MS, LIVE_PROBE_INTERVAL_MS, Resource, STATIC_INTERVAL_MS, resource_needed,
+    LIVE_INTERVAL_MS, LIVE_PROBE_INTERVAL_MS, Resource, STATIC_INTERVAL_MS, media_type_names_json,
+    resource_needed, wire,
 };
 use crate::manifest_params::Params;
 use crate::model::Data;
@@ -62,8 +63,9 @@ fn build(handle: PollHandle) -> Option<FetchSpec> {
     Some(FetchSpec::get(resource_of(handle).url(slug)).timeout(FETCH_TIMEOUT))
 }
 
-fn on_reply(handle: PollHandle, response: &FetchResponse) {
-    let resource = resource_of(handle);
+/// Everything provable before any parser runs.
+/// `None` keeps the last good data, whatever the fault.
+fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> {
     if !response.ok() {
         // A cold server answers 503 until its first upstream snapshot
         // lands, which can take minutes. Holding the last good payload
@@ -73,23 +75,89 @@ fn on_reply(handle: PollHandle, response: &FetchResponse) {
             resource.name(),
             response.status
         );
-        return;
+        return None;
+    }
+    // Absent is tolerated; a captive portal's `text/html` is refused unread.
+    if let Some(content_type) = response.content_type()
+        && !media_type_names_json(content_type)
+    {
+        log_warn!(
+            "formula-1: {} answered as {}; keeping the last good data",
+            resource.name(),
+            content_type
+        );
+        return None;
     }
     let json = response.json();
+    if !json.is_valid() {
+        log_warn!(
+            "formula-1: {} body is not JSON; keeping the last good data",
+            resource.name()
+        );
+        return None;
+    }
+    let want = resource.envelope_id(Params::current().driver.as_manifest_value());
+    if json.str(wire::RESOURCE).as_deref() != Some(want.as_str()) {
+        log_warn!(
+            "formula-1: {} reply answers for another resource; keeping the last good data",
+            resource.name()
+        );
+        return None;
+    }
+    Some(json)
+}
+
+fn keep_last_good(resource: Resource) {
+    log_warn!(
+        "formula-1: {} reply did not parse; keeping the last good data",
+        resource.name()
+    );
+}
+
+fn on_reply(handle: PollHandle, response: &FetchResponse) {
+    let resource = resource_of(handle);
+    let Some(json) = valid_reply(resource, response) else {
+        return;
+    };
     DATA.with(|data| {
         let mut data = data.borrow_mut();
         match resource {
-            Resource::Standings => data.standings = parse::standings(&json),
-            Resource::DriverStats => data.driver_stats = parse::driver_stats(&json),
-            Resource::Driver => data.driver = parse::driver(&json),
-            Resource::Teams => data.teams = parse::teams(&json),
-            Resource::Drivers => data.driver_teams = parse::driver_teams(&json),
-            Resource::NextRace => {
-                data.next_race = parse::next_race(&json, Params::current().local_time);
-            }
-            Resource::LiveRace => data.live_race = parse::live_board(&json),
-            Resource::LiveQuali => data.live_quali = parse::live_board(&json),
-            Resource::LivePractice => data.live_practice = parse::live_board(&json),
+            Resource::Standings => match parse::standings(&json) {
+                Ok(rows) => data.standings = rows,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::DriverStats => match parse::driver_stats(&json) {
+                Ok(rows) => data.driver_stats = rows,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::Driver => match parse::driver(&json) {
+                Ok(driver) => data.driver = Some(driver),
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::Teams => match parse::teams(&json) {
+                Ok(rows) => data.teams = rows,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::Drivers => match parse::driver_teams(&json) {
+                Ok(rows) => data.driver_teams = rows,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::NextRace => match parse::next_race(&json, Params::current().local_time) {
+                Ok(race) => data.next_race = race,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::LiveRace => match parse::live_board(&json) {
+                Ok(board) => data.live_race = board,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::LiveQuali => match parse::live_board(&json) {
+                Ok(board) => data.live_quali = board,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
+            Resource::LivePractice => match parse::live_board(&json) {
+                Ok(board) => data.live_practice = board,
+                Err(parse::Malformed) => keep_last_good(resource),
+            },
         }
     });
     if resource.is_live_board() {

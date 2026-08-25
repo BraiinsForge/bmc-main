@@ -111,6 +111,26 @@ impl Resource {
             fmt!("{BASE_URL}/api/v1/data/formula-1/{}", self.name())
         }
     }
+
+    /// What the reply's envelope must name under `resource`.
+    #[must_use]
+    pub fn envelope_id(self, driver_slug: &str) -> String {
+        if self == Self::Driver {
+            fmt!("formula-1/driver/{}", driver_slug)
+        } else {
+            fmt!("formula-1/{}", self.name())
+        }
+    }
+}
+
+/// Whether the media type names JSON as the envelope — the plain type
+/// or an RFC 6839 `+json` suffix, in whatever casing RFC 9110 §8.3 allows.
+#[must_use]
+pub fn media_type_names_json(content_type: &str) -> bool {
+    let media_type = content_type
+        .split_once(';')
+        .map_or(content_type, |(t, _)| t);
+    media_type.trim().to_ascii_lowercase().ends_with("json")
 }
 
 /// Whether `view` reads `resource`,
@@ -173,6 +193,12 @@ pub mod wire {
     /// Present and `false` when a live resource has no session running.
     pub const LIVE_FLAG: &str = "/data/live";
 
+    /// What the envelope says it answers for,
+    /// present on every real reply.
+    pub const RESOURCE: &str = "/resource";
+
+    pub const DATA: &str = "/data";
+
     // `fmt!` expands against the SDK's re-exports, which a nested
     // module does not inherit from the file above it.
     #[cfg_attr(
@@ -225,7 +251,10 @@ pub mod wire {
 
 #[cfg(test)]
 mod tests {
-    use super::{BASE_URL, Resource, Screen, View, resource_needed, select_screen, wire};
+    use super::{
+        BASE_URL, Resource, Screen, View, media_type_names_json, resource_needed, select_screen,
+        wire,
+    };
     use crate::model::{Data, LiveBoard};
     use crate::screens::fixtures;
 
@@ -384,5 +413,31 @@ mod tests {
                 resource.name(),
             );
         }
+    }
+
+    #[test]
+    fn a_legally_cased_media_type_names_json() {
+        assert!(media_type_names_json("Application/JSON; charset=utf-8"));
+        assert!(
+            media_type_names_json("Application/JSON ; charset=utf-8"),
+            "a parameter may be spaced off the type it follows"
+        );
+    }
+
+    #[test]
+    fn a_json_suffix_names_json() {
+        assert!(media_type_names_json("application/vnd.api+json"));
+    }
+
+    #[test]
+    fn a_type_merely_containing_json_does_not() {
+        assert!(
+            !media_type_names_json("application/json-seq"),
+            "a JSON sequence is not one JSON document"
+        );
+        assert!(
+            !media_type_names_json("text/html; profile=json"),
+            "json in a parameter names nothing"
+        );
     }
 }

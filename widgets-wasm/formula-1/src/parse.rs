@@ -25,7 +25,9 @@
 //! every rule that plain values can decide lives in `model.rs`,
 //! where it is natively testable.
 
-use bmc_wasm_sdk::{CalendarDate, JsonDoc, Length, LocalDateTime, Mass, calendar, system};
+use bmc_wasm_sdk::{
+    CalendarDate, JsonDoc, JsonKind, Length, LocalDateTime, Mass, calendar, system,
+};
 
 use crate::api::wire;
 use crate::model::{
@@ -34,8 +36,17 @@ use crate::model::{
     team_color,
 };
 
-/// Rows are read until a probe field comes back absent, which is how
-/// an array payload's end is found through a pointer API.
+/// The payload is not shaped as its resource answers — never merely empty:
+/// a right-shaped payload with nothing in it parses to its own empty value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Malformed;
+
+/// Rows are read until a probe field comes back absent,
+/// which is how an array payload's end is found through a pointer API.
+///
+/// Sound only because every probe is a bare `String` in the Nexus DTOs
+/// (`nexus-data/formula1`), so no row can omit it — a mid-array absence
+/// would otherwise read as the table's end.
 fn each_row(json: &JsonDoc, probe: &str, mut read: impl FnMut(usize)) {
     for index in 0.. {
         if json.str(&wire::row(index, probe)).is_none() {
@@ -108,8 +119,10 @@ fn medium(json: &JsonDoc, path: &str) -> u16 {
         .clamp(0, i64::from(u16::MAX)) as u16
 }
 
-#[must_use]
-pub fn standings(json: &JsonDoc) -> Vec<StandingsRow> {
+pub fn standings(json: &JsonDoc) -> Result<Vec<StandingsRow>, Malformed> {
+    if json.kind(wire::DATA) != Some(JsonKind::Array) {
+        return Err(Malformed);
+    }
     let mut rows = Vec::new();
     each_row(json, "driver_name", |index| {
         let at = |field: &str| wire::row(index, field);
@@ -126,7 +139,7 @@ pub fn standings(json: &JsonDoc) -> Vec<StandingsRow> {
             headshot_url: image(json, &at("headshot_url")),
         });
     });
-    rows
+    Ok(rows)
 }
 
 /// One statistics row, read from `at` —
@@ -158,19 +171,23 @@ fn driver_stats_at(json: &JsonDoc, at: &impl Fn(&str) -> String) -> DriverStats 
     }
 }
 
-#[must_use]
-pub fn driver_stats(json: &JsonDoc) -> Vec<DriverStats> {
+pub fn driver_stats(json: &JsonDoc) -> Result<Vec<DriverStats>, Malformed> {
+    if json.kind(wire::DATA) != Some(JsonKind::Array) {
+        return Err(Malformed);
+    }
     let mut rows = Vec::new();
     each_row(json, "name", |index| {
         rows.push(driver_stats_at(json, &|field| wire::row(index, field)));
     });
-    rows
+    Ok(rows)
 }
 
-/// The constructors' table, which is where a mark comes from: no
-/// driver-facing resource names one.
-#[must_use]
-pub fn teams(json: &JsonDoc) -> Vec<Team> {
+/// The constructors' table, which is where a mark
+/// comes from: no driver-facing resource names one.
+pub fn teams(json: &JsonDoc) -> Result<Vec<Team>, Malformed> {
+    if json.kind("/data/teams") != Some(JsonKind::Array) {
+        return Err(Malformed);
+    }
     let mut rows = Vec::new();
     for index in 0.. {
         let at = |field: &str| wire::team(index, field);
@@ -187,12 +204,14 @@ pub fn teams(json: &JsonDoc) -> Vec<Team> {
             color: color(json, &at("resolved_color")),
         });
     }
-    rows
+    Ok(rows)
 }
 
 /// Which constructor each driver races for.
-#[must_use]
-pub fn driver_teams(json: &JsonDoc) -> Vec<DriverTeam> {
+pub fn driver_teams(json: &JsonDoc) -> Result<Vec<DriverTeam>, Malformed> {
+    if json.kind(wire::DATA) != Some(JsonKind::Array) {
+        return Err(Malformed);
+    }
     let mut rows = Vec::new();
     each_row(json, "jolpica_id", |index| {
         let at = |field: &str| wire::row(index, field);
@@ -209,17 +228,30 @@ pub fn driver_teams(json: &JsonDoc) -> Vec<DriverTeam> {
             team_id,
         });
     });
-    rows
+    Ok(rows)
 }
 
-#[must_use]
-pub fn driver(json: &JsonDoc) -> Option<DriverStats> {
+pub fn driver(json: &JsonDoc) -> Result<DriverStats, Malformed> {
+    if json.kind(wire::DATA) != Some(JsonKind::Object) {
+        return Err(Malformed);
+    }
     let stats = driver_stats_at(json, &|field| wire::field(field));
-    (!stats.name.is_empty()).then_some(stats)
+    if stats.name.is_empty() {
+        return Err(Malformed);
+    }
+    Ok(stats)
 }
 
-#[must_use]
-pub fn next_race(json: &JsonDoc, local_time: bool) -> Option<NextRace> {
+/// `Ok(None)` is a parsed payload announcing no race,
+/// which an off-season legitimately is.
+pub fn next_race(json: &JsonDoc, local_time: bool) -> Result<Option<NextRace>, Malformed> {
+    if json.kind(wire::DATA) != Some(JsonKind::Object) {
+        return Err(Malformed);
+    }
+    Ok(announced_race(json, local_time))
+}
+
+fn announced_race(json: &JsonDoc, local_time: bool) -> Option<NextRace> {
     let gp_name = json.str(&wire::field("gp_name"))?;
     let venue_timezone = json.str(&wire::field("venue_timezone"));
     // Off the viewer's own clock the schedule stays on the circuit's,
@@ -282,10 +314,12 @@ fn sector(json: &JsonDoc, index: usize, which: u8) -> Option<Sector> {
 /// The `live` flag is only present when idle,
 /// so its absence means a session — subject to it having entries,
 /// which [`LiveBoard::from_board`] decides.
-#[must_use]
-pub fn live_board(json: &JsonDoc) -> LiveBoard {
+pub fn live_board(json: &JsonDoc) -> Result<LiveBoard, Malformed> {
     if json.bool(wire::LIVE_FLAG) == Some(false) {
-        return LiveBoard::Idle;
+        return Ok(LiveBoard::Idle);
+    }
+    if json.kind("/data/entries") != Some(JsonKind::Array) {
+        return Err(Malformed);
     }
     let mut rows = Vec::new();
     for index in 0.. {
@@ -331,12 +365,12 @@ pub fn live_board(json: &JsonDoc) -> LiveBoard {
                 .and_then(DriverStatus::from_wire),
         });
     }
-    LiveBoard::from_board(TimingBoard {
+    Ok(LiveBoard::from_board(TimingBoard {
         session_label: text(json, &wire::field("session_label")),
         gp_name: text(json, &wire::field("gp_name")),
         country_flag_url: image(json, &wire::field("country_flag_url")),
         current_lap: medium(json, &wire::field("current_lap")),
         total_laps: medium(json, &wire::field("total_laps")),
         rows,
-    })
+    }))
 }
