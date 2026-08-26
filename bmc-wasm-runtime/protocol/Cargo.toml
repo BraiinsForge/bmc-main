@@ -14,6 +14,8 @@ serde = { workspace = true, optional = true }
 
 [features]
 default = []
+# Shared host-side allocator for renderer and audio resource IDs.
+id-pool = []
 # Off by default so the SDK build path doesn't pick up serde
 serde = ["dep:serde"]
 # Colour conversions for egui consumers; off so the wasm SDK never sees egui.

@@ -311,6 +311,19 @@ impl UploadedMesh {
 pub(crate) struct MeshReservations {
     by_tag: HashMap<String, MeshId>,
     slot_count: usize,
+    free_indices: Vec<usize>,
+}
+
+fn release_mesh_index(free_indices: &mut Vec<usize>, index: usize, slot_count: usize) {
+    assert!(
+        index < slot_count,
+        "BUG: released mesh index must have been issued"
+    );
+    debug_assert!(
+        !free_indices.contains(&index),
+        "BUG: released mesh index must not already be free"
+    );
+    free_indices.push(index);
 }
 
 impl MeshReservations {
@@ -318,11 +331,18 @@ impl MeshReservations {
         if let Some(&id) = self.by_tag.get(tag) {
             return Some(id);
         }
-        let Some(id) = mesh_id_from_storage_index(self.slot_count) else {
+        let index = if let Some(index) = self.free_indices.pop() {
+            index
+        } else if mesh_id_from_storage_index(self.slot_count).is_some() {
+            let index = self.slot_count;
+            self.slot_count += 1;
+            index
+        } else {
             tracing::error!("mesh reservation failed: id space exhausted ({tag})");
             return None;
         };
-        self.slot_count += 1;
+        let id = mesh_id_from_storage_index(index)
+            .expect("BUG: reusable mesh storage index must have a wire ID");
         self.by_tag.insert(tag.to_owned(), id);
         Some(id)
     }
@@ -342,14 +362,26 @@ impl MeshReservations {
     }
 
     pub(crate) fn evict_prefix(&mut self, prefix: &str) -> usize {
-        let before = self.by_tag.len();
+        let ids: Vec<MeshId> = self
+            .by_tag
+            .iter()
+            .filter(|(tag, _)| bmc_wasm_protocol::tag_matches_prefix(tag, prefix))
+            .map(|(_, id)| *id)
+            .collect();
         self.by_tag
             .retain(|tag, _| !bmc_wasm_protocol::tag_matches_prefix(tag, prefix));
-        before - self.by_tag.len()
+        for id in ids.iter().copied() {
+            release_mesh_index(
+                &mut self.free_indices,
+                mesh_id_to_storage_index(id),
+                self.slot_count,
+            );
+        }
+        ids.len()
     }
 
-    fn into_parts(self) -> (HashMap<String, MeshId>, usize) {
-        (self.by_tag, self.slot_count)
+    fn into_parts(self) -> (HashMap<String, MeshId>, usize, Vec<usize>) {
+        (self.by_tag, self.slot_count, self.free_indices)
     }
 }
 
@@ -400,6 +432,7 @@ pub struct MeshRenderer {
     meshes: Vec<Option<UploadedMesh>>,
     // Tag → MeshId for idempotent registration.
     by_tag: std::collections::HashMap<String, MeshId>,
+    free_indices: Vec<usize>,
     // Per-slot dirty tracking
     slots: Vec<SlotState>,
     #[cfg(feature = "profiling")]
@@ -509,7 +542,7 @@ impl MeshRenderer {
             );
 
             let slots = (0..MAX_SLOTS).map(|_| SlotState::new()).collect();
-            let (by_tag, slot_count) = reservations.into_parts();
+            let (by_tag, slot_count, free_indices) = reservations.into_parts();
             let meshes = std::iter::repeat_with(|| None).take(slot_count).collect();
 
             Ok(Self {
@@ -538,6 +571,7 @@ impl MeshRenderer {
                 u_highlight_color,
                 meshes,
                 by_tag,
+                free_indices,
                 slots,
                 #[cfg(feature = "profiling")]
                 setup_w: ii_stopwatch::StopWatch::default(),
@@ -600,10 +634,15 @@ impl MeshRenderer {
                             Some(id),
                             "BUG: failed upload must roll back its own tag reservation"
                         );
-                        assert!(
-                            matches!(self.meshes.pop(), Some(None)),
-                            "BUG: failed upload must roll back its empty storage slot"
-                        );
+                        let index = mesh_id_to_storage_index(id);
+                        if index + 1 == self.meshes.len() {
+                            assert!(
+                                matches!(self.meshes.pop(), Some(None)),
+                                "BUG: failed upload must remove its empty tail storage slot"
+                            );
+                        } else {
+                            release_mesh_index(&mut self.free_indices, index, self.meshes.len());
+                        }
                         tracing::error!("mesh upload failed ({tag}): {error}");
                         return None;
                     }
@@ -627,11 +666,18 @@ impl MeshRenderer {
         match self.tag_state(tag) {
             AssetTagState::Resident(id) | AssetTagState::Suspended(id) => Some(id),
             AssetTagState::Unknown => {
-                let Some(id) = mesh_id_from_storage_index(self.meshes.len()) else {
+                let index = if let Some(index) = self.free_indices.pop() {
+                    index
+                } else if mesh_id_from_storage_index(self.meshes.len()).is_some() {
+                    let index = self.meshes.len();
+                    self.meshes.push(None);
+                    index
+                } else {
                     tracing::error!("mesh reservation failed: id space exhausted ({tag})");
                     return None;
                 };
-                self.meshes.push(None);
+                let id = mesh_id_from_storage_index(index)
+                    .expect("BUG: reusable mesh storage index must have a wire ID");
                 self.by_tag.insert(tag.to_owned(), id);
                 Some(id)
             }
@@ -1009,17 +1055,11 @@ impl MeshRenderer {
         })
     }
 
-    /// Evict a single tag's mesh: drop its GL handles and clear the storage
-    /// slot. The `MeshId` returned by earlier `register_mesh(tag, …)` calls
-    /// becomes invalid; subsequent renders that reference it no-op safely
-    /// because the slot is now `None`. The atlas pixels last drawn under that
-    /// slot remain until something else redraws.
+    /// Evict a single tag's mesh, release its ID, and invalidate renderer slots.
+    /// Widgets must not draw the released ID after eviction because a later
+    /// registration may reuse it.
     ///
     /// Returns `true` if a tag was found and evicted, `false` otherwise.
-    ///
-    /// IDs are not recycled — registering a fresh tag after eviction allocates
-    /// a new storage slot. Slot recycling is a separate concern from resource
-    /// release and is not implemented here.
     pub fn evict(&mut self, gl: &glow::Context, tag: &str) -> bool {
         let Some(id) = self.by_tag.remove(tag) else {
             return false;
@@ -1033,6 +1073,10 @@ impl MeshRenderer {
             crate::gpu_access::assert_gpu_access_authorized();
             unsafe { mesh.drop_gl(gl) };
         }
+        for slot in &mut self.slots {
+            slot.invalidate_mesh(id);
+        }
+        release_mesh_index(&mut self.free_indices, index, self.meshes.len());
         true
     }
 
@@ -1304,7 +1348,10 @@ mod profile {
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
-    use super::{MeshRenderer, UploadedMesh, atlas};
+    use super::{
+        MeshDrawArgs, MeshHighlight, MeshLighting, MeshRenderer, MeshReservations, MeshTransform,
+        UploadedMesh, atlas, release_mesh_index,
+    };
     use crate::renderer::{AssetSuspendResult, AssetTagState};
     use crate::test_harness::{GlHarness, create_real_buffer, create_real_texture};
     use glow::HasContext;
@@ -1319,6 +1366,92 @@ mod tests {
         data[12..16].copy_from_slice(&offset);
         data[16..20].copy_from_slice(&offset);
         data
+    }
+
+    fn mesh_draw_args() -> MeshDrawArgs {
+        MeshDrawArgs {
+            transform: MeshTransform {
+                fov: 0.0,
+                distance: 0.0,
+                quat: [0.0; 4],
+                position: [0.0; 3],
+                scale: 0.0,
+            },
+            lighting: MeshLighting {
+                pitch: 0.0,
+                yaw: 0.0,
+                ambient: 0.0,
+                specular: 0.0,
+            },
+            highlight: MeshHighlight {
+                u_min: 0.0,
+                v_min: 0.0,
+                u_max: 0.0,
+                v_max: 0.0,
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+            },
+        }
+    }
+
+    #[test]
+    fn pending_reservations_reuse_evicted_slots() {
+        let mut reservations = MeshReservations::default();
+        let first = reservations
+            .reserve("widget-a:mesh")
+            .expect("BUG: first reservation must fit");
+        let second = reservations
+            .reserve("widget-b:mesh")
+            .expect("BUG: second reservation must fit");
+
+        assert_eq!(reservations.evict_prefix("widget-a"), 1);
+        assert_eq!(
+            reservations.reserve("widget-c:mesh"),
+            Some(first),
+            "an evicted slot must be reused before allocating past the live second slot"
+        );
+        assert_ne!(first, second);
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: released mesh index must not already be free")]
+    fn releasing_a_mesh_index_twice_fails_loudly() {
+        let mut free_indices = Vec::new();
+
+        release_mesh_index(&mut free_indices, 0, 1);
+        release_mesh_index(&mut free_indices, 0, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: released mesh index must have been issued")]
+    fn releasing_an_unissued_mesh_index_fails_loudly() {
+        release_mesh_index(&mut Vec::new(), 1, 1);
+    }
+
+    #[test]
+    fn pending_free_indices_survive_renderer_initialization() {
+        let mut reservations = MeshReservations::default();
+        let first = reservations
+            .reserve("first")
+            .expect("BUG: first reservation must succeed");
+        let second = reservations
+            .reserve("second")
+            .expect("BUG: second reservation must succeed");
+        assert_eq!(reservations.evict_prefix("first"), 1);
+
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new_with_reservations(gl, &mut canvas, 0, reservations)
+            .expect("BUG: mesh renderer init must succeed");
+
+        assert_eq!(
+            renderer.register_mesh(gl, "replacement", &minimal_mesh()),
+            Some(first)
+        );
+        assert_ne!(first, second);
+        renderer.destroy(gl, &mut canvas);
     }
 
     /// Build an `UploadedMesh` whose GL handles are real, freshly allocated
@@ -1409,6 +1542,59 @@ mod tests {
         assert_eq!(renderer.register_mesh(gl, "broken", &[]), None);
         assert_eq!(renderer.tag_state("broken"), AssetTagState::Unknown);
         assert!(renderer.meshes.is_empty());
+
+        renderer.destroy(gl, &mut canvas);
+    }
+
+    #[test]
+    fn failed_registration_keeps_recycled_non_tail_index_reusable() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
+        let mesh = minimal_mesh();
+        let first = renderer
+            .register_mesh(gl, "first", &mesh)
+            .expect("BUG: first registration must succeed");
+        let recycled = renderer
+            .register_mesh(gl, "middle", &mesh)
+            .expect("BUG: middle registration must succeed");
+        let last = renderer
+            .register_mesh(gl, "last", &mesh)
+            .expect("BUG: last registration must succeed");
+
+        assert!(renderer.evict(gl, "middle"));
+        assert_eq!(renderer.register_mesh(gl, "broken", &[]), None);
+        assert_eq!(
+            renderer.register_mesh(gl, "replacement", &mesh),
+            Some(recycled)
+        );
+        assert_ne!(first, recycled);
+        assert_ne!(last, recycled);
+
+        renderer.destroy(gl, &mut canvas);
+    }
+
+    #[test]
+    fn evicting_mesh_invalidates_atlas_slot_before_id_reuse() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let gl = &harness.gl;
+        let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
+        let mut renderer = MeshRenderer::new(gl, &mut canvas, 0).expect("BUG: mesh renderer init");
+        let mesh = minimal_mesh();
+        let id = renderer
+            .register_mesh(gl, "old", &mesh)
+            .expect("BUG: initial registration must succeed");
+        let args = mesh_draw_args();
+        assert!(renderer.slots[0].check_and_update(id, &args));
+        assert!(!renderer.slots[0].check_and_update(id, &args));
+
+        assert!(renderer.evict(gl, "old"));
+        let replacement = renderer
+            .register_mesh(gl, "new", &mesh)
+            .expect("BUG: replacement registration must succeed");
+        assert_eq!(replacement, id);
+        assert!(renderer.slots[0].check_and_update(replacement, &args));
 
         renderer.destroy(gl, &mut canvas);
     }
@@ -1530,8 +1716,8 @@ mod tests {
         let replacement = renderer
             .register_mesh(gl, "widget-1:mesh", &mesh)
             .expect("BUG: re-registration after eviction should succeed");
-        assert_ne!(replacement, id_1);
-        assert_eq!(renderer.meshes.len(), registered_slots + 1);
+        assert_eq!(replacement, id_1);
+        assert_eq!(renderer.meshes.len(), registered_slots);
 
         renderer.destroy(gl, &mut canvas);
     }

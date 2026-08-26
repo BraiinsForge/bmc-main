@@ -22,7 +22,7 @@ bmc-render = { path = "../bmc-render" }
 bmc-shared-time = { path = "../bmc-shared/time" }
 bmc-shared-utils = { workspace = true }
 bmc-wasm-assets = { path = "../bmc-wasm-assets", optional = true }
-bmc-wasm-protocol = { path = "protocol", features = ["domain", "serde", "widget-protocol"] }
+bmc-wasm-protocol = { path = "protocol", features = ["domain", "id-pool", "serde", "widget-protocol"] }
 bmc-widget-manifest.workspace = true
 bmc-widget-protocol.workspace = true
 chrono.workspace = true

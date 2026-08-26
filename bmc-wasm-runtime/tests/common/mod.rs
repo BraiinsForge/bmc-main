@@ -50,15 +50,11 @@ pub mod headless_egl {
     use std::ffi::{CString, c_void};
     use std::num::NonZeroU32;
 
-    /// Headless GL context tied to a pbuffer; kept alive for the lifetime of the widget
-    /// runtime through `_resources` below.
+    /// Headless GL context tied to a pbuffer and its drop-ordered resources.
     pub struct HeadlessGl {
         pub display: Display,
         pub fbo_id: u32,
-        /// Ownership root for the GL resources backing this context. Never accessed after
-        /// construction — the `_` prefix tells the compiler that's intentional. Held only
-        /// so its `Drop` impls fire when the test ends; see [`GlResources`] for drop order.
-        _resources: GlResources,
+        resources: GlResources,
     }
 
     /// Ownership root for the GL resources `HeadlessGl` keeps alive. Fields drop in declaration
@@ -66,8 +62,7 @@ pub mod headless_egl {
     /// current (glutin enforces this at runtime), and texture / context-wrapped glow handles
     /// release their underlying GL state once the context goes.
     ///
-    /// Every field is intentionally write-only — held to keep the GL state alive for as long
-    /// as `HeadlessGl` lives, never read after construction.
+    /// The GL handle also supports framebuffer inspection through `HeadlessGl`'s `AsRef` impl.
     #[expect(dead_code, reason = "ownership markers — see struct doc")]
     struct GlResources {
         surface: Surface<PbufferSurface>,
@@ -81,6 +76,12 @@ pub mod headless_egl {
         pub fn proc_address(&self) -> impl FnMut(&str) -> *const c_void + '_ {
             let display = self.display.clone();
             move |s: &str| display.get_proc_address(&CString::new(s).unwrap_or_default())
+        }
+    }
+
+    impl AsRef<glow::Context> for HeadlessGl {
+        fn as_ref(&self) -> &glow::Context {
+            &self.resources.gl
         }
     }
 
@@ -187,7 +188,7 @@ pub mod headless_egl {
         Ok(HeadlessGl {
             display,
             fbo_id,
-            _resources: GlResources {
+            resources: GlResources {
                 surface,
                 context: gl_context,
                 gl,

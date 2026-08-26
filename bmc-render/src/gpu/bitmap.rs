@@ -28,12 +28,14 @@ use std::fmt;
 use std::io::Cursor;
 use std::panic;
 
-use bmc_wasm_protocol::BitmapId;
+use bmc_wasm_protocol::{BitmapId, IdPool};
 use femtovg::{ImageFlags, ImageId, ImageSource, Paint, Path};
 use imgref::ImgRef;
 use rgb::{FromSlice as _, RGBA8};
 
 use crate::renderer::{AssetSuspendResult, AssetTagState};
+
+const BITMAP_ID_EXCLUSIVE_CAP: u16 = u16::MAX;
 
 /// GPU texture handle and source dimensions for a registered bitmap.
 struct StoredBitmap {
@@ -54,14 +56,14 @@ struct BitmapReservation {
 pub struct BitmapRegistry {
     bitmaps: HashMap<BitmapId, StoredBitmap>,
     by_tag: HashMap<String, BitmapReservation>,
-    next_id: u16,
+    ids: IdPool<BitmapId>,
 }
 
 impl fmt::Debug for BitmapRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("BitmapRegistry")
             .field("count", &self.bitmaps.len())
-            .field("next_id", &self.next_id)
+            .field("ids", &self.ids)
             .finish_non_exhaustive()
     }
 }
@@ -72,7 +74,7 @@ impl BitmapRegistry {
         Self {
             bitmaps: HashMap::new(),
             by_tag: HashMap::new(),
-            next_id: 1,
+            ids: IdPool::new(BITMAP_ID_EXCLUSIVE_CAP),
         }
     }
 
@@ -84,7 +86,10 @@ impl BitmapRegistry {
             }
             return Some(reservation.id);
         }
-        let id = BitmapId::alloc(&mut self.next_id);
+        let Some(id) = self.ids.alloc() else {
+            tracing::error!("bitmap registry exhausted ({tag})");
+            return None;
+        };
         self.by_tag
             .insert(tag.to_owned(), BitmapReservation { id, flags });
         Some(id)
@@ -140,7 +145,10 @@ impl BitmapRegistry {
                     }
                 };
 
-                let id = self.reserve(tag, flags)?;
+                let Some(id) = self.reserve(tag, flags) else {
+                    canvas.delete_image(image_id);
+                    return None;
+                };
                 self.bitmaps.insert(
                     id,
                     StoredBitmap {
@@ -200,7 +208,11 @@ impl BitmapRegistry {
             reservation.flags = flags;
             return Some(id);
         }
-        let id = BitmapId::alloc(&mut self.next_id);
+        let Some(id) = self.ids.alloc() else {
+            canvas.delete_image(image_id);
+            tracing::error!("bitmap registry exhausted ({tag})");
+            return None;
+        };
         self.bitmaps.insert(
             id,
             StoredBitmap {
@@ -277,22 +289,26 @@ impl BitmapRegistry {
     }
 
     /// Delete all registered FemtoVG images.
-    pub fn clear(&mut self, canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>) {
+    ///
+    /// The caller must also invalidate renderer state that caches bitmap IDs.
+    pub(super) fn clear(&mut self, canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>) {
         if !self.bitmaps.is_empty() {
             crate::gpu_access::assert_gpu_access_authorized();
         }
         for bitmap in self.bitmaps.drain().map(|(_, bitmap)| bitmap) {
             canvas.delete_image(bitmap.image_id);
         }
+        self.clear_reservations();
+    }
+
+    fn clear_reservations(&mut self) {
         self.by_tag.clear();
+        self.ids = IdPool::new(BITMAP_ID_EXCLUSIVE_CAP);
     }
 
     /// Evict a tag's bitmap reservation and any resident payload.
     /// Returns `true` when a tag was found and removed.
-    ///
-    /// IDs are not recycled — registering a fresh tag after eviction
-    /// allocates a new ID via `next_id`.
-    pub fn evict(
+    fn evict(
         &mut self,
         tag: &str,
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
@@ -304,13 +320,15 @@ impl BitmapRegistry {
             crate::gpu_access::assert_gpu_access_authorized();
             canvas.delete_image(stored.image_id);
         }
+        self.ids.release(reservation.id);
         true
     }
 
     /// Evict every tag matching `prefix` at segment boundaries (the tag is
     /// either exactly `prefix` or a descendant under it).
+    /// The caller must invalidate renderer state that caches removed bitmap IDs.
     /// Returns the number of tags removed.
-    pub fn evict_prefix(
+    pub(super) fn evict_prefix(
         &mut self,
         prefix: &str,
         canvas: &mut femtovg::Canvas<femtovg::renderer::OpenGl>,
@@ -840,7 +858,7 @@ mod tests {
     }
 
     #[test]
-    fn register_after_evict_uses_fresh_id() {
+    fn register_after_evict_reuses_released_id() {
         let harness = GlHarness::new().expect("BUG: headless GL setup failed");
         let mut canvas = harness.build_canvas().expect("BUG: canvas init failed");
         let mut reg = BitmapRegistry::new();
@@ -853,8 +871,25 @@ mod tests {
         let id2 = reg
             .register("ephemeral", &png, &mut canvas, ImageFlags::empty())
             .expect("BUG: re-register");
-        // IDs are not recycled — eviction frees resources, not slots.
-        assert_ne!(id1, id2);
+        assert_eq!(id1, id2);
+    }
+
+    #[test]
+    fn clear_restarts_bitmap_id_allocation() {
+        let mut registry = BitmapRegistry::new();
+        let first = registry
+            .reserve("first", ImageFlags::empty())
+            .expect("BUG: first reservation should succeed");
+        let _second = registry
+            .reserve("second", ImageFlags::empty())
+            .expect("BUG: second reservation should succeed");
+
+        registry.clear_reservations();
+
+        assert_eq!(
+            registry.reserve("replacement", ImageFlags::empty()),
+            Some(first)
+        );
     }
 
     #[test]
@@ -1033,7 +1068,7 @@ mod tests {
         let next = reg
             .register("widget:bitmap", &png, &mut canvas, ImageFlags::empty())
             .expect("BUG: re-registration should succeed");
-        assert_ne!(next, id);
+        assert_eq!(next, id);
     }
 
     #[test]

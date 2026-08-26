@@ -568,13 +568,13 @@ impl FemtoVgRenderer {
     /// are preserved.
     pub fn drop_all(&mut self) {
         self.release_gpu_assets();
-        self.sphere_bitmap_id = None;
         self.pending_mesh_reservations = MeshReservations::default();
         self.icon_registry = SvgRegistry::new();
         self.icon_registry.register_builtins();
     }
 
     fn release_gpu_assets(&mut self) {
+        self.sphere_bitmap_id = None;
         if let Some(sphere) = self.sphere.take() {
             sphere.destroy(&self.gl, &mut self.canvas);
         }
@@ -2082,7 +2082,8 @@ mod tests {
     #[test]
     fn sphere_rebind_after_bitmap_evict_does_not_use_deleted_texture() {
         let harness = GlHarness::new().expect("BUG: headless GL setup failed");
-        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
             .expect("BUG: renderer init failed");
 
         let png_a = one_px_png([255, 0, 0, 255]);
@@ -2093,6 +2094,7 @@ mod tests {
             .expect("BUG: register A");
         drain_gl_errors(&harness.gl);
 
+        renderer.begin_frame(64, 64, 1.0);
         renderer.draw_sphere(
             0.0,
             0.0,
@@ -2106,6 +2108,7 @@ mod tests {
             f32::NAN,
             false,
         );
+        renderer.flush();
         let err = unsafe { harness.gl.get_error() };
         assert_eq!(
             err,
@@ -2113,21 +2116,21 @@ mod tests {
             "first draw_sphere produced GL 0x{err:04X}"
         );
         assert_eq!(renderer.sphere_bitmap_id, Some(id_a));
-
-        // Evict A and register B under the same tag — mirrors the
-        // `BitmapSlot::set` host path that destroys A's GL texture.
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
         assert!(
-            renderer
-                .bitmap_registry
-                .evict("sphere:test", &mut renderer.canvas),
-            "BUG: evict A",
+            center[0] > 240 && center[1] < 16 && center[2] < 16,
+            "initial red texture must be sampled at sphere center, got {center:?}"
         );
+
+        assert_eq!(renderer.evict_prefix("sphere:test"), 1);
         let id_b = renderer
             .register_bitmap("sphere:test", &png_b)
             .expect("BUG: register B");
-        assert_ne!(id_a, id_b, "BUG: re-register should mint a fresh BitmapId");
+        assert_eq!(id_a, id_b, "released bitmap ID should be reused");
 
         drain_gl_errors(&harness.gl);
+        renderer.begin_frame(64, 64, 1.0);
         renderer.draw_sphere(
             0.0,
             0.0,
@@ -2141,6 +2144,7 @@ mod tests {
             f32::NAN,
             false,
         );
+        renderer.flush();
         let err = unsafe { harness.gl.get_error() };
         assert_eq!(
             err,
@@ -2151,6 +2155,12 @@ mod tests {
             renderer.sphere_bitmap_id,
             Some(id_b),
             "BUG: rebind tracker must follow the new BitmapId",
+        );
+        let pixels = read_pixels_top_down(&harness.gl, fbo, 64, 64);
+        let center = pixels[32 * 64 + 32];
+        assert!(
+            center[1] > 240 && center[0] < 16 && center[2] < 16,
+            "replacement green texture must be sampled at sphere center, got {center:?}"
         );
     }
 
@@ -2430,12 +2440,7 @@ mod tests {
         let id = renderer
             .register_bitmap("sphere:gone", &png)
             .expect("BUG: register");
-        assert!(
-            renderer
-                .bitmap_registry
-                .evict("sphere:gone", &mut renderer.canvas),
-            "BUG: evict",
-        );
+        assert_eq!(renderer.evict_prefix("sphere:gone"), 1);
 
         drain_gl_errors(&harness.gl);
         renderer.draw_sphere(

@@ -28,8 +28,9 @@ use std::fmt;
 
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_FLAG_HAS_STROKE, SVG_OP_CLOSE,
-    SVG_OP_CUBIC_TO, SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO, SVG_RESERVED_MIN, SvgId,
+    IdPool, SVG_FLAG_EVENODD, SVG_FLAG_HAS_FILL, SVG_FLAG_HAS_ID, SVG_FLAG_HAS_STROKE,
+    SVG_OP_CLOSE, SVG_OP_CUBIC_TO, SVG_OP_LINE_TO, SVG_OP_MOVE_TO, SVG_OP_QUAD_TO,
+    SVG_RESERVED_MIN, SvgId,
 };
 use femtovg::{FillRule, Paint, Path};
 
@@ -70,14 +71,14 @@ pub struct RegisteredSvg {
 pub struct SvgRegistry {
     icons: HashMap<SvgId, RegisteredSvg>,
     by_tag: HashMap<String, SvgId>,
-    next_id: u16,
+    ids: IdPool<SvgId>,
 }
 
 impl fmt::Debug for SvgRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("SvgRegistry")
             .field("count", &self.icons.len())
-            .field("next_id", &self.next_id)
+            .field("ids", &self.ids)
             .finish_non_exhaustive()
     }
 }
@@ -88,7 +89,7 @@ impl SvgRegistry {
         Self {
             icons: HashMap::new(),
             by_tag: HashMap::new(),
-            next_id: 1,
+            ids: IdPool::new(SVG_RESERVED_MIN),
         }
     }
 
@@ -96,14 +97,12 @@ impl SvgRegistry {
         match self.tag_state(tag) {
             AssetTagState::Resident(id) | AssetTagState::Suspended(id) => Some(id),
             AssetTagState::Unknown => {
-                if self.next_id >= SVG_RESERVED_MIN {
+                let Some(id) = self.ids.alloc() else {
                     tracing::error!(
-                        "user icon registry exhausted at 0x{:04X} (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
-                        self.next_id,
+                        "user icon registry exhausted (reserved range starts at 0x{SVG_RESERVED_MIN:04X})",
                     );
                     return None;
-                }
-                let id = SvgId::alloc(&mut self.next_id);
+                };
                 self.by_tag.insert(tag.to_owned(), id);
                 Some(id)
             }
@@ -153,6 +152,10 @@ impl SvgRegistry {
 
     /// Parse binary icon data and register it with an explicit ID.
     pub fn register_with_id(&mut self, id: SvgId, data: &[u8]) {
+        assert!(
+            id.to_wire() >= SVG_RESERVED_MIN,
+            "BUG: explicit SVG ID must belong to the host-reserved range"
+        );
         match parse_svg(data) {
             Ok(icon) => {
                 self.icons.insert(id, icon);
@@ -213,14 +216,12 @@ impl SvgRegistry {
     /// Evict a tag-registered icon. Returns `true` if a tag was found
     /// and removed. Built-in icons (registered via `register_with_id`,
     /// no tag) are unaffected.
-    ///
-    /// IDs are not recycled — registering a fresh tag
-    /// after eviction allocates a new ID via `next_id`.
     pub fn evict(&mut self, tag: &str) -> bool {
         let Some(id) = self.by_tag.remove(tag) else {
             return false;
         };
         self.icons.remove(&id);
+        self.ids.release(id);
         true
     }
 
@@ -612,7 +613,27 @@ mod tests {
         let new_id = reg
             .register("widget:icon", &data)
             .expect("BUG: re-register should succeed");
-        assert_ne!(new_id, id);
+        assert_eq!(new_id, id);
+    }
+
+    #[test]
+    fn recycled_svg_ids_stay_below_the_reserved_range() {
+        let mut registry = SvgRegistry::new();
+        let reserved_min = 3;
+        registry.ids = IdPool::new(reserved_min);
+        let data = minimal_icon();
+        let first = registry
+            .register("first", &data)
+            .expect("BUG: first registration should succeed");
+        let second = registry
+            .register("second", &data)
+            .expect("BUG: second registration should succeed");
+
+        assert_eq!(registry.register("exhausted", &data), None);
+        assert!(registry.evict("first"));
+        assert_eq!(registry.register("replacement", &data), Some(first));
+        assert!(first.to_wire() < reserved_min);
+        assert!(second.to_wire() < reserved_min);
     }
 
     #[test]
@@ -682,5 +703,14 @@ mod tests {
         assert!(reg.get(user).is_none());
         // Built-in icons have no `by_tag` entry, so prefix sweeps don't reach them.
         assert!(reg.get(builtin).is_some());
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: explicit SVG ID must belong to the host-reserved range")]
+    fn register_with_id_rejects_user_range() {
+        let mut reg = SvgRegistry::new();
+        let user = SvgId::from_wire(SVG_RESERVED_MIN - 1).expect("BUG: user ID must be nonzero");
+
+        reg.register_with_id(user, &minimal_icon());
     }
 }

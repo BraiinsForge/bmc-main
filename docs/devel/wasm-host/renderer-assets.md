@@ -52,8 +52,9 @@ embedded data for their native registrars.
 
 ## Registration and IDs
 
-Renderer tags are namespaced per widget instance. A new registration creates a stable reservation and returns its opaque
-`SvgId`, `BitmapId`, or `MeshId`.
+Renderer tags are namespaced per widget instance. Registration and guest eviction imports prepend that namespace, so a
+widget cannot register over or evict another widget's assets. A new registration creates a reservation and returns its
+opaque `SvgId`, `BitmapId`, or `MeshId`.
 
 Package and cache registration always creates or reuses a suspended reservation. It does not install the renderer
 payload merely because the widget requested an ID. During rendering, the host restores a suspended SVG, bitmap, or mesh
@@ -64,7 +65,16 @@ Volatile registration remains allowed and resident while the slot is dormant for
 
 A suspended reservation still owns its ID. Drawing it cannot alias another asset: renderer lookup reports no resident
 payload until restoration fills that exact reservation. Destructive eviction removes the reservation and its runtime
-backing association; it does not delete immutable package files or cache blobs. Cache deletion is a separate cache API.
+backing association, then releases its ID for reuse. Each runtime refuses draw IDs it does not currently own, preventing
+a stale tree from drawing an ID reallocated to another widget. Host-reserved SVG IDs are exempt so widgets can use
+built-in renderer icons without owning ledger entries for them. A widget remains responsible for not using its own
+evicted IDs. Eviction does not delete immutable package files or cache blobs; cache deletion is a separate cache API.
+
+Bitmap and SVG registries reuse released IDs before extending their allocation high-water marks. SVG widget IDs remain
+below the host-reserved range. Mesh IDs are one-based storage indices; eviction releases the vacant index and
+invalidates atlas slots that cached the old mesh. Pending mesh reservations use the same hole-reuse policy before GPU
+initialization. This keeps repeated registration and eviction bounded by the maximum number of simultaneously live
+assets.
 
 ## Sleep and wake
 

@@ -30,6 +30,9 @@
 //! writes `0`. Outside the wire/FFI seam, prefer `Option<*Id>` over the
 //! raw value.
 
+#[cfg(any(feature = "id-pool", test))]
+use std::fmt;
+
 macro_rules! define_id {
     ($(#[$meta:meta])* $name:ident, $kind:literal, $inner:ty) => {
         $(#[$meta])*
@@ -110,6 +113,88 @@ define_id! {
 
 u16_ffi_bridge!(SvgId, BitmapId, MeshId, AudioId);
 
+#[cfg(any(feature = "id-pool", test))]
+mod reusable_id {
+    pub trait Sealed {}
+}
+
+#[cfg(any(feature = "id-pool", test))]
+#[doc(hidden)]
+pub trait ReusableId: reusable_id::Sealed {}
+
+/// Host-side pool that reuses released IDs before extending the high-water mark.
+#[cfg(any(feature = "id-pool", test))]
+pub struct IdPool<I: ReusableId> {
+    next: u16,
+    free: Vec<I>,
+    exclusive_cap: u16,
+}
+
+#[cfg(any(feature = "id-pool", test))]
+impl<I: ReusableId> IdPool<I> {
+    #[must_use]
+    pub fn new(exclusive_cap: u16) -> Self {
+        Self {
+            next: 1,
+            free: Vec::new(),
+            exclusive_cap,
+        }
+    }
+}
+
+#[cfg(any(feature = "id-pool", test))]
+macro_rules! reusable_id {
+    ($($id:ty),+ $(,)?) => {
+        $(
+            impl reusable_id::Sealed for $id {}
+
+            impl ReusableId for $id {}
+
+            impl IdPool<$id> {
+                pub fn alloc(&mut self) -> Option<$id> {
+                    if let Some(id) = self.free.pop() {
+                        return Some(id);
+                    }
+                    if self.next >= self.exclusive_cap {
+                        return None;
+                    }
+                    let id = <$id>::from_wire(self.next)
+                        .expect("BUG: reusable ID pool issued zero");
+                    self.next += 1;
+                    Some(id)
+                }
+
+                pub fn release(&mut self, id: $id) {
+                    let raw = id.to_wire();
+                    assert!(
+                        raw < self.next,
+                        "BUG: released ID must have been issued by this pool"
+                    );
+                    debug_assert!(
+                        self.free.iter().all(|free| free.to_wire() != raw),
+                        "BUG: released ID must not already be free"
+                    );
+                    self.free.push(id);
+                }
+            }
+        )+
+    };
+}
+
+#[cfg(any(feature = "id-pool", test))]
+reusable_id!(AudioId, BitmapId, SvgId);
+
+#[cfg(any(feature = "id-pool", test))]
+impl<I: ReusableId> fmt::Debug for IdPool<I> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("IdPool")
+            .field("next", &self.next)
+            .field("free", &self.free.len())
+            .field("exclusive_cap", &self.exclusive_cap)
+            .finish()
+    }
+}
+
 // ── Network / data resources (u32 wire — wasmi FFI calling convention) ─
 
 define_id! {
@@ -170,4 +255,43 @@ define_id! {
 define_id! {
     /// HTTP-listener handle (server side, accepting inbound requests).
     HttpListenerId, "http listener", u32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn released_ids_are_reused_before_fresh_ids() {
+        let mut pool = IdPool::<BitmapId>::new(4);
+        let first = pool.alloc().expect("BUG: first ID must fit");
+        let second = pool.alloc().expect("BUG: second ID must fit");
+
+        pool.release(first);
+
+        assert_eq!(pool.alloc(), Some(first));
+        assert_eq!(pool.alloc().map(BitmapId::to_wire), Some(3));
+        assert_eq!(pool.alloc(), None);
+        pool.release(second);
+        assert_eq!(pool.alloc(), Some(second));
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: released ID must not already be free")]
+    fn releasing_an_id_twice_fails_loudly() {
+        let mut pool = IdPool::<BitmapId>::new(4);
+        let id = pool.alloc().expect("BUG: first ID must fit");
+
+        pool.release(id);
+        pool.release(id);
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: released ID must have been issued by this pool")]
+    fn releasing_an_unissued_id_fails_loudly() {
+        let mut pool = IdPool::<BitmapId>::new(4);
+        let unissued = BitmapId::from_wire(1).expect("BUG: nonzero bitmap ID must be valid");
+
+        pool.release(unissued);
+    }
 }

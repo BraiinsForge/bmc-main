@@ -46,6 +46,25 @@ const DORMANT_NEAREST_TAG: &str = "dormant-nearest";
 const DORMANT_MESH_TAG: &str = "dormant-mesh";
 const DORMANT_FIT_TAG: &str = "dormant-fit";
 const DORMANT_CACHE_TAG: &str = "dormant-cache";
+
+fn read_pixel(gl: &headless_egl::HeadlessGl, x: i32, y: i32) -> [u8; 4] {
+    use glow::HasContext;
+
+    let mut pixel = [0; 4];
+    // SAFETY: HeadlessGl keeps its GL context current for its lifetime.
+    unsafe {
+        gl.as_ref().read_pixels(
+            x,
+            y,
+            1,
+            1,
+            glow::RGBA,
+            glow::UNSIGNED_BYTE,
+            glow::PixelPackData::Slice(Some(&mut pixel)),
+        );
+    }
+    pixel
+}
 const IMAGE_DECODE_COMPLETION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy, Debug)]
@@ -139,23 +158,23 @@ impl AssetKind {
             Self::Svg => bmc_wasm_sdk::Draw::svg_builtin(
                 0.0,
                 0.0,
-                1.0,
-                1.0,
+                64.0,
+                64.0,
                 SvgId::from_ffi(raw_id).expect("BUG: fixture SVG ID must be valid"),
                 bmc_wasm_protocol::colors::WHITE,
             ),
             Self::Bitmap | Self::BitmapNearest => bmc_wasm_sdk::Draw::bitmap_id(
                 0.0,
                 0.0,
-                1.0,
-                1.0,
+                64.0,
+                64.0,
                 Some(BitmapId::from_ffi(raw_id).expect("BUG: fixture bitmap ID must be valid")),
             ),
             Self::Mesh => bmc_wasm_sdk::Draw::Mesh {
                 x: 0.0,
                 y: 0.0,
-                w: 1.0,
-                h: 1.0,
+                w: 64.0,
+                h: 64.0,
                 mesh_id: Some(
                     MeshId::from_ffi(raw_id).expect("BUG: fixture mesh ID must be valid"),
                 ),
@@ -251,6 +270,7 @@ fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
             (func $register (param i32 i32 i32) (result i32)))
           (import "env" "host_submit_tree"
             (func $submit_tree (param i32 i32 i32 i32)))
+          (import "env" "host_evict_all" (func $evict_all (result i32)))
           (memory (export "memory") 1)
           (data (i32.const 0) "{data}")
           (global $wake_count (mut i32) (i32.const 0))
@@ -277,6 +297,7 @@ fn package_demand_wat(kind: AssetKind, id: &[u8; 32]) -> String {
             call $register
             global.set $asset_id
             global.get $asset_id)
+          (func (export "evict_all") (result i32) call $evict_all)
           (func (export "wake_count") (result i32) global.get $wake_count))
         "#,
         import = kind.package_import_name(),
@@ -986,9 +1007,13 @@ fn package_runtime(kind: AssetKind, id: &[u8; 32], config: RuntimeConfig) -> Was
     .expect("BUG: package runtime must construct")
 }
 
-fn package_svg_demand_runtime(id: &[u8; 32], config: RuntimeConfig) -> WasmWidgetRuntime {
-    let wasm = wat::parse_str(package_demand_wat(AssetKind::Svg, id))
-        .expect("BUG: package demand WAT must parse");
+fn package_demand_runtime(
+    kind: AssetKind,
+    id: &[u8; 32],
+    config: RuntimeConfig,
+) -> WasmWidgetRuntime {
+    let wasm =
+        wat::parse_str(package_demand_wat(kind, id)).expect("BUG: package demand WAT must parse");
     WasmWidgetRuntime::new(
         &wasm,
         64,
@@ -1335,6 +1360,21 @@ fn stale_ledger_id_still_acquires_gpu_access_before_tag_suspension() {
             1,
             "the fixture must remove its original reservation"
         );
+        match kind {
+            AssetKind::Bitmap => {
+                renderer
+                    .register_bitmap("another-widget:replacement", &payload)
+                    .expect("BUG: another bitmap must consume the released ID");
+            }
+            AssetKind::Mesh => {
+                renderer
+                    .register_mesh("another-widget:replacement", &payload)
+                    .expect("BUG: another mesh must consume the released ID");
+            }
+            AssetKind::Svg | AssetKind::BitmapNearest => {
+                panic!("BUG: stale-ID fixture only covers GPU-backed suspension")
+            }
+        }
         let replacement_id = match kind {
             AssetKind::Bitmap => renderer
                 .register_bitmap(&renderer_tag, &payload)
@@ -1371,6 +1411,77 @@ fn stale_ledger_id_still_acquires_gpu_access_before_tag_suspension() {
             "{kind:?} tag suspension must acquire GPU access before deletion"
         );
     }
+}
+
+#[test]
+fn stale_widget_tree_cannot_draw_an_id_reused_by_another_widget() {
+    let Some(gl) = headless_egl::try_init(64, 64) else {
+        return;
+    };
+    let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
+    let first_payload = one_px_png([0, 255, 0, 255]);
+    let second_payload = one_px_png([255, 0, 0, 255]);
+    let first_package_id =
+        write_package_asset(package_dir.path(), PackageAssetKind::Bitmap, &first_payload);
+    let second_package_id = write_package_asset(
+        package_dir.path(),
+        PackageAssetKind::Bitmap,
+        &second_payload,
+    );
+    let config = || RuntimeConfig {
+        package_assets: Some(PackageAssetStore::new(package_dir.path())),
+        ..RuntimeConfig::default()
+    };
+    let mut first_runtime = package_demand_runtime(AssetKind::Bitmap, &first_package_id, config());
+    let mut second_runtime =
+        package_demand_runtime(AssetKind::Bitmap, &second_package_id, config());
+    let mut proc = gl.proc_address();
+    let mut renderer = unsafe { FemtoVgRenderer::new(&mut proc, 64, 64, gl.fbo_id, 0) }
+        .expect("BUG: renderer must construct");
+
+    let stale_id = call_export(&mut first_runtime, &mut renderer, "register_valid");
+    renderer.begin_frame(64, 64, 1.0);
+    assert_eq!(
+        first_runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: first widget render must complete"),
+        RenderStatus::Ok
+    );
+    renderer.flush();
+    assert_eq!(
+        call_export(&mut first_runtime, &mut renderer, "evict_all"),
+        1,
+        "the first widget must release its bitmap reservation"
+    );
+
+    let reused_id = call_export(&mut second_runtime, &mut renderer, "register_valid");
+    assert_eq!(
+        reused_id, stale_id,
+        "the second widget must reuse the released bitmap ID"
+    );
+    renderer.begin_frame(64, 64, 1.0);
+    assert_eq!(
+        second_runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: second widget render must complete"),
+        RenderStatus::Ok
+    );
+    renderer.flush();
+    assert_eq!(read_pixel(&gl, 32, 32), [255, 0, 0, 255]);
+
+    renderer.begin_frame(64, 64, 1.0);
+    assert_eq!(
+        first_runtime
+            .with_renderer(renderer_ptr(&mut renderer), |runtime| runtime.render(16))
+            .expect("BUG: stale widget render must complete"),
+        RenderStatus::Ok
+    );
+    renderer.flush();
+    assert_eq!(
+        read_pixel(&gl, 32, 32),
+        [0, 0, 0, 255],
+        "the stale tree must not draw the second widget's bitmap"
+    );
 }
 
 #[test]
@@ -1538,7 +1649,8 @@ fn package_renderer_failures_are_deferred_until_a_tree_demands_the_asset() {
     let valid_id =
         *bmc_wasm_assets::package_asset_id(PackageAssetKind::Svg, &valid_payload).as_bytes();
 
-    let mut missing_store = package_svg_demand_runtime(&valid_id, RuntimeConfig::default());
+    let mut missing_store =
+        package_demand_runtime(AssetKind::Svg, &valid_id, RuntimeConfig::default());
     assert_package_demand_fails(&mut missing_store, &gl);
 
     let corrupt_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
@@ -1551,7 +1663,8 @@ fn package_renderer_failures_are_deferred_until_a_tree_demands_the_asset() {
     .expect("BUG: package fixture directory must construct");
     std::fs::write(&corrupt_path, b"corrupt payload")
         .expect("BUG: corrupt package fixture must be writable");
-    let mut corrupt = package_svg_demand_runtime(
+    let mut corrupt = package_demand_runtime(
+        AssetKind::Svg,
         &valid_id,
         RuntimeConfig {
             package_assets: Some(PackageAssetStore::new(corrupt_dir.path())),
@@ -1566,7 +1679,8 @@ fn package_renderer_failures_are_deferred_until_a_tree_demands_the_asset() {
         PackageAssetKind::Svg,
         b"not compiled SVG data",
     );
-    let mut invalid = package_svg_demand_runtime(
+    let mut invalid = package_demand_runtime(
+        AssetKind::Svg,
         &invalid_id,
         RuntimeConfig {
             package_assets: Some(PackageAssetStore::new(invalid_dir.path())),
@@ -1588,7 +1702,8 @@ fn package_restore_reports_a_changed_reservation_separately() {
     let package_dir = tempfile::tempdir().expect("BUG: package tempdir must construct");
     let payload = compiled_empty_svg();
     let id = write_package_asset(package_dir.path(), PackageAssetKind::Svg, &payload);
-    let mut runtime = package_svg_demand_runtime(
+    let mut runtime = package_demand_runtime(
+        AssetKind::Svg,
         &id,
         RuntimeConfig {
             package_assets: Some(PackageAssetStore::new(package_dir.path())),
@@ -1604,6 +1719,9 @@ fn package_restore_reports_a_changed_reservation_separately() {
     let reserved_id = call_export(&mut runtime, &mut renderer, "register_valid");
 
     assert_eq!(renderer.evict_prefix(namespace.as_str()), 1);
+    renderer
+        .register_svg("another-widget:replacement", &payload)
+        .expect("BUG: another registration must consume the released ID");
     let replacement_id = renderer
         .register_svg(&renderer_tag, &payload)
         .expect("BUG: replacement SVG must register")

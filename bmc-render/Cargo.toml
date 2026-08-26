@@ -18,7 +18,7 @@ include = [
 [dependencies]
 anyhow.workspace = true
 bmc-render-skin = { path = "skin" }
-bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
+bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol", features = ["id-pool"] }
 ii-stopwatch.workspace = true
 tracing.workspace = true
 

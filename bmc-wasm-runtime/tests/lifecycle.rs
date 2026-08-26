@@ -1735,7 +1735,7 @@ fn rendererless_dormant_poll_defers_uncached_image_decode_without_upload() {
 }
 
 #[test]
-fn sleep_eviction_and_wake_cache_registration_allocate_a_fresh_suspended_bitmap_id() {
+fn sleep_eviction_and_wake_cache_registration_reuse_the_released_bitmap_id() {
     let Some(gl) = headless_egl::try_init(320, 240) else {
         return;
     };
@@ -1790,14 +1790,14 @@ fn sleep_eviction_and_wake_cache_registration_allocate_a_fresh_suspended_bitmap_
     .expect("BUG: bitmap ID must fit u32");
     let wake_id = bmc_wasm_protocol::BitmapId::from_ffi(wake_raw)
         .expect("BUG: wake cache restore must return a nonzero ID");
-    assert_ne!(
+    assert_eq!(
         wake_id, first_id,
-        "explicit on_sleep eviction must retire the old ID"
+        "explicit on_sleep eviction must make its ID available to the next registration"
     );
     assert_eq!(
         renderer.bitmap_tag_state(&renderer_tag),
         AssetTagState::Suspended(wake_id),
-        "wake registration must leave the fresh reservation lazy until a draw uses it"
+        "wake registration must leave the reused reservation lazy until a draw uses it"
     );
 }
 
@@ -1890,7 +1890,7 @@ fn dormant_callback_can_destructively_evict_and_recreate_a_volatile_asset() {
         .expect("BUG: callback SVG ID must fit u32"),
     )
     .expect("BUG: dormant pointer registration must return an ID");
-    assert_ne!(callback_id, asset_id);
+    assert_eq!(callback_id, asset_id);
     assert_eq!(
         lifecycle_svg_state(&runtime, &renderer),
         AssetTagState::Resident(callback_id)
