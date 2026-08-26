@@ -73,11 +73,14 @@ interface Props {
 
 interface State {
     isLoading: boolean;
+    previewRejected: boolean;
 
     manifestWidgets: pb.WidgetManifest[];
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
     scene: null | pb.Scene;
+    runningWidgetCount: number;
+    maxRunningWidgetCount: number;
     timezones: pb.Timezone[];
     hardwareCapabilities: null | pb.HardwareCapabilities;
     accounts: pb.Account[];
@@ -90,10 +93,13 @@ interface State {
 
 const getInitialState = (): State => ({
     isLoading: false,
+    previewRejected: false,
     manifestWidgets: [],
     manifestLookup: new Map(),
     manifestsLoading: false,
     scene: null,
+    runningWidgetCount: 0,
+    maxRunningWidgetCount: 0,
     timezones: [],
     hardwareCapabilities: null,
     accounts: [],
@@ -225,9 +231,12 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.abortLoadScene.replace();
-            const { scene } = await pb.rpc.scenes.getScene({ value: sceneId }, { signal });
+            const { scene, runningWidgetCount, maxRunningWidgetCount } = await pb.rpc.scenes.getScene(
+                { value: sceneId },
+                { signal },
+            );
 
-            this.setState({ isLoading: false, scene: scene || null });
+            this.setState({ isLoading: false, scene: scene || null, runningWidgetCount, maxRunningWidgetCount });
             return scene;
         } catch ($) {
             if (pb.abort.is($)) return;
@@ -242,16 +251,28 @@ class View extends Component<Props, State> {
     private abortPreview = pb.abort.get();
     #previewOpen = async (): Promise<void> => {
         const { sceneId, intl } = this.props;
+        let previewAccepted = false;
 
         try {
             const { signal } = this.abortPreview.replace();
             const stream = pb.rpc.scenes.previewScene({ value: sceneId }, { signal });
-            for await (const _ of stream) console.log('💗 Scene preview ping');
+            for await (const _ of stream) {
+                console.log('💗 Scene preview ping');
+                if (!previewAccepted) {
+                    previewAccepted = true;
+                    this.#loadSceneDebounced();
+                }
+            }
         } catch ($) {
             if (pb.abort.is($)) return;
-
-            const msg: string = intl.formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            toast.error(msg);
+            const msg = fn.runningWidgetLimitErrorMessage($, intl);
+            if (msg) {
+                this.setState({ previewRejected: true }, this.#goBack);
+                toast.error(msg);
+                return;
+            }
+            if (!previewAccepted) this.setState({ previewRejected: true }, this.#goBack);
+            toast.error(intl.formatMessage({ defaultMessage: 'Display preview connection lost!' }));
         }
     };
 
@@ -470,7 +491,8 @@ class View extends Component<Props, State> {
             this.#loadSceneDebounced();
         } catch ($) {
             if (pb.abort.is($)) return;
-            let msg = pb.collectAllErrorsAsFormattedList($);
+            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to add widget!' });
             toast.error(msg);
         }
@@ -707,8 +729,19 @@ class View extends Component<Props, State> {
     };
 
     render() {
+        if (this.state.previewRejected) return null;
+
         const { intl } = this.props;
-        const { scene, openDialogKind, manifestForm, manifestWidgets, addPosition, hardwareCapabilities } = this.state;
+        const {
+            scene,
+            openDialogKind,
+            manifestForm,
+            manifestWidgets,
+            addPosition,
+            hardwareCapabilities,
+            runningWidgetCount,
+            maxRunningWidgetCount,
+        } = this.state;
 
         const widgets: pb.Widget[] = scene?.kind.case === 'combined' ? scene.kind.value.widgets : [];
         const manifests = this.state.manifestLookup;
@@ -737,6 +770,15 @@ class View extends Component<Props, State> {
                             />
                             <h1 className={css.title} children={this.#txt.title} />
                         </div>
+                        {maxRunningWidgetCount > 0 ? (
+                            <div
+                                className={css.capacity}
+                                children={intl.formatMessage(
+                                    { defaultMessage: 'Running widgets: {running} / {maximum}' },
+                                    { running: runningWidgetCount, maximum: maxRunningWidgetCount },
+                                )}
+                            />
+                        ) : null}
                     </header>
 
                     <main className={css.main}>

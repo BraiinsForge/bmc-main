@@ -21,6 +21,8 @@
 
 import invariant from 'invariant';
 import { cloneDeep } from 'es-toolkit';
+import { Code, ConnectError } from '@connectrpc/connect';
+import type { IntlShape } from 'react-intl';
 
 import * as pb from '@/proto';
 import { URLS } from '@/constants';
@@ -28,6 +30,11 @@ import { assertUnreachable } from '@/lib/ts';
 
 import * as C from './const';
 import type { WidgetOrPlaceholder, WidgetsOccupandyMap, WidgetsWithPlaceholders } from './const';
+
+export function runningWidgetLimitErrorMessage(error: unknown, intl: IntlShape): null | string {
+    if (ConnectError.from(error).code !== Code.ResourceExhausted) return null;
+    return intl.formatMessage({ defaultMessage: 'Running widget limit reached.' });
+}
 
 /**
  * To allow the user to:

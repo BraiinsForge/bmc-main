@@ -43,6 +43,10 @@
 .title {
     composes: heading-06 from 'styles/carbon/typography.scss';
 }
+.capacity {
+    composes: label-01 from 'styles/carbon/typography.scss';
+    color: $text-secondary;
+}
 
 //
 // Main

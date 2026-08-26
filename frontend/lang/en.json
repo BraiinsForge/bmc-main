@@ -80,6 +80,9 @@
   "3cc4Ct": {
     "defaultMessage": "Light"
   },
+  "qqlyYM": {
+    "defaultMessage": "Running widget limit reached."
+  },
   "40TKTx": {
     "defaultMessage": "Save and Continue"
   },
@@ -451,6 +454,9 @@
   },
   "aSAPwR": {
     "defaultMessage": "Time Format"
+  },
+  "8lf7Go": {
+    "defaultMessage": "Running widgets: {running} / {maximum}"
   },
   "aYefQt": {
     "defaultMessage": "Failed to update scene duration! Please try again!"

@@ -19,7 +19,8 @@
 // the grant above.
 
 import { afterEach, beforeEach, describe, test, expect, rstest } from '@rstest/core';
-import { act, cleanup, fireEvent, render, waitFor } from '@testing-library/react/pure';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react/pure';
+import { Code, ConnectError } from '@connectrpc/connect';
 import { MemoryRouter } from 'react-router';
 import { IntlProvider } from 'react-intl';
 import { HelmetProvider } from '@dr.pogodin/react-helmet';
@@ -28,6 +29,7 @@ import DisplayList from './DisplayList';
 import * as pb from '@/proto';
 import { mocks } from '@/proto/transport';
 import type { ServiceMocks } from '@/lib/proto';
+import { Toaster } from '@/lib/toast';
 
 // `mocks.service` wants every method typed; at runtime it only registers what we
 // pass. This lets us register a typed subset.
@@ -40,6 +42,8 @@ function registerMocks<S extends AnyService>(service: S, methods: Partial<Servic
 // Used to count rows and read back each row's scene id.
 const ROW_ID_PREFIX = 'bmc-display-comp-scene-overview-row-';
 const ROW_ID_SUFFIX = '-clone';
+const LIMIT_ERROR = 'running widget limit exceeded: 56 running, operation would activate 1, maximum 56';
+const LIMIT_MESSAGE = 'Running widget limit reached.';
 
 function rowSceneIds(container: HTMLElement): string[] {
     const sel = `[id^="${ROW_ID_PREFIX}"][id$="${ROW_ID_SUFFIX}"]`;
@@ -61,7 +65,11 @@ function installMocks(): void {
     mocks.clear();
 
     registerMocks(pb.services.SceneManagementService, {
-        getScenes: () => ({ scenes: server.map(s => ({ ...s })) }),
+        getScenes: () => ({
+            scenes: server.map(s => ({ ...s })),
+            runningWidgetCount: 1,
+            maxRunningWidgetCount: 56,
+        }),
         cloneScene: ({ req }) => {
             const srcId = req.value;
             const idx = server.findIndex(s => s.id === srcId);
@@ -72,6 +80,7 @@ function installMocks(): void {
             server.splice((idx >= 0 ? idx : server.length - 1) + 1, 0, copy);
             return { value: copy.id };
         },
+        updateWidget: () => ({}),
         getSceneCycling: () => ({}),
         getAvailableWidgets: () => ({ widgets: [] }),
     });
@@ -91,6 +100,7 @@ function renderPage() {
             <IntlProvider locale="en">
                 <MemoryRouter>
                     <DisplayList />
+                    <Toaster />
                 </MemoryRouter>
             </IntlProvider>
         </HelmetProvider>,
@@ -251,4 +261,312 @@ describe('DisplayList scene clone (BDK-527)', () => {
         expect(cloneBtn(optimisticId as string)?.disabled).toBe(true);
         expect(cloneBtn('A')?.disabled).toBe(true);
     });
+
+    test('a rejected clone removes its optimistic row immediately', async () => {
+        registerMocks(pb.services.SceneManagementService, {
+            cloneScene: () => {
+                throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+            },
+        });
+        const { container } = renderPage();
+        await flush();
+
+        clickFirstClone(container);
+        await flush();
+
+        expect(rowSceneIds(container)).toEqual(['A']);
+        expect(document.body.textContent).toContain(LIMIT_MESSAGE);
+    });
+});
+
+describe('running widget limit', () => {
+    test('disabling a scene updates the toggle before the request settles', async () => {
+        let resolveUpdate: () => void = () => undefined;
+        registerMocks(pb.services.SceneManagementService, {
+            updateScene: () =>
+                new Promise(resolve => {
+                    resolveUpdate = () => resolve({});
+                }),
+        });
+        renderPage();
+        await flush();
+
+        const toggle = document.getElementById(`${ROW_ID_PREFIX}A-enabled`);
+        if (!toggle) throw new Error('scene toggle not rendered');
+        expect(toggle.getAttribute('aria-checked')).toBe('true');
+
+        fireEvent.click(toggle);
+
+        expect(toggle.getAttribute('aria-checked')).toBe('false');
+        resolveUpdate();
+        await flush();
+    });
+
+    test('a rejected enable leaves the scene disabled and explains the running widget limit', async () => {
+        server[0].enabled = false;
+        registerMocks(pb.services.SceneManagementService, {
+            updateScene: () => {
+                throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+            },
+        });
+        renderPage();
+        await flush();
+
+        const toggle = document.getElementById(`${ROW_ID_PREFIX}A-enabled`);
+        if (!toggle) throw new Error('scene toggle not rendered');
+        expect(toggle.getAttribute('aria-checked')).toBe('false');
+
+        fireEvent.click(toggle);
+        await flush();
+
+        expect(toggle.getAttribute('aria-checked')).toBe('false');
+        expect(document.body.textContent).toContain(LIMIT_MESSAGE);
+    });
+
+    test('a rejected fullscreen add does not open the widget editor and explains the running widget limit', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+            },
+        });
+        renderPage();
+        await flush();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Add New' }));
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Full Screen' }));
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+
+        expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
+        expect(document.body.textContent).toContain(LIMIT_MESSAGE);
+    });
+
+    test('a rejected new fullscreen preview removes the created scene', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: false,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => {
+                server.push(created);
+                return { value: created.id };
+            },
+            getScene: () => ({ scene: created, runningWidgetCount: 56, maxRunningWidgetCount: 56 }),
+            removeScene: ({ req }) => {
+                server = server.filter(scene => scene.id !== req.value);
+                return {};
+            },
+            previewScene: () =>
+                (async function* () {
+                    yield* [];
+                    throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+                })(),
+        });
+        renderPage();
+        await flush();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Add New' }));
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Full Screen' }));
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+        await flush();
+
+        expect(server.some(scene => scene.id === created.id)).toBe(false);
+        expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
+        expect(document.body.textContent).toContain(LIMIT_MESSAGE);
+    });
+
+    test('a failed new-scene cleanup reports only the cleanup failure', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        const created = pb.create(pb.SceneSchema, {
+            id: 'B',
+            enabled: false,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-b',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            addFullscreenScene: () => ({ value: created.id }),
+            getScene: () => ({ scene: created, runningWidgetCount: 56, maxRunningWidgetCount: 56 }),
+            removeScene: () => {
+                throw new ConnectError('cleanup failed', Code.Internal);
+            },
+            previewScene: () =>
+                (async function* () {
+                    yield* [];
+                    throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+                })(),
+        });
+        renderPage();
+        await flush();
+
+        fireEvent.click(screen.getByRole('button', { name: 'Add New' }));
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Full Screen' }));
+        await flush();
+        fireEvent.click(screen.getByRole('button', { name: 'Clock' }));
+        await flush();
+        await flush();
+
+        expect(document.body.textContent).toContain('cleanup failed');
+        expect(document.body.textContent).not.toContain(LIMIT_MESSAGE);
+    });
+
+    test('a server-cancelled existing-scene revert reports only the revert failure', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        server[0] = pb.create(pb.SceneSchema, {
+            id: 'A',
+            enabled: false,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-a',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            updateWidget: () => {
+                throw new ConnectError('revert cancelled', Code.Canceled);
+            },
+            previewScene: () => {
+                throw new ConnectError('connection lost', Code.Unavailable);
+            },
+        });
+        const { container } = renderPage();
+        await flush();
+
+        const edit = container.querySelector<HTMLButtonElement>(`#${ROW_ID_PREFIX}A-edit`);
+        if (!edit) throw new Error('scene edit button not rendered');
+        fireEvent.click(edit);
+        await flush();
+
+        expect(document.body.textContent).toContain('revert cancelled');
+        expect(document.body.textContent).not.toContain('Display preview connection lost!');
+    });
+
+    test('a rejected fullscreen preview explains the running widget limit', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        server[0] = pb.create(pb.SceneSchema, {
+            id: 'A',
+            enabled: false,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-a',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            previewScene: () =>
+                (async function* () {
+                    yield* [];
+                    throw new ConnectError(LIMIT_ERROR, Code.ResourceExhausted);
+                })(),
+        });
+        const { container } = renderPage();
+        await flush();
+
+        const edit = container.querySelector<HTMLButtonElement>(`#${ROW_ID_PREFIX}A-edit`);
+        if (!edit) throw new Error('scene edit button not rendered');
+        fireEvent.click(edit);
+        await flush();
+
+        expect(screen.queryByRole('dialog', { name: 'Configure Widget' })).toBeNull();
+        expect(document.body.textContent).toContain(LIMIT_MESSAGE);
+    });
+
+    test('a preview connection failure after admission keeps the editor open', async () => {
+        const manifest = pb.create(pb.WidgetManifestSchema, {
+            uid: 'clock',
+            name: 'Clock',
+            supportedSizes: [pb.WidgetSize.FULL],
+        });
+        server[0] = pb.create(pb.SceneSchema, {
+            id: 'A',
+            enabled: false,
+            kind: {
+                case: 'fullscreen',
+                value: pb.create(pb.Scene_FullscreenSchema, {
+                    widget: pb.create(pb.WidgetSchema, {
+                        id: 'widget-a',
+                        config: pb.create(pb.WidgetConfigSchema, { widgetUid: manifest.uid }),
+                    }),
+                }),
+            },
+        });
+        registerMocks(pb.services.SceneManagementService, {
+            getAvailableWidgets: () => ({ widgets: [manifest] }),
+            previewScene: () =>
+                (async function* () {
+                    yield pb.create(pb.EmptySchema);
+                    throw new ConnectError('connection lost', Code.Unavailable);
+                })(),
+        });
+        const { container } = renderPage();
+        await flush();
+
+        const edit = container.querySelector<HTMLButtonElement>(`#${ROW_ID_PREFIX}A-edit`);
+        if (!edit) throw new Error('scene edit button not rendered');
+        fireEvent.click(edit);
+        await flush();
+
+        expect(screen.getByRole('dialog', { name: 'Configure Widget' })).toBeTruthy();
+        expect(document.body.textContent).toContain('Display preview connection lost!');
+    });
+});
+
+test('shows running widget capacity reported by the backend', async () => {
+    renderPage();
+    await flush();
+
+    expect(screen.getByText('Running widgets: 1 / 56')).toBeTruthy();
 });

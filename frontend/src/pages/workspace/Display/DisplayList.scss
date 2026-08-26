@@ -60,6 +60,12 @@
     text-wrap: pretty;
 }
 
+.capacity {
+    composes: label-01 from 'styles/carbon/typography.scss';
+    margin-top: mini-units(1);
+    color: $text-secondary;
+}
+
 .headerControls {
     composes: flex horizontal center endJustified selfEnd from 'styles/layout.scss';
     position: relative;

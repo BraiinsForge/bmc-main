@@ -59,6 +59,11 @@ let optimisticCloneSeq = 0;
 
 type OpenDialogKind = null | 'scene-select' | 'manifest';
 
+enum DialogCloseResult {
+    Closed = 'closed',
+    CleanupFailed = 'cleanup-failed',
+}
+
 interface ManifestFormState {
     manifest: null | pb.WidgetManifest;
     sceneID: string;
@@ -79,6 +84,8 @@ interface State {
     isLoading: boolean;
 
     scenes: pb.Scene[];
+    runningWidgetCount: number;
+    maxRunningWidgetCount: number;
     manifestWidgets: pb.WidgetManifest[];
     manifestLookup: pb.ManifestLookup;
     manifestsLoading: boolean;
@@ -102,6 +109,8 @@ const getInitialState = (): State => ({
     isLoading: false,
 
     scenes: [],
+    runningWidgetCount: 0,
+    maxRunningWidgetCount: 0,
     manifestWidgets: [],
     manifestLookup: new Map(),
     manifestsLoading: false,
@@ -275,8 +284,8 @@ class View extends Component<Props, State> {
 
         try {
             const { signal } = this.abortLoadScenes.replace();
-            const { scenes } = await pb.rpc.scenes.getScenes({}, { signal });
-            this.setState({ isLoading: false, scenes });
+            const { scenes, runningWidgetCount, maxRunningWidgetCount } = await pb.rpc.scenes.getScenes({}, { signal });
+            this.setState({ isLoading: false, scenes, runningWidgetCount, maxRunningWidgetCount });
             return scenes;
         } catch ($) {
             if (pb.abort.is($)) return [];
@@ -346,7 +355,8 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
+            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to add manifest widget!' });
             toast.error(msg);
         }
@@ -361,30 +371,32 @@ class View extends Component<Props, State> {
         this.#notifySceneAdded();
     };
 
-    #openDialogCancel = async (): Promise<void> => {
+    #openDialogCancel = async (): Promise<DialogCloseResult> => {
         const { formatMessage } = this.props.intl;
         const { manifestForm } = this.state;
         const { sceneID, widgetID, manifest, originalParams, isNewScene } = manifestForm;
         this.#liveUpdateWidget.cancel();
         this.abortPreview.abort();
+        this.#loadScenesDebounced();
         this.setState({ openDialogKind: null });
 
+        // Cleanup has no client abort signal, so Canceled is a server failure that must be shown.
         if (isNewScene && sceneID) {
             try {
                 await pb.rpc.scenes.removeScene({ value: sceneID });
                 this.#loadScenesDebounced();
             } catch ($) {
-                if (pb.abort.is($)) return;
                 let msg = pb.collectAllErrorsAsFormattedList($);
                 msg ||= formatMessage({ defaultMessage: 'Failed to remove scene!' });
                 toast.error(msg);
+                return DialogCloseResult.CleanupFailed;
             }
-            return;
+            return DialogCloseResult.Closed;
         }
 
-        if (!manifest || !widgetID || !sceneID) return;
+        if (!manifest || !widgetID || !sceneID) return DialogCloseResult.Closed;
         const built = fn.buildWidgetDataStruct(manifest, originalParams);
-        if (!built.ok) return;
+        if (!built.ok) return DialogCloseResult.Closed;
         try {
             await pb.rpc.scenes.updateWidget({
                 id: widgetID,
@@ -397,25 +409,44 @@ class View extends Component<Props, State> {
                 // and cancelling out of a bad one would then be impossible.
             });
         } catch ($) {
-            if (pb.abort.is($)) return;
             let msg = pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to revert widget!' });
             toast.error(msg);
+            return DialogCloseResult.CleanupFailed;
         }
+        return DialogCloseResult.Closed;
     };
 
     private abortPreview = pb.abort.get();
     #previewOpen = async (sceneId: string): Promise<void> => {
         const { formatMessage } = this.props.intl;
+        let previewAccepted = false;
 
         try {
             const { signal } = this.abortPreview.replace();
             const stream = pb.rpc.scenes.previewScene({ value: sceneId }, { signal });
-            for await (const _ of stream) console.log('💗 Scene preview ping');
+            for await (const _ of stream) {
+                console.log('💗 Scene preview ping');
+                if (!previewAccepted) {
+                    previewAccepted = true;
+                    this.#loadScenesDebounced();
+                }
+            }
         } catch ($) {
             if (pb.abort.is($)) return;
-            const msg: string = formatMessage({ defaultMessage: 'Display preview connection lost!' });
-            toast.error(msg);
+            if (this.state.manifestForm.sceneID !== sceneId) return;
+            const msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            if (msg) {
+                const closeResult = await this.#openDialogCancel();
+                if (closeResult === DialogCloseResult.CleanupFailed) return;
+                toast.error(msg);
+                return;
+            }
+            if (!previewAccepted) {
+                const closeResult = await this.#openDialogCancel();
+                if (closeResult === DialogCloseResult.CleanupFailed) return;
+            }
+            toast.error(formatMessage({ defaultMessage: 'Display preview connection lost!' }));
         }
     };
 
@@ -651,13 +682,13 @@ class View extends Component<Props, State> {
         const { formatMessage } = this.props.intl;
         const { signal } = this.abortSceneSetEnabled.replace();
 
-        try {
-            // Optimistic update first
+        if (!value) {
             this.setState(s => ({
-                scenes: s.scenes.map(x => (x.id === id ? { ...x, enabled: value } : x)),
+                scenes: s.scenes.map(x => (x.id === id ? { ...x, enabled: false } : x)),
             }));
+        }
 
-            // Submit to backend
+        try {
             await pb.rpc.scenes.updateScene(
                 {
                     id,
@@ -668,11 +699,14 @@ class View extends Component<Props, State> {
                 },
                 { signal },
             );
-            // Design declares that this action does not need a success notification
+            this.setState(s => ({
+                scenes: s.scenes.map(x => (x.id === id ? { ...x, enabled: value } : x)),
+            }));
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
+            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to update widget state!' });
             toast.error(msg);
         }
@@ -729,7 +763,10 @@ class View extends Component<Props, State> {
         } catch ($) {
             if (pb.abort.is($)) return;
 
-            let msg = pb.collectAllErrorsAsFormattedList($);
+            this.setState(s => ({ scenes: s.scenes.filter(scene => scene.id !== optimisticId) }));
+
+            let msg = fn.runningWidgetLimitErrorMessage($, this.props.intl);
+            msg ||= pb.collectAllErrorsAsFormattedList($);
             msg ||= formatMessage({ defaultMessage: 'Failed to clone the widget!' });
             toast.error(msg);
         }
@@ -937,7 +974,7 @@ class View extends Component<Props, State> {
 
     render() {
         const { intl } = this.props;
-        const { scenes, cycle } = this.state;
+        const { scenes, cycle, runningWidgetCount, maxRunningWidgetCount } = this.state;
 
         return (
             <div className={css.root}>
@@ -952,6 +989,15 @@ class View extends Component<Props, State> {
                                     'Configure the content displayed on your Deck. Enable, order, and set durations for each widget to control what’s shown.',
                             })}
                         />
+                        {maxRunningWidgetCount > 0 ? (
+                            <div
+                                className={css.capacity}
+                                children={intl.formatMessage(
+                                    { defaultMessage: 'Running widgets: {running} / {maximum}' },
+                                    { running: runningWidgetCount, maximum: maxRunningWidgetCount },
+                                )}
+                            />
+                        ) : null}
                     </div>
 
                     {this.#headerRender()}
