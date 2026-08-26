@@ -165,6 +165,10 @@ const HOVER_FADE_SECS: f32 = 0.12;
 /// tone, so a full step re-opens the seam they share a colour to close.
 const HOVER_STRENGTH: f32 = 0.5;
 
+/// Pull of the enclosure's checkerboard towards `background`.
+/// Kept low: it shows only in gaps a few pixels wide and must part from black.
+const BACKING_TINT: f32 = 0.4;
+
 /// egui reports a window a pixel larger than the frame it paints,
 /// so the stroke needs no inset to show; adding one leaves the shadow
 /// as a ring between border and content.
@@ -557,6 +561,9 @@ impl TestbedApp {
         let close_hint = format!("close {}", super::ui_helpers::platform_name(platform));
         let mut closed = false;
         let response = window.show(ctx, |ui| {
+            // Painted behind the states, sized after them: only they say
+            // how much enclosure there is.
+            let casing = ui.painter().add(egui::Shape::Noop);
             // The states are spaced by hand below, so the window's own
             // between-widgets gap would only be a second, invisible one.
             ui.spacing_mut().item_spacing.y = 0.0;
@@ -567,6 +574,23 @@ impl TestbedApp {
                 }
                 self.paint_state(ui, platform, frame, &flat, active_record_idx, time_s);
             }
+            // Off the border by its width: `WINDOW_INSET` is zero and egui
+            // strokes `StrokeKind::Inside`, so that pixel is the border's.
+            let casing_rect = ui
+                .min_rect()
+                .shrink(ctx.style().visuals.window_stroke.width);
+            ui.painter().set(
+                casing,
+                paint::checkerboard(
+                    casing_rect,
+                    palette
+                        .canvas
+                        .lerp_to_gamma(palette.background, BACKING_TINT),
+                    palette
+                        .canvas_alt
+                        .lerp_to_gamma(palette.background, BACKING_TINT),
+                ),
+            );
         });
 
         // Where it ended up, which is where it was put unless it was dragged.
@@ -598,7 +622,6 @@ impl TestbedApp {
         };
         let (places, size) = state_layout(frame, strip);
         let (outer, _) = ui.allocate_exact_size(size * zoom, egui::Sense::hover());
-        ui.painter().rect_filled(outer, 0.0, palette.background);
         let screen_origin = outer.min;
 
         for (place, (view_idx, local)) in frame.views.iter().enumerate() {

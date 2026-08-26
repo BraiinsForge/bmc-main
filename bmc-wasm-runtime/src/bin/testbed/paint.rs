@@ -263,18 +263,20 @@ pub(super) type GlProcAddress =
 
 // ── Background ──────────────────────────────────────────────────────
 
-/// Paint a two-tone checkerboard over `rect` — same pattern as `bmc-virt-console`'s
+/// A two-tone checkerboard over `rect` — same pattern as `bmc-virt-console`'s
 /// device backdrop so the tile boundaries read clearly against an otherwise blank window.
-pub(super) fn draw_checkerboard(
-    painter: &egui::Painter,
+///
+/// A shape, not a paint call: the enclosure sizes itself from its states,
+/// so it reserves an index before them and fills it after.
+pub(super) fn checkerboard(
     rect: egui::Rect,
-    palette: &super::theme::Palette,
-) {
+    color_a: egui::Color32,
+    color_b: egui::Color32,
+) -> egui::Shape {
     let size = 16.0;
-    let color_a = palette.canvas;
-    let color_b = palette.canvas_alt;
     let cols = (rect.width() / size).ceil() as usize;
     let rows = (rect.height() / size).ceil() as usize;
+    let mut cells = Vec::with_capacity(rows * cols);
     for row in 0..rows {
         for col in 0..cols {
             let color = if (row + col) % 2 == 0 {
@@ -283,10 +285,11 @@ pub(super) fn draw_checkerboard(
                 color_b
             };
             let pos = rect.min + egui::vec2(col as f32 * size, row as f32 * size);
-            let cell_rect = egui::Rect::from_min_size(pos, egui::vec2(size, size));
-            painter.rect_filled(cell_rect, 0.0, color);
+            let cell = egui::Rect::from_min_size(pos, egui::vec2(size, size));
+            cells.push(egui::Shape::rect_filled(cell.intersect(rect), 0.0, color));
         }
     }
+    egui::Shape::Vec(cells)
 }
 
 // ── LED strip rendering ─────────────────────────────────────────────

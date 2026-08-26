@@ -77,7 +77,7 @@ use bmc_wasm_runtime::{DiskCache, RuntimeConfig, SystemSnapshot};
 use clap::Parser;
 
 use paint::{
-    GlProcAddress, draw_checkerboard, paint_timing_chart, paint_timing_legend, write_perf_report,
+    GlProcAddress, checkerboard, paint_timing_chart, paint_timing_legend, write_perf_report,
 };
 use recording::{RecordUnwind, RecordingMode, RecordingState};
 use view::{DeviceView, ViewCommand};
@@ -2514,7 +2514,11 @@ impl TestbedApp {
             .frame(egui::Frame::NONE)
             .show_inside(root_ui, |ui| {
                 self.canvas.rect = ui.max_rect();
-                draw_checkerboard(ui.painter(), ui.max_rect(), palette);
+                ui.painter().add(checkerboard(
+                    ui.max_rect(),
+                    palette.canvas,
+                    palette.canvas_alt,
+                ));
                 let background = ui.interact(
                     ui.max_rect(),
                     ui.id().with("canvas"),
