@@ -326,28 +326,36 @@ fn driver_placeholders(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
-/// Text of exactly `chars` characters. Cut from a constructor's name
-/// rather than filler, since a proportional font makes the glyph mix,
-/// not the count, decide what fits.
+/// A constructor's name rather than filler, since a proportional font
+/// makes the glyph mix, not the count, decide what fits.
+const RULER_SOURCE: &str = "Scuderia Ferrari Racing Team Alpha Romeo Sauber";
+
+/// Text of exactly `chars` characters, cut from [`RULER_SOURCE`].
 fn ruler(chars: usize) -> String {
-    const SOURCE: &str = "Scuderia Ferrari Racing Team Alpha Romeo Sauber";
     assert!(
-        chars <= SOURCE.chars().count(),
-        "a {chars}-character ruler needs a longer source than {SOURCE:?}",
+        chars <= RULER_SOURCE.chars().count(),
+        "a {chars}-character ruler needs a longer source than {RULER_SOURCE:?}",
     );
-    SOURCE.chars().take(chars).collect()
+    RULER_SOURCE.chars().take(chars).collect()
 }
 
-fn ruler_length(ctx: &mut SceneCtx, lengths: &[&str]) -> usize {
-    lengths[ctx.select("Length", lengths, 0)]
-        .parse()
-        .expect("BUG: every ruler length is a number")
+/// Drag until the column cuts — that length is the frame's budget.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a character count over a fixed sample string, and the slider \
+              is bounded to it"
+)]
+fn ruler_length(ctx: &mut SceneCtx) -> usize {
+    let longest = RULER_SOURCE.chars().count() as f32;
+    ctx.slider("Length", 20.0, 1.0, longest, 1.0) as usize
 }
 
 /// The value column at a chosen length, to see where it cuts.
 #[scene]
 fn driver_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let chars = ruler_length(ctx, &["20", "21", "24", "25"]);
+    let chars = ruler_length(ctx);
     size_stages(ctx, ui, move |bucket| {
         move || driver::driver_view(&fixtures::driver_widest(bucket, &ruler(chars)))
     });
@@ -356,7 +364,7 @@ fn driver_widest(ctx: &mut SceneCtx, ui: &mut Ui) {
 /// The name and team columns at a chosen length.
 #[scene]
 fn standings_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let chars = ruler_length(ctx, &["17", "18", "22", "23"]);
+    let chars = ruler_length(ctx);
     size_stages(ctx, ui, move |bucket| {
         move || standings::standings_view(&fixtures::standings_ruler(bucket, &ruler(chars)))
     });
@@ -365,7 +373,7 @@ fn standings_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
 /// The info column at a chosen length.
 #[scene]
 fn next_race_ruler(ctx: &mut SceneCtx, ui: &mut Ui) {
-    let chars = ruler_length(ctx, &["12", "13", "16", "17"]);
+    let chars = ruler_length(ctx);
     size_stages(ctx, ui, move |bucket| {
         move || next_race::next_race_view(&fixtures::next_race_ruler(bucket, &ruler(chars)))
     });
