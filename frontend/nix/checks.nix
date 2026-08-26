@@ -30,6 +30,8 @@ let
     }: pkgs.stdenv.mkDerivation {
       name = "bmc-fe-check-${name}";
       inherit src;
+      # `src` keeps the repo shape; the recipes run from the frontend itself.
+      sourceRoot = "bmc-fe-patched-src/frontend";
       buildInputs = [ pkgs.yarn pkgs.just ];
       buildPhase = ''
         export HOME=$(pwd)

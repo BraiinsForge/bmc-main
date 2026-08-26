@@ -28,6 +28,8 @@ in {
     build = pkgs.stdenv.mkDerivation {
       name = "bmc-frontend";
       inherit src;
+      # `src` keeps the repo shape; the recipes run from the frontend itself.
+      sourceRoot = "bmc-fe-patched-src/frontend";
 
       buildInputs = [ pkgs.yarn pkgs.just ];
 

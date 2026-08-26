@@ -144,3 +144,8 @@ incremental = false
 # at opt 0 would crawl. Optimize dependencies only.
 [profile.dev.package."*"]
 opt-level = 3
+
+# Lint only, for a tree of its own: sharing `dev` fails the widget path deps
+# with E0463, since a dep outside this workspace gets no clippy wrapper.
+[profile.fast]
+inherits = "dev"

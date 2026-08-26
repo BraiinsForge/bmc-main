@@ -8,13 +8,11 @@
 #   `<DIE>.msdf.json`) used by the runtime's MSDF shader path. The
 #   per-die scripts have a nix shebang that pulls Pillow when needed.
 
+import '../../common.justfile'
+
 dir := justfile_directory()
 dice := "D4 D6 D8 D10 D12 D20"
 numbered_dice := "D4 D8 D10 D12 D20"
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # Regenerate every dice asset: geometry .glb (Blender) + MSDF sidecars.
 all: glb-all msdf-all

@@ -1,14 +1,12 @@
 # media-control example: control a DLNA renderer via dlna-push.py.
 
+import '../../common.justfile'
+
 dir := justfile_directory()
 tools := dir + "/tools/dlna-push.py"
 port := "49494"
 name := "Deck Test"
 host := "127.0.0.1:" + port
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # Spawn renderer and play built-in example 0 (default video).
 serve:

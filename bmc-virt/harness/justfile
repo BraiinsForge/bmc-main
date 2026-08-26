@@ -1,6 +1,4 @@
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
+import '../../common.justfile'
 
 # Run a harness script in the dev shell (lint/type/test live at the repo root).
 run script:

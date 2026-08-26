@@ -9,6 +9,8 @@
 # and `widgets-wasm/` (production widgets). Each widget's workspace root
 # is resolved at recipe execution time via `tools/widget_root.py`.
 
+import '../common.justfile'
+
 dir := source_directory()
 wasm_target := "wasm32-unknown-unknown"
 cargo_features := "--features testbed"
@@ -18,10 +20,6 @@ target_dir_tool := dir + "/../scripts/cargo_target_dir.py"
 
 # Visual regression output (shared across all widget roots).
 output_dir := dir + "/captures"
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # === Build / clean ===
 

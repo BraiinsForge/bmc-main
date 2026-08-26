@@ -1,18 +1,11 @@
 # bmc-gallery dev tasks — run, hot-reload and headless-render the Deck widget gallery.
 
+import '../common.justfile'
+
 set working-directory := '..'
 # `gl` takes the command as positional arguments: interpolating them as one string
 # re-splits a scene name that contains a space back into two arguments.
 set positional-arguments
-
-# The flake's checks build the compositor stack, so they exist for Linux only.
-# A darwin host has no local system to ask for; nix routes these checks
-# to the configured `linux-builder`, which serves aarch64 natively under apple-virt.
-NIX_SYSTEM := if os() == "macos" { "aarch64-linux" } else { "$(nix eval --impure --raw --expr builtins.currentSystem)" }
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # Run CMD, on mesa's software EGL when GALLERY_SOFTWARE_GL=1.
 [private]
@@ -88,11 +81,7 @@ lints:
 
 # Lint the scenes under the same set the workspace holds its own code to.
 clippy:
-    # Its own target dir, nested inside the ignored one. Sharing with `check`/`build`
-    # leaves the widget crates failing to resolve their own dependencies with E0463:
-    # they are path deps outside this crate's workspace, so they get no clippy wrapper.
-    env CARGO_TARGET_DIR=bmc-gallery/target/clippy \
-        cargo clippy --locked --manifest-path bmc-gallery/Cargo.toml --all-targets -- -D warnings
+    cargo clippy --profile fast --locked --manifest-path bmc-gallery/Cargo.toml --all-targets -- -D warnings
 
 # Build the same gallery outputs and checks as CI.
 ci:

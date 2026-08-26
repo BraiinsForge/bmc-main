@@ -26,6 +26,9 @@
   inputs = {
     self.lfs = true;
     nixpkgs.url = "github:nixos/nixpkgs/nixpkgs-unstable";
+    # `set default-list` in common.justfile needs just >= 1.52.0, which the pin
+    # above misses by three weeks. Scoped to that tool rather than moving it.
+    nixpkgs-just.url = "github:nixos/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     nix-source-info.url = "github:BraiinsForge/nix-source-info";
     nixlib.url = "github:BraiinsForge/nix-lib/master";
@@ -50,7 +53,7 @@
     };
   };
 
-  outputs = { self, nixpkgs, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
+  outputs = { self, nixpkgs, nixpkgs-just, flake-utils, nixlib, pyproject-nix, uv2nix, pyproject-build-systems, ... }:
     flake-utils.lib.eachSystem [ "x86_64-linux" "aarch64-linux" "x86_64-darwin" "aarch64-darwin" ] (localSystem:
       let
         pkgs = import nixpkgs {
@@ -68,6 +71,10 @@
             (final: prev: {
               nodejs = prev.nodejs_24;
               yarn = prev.yarn.override { nodejs = prev.nodejs_24; };
+            })
+            # See the `nixpkgs-just` input for why this one tool comes from elsewhere.
+            (final: prev: {
+              just = nixpkgs-just.legacyPackages.${localSystem}.just;
             })
           ];
         };
@@ -90,7 +97,9 @@
           inherit pkgs capture;
           inherit (workspace) wasmWidgets wasmWidgetCatalog;
         };
-        content-checks = nixlib.braiinschk.${localSystem} {
+        # `checks.nix` directly, not `nixlib.braiinschk.<system>`: that output bakes
+        # in nixlib's own `pkgs`, whose `just` predates the `default-list` setting.
+        content-checks = import "${nixlib}/checks.nix" pkgs {
           mermaid = true;
           justfile = true;
           shell = true;
@@ -146,6 +155,13 @@
             ]
             + ":"
             + (prev.LD_LIBRARY_PATH or "");
+          # A tree of this shell's own, or each toolchain rebuilds the other's.
+          # Absolute and unconditional: inheriting merges the two, relative scatters them.
+          shellHook = (prev.shellHook or "") + ''
+            bmcRoot="$(git rev-parse --show-toplevel 2>/dev/null)"
+            export CARGO_TARGET_DIR="''${bmcRoot:-$PWD}/.tmp/cargo-target-nix"
+            unset bmcRoot
+          '';
           # bmc-openwrt/build.rs bakes these into its test binaries as an rpath,
           # keeping the compositor libraries off the loader path.
           BMC_TEST_RPATH = pkgs.lib.makeLibraryPath [

@@ -1,8 +1,6 @@
-set shell := ["bash", "-cu"]
+import '../common.justfile'
 
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
+set shell := ["bash", "-cu"]
 
 # Regenerate the committed `manifest.schema.json` from the Rust types.
 gen-schema:

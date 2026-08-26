@@ -1,3 +1,5 @@
+import 'common.justfile'
+
 # Frontend build, lint, test, and mock-backend serving.
 mod fe 'frontend/justfile'
 mod gallery 'bmc-gallery/justfile'
@@ -12,30 +14,12 @@ mod wasm 'bmc-wasm-runtime/justfile'
 # Per-widget dev recipes.
 mod widgets 'widgets-wasm'
 
-# The flake's checks build the compositor stack, so they exist for Linux only.
-# A darwin host has no local system to ask for; nix routes these to the configured
-# `linux-builder`, which serves aarch64 natively under apple-virt.
-NIX_SYSTEM := if os() == "macos" { "aarch64-linux" } else { "$(nix eval --impure --raw --expr builtins.currentSystem)" }
-
 # Auto-enter the dev shell for recipes that link against system libs
 # (e.g. `cargo nextest` needs wayland-client to compile bmc).
 # `cargo check`/`clippy` skip linking, so they don't need this wrap.
 # No-op when already inside a `nix develop` shell (IN_NIX_SHELL set
 # by nix); otherwise wrap the command in `nix develop --command`.
 NIX_DEV := if env("IN_NIX_SHELL", "") == "" { "nix develop --command" } else { "" }
-
-# Global env vars
-
-export FORCE_COLOR := "1"
-# Default tracing filter for `just wasm::dev` and friends; overridable by the caller's env.
-export RUST_LOG := env('RUST_LOG', 'bmc_wasm_runtime=debug,testbed=debug,bmc_gallery=info')
-# The package `cache-dir` configs alone still leave part of ruff's cache in a
-# cwd `.ruff_cache`; only the env var redirects all of it into the scratch dir.
-export RUFF_CACHE_DIR := justfile_directory() / ".tmp/ruff_cache"
-
-[private]
-default:
-    @just --justfile {{ justfile() }} --list
 
 # === Quick local validation (default; LLM-friendly) ===
 
@@ -65,9 +49,9 @@ validate: format clippy python
     nix build -L ".#checks.{{ NIX_SYSTEM }}.public-widget-assets"
 
     # Wasm lint; production widgets are gated, examples only have to build.
-    cargo clippy -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
-    cargo clippy -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
-    (cd widgets-wasm && cargo clippy --target wasm32-unknown-unknown --workspace -- -D warnings)
+    cargo clippy --profile fast -p bmc-wasm-runtime --all-targets --features testbed -- -D warnings
+    cargo clippy --profile fast -p bmc-wasm-runtime --bin capture --features capture -- -D warnings
+    (cd widgets-wasm && cargo clippy --profile fast --target wasm32-unknown-unknown --workspace -- -D warnings)
 
     # Crate list, not --workspace: that loses bmc-wasm-sdk's bmc_render_macros feature.
     # Left unwrapped like the clippy runs above: `nix develop` swaps the toolchain

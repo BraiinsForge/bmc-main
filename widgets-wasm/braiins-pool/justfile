@@ -2,13 +2,11 @@
 # from this directory. Generic mechanics (builds, watch, testbed) delegate to
 # the wasm module; this file owns only the sim scenarios and their wiring.
 
+import '../../common.justfile'
+
 dir := source_directory()
 repo := parent_directory(parent_directory(dir))
 root_justfile := repo / "justfile"
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # Widget + pool sim + rebuild watch in one mprocs. SCENARIO = healthy | idle | denied.
 dev SCENARIO="healthy":

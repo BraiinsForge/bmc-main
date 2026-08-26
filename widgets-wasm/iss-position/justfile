@@ -4,12 +4,10 @@
 # Import the repo-root justfile so `preview` can re-run `format` afterwards.
 mod root "../.."
 
+import '../../common.justfile'
+
 dir := justfile_directory()
 tools_dir := dir + "/tools"
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # Render the Natural Earth dark textures (supersampled, then downsampled).
 render:

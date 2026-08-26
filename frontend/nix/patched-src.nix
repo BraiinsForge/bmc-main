@@ -27,7 +27,13 @@ pkgs.stdenv.mkDerivation {
   dontBuild = true;
   dontUnpack = true;
 
-  installPhase = "cp -r $src $out";
+  # Nested under `frontend/` rather than sitting at the root: `justfile`
+  # imports `../common.justfile`, which has to exist beside it.
+  installPhase = ''
+    mkdir -p $out/frontend
+    cp -r $src/. -t $out/frontend
+    cp ${../../common.justfile} $out/common.justfile
+  '';
 
   # dependencies used for automatic shebang patching in fixupPhase
   buildInputs = [ pkgs.yarn ];

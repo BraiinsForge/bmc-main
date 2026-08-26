@@ -1,9 +1,7 @@
+import '../common.justfile'
+
 # Guest-side event daemon: build, deploy, and test.
 mod harness 'harness/justfile'
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # Rebuild the OpenWrt feed cache after changing packageList or openwrtVersion in dl-cache/openwrt-config.nix.
 update-cache:

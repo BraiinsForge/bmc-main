@@ -1,6 +1,6 @@
 ---
 name: justfile-conventions
-description: Use when authoring or modifying a `justfile` in this repository — adding a recipe, adding a private default, working inside a `mod`-imported submodule justfile, or wondering why a path resolves to the wrong directory. Triggers on phrases like "add a just recipe", "new just target", "edit the justfile", "fix the just module", or when about to write `source_directory()` / `justfile_directory()` inside a submodule justfile.
+description: Use when authoring or modifying a `justfile` in this repository — adding a recipe, adding a new justfile, working inside a `mod`-imported submodule justfile, or wondering why a path resolves to the wrong directory. Triggers on phrases like "add a just recipe", "new just target", "edit the justfile", "fix the just module", or when about to write `source_directory()` / `justfile_directory()` inside a submodule justfile.
 ---
 
 # Justfile authoring conventions
@@ -57,30 +57,39 @@ dev widget:
 When debugging a "wrong path" / "no such file" error in a module recipe, the first hypothesis is `justfile()` vs
 `source_*()` confusion — not a flag or typo issue.
 
-## Private `default:` recipe at the top
+## Every justfile imports `common.justfile`
 
 `just` runs the first recipe in a file when invoked with no arguments. For a submodule that means `just <module>` runs
 the module's *first* recipe — which is often expensive or destructive (`clean`, `update-cache`, `validate`,
-`build-everything`). To prevent the footgun, every justfile — root and submodule — gets a private `default` recipe at
-the top that just lists what's available:
+`build-everything`). `set default-list := true` in `common.justfile` closes that: bare `just`, `just <module>`, and a
+direct `just --justfile <path>` all print the recipe list instead. No `default` recipe anywhere.
+
+That file also carries the settings every justfile shares — `CARGO_TARGET_DIR`, `RUFF_CACHE_DIR`, `RUST_LOG`,
+`FORCE_COLOR`, `NIX_SYSTEM` — so a recipe behaves the same however it was reached.
 
 ```just
-[private]
-default:
-    @just --justfile {{ justfile() }} --list
+import '../common.justfile'
 ```
 
-Use `[private]` so it doesn't pollute the `just --list` output that the recipe itself produces. Always reference the
-justfile explicitly via `--justfile {{ justfile() }}` — a bare `just --list` invoked from inside a submodule lists
-*root* recipes, not the module's.
+Settings cross an `import` but **not** a `mod`, so the import goes in every justfile individually — including one that
+is itself a `mod` of another (`bmc-virt/harness/justfile`). Miss it and the file silently gets the footgun back.
 
-When adding a submodule justfile (via `mod foo 'foo/justfile'`), `default:` is the first thing in the file. The
-expensive recipe goes after it.
+`default-list` needs just >= 1.52.0. The dev shell pins one through the `nixpkgs-just` flake input, but a `just` on
+`PATH` outside it is the developer's own, and an older one fails to parse every justfile here. `set minimum-version`
+would say so plainly, except it only arrived in 1.55.0 — too late to help the versions that need the warning.
+
+The one exception is `bmc-virt/rootfs/overlay/root/justfile`, which ships to the VM as `/root/justfile` where
+`common.justfile` does not exist. Keep its first recipe a harmless one by hand.
+
+Anchor the shared paths with `source_directory()`, never `justfile_directory()`: inside an imported file the former is
+stably `common.justfile`'s own directory, while the latter follows whichever justfile was invoked and forks the layout
+between entry points. The same asymmetry means a *recipe* body cannot be shared this way — `source_file()` inside an
+imported recipe names `common.justfile`, not the importer.
 
 ## Hard rules — never
 
 - Never put a multi-line `#` comment block above a `just` recipe — single line only.
 - Never use `justfile()` or `justfile_directory()` inside a `mod`-imported submodule justfile when you want the
   submodule's own path. Use `source_directory()`.
-- Never let the first recipe in any justfile be one that does real work. The first recipe is a private `default:` that
-  runs `just --list`.
+- Never add a justfile without `import`ing `common.justfile`. Without it `set default-list` does not apply and a bare
+  `just <module>` runs the first recipe.

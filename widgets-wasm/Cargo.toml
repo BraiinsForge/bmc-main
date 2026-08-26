@@ -70,3 +70,9 @@ strip = true
 [profile.profiling]
 inherits = "release"
 strip = false
+
+# Lint only, for a tree of its own: `clippy-driver` leaves one `wasm::dev`
+# then fails to link out of. No `lto`, since a lint never links the wasm.
+[profile.fast]
+inherits = "dev"
+lto = false

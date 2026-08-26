@@ -2,6 +2,8 @@
 # flake (`nix build .#frontend`); these recipes mirror what runs in CI and
 # what's useful during local iteration.
 
+import '../common.justfile'
+
 # Enable Slint live-preview across all recipes that spawn the mock backend.
 export SLINT_LIVE_PREVIEW := "1"
 
@@ -9,10 +11,6 @@ export SLINT_LIVE_PREVIEW := "1"
 # under `just fe::…` the latter is the root justfile's directory,
 # so every path below would climb one too far.
 dir := source_directory()
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
 
 # === QA ===
 

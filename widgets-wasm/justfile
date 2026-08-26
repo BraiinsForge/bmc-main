@@ -1,8 +1,6 @@
+import '../common.justfile'
+
 # Braiins Pool widget: sim-backed dev, profiling, and fixture recording.
 mod braiins-pool 'braiins-pool'
 # Formula 1 widget: sim-backed dev and fixture recording.
 mod formula-1 'formula-1'
-
-[private]
-default:
-    @just --justfile {{ source_file() }} --list

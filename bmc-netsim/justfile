@@ -1,10 +1,8 @@
 # bmc-netsim dev tasks — local-iteration shortcuts around the simulator binary.
 
-dir := source_directory()
+import '../common.justfile'
 
-[private]
-default:
-    @just --justfile {{ source_file() }} --list
+dir := source_directory()
 
 # Regenerate the committed blueprint JSON schema from the Rust types.
 schema:
