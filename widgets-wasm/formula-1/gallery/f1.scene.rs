@@ -302,6 +302,30 @@ fn driver_sparse(ctx: &mut SceneCtx, ui: &mut Ui) {
     });
 }
 
+/// Every value the payload may leave out, left out at once, so the card
+/// shows each placeholder beside the few values that always arrive.
+#[scene]
+fn driver_placeholders(ctx: &mut SceneCtx, ui: &mut Ui) {
+    size_stages(ctx, ui, |bucket| {
+        move || {
+            let mut stats = fixtures::drivers()
+                .into_iter()
+                .next()
+                .expect("BUG: fixtures name a driver");
+            stats.number = None;
+            stats.ranking = None;
+            stats.gp_wins = None;
+            stats.world_titles = None;
+            stats.age = None;
+            stats.weight = None;
+            stats.height = None;
+            stats.race_engineer = None;
+            stats.debut_year = None;
+            driver::driver_view(&fixtures::driver_card(bucket, Some(stats)))
+        }
+    });
+}
+
 /// Text of exactly `chars` characters. Cut from a constructor's name
 /// rather than filler, since a proportional font makes the glyph mix,
 /// not the count, decide what fits.

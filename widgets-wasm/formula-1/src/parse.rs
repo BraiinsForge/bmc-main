@@ -155,7 +155,7 @@ fn driver_stats_at(json: &JsonDoc, at: &impl Fn(&str) -> String) -> DriverStats 
     DriverStats {
         jolpica_id: text(json, &at("jolpica_id")),
         name: text(json, &at("name")),
-        number: CarNumber::new(small(json, &at("number"))),
+        number: counted(json, &at("number")).map(CarNumber::new),
         headshot_url: image(json, &at("headshot_url")),
         team: text(json, &at("team")),
         team_color: color(json, &at("team_color")),

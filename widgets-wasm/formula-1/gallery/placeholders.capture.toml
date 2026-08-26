@@ -1,0 +1,77 @@
+# What every screen draws where the payload named nothing, on one sheet —
+# so a placeholder is judged against the values beside it and against the
+# other screens', rather than one frame at a time.
+# See `standings.capture.toml` for what `size` and `frames` are doing.
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "driver-placeholders-full"
+scene = "bmc_gallery::f1::Driver Placeholders"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "driver-placeholders-large"
+scene = "bmc_gallery::f1::Driver Placeholders"
+frames = 24
+
+[shot.knobs]
+Size = "Deck large"
+
+# The two narrow frames name the driver in the header rather than under
+# the portrait, which is the other place a missing number would have shown.
+[[shot]]
+name = "driver-placeholders-medium"
+scene = "bmc_gallery::f1::Driver Placeholders"
+frames = 24
+
+[shot.knobs]
+Size = "Deck medium"
+
+[[shot]]
+name = "driver-placeholders-small"
+scene = "bmc_gallery::f1::Driver Placeholders"
+frames = 24
+
+[shot.knobs]
+Size = "Deck small"
+
+[[shot]]
+name = "next-race-sparse-full"
+scene = "bmc_gallery::f1::Next Race Sparse"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+# The tables, whose position column is one glyph wide by design and so
+# stands in for a missing place differently from a labelled row.
+[[shot]]
+name = "standings-unranked-full"
+scene = "bmc_gallery::f1::Standings Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+[[shot]]
+name = "live-unranked-full"
+scene = "bmc_gallery::f1::Live Unranked"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"
+
+# A card with everything present, as the contrast the rest are read against.
+[[shot]]
+name = "driver-full"
+scene = "bmc_gallery::f1::Driver"
+frames = 24
+
+[shot.knobs]
+Size = "Deck fullscreen"

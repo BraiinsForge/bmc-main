@@ -40,9 +40,6 @@ pub struct NextRaceViewData {
     pub race: Option<NextRace>,
 }
 
-/// What the server had nothing for.
-const UNKNOWN: &str = "N/A";
-
 /// The design's gap between columns.
 const COLUMN_GAP: f32 = 40.0;
 /// The Grand Prix name, the largest type on the widget.
@@ -137,23 +134,20 @@ fn third(bucket: SizeBucket) -> f32 {
     (width - space::padding(bucket) * 2.0 - COLUMN_GAP * 2.0) / 3.0
 }
 
-fn count(value: Option<u16>) -> String {
-    value.map_or_else(|| UNKNOWN.to_owned(), |value| fmt!("{}", value))
+fn count(value: Option<u16>) -> Option<String> {
+    value.map(|value| fmt!("{}", value))
 }
 
 /// A distance in the operator's own units — kilometres, or miles.
-fn distance(value: Option<Length>, decimals: u32) -> String {
-    value.map_or_else(|| UNKNOWN.to_owned(), |value| value.format(decimals))
+fn distance(value: Option<Length>, decimals: u32) -> Option<String> {
+    value.map(|value| value.format(decimals))
 }
 
-fn session_time(at: Option<LocalDateTime>) -> String {
-    at.map_or_else(
-        || UNKNOWN.to_owned(),
-        |at| fmt!("{} {}", at.weekday_short(), parts::clock(at)),
-    )
+fn session_time(at: Option<LocalDateTime>) -> Option<String> {
+    at.map(|at| fmt!("{} {}", at.weekday_short(), parts::clock(at)))
 }
 
-fn info_row(label: &str, value: &str, layout: Layout) -> Node {
+fn info_row(label: &str, value: Option<&str>, layout: Layout) -> Node {
     parts::stat_row(
         label,
         value,
@@ -165,17 +159,25 @@ fn info_row(label: &str, value: &str, layout: Layout) -> Node {
 
 fn circuit_rows(race: &NextRace, layout: Layout) -> Vec<Node> {
     vec![
-        info_row("Number of Laps", &count(race.total_laps), layout),
-        info_row("Circuit Length", &distance(race.track_length, 3), layout),
-        info_row("Race Distance", &distance(race.race_distance, 1), layout),
-        info_row("DRS Zones", &count(race.drs_zones.map(u16::from)), layout),
-        // Printed as it arrives. The order is the upstream's own;
-        // softest-first belongs to the design rather than to the data.
+        info_row("Number of Laps", count(race.total_laps).as_deref(), layout),
         info_row(
-            "S / M / H Tires",
-            race.tire_compounds.as_deref().unwrap_or(UNKNOWN),
+            "Circuit Length",
+            distance(race.track_length, 3).as_deref(),
             layout,
         ),
+        info_row(
+            "Race Distance",
+            distance(race.race_distance, 1).as_deref(),
+            layout,
+        ),
+        info_row(
+            "DRS Zones",
+            count(race.drs_zones.map(u16::from)).as_deref(),
+            layout,
+        ),
+        // Printed as it arrives. The order is the upstream's own;
+        // softest-first belongs to the design rather than to the data.
+        info_row("S / M / H Tires", race.tire_compounds.as_deref(), layout),
     ]
 }
 
@@ -198,14 +200,14 @@ fn schedule_rows(race: &NextRace, layout: Layout, bucket: SizeBucket) -> Vec<Nod
     if let (Schedule::DatedSessions, Some(start)) = (layout.schedule, race.date_start) {
         rows.push(info_row(
             "Date",
-            &parts::date_range(start, race.date_end),
+            Some(&parts::date_range(start, race.date_end)),
             layout,
         ));
     }
     for session in &race.sessions {
         rows.push(info_row(
             &parts::truncate(&session.name, session_chars(bucket)),
-            &session_time(session.starts_at),
+            session_time(session.starts_at).as_deref(),
             layout,
         ));
     }

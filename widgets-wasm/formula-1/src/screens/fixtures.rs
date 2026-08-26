@@ -839,7 +839,7 @@ pub fn drivers() -> Vec<DriverStats> {
         .map(|driver| DriverStats {
             jolpica_id: slug_of(driver.name),
             name: driver.name.to_owned(),
-            number: CarNumber::new(driver.number),
+            number: Some(CarNumber::new(driver.number)),
             headshot_url: headshot_url(driver.name),
             team: driver.team.to_owned(),
             team_color: team_color(driver.livery),

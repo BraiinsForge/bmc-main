@@ -49,7 +49,16 @@ pub mod color {
     pub const PLACEHOLDER: Color = GRAY_90;
 }
 
-/// What an ordinal reads as when the payload named none.
+/// What a labelled row reads as where the payload named no value.
+///
+/// Never written at a call site: absence travels as `None`,
+/// and [`stat_row`] alone draws this — so a blank cannot be
+/// painted as though it held something.
+const UNKNOWN: &str = "N/A";
+
+/// What a table's position column reads as where a row has no place.
+/// The column is sized for the two digits a place takes, and `N/A`
+/// overruns it at the widest frame's row font.
 pub const NO_ORDINAL: &str = "—";
 
 pub mod font {
@@ -204,6 +213,21 @@ pub enum LabelWeight {
     Strong,
 }
 
+/// A stat's value, or [`UNKNOWN`] dimmed where the payload named none —
+/// the one place either is drawn, so absence always reads as absence.
+fn stat_value(value: Option<&str>, value_chars: usize, size: u32) -> Node {
+    match value {
+        Some(value) => text(
+            truncate(value, value_chars),
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+        ),
+        None => text(
+            UNKNOWN,
+            style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT_MUTED, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
+        ),
+    }
+}
+
 /// A label and its value, pushed to opposite edges of the row.
 ///
 /// `value_chars` cuts the value, which every caller sources from the
@@ -212,7 +236,7 @@ pub enum LabelWeight {
 #[must_use]
 pub fn stat_row(
     label: &str,
-    value: &str,
+    value: Option<&str>,
     value_chars: usize,
     size: u32,
     weight: LabelWeight,
@@ -238,13 +262,7 @@ pub fn stat_row(
             cross_align: CrossAlign::Center,
             justify_content: Justify::SpaceBetween
         ),
-        [
-            label,
-            text(
-                truncate(value, value_chars),
-                style!(size: size, weight: FontWeight::SEMIBOLD, color: color::TEXT, align: TextAlign::Right, line_height: 1.0, text_overflow: TextOverflow::Ellipsis),
-            ),
-        ],
+        [label, stat_value(value, value_chars, size)],
     )
 }
 

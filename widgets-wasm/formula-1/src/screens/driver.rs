@@ -42,9 +42,6 @@ pub struct DriverViewData {
     pub team_logo_url: ImageUrl,
 }
 
-/// What the server had nothing for.
-const UNKNOWN: &str = "N/A";
-
 /// The driver's name above their team, at the widest frame's size.
 const NAME_FULL: u32 = 32;
 /// The headshot, square on the widest frame and shorter below it.
@@ -122,15 +119,25 @@ fn layout(bucket: SizeBucket) -> Layout {
     }
 }
 
-fn count(value: Option<u8>) -> String {
-    value.map_or_else(|| UNKNOWN.to_owned(), |value| fmt!("{}", value))
+fn count(value: Option<u8>) -> Option<String> {
+    value.map(|value| fmt!("{}", value))
 }
 
-fn year(value: Option<u16>) -> String {
-    value.map_or_else(|| UNKNOWN.to_owned(), |value| fmt!("{}", value))
+fn year(value: Option<u16>) -> Option<String> {
+    value.map(|value| fmt!("{}", value))
 }
 
-fn stat(label: &str, value: &str, layout: Layout) -> Node {
+/// The driver's name, carrying their number where the payload named one.
+/// The number is part of this line rather than a value of its own,
+/// so an absent one leaves the name standing alone, not a placeholder.
+fn name_line(driver: &DriverStats) -> String {
+    driver.number.map_or_else(
+        || driver.name.clone(),
+        |number| fmt!("{} #{}", driver.name, number.get()),
+    )
+}
+
+fn stat(label: &str, value: Option<&str>, layout: Layout) -> Node {
     parts::stat_row(
         label,
         value,
@@ -143,53 +150,45 @@ fn stat(label: &str, value: &str, layout: Layout) -> Node {
 /// Who the driver drives as — the name block already says this
 /// wherever a frame draws one.
 fn naming_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
+    let number = driver.number.map(|number| fmt!("#{}", number.get()));
     vec![
-        stat("Team", &driver.team, layout),
-        stat("Number", &fmt!("#{}", driver.number.get()), layout),
+        stat("Team", Some(&driver.team), layout),
+        stat("Number", number.as_deref(), layout),
     ]
 }
 
 /// Where the driver stands this season.
 fn season_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
+    let ranking = driver.ranking.map(|rank| fmt!("#{}", rank));
     vec![
-        stat(
-            "Ranking",
-            &driver
-                .ranking
-                .map_or_else(|| parts::NO_ORDINAL.to_owned(), |rank| fmt!("#{}", rank)),
-            layout,
-        ),
-        stat("Points", &fmt!("{}", driver.points), layout),
+        stat("Ranking", ranking.as_deref(), layout),
+        stat("Points", Some(&fmt!("{}", driver.points)), layout),
     ]
 }
 
 /// What the driver has won.
 fn record_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
     vec![
-        stat("Grand Prix Wins", &count(driver.gp_wins), layout),
-        stat("World Titles", &count(driver.world_titles), layout),
+        stat("Grand Prix Wins", count(driver.gp_wins).as_deref(), layout),
+        stat(
+            "World Titles",
+            count(driver.world_titles).as_deref(),
+            layout,
+        ),
     ]
 }
 
 /// Who the driver is, in the operator's own units.
 fn person_rows(driver: &DriverStats, layout: Layout) -> Vec<Node> {
-    let weight = driver
-        .weight
-        .map_or_else(|| UNKNOWN.to_owned(), |it| it.format(0));
-    let height = driver
-        .height
-        .map_or_else(|| UNKNOWN.to_owned(), |it| it.format_short(0));
-    let engineer = driver
-        .race_engineer
-        .clone()
-        .unwrap_or_else(|| UNKNOWN.to_owned());
+    let weight = driver.weight.map(|it| it.format(0));
+    let height = driver.height.map(|it| it.format_short(0));
     vec![
-        stat("Age", &count(driver.age), layout),
-        stat("Weight", &weight, layout),
-        stat("Height", &height, layout),
+        stat("Age", count(driver.age).as_deref(), layout),
+        stat("Weight", weight.as_deref(), layout),
+        stat("Height", height.as_deref(), layout),
         nationality_row(driver, layout),
-        stat("Race Engineer", &engineer, layout),
-        stat("F1 Debut", &year(driver.debut_year), layout),
+        stat("Race Engineer", driver.race_engineer.as_deref(), layout),
+        stat("F1 Debut", year(driver.debut_year).as_deref(), layout),
     ]
 }
 
@@ -261,10 +260,7 @@ fn portrait(driver: &DriverStats, layout: Layout) -> Option<Node> {
                 (PHOTO_LARGE, PHOTO_LARGE, font::TITLE)
             };
             let mut named = vec![text(
-                parts::truncate(
-                    &fmt!("{} #{}", driver.name, driver.number.get()),
-                    layout.value_chars,
-                ),
+                parts::truncate(&name_line(driver), layout.value_chars),
                 style!(size: name_size, weight: FontWeight::SEMIBOLD, color: color::TEXT),
             )];
             // The widest frame names the team in the header's mark
@@ -293,14 +289,11 @@ fn header(driver: &DriverStats, logo: &ImageUrl, bucket: SizeBucket) -> Node {
             vec![parts::title("Driver stats"), spacer(1.0), mark]
         }
         SizeBucket::Medium => vec![
-            parts::subtitle(&fmt!("{} #{}", driver.name, driver.number.get()), bucket),
+            parts::subtitle(&name_line(driver), bucket),
             spacer(1.0),
             mark,
         ],
-        SizeBucket::Small => vec![parts::subtitle(
-            &fmt!("{} #{}", driver.name, driver.number.get()),
-            bucket,
-        )],
+        SizeBucket::Small => vec![parts::subtitle(&name_line(driver), bucket)],
     };
     parts::header(content, false, bucket)
 }
@@ -378,7 +371,7 @@ pub fn driver_view(view: &DriverViewData) -> Node {
 
 #[cfg(test)]
 mod tests {
-    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, parts, parts::space};
+    use super::{PHOTO_LARGE, Portrait, TEAM_MARK, layout, name_line, parts, parts::space};
     use crate::model::SizeBucket;
     use crate::screens::fixtures;
 
@@ -431,6 +424,22 @@ mod tests {
                 "{bucket:?} must still cut what overruns its {chars}",
             );
         }
+    }
+
+    /// There is no zeroth car, so a driver the payload gave no number
+    /// keeps their name to themselves rather than trailing a bare `#`.
+    #[test]
+    fn a_driver_without_a_number_is_named_without_one() {
+        let mut driver = fixtures::drivers()
+            .into_iter()
+            .next()
+            .expect("BUG: the fixtures name a driver");
+        assert!(
+            name_line(&driver).contains('#'),
+            "a driver with a number is named with it"
+        );
+        driver.number = None;
+        assert_eq!(name_line(&driver), driver.name);
     }
 
     /// The stats column stretches to the portrait beside it,

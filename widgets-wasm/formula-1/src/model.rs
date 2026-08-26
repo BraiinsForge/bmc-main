@@ -84,12 +84,11 @@ pub fn team_color(hex: &str) -> Color {
     u32::from_str_radix(digits, 16).map_or(FALLBACK_TEAM_COLOR, Color::from_hex)
 }
 
-/// A car's racing number.
+/// A car's racing number, which the screens print and nothing else reads.
 ///
 /// Distinct from a championship or grid position, which are small
-/// integers too: the driver card joins the two statistics resources on
-/// this number, so confusing the two would quietly show another
-/// driver's figures.
+/// integers too: the two resources join on `jolpica_id`, so a number
+/// mistaken for a place would print as one without ever being caught.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CarNumber(u8);
 
@@ -288,7 +287,8 @@ pub struct DriverStats {
     /// and what the `driver` param holds — so one joins to another.
     pub jolpica_id: String,
     pub name: String,
-    pub number: CarNumber,
+    /// Absent where the payload named none: there is no zeroth car.
+    pub number: Option<CarNumber>,
     pub headshot_url: ImageUrl,
     pub team: String,
     pub team_color: Color,
@@ -483,8 +483,8 @@ impl Data {
             .unwrap_or_default()
     }
 
-    /// The constructor `jolpica_id` races for, by the same two hops the
-    /// mark takes.
+    /// The constructor `jolpica_id` races for,
+    /// by the same two hops the mark takes.
     #[must_use]
     pub fn team_of(&self, jolpica_id: &str) -> Option<&Team> {
         self.driver_teams
@@ -526,7 +526,7 @@ mod tests {
     fn driver(slug: &str, number: u8, name: &str) -> DriverStats {
         DriverStats {
             jolpica_id: slug.to_owned(),
-            number: CarNumber::new(number),
+            number: Some(CarNumber::new(number)),
             name: name.to_owned(),
             ..DriverStats::default()
         }
