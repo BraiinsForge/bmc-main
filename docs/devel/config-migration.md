@@ -113,7 +113,7 @@ disappears (a scene left with zero widgets is dropped and counted in `Report.dro
 
 ### Active widget limit
 
-The v0 migration counts enabled scenes in stored order against `crate::config::MAX_ACTIVE_WIDGETS`. If all widgets in
+The v0 migration counts enabled scenes in stored order against `crate::config::MAX_RUNNING_WIDGETS`. If all widgets in
 the next enabled scene would exceed the remaining budget, migration retains but disables the whole scene, increments
 `Report.deactivated_scenes`, and continues scanning so a later smaller scene can still fit. The offline migration CLI
 reports this count as `deactivated_scenes`.

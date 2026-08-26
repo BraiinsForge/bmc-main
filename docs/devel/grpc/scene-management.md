@@ -70,14 +70,14 @@ Primary sources:
 - Placement validation rejects out-of-bounds and overlaps in combined scenes.
 - Fullscreen-scene widget is immutable in shape/placement via `UpdateWidget` constraints.
 
-### Active widget capacity
+### Running widget capacity
 
 - `AddFullscreenScene`, `AddWidget` on an enabled or previewed scene, enabling through `UpdateScene`, and cloning an
-  enabled scene reject with `ResourceExhausted` when the operation would exceed the device-wide active widget limit.
+  enabled scene reject with `ResourceExhausted` when the operation would exceed the device-wide running widget limit.
 - A capacity rejection leaves configuration unchanged. Disabling and removing remain available even when the stored
   configuration is already over capacity. A scene whose preview is rejected can still be removed from the scene list.
-- `PreviewScene` rejects with `ResourceExhausted` when its widgets would raise the running total above the active widget
-  limit.
+- `PreviewScene` rejects with `ResourceExhausted` when its widgets would raise the running total above the running
+  widget limit.
 - A second concurrent `PreviewScene` request rejects with `FailedPrecondition`.
 
 ## Frontend Guidance
@@ -85,4 +85,4 @@ Primary sources:
 - Always send complete params in `UpdateWidget`.
 - Keep local validation aligned with manifest schema, but still treat server validation errors as authoritative.
 - Treat preview stream as a leased resource (single owner).
-- Read the current device-wide budget from `active_widget_count` and `max_active_widget_count`.
+- Read the current device-wide budget from `running_widget_count` and `max_running_widget_count`.

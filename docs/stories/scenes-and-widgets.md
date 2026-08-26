@@ -46,6 +46,23 @@ multiple compatible widgets placed on the shared grid.
 - Disabled scenes do not participate in scene cycling.
 - Re-enabling a scene returns it to the configured scene order.
 
+### Stay within device capacity
+
+> As a user, I want the Deck to prevent widget configurations that exceed its memory capacity so the display remains
+> reliable.
+
+- The web UI shows the number of running widgets alongside the maximum of 56.
+- Adding a widget to an enabled scene, adding a fullscreen scene, enabling a scene, or cloning an enabled scene is
+  rejected when it would raise the running widget count above 56.
+- A rejected operation leaves the displayed configuration unchanged and explains that the running-widget limit was
+  reached.
+- Disabling or removing scenes and widgets remains available even if a configuration is already above the limit.
+- Widgets may still be added to disabled scenes that are not being previewed because they do not become active until the
+  scene is enabled.
+- Previewing a disabled scene is rejected when its widgets would raise the number of running widgets above 56.
+- Adding a widget to a disabled scene being previewed is rejected when it would raise the number of running widgets
+  above 56.
+
 ### Reorder scenes
 
 > As a user, I want to choose the order in which scenes appear, so swipes and automatic cycling follow my preferred
@@ -95,6 +112,8 @@ swipes and automatic rotation.
 
 ## Constraints
 
+- A combined scene is bounded by the device's slot grid.
+- At most 56 widgets run at once, counting widgets in enabled scenes and a disabled scene being previewed.
 - A fullscreen scene uses exactly one `full` widget.
 - A combined scene uses compatible widgets in the supported grid sizes for the device.
 - Scene cycling operates only on enabled scenes that are supported by the current hardware and installed widget

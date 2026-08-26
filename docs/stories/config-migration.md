@@ -23,6 +23,10 @@ typed credential instances. Every later schema bump adds one more step to the sa
 - Device settings survive too: alarms, night mode, brightness, sound volume, localization, scene cycling, the LED and
   boot-sound switches, and auto-upgrade preferences all carry over unchanged.
 - Scene IDs, widget positions, and widget sizes are preserved. The grid the user built still looks the same.
+- The v0 migration keeps at most 56 widgets active. When an enabled scene would cross that limit, the whole scene is
+  retained but disabled; its widgets and settings remain available to the user.
+- Migration continues examining later scenes after disabling an overflowing scene. A later scene remains enabled when
+  all of its widgets fit within the remaining capacity.
 - Each upgrade step translates the widgets it has an equivalent for and drops the rest. In the current v0 → v1 step that
   means the clock, block height, halving countdown, image, Braiins Pool, and ticker widgets keep their settings, plus
   the Braiins Forge remote widgets that now have a WASM equivalent — weather, nameday, ISS position, random facts, and
