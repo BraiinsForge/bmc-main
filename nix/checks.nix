@@ -265,14 +265,18 @@ in
       nativeBuildInputs = [ pkgs.ast-grep ];
       src = lib.fileset.toSource {
         root = ../.;
-        fileset = lib.fileset.unions [
-          ../sgconfig.yml
-          ../rules
-          ../bmc-wasm-runtime/sdk/src
-          ../bmc-wasm-runtime/protocol/src
-          ../widgets-wasm
-          ../widgets-wasm-examples
-        ];
+        # Less `*.scene.rs`, which only the gallery's glob compiles —
+        # they sit beside the widget they exercise but reach no wasm binary.
+        fileset = lib.fileset.difference
+          (lib.fileset.unions [
+            ../sgconfig.yml
+            ../rules
+            ../bmc-wasm-runtime/sdk/src
+            ../bmc-wasm-runtime/protocol/src
+            ../widgets-wasm
+            ../widgets-wasm-examples
+          ])
+          (lib.fileset.fileFilter (file: lib.hasSuffix ".scene.rs" file.name) ../widgets-wasm);
       };
     } ''
     cd $src
