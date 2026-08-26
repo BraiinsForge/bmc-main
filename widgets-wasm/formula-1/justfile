@@ -83,12 +83,13 @@ capture NAME="*":
         just --justfile {{ root_justfile }} gallery::capture "$recipe" "f1-$name"
     done
 
-# Record SIZE's fixture against SCENARIO (see `dev`); needs `run-netsim` serving.
-record SCENARIO SIZE="full":
+# Testbed on SCENARIO (see `dev`), ready to record; needs `run-netsim` serving.
+record SCENARIO:
     #!/usr/bin/env bash
     set -euo pipefail
 
     # Bound to a variable, not inlined: a failed substitution inside the exec's
     # arguments would leave `set -e` satisfied and record against the live API.
     args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
-    exec just --justfile {{ root_justfile }} wasm::record formula-1 {{ SIZE }} $args
+
+    exec just --justfile {{ root_justfile }} wasm::record formula-1 $args

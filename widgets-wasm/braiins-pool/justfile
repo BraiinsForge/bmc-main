@@ -73,4 +73,5 @@ record SCENARIO TARGET="bmc100:full":
     #
     # The dataset name carries the scenario: without it, `idle` and `denied`
     # would each overwrite the healthy fixture recorded at the same target.
-    exec just --justfile {{ root_justfile }} wasm::record braiins-pool {{ TARGET }} {{ replace(TARGET, ":", "-") + "-" + SCENARIO }} $args
+    exec just --justfile {{ root_justfile }} wasm::record braiins-pool \
+        --record={{ TARGET }} --record-name={{ replace(TARGET, ":", "-") + "-" + SCENARIO }} $args

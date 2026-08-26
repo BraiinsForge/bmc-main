@@ -122,8 +122,8 @@ docs:
 
 # === Recording ===
 
-# Record a session. TARGET = <platform>:<viewport>; omit NAME and the dialog asks for it; extra args reach the testbed.
-record WIDGET TARGET="bmc100:full" NAME="" *ARGS:
+# Record a session; the GUI chooses target and name. Extra args reach the testbed (`--record=`, `--record-name=`).
+record WIDGET *ARGS:
     #!/usr/bin/env bash
     set -euo pipefail
 
@@ -135,7 +135,8 @@ record WIDGET TARGET="bmc100:full" NAME="" *ARGS:
     cargo build --manifest-path "$root/$name/Cargo.toml" --release --target {{ wasm_target }}
 
     # No --cache-dir: recording stays hermetic so the fixture is reproducible.
-    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --record={{ TARGET }} {{ if NAME != "" { "--record-name=" + NAME } else { "" } }} {{ ARGS }}
+    cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml \
+        -- "$wasm_file" --widget-root "$root/$name" {{ ARGS }}
 
 # === Visual regression ===
 
