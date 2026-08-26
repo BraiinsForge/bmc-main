@@ -27,7 +27,8 @@
 //!
 //! [`probe`] does one pass (a `getifaddrs(3)` walk, one `uci -q show wireless`
 //! spawn, one `ubus call network.wireless status` spawn for the netdev-to-mode
-//! mapping, one `/proc/net/wireless` read) and returns a [`Snapshot`]; callers
+//! mapping, a sysfs `carrier` read per wired candidate, one `/proc/net/wireless`
+//! read) and returns a [`Snapshot`]; callers
 //! that want a single field can use [`hostname`], [`primary_ipv4`],
 //! [`configured_station_ssid`], or [`wifi_signal_dbm`].
 
@@ -48,16 +49,63 @@ enum WifiMode {
     Unknown,
 }
 
-impl WifiMode {
-    /// Uplink preference for `pick_ipv4`: a station interface is the real
-    /// uplink, an unknown interface (mode not reported by `uci`) is a maybe, and
-    /// an AP interface (a coexisting setup AP) must never shadow the uplink.
-    fn rank(self) -> u8 {
-        match self {
-            WifiMode::Station => 0,
-            WifiMode::Unknown => 1,
-            WifiMode::Ap => 2,
-        }
+/// Setup-AP interfaces that never appear in `uci` wireless config. The ESP32 is
+/// an external chip driven over its own firmware path, so its AP is reported as
+/// `Unknown` and would otherwise outrank a real wireless uplink.
+const KNOWN_AP_INTERFACES: &[&str] = &["ethap0"];
+
+/// Uplink preference, best first. The order is the product decision: the
+/// cable when it is plugged in, else the WiFi station, else whatever else has
+/// an address, and a setup AP only when nothing else does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum UplinkRank {
+    /// A non-`wlan*` interface with no wireless mode: assumed to be the cable.
+    Wired,
+    Station,
+    /// A `wlan*` interface the wireless status could not classify.
+    Unclassified,
+    /// Any access point, so a setup AP never shadows a real uplink.
+    Ap,
+}
+
+fn uplink_rank(name: &str, mode: WifiMode) -> UplinkRank {
+    match mode {
+        WifiMode::Ap => UplinkRank::Ap,
+        // The ESP32 AP has no wireless section, so it is known by name.
+        WifiMode::Unknown if KNOWN_AP_INTERFACES.contains(&name) => UplinkRank::Ap,
+        WifiMode::Station => UplinkRank::Station,
+        WifiMode::Unknown if !name.starts_with("wlan") => UplinkRank::Wired,
+        WifiMode::Unknown => UplinkRank::Unclassified,
+    }
+}
+
+/// Drop wired candidates whose link is down. A statically configured `eth0`
+/// keeps its address after the cable is unplugged and would otherwise shadow a
+/// working WiFi uplink. Only wired interfaces are judged this way: a WiFi
+/// netdev's carrier follows association, which its address already reflects.
+/// Pure, for testing.
+fn drop_unplugged_wired(
+    interfaces: Vec<Interface>,
+    modes: &HashMap<String, WifiMode>,
+    has_carrier: impl Fn(&str) -> bool,
+) -> Vec<Interface> {
+    interfaces
+        .into_iter()
+        .filter(|iface| {
+            let mode = modes.get(&iface.name).copied().unwrap_or_default();
+            uplink_rank(&iface.name, mode) != UplinkRank::Wired || has_carrier(&iface.name)
+        })
+        .collect()
+}
+
+/// Link state from `/sys/class/net/<name>/carrier`: `1` with link, `0`
+/// without, and `EINVAL` while the interface is administratively down (no
+/// uplink either). Any other failure means the answer is unknown, and an
+/// unknown link is kept rather than dropped.
+fn sysfs_carrier(name: &str) -> bool {
+    match std::fs::read_to_string(format!("/sys/class/net/{name}/carrier")) {
+        Ok(carrier) => carrier.trim() == "1",
+        Err(e) => e.kind() != std::io::ErrorKind::InvalidInput,
     }
 }
 
@@ -78,13 +126,11 @@ fn interface_ipv4(iface: &Interface) -> Option<Ipv4Addr> {
 
 /// Pick the preferred routable IPv4 from an interface list. Pure, for testing.
 ///
-/// Prefer WiFi station interfaces, then unknown-mode ones, with AP-mode last so
-/// a coexisting setup AP (used during reconfiguration) does not shadow the real
-/// uplink (see `WifiMode::rank`). Within a mode rank, prefer kernel `wlan*`
-/// names (the trailing index is not stable across boots/platforms, so match the
-/// prefix, not a fixed name), then fall back to lexicographic interface-name
-/// order so the result is deterministic and does not depend on raw
-/// `getifaddrs(3)` enumeration order.
+/// Ranked wired first, then WiFi station, then unclassified, then AP last so a
+/// coexisting setup AP does not shadow the real uplink. Ties break on the
+/// interface name (matching the `wlan` prefix, whose trailing index is not
+/// stable across boots) for a deterministic result independent of raw
+/// `getifaddrs(3)` order.
 #[must_use]
 fn ranked_candidates<'a>(
     interfaces: &'a [Interface],
@@ -98,8 +144,8 @@ fn ranked_candidates<'a>(
             Some((iface.name.as_str(), mode))
         })
         .collect();
-    // Station, then unknown, then AP; wlan* before others, then lexicographic.
-    candidates.sort_by_key(|(name, mode)| (mode.rank(), !name.starts_with("wlan"), *name));
+    // Wired, then station, then unclassified, then AP; ties broken by name.
+    candidates.sort_by_key(|(name, mode)| (uplink_rank(name, *mode), *name));
     candidates
 }
 
@@ -113,10 +159,11 @@ fn pick_interface<'a>(
         .map(|(name, _)| *name)
 }
 
-/// Like [`pick_interface`] but never an AP-mode interface: the setup AP's own
-/// address is not an uplink, and a setup flow watching for "the device got an
-/// IP" must not trigger on it. Unknown-mode interfaces stay eligible, since the
-/// wireless status cannot classify a non-WiFi uplink and it still counts.
+/// Like [`pick_interface`] but never an AP (by mode, or the ESP32 AP by name):
+/// the setup AP's own address is not an uplink, and a setup flow watching for
+/// "the device got an IP" must not trigger on it. Unknown-mode interfaces stay
+/// eligible, since the wireless status cannot classify a non-WiFi uplink and it
+/// still counts.
 #[must_use]
 fn pick_station_interface<'a>(
     interfaces: &'a [Interface],
@@ -124,7 +171,7 @@ fn pick_station_interface<'a>(
 ) -> Option<&'a str> {
     ranked_candidates(interfaces, modes)
         .into_iter()
-        .find(|(_, mode)| *mode != WifiMode::Ap)
+        .find(|(name, mode)| uplink_rank(name, *mode) != UplinkRank::Ap)
         .map(|(name, _)| name)
 }
 
@@ -359,6 +406,11 @@ pub fn probe() -> Option<Snapshot> {
     let interfaces = get_if_addrs::get_if_addrs().ok()?;
     let sections = uci_show_wireless_sections();
     let wireless_status = ubus_wireless_status();
+    let modes = wireless_status
+        .as_deref()
+        .map(modes_map_from_ubus)
+        .unwrap_or_default();
+    let interfaces = drop_unplugged_wired(interfaces, &modes, sysfs_carrier);
     let proc_net_wireless = std::fs::read_to_string(PROC_NET_WIRELESS_PATH).ok();
     Some(snapshot_from(
         &interfaces,
@@ -380,20 +432,26 @@ pub fn hostname() -> Option<String> {
 /// [`primary_ipv4`]. `None` when no interface has a routable address.
 #[must_use]
 pub fn primary_interface() -> Option<String> {
-    let interfaces = get_if_addrs::get_if_addrs().ok()?;
-    let modes = ubus_wireless_status()
-        .map(|status| modes_map_from_ubus(&status))
-        .unwrap_or_default();
+    let (interfaces, modes) = live_candidates()?;
     pick_interface(&interfaces, &modes).map(ToOwned::to_owned)
 }
 
-/// Primary routable IPv4 (WiFi-station-preferred), or `None` when offline.
-#[must_use]
-pub fn primary_ipv4() -> Option<Ipv4Addr> {
+/// The addressed interfaces and their wireless modes as ranked in production:
+/// one `getifaddrs(3)` walk, one `ubus` spawn, unplugged cables dropped.
+fn live_candidates() -> Option<(Vec<Interface>, HashMap<String, WifiMode>)> {
     let interfaces = get_if_addrs::get_if_addrs().ok()?;
     let modes = ubus_wireless_status()
         .map(|status| modes_map_from_ubus(&status))
         .unwrap_or_default();
+    let interfaces = drop_unplugged_wired(interfaces, &modes, sysfs_carrier);
+    Some((interfaces, modes))
+}
+
+/// Primary routable IPv4 (cable first, then WiFi station, see `pick_interface`
+/// for the full ranking), or `None` when offline.
+#[must_use]
+pub fn primary_ipv4() -> Option<Ipv4Addr> {
+    let (interfaces, modes) = live_candidates()?;
     pick_ipv4(&interfaces, &modes)
 }
 
@@ -484,7 +542,51 @@ mod tests {
     }
 
     #[test]
-    fn prefers_wifi_ipv4_before_ethernet_even_when_ethernet_is_first() {
+    fn prefers_the_cable_when_both_ethernet_and_wifi_are_up() {
+        let interfaces = vec![
+            v4("eth0", Ipv4Addr::new(10, 33, 50, 103)),
+            v4("wlan0", Ipv4Addr::new(192, 168, 1, 106)),
+        ];
+        let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
+        assert_eq!(pick_interface(&interfaces, &modes), Some("eth0"));
+    }
+
+    #[test]
+    fn an_unplugged_static_cable_does_not_shadow_the_wifi_uplink() {
+        // A static `eth0` keeps its address with the cable out; only the
+        // carrier tells, and only wired candidates are judged by it.
+        let interfaces = vec![
+            v4("eth0", Ipv4Addr::new(10, 33, 50, 103)),
+            v4("wlan0", Ipv4Addr::new(192, 168, 1, 106)),
+        ];
+        let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
+        let plugged = drop_unplugged_wired(interfaces.clone(), &modes, |_| true);
+        assert_eq!(pick_interface(&plugged, &modes), Some("eth0"));
+        let unplugged = drop_unplugged_wired(interfaces, &modes, |name| name != "eth0");
+        assert_eq!(pick_interface(&unplugged, &modes), Some("wlan0"));
+    }
+
+    #[test]
+    fn the_esp32_setup_ap_never_shadows_a_wifi_uplink() {
+        // `ethap0` is the ESP32 setup AP. It has no `uci` wireless section, so it
+        // arrives as `Unknown`; ranking wired-first without naming it explicitly
+        // would let it outrank the station carrying the real uplink.
+        let interfaces = vec![
+            v4("ethap0", Ipv4Addr::new(10, 0, 0, 21)),
+            v4("wlan0", Ipv4Addr::new(192, 168, 1, 106)),
+        ];
+        let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
+        assert_eq!(pick_interface(&interfaces, &modes), Some("wlan0"));
+    }
+
+    #[test]
+    fn the_setup_ap_is_used_when_it_is_the_only_address() {
+        let interfaces = vec![v4("ethap0", Ipv4Addr::new(10, 0, 0, 21))];
+        assert_eq!(pick_interface(&interfaces, &HashMap::new()), Some("ethap0"));
+    }
+
+    #[test]
+    fn prefers_ethernet_ipv4_before_wifi_when_both_are_up() {
         let ifaces = vec![
             v4("lo", Ipv4Addr::LOCALHOST),
             v4("eth0", Ipv4Addr::new(192, 168, 1, 50)),
@@ -492,7 +594,7 @@ mod tests {
         ];
         assert_eq!(
             pick_ipv4(&ifaces, &HashMap::new()),
-            Some(Ipv4Addr::new(10, 0, 0, 5))
+            Some(Ipv4Addr::new(192, 168, 1, 50))
         );
     }
 
@@ -706,6 +808,23 @@ header
         assert_eq!(
             pick_station_ipv4(&interfaces, &modes),
             Some(Ipv4Addr::new(192, 168, 1, 5))
+        );
+    }
+
+    #[test]
+    fn the_esp32_setup_ap_is_never_the_station_address() {
+        // `ethap0` has no wireless section and no mode, so only its name says
+        // it is the setup AP; `station_ipv4` must skip it like `ipv4` does.
+        let interfaces = vec![v4("ethap0", Ipv4Addr::new(10, 0, 0, 21))];
+        assert_eq!(pick_station_ipv4(&interfaces, &HashMap::new()), None);
+        let interfaces = vec![
+            v4("ethap0", Ipv4Addr::new(10, 0, 0, 21)),
+            v4("wlan0", Ipv4Addr::new(192, 168, 1, 106)),
+        ];
+        let modes = HashMap::from([("wlan0".to_owned(), WifiMode::Station)]);
+        assert_eq!(
+            pick_station_ipv4(&interfaces, &modes),
+            Some(Ipv4Addr::new(192, 168, 1, 106))
         );
     }
 
