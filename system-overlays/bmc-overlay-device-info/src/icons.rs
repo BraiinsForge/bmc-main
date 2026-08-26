@@ -40,6 +40,7 @@ const DESKTOP_CLOCK: Svg = include_svg!("assets/desktop_clock.svg");
 const ERROR: Svg = include_svg!("assets/error.svg");
 /// Resolves to the repo-root `assets/`, shared with the settings tray.
 const CLOSE: Svg = include_svg!("assets/icons/close.svg");
+const SWIPE_DOWN: Svg = include_svg!("assets/swipe_down.svg");
 
 /// A registered icon and the viewBox it was authored at.
 /// The host scales X and Y independently,
@@ -61,6 +62,7 @@ pub struct DeviceInfoIcons {
     pub desktop_clock: Icon,
     pub error: Icon,
     pub close: Icon,
+    pub swipe_down: Icon,
 }
 
 #[must_use]
@@ -84,5 +86,6 @@ pub fn register_icons(renderer: &mut dyn Renderer) -> DeviceInfoIcons {
         desktop_clock: reg(&DESKTOP_CLOCK),
         error: reg(&ERROR),
         close: reg(&CLOSE),
+        swipe_down: reg(&SWIPE_DOWN),
     }
 }

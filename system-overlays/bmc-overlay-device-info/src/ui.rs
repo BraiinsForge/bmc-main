@@ -141,8 +141,10 @@ const DEV_DECK_ICON_MARGIN: f32 = 30.0;
 /// Both match the settings tray, which is the other overlay a touch closes.
 const CLOSE_TARGET: f32 = 48.0;
 const CLOSE_GLYPH: f32 = 24.0;
-/// Keeps the target off the panel's top-right corner.
-const CLOSE_INSET: f32 = 24.0;
+/// Keeps the corner affordances off the panel's edges.
+const CORNER_INSET: f32 = 24.0;
+/// Legacy `connect_info` spacing between the tray hint's parts.
+const TRAY_HINT_GAP: f32 = 8.0;
 /// Breathing room above the first line of a screen, and between its blocks.
 const SCREEN_TOP_INSET: f32 = 40.0;
 const SCREEN_GAP: f32 = 20.0;
@@ -305,8 +307,8 @@ fn close_affordance(icon_id: Icon) -> TreeNode {
         props: PropsData {
             width: CLOSE_TARGET,
             height: CLOSE_TARGET,
-            inset_top: CLOSE_INSET,
-            inset_right: CLOSE_INSET,
+            inset_top: CORNER_INSET,
+            inset_right: CORNER_INSET,
             ..PropsData::default()
         },
         touch_key: None,
@@ -321,6 +323,51 @@ fn close_affordance(icon_id: Icon) -> TreeNode {
             fills: Vec::new(),
         }],
     }
+}
+
+/// The settings-tray hint in the bottom-right, absolutely positioned so it sits
+/// outside the column layout and shifts nothing. Carried over from the legacy
+/// `connect_info` screen, which said the same thing about a swipe up.
+fn tray_hint(icon_id: Icon) -> TreeNode {
+    let (glyph_width, glyph_height) = icon_id.size;
+    let glyph = TreeNode::Canvas {
+        props: PropsData {
+            width: glyph_width,
+            height: glyph_height,
+            ..PropsData::default()
+        },
+        touch_key: None,
+        draws: vec![DrawCommand::Svg {
+            x: 0.0,
+            y: 0.0,
+            w: glyph_width,
+            h: glyph_height,
+            color: TRANSPARENT,
+            icon_id: icon_id.id,
+            anti_alias: true,
+            fills: Vec::new(),
+        }],
+    };
+    row(
+        PropsData {
+            // The close target's own band, so the two corner affordances
+            // sit on one line however tall the hint's own content is.
+            height: CLOSE_TARGET,
+            cross_align: CrossAlign::Center,
+            gap: TRAY_HINT_GAP,
+            inset_top: CORNER_INSET,
+            inset_left: CORNER_INSET,
+            ..PropsData::default()
+        },
+        [
+            content("To access the controls, IP and WiFi info", TextAlign::Right),
+            text(
+                "swipe down",
+                style(24, GRAY_40, FontWeight::BOLD, TextAlign::Right),
+            ),
+            glyph,
+        ],
+    )
 }
 
 /// Whether a touch anywhere on `view` closes it, which is what the close glyph
@@ -349,13 +396,18 @@ fn dismisses_on_touch(view: &DeviceInfoView) -> bool {
     }
 }
 
-/// Put the close glyph on a screen, outside its column layout.
-fn dismissable(tree: TreeNode, icon_id: Icon) -> TreeNode {
+/// Put an absolutely-positioned node on a screen, outside its column layout.
+fn overlaid(tree: TreeNode, node: TreeNode) -> TreeNode {
     let TreeNode::Row(props, mut columns) = tree else {
         panic!("BUG: every screen is rooted in a row");
     };
-    columns.push(close_affordance(icon_id));
+    columns.push(node);
     TreeNode::Row(props, columns)
+}
+
+/// Put the close glyph on a screen, outside its column layout.
+fn dismissable(tree: TreeNode, icon_id: Icon) -> TreeNode {
+    overlaid(tree, close_affordance(icon_id))
 }
 
 /// One full-height column of a screen: its blocks packed under the top inset,
@@ -667,9 +719,10 @@ pub fn build_device_info_tree(view: &DeviceInfoView, icons: DeviceInfoIcons) -> 
             lines.push(content("Waiting for IP address", TextAlign::Center));
             template_tree(Justify::Center, false, icons.wifi, CONNECTING_TITLE, lines)
         }
-        DeviceInfoView::Success { ip } => {
-            connected_info_tree(icons.desktop_clock, "Access the device at", *ip)
-        }
+        DeviceInfoView::Success { ip } => overlaid(
+            connected_info_tree(icons.desktop_clock, "Access the device at", *ip),
+            tray_hint(icons.swipe_down),
+        ),
         DeviceInfoView::Failed { ssid } => {
             let mut lines = ssid_lines(ssid.as_deref());
             lines.push(content("No IP address assigned", TextAlign::Center));
