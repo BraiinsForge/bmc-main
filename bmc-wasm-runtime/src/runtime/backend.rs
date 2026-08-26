@@ -29,8 +29,8 @@ use std::time::Instant;
 use anyhow::{Result, bail};
 use bmc_wasm_protocol::colors::Color;
 use bmc_wasm_protocol::{
-    BLACK, BitmapId, ICON_METER, MeshId, RED_60, SDK_INIT_EXPORT, SDK_VERSION, SvgId,
-    version_unpack,
+    BLACK, BitmapId, ICON_METER, MeshId, RED_60, SDK_INIT_EXPORT, SDK_VERSION, SVG_RESERVED_MIN,
+    SvgId, version_unpack,
 };
 use chrono::{DateTime, FixedOffset};
 use wasmi::{Caller, Extern, Linker};
@@ -464,7 +464,7 @@ pub(super) struct RendererAssetRestorer<'a> {
     renderer_assets: &'a mut crate::renderer_assets::RendererAssetLedger,
     profile_sections: &'a mut BTreeMap<String, u64>,
     has_pending: bool,
-    seen: HashSet<RendererAssetId>,
+    resolved: HashSet<RendererAssetId>,
     observation: RendererAssetRestorationObservation,
     failure: Option<String>,
     #[cfg(feature = "profiling")]
@@ -487,7 +487,7 @@ impl<'a> RendererAssetRestorer<'a> {
             renderer_assets,
             profile_sections,
             has_pending,
-            seen: HashSet::new(),
+            resolved: HashSet::new(),
             observation: RendererAssetRestorationObservation::default(),
             failure: None,
             #[cfg(feature = "profiling")]
@@ -499,71 +499,81 @@ impl<'a> RendererAssetRestorer<'a> {
         if self.failure.is_some() {
             return false;
         }
+        if is_host_renderer_asset(id) {
+            return true;
+        }
+        if !self.renderer_assets.owns(id) {
+            if self.renderer_assets.should_warn_unowned() {
+                tracing::warn!(
+                    instance_id = self.instance_id,
+                    asset_kind = id.kind_name(),
+                    asset_id = id.to_ffi(),
+                    "widget draw skipped an unowned renderer asset; further warnings suppressed"
+                );
+            }
+            return false;
+        }
         if !self.has_pending {
             return true;
         }
-        if !self.seen.insert(id) {
+        if !self.resolved.insert(id) {
             return true;
         }
-        let pending = self.renderer_assets.pending_by_id(id);
-        if pending.is_empty() {
+        let Some((raw_tag, record)) = self.renderer_assets.pending_by_id(id) else {
             return true;
+        };
+        let restore_started = Instant::now();
+        let restore_result = restore_renderer_asset(
+            self.instance_id,
+            self.asset_cache,
+            self.package_assets,
+            renderer,
+            &raw_tag,
+            &record,
+        );
+        let restore_us = u64::try_from(restore_started.elapsed().as_micros()).unwrap_or(u64::MAX);
+        #[cfg(feature = "profiling")]
+        {
+            self.restore_us = self.restore_us.saturating_add(restore_us);
         }
-        for (raw_tag, record) in pending {
-            let restore_started = Instant::now();
-            let restore_result = restore_renderer_asset(
-                self.instance_id,
-                self.asset_cache,
-                self.package_assets,
-                renderer,
-                &raw_tag,
-                &record,
-            );
-            let restore_us =
-                u64::try_from(restore_started.elapsed().as_micros()).unwrap_or(u64::MAX);
-            #[cfg(feature = "profiling")]
-            {
-                self.restore_us = self.restore_us.saturating_add(restore_us);
+        match restore_result {
+            Ok(RendererAssetRestore::Restored) => {
+                self.renderer_assets.mark_resident(&raw_tag);
+                *self
+                    .profile_sections
+                    .entry("asset_restore_us".to_owned())
+                    .or_default() += restore_us;
+                match record.kind {
+                    RendererAssetKind::Svg => self.observation.svg_restored += 1,
+                    RendererAssetKind::Bitmap(_) => self.observation.bitmap_restored += 1,
+                    RendererAssetKind::Mesh => self.observation.mesh_restored += 1,
+                }
+                #[cfg(feature = "profiling")]
+                tracing::info!(
+                    target: bmc_render::profile::TARGET,
+                    instance_id = self.instance_id,
+                    tag = %raw_tag,
+                    asset_kind = record.kind.name(),
+                    asset_id = record.id.to_ffi(),
+                    "widget renderer asset restored on demand"
+                );
             }
-            match restore_result {
-                Ok(RendererAssetRestore::Restored) => {
-                    self.renderer_assets.mark_resident(&raw_tag);
-                    *self
-                        .profile_sections
-                        .entry("asset_restore_us".to_owned())
-                        .or_default() += restore_us;
-                    match record.kind {
-                        RendererAssetKind::Svg => self.observation.svg_restored += 1,
-                        RendererAssetKind::Bitmap(_) => self.observation.bitmap_restored += 1,
-                        RendererAssetKind::Mesh => self.observation.mesh_restored += 1,
-                    }
-                    #[cfg(feature = "profiling")]
-                    tracing::info!(
-                        target: bmc_render::profile::TARGET,
-                        instance_id = self.instance_id,
-                        tag = %raw_tag,
-                        asset_kind = record.kind.name(),
-                        asset_id = record.id.to_ffi(),
-                        "widget renderer asset restored on demand"
-                    );
-                }
-                Ok(RendererAssetRestore::AlreadyResident) => {
-                    self.observation.already_resident += 1;
-                    self.renderer_assets.mark_resident(&raw_tag);
-                }
-                Ok(RendererAssetRestore::Skipped) => {
-                    self.observation.skipped += 1;
-                    self.renderer_assets.disable_restoration(&raw_tag);
-                }
-                Err(error) => {
-                    tracing::error!(
-                        instance_id = self.instance_id,
-                        %error,
-                        "renderer asset restoration failed"
-                    );
-                    self.failure = Some(error);
-                    return false;
-                }
+            Ok(RendererAssetRestore::AlreadyResident) => {
+                self.observation.already_resident += 1;
+                self.renderer_assets.mark_resident(&raw_tag);
+            }
+            Ok(RendererAssetRestore::Skipped) => {
+                self.observation.skipped += 1;
+                self.renderer_assets.disable_restoration(&raw_tag);
+            }
+            Err(error) => {
+                tracing::error!(
+                    instance_id = self.instance_id,
+                    %error,
+                    "renderer asset restoration failed"
+                );
+                self.failure = Some(error);
+                return false;
             }
         }
         self.has_pending = self.renderer_assets.has_pending_restorable();
@@ -597,6 +607,10 @@ impl<'a> RendererAssetRestorer<'a> {
         );
         Ok(Some(observation))
     }
+}
+
+fn is_host_renderer_asset(id: RendererAssetId) -> bool {
+    matches!(id, RendererAssetId::Svg(id) if id.to_wire() >= SVG_RESERVED_MIN)
 }
 
 impl RendererAssetResolver for RendererAssetRestorer<'_> {
@@ -2340,8 +2354,10 @@ mod tests {
 
     use super::{
         DeadOverlayBackground, DisplayInfo, RuntimeConfig, WasmWidgetModule, WasmWidgetRuntime,
+        is_host_renderer_asset,
     };
-    use bmc_wasm_protocol::{DisplayShape, ViewportShape};
+    use crate::renderer_assets::RendererAssetId;
+    use bmc_wasm_protocol::{DisplayShape, SVG_RESERVED_MIN, SvgId, ViewportShape};
 
     /// Minimal SDK-version-shaped widget so `WasmWidgetRuntime::new` finishes
     /// instantiation without needing a renderer or GL context.
@@ -2594,5 +2610,16 @@ mod tests {
         assert!(error.to_string().contains("all fuel consumed"));
         assert!(normal.deliver_params_update(BTreeMap::new()));
         assert_eq!(normal.call_export_i32("completed"), Some(1));
+    }
+
+    #[test]
+    fn only_reserved_svg_ids_bypass_widget_ownership() {
+        let widget_svg = SvgId::from_wire(SVG_RESERVED_MIN - 1)
+            .expect("BUG: highest widget SVG ID must be non-zero");
+        let host_svg =
+            SvgId::from_wire(SVG_RESERVED_MIN).expect("BUG: first host SVG ID must be non-zero");
+
+        assert!(!is_host_renderer_asset(RendererAssetId::Svg(widget_svg)));
+        assert!(is_host_renderer_asset(RendererAssetId::Svg(host_svg)));
     }
 }

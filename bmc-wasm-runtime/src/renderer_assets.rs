@@ -18,7 +18,7 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use bmc_wasm_protocol::{BitmapId, BitmapSampling, MeshId, PackageAssetId, SvgId};
 
@@ -67,8 +67,7 @@ impl RendererAssetKind {
     pub(crate) fn name(self) -> &'static str {
         match self {
             Self::Svg => "svg",
-            Self::Bitmap(BitmapSampling::Linear) => "bitmap-linear",
-            Self::Bitmap(BitmapSampling::Nearest) => "bitmap-nearest",
+            Self::Bitmap(_) => "bitmap",
             Self::Mesh => "mesh",
         }
     }
@@ -87,6 +86,14 @@ impl RendererAssetId {
             Self::Svg(id) => id.to_ffi(),
             Self::Bitmap(id) => id.to_ffi(),
             Self::Mesh(id) => id.to_ffi(),
+        }
+    }
+
+    pub(crate) fn kind_name(self) -> &'static str {
+        match self {
+            Self::Svg(_) => "svg",
+            Self::Bitmap(_) => "bitmap",
+            Self::Mesh(_) => "mesh",
         }
     }
 }
@@ -109,11 +116,21 @@ pub(crate) enum DemandRestoration {
 #[derive(Debug, Default)]
 pub(crate) struct RendererAssetLedger {
     records: BTreeMap<String, RendererAssetRecord>,
+    owned_ids: HashSet<RendererAssetId>,
+    warned_unowned_draw: bool,
 }
 
 impl RendererAssetLedger {
     pub(crate) fn get(&self, tag: &str) -> Option<&RendererAssetRecord> {
         self.records.get(tag)
+    }
+
+    pub(crate) fn owns(&self, id: RendererAssetId) -> bool {
+        self.owned_ids.contains(&id)
+    }
+
+    pub(crate) fn should_warn_unowned(&mut self) -> bool {
+        !std::mem::replace(&mut self.warned_unowned_draw, true)
     }
 
     pub(crate) fn record(
@@ -131,6 +148,8 @@ impl RendererAssetLedger {
                 }
                 (state, _) => state,
             };
+        } else if !self.owned_ids.insert(record.id) {
+            return Err(record);
         }
         self.records.insert(tag, record);
         Ok(())
@@ -151,16 +170,18 @@ impl RendererAssetLedger {
         })
     }
 
-    pub(crate) fn pending_by_id(&self, id: RendererAssetId) -> Vec<(String, RendererAssetRecord)> {
+    pub(crate) fn pending_by_id(
+        &self,
+        id: RendererAssetId,
+    ) -> Option<(String, RendererAssetRecord)> {
         self.records
             .iter()
-            .filter(|(_, record)| {
+            .find(|(_, record)| {
                 record.backing.is_restorable()
                     && record.demand_restoration == DemandRestoration::Pending
                     && record.id == id
             })
             .map(|(tag, record)| (tag.clone(), record.clone()))
-            .collect()
     }
 
     pub(crate) fn disable_restoration(&mut self, tag: &str) {
@@ -182,12 +203,22 @@ impl RendererAssetLedger {
     }
 
     pub(crate) fn remove_prefix(&mut self, prefix: &str) {
-        self.records
-            .retain(|tag, _| !bmc_wasm_protocol::tag_matches_prefix(tag, prefix));
+        let owned_ids = &mut self.owned_ids;
+        self.records.retain(|tag, record| {
+            if !bmc_wasm_protocol::tag_matches_prefix(tag, prefix) {
+                return true;
+            }
+            assert!(
+                owned_ids.remove(&record.id),
+                "BUG: renderer asset record must have an owned ID"
+            );
+            false
+        });
     }
 
     pub(crate) fn clear(&mut self) {
         self.records.clear();
+        self.owned_ids.clear();
     }
 }
 
@@ -203,6 +234,28 @@ mod tests {
             ),
             backing,
             demand_restoration: DemandRestoration::Pending,
+        }
+    }
+
+    #[cfg(feature = "profiling")]
+    #[test]
+    fn record_and_id_kinds_share_the_structured_log_vocabulary() {
+        let svg = SvgId::from_ffi(1).expect("BUG: fixture SVG ID must be non-zero");
+        let bitmap = BitmapId::from_ffi(1).expect("BUG: fixture bitmap ID must be non-zero");
+        let mesh = MeshId::from_ffi(1).expect("BUG: fixture mesh ID must be non-zero");
+        for (kind, id) in [
+            (RendererAssetKind::Svg, RendererAssetId::Svg(svg)),
+            (
+                RendererAssetKind::Bitmap(BitmapSampling::Linear),
+                RendererAssetId::Bitmap(bitmap),
+            ),
+            (
+                RendererAssetKind::Bitmap(BitmapSampling::Nearest),
+                RendererAssetId::Bitmap(bitmap),
+            ),
+            (RendererAssetKind::Mesh, RendererAssetId::Mesh(mesh)),
+        ] {
+            assert_eq!(kind.name(), id.kind_name());
         }
     }
 
@@ -266,12 +319,14 @@ mod tests {
             ledger.get("asset"),
             Some(&svg_record(1, AssetBacking::Volatile))
         );
+        assert!(!ledger.owns(svg_record(2, AssetBacking::Volatile).id));
     }
 
     #[test]
     fn repeated_registration_preserves_residency_but_cache_refill_rearms_a_miss() {
         let mut ledger = RendererAssetLedger::default();
         let record = svg_record(1, AssetBacking::Cache("asset".into()));
+        let id = record.id;
         ledger
             .record("asset".to_owned(), record.clone())
             .expect("first record must be accepted");
@@ -295,29 +350,76 @@ mod tests {
             ledger.get("asset").map(|record| record.demand_restoration),
             Some(DemandRestoration::Pending)
         );
+
+        ledger.remove_prefix("asset");
+
+        assert!(!ledger.owns(id));
+    }
+
+    #[test]
+    fn ownership_ends_when_the_widget_evicts_its_tag() {
+        let mut ledger = RendererAssetLedger::default();
+        let record = svg_record(1, AssetBacking::Volatile);
+        let id = record.id;
+        ledger
+            .record("asset".to_owned(), record)
+            .expect("first record must be accepted");
+
+        assert!(ledger.owns(id));
+
+        ledger.remove_prefix("asset");
+
+        assert!(!ledger.owns(id));
+    }
+
+    #[test]
+    fn clearing_the_ledger_ends_ownership() {
+        let mut ledger = RendererAssetLedger::default();
+        let record = svg_record(1, AssetBacking::Volatile);
+        let id = record.id;
+        ledger
+            .record("asset".to_owned(), record)
+            .expect("first record must be accepted");
+
+        ledger.clear();
+
+        assert!(!ledger.owns(id));
+    }
+
+    #[test]
+    fn record_rejects_an_id_owned_by_another_tag() {
+        let mut ledger = RendererAssetLedger::default();
+        let record = svg_record(1, AssetBacking::Volatile);
+        let id = record.id;
+        ledger
+            .record("first".to_owned(), record.clone())
+            .expect("first record must be accepted");
+        assert!(ledger.record("second".to_owned(), record).is_err());
+        assert!(ledger.owns(id));
+        assert!(ledger.get("second").is_none());
     }
 
     #[test]
     fn restoration_state_updates_are_scoped_to_the_ledger_tag() {
         let mut ledger = RendererAssetLedger::default();
-        let record = svg_record(1, AssetBacking::Cache("asset".into()));
         ledger
-            .record("first".to_owned(), record.clone())
+            .record(
+                "first".to_owned(),
+                svg_record(1, AssetBacking::Cache("first".into())),
+            )
             .expect("first record must be accepted");
         ledger
-            .record("second".to_owned(), record)
-            .expect("second tag may share a renderer ID");
+            .record(
+                "second".to_owned(),
+                svg_record(2, AssetBacking::Cache("second".into())),
+            )
+            .expect("second record must be accepted");
 
-        let shared_id =
+        let first_id =
             RendererAssetId::Svg(SvgId::from_ffi(1).expect("BUG: fixture SVG ID must be non-zero"));
         assert_eq!(
-            ledger
-                .pending_by_id(shared_id)
-                .into_iter()
-                .map(|(tag, _)| tag)
-                .collect::<Vec<_>>(),
-            ["first", "second"],
-            "an encountered ID must select every pending alias"
+            ledger.pending_by_id(first_id).map(|(tag, _)| tag),
+            Some("first".to_owned())
         );
 
         ledger.mark_resident("second");
@@ -330,15 +432,23 @@ mod tests {
             ledger.get("second").map(|record| record.demand_restoration),
             Some(DemandRestoration::Resident)
         );
-        assert_eq!(
-            ledger
-                .pending_by_id(shared_id)
-                .into_iter()
-                .map(|(tag, _)| tag)
-                .collect::<Vec<_>>(),
-            ["first"],
-            "an encountered ID must not select a resident alias"
-        );
+        let second_id =
+            RendererAssetId::Svg(SvgId::from_ffi(2).expect("BUG: fixture SVG ID must be non-zero"));
+        assert!(ledger.pending_by_id(second_id).is_none());
+    }
+
+    #[test]
+    fn unowned_warning_is_emitted_once_for_the_runtime() {
+        let mut ledger = RendererAssetLedger::default();
+        let record = svg_record(1, AssetBacking::Volatile);
+
+        assert!(ledger.should_warn_unowned());
+        assert!(!ledger.should_warn_unowned());
+        ledger
+            .record("asset".to_owned(), record)
+            .expect("BUG: first record must be accepted");
+        ledger.remove_prefix("asset");
+        assert!(!ledger.should_warn_unowned());
     }
 
     #[test]
