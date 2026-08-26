@@ -60,7 +60,7 @@ watch WIDGET:
     cd "$root" && exec cargo watch -x "build --manifest-path $name/Cargo.toml --target {{ wasm_target }}"
 
 # Run the debug testbed on WIDGET with its dev blob cache; extra ARGS reach the testbed.
-testbed WIDGET ARGS="":
+testbed WIDGET ARGS="" BUCKET="default":
     #!/usr/bin/env bash
     set -euo pipefail
     root=$({{ dir }}/tools/widget_root.py {{ WIDGET }})
@@ -69,7 +69,8 @@ testbed WIDGET ARGS="":
     wasm_file="$target/{{ wasm_target }}/debug/$(echo "$name" | tr - _).wasm"
     # Per-widget dev blob cache in the repo scratch dir, easy to find and
     # clear, so history survives a hot rebuild.
-    cache_dir="{{ parent_directory(dir) }}/.tmp/testbed-cache/$name"
+    # BUCKET keeps concurrent runs apart: two sharing one collide on `<key>.tmp` in `DiskCache::put`.
+    cache_dir="{{ parent_directory(dir) }}/.tmp/testbed-cache/$name/{{ BUCKET }}"
     mkdir -p "$cache_dir"
     exec cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --cache-dir "$cache_dir" {{ ARGS }}
 

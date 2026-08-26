@@ -56,7 +56,8 @@ run-testbed SCENARIO:
     set -euo pipefail
 
     args=$(just --justfile {{ source_file() }} sim-args {{ SCENARIO }})
-    exec just --justfile {{ root_justfile }} wasm::testbed formula-1 "$args"
+    # Its own cache bucket, so scenarios running side by side never collide.
+    exec just --justfile {{ root_justfile }} wasm::testbed formula-1 "$args" {{ SCENARIO }}
 
 # Render the gallery scenes headlessly; NAME picks one recipe, default all.
 capture NAME="*":
