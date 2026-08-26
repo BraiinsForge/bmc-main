@@ -94,13 +94,26 @@ pub const BOS_SUBTYPE: &str = "_bos._sub._http._tcp.local.";
 /// Bounds on waiting for the daemon to confirm an operation.
 ///
 /// Confirmations arrive after one trip through the daemon's event loop —
-/// mdns-sd 0.21.0 sends the goodbyes inline before replying (see its
-/// `exec_command_unregister` and `cleanup`) — so neither value carries
-/// protocol time, only scheduling margin. Unregister confirms a single
+/// mdns-sd 0.21.0 sends the first goodbye inline before replying (see its
+/// `exec_command_unregister` and `cleanup`) — so neither value covers the
+/// resend, only scheduling margin. Waiting for the resend is
+/// [`GOODBYE_RESEND_WINDOW`], paid separately. Unregister confirms a single
 /// service; shutdown also says goodbye per service and tears down every
 /// socket, so it gets the larger margin.
 const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(3);
 const UNREGISTER_TIMEOUT: Duration = Duration::from_millis(500);
+
+/// How long to keep the daemon alive after a withdraw so its own goodbye
+/// resend goes out.
+///
+/// mdns-sd 0.21.0 queues a second goodbye 120 ms after `unregister`
+/// ("repeat for one time just in case some peers miss the message"), but its
+/// `Exit` path emits one goodbye per service and then returns from the event
+/// loop, discarding queued retransmissions. Unregistering first and waiting
+/// out that timer buys the second packet: a goodbye is unacknowledged
+/// multicast, and the one that gets lost is what leaves a peer showing a
+/// miner that is no longer there.
+const GOODBYE_RESEND_WINDOW: Duration = Duration::from_millis(200);
 
 /// How long [`MdnsAdvertiser::start`] waits for probing to report a conflict.
 ///
@@ -319,7 +332,14 @@ impl MdnsAdvertiser {
     /// waits for the daemon's confirmation — callers can then order it
     /// strictly before taking the network down instead of hoping the packets
     /// made it out.
+    ///
+    /// Withdrawing before the daemon exits is what gets the goodbye sent
+    /// twice; see [`GOODBYE_RESEND_WINDOW`].
     pub async fn shutdown(self) -> Result<(), Error> {
+        if let Some(fullname) = self.fullname.as_deref() {
+            withdraw(&self.daemon, fullname).await;
+            tokio::time::sleep(GOODBYE_RESEND_WINDOW).await;
+        }
         let receiver = self.daemon.shutdown()?;
         timeout(SHUTDOWN_TIMEOUT, receiver.recv_async())
             .await
