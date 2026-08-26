@@ -40,7 +40,7 @@ use uuid::Uuid;
 use bmc_platform::HardwareCapabilities;
 
 use crate::compositor::WidgetInstanceKey;
-use crate::config::ConfigHandle;
+use crate::config::{ConfigHandle, MAX_RUNNING_WIDGETS, fits_running_widgets};
 use crate::credential;
 use crate::data::{Account, AccountId, SceneCycling, SceneCyclingTransition};
 use crate::led_coordinator::{Layer, LedCoordinatorHandle};
@@ -473,6 +473,43 @@ impl SceneManagementService {
             .save()
             .await
             .map_err(|e| Status::internal(format!("failed to save config: {e}")))
+    }
+
+    fn running_widget_count(
+        config: &ConfigHandle,
+        preview_scene_id: Option<scene::SceneId>,
+    ) -> usize {
+        let preview_widget_count = preview_scene_id
+            .and_then(|id| config.scenes().get(&id))
+            .filter(|scene| !scene.enabled) // Enabled previews are already included in active_widget_count().
+            .map_or(0, |scene| scene.widgets.len());
+        config.active_widget_count() + preview_widget_count
+    }
+
+    fn require_widget_capacity(
+        config: &ConfigHandle,
+        preview_scene_id: Option<scene::SceneId>,
+        additional_widgets: usize,
+    ) -> Result<(), Status> {
+        let running_widget_count = Self::running_widget_count(config, preview_scene_id);
+        if fits_running_widgets(running_widget_count, additional_widgets) {
+            return Ok(());
+        }
+
+        Err(Status::resource_exhausted(format!(
+            "running widget limit exceeded: {running_widget_count} running, operation would activate {additional_widgets}, maximum {MAX_RUNNING_WIDGETS}",
+        )))
+    }
+
+    fn running_widget_capacity(
+        config: &ConfigHandle,
+        preview_scene_id: Option<scene::SceneId>,
+    ) -> (u32, u32) {
+        (
+            u32::try_from(Self::running_widget_count(config, preview_scene_id))
+                .expect("BUG: running widget count fits in u32"),
+            u32::try_from(MAX_RUNNING_WIDGETS).expect("BUG: running widget limit fits in u32"),
+        )
     }
 
     fn validate_widget_update(
@@ -1203,14 +1240,23 @@ impl GrpcSceneManagementService for SceneManagementService {
         &self,
         _request: Request<()>,
     ) -> Result<Response<web::GetScenesResponse>, Status> {
+        let preview = self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
+        let preview_scene_id = *preview;
+        drop(preview);
         let store = self.secret_store.read().await;
         let scenes = config
             .scenes()
             .values()
             .map(|scene| scene_to_proto(scene, store.accounts()))
             .collect();
-        Ok(Response::new(web::GetScenesResponse { scenes }))
+        let (running_widget_count, max_running_widget_count) =
+            Self::running_widget_capacity(&config, preview_scene_id);
+        Ok(Response::new(web::GetScenesResponse {
+            scenes,
+            running_widget_count,
+            max_running_widget_count,
+        }))
     }
 
     async fn get_scene(
@@ -1221,15 +1267,21 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id = Uuid::parse_str(&id_str)
             .map_err(|_| Status::invalid_argument(format!("invalid scene ID: {id_str}")))?;
 
+        let preview = self.preview_scene_id.lock().await;
         let config = self.config_handle.read().await;
+        let preview_scene_id = *preview;
+        drop(preview);
         let scene = config
             .scenes()
             .get(&scene::SceneId::from(id))
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
-
         let store = self.secret_store.read().await;
+        let (running_widget_count, max_running_widget_count) =
+            Self::running_widget_capacity(&config, preview_scene_id);
         Ok(Response::new(web::SceneResponse {
             scene: Some(scene_to_proto(scene, store.accounts())),
+            running_widget_count,
+            max_running_widget_count,
         }))
     }
 
@@ -1271,7 +1323,9 @@ impl GrpcSceneManagementService for SceneManagementService {
 
         let registrations;
         {
+            let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
+            Self::require_widget_capacity(&config, *preview, scene.widgets.len())?;
             let accounts = self.secret_store.read().await;
             let typed_bindings =
                 validate_credential_bindings(manifest, &requested_bindings, accounts.accounts())
@@ -1334,10 +1388,23 @@ impl GrpcSceneManagementService for SceneManagementService {
             let preview = self.preview_scene_id.lock().await;
             let previewing = *preview == Some(scene_id_key);
             let mut config = self.config_handle.write().await;
+            let stored_scene = config
+                .scenes()
+                .get(&scene_id_key)
+                .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
+            if req.enabled && !stored_scene.enabled {
+                let additional_widgets = if previewing {
+                    // The disabled scene's widgets are already counted by its preview.
+                    0
+                } else {
+                    stored_scene.widgets.len()
+                };
+                Self::require_widget_capacity(&config, *preview, additional_widgets)?;
+            }
             let scene = config
                 .scenes_mut()
                 .get_mut(&scene_id_key)
-                .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
+                .expect("BUG: scene existence checked above");
 
             let cycle_duration = req
                 .cycle_duration_sec
@@ -1419,12 +1486,16 @@ impl GrpcSceneManagementService for SceneManagementService {
         let id =
             Uuid::parse_str(&id_str).map_err(|_| Status::invalid_argument("invalid scene ID"))?;
 
+        let preview = self.preview_scene_id.lock().await;
         let mut config = self.config_handle.write().await;
         let (source_idx, mut cloned) = config
             .scenes()
             .get_full(&scene::SceneId::from(id))
             .map(|(idx, _, scene)| (idx, scene.clone()))
             .ok_or_else(|| Status::not_found(format!("scene not found: {id}")))?;
+        if cloned.enabled {
+            Self::require_widget_capacity(&config, *preview, cloned.widgets.len())?;
+        }
 
         cloned.id = scene::SceneId::generate();
         // Give each widget a new ID
@@ -1452,6 +1523,7 @@ impl GrpcSceneManagementService for SceneManagementService {
             )
         };
         drop(config);
+        drop(preview);
 
         for registration in registrations {
             self.coordinator
@@ -1541,7 +1613,7 @@ impl GrpcSceneManagementService for SceneManagementService {
         let scene_was_disabled = {
             let mut preview = self.preview_scene_id.lock().await;
             if preview.is_some() {
-                return Err(Status::resource_exhausted("scene preview already active"));
+                return Err(Status::failed_precondition("scene preview already active"));
             }
 
             let config = self.config_handle.read().await;
@@ -1549,6 +1621,10 @@ impl GrpcSceneManagementService for SceneManagementService {
                 .scenes()
                 .get(&scene_id)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
+
+            if !scene.enabled {
+                Self::require_widget_capacity(&config, None, scene.widgets.len())?;
+            }
 
             *preview = Some(scene_id);
 
@@ -1732,14 +1808,15 @@ impl GrpcSceneManagementService for SceneManagementService {
         let scene_id_key = scene::SceneId::from(scene_id);
 
         let registration = {
+            let preview = self.preview_scene_id.lock().await;
             let mut config = self.config_handle.write().await;
             let accounts = self.secret_store.read().await;
             widget.credential_bindings =
                 validate_credential_bindings(manifest, &requested_bindings, accounts.accounts())
                     .map_err(bad_request_status)?;
             let scene = config
-                .scenes_mut()
-                .get_mut(&scene_id_key)
+                .scenes()
+                .get(&scene_id_key)
                 .ok_or_else(|| Status::not_found(format!("scene not found: {scene_id}")))?;
 
             if scene.kind == scene::SceneKind::Combined {
@@ -1748,6 +1825,14 @@ impl GrpcSceneManagementService for SceneManagementService {
 
             validate_widget_placement(scene, &widget, None)?;
 
+            if scene.enabled || *preview == Some(scene_id_key) {
+                Self::require_widget_capacity(&config, *preview, 1)?;
+            }
+
+            let scene = config
+                .scenes_mut()
+                .get_mut(&scene_id_key)
+                .expect("BUG: scene existence checked above");
             scene.widgets.insert(widget.id, widget.clone());
             Self::save_config(&mut config).await?;
 
@@ -4012,7 +4097,7 @@ mod tests {
         std::fs::write(
             package.join("manifest.json"),
             format!(
-                r#"{{"uid":"{widget_uid}","version":"1.0.0","name":"preview-test","description":"preview test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}},{{"type":"rectangular","min_width":638,"max_width":638,"min_height":238,"max_height":238}}],"params":{{"label":{{"name":"Label","type":"string","default_value":"old"}}}},"credentials":{{"pool":{{"type":"braiins-pool","label":"Pool","required":true}}}}}}"#
+                r#"{{"uid":"{widget_uid}","version":"1.0.0","name":"preview-test","description":"preview test","binary":"widget","supported_viewports":[{{"type":"rectangular","min_width":317,"max_width":317,"min_height":238,"max_height":238}},{{"type":"rectangular","min_width":638,"max_width":638,"min_height":238,"max_height":238}},{{"type":"rectangular","min_width":1280,"max_width":1280,"min_height":480,"max_height":480}}],"params":{{"label":{{"name":"Label","type":"string","default_value":"old"}}}},"credentials":{{"pool":{{"type":"braiins-pool","label":"Pool","required":true}}}}}}"#
             ),
         )
         .expect("BUG: write widget manifest");
@@ -4116,6 +4201,27 @@ mod tests {
                 credential_bindings: Some(web::CredentialBindings::default()),
             }),
         }
+    }
+
+    fn add_fullscreen_scene_request(
+        fixture: &PreviewLifecycleFixture,
+    ) -> web::AddFullscreenSceneRequest {
+        web::AddFullscreenSceneRequest {
+            config: Some(web::WidgetConfig {
+                widget_uid: fixture.widget_uid.to_string(),
+                params: Some(web::WidgetDataStruct::default()),
+                credential_bindings: Some(web::CredentialBindings::default()),
+            }),
+        }
+    }
+
+    async fn fill_active_widgets(fixture: &PreviewLifecycleFixture, target_count: usize) {
+        let mut config = fixture.config.write().await;
+        while config.active_widget_count() < target_count {
+            let scene = scene::Scene::fullscreen(fixture.widget_uid, BTreeMap::new());
+            config.scenes_mut().insert(scene.id, scene);
+        }
+        assert_eq!(config.active_widget_count(), target_count);
     }
 
     fn observe_registration_from_config_edit(fixture: &PreviewLifecycleFixture) {
@@ -4494,6 +4600,499 @@ mod tests {
             calls.iter().all(|call| !call.starts_with("activate ")),
             "disabled addition must not activate its retained registration"
         );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn adding_widget_to_disabled_scene_at_capacity_succeeds() {
+        let fixture = preview_lifecycle_fixture(false, false).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+
+        fixture
+            .service
+            .add_widget(Request::new(add_widget_request(&fixture)))
+            .await
+            .expect("adding an inactive widget at running capacity must succeed");
+
+        let config = fixture.config.read().await;
+        assert_eq!(config.active_widget_count(), MAX_RUNNING_WIDGETS);
+        assert_eq!(
+            config
+                .scenes()
+                .get(&fixture.scene_id)
+                .expect("BUG: fixture scene")
+                .widgets
+                .len(),
+            1
+        );
+        drop(config);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn adding_widget_to_enabled_scene_at_capacity_is_rejected_without_mutation() {
+        let fixture = preview_lifecycle_fixture(true, false).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+
+        let status = fixture
+            .service
+            .add_widget(Request::new(add_widget_request(&fixture)))
+            .await
+            .expect_err("BUG: widget above running capacity must be rejected");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        let config = fixture.config.read().await;
+        assert!(
+            config
+                .scenes()
+                .get(&fixture.scene_id)
+                .expect("BUG: fixture scene")
+                .widgets
+                .is_empty(),
+            "rejected widget must not be persisted"
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn unsupported_combined_scene_is_reported_before_running_capacity() {
+        let mut fixture = preview_lifecycle_fixture(true, false).await;
+        Arc::get_mut(&mut fixture.service)
+            .expect("BUG: fixture owns the only service reference")
+            .capabilities = bmc100_caps(None);
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+        let mut request = add_widget_request(&fixture);
+        request.size = web::WidgetSize::Full.into();
+
+        let status = fixture
+            .service
+            .add_widget(Request::new(request))
+            .await
+            .expect_err("BUG: unsupported combined scene must be rejected");
+
+        assert_eq!(status.code(), Code::FailedPrecondition);
+        assert_eq!(
+            status.message(),
+            "combined scenes are not supported on this hardware"
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn adding_widget_that_reaches_running_capacity_succeeds() {
+        let fixture = preview_lifecycle_fixture(true, false).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+
+        fixture
+            .service
+            .add_widget(Request::new(add_widget_request(&fixture)))
+            .await
+            .expect("adding the final widget within capacity must succeed");
+
+        assert_eq!(
+            fixture.config.read().await.active_widget_count(),
+            MAX_RUNNING_WIDGETS
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn enabling_scene_that_reaches_running_capacity_succeeds() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        {
+            let mut config = fixture.config.write().await;
+            let scene = config
+                .scenes_mut()
+                .get_mut(&fixture.scene_id)
+                .expect("BUG: fixture scene");
+            let mut second_widget = scene
+                .widgets
+                .values()
+                .next()
+                .expect("BUG: fixture widget")
+                .clone_with_new_id();
+            second_widget.position.col = 1;
+            scene.widgets.insert(second_widget.id, second_widget);
+        }
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 2).await;
+
+        fixture
+            .service
+            .update_scene(Request::new(web::UpdateSceneRequest {
+                id: fixture.scene_id.to_string(),
+                enabled: true,
+                cycle_duration_sec: None,
+            }))
+            .await
+            .expect("enabling a multi-widget scene within capacity must succeed");
+
+        assert_eq!(
+            fixture.config.read().await.active_widget_count(),
+            MAX_RUNNING_WIDGETS
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn enabling_previewed_scene_at_capacity_succeeds() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+        let stream = start_preview(&fixture).await;
+
+        fixture
+            .service
+            .update_scene(Request::new(web::UpdateSceneRequest {
+                id: fixture.scene_id.to_string(),
+                enabled: true,
+                cycle_duration_sec: None,
+            }))
+            .await
+            .expect("enabling an admitted preview must not count its widgets twice");
+
+        assert_eq!(
+            fixture.config.read().await.active_widget_count(),
+            MAX_RUNNING_WIDGETS
+        );
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn enabling_another_scene_while_preview_fills_capacity_is_rejected() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let target_scene_id = {
+            let mut target = scene::Scene::fullscreen(fixture.widget_uid, BTreeMap::new());
+            target.enabled = false;
+            let id = target.id;
+            fixture.config.write().await.scenes_mut().insert(id, target);
+            id
+        };
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+        let stream = start_preview(&fixture).await;
+
+        let status = fixture
+            .service
+            .update_scene(Request::new(web::UpdateSceneRequest {
+                id: target_scene_id.to_string(),
+                enabled: true,
+                cycle_duration_sec: None,
+            }))
+            .await
+            .expect_err("BUG: preview must consume capacity when enabling another scene");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert!(
+            !fixture
+                .config
+                .read()
+                .await
+                .scenes()
+                .get(&target_scene_id)
+                .expect("BUG: target scene")
+                .enabled
+        );
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn enabling_scene_at_capacity_is_rejected_while_disabling_above_capacity_succeeds() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+
+        let enable = web::UpdateSceneRequest {
+            id: fixture.scene_id.to_string(),
+            enabled: true,
+            cycle_duration_sec: None,
+        };
+        let status = fixture
+            .service
+            .update_scene(Request::new(enable.clone()))
+            .await
+            .expect_err("BUG: enabling above running capacity must be rejected");
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        {
+            let config = fixture.config.read().await;
+            assert!(
+                !config
+                    .scenes()
+                    .get(&fixture.scene_id)
+                    .expect("BUG: fixture scene")
+                    .enabled
+            );
+            assert_eq!(config.active_widget_count(), MAX_RUNNING_WIDGETS);
+        }
+
+        fixture
+            .config
+            .write()
+            .await
+            .scenes_mut()
+            .get_mut(&fixture.scene_id)
+            .expect("BUG: fixture scene")
+            .enabled = true;
+        fixture
+            .service
+            .update_scene(Request::new(web::UpdateSceneRequest {
+                enabled: false,
+                ..enable
+            }))
+            .await
+            .expect("disabling above running capacity must remain available");
+
+        assert!(
+            !fixture
+                .config
+                .read()
+                .await
+                .scenes()
+                .get(&fixture.scene_id)
+                .expect("BUG: fixture scene")
+                .enabled
+        );
+
+        fixture
+            .config
+            .write()
+            .await
+            .scenes_mut()
+            .get_mut(&fixture.scene_id)
+            .expect("BUG: fixture scene")
+            .enabled = true;
+        assert_eq!(
+            fixture.config.read().await.active_widget_count(),
+            MAX_RUNNING_WIDGETS + 1
+        );
+        fixture
+            .service
+            .remove_scene(Request::new(fixture.scene_id.to_string()))
+            .await
+            .expect("removing above running capacity must remain available");
+        assert!(
+            !fixture
+                .config
+                .read()
+                .await
+                .scenes()
+                .contains_key(&fixture.scene_id)
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn cloning_enabled_scene_at_capacity_is_rejected() {
+        let fixture = preview_lifecycle_fixture(true, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+        let scene_count = fixture.config.read().await.scenes().len();
+
+        let status = fixture
+            .service
+            .clone_scene(Request::new(fixture.scene_id.to_string()))
+            .await
+            .expect_err("BUG: clone above running capacity must be rejected");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert_eq!(fixture.config.read().await.scenes().len(), scene_count);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn cloning_enabled_scene_while_preview_fills_capacity_is_rejected() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+        let source_scene_id = fixture
+            .config
+            .read()
+            .await
+            .scenes()
+            .values()
+            .find(|scene| scene.enabled)
+            .expect("BUG: active source scene")
+            .id;
+        let scene_count = fixture.config.read().await.scenes().len();
+        let stream = start_preview(&fixture).await;
+
+        let status = fixture
+            .service
+            .clone_scene(Request::new(source_scene_id.to_string()))
+            .await
+            .expect_err("BUG: preview must consume capacity when cloning an enabled scene");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert_eq!(fixture.config.read().await.scenes().len(), scene_count);
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn adding_fullscreen_scene_at_capacity_is_rejected_without_mutation() {
+        let fixture = preview_lifecycle_fixture(false, false).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+        let scene_count = fixture.config.read().await.scenes().len();
+
+        let status = fixture
+            .service
+            .add_fullscreen_scene(Request::new(add_fullscreen_scene_request(&fixture)))
+            .await
+            .expect_err("BUG: fullscreen scene above running capacity must be rejected");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert_eq!(fixture.config.read().await.scenes().len(), scene_count);
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn adding_fullscreen_scene_while_preview_fills_capacity_is_rejected() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+        let scene_count = fixture.config.read().await.scenes().len();
+        let stream = start_preview(&fixture).await;
+
+        let status = fixture
+            .service
+            .add_fullscreen_scene(Request::new(add_fullscreen_scene_request(&fixture)))
+            .await
+            .expect_err("BUG: preview must consume capacity when adding a fullscreen scene");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert_eq!(fixture.config.read().await.scenes().len(), scene_count);
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn previewing_disabled_scene_at_running_capacity_is_rejected() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS).await;
+
+        let Err(status) = fixture
+            .service
+            .preview_scene(Request::new(fixture.scene_id.to_string()))
+            .await
+        else {
+            panic!("BUG: preview above running capacity must be rejected");
+        };
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert!(fixture.service.preview_scene_id.lock().await.is_none());
+        assert_eq!(
+            fixture.config.read().await.active_widget_count(),
+            MAX_RUNNING_WIDGETS
+        );
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn previewing_disabled_scene_that_reaches_capacity_succeeds() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+
+        let stream = start_preview(&fixture).await;
+        wait_for_managed_widgets(&fixture.coordinator, 1).await;
+
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_preview_is_a_failed_precondition_not_a_capacity_error() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let stream = start_preview(&fixture).await;
+
+        let Err(status) = fixture
+            .service
+            .preview_scene(Request::new(fixture.scene_id.to_string()))
+            .await
+        else {
+            panic!("BUG: a second preview must be rejected");
+        };
+
+        assert_eq!(status.code(), Code::FailedPrecondition);
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn adding_widget_to_disabled_preview_at_capacity_is_rejected_without_mutation() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        fill_active_widgets(&fixture, MAX_RUNNING_WIDGETS - 1).await;
+        let stream = start_preview(&fixture).await;
+        let mut request = add_widget_request(&fixture);
+        request
+            .position
+            .as_mut()
+            .expect("BUG: add request position")
+            .col = 1;
+
+        let status = fixture
+            .service
+            .add_widget(Request::new(request))
+            .await
+            .expect_err("BUG: preview widget above running capacity must be rejected");
+
+        assert_eq!(status.code(), Code::ResourceExhausted);
+        assert_eq!(
+            fixture
+                .config
+                .read()
+                .await
+                .scenes()
+                .get(&fixture.scene_id)
+                .expect("BUG: fixture scene")
+                .widgets
+                .len(),
+            1,
+            "rejected preview widget must not be persisted"
+        );
+
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
+        fixture.coordinator.shutdown_widget_manager().await;
+    }
+
+    #[tokio::test]
+    async fn scene_responses_include_preview_widgets_in_running_capacity() {
+        let fixture = preview_lifecycle_fixture(false, true).await;
+        let expected_running_widgets = fixture.config.read().await.active_widget_count() + 1;
+        let stream = start_preview(&fixture).await;
+        let response = fixture
+            .service
+            .get_scenes(Request::new(()))
+            .await
+            .expect("BUG: get scenes must succeed")
+            .into_inner();
+
+        assert_eq!(
+            response.running_widget_count,
+            u32::try_from(expected_running_widgets).expect("BUG: test count fits in u32")
+        );
+        assert_eq!(
+            response.max_running_widget_count,
+            u32::try_from(MAX_RUNNING_WIDGETS).expect("BUG: test limit fits in u32")
+        );
+
+        let response = fixture
+            .service
+            .get_scene(Request::new(fixture.scene_id.to_string()))
+            .await
+            .expect("BUG: get scene must succeed")
+            .into_inner();
+        assert_eq!(
+            response.running_widget_count,
+            u32::try_from(expected_running_widgets).expect("BUG: test count fits in u32")
+        );
+        assert_eq!(
+            response.max_running_widget_count,
+            u32::try_from(MAX_RUNNING_WIDGETS).expect("BUG: test limit fits in u32")
+        );
+        drop(stream);
+        wait_for_preview_clear(&fixture.service).await;
         fixture.coordinator.shutdown_widget_manager().await;
     }
 

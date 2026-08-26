@@ -211,10 +211,6 @@ impl Config {
             .sum()
     }
 
-    pub fn can_activate_widgets(&self, count: usize) -> bool {
-        fits_active_widgets(self.active_widget_count(), count)
-    }
-
     pub fn scene_cycling(&self) -> SceneCycling {
         self.scene_cycling.clone().unwrap_or_default()
     }

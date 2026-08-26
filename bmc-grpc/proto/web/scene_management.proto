@@ -50,6 +50,10 @@ message Scene {
 message GetScenesResponse {
   // sorted by position, asc
   repeated Scene scenes = 1;
+  // Widgets running across enabled scenes and any scene admitted for preview.
+  uint32 running_widget_count = 2;
+  // Device-wide cap on running widgets, including widgets admitted for preview.
+  uint32 max_running_widget_count = 3;
 }
 
 message AddFullscreenSceneRequest {
@@ -71,6 +75,10 @@ message MoveSceneRequest {
 
 message SceneResponse {
   Scene scene = 1;
+  // Widgets running across enabled scenes and any scene admitted for preview.
+  uint32 running_widget_count = 2;
+  // Device-wide cap on running widgets, including widgets admitted for preview.
+  uint32 max_running_widget_count = 3;
 }
 
 // Position of the widget on the combined scene grid.
