@@ -19,37 +19,62 @@
 // the grant above.
 
 //! Braiins Pool screen scenes, rendered natively over fixture data.
-//! Every scene shows all four design sizes as stacked stages.
+//! Every scene shows each device frame as a stacked stage.
 
 use bmc_gallery::prelude::*;
-use braiins_pool::model::SizeBucket;
+use braiins_pool::model::{SizeBucket, size_bucket};
+use braiins_pool::screens::big_chart::BigChartViewData;
+use braiins_pool::screens::overview::OverviewViewData;
 use braiins_pool::screens::{big_chart, fixtures, overview};
 
 scene_meta! { title: "Widgets / Braiins Pool" }
 
-const BUCKETS: [(SizeBucket, &str); 4] = [
-    (SizeBucket::Full, "Fullscreen"),
-    (SizeBucket::Large, "Large"),
-    (SizeBucket::Medium, "Medium"),
-    (SizeBucket::Small, "Small"),
-];
+/// The device frames this widget is staged in: every one the gallery
+/// knows of, less the round face, which the manifest does not admit.
+fn viewports() -> impl Iterator<Item = DeviceViewport> {
+    DEVICE_VIEWPORTS
+        .into_iter()
+        .filter(|viewport| !viewport.size.is_round())
+}
 
-/// Each design size on its own stage, at the width and height the fixture
-/// reports rather than a preset, so the frame is the one the design specifies.
+/// Which viewport to stage, as an index into [`viewports`],
+/// `None` for every one of them.
 ///
-/// The callback hands back the frame plus a closure that *builds* the tree,
+/// Stacking them all is what a scene is worth looking at for,
+/// so that is the default; a capture recipe pins one and must —
+/// six stages stacked overrun the renderer's texture bound.
+fn only_size(ctx: &mut SceneCtx) -> Option<usize> {
+    let mut labels = vec!["All"];
+    labels.extend(viewports().map(|viewport| viewport.label));
+    ctx.select("Size", &labels, 0).checked_sub(1)
+}
+
+/// Each device frame on its own stage, its size handed to the callback:
+/// these screens bake chart geometry into canvas draw lists at build time,
+/// so a view's own width and height have to be the stage's.
+///
+/// The callback hands back a closure that *builds* the tree,
 /// run inside the stage where the asset registrars are live:
 /// these screens draw SVG icons, and building above the stage
 /// registers them against nothing.
 fn size_stages<Build: FnOnce() -> Node>(
     ctx: &mut SceneCtx,
     ui: &mut Ui,
-    mut view: impl FnMut(SizeBucket) -> (f32, f32, Build),
+    mut view: impl FnMut(SizeBucket, f32, f32) -> Build,
 ) {
-    for (bucket, label) in BUCKETS {
-        let (width, height, build) = view(bucket);
-        ui.heading(label);
-        ctx.node_stage(ui, (width, height), build);
+    let only = only_size(ctx);
+    for (index, viewport) in viewports().enumerate() {
+        if only.is_some_and(|wanted| wanted != index) {
+            continue;
+        }
+        let (width, height) = viewport.pixels();
+        let build = view(
+            size_bucket(width, height),
+            viewport.size.layout_width(),
+            viewport.size.layout_height(),
+        );
+        ui.heading(viewport.label);
+        ctx.node_stage(ui, viewport.size, build);
     }
 }
 
@@ -65,11 +90,13 @@ fn spread_knob(ctx: &mut SceneCtx) -> f64 {
 fn overview(ctx: &mut SceneCtx, ui: &mut Ui) {
     let worker_states = ctx.toggle("Worker states", true);
     let spread = spread_knob(ctx);
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_overview(bucket, worker_states, spread);
-        (view.width, view.height, move || {
-            overview::overview_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = OverviewViewData {
+            width,
+            height,
+            ..fixtures::sample_overview(bucket, worker_states, spread)
+        };
+        move || overview::overview_view(&view)
     });
 }
 
@@ -77,110 +104,132 @@ fn overview(ctx: &mut SceneCtx, ui: &mut Ui) {
 fn big_chart(ctx: &mut SceneCtx, ui: &mut Ui) {
     let worker_states = ctx.toggle("Worker states", true);
     let spread = spread_knob(ctx);
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_big_chart(bucket, worker_states, spread);
-        (view.width, view.height, move || {
-            big_chart::big_chart_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = BigChartViewData {
+            width,
+            height,
+            ..fixtures::sample_big_chart(bucket, worker_states, spread)
+        };
+        move || big_chart::big_chart_view(&view)
     });
 }
 
 #[scene]
 fn overview_unbound(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_overview_unbound(bucket);
-        (view.width, view.height, move || {
-            overview::overview_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = OverviewViewData {
+            width,
+            height,
+            ..fixtures::sample_overview_unbound(bucket)
+        };
+        move || overview::overview_view(&view)
     });
 }
 
 #[scene]
 fn overview_loading(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_overview_loading(bucket);
-        (view.width, view.height, move || {
-            overview::overview_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = OverviewViewData {
+            width,
+            height,
+            ..fixtures::sample_overview_loading(bucket)
+        };
+        move || overview::overview_view(&view)
     });
 }
 
 #[scene]
 fn overview_empty(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_overview_empty(bucket);
-        (view.width, view.height, move || {
-            overview::overview_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = OverviewViewData {
+            width,
+            height,
+            ..fixtures::sample_overview_empty(bucket)
+        };
+        move || overview::overview_view(&view)
     });
 }
 
 #[scene]
 fn overview_failed(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_overview_failed(bucket);
-        (view.width, view.height, move || {
-            overview::overview_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = OverviewViewData {
+            width,
+            height,
+            ..fixtures::sample_overview_failed(bucket)
+        };
+        move || overview::overview_view(&view)
     });
 }
 
 #[scene]
 fn overview_denied(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_overview_denied(bucket);
-        (view.width, view.height, move || {
-            overview::overview_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = OverviewViewData {
+            width,
+            height,
+            ..fixtures::sample_overview_denied(bucket)
+        };
+        move || overview::overview_view(&view)
     });
 }
 
 #[scene]
 fn big_chart_unbound(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_big_chart_unbound(bucket);
-        (view.width, view.height, move || {
-            big_chart::big_chart_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = BigChartViewData {
+            width,
+            height,
+            ..fixtures::sample_big_chart_unbound(bucket)
+        };
+        move || big_chart::big_chart_view(&view)
     });
 }
 
 #[scene]
 fn big_chart_loading(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_big_chart_loading(bucket);
-        (view.width, view.height, move || {
-            big_chart::big_chart_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = BigChartViewData {
+            width,
+            height,
+            ..fixtures::sample_big_chart_loading(bucket)
+        };
+        move || big_chart::big_chart_view(&view)
     });
 }
 
 #[scene]
 fn big_chart_empty(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_big_chart_empty(bucket);
-        (view.width, view.height, move || {
-            big_chart::big_chart_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = BigChartViewData {
+            width,
+            height,
+            ..fixtures::sample_big_chart_empty(bucket)
+        };
+        move || big_chart::big_chart_view(&view)
     });
 }
 
 #[scene]
 fn big_chart_failed(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_big_chart_failed(bucket);
-        (view.width, view.height, move || {
-            big_chart::big_chart_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = BigChartViewData {
+            width,
+            height,
+            ..fixtures::sample_big_chart_failed(bucket)
+        };
+        move || big_chart::big_chart_view(&view)
     });
 }
 
 #[scene]
 fn big_chart_denied(ctx: &mut SceneCtx, ui: &mut Ui) {
-    size_stages(ctx, ui, |bucket| {
-        let view = fixtures::sample_big_chart_denied(bucket);
-        (view.width, view.height, move || {
-            big_chart::big_chart_view(&view)
-        })
+    size_stages(ctx, ui, |bucket, width, height| {
+        let view = BigChartViewData {
+            width,
+            height,
+            ..fixtures::sample_big_chart_denied(bucket)
+        };
+        move || big_chart::big_chart_view(&view)
     });
 }
