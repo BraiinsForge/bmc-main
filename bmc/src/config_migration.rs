@@ -84,6 +84,8 @@ pub struct Report {
     /// Scenes dropped because every widget in them was dropped,
     /// leaving the scene empty.
     pub dropped_scenes: usize,
+    /// Scenes retained but disabled because enabling them would exceed the active-widget limit.
+    pub deactivated_scenes: usize,
     /// Widgets that survived the upgrade, each mapped to the
     /// `widget_type_id` of a shipped `widgets-wasm` manifest.
     pub translated_widgets: usize,

@@ -8,6 +8,7 @@ authors = ["Braiins <braiins@braiins.com>"]
 # Non-Rust fixtures read by this crate's own tests.
 [package.metadata.nix]
 include = [
+    "tests/fixtures/active_widget_limit_v0.json",
     "tests/fixtures/legacy_config_sample.json",
     # Globbed, not listed: the golden suite discovers its cases by reading
     # this directory, so a case whose files the filter dropped would be

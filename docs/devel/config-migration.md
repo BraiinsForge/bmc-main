@@ -111,6 +111,16 @@ a `clock_style` outside the enum migrates as `digital`).
 Drops are counted in `Report.dropped_widgets`. The scene itself always survives; only the individual widget entry
 disappears (a scene left with zero widgets is dropped and counted in `Report.dropped_scenes`).
 
+### Active widget limit
+
+The v0 migration counts enabled scenes in stored order against `crate::config::MAX_ACTIVE_WIDGETS`. If all widgets in
+the next enabled scene would exceed the remaining budget, migration retains but disables the whole scene, increments
+`Report.deactivated_scenes`, and continues scanning so a later smaller scene can still fit. The offline migration CLI
+reports this count as `deactivated_scenes`.
+
+The capacity clamp is specific to v0 migration. Later configuration versions are not rewritten on startup; runtime gRPC
+operations prevent further capacity increases while disable and removal operations remain available.
+
 ### Malformed scene geometry
 
 The v0 schema stored each widget's `size` independently of its scene kind, so it could express layouts the current
@@ -235,8 +245,9 @@ reshape moves secrets into `field_values` (`token`/`password`), so broadening it
 - **Integration:** round-trips a captured device config through the load→validate→persist chain and asserts: version
   header, scene count, every post-upgrade widget carries a non-nil manifest `widget_type_id`, no retired placeholder
   param shape (`_legacy` / `_legacy_remote`) leaks, backup file exists, `translated` counter matches the on-disk widget
-  count. Plus an invalid-migration test asserting the original file is left intact when validation fails, and a test for
-  the pure `LoadedConfig::from_str` path (`load_is_pure_without_persist`) verifying it upgrades in memory without
+  count. An oversized v0 fixture verifies whole-scene deactivation and continued scanning up to the active-widget
+  boundary. Plus an invalid-migration test asserting the original file is left intact when validation fails, and a test
+  for the pure `LoadedConfig::from_str` path (`load_is_pure_without_persist`) verifying it upgrades in memory without
   touching disk.
 - **CLI:** `bmc-migrate-config <src> <dst>` exits 0, writes `<dst>`, and emits a counts report
   (`cli_smoke_migrates_fixture_and_reports_counts`); and refuses — non-zero exit, no `<dst>` written — a config that
@@ -248,14 +259,15 @@ reshape moves secrets into `field_values` (`token`/`password`), so broadening it
 
 ## Files
 
-- `bmc/src/config.rs` — `version` field, `CONFIG_VERSION` constant, `Config::from_migrated_parts`, and the
+- `bmc/src/config.rs` — `version` field, configuration constants, `Config::from_migrated_parts`, and the
   `ConfigHandle::init` boot wiring (`load_and_validate` / `recover_from_failed_load`) plus the `migrated`-flag
   commit-on-first-save.
 - `bmc/src/config_migration.rs` — `LoadedConfig`, `FromStr` version dispatch, `load_any_version`, `save_with_backup` /
   `backup_existing`, `Report`.
 - `bmc/src/config_migration/v0.rs` — deserialize-only v0 types.
-- `bmc/src/config_migration/upgrade_v0.rs` — manifest UID constants, remote-widget slug dispatch, per-widget translators
-  (required-param filling, enum guards), and `params_from_value` (legacy JSON params → typed param map).
+- `bmc/src/config_migration/upgrade_v0.rs` — active-widget limiting, manifest UID constants, remote-widget slug
+  dispatch, per-widget translators (required-param filling, enum guards), and `params_from_value` (legacy JSON params →
+  typed param map).
 - `bmc/src/config_migration/upgrade_v1.rs` — the v1 → current account reshape (`reshape_legacy_account`), shared with
   the v0 path.
 - `bmc/src/widget/coordinator.rs` — defensive nil-UID skip (the migration no longer produces nil UIDs; the guard is
@@ -263,3 +275,4 @@ reshape moves secrets into `field_values` (`token`/`password`), so broadening it
 - `bmc/src/bin/migrate_config.rs` — offline CLI.
 - `bmc/tests/config_migration.rs` — integration tests.
 - `bmc/tests/fixtures/legacy_config_sample.json` — captured sample.
+- `bmc/tests/fixtures/active_widget_limit_v0.json` — oversized active-widget sample.

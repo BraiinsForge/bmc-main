@@ -156,6 +156,13 @@ impl ConfigNotify {
 ///   widget `placement` replaces legacy `size`.
 pub const CONFIG_VERSION: u32 = 2;
 
+/// Cap on concurrently running widgets, sized to the device's 256 MB RAM budget.
+pub const MAX_RUNNING_WIDGETS: usize = 56;
+
+pub(crate) fn fits_running_widgets(running: usize, additional: usize) -> bool {
+    additional <= MAX_RUNNING_WIDGETS.saturating_sub(running)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Config {
     /// Schema version of the on-disk config; see [`CONFIG_VERSION`] for the version history. `0` or
@@ -194,6 +201,18 @@ pub struct Config {
 impl Config {
     pub fn scenes(&self) -> &IndexMap<SceneId, Scene> {
         &self.scenes
+    }
+
+    pub fn active_widget_count(&self) -> usize {
+        self.scenes
+            .values()
+            .filter(|scene| scene.enabled)
+            .map(|scene| scene.widgets.len())
+            .sum()
+    }
+
+    pub fn can_activate_widgets(&self, count: usize) -> bool {
+        fits_active_widgets(self.active_widget_count(), count)
     }
 
     pub fn scene_cycling(&self) -> SceneCycling {
@@ -511,6 +530,7 @@ impl ConfigHandle {
             info!(
                 scenes = report.scenes,
                 dropped_scenes = report.dropped_scenes,
+                deactivated_scenes = report.deactivated_scenes,
                 translated_widgets = report.translated_widgets,
                 dropped_widgets = report.dropped_widgets,
                 "migrated legacy config in memory; will persist on next config change",

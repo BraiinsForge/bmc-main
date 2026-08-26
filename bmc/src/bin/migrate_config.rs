@@ -100,12 +100,16 @@ async fn run() -> Result<()> {
     let was_migrated = loaded.was_migrated();
     if let Some(report) = loaded.report() {
         println!(
-            "scenes={} dropped_scenes={} translated_widgets={} dropped_widgets={} accounts={account_count} was_migrated={was_migrated}",
-            report.scenes, report.dropped_scenes, report.translated_widgets, report.dropped_widgets,
+            "scenes={} dropped_scenes={} deactivated_scenes={} translated_widgets={} dropped_widgets={} accounts={account_count} was_migrated={was_migrated}",
+            report.scenes,
+            report.dropped_scenes,
+            report.deactivated_scenes,
+            report.translated_widgets,
+            report.dropped_widgets,
         );
     } else {
         println!(
-            "scenes={} dropped_scenes=0 translated_widgets=0 dropped_widgets=0 accounts={account_count} was_migrated={was_migrated}",
+            "scenes={} dropped_scenes=0 deactivated_scenes=0 translated_widgets=0 dropped_widgets=0 accounts={account_count} was_migrated={was_migrated}",
             loaded.current().scenes().len(),
         );
     }

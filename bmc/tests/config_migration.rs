@@ -34,6 +34,7 @@ use tempfile::TempDir;
 use tokio::fs;
 
 const FIXTURE: &str = include_str!("fixtures/legacy_config_sample.json");
+const ACTIVE_WIDGET_LIMIT_FIXTURE: &str = include_str!("fixtures/active_widget_limit_v0.json");
 
 const NIL_UUID: &str = "00000000-0000-0000-0000-000000000000";
 
@@ -150,6 +151,41 @@ async fn migrates_device_sample_without_losing_scenes() {
         }
     }
     assert!(saw_backup, "backup file must be written");
+}
+
+#[test]
+fn migration_disables_whole_scenes_over_the_active_widget_limit() {
+    let loaded = LoadedConfig::from_str(ACTIVE_WIDGET_LIMIT_FIXTURE)
+        .expect("BUG: oversized v0 fixture must migrate");
+    assert!(loaded.was_migrated(), "v0 fixture must trigger migration");
+    loaded
+        .validate()
+        .expect("BUG: oversized fixture must migrate to a valid config");
+
+    let enabled = loaded
+        .current()
+        .scenes()
+        .values()
+        .map(|scene| scene.enabled)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        enabled,
+        [true, true, true, true, true, true, true, false, false, true],
+        "disable only the overflowing scene and continue checking later scenes"
+    );
+    assert_eq!(
+        loaded.current().active_widget_count(),
+        56,
+        "migration must leave at most the supported number of widgets active"
+    );
+    assert_eq!(
+        loaded
+            .report()
+            .expect("BUG: migrated config must carry a report")
+            .deactivated_scenes,
+        1,
+        "report every scene disabled to enforce the limit"
+    );
 }
 
 /// Golden migration snapshots: `<case>.v0.json` migrates to

@@ -64,7 +64,7 @@ use crate::config::widget_uuids::{
     NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID,
     TICKER_SINGLE_UID, WEATHER_UID,
 };
-use crate::config::{CONFIG_VERSION, Config, MigratedSettings};
+use crate::config::{CONFIG_VERSION, Config, MigratedSettings, fits_running_widgets};
 use crate::data::{AccountId, SceneCycling};
 use crate::scene::{
     Scene, SceneId, SceneKind, Widget, WidgetId, WidgetPlacement, WidgetPosition, WidgetSize,
@@ -174,6 +174,7 @@ pub(crate) fn manifest_test_expectations()
 /// reshaping them is the next hop's transform, sequenced one level up.
 pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report, Vec<Value>) {
     let mut report = Report::default();
+    let mut active_widgets = 0;
 
     // Insert explicitly rather than `collect()` so a duplicate scene
     // id (hand-edited or corrupt config) is dropped with a `warn!`
@@ -182,7 +183,7 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report, Vec<Value>
     // those counts to keep the report matching the on-disk result.
     let mut scenes: IndexMap<SceneId, Scene> = IndexMap::new();
     for scene in &v0.scenes {
-        let Some(scene) = upgrade_scene(scene, &mut report) else {
+        let Some(mut scene) = upgrade_scene(scene, &mut report) else {
             continue;
         };
         if scenes.contains_key(&scene.id) {
@@ -192,6 +193,14 @@ pub(super) fn upgrade_with_report(v0: v0::Config) -> (Config, Report, Vec<Value>
                 .translated_widgets
                 .saturating_sub(scene.widgets.len());
             continue;
+        }
+        if scene.enabled {
+            if fits_running_widgets(active_widgets, scene.widgets.len()) {
+                active_widgets += scene.widgets.len();
+            } else {
+                scene.enabled = false;
+                report.deactivated_scenes += 1;
+            }
         }
         scenes.insert(scene.id, scene);
     }
