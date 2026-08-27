@@ -61,6 +61,7 @@ pub(crate) struct Palette {
     /// Face of interactive fields: text inputs, selects, checkboxes, buttons.
     pub(crate) field: Color32,
     pub(crate) field_hover: Color32,
+    pub(crate) field_pressed: Color32,
     /// Separators between control groups.
     pub(crate) border_subtle: Color32,
 
@@ -75,6 +76,12 @@ pub(crate) struct Palette {
     /// the toolbar chip, the choose overlays, the take's panel.
     pub(crate) accent_record: Color32,
     pub(crate) accent_record_hover: Color32,
+    pub(crate) accent_record_pressed: Color32,
+
+    /// What ends a take, against the `accent_record` of what fills one.
+    pub(crate) accent_commit: Color32,
+    pub(crate) accent_commit_hover: Color32,
+    pub(crate) accent_commit_pressed: Color32,
 
     // `support_*` — how an outcome reports itself, as against `action_*`,
     // which is something to click.
@@ -87,15 +94,18 @@ pub(crate) struct Palette {
     /// colour, so "the thing to click" reads the same wherever it appears.
     pub(crate) action_primary: Color32,
     pub(crate) action_primary_hover: Color32,
+    pub(crate) action_primary_pressed: Color32,
     /// A confirming action that destroys something — loud on purpose.
     pub(crate) action_danger: Color32,
     pub(crate) action_danger_hover: Color32,
+    pub(crate) action_danger_pressed: Color32,
     /// An action that cannot be taken yet: the whole control goes flat, not
     /// just its label, so it reads as unavailable rather than as low contrast.
     pub(crate) action_disabled: Color32,
+
+    pub(crate) text_primary: Color32,
+    pub(crate) text_secondary: Color32,
     pub(crate) text_disabled: Color32,
-    /// Text riding on `action_primary` or `action_danger`, where the chrome's
-    /// own text colours have nothing to do with the contrast that matters.
     pub(crate) text_on_color: Color32,
 
     // `data_*` — a categorical series, after Carbon's `$data-N`.
@@ -118,19 +128,28 @@ pub(crate) const DARK: Palette = Palette {
     layer_inset: swatch::BLACK.to_egui(),
     field: swatch::GRAY_80.to_egui(),
     field_hover: swatch::GRAY_70.to_egui(),
+    field_pressed: swatch::GRAY_90.to_egui(),
     border_subtle: swatch::GRAY_80.to_egui(),
     backdrop: Color32::from_black_alpha(170),
     display_unlit: Color32::from_black_alpha(170),
     accent_record: swatch::ORANGE_50.to_egui(),
     accent_record_hover: swatch::ORANGE_60.to_egui(),
+    accent_record_pressed: swatch::ORANGE_70.to_egui(),
+    accent_commit: swatch::BLUE_50.to_egui(),
+    accent_commit_hover: swatch::BLUE_60.to_egui(),
+    accent_commit_pressed: swatch::BLUE_70.to_egui(),
     support_success: swatch::GREEN_60.to_egui(),
     support_error: swatch::RED_60.to_egui(),
     support_warning: swatch::YELLOW_30.to_egui(),
     action_primary: swatch::VIOLET_60.to_egui(),
     action_primary_hover: swatch::VIOLET_70.to_egui(),
+    action_primary_pressed: swatch::VIOLET_80.to_egui(),
     action_danger: swatch::RED_60.to_egui(),
     action_danger_hover: swatch::RED_70.to_egui(),
+    action_danger_pressed: swatch::RED_80.to_egui(),
     action_disabled: swatch::GRAY_70.to_egui(),
+    text_primary: swatch::GRAY_10.to_egui(),
+    text_secondary: swatch::GRAY_30.to_egui(),
     text_disabled: swatch::GRAY_50.to_egui(),
     text_on_color: swatch::WHITE.to_egui(),
     data: DATA_SERIES,
@@ -150,19 +169,28 @@ pub(crate) const LIGHT: Palette = Palette {
     // all that separates a control from the panel it sits on.
     field: swatch::WHITE.to_egui(),
     field_hover: swatch::GRAY_20.to_egui(),
+    field_pressed: swatch::GRAY_30.to_egui(),
     border_subtle: swatch::GRAY_30.to_egui(),
     backdrop: Color32::from_black_alpha(150),
     display_unlit: Color32::from_black_alpha(110),
     accent_record: swatch::ORANGE_50.to_egui(),
     accent_record_hover: swatch::ORANGE_60.to_egui(),
+    accent_record_pressed: swatch::ORANGE_70.to_egui(),
+    accent_commit: swatch::BLUE_50.to_egui(),
+    accent_commit_hover: swatch::BLUE_60.to_egui(),
+    accent_commit_pressed: swatch::BLUE_70.to_egui(),
     support_success: swatch::GREEN_60.to_egui(),
     support_error: swatch::RED_60.to_egui(),
     support_warning: swatch::YELLOW_30.to_egui(),
     action_primary: swatch::VIOLET_60.to_egui(),
     action_primary_hover: swatch::VIOLET_70.to_egui(),
+    action_primary_pressed: swatch::VIOLET_80.to_egui(),
     action_danger: swatch::RED_60.to_egui(),
     action_danger_hover: swatch::RED_70.to_egui(),
+    action_danger_pressed: swatch::RED_80.to_egui(),
     action_disabled: swatch::GRAY_70.to_egui(),
+    text_primary: swatch::GRAY_100.to_egui(),
+    text_secondary: swatch::GRAY_70.to_egui(),
     text_disabled: swatch::GRAY_50.to_egui(),
     text_on_color: swatch::WHITE.to_egui(),
     data: DATA_SERIES,
@@ -199,6 +227,80 @@ impl Palette {
     /// by [`WASH`], so the header reads as a washed `layer`, not a red panel.
     pub(crate) fn support_error_wash(&self) -> Color32 {
         self.support_error.gamma_multiply(WASH)
+    }
+}
+
+/// A control's fill through the states a pointer puts it in, and the ink
+/// that stays legible on all of them.
+///
+/// `pressed` is darker than both the others, whichever way `hover` went:
+/// it reads as pushed in, after the physical button it stands for.
+#[derive(Clone, Copy)]
+pub(crate) struct Tone {
+    pub(crate) rest: Color32,
+    pub(crate) hover: Color32,
+    pub(crate) pressed: Color32,
+    pub(crate) ink: Color32,
+}
+
+impl Tone {
+    /// The same face as the fields around it.
+    pub(crate) fn secondary(palette: &Palette) -> Self {
+        Self {
+            rest: palette.field,
+            hover: palette.field_hover,
+            pressed: palette.field_pressed,
+            ink: palette.text_primary,
+        }
+    }
+
+    pub(crate) fn primary(palette: &Palette) -> Self {
+        Self {
+            rest: palette.action_primary,
+            hover: palette.action_primary_hover,
+            pressed: palette.action_primary_pressed,
+            ink: palette.text_on_color,
+        }
+    }
+
+    /// Engaged, it goes flat under the pointer: a control already on has no
+    /// further state to promise. It still takes a press, which turns it off.
+    pub(crate) fn switch(palette: &Palette, on: bool) -> Self {
+        if on {
+            Self {
+                hover: palette.action_primary,
+                ..Self::primary(palette)
+            }
+        } else {
+            Self::secondary(palette)
+        }
+    }
+
+    pub(crate) fn record(palette: &Palette) -> Self {
+        Self {
+            rest: palette.accent_record,
+            hover: palette.accent_record_hover,
+            pressed: palette.accent_record_pressed,
+            ink: palette.text_on_color,
+        }
+    }
+
+    pub(crate) fn commit(palette: &Palette) -> Self {
+        Self {
+            rest: palette.accent_commit,
+            hover: palette.accent_commit_hover,
+            pressed: palette.accent_commit_pressed,
+            ink: palette.text_on_color,
+        }
+    }
+
+    pub(crate) fn danger(palette: &Palette) -> Self {
+        Self {
+            rest: palette.action_danger,
+            hover: palette.action_danger_hover,
+            pressed: palette.action_danger_pressed,
+            ink: palette.text_on_color,
+        }
     }
 }
 

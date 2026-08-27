@@ -296,14 +296,14 @@ fn state_layout(frame: &DeviceFrame, strip: f32) -> (Vec<egui::Pos2>, egui::Vec2
 /// `width` is the body's: a window sizes to its widest child, so a strip
 /// taking whatever is offered would set the width and pad narrow platforms.
 ///
-/// `close_hint` adds a close affordance and names what it closes; strips with
-/// no meaningful close pass `None`. Returns whether it was clicked.
+/// `close` carries the hint and the cross to draw it with; a strip with no
+/// meaningful close passes `None`. Returns whether it was clicked.
 fn title_strip(
     ui: &mut egui::Ui,
     title: &str,
     width: f32,
     palette: &super::theme::Palette,
-    close_hint: Option<&str>,
+    close: Option<(&str, &mut super::icon::Icon)>,
 ) -> bool {
     let (rect, response) = ui.allocate_exact_size(egui::vec2(width, TITLE_H), egui::Sense::hover());
     // Nothing else marks these as draggable, and fading rather than
@@ -328,7 +328,7 @@ fn title_strip(
         egui::FontId::proportional(TITLE_FONT),
         ui.visuals().strong_text_color(),
     );
-    let closed = close_hint.is_some_and(|hint| paint_close(ui, rect, hint));
+    let closed = close.is_some_and(|(hint, icon)| paint_close(ui, icon, rect, hint));
     // The body meets the strip as a window edge, not as the next widget down.
     // Taken here rather than off the window's style, which the body inherits.
     let gap = ui.spacing().item_spacing.y;
@@ -340,12 +340,17 @@ fn title_strip(
 ///
 /// The hint says what closing means here — a device is opened and closed as
 /// a whole, so either of BMC100's two frames closes the device.
-fn paint_close(ui: &mut egui::Ui, strip: egui::Rect, hint: &str) -> bool {
+fn paint_close(
+    ui: &mut egui::Ui,
+    icon: &mut super::icon::Icon,
+    strip: egui::Rect,
+    hint: &str,
+) -> bool {
     let centre = egui::pos2(
         strip.right() - TITLE_PAD - super::ui_helpers::CLOSE_SIZE / 2.0,
         strip.center().y,
     );
-    super::ui_helpers::close_button(ui, centre, hint)
+    super::ui_helpers::close_button(ui, icon, centre, strip, hint)
 }
 
 /// Air between windows in a packed arrangement.
@@ -567,7 +572,13 @@ impl TestbedApp {
             // The states are spaced by hand below, so the window's own
             // between-widgets gap would only be a second, invisible one.
             ui.spacing_mut().item_spacing.y = 0.0;
-            closed = title_strip(ui, &title, title_width, palette, Some(&close_hint));
+            closed = title_strip(
+                ui,
+                &title,
+                title_width,
+                palette,
+                Some((&close_hint, &mut self.icons.close)),
+            );
             for (state, frame) in frames.iter().enumerate() {
                 if state > 0 {
                     ui.add_space(STATE_GAP);

@@ -30,7 +30,7 @@
 
 use bmc_wasm_runtime::platform_catalog::{Platform, Target};
 
-use super::theme::{Palette, size, spacing};
+use super::theme::{Palette, Tone, size, spacing};
 
 /// How the chrome names a device, and one of its viewports.
 ///
@@ -70,47 +70,211 @@ pub(super) fn with_pointer(response: egui::Response) -> egui::Response {
     response
 }
 
-/// A button carrying a solid accent: the accent at rest, a deeper step under
-/// the pointer.
-///
-/// `Button::fill` would paint every state the same colour, so the fill rides
-/// `weak_bg_fill` per state instead. Disabled needs no entry — egui fades a
-/// disabled `Ui` whole.
-pub(super) fn accent_button(
-    ui: &mut egui::Ui,
-    label: &str,
-    accent: Accent,
-    enabled: bool,
-    palette: &Palette,
-) -> egui::Response {
-    ui.scope(|ui| {
-        let widgets = &mut ui.style_mut().visuals.widgets;
-        widgets.inactive.weak_bg_fill = accent.rest;
-        widgets.hovered.weak_bg_fill = accent.hover;
-        widgets.active.weak_bg_fill = accent.hover;
+pub(super) const ICON_SIZE: f32 = 14.0;
+const INLINE_GAP: f32 = 6.0;
+const STACK_GAP: f32 = 2.0;
 
-        let label = egui::RichText::new(label)
-            .color(palette.text_on_color)
-            .strong();
-        with_pointer(ui.add_enabled(enabled, egui::Button::new(label)))
-    })
-    .inner
-}
+/// So a one-word control and its three-word neighbour match on the bar.
+const MIN_STACK_W: f32 = 54.0;
 
-/// A fill and the step it takes under the pointer.
 #[derive(Clone, Copy)]
-pub(super) struct Accent {
-    rest: egui::Color32,
-    hover: egui::Color32,
+enum Layout {
+    Inline,
+    /// Keeps the icon's row whether or not the button has one.
+    Stacked,
 }
 
-impl Accent {
-    pub(super) fn record(palette: &Palette) -> Self {
+/// Laid out by hand rather than as an `egui::Button`.
+/// The icon is a tinted mask that [`super::icon`] snaps to the pixel grid,
+/// and a `Button` would place it at some fraction of a point instead.
+pub(super) struct Button<'a> {
+    label: &'a str,
+    icon: Option<&'a mut super::icon::Icon>,
+    tone: Option<Tone>,
+    layout: Layout,
+    enabled: bool,
+}
+
+impl<'a> Button<'a> {
+    pub(super) fn bar(label: &'a str) -> Self {
         Self {
-            rest: palette.accent_record,
-            hover: palette.accent_record_hover,
+            label,
+            icon: None,
+            tone: None,
+            layout: Layout::Stacked,
+            enabled: true,
         }
     }
+
+    pub(super) fn inline(label: &'a str) -> Self {
+        Self {
+            layout: Layout::Inline,
+            ..Self::bar(label)
+        }
+    }
+
+    pub(super) fn icon(mut self, icon: &'a mut super::icon::Icon) -> Self {
+        self.icon = Some(icon);
+        self
+    }
+
+    /// Left unsaid, a button wears [`Tone::secondary`].
+    pub(super) fn tone(mut self, tone: Tone) -> Self {
+        self.tone = Some(tone);
+        self
+    }
+
+    pub(super) fn enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    /// Disabled needs no colours of its own: `add_enabled_ui` fades the
+    /// painter, so fill, icon and label dim together.
+    pub(super) fn show(self, ui: &mut egui::Ui, palette: &Palette) -> egui::Response {
+        let Self {
+            label,
+            icon,
+            tone,
+            layout,
+            enabled,
+        } = self;
+        ui.add_enabled_ui(enabled, |ui| {
+            let tone = tone.unwrap_or_else(|| Tone::secondary(palette));
+            let (rect, response) =
+                allocate_slot(ui, label, layout, icon.is_some(), egui::Sense::click());
+            let corner_radius = ui.style().interact(&response).corner_radius;
+            ui.painter()
+                .rect_filled(rect, corner_radius, tone_fill(tone, &response));
+            paint_slot(ui, rect, icon, label, layout, tone.ink);
+            with_pointer(response)
+        })
+        .inner
+    }
+}
+
+/// Shaped like a stacked button but inert, so a reading
+/// on the bar sits level with the controls beside it.
+pub(super) fn bar_readout(
+    ui: &mut egui::Ui,
+    icon: Option<&mut super::icon::Icon>,
+    label: &str,
+    palette: &Palette,
+) -> egui::Response {
+    let (rect, response) = allocate_slot(
+        ui,
+        label,
+        Layout::Stacked,
+        icon.is_some(),
+        egui::Sense::hover(),
+    );
+    paint_slot(
+        ui,
+        rect,
+        icon,
+        label,
+        Layout::Stacked,
+        palette.text_secondary,
+    );
+    response
+}
+
+/// Held first: the pointer is over a button it is pressing,
+/// so asking about hover would answer for both.
+fn tone_fill(tone: Tone, response: &egui::Response) -> egui::Color32 {
+    if response.is_pointer_button_down_on() {
+        tone.pressed
+    } else if response.hovered() {
+        tone.hover
+    } else {
+        tone.rest
+    }
+}
+
+fn inline_icon_advance(has_icon: bool) -> f32 {
+    if has_icon {
+        ICON_SIZE + INLINE_GAP
+    } else {
+        0.0
+    }
+}
+
+fn allocate_slot(
+    ui: &mut egui::Ui,
+    label: &str,
+    layout: Layout,
+    has_icon: bool,
+    sense: egui::Sense,
+) -> (egui::Rect, egui::Response) {
+    let padding = ui.spacing().button_padding;
+    let text = button_label(ui, label);
+    let (content, floor) = match layout {
+        Layout::Inline => (
+            egui::vec2(
+                inline_icon_advance(has_icon) + text.size().x,
+                // So a label-only button stands as tall as the one beside it.
+                text.size().y.max(ICON_SIZE),
+            ),
+            0.0,
+        ),
+        Layout::Stacked => (
+            egui::vec2(
+                text.size().x.max(ICON_SIZE),
+                ICON_SIZE + STACK_GAP + text.size().y,
+            ),
+            MIN_STACK_W,
+        ),
+    };
+    let size = egui::vec2(
+        (content.x + 2.0 * padding.x).max(floor),
+        content.y + 2.0 * padding.y,
+    );
+    ui.allocate_exact_size(size, sense)
+}
+
+fn paint_slot(
+    ui: &mut egui::Ui,
+    rect: egui::Rect,
+    icon: Option<&mut super::icon::Icon>,
+    label: &str,
+    layout: Layout,
+    colour: egui::Color32,
+) {
+    let inner = rect.shrink2(ui.spacing().button_padding);
+    let text = button_label(ui, label);
+    let (icon_min, text_min) = match layout {
+        Layout::Inline => {
+            let advance = inline_icon_advance(icon.is_some());
+            let left = inner.center().x - f32::midpoint(advance, text.size().x);
+            (
+                egui::pos2(left, inner.center().y - ICON_SIZE / 2.0),
+                egui::pos2(left + advance, inner.center().y - text.size().y / 2.0),
+            )
+        }
+        Layout::Stacked => (
+            egui::pos2(inner.center().x - ICON_SIZE / 2.0, inner.min.y),
+            egui::pos2(
+                inner.center().x - text.size().x / 2.0,
+                inner.max.y - text.size().y,
+            ),
+        ),
+    };
+    if let Some(icon) = icon {
+        icon.paint(
+            ui,
+            egui::Rect::from_min_size(icon_min, egui::Vec2::splat(ICON_SIZE)),
+            colour,
+        );
+    }
+    ui.painter().galley(text_min, text, colour);
+}
+
+fn button_label(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
+    ui.painter().layout_no_wrap(
+        label.to_owned(),
+        egui::TextStyle::Button.resolve(ui.style()),
+        egui::Color32::PLACEHOLDER,
+    )
 }
 
 /// How far a group divider stops short of its bar's edges.
@@ -121,17 +285,30 @@ const DIVIDER_INSET: f32 = 9.0;
 const FIELD_PAD_X: i8 = spacing::S03 as i8;
 const FIELD_PAD_Y: i8 = spacing::S03 as i8;
 
-/// Hit area of a close cross, and half the length of each arm.
+/// Nominal box of a close cross, which is what places it.
 pub(super) const CLOSE_SIZE: f32 = 16.0;
-const CLOSE_ARM: f32 = 3.5;
+
+/// Under [`ICON_SIZE`]: the cross is drawn edge to edge where a toolbar icon
+/// carries its own margin, so equal numbers do not render as equal weight.
+const CLOSE_GLYPH: f32 = 12.0;
+
+/// Larger than any surface offers, so the surface is what decides.
+const CLOSE_HIT: f32 = 32.0;
 
 /// The dismiss control every piece of chrome shares — a window's title strip,
 /// a banner.
 ///
-/// A cross rather than a labelled button: it goes where a label has no room,
-/// and its hint carries what dismissing means there.
-pub(super) fn close_button(ui: &mut egui::Ui, centre: egui::Pos2, hint: &str) -> bool {
-    let hit = egui::Rect::from_center_size(centre, egui::Vec2::splat(CLOSE_SIZE));
+/// The target fills `within` and clips to it. This only interacts and never
+/// allocates, so one reaching past its own surface would take the clicks
+/// meant for whatever lies under it.
+pub(super) fn close_button(
+    ui: &mut egui::Ui,
+    icon: &mut super::icon::Icon,
+    centre: egui::Pos2,
+    within: egui::Rect,
+    hint: &str,
+) -> bool {
+    let hit = egui::Rect::from_center_size(centre, egui::Vec2::splat(CLOSE_HIT)).intersect(within);
     let response = ui
         .interact(hit, ui.id().with(("close", hint)), egui::Sense::click())
         .on_hover_text(hint);
@@ -143,18 +320,10 @@ pub(super) fn close_button(ui: &mut egui::Ui, centre: egui::Pos2, hint: &str) ->
     } else {
         ui.visuals().weak_text_color()
     };
-    let arm = CLOSE_ARM;
-    let stroke = egui::Stroke::new(1.5_f32, colour);
-    ui.painter().line_segment(
-        [centre - egui::vec2(arm, arm), centre + egui::vec2(arm, arm)],
-        stroke,
-    );
-    ui.painter().line_segment(
-        [
-            centre + egui::vec2(arm, -arm),
-            centre - egui::vec2(arm, -arm),
-        ],
-        stroke,
+    icon.paint(
+        ui,
+        egui::Rect::from_center_size(centre, egui::Vec2::splat(CLOSE_GLYPH)),
+        colour,
     );
     response.clicked()
 }
@@ -229,8 +398,7 @@ pub(super) const DIALOG_PAD: i8 = spacing::S05 as i8;
 #[derive(Clone, Copy)]
 pub(super) struct DialogPrimary {
     pub(super) label: &'static str,
-    pub(super) fill: egui::Color32,
-    pub(super) hover: egui::Color32,
+    pub(super) tone: Tone,
     pub(super) enabled: bool,
 }
 
@@ -252,16 +420,12 @@ pub(super) fn dialog_footer(
     let cell = egui::vec2(ui.available_width() / 2.0, size::LG);
     let cancel = FooterButton {
         label: "Cancel",
-        fill: palette.field,
-        hover: palette.field_hover,
-        text: ui.visuals().strong_text_color(),
+        tone: Tone::secondary(palette),
         enabled: true,
     };
     let confirm = FooterButton {
         label: primary.label,
-        fill: primary.fill,
-        hover: primary.hover,
-        text: palette.text_on_color,
+        tone: primary.tone,
         enabled: primary.enabled,
     };
     let mut click = FooterClick::None;
@@ -281,9 +445,7 @@ pub(super) fn dialog_footer(
 #[derive(Clone, Copy)]
 struct FooterButton {
     label: &'static str,
-    fill: egui::Color32,
-    hover: egui::Color32,
-    text: egui::Color32,
+    tone: Tone,
     enabled: bool,
 }
 
@@ -305,10 +467,10 @@ fn footer_button(
     let (rect, response) = ui.allocate_exact_size(size, sense);
     // Unavailable means the whole control goes flat, not a dimmed version of
     // the action — a tinted primary still reads as the thing to click.
-    let (fill, text) = match (button.enabled, response.hovered()) {
-        (false, _) => (palette.action_disabled, palette.text_disabled),
-        (true, true) => (button.hover, button.text),
-        (true, false) => (button.fill, button.text),
+    let (fill, text) = if button.enabled {
+        (tone_fill(button.tone, &response), button.tone.ink)
+    } else {
+        (palette.action_disabled, palette.text_disabled)
     };
     ui.painter().rect_filled(rect, 0.0, fill);
     ui.painter().text(

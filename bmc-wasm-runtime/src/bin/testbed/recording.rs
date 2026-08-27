@@ -30,7 +30,7 @@ use bmc_wasm_runtime::unified_fixture::{
 };
 
 use super::TestbedApp;
-use super::theme::spacing;
+use super::theme::{Tone, spacing};
 use super::ui_helpers::{
     DialogPrimary, FooterClick, dialog_body, dialog_footer, dialog_header, dialog_surface,
     target_name, text_field,
@@ -1208,15 +1208,12 @@ fn paint_recording_panel(
             group.add_space(6.0);
             let mut capture = false;
             group.horizontal(|row| {
-                capture = super::ui_helpers::accent_button(
-                    row,
-                    "Capture",
-                    super::ui_helpers::Accent::record(palette),
-                    true,
-                    palette,
-                )
-                .on_hover_text("commit the current widget state as a baseline frame")
-                .clicked();
+                capture = super::ui_helpers::Button::inline("Capture")
+                    .icon(&mut icons.camera)
+                    .tone(Tone::record(palette))
+                    .show(row, palette)
+                    .on_hover_text("commit the current widget state as a baseline frame")
+                    .clicked();
                 row.checkbox(&mut rec.auto_capture, "after every action")
                     .on_hover_text("append a capture automatically after each recorded action");
             });
@@ -1319,7 +1316,7 @@ impl EventKind {
 
     fn icon<'i>(&self, icons: &'i mut super::icon::Icons) -> &'i mut super::icon::Icon {
         match self {
-            Self::Capture => &mut icons.record,
+            Self::Capture => &mut icons.camera,
             Self::Touch => &mut icons.touch,
             Self::Delivery => &mut icons.delivery,
             Self::Network => &mut icons.network,
@@ -1427,15 +1424,13 @@ impl TestbedApp {
                             | NameVerdict::Replaces
                             | NameVerdict::Rebinds { .. } => "Re-record",
                         },
-                        fill: palette.action_danger,
-                        hover: palette.action_danger_hover,
+                        tone: Tone::danger(palette),
                         enabled: true,
                     }
                 } else {
                     DialogPrimary {
                         label: "Record",
-                        fill: palette.action_primary,
-                        hover: palette.action_primary_hover,
+                        tone: Tone::primary(palette),
                         enabled: verdict != NameVerdict::Unusable,
                     }
                 };

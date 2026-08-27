@@ -27,6 +27,8 @@
 use bmc_wasm_runtime::platform_catalog::{PLATFORMS, Platform, manifest_viewport_shape};
 
 use super::TestbedApp;
+use super::theme::Tone;
+use super::ui_helpers::{Button, ICON_SIZE, bar_readout};
 
 /// Tall enough for a stacked icon over its label, with breathing room; the
 /// toolbar owns its height now that nothing derives the window size from
@@ -72,14 +74,19 @@ impl TestbedApp {
                     super::ui_helpers::group_divider(row, palette.border_subtle, TOOLBAR_H);
 
                     // The widget's own build and its rendering.
-                    if bar_button(row, Some(&mut self.icons.reload), "Reload", false, palette)
+                    if Button::bar("Reload")
+                        .icon(&mut self.icons.reload)
+                        .show(row, palette)
                         .on_hover_text("re-read the widget's wasm from disk")
                         .clicked()
                     {
                         self.hot_reload.manual_reload = true;
                     }
                     let debug_on = bmc_render::tree::debug_layout_enabled();
-                    if bar_button(row, Some(&mut self.icons.debug), "Debug", debug_on, palette)
+                    if Button::bar("Debug")
+                        .icon(&mut self.icons.debug)
+                        .tone(Tone::switch(palette, debug_on))
+                        .show(row, palette)
                         .on_hover_text(
                             "outline every layout node in the widget render, \
                              and egui's own inspector over the chrome",
@@ -89,15 +96,12 @@ impl TestbedApp {
                         bmc_render::tree::toggle_debug_layout();
                     }
                     let timings_on = self.show_view_timings;
-                    if bar_button(
-                        row,
-                        Some(&mut self.icons.timer),
-                        "Timings",
-                        timings_on,
-                        palette,
-                    )
-                    .on_hover_text("show each view's own frame cost over it")
-                    .clicked()
+                    if Button::bar("Timings")
+                        .icon(&mut self.icons.timer)
+                        .tone(Tone::switch(palette, timings_on))
+                        .show(row, palette)
+                        .on_hover_text("show each view's own frame cost over it")
+                        .clicked()
                     {
                         self.show_view_timings = !self.show_view_timings;
                     }
@@ -106,15 +110,12 @@ impl TestbedApp {
                     // Simulated conditions: what the device can and cannot
                     // reach, and when it thinks it is.
                     let offline = self.offline;
-                    if bar_button(
-                        row,
-                        Some(&mut self.icons.offline),
-                        "Offline",
-                        offline,
-                        palette,
-                    )
-                    .on_hover_text("seal live I/O, mirroring an offline device")
-                    .clicked()
+                    if Button::bar("Offline")
+                        .icon(&mut self.icons.offline)
+                        .tone(Tone::switch(palette, offline))
+                        .show(row, palette)
+                        .on_hover_text("seal live I/O, mirroring an offline device")
+                        .clicked()
                     {
                         self.offline = !self.offline;
                     }
@@ -149,18 +150,12 @@ impl TestbedApp {
             for p in PLATFORMS {
                 let open = self.stage.is_open(p);
                 let supported = platform_supported(p, &self.manifest);
-                let response = set
-                    .add_enabled_ui(supported, |ui| {
-                        let icon = &mut self.icons.devices;
-                        bar_button(
-                            ui,
-                            Some(icon),
-                            &super::ui_helpers::platform_name(p),
-                            open,
-                            palette,
-                        )
-                    })
-                    .inner
+                let name = super::ui_helpers::platform_name(p);
+                let response = Button::bar(&name)
+                    .icon(&mut self.icons.devices)
+                    .tone(Tone::switch(palette, open))
+                    .enabled(supported)
+                    .show(set, palette)
                     .on_hover_text(p.label)
                     .on_disabled_hover_text("the manifest admits no viewport of this platform");
                 if response.clicked() {
@@ -187,35 +182,30 @@ impl TestbedApp {
         let accent = palette.accent_record;
 
         if !choosing && !recording {
-            // Red in rest too: this is the one destructive-adjacent control
-            // on the bar, and its colour is its identity.
-            let response = row
-                .scope(|ui| {
-                    let widgets = &mut ui.style_mut().visuals.widgets;
-                    widgets.inactive.fg_stroke.color = accent;
-                    widgets.hovered.fg_stroke.color = accent;
-                    widgets.active.fg_stroke.color = accent;
-                    let cause = if self.cli.perf_report_path.is_some() {
-                        Some("a profiling run cannot record")
-                    } else if self.cli.resolved_widget_root().is_none() {
-                        Some("recording needs a widget root to write the fixture into")
-                    } else if recordable_targets(&self.manifest).is_empty() {
-                        Some("the manifest admits no viewport")
-                    } else {
-                        None
-                    };
-                    let inner = ui
-                        .add_enabled_ui(cause.is_none(), |ui| {
-                            bar_button(ui, Some(&mut self.icons.record), "Record", false, palette)
-                                .on_hover_text("record a capture fixture from a live take")
-                        })
-                        .inner;
-                    match cause {
-                        Some(cause) => inner.on_disabled_hover_text(cause),
-                        None => inner,
-                    }
+            let cause = if self.cli.perf_report_path.is_some() {
+                Some("a profiling run cannot record")
+            } else if self.cli.resolved_widget_root().is_none() {
+                Some("recording needs a widget root to write the fixture into")
+            } else if recordable_targets(&self.manifest).is_empty() {
+                Some("the manifest admits no viewport")
+            } else {
+                None
+            };
+            // Red at rest too: the colour is this control's identity.
+            // Only the ink, so it sits on the face its neighbours do.
+            let response = Button::bar("Record")
+                .icon(&mut self.icons.record)
+                .tone(Tone {
+                    ink: accent,
+                    ..Tone::secondary(palette)
                 })
-                .inner;
+                .enabled(cause.is_none())
+                .show(row, palette)
+                .on_hover_text("record a capture fixture from a live take");
+            let response = match cause {
+                Some(cause) => response.on_disabled_hover_text(cause),
+                None => response,
+            };
             if response.clicked() {
                 let ctx = row.ctx().clone();
                 self.start_choosing(&ctx);
@@ -259,21 +249,20 @@ impl TestbedApp {
         } else {
             None
         };
-        let save = super::ui_helpers::accent_button(
-            row,
-            "Save",
-            super::ui_helpers::Accent::record(palette),
-            save_cause.is_none(),
-            palette,
-        )
-        .on_hover_text("write the fixture and leave the take");
+        let save = Button::inline("Save")
+            .icon(&mut self.icons.save)
+            .tone(Tone::commit(palette))
+            .enabled(save_cause.is_none())
+            .show(row, palette)
+            .on_hover_text("write the fixture and leave the take");
         if let Some(cause) = save_cause {
             save.on_disabled_hover_text(cause);
         } else if save.clicked() {
             let ctx = row.ctx().clone();
             self.save_recording(&ctx);
         }
-        if super::ui_helpers::with_pointer(row.button("Cancel"))
+        if Button::inline("Cancel")
+            .show(row, palette)
             .on_hover_text("discard the take and put the canvas back")
             .clicked()
         {
@@ -290,15 +279,11 @@ impl TestbedApp {
     /// comparable at a glance.
     fn paint_view_controls(&mut self, row: &mut egui::Ui) {
         let palette = self.theme.palette(row.ctx());
-        if bar_button(
-            row,
-            Some(&mut self.icons.arrange_grid),
-            "Tile",
-            false,
-            palette,
-        )
-        .on_hover_text("lay the device windows out to use the canvas tightly")
-        .clicked()
+        if Button::bar("Tile")
+            .icon(&mut self.icons.arrange_grid)
+            .show(row, palette)
+            .on_hover_text("lay the device windows out to use the canvas tightly")
+            .clicked()
         {
             self.stage.request_arrange();
         }
@@ -309,15 +294,16 @@ impl TestbedApp {
         let mut full_size = false;
         row.scope(|pair| {
             pair.spacing_mut().item_spacing.x = 1.0;
-            fit = bar_button(pair, Some(&mut self.icons.scale_out), "Fit", false, palette)
+            fit = Button::bar("Fit")
+                .icon(&mut self.icons.scale_out)
+                .show(pair, palette)
                 .on_hover_text("scale the canvas until every device window is in view")
                 .clicked();
-            full_size = pair
-                .add_enabled_ui(!at_full_size, |ui| {
-                    bar_button(ui, Some(&mut self.icons.scale_in), "100%", false, palette)
-                        .on_hover_text("show the devices at their own pixel size")
-                })
-                .inner
+            full_size = Button::bar("100%")
+                .icon(&mut self.icons.scale_in)
+                .enabled(!at_full_size)
+                .show(pair, palette)
+                .on_hover_text("show the devices at their own pixel size")
                 .clicked();
         });
         if fit {
@@ -336,20 +322,30 @@ impl TestbedApp {
         let palette = self.theme.palette(row.ctx());
         let secs = self.clock.offset_ms / 1_000;
         let offset = format!("+{}:{:02}", secs / 60, secs % 60);
-        bar_readout(row, Some(&mut self.icons.delay), &offset)
+        bar_readout(row, Some(&mut self.icons.delay), &offset, palette)
             .on_hover_text("how far the simulated clock runs ahead of real time");
 
         let mut advance_ms = 0_u64;
         let mut reset = false;
         row.scope(|group| {
             group.spacing_mut().item_spacing.x = 1.0;
-            if bar_button(group, Some(&mut self.icons.delay), "+1m", false, palette).clicked() {
+            if Button::bar("+1m")
+                .icon(&mut self.icons.delay)
+                .show(group, palette)
+                .clicked()
+            {
                 advance_ms = 60_000;
             }
-            if bar_button(group, Some(&mut self.icons.delay), "+5m", false, palette).clicked() {
+            if Button::bar("+5m")
+                .icon(&mut self.icons.delay)
+                .show(group, palette)
+                .clicked()
+            {
                 advance_ms = 300_000;
             }
-            reset = bar_button(group, Some(&mut self.icons.delay), "Reset", false, palette)
+            reset = Button::bar("Reset")
+                .icon(&mut self.icons.delay)
+                .show(group, palette)
                 .on_hover_text("return the clock to real time")
                 .clicked();
         });
@@ -372,7 +368,10 @@ impl TestbedApp {
                     super::theme::ThemeChoice::Dark => &mut self.icons.theme_dark,
                     super::theme::ThemeChoice::Light => &mut self.icons.theme_light,
                 };
-                if bar_button(set, Some(icon), choice.label(), selected, palette)
+                if Button::bar(choice.label())
+                    .icon(icon)
+                    .tone(Tone::switch(palette, selected))
+                    .show(set, palette)
                     .on_hover_text(choice.describe())
                     .clicked()
                 {
@@ -383,116 +382,9 @@ impl TestbedApp {
     }
 }
 
-/// Toolbar icons are square and sized to sit over the button text.
-const ICON_SIZE: f32 = 14.0;
-
-/// Between a stacked button's icon and its label.
-const STACK_GAP: f32 = 2.0;
-
 /// Between two controls that are the same operation at different settings —
 /// closer to each other than to the groups on either side.
 const PAIR_GAP: f32 = 10.0;
-
-/// Width every button takes at least, so a one-word control and its
-/// three-word neighbour still read as the same kind of thing.
-const MIN_BUTTON_W: f32 = 54.0;
-
-/// A button on the bar: an icon over its label, both centred.
-///
-/// Stacked rather than lengthwise, because the bar carries enough controls
-/// that laying each one out sideways ran it off the window's edge. The icon
-/// row is reserved whether or not a control has one, and every button takes
-/// at least [`MIN_BUTTON_W`], so labels line up across the bar and neighbours
-/// do not vary in size for the length of a word.
-///
-/// The icon takes whatever text colour the button's own state resolves to,
-/// so it dims, highlights and inverts exactly as the label does.
-fn bar_button(
-    ui: &mut egui::Ui,
-    icon: Option<&mut super::icon::Icon>,
-    label: &str,
-    selected: bool,
-    palette: &super::theme::Palette,
-) -> egui::Response {
-    let (rect, response) = allocate_bar_slot(ui, label, egui::Sense::click());
-    let visuals = ui.style().interact_selectable(&response, selected);
-    // `interact_selectable` pins a selected control to the selection colour
-    // whatever the pointer is doing, so a selected button has to answer hover
-    // itself or it answers not at all.
-    let fill = if selected && response.hovered() {
-        palette.action_primary_hover
-    } else {
-        visuals.weak_bg_fill
-    };
-    ui.painter().rect_filled(rect, visuals.corner_radius, fill);
-    paint_bar_slot(ui, rect, icon, label, visuals.fg_stroke.color);
-    super::ui_helpers::with_pointer(response)
-}
-
-/// A reading on the bar, shaped like the buttons around it but inert.
-fn bar_readout(
-    ui: &mut egui::Ui,
-    icon: Option<&mut super::icon::Icon>,
-    label: &str,
-) -> egui::Response {
-    let (rect, response) = allocate_bar_slot(ui, label, egui::Sense::hover());
-    let colour = ui.visuals().weak_text_color();
-    paint_bar_slot(ui, rect, icon, label, colour);
-    response
-}
-
-/// The room one control takes on the bar, uniform by construction.
-fn allocate_bar_slot(
-    ui: &mut egui::Ui,
-    label: &str,
-    sense: egui::Sense,
-) -> (egui::Rect, egui::Response) {
-    let padding = ui.spacing().button_padding;
-    let text = bar_label(ui, label);
-    let content = egui::vec2(
-        text.size().x.max(ICON_SIZE),
-        ICON_SIZE + STACK_GAP + text.size().y,
-    );
-    let size = egui::vec2(
-        (content.x + 2.0 * padding.x).max(MIN_BUTTON_W),
-        content.y + 2.0 * padding.y,
-    );
-    ui.allocate_exact_size(size, sense)
-}
-
-fn paint_bar_slot(
-    ui: &mut egui::Ui,
-    rect: egui::Rect,
-    icon: Option<&mut super::icon::Icon>,
-    label: &str,
-    colour: egui::Color32,
-) {
-    let inner = rect.shrink2(ui.spacing().button_padding);
-    if let Some(icon) = icon {
-        let icon_rect = egui::Rect::from_min_size(
-            egui::pos2(inner.center().x - ICON_SIZE / 2.0, inner.min.y),
-            egui::Vec2::splat(ICON_SIZE),
-        );
-        icon.paint(ui, icon_rect, colour);
-    }
-    let text = bar_label(ui, label);
-    ui.painter().galley(
-        egui::pos2(
-            inner.center().x - text.size().x / 2.0,
-            inner.max.y - text.size().y,
-        ),
-        text,
-        colour,
-    );
-}
-
-fn bar_label(ui: &egui::Ui, label: &str) -> std::sync::Arc<egui::Galley> {
-    ui.painter().layout_no_wrap(
-        label.to_owned(),
-        egui::TextStyle::Button.resolve(ui.style()),
-        egui::Color32::PLACEHOLDER,
-    )
-}
 
 /// Whether the widget's manifest admits at least one of `platform`'s
 /// viewports at the platform's display density.

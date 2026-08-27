@@ -2629,6 +2629,7 @@ impl TestbedApp {
             NoticeKind::Saved => &mut self.icons.saved,
             NoticeKind::Failed => &mut self.icons.warning,
         };
+        let close = &mut self.icons.close;
 
         let mut dismissed = false;
         egui::Area::new(egui::Id::new("testbed_notice"))
@@ -2653,13 +2654,19 @@ impl TestbedApp {
                                 .0;
                             icon.paint(row, icon_rect, accent);
                             row.label(egui::RichText::new(heading).color(accent).strong());
-                            // The close is a control of its own, so reading
-                            // the banner cannot dismiss it by a stray click.
-                            let centre = egui::pos2(
-                                row.max_rect().right() - ui_helpers::CLOSE_SIZE / 2.0,
-                                row.max_rect().center().y,
+                            // Sized to the row rather than to `max_rect`,
+                            // which reaches the frame's floor and would
+                            // drop the cross onto the message.
+                            let line = egui::Rect::from_x_y_ranges(
+                                row.max_rect().x_range(),
+                                row.min_rect().y_range(),
                             );
-                            dismissed = ui_helpers::close_button(row, centre, "dismiss");
+                            let centre = egui::pos2(
+                                line.right() - ui_helpers::CLOSE_SIZE / 2.0,
+                                line.center().y,
+                            );
+                            dismissed =
+                                ui_helpers::close_button(row, close, centre, line, "dismiss");
                         });
                         ui.add_space(4.0);
                         ui.label(egui::RichText::new(text).font(egui::FontId::monospace(11.0)));

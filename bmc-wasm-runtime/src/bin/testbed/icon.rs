@@ -97,7 +97,9 @@ pub(crate) struct Icons {
     pub(crate) scale_in: Icon,
     pub(crate) scale_out: Icon,
     pub(crate) automatic: Icon,
-    // The notice banner's two outcomes.
+    pub(crate) camera: Icon,
+    pub(crate) save: Icon,
+    pub(crate) close: Icon,
     pub(crate) saved: Icon,
     pub(crate) warning: Icon,
     // The recording log's per-event-kind marks.
@@ -124,6 +126,9 @@ impl Icons {
             scale_in: Icon::new(include_bytes!("assets/icons/scale-in.svg")),
             scale_out: Icon::new(include_bytes!("assets/icons/scale-out.svg")),
             automatic: Icon::new(include_bytes!("assets/icons/automatic.svg")),
+            camera: Icon::new(include_bytes!("assets/icons/camera.svg")),
+            save: Icon::new(include_bytes!("assets/icons/save.svg")),
+            close: Icon::new(include_bytes!("assets/icons/close.svg")),
             saved: Icon::new(include_bytes!("assets/icons/saved.svg")),
             warning: Icon::new(include_bytes!("assets/icons/warning.svg")),
             touch: Icon::new(include_bytes!("assets/icons/touch.svg")),
@@ -175,7 +180,7 @@ mod tests {
         // Parsing is not drawing: an empty or mis-scaled viewBox rasterizes
         // blank, so check coverage rather than trusting `new` not to panic.
         let icons = Icons::new();
-        let named: [(&str, &Icon); 20] = [
+        let named: [(&str, &Icon); 23] = [
             ("theme-auto", &icons.theme_auto),
             ("theme-dark", &icons.theme_dark),
             ("theme-light", &icons.theme_light),
@@ -196,6 +201,9 @@ mod tests {
             ("scale-in", &icons.scale_in),
             ("scale-out", &icons.scale_out),
             ("automatic", &icons.automatic),
+            ("camera", &icons.camera),
+            ("save", &icons.save),
+            ("close", &icons.close),
         ];
         for (name, icon) in named {
             let image = mask(icon.svg, 32);
