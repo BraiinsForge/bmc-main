@@ -766,9 +766,14 @@ pub fn render_device_info(
 #[cfg(test)]
 mod tests {
     use super::{AccessPoint, DeviceInfoView, build_device_info_tree, dismisses_on_touch};
-    use crate::icons::DeviceInfoIcons;
-    use bmc_render::tree::TreeNode;
+    use crate::icons::{DeviceInfoIcons, Icon};
+    use bmc_render::tree::{DrawCommand, TreeNode};
+    use bmc_wasm_protocol::SvgId;
     use std::net::Ipv4Addr;
+
+    const IP: Ipv4Addr = Ipv4Addr::new(10, 0, 0, 5);
+    const SETUP_URL: &str = "http://10.0.0.21/";
+    const SETUP_SSID: &str = "Deck setup";
 
     /// Every view the gallery has a cell for, `Done` included.
     fn all_views() -> Vec<DeviceInfoView> {
@@ -814,6 +819,109 @@ mod tests {
         ]
     }
 
+    /// Direct children of a container node, if any.
+    fn children(node: &TreeNode) -> Option<&[TreeNode]> {
+        match node {
+            TreeNode::Column(_, kids)
+            | TreeNode::Row(_, kids)
+            | TreeNode::Center(_, kids)
+            | TreeNode::Scroll { children: kids, .. } => Some(kids),
+            TreeNode::Tag { content, .. } => Some(std::slice::from_ref(&**content)),
+            TreeNode::Paragraph { .. }
+            | TreeNode::Button { .. }
+            | TreeNode::Spacer { .. }
+            | TreeNode::Canvas { .. }
+            | TreeNode::Notification { .. }
+            | TreeNode::RelTime { .. }
+            | TreeNode::Modal { .. }
+            | TreeNode::ProgressBar { .. }
+            | TreeNode::Switcher { .. }
+            | TreeNode::Skeleton(_) => None,
+        }
+    }
+
+    /// Every span the screen puts on the panel, in render order.
+    fn texts(node: &TreeNode) -> Vec<String> {
+        let mut out = Vec::new();
+        if let TreeNode::Paragraph { spans, .. } = node {
+            out.extend(spans.iter().map(|span| span.text.clone()));
+        }
+        for kid in children(node).unwrap_or_default() {
+            out.extend(texts(kid));
+        }
+        out
+    }
+
+    /// Every draw the screen issues, from every canvas in the tree.
+    fn draws(node: &TreeNode) -> Vec<&DrawCommand> {
+        let mut out = Vec::new();
+        if let TreeNode::Canvas { draws: own, .. } = node {
+            out.extend(own.iter());
+        }
+        for kid in children(node).unwrap_or_default() {
+            out.extend(draws(kid));
+        }
+        out
+    }
+
+    /// What the screen's QR codes encode.
+    fn qr_payloads(tree: &TreeNode) -> Vec<&str> {
+        draws(tree)
+            .into_iter()
+            .filter_map(|draw| {
+                if let DrawCommand::Qr { text, .. } = draw {
+                    Some(text.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Which registered icons the screen draws.
+    fn icon_ids(tree: &TreeNode) -> Vec<SvgId> {
+        draws(tree)
+            .into_iter()
+            .filter_map(|draw| {
+                if let DrawCommand::Svg { icon_id, .. } = draw {
+                    *icon_id
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Icons whose IDs all differ, so a screen reaching for the wrong one fails
+    /// instead of matching the `None` every default icon shares.
+    fn distinct_icons() -> DeviceInfoIcons {
+        let mut next = 1;
+        let mut id = || {
+            let icon = Icon {
+                id: SvgId::from_wire(next),
+                size: (24.0, 24.0),
+            };
+            next += 1;
+            icon
+        };
+        DeviceInfoIcons {
+            wifi: id(),
+            wifi_connect: id(),
+            wifi_error: id(),
+            success: id(),
+            refresh: id(),
+            desktop_clock: id(),
+            error: id(),
+            close: id(),
+            swipe_down: id(),
+        }
+    }
+
+    fn tree_for(view: &DeviceInfoView) -> TreeNode {
+        build_device_info_tree(view, distinct_icons())
+            .expect("BUG: every view but Done builds a tree")
+    }
+
     /// The close glyph is the only absolutely positioned node on a screen.
     fn has_close(tree: &TreeNode) -> bool {
         let TreeNode::Row(_, columns) = tree else {
@@ -832,6 +940,182 @@ mod tests {
                 tree.is_some(),
                 view != DeviceInfoView::Done,
                 "view {view:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_screen_renders_its_own_words() {
+        let cases: Vec<(DeviceInfoView, &[&str])> = vec![
+            (
+                DeviceInfoView::SetupStart { ap: None },
+                &["Initial Setup", "Starting setup Wi-Fi..."],
+            ),
+            (
+                DeviceInfoView::SetupStart {
+                    ap: Some(AccessPoint {
+                        ssid: SETUP_SSID.to_owned(),
+                        setup_url: SETUP_URL.to_owned(),
+                    }),
+                },
+                &[
+                    "Connect to Braiins Deck Wi-Fi",
+                    "Wi-Fi SSID",
+                    SETUP_SSID,
+                    "Scan the code!",
+                    SETUP_URL,
+                ],
+            ),
+            (
+                DeviceInfoView::SetupConnecting { ssid: None },
+                &["Connecting to Wi-Fi...", "Waiting for Wi-Fi connection"],
+            ),
+            (
+                DeviceInfoView::SetupConnected {
+                    ssid: Some("home".to_owned()),
+                },
+                &["Your Braiins Deck is connected!", "Wi-Fi SSID", "home"],
+            ),
+            (
+                DeviceInfoView::SetupConnectInfo {
+                    ip: Some(IP),
+                    ssid: None,
+                },
+                &["Complete the setup", "http://10.0.0.5/", "or scan the QR"],
+            ),
+            (
+                DeviceInfoView::SetupConnectInfo {
+                    ip: None,
+                    ssid: Some("home".to_owned()),
+                },
+                &["Connecting to Wi-Fi...", "home"],
+            ),
+            (
+                DeviceInfoView::SetupCompleted,
+                &["Braiins Deck is ready!", "Login to continue"],
+            ),
+            (
+                DeviceInfoView::SetupError,
+                &["Could not connect. Please try again."],
+            ),
+            (
+                DeviceInfoView::SetupFatal {
+                    restarting: true,
+                    dismissible: false,
+                },
+                &["Problem Occurred", "Restarting Braiins Deck..."],
+            ),
+            (
+                DeviceInfoView::SetupFatal {
+                    restarting: false,
+                    dismissible: false,
+                },
+                &["Problem Occurred", "Restart Braiins Deck to try again"],
+            ),
+            (DeviceInfoView::UpgradeSuccess, &["Update Finished"]),
+            (
+                DeviceInfoView::Connecting {
+                    ssid: Some("home".to_owned()),
+                },
+                &["Connecting to Wi-Fi...", "Wi-Fi SSID", "home"],
+            ),
+            (
+                DeviceInfoView::Success { ip: IP },
+                &[
+                    "Access the device at",
+                    "http://10.0.0.5/",
+                    "To access the controls, IP and Wi-Fi info",
+                    "swipe down",
+                ],
+            ),
+            (
+                DeviceInfoView::Failed { ssid: None },
+                &["Problem with connection", "No IP address assigned"],
+            ),
+        ];
+        for (view, wanted) in cases {
+            let rendered = texts(&tree_for(&view));
+            for want in wanted {
+                assert!(
+                    rendered.iter().any(|line| line.contains(want)),
+                    "{view:?} never says {want:?}; it says {rendered:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_qr_codes_carry_the_address_printed_beside_them() {
+        // The setup screen reads its label and its code from different fields,
+        // so a swap between them is the one mismatch that is possible here.
+        let tree = tree_for(&DeviceInfoView::SetupStart {
+            ap: Some(AccessPoint {
+                ssid: SETUP_SSID.to_owned(),
+                setup_url: SETUP_URL.to_owned(),
+            }),
+        });
+        assert_eq!(
+            qr_payloads(&tree),
+            [SETUP_URL],
+            "the setup code opens the wizard, not the SSID"
+        );
+
+        let url = format!("http://{IP}/");
+        for view in [
+            DeviceInfoView::SetupConnectInfo {
+                ip: Some(IP),
+                ssid: None,
+            },
+            DeviceInfoView::Success { ip: IP },
+        ] {
+            let tree = tree_for(&view);
+            assert_eq!(qr_payloads(&tree), [url.as_str()], "{view:?}");
+            assert!(
+                texts(&tree).iter().any(|line| line.contains(&url)),
+                "{view:?} prints the address it encodes"
+            );
+        }
+    }
+
+    #[test]
+    fn each_screen_leads_with_its_own_icon() {
+        let icons = distinct_icons();
+        for (view, wanted) in [
+            (DeviceInfoView::SetupStart { ap: None }, icons.wifi_connect),
+            (DeviceInfoView::SetupConnecting { ssid: None }, icons.wifi),
+            (DeviceInfoView::SetupConnected { ssid: None }, icons.wifi),
+            (
+                DeviceInfoView::SetupConnectInfo {
+                    ip: Some(IP),
+                    ssid: None,
+                },
+                icons.desktop_clock,
+            ),
+            (DeviceInfoView::SetupCompleted, icons.success),
+            (DeviceInfoView::SetupError, icons.wifi_error),
+            (
+                DeviceInfoView::SetupFatal {
+                    restarting: true,
+                    dismissible: false,
+                },
+                icons.refresh,
+            ),
+            (
+                DeviceInfoView::SetupFatal {
+                    restarting: false,
+                    dismissible: false,
+                },
+                icons.error,
+            ),
+            (DeviceInfoView::UpgradeSuccess, icons.success),
+            (DeviceInfoView::Success { ip: IP }, icons.desktop_clock),
+            (DeviceInfoView::Failed { ssid: None }, icons.wifi_error),
+        ] {
+            let drawn = icon_ids(&tree_for(&view));
+            let wanted = wanted.id.expect("BUG: fixture icons carry an ID");
+            assert!(
+                drawn.contains(&wanted),
+                "{view:?} draws {drawn:?}, which does not include its own icon {wanted:?}"
             );
         }
     }
