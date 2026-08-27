@@ -55,8 +55,8 @@ use bmc_wasm_runtime::unified_fixture::{
     validate_fixture,
 };
 use bmc_wasm_runtime::{
-    FixtureEvent, FixtureEventKind, PackageAssetStore, RenderStatus, RuntimeConfig, SystemSnapshot,
-    WasmWidgetRuntime,
+    DiskCache, FixtureEvent, FixtureEventKind, PackageAssetStore, RenderStatus, RuntimeConfig,
+    SystemSnapshot, WasmWidgetRuntime,
 };
 
 /// Fixed timestep per frame (ms).
@@ -513,6 +513,7 @@ fn run_unified_capture(
 
     // Prepare KV directory — seed from fixture header KV, not secrets.ini
     let kv_dir = prepare_unified_kv_dir(ctx, config, &widget_name, fixture);
+    let blob_dir = prepare_unified_blob_dir(ctx, &widget_name);
 
     // Extract fetch interceptors and network events from the unified timeline
     let (fetch_interceptor, network_events) = split_unified_events(fixture);
@@ -535,6 +536,7 @@ fn run_unified_capture(
     // Build runtime config
     let mut rt_config = RuntimeConfig {
         kv_store_path: Some(kv_dir),
+        asset_cache: Some(DiskCache::new(blob_dir, CAPTURE_CACHE_MAX_BYTES)),
         package_assets: Some(PackageAssetStore::new(&ctx.asset_root)),
         mesh_msaa_samples: 4,
         rng_seed: Some(42),
@@ -1297,6 +1299,23 @@ fn prepare_unified_kv_dir(
         }
     }
     kv_dir
+}
+
+/// Per-tag bucket cap for the replay blob cache, matching the device's flash cap.
+const CAPTURE_CACHE_MAX_BYTES: u64 = 16 * 1_024 * 1_024;
+
+/// A fresh blob cache for replay: without one an image stays `Volatile`,
+/// so a dormant view drops it and the frame draws fallback, not artwork.
+fn prepare_unified_blob_dir(ctx: &CaptureCtx, widget_name: &str) -> PathBuf {
+    let blob_dir = std::env::temp_dir()
+        .join("bmc-wasm-capture")
+        .join(widget_name)
+        .join(ctx.target.platform.id)
+        .join(ctx.target.viewport.id)
+        .join(format!("{}-blobs", ctx.dataset));
+    let _ = std::fs::remove_dir_all(&blob_dir);
+    let _ = std::fs::create_dir_all(&blob_dir);
+    blob_dir
 }
 
 // ── Event splitting ─────────────────────────────────────────────────

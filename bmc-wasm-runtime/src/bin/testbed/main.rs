@@ -338,6 +338,11 @@ fn origin_of(side: &str) -> Result<String> {
 /// Per-tag bucket cap for the dev blob cache, matching the device's flash cap.
 const DEV_CACHE_MAX_BYTES: u64 = 16 * 1_024 * 1_024;
 
+/// Root for the caches the testbed makes itself, not the one `--cache-dir` names.
+fn temp_cache_root() -> PathBuf {
+    std::env::temp_dir().join("bmc-wasm-testbed")
+}
+
 /// A deterministic stand-in for the Deck's network info, so widgets that
 /// render bind hints or QR codes show them in the testbed and recordings
 /// stay reproducible. Deliberately fake — there is no web app to reach.
@@ -394,16 +399,35 @@ impl CliArgs {
             .collect()
     }
 
-    /// The disk-backed blob cache for `--cache-dir`, creating the directory
-    /// first; `None` when unset (the default) or uncreatable, so a hot loop
-    /// stays hermetic unless a cache is asked for.
+    /// The disk-backed blob cache for `--cache-dir`, creating the directory first;
+    /// `None` only when the directory cannot be made.
+    ///
+    /// Falls back to the system temp dir rather than running cacheless:
+    /// a dormant view's images are dropped on upload,
+    /// and only a cache-backed asset can be restored afterwards.
     fn asset_cache(&self) -> Option<DiskCache> {
-        let dir = self.cache_dir.clone()?;
+        let dir = self
+            .cache_dir
+            .clone()
+            .unwrap_or_else(|| self.temp_cache_dir());
         if let Err(e) = std::fs::create_dir_all(&dir) {
             tracing::warn!(dir = %dir.display(), %e, "cache dir create failed; blob cache off");
             return None;
         }
         Some(DiskCache::new(dir, DEV_CACHE_MAX_BYTES))
+    }
+
+    /// Per-process, so two testbeds on one widget
+    /// cannot collide on `<key>.tmp` inside `DiskCache::put`.
+    fn temp_cache_dir(&self) -> PathBuf {
+        let widget = self
+            .resolved_widget_root()
+            .and_then(|root| {
+                root.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "widget".to_owned());
+        temp_cache_root().join(format!("{widget}-{}", std::process::id()))
     }
 }
 
@@ -1075,6 +1099,9 @@ pub(crate) struct TestbedApp {
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
+    /// The take's own blob cache: empty at its start and gone at its end,
+    /// so a fixture replays from nothing while its views keep what they fetch.
+    take_cache_dir: Option<PathBuf>,
 }
 
 /// Wall-clock instants used to drive per-frame timing.
@@ -1296,6 +1323,7 @@ impl TestbedApp {
                 recent_frame_us: std::collections::VecDeque::with_capacity(60),
             },
             recording_mode: RecordingMode::new(),
+            take_cache_dir: None,
         };
         app.stage.set_open(open_platforms);
         // Arranged from the first frame that has views to arrange: every
@@ -1525,7 +1553,20 @@ impl TestbedApp {
             tracing::warn!("record: already recording, ignoring a second entry");
             return;
         }
+        // Before anything is displaced: a take with no cache drops every image
+        // a dormant view fetched, baking the blank into the fixture.
+        let take_cache = match Self::fresh_take_cache_dir() {
+            Ok(dir) => dir,
+            Err(e) => {
+                self.notice = Some(Notice::failed(format!(
+                    "Cannot make the take's blob cache: {e}\n\
+                     Recording would lose every image, so it did not start."
+                )));
+                return;
+            }
+        };
         let kv_stash = self.stash_kv_dir(target);
+        self.take_cache_dir = Some(take_cache);
         let displaced = self.stage.pin_to(target.platform);
         let started = self.recording_mode.begin_take(
             target,
@@ -1608,6 +1649,9 @@ impl TestbedApp {
                 {
                     tracing::warn!("record: cannot restore KV dir {}: {e}", live.display());
                 }
+                if let Some(cache) = self.take_cache_dir.take() {
+                    let _ = std::fs::remove_dir_all(&cache);
+                }
                 self.stage.retire_all();
                 self.stage.set_open(restore_platforms);
             }
@@ -1617,6 +1661,14 @@ impl TestbedApp {
         // repacked them, so there is no untouched arrangement left to keep.
         self.stage.request_arrange();
         ctx.request_repaint();
+    }
+
+    /// An empty blob cache for the take.
+    fn fresh_take_cache_dir() -> std::io::Result<PathBuf> {
+        let dir = temp_cache_root().join(format!("take-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir)?;
+        Ok(dir)
     }
 
     /// Move the take's KV dir to a `.pre-record` sibling,
@@ -1819,11 +1871,19 @@ impl TestbedApp {
     fn view_runtime_config(&self, kv_path: PathBuf, recording: bool) -> RuntimeConfig {
         let take_clock = self.recording_mode.take_clock().filter(|_| recording);
         let mut config = if let Some(clock) = take_clock {
-            fixtures::build_unified_recording_config(
+            let mut recording = fixtures::build_unified_recording_config(
                 kv_path,
                 self.recording_mode.fetch_buffer(),
                 clock,
-            )
+            );
+            // `build_unified_recording_config` defaults the cache to `None`,
+            // which costs the take every image a dormant view fetched.
+            let dir = self
+                .take_cache_dir
+                .clone()
+                .expect("BUG: a take runs only after enter_recording made its cache");
+            recording.asset_cache = Some(DiskCache::new(dir, DEV_CACHE_MAX_BYTES));
+            recording
         } else {
             RuntimeConfig {
                 kv_store_path: Some(kv_path),
