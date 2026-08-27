@@ -1,7 +1,7 @@
 # Device Setup & Connect Screens
 
-Full-screen messages the Deck shows on its own display when it needs to be set up or has just booted: which WiFi network
-to join to configure it, how far the setup has got, and the address the web UI is reachable at. A brand-new or
+Full-screen messages the Deck shows on its own display when it needs to be set up or has just booted: which Wi-Fi
+network to join to configure it, how far the setup has got, and the address the web UI is reachable at. A brand-new or
 factory-reset device can be set up from a phone without knowing anything about it in advance.
 
 ## User stories
@@ -11,13 +11,13 @@ factory-reset device can be set up from a phone without knowing anything about i
 > As a new owner, I want the Deck to tell me on its screen how to reach it so that I can configure it from my phone
 > without hunting for an address.
 
-- A device with no configuration shows the name of the WiFi network it is broadcasting, plus a QR code that opens the
+- A device with no configuration shows the name of the Wi-Fi network it is broadcasting, plus a QR code that opens the
   setup wizard once the phone has joined that network.
 - The QR code and the printed address always name the setup network's own address, so scanning it right after joining
   works.
 - The screen stays up as long as the device is waiting, and cannot be tapped away while the setup network is live.
 
-### Follow the WiFi join from the device
+### Follow the Wi-Fi join from the device
 
 > As a user configuring the Deck, I want to see whether it managed to join my network so that I know whether to keep
 > waiting or fix the password.
@@ -28,12 +28,12 @@ factory-reset device can be set up from a phone without knowing anything about i
 - A failed join says so, and the device returns to showing its setup network so the credentials can be entered again.
 - Once setup is complete the device says so ("ready") and hands the display over to the ordinary scenes.
 
-### Move the device to a different WiFi network
+### Move the device to a different Wi-Fi network
 
-> As a user, I want to re-run WiFi setup from the device so that I can move the Deck to another network without the web
+> As a user, I want to re-run Wi-Fi setup from the device so that I can move the Deck to another network without the web
 > UI.
 
-- Starting WiFi setup again from the settings tray shows the same setup screens as a first boot.
+- Starting Wi-Fi setup again from the settings tray shows the same setup screens as a first boot.
 - The screens step aside after eight minutes without progress, so a device that is otherwise working goes back to its
   scenes instead of sitting on a setup screen.
 - Starting the setup again from the tray brings the screens straight back.
@@ -49,8 +49,8 @@ factory-reset device can be set up from a phone without knowing anything about i
   there is something to go back to and the settings tray still shows the setup network is up.
 - A device still being set up keeps the screen, because there is nothing behind it: it never hides a live setup network
   or an unfinished wizard.
-- A device that has WiFi credentials but never obtains an address is reset back into setup, so it lands on a screen with
-  a way forward instead of a blank one.
+- A device that has Wi-Fi credentials but never obtains an address is reset back into setup, so it lands on a screen
+  with a way forward instead of a blank one.
 
 ### Learn the device's address after a boot
 

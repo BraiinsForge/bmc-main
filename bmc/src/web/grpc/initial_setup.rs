@@ -114,7 +114,7 @@ where
             Ok(()) => Ok(Response::new(())),
             Err(e) => match e {
                 WifiSetupError::InProgress => {
-                    Err(Status::failed_precondition("WiFi setup is in progress"))
+                    Err(Status::failed_precondition("Wi-Fi setup is in progress"))
                 }
             },
         }

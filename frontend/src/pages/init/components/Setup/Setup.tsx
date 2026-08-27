@@ -155,7 +155,7 @@ class View extends Component<Props> {
                 className={css.layout}
             >
                 <ProgressIndicator currentIndex={1} className={css.progress}>
-                    <ProgressStep label="Wifi Settings" />
+                    <ProgressStep label="Wi-Fi Settings" />
                     <ProgressStep label="Initial Setup" className={css.disabledTab} />
                 </ProgressIndicator>
 

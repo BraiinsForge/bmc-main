@@ -72,7 +72,7 @@ export default class InitWifi extends Component<any, State> {
             networks = res.networks;
         } catch ($) {
             if (pb.abort.is($)) return;
-            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to load WiFi networks!'] });
+            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to load Wi-Fi networks!'] });
         }
 
         this.setState({ wifi: { isLoading: false, networks } });
@@ -88,7 +88,7 @@ export default class InitWifi extends Component<any, State> {
             return true;
         } catch ($) {
             if (pb.abort.is($)) return false;
-            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to set WiFi!'] });
+            this.setState({ errors: pb.collectAllErrors($) ?? ['Failed to set Wi-Fi!'] });
             return false;
         }
     };

@@ -229,7 +229,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Wifi scan: Unknown error!' });
+            msg ||= formatMessage({ defaultMessage: 'Wi-Fi scan: Unknown error!' });
             this.setState(s => ({
                 wifi: {
                     ...s.wifi,
@@ -262,7 +262,7 @@ class View extends Component<Props, State> {
             if (pb.abort.is($)) return false;
 
             let msg = pb.collectAllErrorsAsFormattedList($);
-            msg ||= formatMessage({ defaultMessage: 'Wifi connection: Unknown error!' });
+            msg ||= formatMessage({ defaultMessage: 'Wi-Fi connection: Unknown error!' });
             toast.error(msg);
             return false;
         }

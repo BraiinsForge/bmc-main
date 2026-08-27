@@ -122,11 +122,11 @@ impl DeviceInfoRenderState {
 }
 
 const EYEBROW: &str = "Initial Setup";
-const SETUP_START_TITLE: &str = "Connect to Braiins Deck WiFi";
-const SETUP_AP_PENDING_TITLE: &str = "Starting setup WiFi...";
+const SETUP_START_TITLE: &str = "Connect to Braiins Deck Wi-Fi";
+const SETUP_AP_PENDING_TITLE: &str = "Starting setup Wi-Fi...";
 /// Shared by the setup flow's two connect-progress screens and the operational
 /// one, so the wording cannot drift between the flows.
-const CONNECTING_TITLE: &str = "Connecting to WiFi...";
+const CONNECTING_TITLE: &str = "Connecting to Wi-Fi...";
 const UPGRADE_SUCCESS_TITLE: &str = "Update Finished";
 /// Shared by both setup-failure screens, which differ only in what follows.
 const SETUP_FATAL_TITLE: &str = "Problem Occurred";
@@ -360,7 +360,10 @@ fn tray_hint(icon_id: Icon) -> TreeNode {
             ..PropsData::default()
         },
         [
-            content("To access the controls, IP and WiFi info", TextAlign::Right),
+            content(
+                "To access the controls, IP and Wi-Fi info",
+                TextAlign::Right,
+            ),
             text(
                 "swipe down",
                 style(24, GRAY_40, FontWeight::BOLD, TextAlign::Right),
@@ -444,7 +447,7 @@ fn labeled(label: &str, value: TreeNode) -> TreeNode {
 
 fn ssid_line(ssid: &str) -> TreeNode {
     labeled(
-        "WiFi SSID",
+        "Wi-Fi SSID",
         text(
             ssid,
             style(36, VIOLET_50, FontWeight::REGULAR, TextAlign::Center),
@@ -455,7 +458,7 @@ fn ssid_line(ssid: &str) -> TreeNode {
 fn ssid_lines(ssid: Option<&str>) -> Vec<TreeNode> {
     match ssid {
         Some(ssid) => vec![ssid_line(ssid)],
-        None => vec![content("Waiting for WiFi connection", TextAlign::Center)],
+        None => vec![content("Waiting for Wi-Fi connection", TextAlign::Center)],
     }
 }
 

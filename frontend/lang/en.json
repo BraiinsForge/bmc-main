@@ -239,6 +239,9 @@
   "GretYf": {
     "defaultMessage": "Current Password"
   },
+  "H5+7kJ": {
+    "defaultMessage": "Wi-Fi connection: Unknown error!"
+  },
   "H9AUj0": {
     "defaultMessage": "Screen Cycling: {status}"
   },
@@ -320,6 +323,9 @@
   "OLVyHL": {
     "defaultMessage": "WEP"
   },
+  "OOIqa+": {
+    "defaultMessage": "Wi-Fi scan: Unknown error!"
+  },
   "OUIFSP": {
     "defaultMessage": "Automatic Updates"
   },
@@ -383,9 +389,6 @@
   "TQvMXa": {
     "defaultMessage": "Est. upgrade time: 1 minute"
   },
-  "UabLFj": {
-    "defaultMessage": "Wifi scan: Unknown error!"
-  },
   "Uc3eGg": {
     "defaultMessage": "Analog 1"
   },
@@ -436,9 +439,6 @@
   },
   "ZK1d6f": {
     "defaultMessage": "SSID"
-  },
-  "ZYwC+3": {
-    "defaultMessage": "Wifi connection: Unknown error!"
   },
   "Zaws1W": {
     "defaultMessage": "Add New Display Scene"

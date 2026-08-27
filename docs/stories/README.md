@@ -67,7 +67,7 @@ Wayland protocol.
 ### [Settings Tray](settings-tray.md)
 
 A persistent overlay, revealed by swiping down from the top edge of any scene, for quick access to core system settings:
-brightness, sound volume, night mode, hold-to-confirm device restart, and WiFi reconfiguration. Controls are gated by
+brightness, sound volume, night mode, hold-to-confirm device restart, and Wi-Fi reconfiguration. Controls are gated by
 what the device actually supports.
 
 ### [Night Mode](night-mode.md)
@@ -117,10 +117,10 @@ success or failure screen, including after the restart that finishes an upgrade.
 
 ### [Device Setup & Connect Screens](device-setup-screens.md)
 
-The full-screen messages the Deck shows on its own display when it needs setting up or has just booted: the WiFi network
-to join and a QR code to the setup wizard on a factory-default device, the progress of a WiFi join, and the address the
-web UI is reachable at after every boot. Also covers re-running WiFi setup from the device and the confirmation shown
-after a firmware update restarts.
+The full-screen messages the Deck shows on its own display when it needs setting up or has just booted: the Wi-Fi
+network to join and a QR code to the setup wizard on a factory-default device, the progress of a Wi-Fi join, and the
+address the web UI is reachable at after every boot. Also covers re-running Wi-Fi setup from the device and the
+confirmation shown after a firmware update restarts.
 
 ### Audio & Alarms
 

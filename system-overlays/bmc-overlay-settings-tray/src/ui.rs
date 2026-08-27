@@ -829,7 +829,7 @@ fn control_groups(
             press_fill(p),
             press_tint(p),
             Some(controls.wifi_reconfig.progress),
-            "Reconfigure WiFi",
+            "Reconfigure Wi-Fi",
             "hold 5 seconds",
         ));
     }
@@ -879,7 +879,7 @@ fn shared_caption(tier: Tier, controls: &Controls<'_>, usable: f32) -> Option<Tr
     let raw = if let Some(c) = controls.restart.and_then(|r| r.caption) {
         Some(format!("Restart: {c}"))
     } else if let Some(c) = controls.wifi_reconfig.caption {
-        Some(format!("Reconfigure WiFi: {c}"))
+        Some(format!("Reconfigure Wi-Fi: {c}"))
     } else if !tier.large_text
         && let Some(n) = controls.night_mode
         && let Some(until) = n.until
@@ -1011,7 +1011,7 @@ fn wide_header(
     let value_size = tier.hostname_size;
     let wifi_block = match wifi_view {
         WifiView::Idle => info_block(
-            "WiFi Connection",
+            "Wi-Fi Connection",
             row(
                 PropsData {
                     cross_align: CrossAlign::Center,
@@ -1028,7 +1028,7 @@ fn wide_header(
             ),
         ),
         WifiView::Setup { ap_ssid } => info_block(
-            "WiFi Connection",
+            "Wi-Fi Connection",
             col(
                 PropsData {
                     gap: 6.0,
@@ -1059,7 +1059,7 @@ fn wide_header(
                         ],
                     ),
                     text(
-                        "Join this network from your phone to reconfigure WiFi.",
+                        "Join this network from your phone to reconfigure Wi-Fi.",
                         text_style(INFO_HEADER_SIZE, GRAY_50),
                     ),
                 ],
@@ -2032,7 +2032,9 @@ mod tests {
             "restart beats the wifi caption"
         );
         assert!(
-            !all_texts.iter().any(|t| t.starts_with("Reconfigure WiFi:")),
+            !all_texts
+                .iter()
+                .any(|t| t.starts_with("Reconfigure Wi-Fi:")),
             "the losing caption must not render alongside the winner"
         );
 
@@ -2043,7 +2045,7 @@ mod tests {
         assert!(
             caption_texts(narrow_panel(), wifi_only)
                 .iter()
-                .any(|t| t == "Reconfigure WiFi: Keep holding…"),
+                .any(|t| t == "Reconfigure Wi-Fi: Keep holding…"),
             "reconfigure surfaces its own caption when it is the only hold"
         );
 

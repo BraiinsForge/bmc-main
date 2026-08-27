@@ -150,7 +150,7 @@ where
         let net_man = self.manager.network_manager();
         let wifi_data = require_wifi(net_man)?.status().await.map_err(|e| {
             warn!("Failed to get WiFi status: {}", e);
-            Status::internal("Failed to get WiFi status")
+            Status::internal("Failed to get Wi-Fi status")
         })?;
 
         let status = into_grpc_wifi_status(wifi_data.status);
@@ -172,7 +172,7 @@ where
             .await
             .map_err(|e| {
                 warn!("Failed to get WiFi status: {}", e);
-                Status::internal("Failed to get WiFi status")
+                Status::internal("Failed to get Wi-Fi status")
             })?
             .into_iter()
             .map(into_grpc_wifi_status)
@@ -315,7 +315,7 @@ pub(crate) async fn scan_wifi_response(
         .await
         .map_err(|e| {
             warn!("Failed to scan WiFi networks: {}", e);
-            Status::internal("Failed to scan WiFi networks")
+            Status::internal("Failed to scan Wi-Fi networks")
         })?;
 
     Ok(ScanWifiResponse {

@@ -70,7 +70,7 @@ class View extends Component<Props, State> {
     get #txt() {
         const { formatMessage } = this.props.intl;
         return {
-            enterDetailsManually: formatMessage({ defaultMessage: 'Enter Wifi details manually' }),
+            enterDetailsManually: formatMessage({ defaultMessage: 'Enter Wi-Fi details manually' }),
 
             ssidNetName: formatMessage({ defaultMessage: 'SSID (network name)' }),
             encryptionType: formatMessage({ defaultMessage: 'Encryption Type' }),
@@ -257,8 +257,8 @@ class View extends Component<Props, State> {
 
             content = (
                 <Fragment>
-                    <h1 className={css.title} children="Select Wifi" />
-                    <p className={css.note}>Select wifi you want to connect</p>
+                    <h1 className={css.title} children="Select Wi-Fi" />
+                    <p className={css.note}>Select Wi-Fi you want to connect</p>
 
                     <div
                         className={css.netList}
@@ -308,7 +308,7 @@ class View extends Component<Props, State> {
         return (
             <Layout header={<LogoHeader style={{ width: 'auto', height: 18 }} />} footer={footer}>
                 <ProgressIndicator currentIndex={0} className={css.progress}>
-                    <ProgressStep label="Wifi Settings" />
+                    <ProgressStep label="Wi-Fi Settings" />
                     <ProgressStep label="Initial Setup" className={css.disabledTab} />
                 </ProgressIndicator>
                 {content}

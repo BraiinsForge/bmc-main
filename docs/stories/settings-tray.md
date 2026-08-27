@@ -1,7 +1,7 @@
 # Settings Tray
 
 A persistent overlay, reachable from any scene, that gives quick access to core system settings — brightness, sound
-volume, night mode, device restart, and WiFi reconfiguration — without leaving the current scene or opening the web UI.
+volume, night mode, device restart, and Wi-Fi reconfiguration — without leaving the current scene or opening the web UI.
 
 ## User stories
 
@@ -56,13 +56,13 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 - When no address is available, the tray shows a placeholder rather than a stale or invented one.
 - Where the display has the room, the tray also shows the hostname and a QR code that opens the web UI when scanned.
 
-### Reconfigure WiFi from the device
+### Reconfigure Wi-Fi from the device
 
-> As a user, I want to restart WiFi setup from the tray so that I can re-home the device onto a new network without the
+> As a user, I want to restart Wi-Fi setup from the tray so that I can re-home the device onto a new network without the
 > web UI.
 
-- A hold-to-confirm "Reconfigure WiFi" button starts the WiFi setup access point; the tray then shows the setup network
-  to join from a phone.
+- A hold-to-confirm "Reconfigure Wi-Fi" button starts the Wi-Fi setup access point; the tray then shows the setup
+  network to join from a phone.
 - The tray shows the connection status: the connected network and signal strength.
 
 ### See only the controls the device supports
@@ -70,11 +70,11 @@ volume, night mode, device restart, and WiFi reconfiguration — without leaving
 > As a user, I want the tray to show only controls my device actually has so that nothing on screen is a dead end.
 
 - Devices without sound hardware show no volume controls.
-- Devices whose WiFi is not managed directly by the system show no WiFi button.
+- Devices whose Wi-Fi is not managed directly by the system show no Wi-Fi button.
 - The available controls are decided by the device itself; the tray never guesses.
 
 ## Constraints
 
 - The tray renders above all scenes and widgets; only one instance exists.
-- Restart and WiFi actions always require the hold gesture — there is no single-tap variant.
+- Restart and Wi-Fi actions always require the hold gesture — there is no single-tap variant.
 - Bluetooth and extended settings are out of scope; the tray covers core settings only.
