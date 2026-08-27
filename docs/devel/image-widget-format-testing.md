@@ -90,11 +90,9 @@ break.
 mis-served file cannot read as a decoder regression. Their served lengths must also be distinct: results are correlated
 by body length, so a repeat would make a probe or decode impossible to attribute. Hard fail.
 
-**The build behind the numbers is named.** The decoders live in `bmc-wasm-host`, so checking the widget alone would
-leave every measurement attributable to any profiling host that happened to be deployed. The run reads the host out of
-the built widget's store references — `nix/wasm-widgets.nix` embeds it via `--host-bin`, which makes it a direct
-reference — and says whether the device runs that build. Warns rather than fails, as the widget check it mirrors does: a
-stale build still exercises every decoder, so whether its numbers are worth keeping is the operator's call.
+**The build behind the numbers is named.** The decoders live in the independently packaged `bmc-wasm-host`, so checking
+the widget alone says nothing about the decoder build. The run builds `.#deck-packages-debug.core.pkg.wasmHost`,
+compares that store path with the running host, and warns before measuring a different build.
 
 **The profiling build is proven from the running binary**, by finding a literal that only the instrumented build
 contains. Checking the log instead would be worthless: a log outlives the build that wrote it, so a debug-then-release

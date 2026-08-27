@@ -1,11 +1,10 @@
 # Widget Asset Cache & Cross-Host GC
 
-How the on-disk widget asset cache is laid out, and how orphaned entries are reclaimed when several host versions can
-run at once.
+How the on-disk widget asset cache is laid out, and how orphaned entries remain safe if several host versions run during
+an SDK transition.
 
-For why cache-backed renderer assets survive dormancy, see [`renderer-assets.md`](renderer-assets.md). For why multiple
-hosts coexist, see [`process-model.md`](process-model.md) (one daemon per SDK major) and
-[`sdk-versioning.md`](sdk-versioning.md) (why a protocol break forks the host).
+For why cache-backed renderer assets survive dormancy, see [`renderer-assets.md`](renderer-assets.md). For the
+major-versioned host socket, see [`process-model.md`](process-model.md) and [`sdk-versioning.md`](sdk-versioning.md).
 
 ## Cache layout
 
@@ -32,11 +31,11 @@ mid-shutdown, external write). Without reclamation they accumulate — confirmed
 `config.scenes` to a different widget set leaves the removed instances' `…-full/` buckets behind. (`DiskCache::sweep`
 only trims blobs *within* one bucket; it is not the cross-bucket reconcile.)
 
-The obvious design — "list the buckets of every widget in `config.scenes`, delete the rest" — is **wrong here**, because
-the cache is shared by every running host and **several hosts run at once, one per SDK major** (a protocol break keeps
-old and new hosts alive until every widget upgrades). A host iterating its own config view would treat another host's
-live buckets as orphans and delete them. The live set is not knowable from any single config; it has to be assembled
-from what each running host declares.
+The obvious design — "list the buckets of every widget in `config.scenes`, delete the rest" — is **wrong here**. A host
+owns only the slots connected to its SDK-major socket, not the whole config. The default system starts one active SDK
+host, but an incompatible SDK transition can configure old and new hosts as separate compositor commands. Either host
+would treat the other's live buckets as orphans. The live set therefore has to be assembled from what each running host
+declares.
 
 The filesystem is the only thing every host shares (going through the compositor is deliberately avoided), so liveness
 is published there.
@@ -49,8 +48,8 @@ Each host owns one **GC-root file** in a sibling directory:
 /mnt/data/bmc/widget-gc-roots/sdk-v<major>
 ```
 
-- **Name** — keyed by SDK major, which is exactly what makes concurrent hosts distinct (one host per major, same scheme
-  as the `wasm-host-sdk-v<major>` socket/lock).
+- **Name** — keyed by SDK major, which keeps concurrent hosts distinct using the same scheme as the
+  `wasm-host-sdk-v<major>` socket.
 - **Contents** — the cache tokens the host currently holds, one per line.
 - **mtime is the heartbeat** — rewriting the file (on the periodic tick, and whenever a slot is added) bumps its mtime.
 
@@ -102,7 +101,7 @@ mechanism covers crashes (which a clean-exit hook would not).
 
 ## Testing on a real runtime
 
-The GC runs only in the actual `bmc-wasm-host` daemon — i.e. on the VM or a device, never in the testbed/capture (which
+The GC runs only in the actual `bmc-wasm-host` process — i.e. on the VM or a device, never in the testbed/capture (which
 drive `WasmWidgetRuntime` directly and never enter `run_loop`).
 
 Publishing is immediate, so it can be checked without waiting:
@@ -121,7 +120,7 @@ Reclamation, pruning, and the cross-host union only fire on the tick. To exercis
   republishes before its first sweep.
 
 The default 30-minute period makes live iteration slow, so set `BMC_WIDGET_GC_PERIOD_SECS` (e.g. `20`) in the
-environment that launches `bmc-openwrt` — the host inherits it through the thin — to drive ticks every few seconds.
+environment that launches `bmc-openwrt`; the supervised host inherits it from the compositor.
 
 ## Open items
 

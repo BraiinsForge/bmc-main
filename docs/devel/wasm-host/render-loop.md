@@ -3,7 +3,7 @@
 This document describes how `bmc-wasm-host` drives multiple WASM widget slots in one process: which slots own render
 targets, which slots can render, how frame callbacks are scheduled, and how teardown works.
 
-For process startup, fd passing, and thin/daemon lifetimes, see [`process-model.md`](process-model.md).
+For process startup, fd passing, and thin/host lifetimes, see [`process-model.md`](process-model.md).
 
 ## Main Loop Shape
 
@@ -16,7 +16,7 @@ single-threaded and uses `poll(2)` over:
 
 Each iteration does this:
 
-1. Compute a `poll(2)` timeout from all slots and the host lifetime grace period.
+1. Compute a `poll(2)` timeout from slots, pending admissions, overlays, deferred cleanup, and cache GC.
 2. Poll the listener, Wayland fds, and control sockets.
 3. Accept and load new slots when the listener is readable.
 4. For every existing slot:
@@ -26,7 +26,7 @@ Each iteration does this:
    - poll runtime deliveries.
 5. For every remaining slot, render only if lifecycle and timing gates allow it.
 6. Tear down slots that disconnected, lost Wayland, or returned a fatal render status.
-7. Exit after the last slot is gone and the 100 ms host grace period expires.
+7. Continue serving the listener until the compositor stops the host.
 
 There is no per-widget render thread. Heavy GPU state is shared in `SharedHost`:
 
@@ -165,7 +165,10 @@ The timeout can be shortened by:
 - future runtime frame delays for `Visible` slots;
 - the 8 ms minimum inter-frame remainder;
 - pending runtime I/O;
-- the host's 100 ms post-disconnect grace period.
+- pending admission deadlines;
+- hosted-overlay deadlines;
+- deferred GPU cleanup retries;
+- the next cache-GC deadline.
 
 If a renderable slot has an effective dirty flag or an immediate runtime frame due and the inter-frame floor has
 elapsed, the timeout is `0`, so the host loops without sleeping. The effective flag masks held-back dirtiness in
@@ -226,12 +229,12 @@ A slot is removed when any of these happen:
 Slot shutdown drops the runtime first, then destroys any render target, then drops the Wayland surface client and the
 control socket.
 
-After the table becomes empty, `HostLifetime` records the disconnect time. The main loop keeps running for 100 ms, then
-returns cleanly if no new slot arrived.
+After the table becomes empty, the host keeps the listener and system overlays alive. Its compositor supervisor owns the
+process lifetime, so a later thin can connect without first cycling the shared EGL state.
 
 ## Code Map
 
-- `bmc-wasm-host/src/main_loop.rs` - polling, timeout folding, slot iteration, host lifetime.
+- `bmc-wasm-host/src/main_loop.rs` - polling, timeout folding, admissions, and slot iteration.
 - `bmc-wasm-host/src/slot.rs` - per-slot dispatch, render gating, frame rendering, shutdown.
 - `bmc-wasm-host/src/lifecycle.rs` - lifecycle state machine and allocation retry behavior.
 - `bmc-wasm-host/src/render_target.rs` - per-slot render target allocation and destruction.

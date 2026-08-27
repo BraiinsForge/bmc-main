@@ -155,8 +155,8 @@ styles, how copyright lines are attributed from git authorship, and which third-
 
 Implementation notes for the multi-widget WASM runtime:
 
-- [Process Model](wasm-host/process-model.md) - thin wrapper lifetime, Wayland fd passing, lazy host daemon startup, the
-  thin/host control protocol, and teardown behavior.
+- [Process Model](wasm-host/process-model.md) - thin wrapper lifetime, Wayland fd passing, compositor-owned host
+  startup, the thin/host control protocol, and teardown behavior.
 - [Render Loop](wasm-host/render-loop.md) - slot lifecycle states, render-target ownership, render gating, frame
   scheduling, runtime delivery polling, and compositor lifecycle emission.
 - [Renderer Asset Lifecycle](wasm-host/renderer-assets.md) - static package extraction, package/cache/volatile backing,

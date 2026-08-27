@@ -35,6 +35,11 @@ The expensive, memory-bearing resources â€” the GL context and the font cache â€
 else is identical code. For the current memory-constrained target the overlays compile into `bmc-wasm-host`; standalone
 mode (`bmc_system_overlay::run_standalone`) stays a supported shape and is what each overlay's `src/main.rs` runs.
 
+The production system config starts `bmc-wasm-host` as a compositor-owned command and supplies the compositor's
+`WAYLAND_DISPLAY`. This keeps hosted overlays available when the scene configuration contains no WASM widgets. The
+compositor supervises the host and stops it before tearing down the Wayland display; widget thins only wait for the host
+and never control its lifetime.
+
 The host lends its renderer to exactly one overlay at a time, only for the duration of that overlay's `render` callback,
 the same single-user guarantee the host already relies on for WASM widget slots. See [`framework.md`](framework.md) for
 the trait and the hosted driver, and [`../wasm-host/render-loop.md`](../wasm-host/render-loop.md) for the surrounding

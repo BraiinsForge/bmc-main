@@ -23,17 +23,19 @@ activated package.
 > As a user, I want runtime upgrades to replace incompatible background processes automatically so widgets recover
 > without manual intervention.
 
-- Each thin launcher binds its host to the current compositor process identity and SDK major.
-- A thin that finds a host owned by an older compositor terminates and replaces that host before connecting.
-- Concurrent widget starts serialize host replacement, so only one compatible host owns each SDK-major socket.
+- The compositor starts and supervises the host for the active SDK major independently of widget startup.
+- Widget thins wait for that host and never choose, start, or replace it.
+- A graceful compositor restart stops its host before the new compositor starts the replacement.
+- After forced compositor termination, socket arbitration rejects a replacement while the old host is alive; the
+  supervisor retries with backoff until it can bind.
 
 ### Restart the display only when its executable dependencies change
 
 > As a user, I want the display to restart only when the compositor or its native widget runtime actually changed.
 
-- The compositor service records the per-SDK launcher as an executable dependency.
-- A compositor, thin, or host package change alters that dependency and lets the service orchestrator restart the
-  compositor.
+- The compositor service records the per-SDK thin launcher and host as independent executable dependencies.
+- A compositor, thin, or host package change alters those dependencies and lets the service orchestrator restart the
+  compositor and its host.
 - Widget package changes do not alter the core package or compositor service, so they use targeted replacement instead.
 - The deployment tool observes activation but never issues a compatibility hard restart of the compositor.
 
@@ -46,8 +48,8 @@ activated package.
 - Deployment fails loudly when the compositor is down, the service reconciliation does not settle, or the active core
   predates targeted widget reload; it reports the observed service state and leaves widget load verification to the
   device validation procedure.
-- A crashed compositor is respawned by the service manager. New thins then replace hosts tied to the previous compositor
-  process identity.
+- A crashed compositor is respawned by the service manager, and the new compositor starts a new host before thins
+  reconnect.
 
 ## Constraints
 
