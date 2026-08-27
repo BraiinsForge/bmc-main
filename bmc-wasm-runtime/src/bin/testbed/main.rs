@@ -1071,19 +1071,8 @@ pub(crate) struct TestbedApp {
     /// Parsed manifest — read by the param-mutation panel to render type-appropriate inputs
     /// (ComboBox for enums, DragValue for numerics with min/max/step, etc.).
     pub(crate) manifest: bmc_widget_manifest::Manifest,
-    /// Current per-instance params snapshot. Mutated by the param-mutation UI; the
-    /// underlying runtimes are kept in sync via `deliver_params_update` on each change.
-    pub(crate) params:
-        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
-    /// Current deck-wide system snapshot. Mutated by the system-mutation UI
-    /// on the left sidebar; tile runtimes are kept in sync via `deliver_system_update`
-    /// on each change. Pre-recording UI changes are captured into `RecordingState::system_snapshot`;
-    /// subsequent changes produce `UnifiedEvent::SystemDelivery` entries in the timeline.
-    pub(crate) system: SystemSnapshot,
-    /// Current credential view, in the wire JSON shape.
-    /// Mutated by the Credentials sidebar section; tile runtimes
-    /// are kept in sync via `deliver_credentials_update`.
-    pub(crate) credentials: serde_json::Map<String, serde_json::Value>,
+    /// Set outside a take; [`Self::state`] answers for whichever is live.
+    playground: SandboxedState,
     /// Secrets from `--secrets`, handed to the runtime with each credential
     /// delivery; empty by default, so fetches refuse before egress.
     pub(crate) secrets: bmc_widget_protocol::CredentialSecrets,
@@ -1094,8 +1083,6 @@ pub(crate) struct TestbedApp {
     /// and a pending arrangement.
     pub(crate) stage: stage::Stage,
     clock: Clock,
-    /// Offline toggle: seals every tile's live I/O so refreshes fail.
-    offline: bool,
     hot_reload: HotReload,
     perf: PerfState,
     pub(crate) recording_mode: RecordingMode,
@@ -1110,8 +1097,6 @@ pub(crate) struct TestbedApp {
 struct Clock {
     last_frame: std::time::Instant,
     start_instant: std::time::Instant,
-    /// Fast-forward offset (ms) for the displayed system time; "reset" zeroes it.
-    offset_ms: u64,
     /// Fast-forward offset (ms) for the monotonic clock. Ratchets up with each
     /// advance and never rewinds — "reset" leaves it, so pending poll/render
     /// deadlines don't stall behind a rewound clock.
@@ -1123,6 +1108,23 @@ impl Clock {
     fn monotonic_ms(&self, now: std::time::Instant) -> u64 {
         now.duration_since(self.start_instant).as_millis() as u64 + self.monotonic_offset_ms
     }
+}
+
+/// Everything the operator can set that a widget then sees.
+///
+/// One is the playground; a take clones it and keeps its own copy,
+/// dropped on the way out, so nothing is ever restored.
+#[derive(Clone)]
+pub(crate) struct SandboxedState {
+    pub(crate) params:
+        std::collections::BTreeMap<bmc_widget_manifest::ParamKey, bmc_widget_manifest::ParamValue>,
+    pub(crate) system: SystemSnapshot,
+    pub(crate) credentials: serde_json::Map<String, serde_json::Value>,
+    /// Seals every tile's live I/O so refreshes fail.
+    pub(crate) offline: bool,
+    /// The displayed clock's fast-forward. Its monotonic twin stays on [`Clock`]:
+    /// sandboxing a ratcheting offset would stall deadlines waiting past it.
+    pub(crate) clock_offset_ms: u64,
 }
 
 /// The rebuild cycle end to end: the source watcher that starts a build, the
@@ -1296,18 +1298,20 @@ impl TestbedApp {
             },
             get_proc,
             manifest,
-            params,
-            system: pending_system,
-            credentials: serde_json::Map::new(),
+            playground: SandboxedState {
+                params,
+                system: pending_system,
+                credentials: serde_json::Map::new(),
+                offline: false,
+                clock_offset_ms: 0,
+            },
             gl,
             stage: stage::Stage::default(),
             clock: Clock {
                 last_frame: now,
                 start_instant: now,
-                offset_ms: 0,
                 monotonic_offset_ms: 0,
             },
-            offline: false,
             hot_reload: HotReload {
                 _watcher: watcher,
                 watcher_rx,
@@ -1396,7 +1400,7 @@ impl TestbedApp {
         // A rebuilt runtime starts with nothing bound, so the sidebar's bindings
         // are re-delivered below — without that, a hot reload drops
         // a credential-fed widget back to its unbound state.
-        let credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
+        let credentials = bmc_wasm_runtime::parse_credentials_json(&self.state().credentials);
         let secrets = self.secrets.clone();
         let active_record_idx = self
             .recording_mode
@@ -1572,9 +1576,7 @@ impl TestbedApp {
             target,
             dataset,
             self.cli.resolved_widget_root(),
-            &self.params,
-            &self.system,
-            &self.credentials,
+            self.playground.clone(),
             kv_stash,
             &displaced,
             self.clock.monotonic_ms(std::time::Instant::now()),
@@ -1629,7 +1631,22 @@ impl TestbedApp {
         self.apply_record_unwind(unwind, ctx);
     }
 
+    /// The take's while one runs, else the playground.
+    pub(crate) fn state(&self) -> &SandboxedState {
+        self.recording_mode.sandbox().unwrap_or(&self.playground)
+    }
+
+    pub(crate) fn state_mut(&mut self) -> &mut SandboxedState {
+        match self.recording_mode.sandbox_mut() {
+            Some(take) => take,
+            None => &mut self.playground,
+        }
+    }
+
     /// Undo what the record mode displaced, per what its end handed back.
+    ///
+    /// `end` dropped the take's state with the phase, so the views rebuild
+    /// from the playground without being told to.
     fn apply_record_unwind(&mut self, unwind: RecordUnwind, ctx: &egui::Context) {
         match unwind {
             // The extras close; views the restored canvas keeps are plain
@@ -1893,12 +1910,12 @@ impl TestbedApp {
         };
         config.mesh_msaa_samples = 4;
         config.package_assets = Some(self.prepared_widget.asset_store());
-        config.params = self.params.clone();
-        config.system = self.system.clone();
+        config.params = self.state().params.clone();
+        config.system = self.state().system.clone();
         // The sidebar's bindings as well: a rebuilt runtime starts unbound,
         // and replay installs `initial_credentials` identically,
         // so a recording's first delivery diffs against the operator's real state.
-        config.credentials = bmc_wasm_runtime::parse_credentials_json(&self.credentials);
+        config.credentials = bmc_wasm_runtime::parse_credentials_json(&self.state().credentials);
         config.credential_secrets = self.secrets.clone();
         config.url_rewrites.clone_from(&self.url_rewrites);
         config
@@ -1968,7 +1985,7 @@ impl TestbedApp {
         // A fast-forward advances both clocks so a due poll fires as its data
         // ages out; "reset" rewinds only the display clock, never the monotonic
         // one (which uses its own ratcheting offset).
-        let offset_ms = self.clock.offset_ms;
+        let offset_ms = self.state().clock_offset_ms;
         let monotonic_ms = self.clock.monotonic_ms(now);
         self.recording_mode.advance_clock(monotonic_ms);
         let system_time = (chrono::Local::now()
@@ -1978,7 +1995,7 @@ impl TestbedApp {
             now,
             system_time,
             monotonic_ms,
-            offline: self.offline,
+            offline: self.state().offline,
             profile: false,
         };
         // In recording mode only the active view runs; `App::ui` paints the rest

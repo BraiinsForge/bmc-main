@@ -60,7 +60,7 @@ impl TestbedApp {
         &mut self,
         new_credentials: serde_json::Map<String, serde_json::Value>,
     ) {
-        if new_credentials == self.credentials {
+        if new_credentials == self.state().credentials {
             return;
         }
         let bound = bmc_wasm_runtime::parse_credentials_json(&new_credentials);
@@ -71,13 +71,11 @@ impl TestbedApp {
                 secrets: Box::new(secrets.clone()),
             }));
         }
-        self.credentials = new_credentials;
-
-        let credentials = &self.credentials;
         self.recording_mode
             .record_delivery(|| UnifiedEvent::CredentialDelivery {
-                credentials: credentials.clone(),
+                credentials: new_credentials.clone(),
             });
+        self.state_mut().credentials = new_credentials;
     }
 
     /// Slot key paired with the type its manifest fixes it to.

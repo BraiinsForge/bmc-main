@@ -109,7 +109,7 @@ impl TestbedApp {
 
                     // Simulated conditions: what the device can and cannot
                     // reach, and when it thinks it is.
-                    let offline = self.offline;
+                    let offline = self.state().offline;
                     if Button::bar("Offline")
                         .icon(&mut self.icons.offline)
                         .tone(Tone::switch(palette, offline))
@@ -117,7 +117,7 @@ impl TestbedApp {
                         .on_hover_text("seal live I/O, mirroring an offline device")
                         .clicked()
                     {
-                        self.offline = !self.offline;
+                        self.state_mut().offline = !offline;
                     }
                     self.paint_clock_controls(row);
 
@@ -320,7 +320,7 @@ impl TestbedApp {
     /// so the monotonic clock never rewinds past pending deadlines.
     fn paint_clock_controls(&mut self, row: &mut egui::Ui) {
         let palette = self.theme.palette(row.ctx());
-        let secs = self.clock.offset_ms / 1_000;
+        let secs = self.state().clock_offset_ms / 1_000;
         let offset = format!("+{}:{:02}", secs / 60, secs % 60);
         bar_readout(row, Some(&mut self.icons.delay), &offset, palette)
             .on_hover_text("how far the simulated clock runs ahead of real time");
@@ -349,10 +349,11 @@ impl TestbedApp {
                 .on_hover_text("return the clock to real time")
                 .clicked();
         });
-        self.clock.offset_ms += advance_ms;
         self.clock.monotonic_offset_ms += advance_ms;
+        let displayed = &mut self.state_mut().clock_offset_ms;
+        *displayed += advance_ms;
         if reset {
-            self.clock.offset_ms = 0;
+            *displayed = 0;
         }
     }
 

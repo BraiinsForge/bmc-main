@@ -607,6 +607,8 @@ enum RecordPhase {
         /// The take viewport's KV dir moved aside as `(live, stash)`;
         /// `stash` is `None` when no dir existed.
         kv_stash: (PathBuf, Option<PathBuf>),
+        /// The take's own state, dropped with this phase.
+        sandbox: super::SandboxedState,
     },
 }
 
@@ -653,6 +655,21 @@ impl RecordingMode {
     pub(crate) fn active_mut(&mut self) -> Option<&mut RecordingState> {
         match &mut self.phase {
             RecordPhase::Recording { take, .. } => Some(take),
+            RecordPhase::Off | RecordPhase::Choosing { .. } => None,
+        }
+    }
+
+    /// The running take's state, which displaces the playground.
+    pub(crate) fn sandbox(&self) -> Option<&super::SandboxedState> {
+        match &self.phase {
+            RecordPhase::Recording { sandbox, .. } => Some(sandbox),
+            RecordPhase::Off | RecordPhase::Choosing { .. } => None,
+        }
+    }
+
+    pub(crate) fn sandbox_mut(&mut self) -> Option<&mut super::SandboxedState> {
+        match &mut self.phase {
+            RecordPhase::Recording { sandbox, .. } => Some(sandbox),
             RecordPhase::Off | RecordPhase::Choosing { .. } => None,
         }
     }
@@ -743,12 +760,7 @@ impl RecordingMode {
         target: bmc_wasm_runtime::platform_catalog::Target,
         dataset: String,
         widget_root: Option<PathBuf>,
-        params: &std::collections::BTreeMap<
-            bmc_widget_manifest::ParamKey,
-            bmc_widget_manifest::ParamValue,
-        >,
-        system: &bmc_wasm_runtime::SystemSnapshot,
-        credentials: &serde_json::Map<String, serde_json::Value>,
+        sandbox: super::SandboxedState,
         kv_stash: (PathBuf, Option<PathBuf>),
         current_canvas: &[&'static bmc_wasm_runtime::platform_catalog::Platform],
         monotonic_ms: u64,
@@ -774,13 +786,12 @@ impl RecordingMode {
                 target,
                 dataset,
                 widget_root,
-                params,
-                system,
-                credentials,
+                &sandbox,
                 monotonic_ms,
             )),
             restore_platforms,
             kv_stash,
+            sandbox,
         };
         true
     }
@@ -861,12 +872,7 @@ impl RecordingState {
         target: bmc_wasm_runtime::platform_catalog::Target,
         dataset: String,
         widget_root: Option<PathBuf>,
-        params: &std::collections::BTreeMap<
-            bmc_widget_manifest::ParamKey,
-            bmc_widget_manifest::ParamValue,
-        >,
-        system: &bmc_wasm_runtime::SystemSnapshot,
-        credentials: &serde_json::Map<String, serde_json::Value>,
+        sandbox: &super::SandboxedState,
         monotonic_ms: u64,
     ) -> Self {
         let active_tile = target
@@ -890,12 +896,13 @@ impl RecordingState {
             // Pre-encoded into the JSON shape `FixtureHeader::initial_params`
             // expects, so the fixture is self-contained: replay never has to
             // locate the widget's `manifest.json` to reconstruct the baseline.
-            params_snapshot: params
+            params_snapshot: sandbox
+                .params
                 .iter()
                 .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
                 .collect(),
-            system_snapshot: system.clone(),
-            credentials_snapshot: credentials.clone(),
+            system_snapshot: sandbox.system.clone(),
+            credentials_snapshot: sandbox.credentials.clone(),
             // Capture's fixture-header parser requires a timezone suffix on the
             // time field (e.g. `2026-05-13T15:48:38+02:00`); a naive datetime
             // is rejected.
@@ -1728,9 +1735,13 @@ mod begin_tests {
             target.parse().expect("BUG: target must parse"),
             "take".to_owned(),
             None,
-            &params,
-            &bmc_wasm_runtime::SystemSnapshot::default(),
-            &credentials,
+            &crate::SandboxedState {
+                params,
+                system: bmc_wasm_runtime::SystemSnapshot::default(),
+                credentials,
+                offline: false,
+                clock_offset_ms: 0,
+            },
             TAKE_EPOCH_MS,
         )
     }

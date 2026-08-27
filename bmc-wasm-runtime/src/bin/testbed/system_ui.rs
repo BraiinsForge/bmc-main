@@ -51,7 +51,7 @@ impl TestbedApp {
     ///
     /// A no-op when the new snapshot matches the cached one.
     pub(super) fn apply_system_update(&mut self, new_system: SystemSnapshot) {
-        if new_system == self.system {
+        if new_system == self.state().system {
             return;
         }
         for view in self.stage.tiles_mut() {
@@ -59,13 +59,11 @@ impl TestbedApp {
                 new_system.clone(),
             ))));
         }
-        self.system = new_system;
-
-        let system = &self.system;
         self.recording_mode
             .record_delivery(|| UnifiedEvent::SystemDelivery {
-                system: system.clone(),
+                system: new_system.clone(),
             });
+        self.state_mut().system = new_system;
     }
 
     /// Render the system-mutation form directly into the provided UI.

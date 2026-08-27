@@ -44,7 +44,7 @@ impl TestbedApp {
             bmc_widget_manifest::ParamValue,
         >,
     ) {
-        if new_params == self.params {
+        if new_params == self.state().params {
             return;
         }
         // Fire `on_params_update` on every view: an operator-driven change
@@ -52,16 +52,14 @@ impl TestbedApp {
         for view in self.stage.tiles_mut() {
             view.send(ViewCommand::Deliver(Delivery::Params(new_params.clone())));
         }
-        self.params = new_params;
-
-        let params = &self.params;
         self.recording_mode
             .record_delivery(|| UnifiedEvent::ParamDelivery {
-                params: params
+                params: new_params
                     .iter()
                     .map(|(k, v)| (k.as_str().to_owned(), v.to_json_value()))
                     .collect(),
             });
+        self.state_mut().params = new_params;
     }
 
     /// Render the unified right-side sidebar:
@@ -79,10 +77,10 @@ impl TestbedApp {
         // the egui closure borrows `self`, then put them back
         // via `apply_params_update` / `apply_system_update`
         // which detect diffs and propagate to every tile.
-        let mut working_params = self.params.clone();
+        let mut working_params = self.state().params.clone();
         let manifest_params = self.manifest.params.clone();
-        let mut working_system = self.system.clone();
-        let mut working_credentials = self.credentials.clone();
+        let mut working_system = self.state().system.clone();
+        let mut working_credentials = self.state().credentials.clone();
         let credential_slots = self.credential_slots();
         let mut credentials_changed = false;
         let mut params_changed = false;
