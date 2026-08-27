@@ -313,30 +313,73 @@ impl WasmWidgetRuntime {
         let on_response = self
             .instance
             .get_typed_func::<(u32, u32, u32, u32), ()>(&self.store, "__on_fetch_response");
-        let alloc_func = self
-            .instance
-            .get_typed_func::<u32, u32>(&self.store, "__alloc");
-
-        let (Ok(on_response), Ok(alloc_func)) = (on_response, alloc_func) else {
-            tracing::warn!("widget missing __on_fetch_response or __alloc export");
+        let Ok(on_response) = on_response else {
+            let state = self.store.data_mut();
+            for response in &responses {
+                state.fetch_body_refs.remove(&response.request_id);
+            }
+            tracing::warn!("widget missing __on_fetch_response export");
             return false;
         };
 
-        for resp in responses {
-            let Some((body_ptr, body_len)) =
-                self.alloc_guest_bytes(alloc_func, &resp.body, "fetch response body")
-            else {
-                continue;
+        let retained = {
+            let state = self.store.data_mut();
+            responses
+                .iter()
+                .map(|response| state.fetch_body_refs.remove(&response.request_id))
+                .collect::<Vec<_>>()
+        };
+        let alloc_func = self
+            .instance
+            .get_typed_func::<u32, u32>(&self.store, "__alloc")
+            .ok();
+        if alloc_func.is_none() && retained.iter().any(|retained| !retained) {
+            tracing::warn!("widget missing __alloc export");
+        }
+
+        for (resp, retained) in responses.into_iter().zip(retained) {
+            let request_id = resp.request_id;
+            let status = resp.status;
+            let callback_args = if retained {
+                let Ok(body_len) = u32::try_from(resp.body.len()) else {
+                    tracing::warn!(
+                        request_id = request_id.to_wire(),
+                        body_len = resp.body.len(),
+                        "retained fetch response body exceeds the guest ABI"
+                    );
+                    continue;
+                };
+                self.store
+                    .data_mut()
+                    .active_fetch_bodies
+                    .insert(request_id, resp.body);
+                (request_id.to_wire(), status, 0, body_len)
+            } else {
+                let Some(alloc_func) = alloc_func else {
+                    continue;
+                };
+                let Some((body_ptr, body_len)) =
+                    self.alloc_guest_bytes(alloc_func, &resp.body, "fetch response body")
+                else {
+                    continue;
+                };
+                (request_id.to_wire(), status, body_ptr, body_len)
             };
 
             if let Err(e) = self.store.set_fuel(self.fuel_per_frame) {
                 tracing::error!("set_fuel failed: {e}");
+                self.store
+                    .data_mut()
+                    .active_fetch_bodies
+                    .remove(&request_id);
                 continue;
             }
-            if let Err(e) = on_response.call(
-                &mut self.store,
-                (resp.request_id.to_wire(), resp.status, body_ptr, body_len),
-            ) {
+            let result = on_response.call(&mut self.store, callback_args);
+            self.store
+                .data_mut()
+                .active_fetch_bodies
+                .remove(&request_id);
+            if let Err(e) = result {
                 self.record_guest_trap("__on_fetch_response", &e);
                 break;
             }

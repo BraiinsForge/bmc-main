@@ -49,6 +49,7 @@ use super::super::memory::{parse_headers, read_bytes, read_optional_bytes, read_
 pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_fetch_now_import(linker)?;
     register_fetch_after_import(linker)?;
+    register_fetch_body_ref_import(linker)?;
     register_fetch_cancel_import(linker)?;
     register_websocket_imports(linker)?;
     register_socket_connect_imports(linker)?;
@@ -61,6 +62,25 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_http_listener_imports(linker)?;
     register_http_response_import(linker)?;
     register_network_info_import(linker)?;
+    Ok(())
+}
+
+fn register_fetch_body_ref_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_fetch_response_body_ref",
+        |mut caller: Caller<'_, HostState>, request_id: u32| -> u32 {
+            let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+                return 0;
+            };
+            let state = caller.data_mut();
+            if !state.fetches.contains(request_id) {
+                return 0;
+            }
+            state.fetch_body_refs.insert(request_id);
+            1
+        },
+    )?;
     Ok(())
 }
 
@@ -285,6 +305,7 @@ fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
             match state.fetches.cancel(request_id) {
                 CancelDisposition::Stopped => {
                     state.fetch_keys.remove(&request_id);
+                    state.fetch_body_refs.remove(&request_id);
                     1
                 }
                 CancelDisposition::WillAbort => 0,

@@ -18,6 +18,14 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
+#![cfg_attr(
+    test,
+    expect(
+        clippy::cast_possible_truncation,
+        reason = "native compilation only exposes the wasm32 host ABI for response tests"
+    )
+)]
+
 //! Network fetching for WASM widgets.
 //!
 //! Provides `fetch()` and `fetch_after()` for HTTP requests. The host performs
@@ -46,10 +54,12 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::marker::PhantomData;
 use std::time::Duration;
 
 use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
 
+#[cfg(target_arch = "wasm32")]
 use crate::json::JsonDoc;
 
 /// Default per-call cap on every fetch operation (DNS, connect, send, recv),
@@ -65,7 +75,32 @@ pub struct FetchResponse {
     pub status: u32,
     /// Request ID returned by [`FetchRequest::send`], for correlating responses.
     pub request_id: FetchRequestId,
-    body: Vec<u8>,
+    body: FetchResponseBody,
+}
+
+#[derive(Debug)]
+enum FetchResponseBody {
+    Guest(Vec<u8>),
+    Host { len: u32 },
+}
+
+/// A response body kept in host memory for the duration of its fetch callback.
+#[derive(Debug, PartialEq, Eq)]
+pub struct FetchBodyRef<'a> {
+    request_id: FetchRequestId,
+    len: u32,
+    _response: PhantomData<&'a FetchResponse>,
+}
+
+impl FetchBodyRef<'_> {
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    pub(crate) const fn request_id_wire(&self) -> u32 {
+        self.request_id.to_wire()
+    }
 }
 
 impl FetchResponse {
@@ -82,24 +117,55 @@ impl FetchResponse {
         FetchOutcome::from_wire(self.status)
     }
 
-    /// Response body as bytes.
+    /// Response body as bytes, or an empty slice when [`Self::body_ref`] owns it.
     #[must_use]
     pub fn body(&self) -> &[u8] {
-        &self.body
+        match &self.body {
+            FetchResponseBody::Guest(body) => body,
+            FetchResponseBody::Host { .. } => &[],
+        }
     }
 
-    /// Response body as a UTF-8 string.
+    /// Callback-scoped host body, when the request opted out of guest delivery.
+    #[must_use]
+    pub const fn body_ref(&self) -> Option<FetchBodyRef<'_>> {
+        match &self.body {
+            FetchResponseBody::Guest(_) => None,
+            FetchResponseBody::Host { len } => Some(FetchBodyRef {
+                request_id: self.request_id,
+                len: *len,
+                _response: PhantomData,
+            }),
+        }
+    }
+
+    /// Guest-delivered response body as UTF-8, or `None` for a host-owned body.
     #[must_use]
     pub fn text(&self) -> Option<&str> {
-        core::str::from_utf8(&self.body).ok()
+        match &self.body {
+            FetchResponseBody::Guest(body) => core::str::from_utf8(body).ok(),
+            FetchResponseBody::Host { .. } => None,
+        }
     }
 
-    /// Parse the response body as JSON via the host-side parser.
+    /// Parse the guest-delivered response body as JSON via the host-side parser.
     ///
-    /// Returns a `JsonDoc` handle for querying fields with JSON Pointer paths.
+    /// # Panics
+    ///
+    /// Panics when the body is host-owned and unavailable to the JSON parser.
+    #[cfg(target_arch = "wasm32")]
     #[must_use]
     pub fn json(&self) -> JsonDoc {
-        JsonDoc::parse(&self.body)
+        JsonDoc::parse(self.json_body())
+    }
+
+    fn json_body(&self) -> &[u8] {
+        match &self.body {
+            FetchResponseBody::Guest(body) => body,
+            FetchResponseBody::Host { .. } => {
+                panic!("BUG: a host-owned fetch body cannot be parsed as guest JSON")
+            }
+        }
     }
 }
 
@@ -130,15 +196,28 @@ unsafe extern "C" {
         body_len: u32,
     ) -> u32;
     fn host_fetch_cancel(request_id: u32) -> u32;
+    fn host_fetch_response_body_ref(request_id: u32) -> u32;
 }
 
 type Callback = fn(&FetchResponse);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ResponseBodyDelivery {
+    Guest,
+    Host,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct PendingFetch {
+    callback_idx: usize,
+    body_delivery: ResponseBodyDelivery,
+}
+
 thread_local! {
     /// Registered callbacks indexed by position.
     static CALLBACKS: RefCell<Vec<Callback>> = const { RefCell::new(Vec::new()) };
-    /// Maps request_id → callback index.
-    static PENDING: RefCell<HashMap<FetchRequestId, usize>> = RefCell::new(HashMap::new());
+    /// Maps request IDs to callback and body-delivery metadata.
+    static PENDING: RefCell<HashMap<FetchRequestId, PendingFetch>> = RefCell::new(HashMap::new());
 }
 
 /// Register a callback and return its index.
@@ -205,6 +284,7 @@ pub struct FetchRequest<'a> {
     headers: Option<&'a str>,
     body: Option<&'a [u8]>,
     timeout: Duration,
+    body_delivery: ResponseBodyDelivery,
 }
 
 impl<'a> FetchRequest<'a> {
@@ -217,6 +297,7 @@ impl<'a> FetchRequest<'a> {
             headers: None,
             body: None,
             timeout: DEFAULT_FETCH_TIMEOUT,
+            body_delivery: ResponseBodyDelivery::Guest,
         }
     }
 
@@ -229,6 +310,7 @@ impl<'a> FetchRequest<'a> {
             headers: None,
             body: None,
             timeout: DEFAULT_FETCH_TIMEOUT,
+            body_delivery: ResponseBodyDelivery::Guest,
         }
     }
 
@@ -241,6 +323,7 @@ impl<'a> FetchRequest<'a> {
             headers: None,
             body: None,
             timeout: DEFAULT_FETCH_TIMEOUT,
+            body_delivery: ResponseBodyDelivery::Guest,
         }
     }
 
@@ -253,6 +336,7 @@ impl<'a> FetchRequest<'a> {
             headers: None,
             body: None,
             timeout: DEFAULT_FETCH_TIMEOUT,
+            body_delivery: ResponseBodyDelivery::Guest,
         }
     }
 
@@ -274,6 +358,13 @@ impl<'a> FetchRequest<'a> {
     #[must_use]
     pub fn body(mut self, body: &'a [u8]) -> Self {
         self.body = Some(body);
+        self
+    }
+
+    /// Keep the response body in host memory and expose a callback-scoped reference.
+    #[must_use]
+    pub(crate) fn host_body(mut self) -> Self {
+        self.body_delivery = ResponseBodyDelivery::Host;
         self
     }
 
@@ -307,7 +398,7 @@ impl<'a> FetchRequest<'a> {
                 b_len,
             )
         })?;
-        PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+        insert_pending(request_id, cb_idx, self.body_delivery);
         Some(request_id)
     }
 
@@ -334,9 +425,35 @@ impl<'a> FetchRequest<'a> {
                 b_len,
             )
         })?;
-        PENDING.with(|p| p.borrow_mut().insert(request_id, cb_idx));
+        insert_pending(request_id, cb_idx, self.body_delivery);
         Some(request_id)
     }
+}
+
+fn insert_pending(
+    request_id: FetchRequestId,
+    callback_idx: usize,
+    requested_delivery: ResponseBodyDelivery,
+) {
+    let body_delivery = match requested_delivery {
+        ResponseBodyDelivery::Guest => ResponseBodyDelivery::Guest,
+        ResponseBodyDelivery::Host => {
+            if unsafe { host_fetch_response_body_ref(request_id.to_wire()) } != 0 {
+                ResponseBodyDelivery::Host
+            } else {
+                ResponseBodyDelivery::Guest
+            }
+        }
+    };
+    PENDING.with(|pending| {
+        pending.borrow_mut().insert(
+            request_id,
+            PendingFetch {
+                callback_idx,
+                body_delivery,
+            },
+        );
+    });
 }
 
 fn timeout_ms(timeout: Duration) -> u32 {
@@ -359,20 +476,31 @@ fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
 
 /// Called by the host when a fetch response is ready.
 ///
-/// The host allocates WASM memory via `__alloc`, writes the body there,
-/// then calls this export. We reconstruct the body Vec and dispatch to
-/// the registered callback.
+/// Guest-delivered bodies arrive through `__alloc`; opted-in bodies remain
+/// host-owned and are valid only while the registered callback runs.
+#[expect(
+    clippy::same_length_and_capacity,
+    reason = "__alloc returns exactly body_len bytes"
+)]
 #[unsafe(no_mangle)]
 pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u32, body_len: u32) {
     let Some(request_id) = FetchRequestId::from_wire(request_id) else {
         return;
     };
 
-    // Reconstruct the body from the host-allocated buffer
-    let body = if body_len > 0 && body_ptr != 0 {
-        unsafe { Vec::from_raw_parts(body_ptr as *mut u8, body_len as usize, body_len as usize) }
-    } else {
-        Vec::new()
+    let pending = PENDING.with(|p| p.borrow_mut().remove(&request_id));
+    let body = match pending.map(|pending| pending.body_delivery) {
+        Some(ResponseBodyDelivery::Host) => FetchResponseBody::Host { len: body_len },
+        Some(ResponseBodyDelivery::Guest) | None => {
+            let body = if body_len > 0 && body_ptr != 0 {
+                unsafe {
+                    Vec::from_raw_parts(body_ptr as *mut u8, body_len as usize, body_len as usize)
+                }
+            } else {
+                Vec::new()
+            };
+            FetchResponseBody::Guest(body)
+        }
     };
 
     let response = FetchResponse {
@@ -381,13 +509,58 @@ pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u3
         body,
     };
 
-    // Look up the registered callback. We must copy the function pointer out
-    // before invoking it, because the callback may call `fetch()` which needs
-    // mutable access to CALLBACKS via `register_callback()`.
-    let cb = PENDING
-        .with(|p| p.borrow_mut().remove(&request_id))
-        .and_then(|idx| CALLBACKS.with(|cbs| cbs.borrow().get(idx).copied()));
+    // Copy the callback out before invoking it because it may register another fetch.
+    let cb = pending
+        .and_then(|pending| CALLBACKS.with(|cbs| cbs.borrow().get(pending.callback_idx).copied()));
     if let Some(cb) = cb {
         cb(&response);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_wasm_protocol::FetchRequestId;
+
+    use super::{FetchRequest, FetchResponse, FetchResponseBody, ResponseBodyDelivery};
+
+    fn response(body: FetchResponseBody) -> FetchResponse {
+        FetchResponse {
+            status: 200,
+            request_id: FetchRequestId::from_wire(1).expect("BUG: one is a valid request ID"),
+            body,
+        }
+    }
+
+    #[test]
+    fn guest_body_remains_available_as_text() {
+        let response = response(FetchResponseBody::Guest(b"hello".to_vec()));
+
+        assert_eq!(response.text(), Some("hello"));
+    }
+
+    #[test]
+    fn host_body_request_opts_out_of_guest_delivery() {
+        let request = FetchRequest::get("https://example.com").host_body();
+
+        assert_eq!(request.body_delivery, ResponseBodyDelivery::Host);
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: a host-owned fetch body cannot be parsed as guest JSON")]
+    fn host_body_is_not_reinterpreted_as_empty_json() {
+        let response = response(FetchResponseBody::Host { len: 5 });
+
+        let _ = response.json_body();
+    }
+
+    #[test]
+    fn host_body_is_not_reinterpreted_as_empty_text() {
+        let response = response(FetchResponseBody::Host { len: 5 });
+
+        assert_eq!(response.text(), None);
+        assert_eq!(
+            response.body_ref().map(|body| body.request_id_wire()),
+            Some(1)
+        );
     }
 }

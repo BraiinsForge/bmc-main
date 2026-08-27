@@ -39,8 +39,6 @@ mod wasm_glue {
     )]
     use bmc_wasm_sdk::*;
 
-    /// jpeg-decoder DCT-scales to 1/8 per axis, tolerating 64× more source pixels.
-    const JPEG_SCALE_HEADROOM: u64 = 64;
     /// Menu clears itself this long after opening, untouched.
     const MENU_AUTO_DISMISS_MS: u32 = 10_000;
 
@@ -109,16 +107,6 @@ mod wasm_glue {
         u32::try_from(secs).unwrap_or(u32::MAX).saturating_mul(1000)
     }
 
-    /// Largest source the host can bound for this body's format.
-    fn max_source_pixels(body: &[u8]) -> u64 {
-        let cap = u64::from(host::max_image_pixels());
-        if body.starts_with(&[0xFF, 0xD8, 0xFF]) {
-            cap * JPEG_SCALE_HEADROOM
-        } else {
-            cap
-        }
-    }
-
     // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
     // released Slint widget so existing server URLs carry over unchanged.
     fn expanded_url() -> Option<String> {
@@ -143,7 +131,7 @@ mod wasm_glue {
     }
 
     fn build_request(_handle: PollHandle) -> Option<FetchSpec> {
-        expanded_url().map(FetchSpec::get)
+        expanded_url().map(|url| FetchSpec::get(url).host_body())
     }
 
     fn on_image(_handle: PollHandle, response: &FetchResponse) {
@@ -159,19 +147,24 @@ mod wasm_glue {
                 transient: false,
             };
         }
-        if !response.ok() || response.body().is_empty() {
+        let body = response
+            .body_ref()
+            .expect("BUG: image fetch did not retain its response body");
+        if !response.ok() || body.is_empty() {
             return Event::FetchError {
                 kind: ErrorKind::LoadFailed,
                 transient: true,
             };
         }
-        let Some((w, h)) = host::image_dimensions(response.body()) else {
+        let Some(dimensions) = host::image_dimensions_ref(&body) else {
             return Event::FetchError {
                 kind: ErrorKind::BadImage,
                 transient: false,
             };
         };
-        if u64::from(w) * u64::from(h) > max_source_pixels(response.body()) {
+        let w = dimensions.width;
+        let h = dimensions.height;
+        if u64::from(w) * u64::from(h) > dimensions.max_source_pixels {
             return Event::FetchError {
                 kind: ErrorKind::TooLarge,
                 transient: false,
@@ -180,20 +173,21 @@ mod wasm_glue {
         let size = widget_size();
         let identity = cache_identity().unwrap_or_default();
         let cover = manifest_params::Params::current().sizing == manifest_params::Sizing::Cover;
-        match IMAGE.set_fit(
-            response.body(),
+        let job = IMAGE.set_fit_ref(
+            body,
             size.width,
             size.height,
             cover,
             identity.as_bytes(),
             on_decoded,
-        ) {
-            Some(job) => Event::DecodeStarted {
+        );
+        match job {
+            Ok(job) => Event::DecodeStarted {
                 job,
                 aspect: render::aspect_of(w, h),
             },
             // Decode slots full — retry later.
-            None => Event::FetchError {
+            Err(_body) => Event::FetchError {
                 kind: ErrorKind::LoadFailed,
                 transient: true,
             },

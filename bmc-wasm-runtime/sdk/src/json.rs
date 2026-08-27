@@ -83,7 +83,7 @@ impl JsonDoc {
     pub fn str(&self, path: &str) -> Option<String> {
         let id = self.0?.to_wire();
         // First call with a reasonable buffer to get the actual length
-        let mut buf = vec![0u8; 256];
+        let mut buf = vec![0_u8; 256];
         let actual = unsafe {
             host_json_get_str(
                 id,

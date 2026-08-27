@@ -28,7 +28,9 @@ use bmc_render::{
     decode_scaled_to_cover, decode_scaled_to_fit,
     renderer::{AssetSuspendResult, AssetTagState},
 };
-use bmc_wasm_protocol::{BitmapSampling, ImageJobId, PackageAssetId, PackageAssetKind};
+use bmc_wasm_protocol::{
+    BitmapSampling, FetchRequestId, ImageJobId, PackageAssetId, PackageAssetKind,
+};
 use wasmi::{Caller, Extern, Linker};
 
 use crate::host_api::{CacheWriteOutcome, CompletedImageDecode, DecodedImage, HostState};
@@ -61,6 +63,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
         RendererAssetKind::Bitmap(BitmapSampling::Nearest),
     )?;
     register_bitmap_fit_import(linker)?;
+    register_bitmap_fit_ref_import(linker)?;
     register_mesh_import(linker)?;
     register_package_renderer_import(
         linker,
@@ -69,6 +72,7 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
     register_bitmap_sample_import(linker)?;
     register_image_decode_import(linker)?;
+    register_image_dimensions_ref_import(linker)?;
     register_max_image_pixels_import(linker)?;
     register_bitmap_from_cache_import(linker)?;
     Ok(())
@@ -526,7 +530,7 @@ fn decode_bitmap_fit(
         log_host_decode_image(
             decoded.1,
             decoded.2,
-            u32::try_from(data.len()).expect("BUG: guest image length originated as u32"),
+            u32::try_from(data.len()).expect("BUG: image length passed the fetch delivery ABI"),
             &probe,
         );
         Ok(decoded)
@@ -542,8 +546,96 @@ fn decode_bitmap_fit(
     }
 }
 
-/// Decode off the render thread, register when done.
-/// Returns a job id (`0` = rejected); guest notified via `__on_image_ready`.
+enum BitmapFitSource {
+    Guest(Vec<u8>),
+    Retained(FetchRequestId),
+}
+
+/// Start a fitted bitmap decode off the render thread.
+/// Successful jobs notify the guest through `__on_image_ready`.
+fn start_bitmap_fit(
+    state: &mut HostState,
+    raw_tag: String,
+    source: BitmapFitSource,
+    max_w: u32,
+    max_h: u32,
+    cover: bool,
+    identity: Vec<u8>,
+) -> Option<ImageJobId> {
+    // Zero max dimensions divide by zero in the cover crop.
+    if max_w == 0 || max_h == 0 {
+        tracing::warn!("host_register_bitmap_fit rejected: zero max dimension");
+        return None;
+    }
+    if !decode_target_within_budget(max_w, max_h) {
+        tracing::warn!(
+            max_w,
+            max_h,
+            "host_register_bitmap_fit rejected: target over budget"
+        );
+        return None;
+    }
+    if state.in_flight_image_decodes as usize >= state.resource_limits.max_image_decodes {
+        tracing::warn!(
+            max_image_decodes = state.resource_limits.max_image_decodes,
+            "host_register_bitmap_fit rejected: decode limit reached"
+        );
+        return None;
+    }
+    let data = match source {
+        BitmapFitSource::Guest(data) => data,
+        BitmapFitSource::Retained(request_id) => {
+            let Some(data) = state.active_fetch_bodies.remove(&request_id) else {
+                tracing::warn!(
+                    request_id = request_id.to_wire(),
+                    "host_register_bitmap_fit_ref rejected: retained body missing"
+                );
+                return None;
+            };
+            data
+        }
+    };
+    let tag = state.namespaced_tag(&raw_tag);
+    let job_id = ImageJobId::alloc(&mut state.next_image_job_id);
+    state.in_flight_image_decodes += 1;
+    let tx = state.image_decode_tx.clone();
+    let cache = state.asset_cache.clone();
+    let image_decode_lock_path = state.image_decode_lock_path.clone();
+    let saved_at = u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
+    std::thread::spawn(move || {
+        let (result, decode_us) = decode_bitmap_fit(
+            &data,
+            max_w,
+            max_h,
+            cover,
+            image_decode_lock_path.as_deref(),
+        );
+        // Write-at-decode, off the render thread; the first draw restores from it.
+        let cache_write = if let (Ok(decoded), Some(cache)) = (&result, &cache) {
+            let (rgba, width, height) = decoded.into();
+            let mut meta = Vec::with_capacity(8 + identity.len());
+            meta.extend_from_slice(&width.to_le_bytes());
+            meta.extend_from_slice(&height.to_le_bytes());
+            meta.extend_from_slice(&identity);
+            match cache.put(&raw_tag, saved_at, &meta, rgba) {
+                Ok(()) => CacheWriteOutcome::Stored,
+                Err(error) => CacheWriteOutcome::Failed(error.to_string()),
+            }
+        } else {
+            CacheWriteOutcome::Disabled
+        };
+        let _ = tx.send(CompletedImageDecode {
+            job_id,
+            raw_tag,
+            tag,
+            result,
+            cache_write,
+            decode_us,
+        });
+    });
+    Some(job_id)
+}
+
 fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -574,67 +666,60 @@ fn register_bitmap_fit_import(linker: &mut Linker<HostState>) -> Result<()> {
                 return 0;
             };
             let identity = read_bytes(&caller, identity_ptr, identity_len).unwrap_or_default();
-            // A zero max dimension divides by zero in the cover crop; reject it
-            // here rather than trust the guest's integers.
-            if max_w == 0 || max_h == 0 {
-                tracing::warn!("host_register_bitmap_fit rejected: zero max dimension");
+            start_bitmap_fit(
+                caller.data_mut(),
+                raw_tag,
+                BitmapFitSource::Guest(data),
+                max_w,
+                max_h,
+                cover != 0,
+                identity,
+            )
+            .map_or(0, ImageJobId::to_wire)
+        },
+    )?;
+    Ok(())
+}
+
+fn register_bitmap_fit_ref_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_register_bitmap_fit_ref",
+        |mut caller: Caller<'_, HostState>,
+         tag_ptr: u32,
+         tag_len: u32,
+         request_id: u32,
+         max_w: u32,
+         max_h: u32,
+         cover: u32,
+         identity_ptr: u32,
+         identity_len: u32|
+         -> u32 {
+            let Some(raw_tag) = read_tag(&caller, tag_ptr, tag_len) else {
+                return 0;
+            };
+            let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+                return 0;
+            };
+            let kind = RendererAssetKind::Bitmap(BitmapSampling::Linear);
+            if !caller.data().renderer_asset_registration_matches(
+                &raw_tag,
+                kind,
+                &AssetBacking::Volatile,
+            ) {
                 return 0;
             }
-            if !decode_target_within_budget(max_w, max_h) {
-                tracing::warn!(
-                    max_w,
-                    max_h,
-                    "host_register_bitmap_fit rejected: target over budget"
-                );
-                return 0;
-            }
-            let state = caller.data_mut();
-            if state.in_flight_image_decodes as usize >= state.resource_limits.max_image_decodes {
-                tracing::warn!(
-                    max_image_decodes = state.resource_limits.max_image_decodes,
-                    "host_register_bitmap_fit rejected: decode limit reached"
-                );
-                return 0;
-            }
-            let tag = state.namespaced_tag(&raw_tag);
-            let job_id = ImageJobId::alloc(&mut state.next_image_job_id);
-            state.in_flight_image_decodes += 1;
-            let tx = state.image_decode_tx.clone();
-            let cache = state.asset_cache.clone();
-            let image_decode_lock_path = state.image_decode_lock_path.clone();
-            let saved_at = u64::try_from(state.system_time.timestamp_millis()).unwrap_or(0);
-            std::thread::spawn(move || {
-                let (result, decode_us) = decode_bitmap_fit(
-                    &data,
-                    max_w,
-                    max_h,
-                    cover != 0,
-                    image_decode_lock_path.as_deref(),
-                );
-                // Write-at-decode, off the render thread; the first draw restores from it.
-                let cache_write = if let (Ok(decoded), Some(cache)) = (&result, &cache) {
-                    let (rgba, width, height) = decoded.into();
-                    let mut meta = Vec::with_capacity(8 + identity.len());
-                    meta.extend_from_slice(&width.to_le_bytes());
-                    meta.extend_from_slice(&height.to_le_bytes());
-                    meta.extend_from_slice(&identity);
-                    match cache.put(&raw_tag, saved_at, &meta, rgba) {
-                        Ok(()) => CacheWriteOutcome::Stored,
-                        Err(error) => CacheWriteOutcome::Failed(error.to_string()),
-                    }
-                } else {
-                    CacheWriteOutcome::Disabled
-                };
-                let _ = tx.send(CompletedImageDecode {
-                    job_id,
-                    raw_tag,
-                    tag,
-                    result,
-                    cache_write,
-                    decode_us,
-                });
-            });
-            job_id.to_wire()
+            let identity = read_bytes(&caller, identity_ptr, identity_len).unwrap_or_default();
+            start_bitmap_fit(
+                caller.data_mut(),
+                raw_tag,
+                BitmapFitSource::Retained(request_id),
+                max_w,
+                max_h,
+                cover != 0,
+                identity,
+            )
+            .map_or(0, ImageJobId::to_wire)
         },
     )?;
     Ok(())
@@ -772,6 +857,64 @@ fn log_host_decode_image(w: u32, h: u32, data_len: u32, probe: &bmc_render::prof
     );
 }
 
+const IMAGE_PROBE_INVALID: i64 = -1;
+/// jpeg-decoder DCT-scales to 1/8 per axis, tolerating 64× more source pixels.
+const JPEG_SCALE_HEADROOM: u64 = 64;
+
+fn register_image_dimensions_ref_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_image_dimensions_ref",
+        |mut caller: Caller<'_, HostState>, request_id: u32, max_source_pixels_out: u32| -> i64 {
+            if max_source_pixels_out == 0 {
+                return IMAGE_PROBE_INVALID;
+            }
+            let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+                return IMAGE_PROBE_INVALID;
+            };
+            let (width, height, max_source_pixels) = {
+                let Some(data) = caller.data().active_fetch_bodies.get(&request_id) else {
+                    return IMAGE_PROBE_INVALID;
+                };
+                match probe_image(data) {
+                    Ok(((width, height), format)) => {
+                        #[cfg(feature = "profiling")]
+                        log_host_image_probe(
+                            width,
+                            height,
+                            u32::try_from(data.len()).unwrap_or(u32::MAX),
+                        );
+                        (width, height, retained_image_pixel_limit(format))
+                    }
+                    Err(error) => {
+                        tracing::error!(
+                            %error,
+                            data_len = data.len(),
+                            "host_image_dimensions_ref probe failed"
+                        );
+                        return IMAGE_PROBE_INVALID;
+                    }
+                }
+            };
+            let Some(memory) = caller.get_export("memory").and_then(Extern::into_memory) else {
+                return IMAGE_PROBE_INVALID;
+            };
+            let bytes = max_source_pixels.to_le_bytes();
+            let start = max_source_pixels_out as usize;
+            let Some(end) = start.checked_add(bytes.len()) else {
+                return IMAGE_PROBE_INVALID;
+            };
+            let data = memory.data_mut(&mut caller);
+            if end > data.len() {
+                return IMAGE_PROBE_INVALID;
+            }
+            data[start..end].copy_from_slice(&bytes);
+            (i64::from(width) << 32) | i64::from(height)
+        },
+    )?;
+    Ok(())
+}
+
 fn register_image_decode_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
@@ -866,16 +1009,31 @@ fn rgba_byte_len_limited(width: u32, height: u32) -> Result<usize> {
     usize::try_from(bytes).map_err(Into::into)
 }
 
-fn probe_image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
+fn probe_image(data: &[u8]) -> Result<((u32, u32), Option<image::ImageFormat>)> {
     match std::panic::catch_unwind(|| {
-        image::ImageReader::new(std::io::Cursor::new(data))
+        let reader = image::ImageReader::new(std::io::Cursor::new(data))
             .with_guessed_format()
-            .map_err(image::ImageError::IoError)
-            .and_then(image::ImageReader::into_dimensions)
+            .map_err(image::ImageError::IoError)?;
+        let format = reader.format();
+        reader
+            .into_dimensions()
+            .map(|dimensions| (dimensions, format))
     }) {
-        Ok(Ok(dimensions)) => Ok(dimensions),
+        Ok(Ok(probe)) => Ok(probe),
         Ok(Err(e)) => Err(anyhow::anyhow!("{e}")),
         Err(_) => bail!("decoder panicked while probing dimensions"),
+    }
+}
+
+fn probe_image_dimensions(data: &[u8]) -> Result<(u32, u32)> {
+    probe_image(data).map(|(dimensions, _format)| dimensions)
+}
+
+fn retained_image_pixel_limit(format: Option<image::ImageFormat>) -> u64 {
+    if format == Some(image::ImageFormat::Jpeg) {
+        MAX_DECODE_IMAGE_PIXELS.saturating_mul(JPEG_SCALE_HEADROOM)
+    } else {
+        MAX_DECODE_IMAGE_PIXELS
     }
 }
 
@@ -908,7 +1066,8 @@ mod tests {
 
     use super::{
         MAX_DECODE_IMAGE_PIXELS, decode_bitmap_fit, decode_image_rgba_limited,
-        decode_target_within_budget, probe_image_dimensions, rgba_byte_len_limited,
+        decode_target_within_budget, probe_image, probe_image_dimensions,
+        retained_image_pixel_limit, rgba_byte_len_limited,
     };
 
     #[test]
@@ -1032,6 +1191,22 @@ mod tests {
             .expect("BUG: JPEG should decode within budget");
 
         assert_eq!((rgba.width(), rgba.height()), (2, 2));
+    }
+
+    #[test]
+    fn retained_image_budget_uses_the_host_detected_format() {
+        let (_, jpeg_format) =
+            probe_image(&encode(ImageFormat::Jpeg)).expect("BUG: JPEG should probe");
+        let (_, png_format) =
+            probe_image(&encode(ImageFormat::Png)).expect("BUG: PNG should probe");
+
+        assert_eq!(jpeg_format, Some(ImageFormat::Jpeg));
+        assert_eq!(png_format, Some(ImageFormat::Png));
+        assert!(retained_image_pixel_limit(jpeg_format) > MAX_DECODE_IMAGE_PIXELS);
+        assert_eq!(
+            retained_image_pixel_limit(png_format),
+            MAX_DECODE_IMAGE_PIXELS
+        );
     }
 
     /// `host_decode_image` probes or decodes depending on a null output

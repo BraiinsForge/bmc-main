@@ -2174,6 +2174,18 @@ impl WasmWidgetRuntime {
         self.store.data().fetch_log_probe.last_refusal.as_deref()
     }
 
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn test_active_fetch_body_count(&self) -> usize {
+        self.store.data().active_fetch_bodies.len()
+    }
+
+    #[cfg(feature = "testing")]
+    #[must_use]
+    pub fn test_fetch_body_ref_count(&self) -> usize {
+        self.store.data().fetch_body_refs.len()
+    }
+
     #[cfg(test)]
     #[must_use]
     pub fn test_geometry(

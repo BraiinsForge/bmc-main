@@ -55,6 +55,7 @@ use std::collections::HashMap;
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, SvgId};
 
 use crate::host;
+use crate::net::FetchBodyRef;
 
 macro_rules! define_slot {
     (
@@ -120,10 +121,30 @@ impl BitmapSlot {
         on_ready: ImageReadyCallback,
     ) -> Option<ImageJobId> {
         let job_id = host::register_bitmap_fit(self.name, data, max_w, max_h, cover, identity)?;
-        let idx = register_image_callback(on_ready);
-        IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, idx));
+        remember_image_callback(job_id, on_ready);
         Some(job_id)
     }
+
+    /// Decode a callback-scoped host fetch body without copying it into WASM.
+    #[must_use]
+    pub fn set_fit_ref<'a>(
+        &self,
+        body: FetchBodyRef<'a>,
+        max_w: u32,
+        max_h: u32,
+        cover: bool,
+        identity: &[u8],
+        on_ready: ImageReadyCallback,
+    ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+        let job_id = host::register_bitmap_fit_ref(self.name, body, max_w, max_h, cover, identity)?;
+        remember_image_callback(job_id, on_ready);
+        Ok(job_id)
+    }
+}
+
+fn remember_image_callback(job_id: ImageJobId, on_ready: ImageReadyCallback) {
+    let idx = register_image_callback(on_ready);
+    IMAGE_PENDING.with(|p| p.borrow_mut().insert(job_id, idx));
 }
 
 /// Async-decode result: the job handle, and `Some(id)` on success / `None` on failure.

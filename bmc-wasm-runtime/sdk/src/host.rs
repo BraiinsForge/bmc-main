@@ -26,6 +26,8 @@
 
 // Re-export from protocol — single source of truth for wire-format enums
 #[cfg(target_arch = "wasm32")]
+use crate::net::FetchBodyRef;
+#[cfg(target_arch = "wasm32")]
 use bmc_wasm_protocol::{AudioId, BitmapId, ImageJobId, MeshId, PackageAssetRef, SvgId};
 pub use bmc_wasm_protocol::{ButtonSize, ButtonStyle};
 
@@ -131,6 +133,16 @@ mod ffi {
             identity_ptr: *const u8,
             identity_len: u32,
         ) -> u32;
+        pub(super) fn host_register_bitmap_fit_ref(
+            tag_ptr: *const u8,
+            tag_len: u32,
+            request_id: u32,
+            max_w: u32,
+            max_h: u32,
+            cover: u32,
+            identity_ptr: *const u8,
+            identity_len: u32,
+        ) -> u32;
         pub(super) fn host_register_bitmap_from_cache(tag_ptr: *const u8, tag_len: u32) -> u32;
 
         // Mesh registration. The host dedups by tag.
@@ -163,6 +175,7 @@ mod ffi {
             rgba_out_ptr: *mut u8,
             rgba_out_cap: u32,
         ) -> i64;
+        fn host_image_dimensions_ref(request_id: u32, max_source_pixels_out: *mut u64) -> i64;
 
         // Tag-prefix eviction across icon, bitmap, mesh, and audio registries.
         fn host_evict_prefix(prefix_ptr: *const u8, prefix_len: u32) -> u32;
@@ -444,6 +457,32 @@ mod ffi {
         })
     }
 
+    /// Start a fitted bitmap decode from a callback-scoped host fetch body.
+    /// Rejection returns the body reference for another operation.
+    #[must_use]
+    pub fn register_bitmap_fit_ref<'a>(
+        tag: &str,
+        body: FetchBodyRef<'a>,
+        max_w: u32,
+        max_h: u32,
+        cover: bool,
+        identity: &[u8],
+    ) -> Result<ImageJobId, FetchBodyRef<'a>> {
+        let job_id = ImageJobId::from_wire(unsafe {
+            host_register_bitmap_fit_ref(
+                tag.as_ptr(),
+                tag.len() as u32,
+                body.request_id_wire(),
+                max_w,
+                max_h,
+                u32::from(cover),
+                identity.as_ptr(),
+                identity.len() as u32,
+            )
+        });
+        job_id.ok_or(body)
+    }
+
     /// Restore a bitmap from its per-instance cache entry
     /// (host-side mmap → texture; no bytes cross into wasm).
     /// `None` on a miss.
@@ -485,6 +524,42 @@ mod ffi {
             return None;
         }
         Some((w, h))
+    }
+
+    /// Dimensions and the format-aware source-pixel allowance for a retained image.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct RetainedImageDimensions {
+        /// Declared image width.
+        pub width: u32,
+        /// Declared image height.
+        pub height: u32,
+        /// Source-pixel ceiling for the host-detected image format.
+        pub max_source_pixels: u64,
+    }
+
+    /// Get image dimensions without copying a retained fetch body into WASM.
+    /// The host-detected format determines the returned source-pixel allowance.
+    /// Callers must reject images whose width times height exceeds that
+    /// allowance before registering a decode.
+    #[must_use]
+    pub fn image_dimensions_ref(body: &FetchBodyRef<'_>) -> Option<RetainedImageDimensions> {
+        let mut max_source_pixels = 0;
+        let packed = unsafe {
+            host_image_dimensions_ref(body.request_id_wire(), &raw mut max_source_pixels)
+        };
+        if packed < 0 {
+            return None;
+        }
+        let width = (packed >> 32) as u32;
+        let height = (packed & 0xFFFF_FFFF) as u32;
+        if width == 0 || height == 0 {
+            return None;
+        }
+        Some(RetainedImageDimensions {
+            width,
+            height,
+            max_source_pixels,
+        })
     }
 
     /// Decode image data (PNG, JPEG, etc.) to RGBA pixels on the host.

@@ -232,6 +232,15 @@ impl FetchState {
         self.settle_tx.clone()
     }
 
+    /// Whether a request is queued or in flight.
+    pub fn contains(&self, request_id: FetchRequestId) -> bool {
+        self.in_flight.contains(&request_id)
+            || self
+                .delayed
+                .iter()
+                .any(|fetch| fetch.request_id == request_id)
+    }
+
     /// Settlements delivered since the last drain, each releasing its slot.
     pub fn drain_settled(&mut self) -> Vec<CompletedFetch> {
         let mut settled = Vec::new();
@@ -924,6 +933,12 @@ pub(crate) struct HostState {
 
     pub fetches: FetchState,
 
+    /// Requests whose response bodies stay host-owned during guest delivery.
+    pub fetch_body_refs: HashSet<FetchRequestId>,
+
+    /// Bodies exposed only while their retained fetch callback is running.
+    pub active_fetch_bodies: HashMap<FetchRequestId, Vec<u8>>,
+
     /// Receiver for completed off-thread image decodes.
     pub image_decode_rx: mpsc::Receiver<CompletedImageDecode>,
 
@@ -1311,6 +1326,8 @@ impl HostState {
             current_lifecycle: Lifecycle::Idle,
             next_request_id: 1,
             fetches: FetchState::new(),
+            fetch_body_refs: HashSet::new(),
+            active_fetch_bodies: HashMap::new(),
             image_decode_rx,
             image_decode_tx,
             staged_guest_deliveries: StagedGuestDeliveries::default(),

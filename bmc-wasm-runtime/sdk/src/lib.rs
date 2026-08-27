@@ -364,7 +364,7 @@ pub mod math;
 pub mod mdns;
 pub mod mesh;
 pub mod modal;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod net;
 pub mod network;
 pub mod notification;

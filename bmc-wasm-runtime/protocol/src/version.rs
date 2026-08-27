@@ -29,7 +29,7 @@
 /// - Host function signatures (names, parameter types, return types)
 /// - Binary tree serialization format (node types, field layout)
 /// - Host-side behavioral contracts (e.g. button click reporting)
-pub const SDK_VERSION: (u16, u16, u16) = (0, 4, 0);
+pub const SDK_VERSION: (u16, u16, u16) = (0, 5, 0);
 
 /// The instantiation-handshake export: returns the version, installs the hook.
 pub const SDK_INIT_EXPORT: &str = "__bmc_sdk_init";

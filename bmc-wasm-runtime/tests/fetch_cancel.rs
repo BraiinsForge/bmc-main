@@ -43,6 +43,8 @@ fn fetch_cancel_wat() -> String {
           (result i32)))
       (import "env" "host_fetch_cancel"
         (func $host_fetch_cancel (param i32) (result i32)))
+      (import "env" "host_fetch_response_body_ref"
+        (func $host_fetch_response_body_ref (param i32) (result i32)))
       (import "env" "host_fetch"
         (func $host_fetch
           (param i32 i32 i32 i32 i32 i32 i32 i32 i32)
@@ -73,7 +75,10 @@ fn fetch_cancel_wat() -> String {
             (i32.const 0)     ;; headers_ptr
             (i32.const 0)     ;; headers_len
             (i32.const 0)     ;; body_ptr
-            (i32.const 0)))) ;; body_len
+            (i32.const 0)))  ;; body_len
+        global.get $req_id
+        call $host_fetch_response_body_ref
+        drop)
 
       (func (export "cancel_it") (result i32)
         (call $host_fetch_cancel (global.get $req_id)))
@@ -139,11 +144,14 @@ fn cancel_removes_a_queued_delayed_fetch_entirely() {
     )
     .expect("BUG: runtime construct");
 
+    assert_eq!(runtime.test_fetch_body_ref_count(), 1);
+
     assert_eq!(
         runtime.call_export_i32("cancel_it"),
         Some(1),
         "cancelling a queued delayed fetch should report it was removed",
     );
+    assert_eq!(runtime.test_fetch_body_ref_count(), 0);
     assert_eq!(
         runtime.call_export_i32("cancel_it"),
         Some(0),

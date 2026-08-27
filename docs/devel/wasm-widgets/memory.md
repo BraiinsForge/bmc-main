@@ -99,6 +99,10 @@ Heap allocation still consumes linear memory. This guidance moves variable or la
 it does not make that storage free. Dropping values lets the guest allocator reuse their space, but does not guarantee
 that WebAssembly memory shrinks or that pages immediately leave the process's resident set.
 
+For response bodies consumed by host operations, use `FetchSpec::host_body` to keep the encoded bytes outside guest
+linear memory. The body remains available through `FetchResponse::body_ref` for the duration of the fetch callback; the
+`body` accessor is empty, `text` returns `None`, and `json` panics for host-retained bodies.
+
 ## Scaling and resident memory
 
 Two hundred 64 KiB stack reservations account for 12.5 MiB of linear-memory capacity. Compared with the former 1 MiB

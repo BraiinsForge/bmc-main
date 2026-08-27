@@ -32,6 +32,16 @@ pub enum Method {
     Delete,
 }
 
+/// Where the host delivers a fetch response body.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FetchBodyDelivery {
+    /// Copy the response body into guest memory.
+    #[default]
+    Guest,
+    /// Keep the response body in host memory for callback-scoped processing.
+    Host,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FetchSpec {
     pub method: Method,
@@ -41,6 +51,7 @@ pub struct FetchSpec {
     /// Per-call timeout; `None` defers to the SDK-wide
     /// default applied by `FetchRequest`.
     pub timeout: Option<Duration>,
+    pub body_delivery: FetchBodyDelivery,
 }
 
 impl FetchSpec {
@@ -71,6 +82,7 @@ impl FetchSpec {
             headers: None,
             body: None,
             timeout: None,
+            body_delivery: FetchBodyDelivery::Guest,
         }
     }
 
@@ -83,6 +95,15 @@ impl FetchSpec {
     #[must_use]
     pub fn body(mut self, body: impl Into<Vec<u8>>) -> Self {
         self.body = Some(body.into());
+        self
+    }
+
+    /// Keep the response body in host memory for callback-scoped processing.
+    /// `FetchResponse::body` is empty, `FetchResponse::text` returns `None`, and
+    /// `FetchResponse::json` panics for host-retained bodies.
+    #[must_use]
+    pub fn host_body(mut self) -> Self {
+        self.body_delivery = FetchBodyDelivery::Host;
         self
     }
 
@@ -434,7 +455,7 @@ mod wasm {
 
     use crate::net::{self, FetchRequest, FetchResponse};
 
-    use super::{Config, FetchBackend, FetchSpec, Handle, Method, Registry};
+    use super::{Config, FetchBackend, FetchBodyDelivery, FetchSpec, Handle, Method, Registry};
 
     pub type OnReply = fn(Handle, &FetchResponse);
 
@@ -460,6 +481,10 @@ mod wasm {
             let req = match spec.body.as_deref() {
                 Some(body) => req.body(body),
                 None => req,
+            };
+            let req = match spec.body_delivery {
+                FetchBodyDelivery::Guest => req,
+                FetchBodyDelivery::Host => req.host_body(),
             };
             match delay_ms {
                 Some(ms) => req.send_after(ms, trampoline),
