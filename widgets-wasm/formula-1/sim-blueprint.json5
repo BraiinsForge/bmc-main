@@ -16,7 +16,8 @@
         // Lap 50 of 72: the field has spread, one car is out and another
         // excluded, some are in the pits, and the stints have separated
         // enough that the grid is spread across all three compounds.
-        params: { session: "race", start_lap: 50, image_dir: "gallery/artwork" },
+        // Seven laps of window: the whole band a pit stop can fall in.
+        params: { session: "race", start_lap: 50, time_scale: 5, lap_window: 7, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
@@ -25,8 +26,9 @@
         // The one board that seats the whole field, so the states that sort
         // to the tail are only ever visible here: a retirement, an
         // exclusion, and the damaged car a lap down. Late enough to hold
-        // all three, and on a lap where a pit window is open.
-        params: { session: "quali", start_lap: 55, image_dir: "gallery/artwork" },
+        // all three, and on a lap where a pit window is open —
+        // which closes after 56, hence two laps of window.
+        params: { session: "quali", start_lap: 55, time_scale: 5, lap_window: 2, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
@@ -35,7 +37,8 @@
         // A lap where someone leaving the pits is quick enough to be seated:
         // practice ranks on the best lap, so an out lap further down is
         // generated and never drawn.
-        params: { session: "practice", start_lap: 53, image_dir: "gallery/artwork" },
+        // Four laps is what that pit window has left.
+        params: { session: "practice", start_lap: 53, time_scale: 5, lap_window: 4, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",
@@ -43,7 +46,8 @@
         port: 20107,
         // Lap 35 sits between the retirement and the exclusion, so the board
         // carries exactly one car out where the `race` scenario carries two.
-        params: { session: "race", sprint: true, start_lap: 35, image_dir: "gallery/artwork" },
+        // Five laps of window keeps it short of that exclusion, at 40.
+        params: { session: "race", sprint: true, start_lap: 35, time_scale: 5, lap_window: 5, image_dir: "gallery/artwork" },
     },
     {
         device: "formula-1",

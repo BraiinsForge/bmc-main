@@ -194,6 +194,16 @@
           ],
           "default": null
         },
+        "lap_window": {
+          "description": "How many laps the session runs before returning to [`Self::start_lap`].\n\nA scenario is pinned to the lap that shows what it exists to show,\nand a running clock walks away from it — a pit window closes,\na retirement becomes two. Cycling holds that state indefinitely,\nat the cost of a jump on the wrap.\n\nOmitted, the session runs to the race distance.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint",
+          "default": null,
+          "minimum": 0
+        },
         "season_underway": {
           "description": "`false` scripts the off-season: no next race, empty standings.",
           "type": "boolean",
@@ -225,6 +235,13 @@
         "status": {
           "description": "HTTP status every endpoint returns.",
           "$ref": "#/$defs/HttpStatus"
+        },
+        "time_scale": {
+          "description": "How many session seconds pass per real second.\n\nA board recomputes from completed laps, so it steps once a lap —\nat `1`, every 72 s, which is one frozen frame for any real take.\nLap *times* are unscaled and still read around 1:12.",
+          "type": "integer",
+          "format": "uint",
+          "default": 1,
+          "minimum": 0
         },
         "today": {
           "description": "The day the calendar is drawn around; omitted, the real one.\n\nThe weekend is the one following it,\nand the debut seasons count back from its year.",

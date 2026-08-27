@@ -485,6 +485,21 @@ pub struct Params {
     /// so whatever sorts to the tail — a retirement, an exclusion,
     /// a car a lap down — is visible on the full-field board alone.
     pub start_lap: usize,
+    /// How many session seconds pass per real second.
+    ///
+    /// A board recomputes from completed laps, so it steps once a lap —
+    /// at `1`, every 72 s, which is one frozen frame for any real take.
+    /// Lap *times* are unscaled and still read around 1:12.
+    pub time_scale: usize,
+    /// How many laps the session runs before returning to [`Self::start_lap`].
+    ///
+    /// A scenario is pinned to the lap that shows what it exists to show,
+    /// and a running clock walks away from it — a pit window closes,
+    /// a retirement becomes two. Cycling holds that state indefinitely,
+    /// at the cost of a jump on the wrap.
+    ///
+    /// Omitted, the session runs to the race distance.
+    pub lap_window: Option<usize>,
     /// `false` scripts the off-season: no next race, empty standings.
     pub season_underway: bool,
     /// Whether the weekend runs a sprint, which replaces two practices
@@ -565,6 +580,8 @@ impl Default for Params {
         Self {
             session: Session::Idle,
             start_lap: 0,
+            time_scale: 1,
+            lap_window: None,
             season_underway: true,
             sprint: false,
             stale_secs: 0,
@@ -580,6 +597,16 @@ impl Default for Params {
 impl Params {
     #[must_use]
     pub fn resource(&self, name: &str, port: u16) -> ResourceSpec {
+        // A window past the race distance wraps inside `field_at` and lands
+        // the board on an early lap, quietly forgetting what it was pinned to.
+        assert!(
+            self.lap_window.is_none_or(|laps| {
+                self.start_lap + laps <= TOTAL_LAPS.try_into().unwrap_or(usize::MAX)
+            }),
+            "start_lap {} plus lap_window {:?} runs past the {TOTAL_LAPS}-lap race",
+            self.start_lap,
+            self.lap_window,
+        );
         let home = format!("127.0.0.1:{port}");
 
         // Read once, so every resource this run serves
@@ -619,6 +646,8 @@ impl Params {
             let running = self.session == session;
             let stale = self.stale_secs;
             let start_lap = self.start_lap;
+            let time_scale = self.time_scale;
+            let lap_window = self.lap_window;
             let status = self.status;
             let home = home.clone();
             endpoints.push(EndpointSpec {
@@ -626,7 +655,7 @@ impl Params {
                 path: format!("/api/v1/data/formula-1/{resource}"),
                 response: ResponseSpec::computed(move |ctx| {
                     let data = if running {
-                        board(session, ctx, start_lap)
+                        board(session, ctx, start_lap, time_scale, lap_window)
                     } else {
                         json!({ "live": false })
                     };
@@ -1369,9 +1398,33 @@ fn field_at(session: Session, t_s: f64, seed: u64) -> (Vec<Progress>, u32) {
     (field, lead_lap)
 }
 
-fn board(session: Session, ctx: &RequestCtx, start_lap: usize) -> Json {
-    #[expect(clippy::cast_precision_loss, reason = "a lap count is a few dozen")]
-    let elapsed = (start_lap as f64).mul_add(LAP_SECS, ctx.t_s);
+/// How far into the session the clock stands, in seconds from its first lap.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "a lap count is a few dozen, and a clock scale a few tens"
+)]
+fn session_elapsed(
+    t_s: f64,
+    start_lap: usize,
+    time_scale: usize,
+    lap_window: Option<usize>,
+) -> f64 {
+    let run_for = t_s * time_scale as f64;
+    let into_session = match lap_window {
+        Some(laps) if laps > 0 => run_for.rem_euclid(laps as f64 * LAP_SECS),
+        _ => run_for,
+    };
+    (start_lap as f64).mul_add(LAP_SECS, into_session)
+}
+
+fn board(
+    session: Session,
+    ctx: &RequestCtx,
+    start_lap: usize,
+    time_scale: usize,
+    lap_window: Option<usize>,
+) -> Json {
+    let elapsed = session_elapsed(ctx.t_s, start_lap, time_scale, lap_window);
     let (field, lead_lap) = field_at(session, elapsed, ctx.seed);
     // Where the clock judges the session a stopped driver's lap still
     // counts, so the board cannot hand the fastest lap to a driver
@@ -1635,9 +1688,28 @@ mod tests {
     }
 
     #[test]
+    fn a_lap_window_cycles_the_session_without_leaving_it() {
+        let at = |t_s| session_elapsed(t_s, 50, 5, Some(7));
+        let opened = at(0.0);
+        // Seven laps at five times the clock, in the real seconds that takes.
+        let cycle = 7.0 * LAP_SECS / 5.0;
+        assert!(
+            at(cycle / 2.0) > opened,
+            "the session must advance inside its window"
+        );
+        // A millisecond of session time. `f64::EPSILON` is the gap at 1.0,
+        // and these run to a few thousand, so it would demand exact equality.
+        assert!(
+            (at(cycle) - opened).abs() < 1e-3,
+            "and return to the lap it opened on, so the state it was pinned \
+             to outlasts any recording"
+        );
+    }
+
+    #[test]
     fn a_race_replays_identically_and_positions_close_up() {
-        let one = board(Session::Race, &ctx(1_800.0), 0);
-        let two = board(Session::Race, &ctx(1_800.0), 0);
+        let one = board(Session::Race, &ctx(1_800.0), 0, 1, None);
+        let two = board(Session::Race, &ctx(1_800.0), 0, 1, None);
         assert_eq!(one, two, "same time and seed must replay the same board");
         let entries = one["entries"].as_array().expect("entries");
         assert_eq!(entries.len(), GRID.len());
@@ -1657,7 +1729,7 @@ mod tests {
     #[test]
     fn the_retiree_sinks_to_the_tail_as_a_dnf() {
         let secs_past_retirement = f64::from(RETIREMENT_LAP + 5) * LAP_SECS;
-        let reply = board(Session::Race, &ctx(secs_past_retirement), 0);
+        let reply = board(Session::Race, &ctx(secs_past_retirement), 0, 1, None);
         let entries = reply["entries"].as_array().expect("entries");
         let last = entries.last().expect("a tail");
         assert_eq!(last["status"], "DNF");
@@ -1695,7 +1767,7 @@ mod tests {
     fn a_qualifying_row_reports_the_lap_it_ranks_on() {
         let at = ctx(0.0);
         let (field, _) = field_at(Session::Quali, 55.0 * LAP_SECS, at.seed);
-        let quali = board(Session::Quali, &at, 55);
+        let quali = board(Session::Quali, &at, 55, 1, None);
         let rows = quali["entries"].as_array().expect("entries");
         for (entry, run) in rows.iter().zip(&field) {
             assert_eq!(
@@ -1713,7 +1785,7 @@ mod tests {
     fn a_timed_session_gaps_on_the_best_lap_and_never_on_laps() {
         let at = ctx(0.0);
         let (field, _) = field_at(Session::Practice, 51.0 * LAP_SECS, at.seed);
-        let reply = board(Session::Practice, &at, 51);
+        let reply = board(Session::Practice, &at, 51, 1, None);
         let rows = reply["entries"].as_array().expect("entries");
         assert_eq!(rows[0]["gap_to_leader"], "LEADER");
         for (entry, run) in rows.iter().zip(&field).skip(1) {
@@ -1736,7 +1808,7 @@ mod tests {
         // What the narrowest frame carrying the column seats.
         const SEATS: usize = 5;
         let seats_one = |start_lap: usize| {
-            let reply = board(Session::Practice, &ctx(0.0), start_lap);
+            let reply = board(Session::Practice, &ctx(0.0), start_lap, 1, None);
             reply["entries"].as_array().expect("entries")[..SEATS]
                 .iter()
                 .any(|entry| entry["is_out_lap"] == true)
@@ -1774,7 +1846,7 @@ mod tests {
     fn a_session_sets_new_best_sectors_as_it_runs() {
         let mut painters = BTreeSet::new();
         for lap in 5..60 {
-            let reply = board(Session::Race, &ctx(0.0), lap);
+            let reply = board(Session::Race, &ctx(0.0), lap, 1, None);
             for entry in reply["entries"].as_array().expect("entries") {
                 let purple =
                     (1..=3).any(|which| entry[format!("sector{which}")]["color"] == "purple");
@@ -1794,7 +1866,7 @@ mod tests {
     /// the cell shows a latest lap rather than a best.
     #[test]
     fn a_purple_sector_is_the_quickest_the_board_shows() {
-        let reply = board(Session::Practice, &ctx(0.0), 51);
+        let reply = board(Session::Practice, &ctx(0.0), 51, 1, None);
         let rows = reply["entries"].as_array().expect("entries");
         for which in 1..=3 {
             let key = format!("sector{which}");
@@ -1863,7 +1935,7 @@ mod tests {
                 .collect()
         };
         for session in [Session::Race, Session::Quali, Session::Practice] {
-            let reply = board(session, &ctx(0.0), 50);
+            let reply = board(session, &ctx(0.0), 50, 1, None);
             for entry in reply["entries"].as_array().expect("entries") {
                 let mut keys: BTreeSet<String> = entry
                     .as_object()
@@ -1886,7 +1958,7 @@ mod tests {
     /// the same sector green at the same moment.
     #[test]
     fn one_frame_of_a_race_shows_the_grid_apart() {
-        let reply = board(Session::Race, &ctx(0.0), 50);
+        let reply = board(Session::Race, &ctx(0.0), 50, 1, None);
         let entries = reply["entries"].as_array().expect("entries");
 
         let compounds: BTreeMap<&str, usize> =
