@@ -576,6 +576,8 @@
             header "Building widgets"
             WIDGETS=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.widgets-${guestArch}" \
               --no-link --print-out-paths)
+            WASM_HOST=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.widgets-${guestArch}.host" \
+              --no-link --print-out-paths)
 
             header "Building WASM widgets"
             WASM_EXAMPLES=$(${pkgs.nix}/bin/nix build -L "$GUEST_PKG_PREFIX.wasm-examples" \
@@ -865,6 +867,8 @@
 
             # Widgets path (nix store path, accessible via 9p mount)
             echo "$WIDGETS/lib/bmc-widgets" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/widgets-path"
+            printf '{"compositor":{"commands":[["%s/bin/bmc-wasm-host"]]}}\n' "$WASM_HOST" \
+              > "$TMP_GUEST_OVERLAY/etc/bmc_system.json"
 
             # Event daemon — deployed from nix-built harness venv (uv.lock deps)
             echo "${eventdEnv}/bin/python3" > "$TMP_GUEST_OVERLAY/etc/bmc-virt/eventd-python"

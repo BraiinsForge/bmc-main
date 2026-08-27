@@ -37,7 +37,6 @@ import binascii
 import json
 import re
 import struct
-import subprocess
 import tempfile
 import urllib.error
 import urllib.request
@@ -47,7 +46,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from http import HTTPStatus
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 from bmc_tui import catalog, console, nix
 from bmc_tui.device import Device, RemotePath
@@ -62,6 +61,7 @@ PROCESS = "bmc-wasm-host"
 WIDGET = "image"
 # The profiling build is required below, so debug is the only sensible profile.
 WIDGET_ATTR = Attr(".#deck-packages-debug.widget-image")
+HOST_ATTR = Attr(".#deck-packages-debug.core.pkg.wasmHost")
 # Only the profiling build contains this literal, so the running binary
 # proves what is installed. A log does not: it outlives its own build.
 PROFILING_MARKER = "host_image_probe"
@@ -278,15 +278,14 @@ class ImageFormats:
         cases = _select(self.only)
         console.kv("cases", str(len(cases)))
 
-        with console.spinner("building this tree's widget"):
-            # Realised, not just evaluated: the host is read from this path's
-            # store references, which only exist once it is in the store.
-            widget_path = nix.real().build_out(Attr(f"{WIDGET_ATTR}.pkg"))
-
-        catalog.check_deployed_build(nix.real(), dev, WIDGET_ATTR, WIDGET)
+        backend = nix.real()
+        catalog.check_deployed_build(backend, dev, WIDGET_ATTR, WIDGET)
+        with console.spinner("building this tree's host"):
+            expected_host = backend.build_out(HOST_ATTR)
         catalog.ensure_profiling_build(dev, PROCESS, PROFILING_MARKER)
         build = catalog.running_binary(dev, PROCESS)
-        _check_host_build(dev, widget_path, build)
+        require(build is not None, f"{PROCESS} stopped after the profiling check")
+        _check_host_build(expected_host, cast("StorePath", build))
 
         requests: list[Request] = []
         with server(_views(cases, requests), reachable_from=dev.host) as assets:
@@ -304,7 +303,7 @@ class ImageFormats:
 
         outcomes = _collect(window.text, cases, base_url, requests)
         require(
-            build is not None and catalog.running_binary(dev, PROCESS) == build,
+            catalog.running_binary(dev, PROCESS) == build,
             "the host binary changed mid-run — the window would mix two builds",
         )
         _report(outcomes)
@@ -317,6 +316,18 @@ class ImageFormats:
             names = ", ".join(o.case.name for o in broken)
             raise Abort(f"{len(broken)} format(s) failed on the device: {names}")
         console.ok("every case matched its expected outcome")
+
+
+def _check_host_build(expected: StorePath, running: StorePath) -> None:
+    """Warn when measurements would describe another host build."""
+    console.kv("host binary", str(running))
+    if str(running).startswith(f"{expected}/"):
+        console.ok(f"{PROCESS} is the build this tree expects")
+    else:
+        console.warn(
+            f"{PROCESS} runs {running}, but this tree builds {expected} — "
+            "the measurements will not describe this tree"
+        )
 
 
 def _device_facing(assets: ServerHandle) -> str:
@@ -335,46 +346,6 @@ def _views(cases: list[Case], requests: list[Request]) -> dict[str, ViewConfig]:
         return serve
 
     return {f"/{case.file}": recording_view(case) for case in cases}
-
-
-def _expected_host(widget_path: StorePath) -> tuple[StorePath | None, str]:
-    """The host binary a widget was built against, from its store references.
-
-    `nix/wasm-widgets.nix` passes `--host-bin`, which makes the host a direct
-    reference. Only meaningful once the widget is known to be this tree's.
-    """
-    query = subprocess.run(
-        ["nix-store", "--query", "--references", str(widget_path)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    hosts = [line for line in query.stdout.split() if f"-{PROCESS}-" in line]
-    if len(hosts) == 1:
-        return StorePath(hosts[0]), ""
-    return None, query.stderr.strip() or f"{len(hosts)} references matched"
-
-
-def _check_host_build(dev: Device, widget_path: StorePath, running: StorePath | None) -> None:
-    """Report which host produced the measurements, and whether it is this tree's.
-
-    Warns rather than aborts, like the widget check it mirrors: a mismatch
-    still exercises the decoders, the numbers just describe another build.
-    """
-    console.kv("host binary", str(running) if running else "not running")
-    if running is None:
-        console.warn(f"{PROCESS} is not running on {dev.host}")
-        return
-    expected, why = _expected_host(widget_path)
-    if expected is None:
-        console.warn(f"cannot tell which host {WIDGET} expects, so no build pin: {why}")
-    elif str(running).startswith(str(expected)):
-        console.ok(f"{PROCESS} is the build {WIDGET} expects")
-    else:
-        console.warn(
-            f"{PROCESS} runs {running}, but {WIDGET} expects {expected} — "
-            "the measurements will not describe this tree"
-        )
 
 
 def _select(only: list[str]) -> list[Case]:

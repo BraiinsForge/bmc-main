@@ -23,7 +23,7 @@
 # `profile` and `openwrtFeatures` are supplied by the caller so a debug build
 # can flip on the compositor's `profiling` feature (ii-stopwatch timing + the
 # mesh::profile observability channel) without forking this file.
-{ bmc, armv7Pkgs, deps, profile, wasmLauncher, openwrtFeatures ? [ ] }:
+{ bmc, armv7Pkgs, deps, profile, wasmLauncher, wasmHost, openwrtFeatures ? [ ] }:
 let
   inherit (bmc.lib) mkPackage mkPrioritizedEntries autopatchelfBinaries
     mkOpenWrtService mkOpenWrtDaemon;
@@ -63,7 +63,9 @@ let
         ${./tests/bmc-compositor-service.sh} \
         ${bmc-compositor.service} \
         ${testBusybox}/bin/busybox \
-        ${wasmLauncher}
+        ${wasmLauncher} \
+        ${wasmHost} \
+        ${bmcSystemConfig}
     ${testBusybox}/bin/touch $out
   '';
 
@@ -114,12 +116,18 @@ let
     runtimeDeps = compositorRuntimeDeps armv7Pkgs;
   };
 
+  bmcSystemConfig = armv7Pkgs.writeText "bmc_system.json" (builtins.toJSON {
+    compositor.commands = [
+      [ "/run/current-profile/bin/bmc-wasm-host" ]
+    ];
+  });
+
   bmc-compositor = mkOpenWrtDaemon {
     name = "bmc-compositor";
     start = 95;
     enabled = true;
     command = "${bmc-openwrt}/bin/bmc-openwrt";
-    dependsOn = [ wasmLauncher ];
+    dependsOn = [ wasmLauncher wasmHost bmcSystemConfig ];
     args = [ "--log-to-file" ];
     env = {
       MESA_SHADER_CACHE_MAX_SIZE = "16M";
@@ -282,9 +290,11 @@ let
     postBuild = ''
       chmod u+w $out/bin
       cp ${wasmLauncher}/bin/${wasmLauncher.launcherName} $out/bin/
+      ln -s ${wasmHost}/bin/bmc-wasm-host $out/bin/
     '';
     copyFiles = [
       { src = ./files/profile; dest = "/root/.profile"; }
+      { src = bmcSystemConfig; dest = "/etc/bmc_system.json"; }
     ];
     conffiles = [
       "/root/.profile"
@@ -307,6 +317,10 @@ let
     test -x "$signal"
     test -x "$boundary"
     test -x ${package}/bin/${wasmLauncher.launcherName}
+    test -x ${package}/bin/bmc-wasm-host
+    test -L ${package}/bin/bmc-wasm-host
+    test -f ${package}/special/copy/etc/bmc_system.json
+    ${testBusybox}/bin/grep -F '["/run/current-profile/bin/bmc-wasm-host"]' ${package}/special/copy/etc/bmc_system.json
     first="$(${testBusybox}/bin/printf '%s\n' "$signal" "$boundary" | ${testBusybox}/bin/sort | ${testBusybox}/bin/head -n 1)"
     test "$first" = "$boundary"
 
@@ -321,7 +335,7 @@ let
 
   packageWithTests = package.overrideAttrs (old: {
     passthru = (old.passthru or { }) // {
-      inherit wasmLauncher;
+      inherit bmcSystemConfig wasmHost wasmLauncher;
       tests.activation = nixConfActivationTest;
       tests.activator = nixActivatorTest;
       tests.compositor-service = bmcCompositorServiceTest;

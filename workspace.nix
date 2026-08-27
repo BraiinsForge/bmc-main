@@ -515,21 +515,26 @@ let
           # with wasm widgets, cross-compiled for the guest arch.
           {
             name = "widgets-${arch}";
-            value = pkgs.symlinkJoin {
-              name = "bmc-widgets-${arch}";
-              paths = [
-                (bmc.lib.mkAllWidgets {
-                  inherit widgets;
-                  runtimeDeps = deps.widgetRuntimeDeps.native;
-                  profile = bmc.profiles."${arch}-debug";
-                })
-                (mkAllWasmWidgets {
+            value =
+              let
+                wasmWidgetPackage = mkAllWasmWidgets {
                   profile = bmc.profiles."${arch}-debug";
                   # VM is always debug → mirror mkOpenwrt and turn profiling on.
                   hostFeatures = [ "profiling" ];
-                })
-              ];
-            };
+                };
+              in
+              pkgs.symlinkJoin {
+                name = "bmc-widgets-${arch}";
+                paths = [
+                  (bmc.lib.mkAllWidgets {
+                    inherit widgets;
+                    runtimeDeps = deps.widgetRuntimeDeps.native;
+                    profile = bmc.profiles."${arch}-debug";
+                  })
+                  wasmWidgetPackage
+                ];
+                passthru.host = wasmWidgetPackage.host;
+              };
           }
         ]
       )
@@ -584,9 +589,8 @@ let
 
   wasmWidgetsModule = wasmWidgetsFor bmc.profiles.armv7-glibc-release [ ];
 
-  # Build every shippable wasm widget (has manifest.json) against
-  # `profile`'s host binary, joined into a single lib/bmc-widgets/<name>/
-  # tree (same shape as mkAllWidgets).
+  # Build every shippable wasm widget (has manifest.json) from `profile`, joined
+  # into a single lib/bmc-widgets/<name>/ tree (same shape as mkAllWidgets).
   # Regression-only crates without a manifest are excluded.
   mkAllWasmWidgets = { profile, hostFeatures ? [ ] }:
     let
@@ -599,7 +603,6 @@ let
           inherit (entry) wasmFile manifest;
           wasmDir = m.wasmWidgets.${name};
           thin = m.thin;
-          host = m.host;
         })
         shippable;
     in
@@ -607,6 +610,7 @@ let
       name = "bmc-wasm-widgets";
       paths = widgetPackages;
       passthru = {
+        inherit (m) host;
         wrapperModes = map (package: package.wrapperMode) widgetPackages;
         representativeWrapper = builtins.head widgetPackages;
       };
@@ -652,6 +656,7 @@ in
   wasmWrapperTestPackages = {
     baked = bakedWasmWidgetsForTest.representativeWrapper;
     bakedModes = bakedWasmWidgetsForTest.wrapperModes;
+    host = bakedWasmWidgetsForTest.host;
     inherit (wasmWidgetsModule) mkWasmLauncher;
   };
   inherit (initArtifacts) mkInitArtifacts;
@@ -683,8 +688,8 @@ in
     gallery-clippy = bmc.profiles.gallery.clippy;
     gallery-test = bmc.profiles.gallery.test;
 
-    # Native widgets joined with wasm widgets whose host is built natively,
-    # so bmc-mock sees the full catalog under lib/bmc-widgets/<name>/.
+    # Native widgets joined with wasm widgets, so bmc-mock sees the full catalog
+    # under lib/bmc-widgets/<name>/.
     # Use with bmc-mock --widgets-path ./result/lib/bmc-widgets.
     widgets = pkgs.symlinkJoin {
       name = "bmc-widgets-native";

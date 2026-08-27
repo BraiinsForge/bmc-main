@@ -30,10 +30,7 @@ from bmc_tui.stage import Abort
 
 def _thin(pid: int, starttime: int, widget: str, store: str) -> str:
     wasm = f"/nix/store/{store}-bmc-widget-{widget}/lib/bmc-widgets/{widget}/lib/wasm/{widget}.wasm"
-    return (
-        f"bmc-wasm-thin\t{pid}\t{starttime}\t/nix/store/thin\t"
-        f"/nix/store/thin --wasm {wasm} --host-bin /nix/store/host"
-    )
+    return f"bmc-wasm-thin\t{pid}\t{starttime}\t/nix/store/thin\t/nix/store/thin --wasm {wasm}"
 
 
 _HEALTHY = "\n".join(

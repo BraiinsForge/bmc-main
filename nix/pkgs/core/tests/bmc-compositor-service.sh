@@ -24,6 +24,8 @@ set -eu
 script="$1"
 busybox="$2"
 expected_launcher="$3"
+expected_host="$4"
+expected_system_config="$5"
 tmp="${TMPDIR:-/tmp}/bmc-compositor-service-test-$$"
 root="$tmp/root"
 calls="$tmp/calls"
@@ -133,8 +135,8 @@ assert_script_contains 'mkdir -p /mnt/data/bmc/cache' \
     "generated service does not create the persistent cache directory"
 assert_script_contains 'chmod 0700 /mnt/data/bmc/cache' \
     "generated service does not secure the persistent cache directory"
-assert_script_contains "DEPENDS_ON=\"$expected_launcher\"" \
-    "generated service does not depend on the wasm launcher"
+assert_script_contains "DEPENDS_ON=\"$expected_launcher $expected_host $expected_system_config\"" \
+    "generated service does not depend on the wasm launcher, host, and system config"
 
 # shellcheck source=/dev/null
 . "$script"

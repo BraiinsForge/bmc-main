@@ -38,7 +38,7 @@
 #                   selected profile (typically armv7-glibc-release)
 #   - host:         cross-compiled bmc-wasm-host + autopatchelf for the
 #                   selected profile (typically armv7-glibc-release)
-#   - wasmLauncher: per-SDK-major launcher that pins thin and host together
+#   - wasmLauncher: per-SDK-major launcher that pins the thin
 #   - mkWasmWidget: build one lib/bmc-widgets/<name>/ tree (shell wrapper
 #                   + .wasm blob + manifest) that execs the thin wrapper
 { pkgs
@@ -147,22 +147,22 @@ let
     runtimeDeps = widgetRuntimeDeps.native profile.pkgs;
   };
 
-  mkWasmLauncher = { thin, host }:
+  mkWasmLauncher = { thin }:
     (pkgs.writeTextFile {
       name = launcherName;
       executable = true;
       destination = "/bin/${launcherName}";
       text = ''
         #!/bin/sh
-        exec ${thin}/bin/bmc-wasm-thin --host-bin ${host}/bin/bmc-wasm-host "$@"
+        exec ${thin}/bin/bmc-wasm-thin "$@"
       '';
     }).overrideAttrs (old: {
       passthru = (old.passthru or { }) // {
-        inherit sdkMajor launcherName thin host;
+        inherit sdkMajor launcherName thin;
       };
     });
 
-  wasmLauncher = mkWasmLauncher { inherit thin host; };
+  wasmLauncher = mkWasmLauncher { inherit thin; };
 
   # Per-widget packaging. Produces:
   #   $out/lib/bmc-widgets/<name>/bin/<name>          (shell wrapper)
@@ -171,14 +171,13 @@ let
   #   $out/lib/bmc-widgets/<name>/manifest.json
   #
   # Device-profile wrappers select the active per-major launcher. Other
-  # bundles remain self-contained by baking the thin and host store paths.
+  # bundles remain self-contained by baking the thin store path.
   mkWasmWidget =
     { name          # e.g. "hello-widget"
     , wasmDir       # derivation with all *.wasm files flat in $out/
     , wasmFile      # e.g. "hello_widget.wasm" (cargo: hyphens → underscores)
     , manifest      # path to per-widget manifest.json
     , thin          # thin derivation with bin/bmc-wasm-thin
-    , host          # host derivation with bin/bmc-wasm-host
     , wrapperMode
     }:
     let
@@ -194,7 +193,6 @@ let
           exec ${thin}/bin/bmc-wasm-thin \\
             --wasm $out/lib/bmc-widgets/${name}/lib/wasm/${name}.wasm \\
             --asset-root $out/lib/bmc-widgets/${name}/lib/assets \\
-            --host-bin ${host}/bin/bmc-wasm-host \\
             "\$@"
         '';
     in

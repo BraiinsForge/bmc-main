@@ -21,7 +21,6 @@
 """Unit tests for the image-format harness log parsing and verdicts."""
 
 from pathlib import Path
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, cast
 
 import pytest
@@ -220,31 +219,31 @@ def test_synthesised_fixtures_land_on_the_sides_of_the_caps_they_probe() -> None
     assert len(fmt.flat_bmp(2000, 2000)) > fetch_cap, "must be refused before any decoder"
 
 
-def test_expected_host_reads_the_widget_reference(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A widget embeds its host at build time, so it is a direct reference."""
-    host = "/nix/store/aaa-bmc-wasm-host-armv7l-unknown-linux-gnueabihf-0.1.0"
-    refs = f"{host}\n/nix/store/bbb-bmc-wasm-thin-armv7l-unknown-linux-gnueabihf-0.1.0\n"
-    monkeypatch.setattr(
-        fmt.subprocess,
-        "run",
-        lambda *_a, **_k: SimpleNamespace(stdout=refs, stderr=""),
-    )
-    found, why = fmt._expected_host(StorePath("/nix/store/ccc-bmc-widget-image"))
-    assert str(found) == host
-    assert why == ""
+def test_host_build_pin_accepts_the_expected_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    reports: list[str] = []
+    monkeypatch.setattr(fmt.console, "kv", lambda *_args: None)
+    monkeypatch.setattr(fmt.console, "ok", reports.append)
+    monkeypatch.setattr(fmt.console, "warn", reports.append)
+    expected = StorePath("/nix/store/aaa-bmc-wasm-host")
+
+    fmt._check_host_build(expected, StorePath(f"{expected}/bin/bmc-wasm-host"))
+
+    assert reports == [f"{fmt.PROCESS} is the build this tree expects"]
 
 
-def test_expected_host_is_unknown_when_the_reference_is_absent(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        fmt.subprocess,
-        "run",
-        lambda *_a, **_k: SimpleNamespace(stdout="", stderr="not in the store"),
+def test_host_build_pin_warns_about_another_package(monkeypatch: pytest.MonkeyPatch) -> None:
+    reports: list[str] = []
+    monkeypatch.setattr(fmt.console, "kv", lambda *_args: None)
+    monkeypatch.setattr(fmt.console, "ok", reports.append)
+    monkeypatch.setattr(fmt.console, "warn", reports.append)
+
+    fmt._check_host_build(
+        StorePath("/nix/store/aaa-bmc-wasm-host"),
+        StorePath("/nix/store/bbb-bmc-wasm-host/bin/bmc-wasm-host"),
     )
-    found, why = fmt._expected_host(StorePath("/nix/store/ccc-bmc-widget-image"))
-    assert found is None
-    assert "not in the store" in why
+
+    assert len(reports) == 1
+    assert "measurements will not describe this tree" in reports[0]
 
 
 @pytest.mark.parametrize("case", fmt.CASES, ids=lambda c: c.name)

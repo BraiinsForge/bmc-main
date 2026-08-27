@@ -73,7 +73,7 @@ let
   mkWasmWidgetEntry = name: entry:
     let
       pkg = mkWasmWidget {
-        inherit name thin host;
+        inherit name thin;
         wrapperMode = "profile";
         wasmDir = wasmWidgets.${name};
         inherit (entry) wasmFile manifest;
@@ -96,6 +96,7 @@ in
 wasmWidgetPackages // {
   core = import ./pkgs/core {
     inherit bmc armv7Pkgs deps profile openwrtFeatures wasmLauncher;
+    wasmHost = host;
   };
   bos-avahi = import ./pkgs/bos-avahi { inherit bmc armv7Pkgs; };
   bmc-nix-cli = {

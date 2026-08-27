@@ -51,8 +51,11 @@ let
   parseSdkMajor = import ./sdk-major.nix { inherit lib; };
   sdkMajor = parseSdkMajor (builtins.readFile ../bmc-wasm-runtime/protocol/src/version.rs);
   launcher = deckPackages.core.pkg.wasmLauncher;
+  wasmHost = deckPackages.core.pkg.wasmHost;
+  bmcSystemConfig = deckPackages.core.pkg.bmcSystemConfig;
   profileWrapper = deckPackages.widget-clock.pkg;
   bakedWrapper = wasmWrapperTestPackages.baked;
+  bakedHost = wasmWrapperTestPackages.host;
   inherit (wasmWrapperTestPackages) mkWasmLauncher;
   serviceLib = import ./service.nix { inherit pkgs lib; };
   fakeThin = pkgs.writeShellApplication {
@@ -71,20 +74,19 @@ let
     name = "bmc-wasm-host";
     text = "exit 1";
   };
-  dependencyLauncher = mkWasmLauncher { thin = fakeThin; host = fakeHost; };
-  hostChangedLauncher = mkWasmLauncher { thin = fakeThin; host = changedHost; };
-  thinChangedLauncher = mkWasmLauncher { thin = changedThin; host = fakeHost; };
+  dependencyLauncher = mkWasmLauncher { thin = fakeThin; };
+  thinChangedLauncher = mkWasmLauncher { thin = changedThin; };
   mkDependencyService = dependsOn: serviceLib.mkOpenWrtService {
     name = "dependency-test";
     start = 63;
     inherit dependsOn;
   };
   noDependencyService = mkDependencyService [ ];
-  dependencyService = mkDependencyService [ dependencyLauncher ];
-  hostChangedService = mkDependencyService [ hostChangedLauncher ];
-  thinChangedService = mkDependencyService [ thinChangedLauncher ];
+  dependencyService = mkDependencyService [ dependencyLauncher fakeHost ];
+  hostChangedService = mkDependencyService [ dependencyLauncher changedHost ];
+  thinChangedService = mkDependencyService [ thinChangedLauncher fakeHost ];
   orderedDependencyService = mkDependencyService [ fakeThin fakeHost ];
-  productionDependencyService = mkDependencyService [ launcher ];
+  productionDependencyService = mkDependencyService [ launcher wasmHost bmcSystemConfig ];
 
   productionCrates = {
     inherit (crates) bmc bmc-openwrt wasm-thin wasm-host;
@@ -134,18 +136,14 @@ in
       command = "/bin/true";
       extraVariables.DEPENDS_ON = "invalid";
     }).name;
-    assert toString dependencyLauncher.thin == toString hostChangedLauncher.thin;
-    assert toString dependencyLauncher.host != toString hostChangedLauncher.host;
     assert toString dependencyLauncher.thin != toString thinChangedLauncher.thin;
-    assert toString dependencyLauncher.host == toString thinChangedLauncher.host;
     pkgs.runCommand "service-depends-on" { } ''
       if grep -F 'DEPENDS_ON=' ${noDependencyService.service}; then
         echo "empty dependsOn rendered a dependency line" >&2
         exit 1
       fi
       grep -Fx 'DEPENDS_ON="${fakeThin} ${fakeHost}"' ${orderedDependencyService.service}
-      grep -Fx 'DEPENDS_ON="${launcher}"' ${productionDependencyService.service}
-      test '${dependencyLauncher}' != '${hostChangedLauncher}'
+      grep -Fx 'DEPENDS_ON="${launcher} ${wasmHost} ${bmcSystemConfig}"' ${productionDependencyService.service}
       test '${dependencyLauncher}' != '${thinChangedLauncher}'
       ! cmp -s ${dependencyService.service} ${hostChangedService.service}
       ! cmp -s ${dependencyService.service} ${thinChangedService.service}
@@ -171,7 +169,7 @@ in
       script=${launcher}/bin/${launcher.launcherName}
       test -x "$script"
       grep -F '#!/bin/sh' "$script"
-      grep -F 'exec ${launcher.thin}/bin/bmc-wasm-thin --host-bin ${launcher.host}/bin/bmc-wasm-host "$@"' "$script"
+      grep -F 'exec ${launcher.thin}/bin/bmc-wasm-thin "$@"' "$script"
       touch $out
     '';
 
@@ -181,7 +179,7 @@ in
       script=${profileWrapper}/lib/bmc-widgets/${profileWrapper.name}/bin/${profileWrapper.name}
       grep -F '/run/current-profile/bin/${launcher.launcherName}' "$script"
       grep -F '"$@"' "$script"
-      if grep -F '${launcher.thin}' "$script" || grep -F '${launcher.host}' "$script"; then
+      if grep -F '${launcher.thin}' "$script" || grep -F '${wasmHost}' "$script"; then
         echo "profile wrapper contains a baked runtime path" >&2
         exit 1
       fi
@@ -192,9 +190,9 @@ in
     assert builtins.all (mode: mode == "baked") wasmWrapperTestPackages.bakedModes;
     assert bakedWrapper.wrapperMode == "baked";
     pkgs.runCommand "wasm-wrapper-baked" { } ''
+      test -x ${bakedHost}/bin/bmc-wasm-host
       script=${bakedWrapper}/lib/bmc-widgets/${bakedWrapper.name}/bin/${bakedWrapper.name}
       grep -F '${launcher.thin}/bin/bmc-wasm-thin' "$script"
-      grep -F -- '--host-bin ${launcher.host}/bin/bmc-wasm-host' "$script"
       grep -F '"$@"' "$script"
       if grep -F '/run/current-profile/bin/${launcher.launcherName}' "$script"; then
         echo "baked wrapper contains the profile launcher" >&2
