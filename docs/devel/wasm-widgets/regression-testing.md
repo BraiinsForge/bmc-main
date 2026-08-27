@@ -25,7 +25,12 @@ widgets-wasm/<widget>/
     config.toml                 # opts the widget into wasm-regression
     fixtures/<dataset>.jsonl.gz # one per recorded dataset
     baselines.7z                # compressed reference frames
+    README.md                   # optional, for a set worth explaining
 ```
+
+A large set earns a `README.md` beside its config: what each dataset covers, and — the part a re-recording needs most —
+which combinations were left out and why, so a gap reads as a decision rather than an oversight.
+`widgets-wasm/formula-1/capture/README.md` is the worked example.
 
 `capture/baselines.7z` is tracked via Git LFS. Commit it like any other tracked file; the LFS smudge filter handles the
 rest.
