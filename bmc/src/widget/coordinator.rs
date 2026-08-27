@@ -1516,7 +1516,13 @@ impl Coordinator {
         let shutdown = self.widget_manager.begin_shutdown().await;
         self.finish_lifecycle_stop(config_handle, shutdown, "shutdown")
             .await;
-        if let Err(e) = self.compositor.shutdown() {
+        let compositor = Arc::clone(&self.compositor);
+        // Shutdown waits for command supervisors to reap their children,
+        // so keep a runtime worker available to drive them.
+        if let Err(e) = tokio::task::spawn_blocking(move || compositor.shutdown())
+            .await
+            .expect("BUG: compositor shutdown task panicked")
+        {
             warn!(error = %e, "failed to shut down compositor");
         }
         info!("shutdown complete");

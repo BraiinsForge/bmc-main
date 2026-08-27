@@ -21,5 +21,6 @@
 
 pub mod asset;
 pub mod number_format;
+pub mod process_supervisor;
 pub mod temperature;
 pub mod unit_system;

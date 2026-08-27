@@ -342,6 +342,7 @@ impl EglCompositor {
         status_rx: mpsc::UnboundedReceiver<LedRequestStatusEvent>,
         active_scene_tx: watch::Sender<Option<ActiveScene>>,
         connected_widgets_tx: watch::Sender<BTreeSet<InstanceId>>,
+        runtime: &tokio::runtime::Handle,
         ready_tx: &flume::Sender<Result<String, String>>,
     ) {
         tracing::info!("Compositor thread starting (headless={})...", headless,);
@@ -441,6 +442,19 @@ impl EglCompositor {
         let socket_name = socket_name_os.to_string_lossy().to_string();
 
         tracing::info!("Wayland socket created: {}", socket_name);
+
+        let startup_commands = match super::startup_commands::StartupCommands::load_and_spawn(
+            Path::new(super::startup_commands::SYSTEM_CONFIG_PATH),
+            &socket_name,
+            runtime,
+        ) {
+            Ok(commands) => commands,
+            Err(error) => {
+                tracing::error!(?error, "failed to load compositor commands");
+                // Keep the upgrade path available when the system config cannot be loaded.
+                super::startup_commands::StartupCommands::empty(runtime)
+            }
+        };
 
         let loop_handle = event_loop.handle();
         let poll_fd = try_init!(
@@ -925,6 +939,8 @@ impl EglCompositor {
             }
         }
 
+        // Stop clients before `app_state` drops the Wayland display they use.
+        drop(startup_commands);
         tracing::info!("Compositor thread exiting");
     }
 }
@@ -2485,6 +2501,7 @@ impl Compositor for EglCompositor {
             .expect("BUG: status_rx already taken");
         let active_scene_tx = self.active_scene_tx.clone();
         let connected_widgets_tx = self.connected_widgets_tx.clone();
+        let runtime = tokio::runtime::Handle::current();
 
         let handle = thread::Builder::new()
             .name("egl-compositor".to_owned())
@@ -2506,6 +2523,7 @@ impl Compositor for EglCompositor {
                     status_rx,
                     active_scene_tx,
                     connected_widgets_tx,
+                    &runtime,
                     &ready_tx,
                 );
             })

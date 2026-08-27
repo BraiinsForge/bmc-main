@@ -42,10 +42,16 @@ pub const DRAIN_QUIET: Duration = Duration::from_secs(1);
 /// When to stop draining and exit with connections still open.
 pub const DRAIN_DEADLINE: Duration = Duration::from_secs(10);
 
+/// Reserve time for future compositor commands that handle SIGTERM gracefully.
+/// The current host exits immediately.
+/// Increasing this reduces the time available for connection draining.
+pub const COMPOSITOR_COMMAND_GRACE: Duration = Duration::from_secs(1);
+
 const _: () = assert!(
-    UPGRADE_HOLD.as_secs() + DRAIN_DEADLINE.as_secs() < TERM_TIMEOUT.as_secs(),
-    "a sysupgrade shutdown holds the server open and then drains, \
-     so both must finish before procd resorts to SIGKILL"
+    UPGRADE_HOLD.as_secs() + DRAIN_DEADLINE.as_secs() + COMPOSITOR_COMMAND_GRACE.as_secs()
+        < TERM_TIMEOUT.as_secs(),
+    "the upgrade hold, connection drain, and compositor command grace \
+     must all finish before procd resorts to SIGKILL"
 );
 
 const _: () = assert!(

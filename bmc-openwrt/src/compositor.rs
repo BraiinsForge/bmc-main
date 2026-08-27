@@ -33,6 +33,7 @@ mod scene_cycling;
 mod scene_renderer;
 mod screen_edge;
 mod settings;
+mod startup_commands;
 mod state;
 mod touch_gesture;
 mod upgrade;

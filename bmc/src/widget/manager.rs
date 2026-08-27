@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::time::{Duration, Instant};
 
+use bmc_shared_utils::process_supervisor::RestartPolicy;
 use tokio::process::Child;
 use tokio::sync::{mpsc, oneshot, watch};
 use tracing::{info, warn};
@@ -139,23 +140,6 @@ pub(crate) struct StartPermit(u64);
 /// the 4x2 slot grid. Sixteen is comfortably clear of it.
 const COMMAND_CHANNEL_CAPACITY: usize = 16;
 
-const RESTART_BACKOFF_INITIAL: Duration = Duration::from_secs(1);
-const RESTART_BACKOFF_FACTOR: u32 = 2;
-const _: () = assert!(
-    RESTART_BACKOFF_FACTOR >= 2,
-    "a factor of 1 pins the ladder at its initial delay and 0 respawns without waiting at all"
-);
-/// A ceiling, never a give-up.
-/// A crashed `bmc-wasm-host` drops every thin's control socket at once,
-/// so one host fault exits the whole wasm fleet together —
-/// a restart budget would blank the device for a fault no widget caused.
-const RESTART_BACKOFF_MAX: Duration = Duration::from_mins(5);
-/// Clears the thin's own startup budget:
-/// `DEFAULT_HOST_WAIT` + `DEFAULT_ACK_WAIT` (10 s + 10 s) is how long a widget
-/// that never reaches its host can burn before failing,
-/// and one that never loaded must not read as healthy.
-const RESTART_HEALTHY_UPTIME: Duration = Duration::from_mins(1);
-
 /// Handle to the widget child actor.
 /// Child process handles live in a dedicated task;
 /// this handle only forwards commands to it,
@@ -267,6 +251,8 @@ impl WidgetManager {
         }
 
         let spawner = WaylandSpawner::new(capture_widget_output);
+        // A thin can spend 10 seconds finding its host and another 10 waiting for
+        // acknowledgement; it must run beyond that startup budget to reset backoff.
         Self::with_parts(registry, Box::new(spawner), RestartPolicy::default())
     }
 
@@ -588,41 +574,6 @@ struct ChildExit {
     status: Option<ExitStatus>,
 }
 
-/// The respawn ladder. Injected so tests can walk it in milliseconds.
-#[derive(Debug, Clone, Copy)]
-struct RestartPolicy {
-    initial: Duration,
-    max: Duration,
-    healthy_uptime: Duration,
-}
-
-impl Default for RestartPolicy {
-    fn default() -> Self {
-        Self {
-            initial: RESTART_BACKOFF_INITIAL,
-            max: RESTART_BACKOFF_MAX,
-            healthy_uptime: RESTART_HEALTHY_UPTIME,
-        }
-    }
-}
-
-fn next_backoff(delay: Duration, max: Duration) -> Duration {
-    (delay * RESTART_BACKOFF_FACTOR).min(max)
-}
-
-/// A process that outlived [`RestartPolicy::healthy_uptime`] started successfully,
-/// so its failure begins a new ladder rather than continuing the old one.
-/// An absolute threshold, deliberately, and not a fraction of `backoff`:
-/// a widget dying just past it is up ~98% of the time,
-/// and escalating would trade an unnoticeable blink for a mostly-blank cell.
-fn restart_delay(uptime: Duration, backoff: Duration, policy: &RestartPolicy) -> Duration {
-    if uptime >= policy.healthy_uptime {
-        policy.initial
-    } else {
-        backoff
-    }
-}
-
 /// The actor task: sole owner of every process lifecycle state.
 struct Actor {
     registry: Arc<WidgetRegistry>,
@@ -771,7 +722,7 @@ impl Actor {
         };
         let backoff = pending
             .as_ref()
-            .map_or(self.policy.initial, |pending| pending.backoff);
+            .map_or(self.policy.initial(), |pending| pending.backoff);
 
         match self.spawn_selected_process(launch.clone(), backoff, &widget, internal_tx) {
             Ok(()) => Ok(()),
@@ -779,7 +730,7 @@ impl Actor {
                 self.schedule_restart(
                     Respawn { launch, identity },
                     backoff,
-                    next_backoff(backoff, self.policy.max),
+                    self.policy.next_backoff(backoff),
                     internal_tx,
                 );
                 Err(StartError::PendingRestart(error))
@@ -999,7 +950,9 @@ impl Actor {
             return;
         }
 
-        let delay = restart_delay(widget.spawned_at.elapsed(), widget.backoff, &self.policy);
+        let delay = self
+            .policy
+            .restart_delay(widget.spawned_at.elapsed(), widget.backoff);
         let cause = exit
             .status
             .map_or_else(|| "wait failed".to_owned(), |status| status.to_string());
@@ -1016,7 +969,7 @@ impl Actor {
                 identity: widget.identity,
             },
             delay,
-            next_backoff(delay, self.policy.max),
+            self.policy.next_backoff(delay),
             internal_tx,
         );
     }
@@ -1081,7 +1034,7 @@ impl Actor {
         info!(
             "widget registry changed; retrying {} pending respawn(s) in {:?}",
             pending.len(),
-            self.policy.initial
+            self.policy.initial()
         );
         for instance_id in pending {
             self.retry_pending(&instance_id, internal_tx);
@@ -1106,7 +1059,7 @@ impl Actor {
             identity: pending.identity.clone(),
         };
         let earned = pending.backoff;
-        self.schedule_restart(respawn, self.policy.initial, earned, internal_tx);
+        self.schedule_restart(respawn, self.policy.initial(), earned, internal_tx);
         true
     }
 
@@ -1164,7 +1117,7 @@ impl Actor {
                         identity,
                     },
                     pending.backoff,
-                    next_backoff(pending.backoff, self.policy.max),
+                    self.policy.next_backoff(pending.backoff),
                     internal_tx,
                 );
             }
@@ -1588,11 +1541,11 @@ mod tests {
 
     /// A ladder short enough to walk several rungs inside a test.
     fn fast_policy() -> RestartPolicy {
-        RestartPolicy {
-            initial: Duration::from_millis(10),
-            max: Duration::from_millis(40),
-            healthy_uptime: Duration::from_hours(1),
-        }
+        RestartPolicy::new(
+            Duration::from_millis(10),
+            Duration::from_millis(40),
+            Duration::from_hours(1),
+        )
     }
 
     fn bare_actor(uid: Uuid) -> Actor {
@@ -1663,42 +1616,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn backoff_doubles_up_to_the_ceiling() {
-        let max = Duration::from_mins(5);
-        assert_eq!(
-            next_backoff(Duration::from_secs(1), max),
-            Duration::from_secs(2)
-        );
-        assert_eq!(
-            next_backoff(Duration::from_secs(128), max),
-            Duration::from_secs(256)
-        );
-        assert_eq!(
-            next_backoff(Duration::from_secs(256), max),
-            max,
-            "doubling past the ceiling clamps to it"
-        );
-        assert_eq!(next_backoff(max, max), max, "the ceiling is a fixed point");
-    }
-
-    #[test]
-    fn healthy_uptime_restarts_the_ladder() {
-        let policy = RestartPolicy::default();
-        let climbed = Duration::from_secs(256);
-
-        assert_eq!(
-            restart_delay(policy.healthy_uptime, climbed, &policy),
-            policy.initial,
-            "reaching the healthy uptime exactly restarts the ladder"
-        );
-        assert_eq!(
-            restart_delay(Duration::ZERO, climbed, &policy),
-            climbed,
-            "a process that died on startup continues the ladder"
-        );
-    }
-
     /// The ceiling is a ceiling, not a give-up:
     /// supervision keeps retrying however long the crash loop lasts.
     #[tokio::test]
@@ -1728,24 +1645,24 @@ mod tests {
         const RETRY_BOUND: Duration = Duration::from_millis(500);
 
         let uid = Uuid::new_v4();
-        let policy = RestartPolicy {
-            initial: Duration::from_millis(1),
-            max: Duration::from_secs(30),
-            healthy_uptime: Duration::from_hours(1),
-        };
+        let policy = RestartPolicy::new(
+            Duration::from_millis(1),
+            Duration::from_secs(30),
+            Duration::from_hours(1),
+        );
         let (manager, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "flapping"))
             .await
             .expect("BUG: test spawn failed");
 
-        let mut delay = policy.initial;
+        let mut delay = policy.initial();
         let mut launches = 1;
         while delay < CLIMBED {
             wait_for_pending_restart(&manager, "flapping").await;
             launches += 1;
             wait_for_launch_count(&launched, launches).await;
-            delay = next_backoff(delay, policy.max);
+            delay = policy.next_backoff(delay);
         }
         wait_for_pending_restart(&manager, "flapping").await;
         let crashed_at = Instant::now();
@@ -1779,11 +1696,7 @@ mod tests {
         const RUNG_FLOOR: Duration = Duration::from_millis(200);
 
         let uid = Uuid::new_v4();
-        let policy = RestartPolicy {
-            initial: INITIAL,
-            max: CEILING,
-            healthy_uptime: Duration::from_hours(1),
-        };
+        let policy = RestartPolicy::new(INITIAL, CEILING, Duration::from_hours(1));
         let (manager, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "flapping"))
@@ -1796,7 +1709,7 @@ mod tests {
             wait_for_pending_restart(&manager, "flapping").await;
             launches += 1;
             wait_for_launch_count(&launched, launches).await;
-            delay = next_backoff(delay, CEILING);
+            delay = policy.next_backoff(delay);
         }
         wait_for_pending_restart(&manager, "flapping").await;
 
@@ -1829,11 +1742,7 @@ mod tests {
         const RUNG_THRESHOLD: Duration = Duration::from_millis(200);
 
         let uid = Uuid::new_v4();
-        let policy = RestartPolicy {
-            initial: INITIAL,
-            max: CEILING,
-            healthy_uptime: Duration::from_hours(1),
-        };
+        let policy = RestartPolicy::new(INITIAL, CEILING, Duration::from_hours(1));
         let (manager, launched) = manager_with_launch_log(uid, "true", &[], policy);
         manager
             .spawn_widget(launch(uid, "flapping"))
@@ -1846,7 +1755,7 @@ mod tests {
             wait_for_pending_restart(&manager, "flapping").await;
             launches += 1;
             wait_for_launch_count(&launched, launches).await;
-            delay = next_backoff(delay, CEILING);
+            delay = policy.next_backoff(delay);
         }
         wait_for_pending_restart(&manager, "flapping").await;
 
@@ -1971,7 +1880,7 @@ mod tests {
         };
 
         let about_to_fire = Duration::from_millis(10);
-        let ceiling = RESTART_BACKOFF_MAX;
+        let ceiling = RestartPolicy::default().max();
         actor.schedule_restart(respawn(), about_to_fire, ceiling, &internal_tx);
         actor.schedule_restart(respawn(), ceiling, ceiling, &internal_tx);
 
@@ -2143,7 +2052,7 @@ mod tests {
                 panic!("retry failure must remain supervised")
             }
         };
-        assert_eq!(second.0, next_backoff(first.0, actor.policy.max));
+        assert_eq!(second.0, actor.policy.next_backoff(first.0));
         assert_ne!(second.1, first.1, "the old timer token must be replaced");
         assert_eq!(actor.children.len(), 1, "only one timer may remain armed");
         let snapshot = actor.snapshot();
@@ -2260,7 +2169,7 @@ mod tests {
                 termination: TerminationHandle { done },
                 launch: widget_launch,
                 spawned_at: Instant::now(),
-                backoff: actor.policy.initial,
+                backoff: actor.policy.initial(),
             }),
         );
 
