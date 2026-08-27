@@ -21,9 +21,12 @@
 //! The sparkline view: header row on top, a canvas below drawing the
 //! bottom-anchored sparkline with the tile-centered price over it.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "the shared render module's SDK imports and palette"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "the shared render module's SDK imports and palette"
+    )
 )]
 use super::*;
 use prices::chart;

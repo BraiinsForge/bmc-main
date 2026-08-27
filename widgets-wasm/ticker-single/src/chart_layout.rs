@@ -201,23 +201,6 @@ pub fn nice_ticks(min: f64, max: f64, target: usize) -> Vec<f64> {
     out
 }
 
-/// Split `start..end` into 1-D dash segments (`on` painted, `off` gap):
-/// the engine has no dashed-stroke primitive, so dashes are drawn as
-/// thin rects from these spans.
-#[must_use]
-pub fn dash_spans(start: f32, end: f32, on: f32, off: f32) -> Vec<(f32, f32)> {
-    let stride = on + off;
-    assert!(stride > 0.0, "dash pattern must advance");
-
-    let mut out = Vec::new();
-    let mut x = start;
-    while x < end {
-        out.push((x, (x + on).min(end)));
-        x += stride;
-    }
-    out
-}
-
 /// Bar heights for the volume strip, normalized to the maximum volume.
 /// `None` entries (missing volume) draw nothing. All-`None` input means
 /// the caller hides the strip entirely.
@@ -543,21 +526,6 @@ mod tests {
         // A step this small underflows the magnitude to 0.0; candle values
         // come from the network, so the degenerate range must not panic.
         assert!(nice_ticks(0.0, f64::from_bits(4), 4).is_empty());
-    }
-
-    #[test]
-    fn dashes_alternate_and_clip_at_the_end() {
-        assert_eq!(
-            dash_spans(0.0, 10.0, 4.0, 4.0),
-            vec![(0.0, 4.0), (8.0, 10.0)]
-        );
-        assert!(dash_spans(5.0, 5.0, 4.0, 4.0).is_empty());
-    }
-
-    #[test]
-    #[should_panic(expected = "dash pattern must advance")]
-    fn dashes_reject_a_non_advancing_pattern() {
-        let _ = dash_spans(0.0, 10.0, 0.0, 0.0);
     }
 
     #[test]

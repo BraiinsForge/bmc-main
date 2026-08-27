@@ -26,7 +26,7 @@ pub mod chart_layout;
 pub mod display;
 mod manifest_params;
 pub mod model;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", test))]
 pub mod render;
 
 #[cfg(any(target_arch = "wasm32", test))]
@@ -277,7 +277,7 @@ mod tests {
             quote_currency: None,
         };
         let series =
-            model::Series::from_candles(&candles).expect("BUG: one candle is a valid series");
+            model::Series::from_candles(candles).expect("BUG: one candle is a valid series");
         let mut state = State::Loaded { series };
         apply_reference(&mut state, ReferenceOutcome::Resolved, Some(false));
         let State::Loaded { series } = &state else {
@@ -462,8 +462,8 @@ mod wasm_glue {
     fn on_reply(handle: PollHandle, response: &FetchResponse) {
         let class = fetch::classify(response.status);
         let parsed = if class == FetchClass::Ok {
-            let series = candle::parse_candles(&response.json())
-                .and_then(|c| model::Series::from_candles(&c));
+            let series =
+                candle::parse_candles(&response.json()).and_then(model::Series::from_candles);
             if series.is_none() {
                 // The one failure that means a bug (Nexus schema drift), not
                 // weather — it must not retry in silence.

@@ -44,15 +44,15 @@ impl Series {
     /// marks the market closed, an omitted flag counts as open. Returns `None`
     /// only when the candles list is empty.
     #[must_use]
-    pub fn from_candles(candles: &Candles) -> Option<Series> {
+    pub fn from_candles(candles: Candles) -> Option<Series> {
         let first = candles.bars.first()?.open;
         let current = candles.bars.last()?.close;
         let change_pct = prices::format::price_change(first, current);
         Some(Series {
-            bars: candles.bars.clone(),
+            bars: candles.bars,
             current,
             change_pct,
-            quote_currency: candles.quote_currency.clone(),
+            quote_currency: candles.quote_currency,
             market_open: true,
         })
     }
@@ -171,7 +171,7 @@ mod tests {
 
     #[test]
     fn series_current_is_last_close_and_change_is_first_to_last() {
-        let s = Series::from_candles(&bars(&[100.0, 110.0], 3_600))
+        let s = Series::from_candles(bars(&[100.0, 110.0], 3_600))
             .expect("BUG: two bars build a series");
         assert!((s.current - 110.0).abs() < 1e-9);
         assert!((s.change_pct - 10.0).abs() < 1e-9);
@@ -179,6 +179,15 @@ mod tests {
         assert_eq!(s.bars.len(), 2);
         // open[0]==close[0]==100 here, so the leading open just repeats.
         assert_eq!(s.sparkline_series(), vec![100.0, 100.0, 110.0]);
+    }
+
+    #[test]
+    fn series_reuses_the_parsed_bar_allocation() {
+        let candles = bars(&[100.0, 110.0], 3_600);
+        let parsed_bars = candles.bars.as_ptr();
+        let s = Series::from_candles(candles).expect("BUG: two bars build a series");
+
+        assert_eq!(s.bars.as_ptr(), parsed_bars);
     }
 
     #[test]
@@ -206,7 +215,7 @@ mod tests {
             ],
             quote_currency: None,
         };
-        let s = Series::from_candles(&candles).expect("BUG: candles build a series");
+        let s = Series::from_candles(candles).expect("BUG: candles build a series");
         assert_eq!(s.sparkline_series(), vec![90.0, 100.0, 110.0]);
     }
 
@@ -236,14 +245,14 @@ mod tests {
             ],
             quote_currency: None,
         };
-        let s = Series::from_candles(&candles).expect("BUG: candles build a series");
+        let s = Series::from_candles(candles).expect("BUG: candles build a series");
         assert!((s.change_pct - 50.0).abs() < 1e-9);
         assert!((s.current - 150.0).abs() < 1e-9);
     }
 
     #[test]
     fn falling_series_is_not_positive() {
-        let s = Series::from_candles(&bars(&[100.0, 90.0], 3_600))
+        let s = Series::from_candles(bars(&[100.0, 90.0], 3_600))
             .expect("BUG: two bars build a series");
         assert!((s.change_pct - (-10.0)).abs() < 1e-9);
         assert!(!s.is_positive());
@@ -251,7 +260,7 @@ mod tests {
 
     #[test]
     fn flat_series_is_zero_change_and_positive() {
-        let s = Series::from_candles(&bars(&[100.0, 100.0], 3_600))
+        let s = Series::from_candles(bars(&[100.0, 100.0], 3_600))
             .expect("BUG: two bars build a series");
         assert!(s.change_pct.abs() < 1e-9);
         assert!(s.is_positive());
@@ -260,11 +269,11 @@ mod tests {
     #[test]
     fn non_positive_first_close_keeps_the_row() {
         let zero =
-            Series::from_candles(&bars(&[0.0, 5.0], 3_600)).expect("BUG: bars build a series");
+            Series::from_candles(bars(&[0.0, 5.0], 3_600)).expect("BUG: bars build a series");
         assert!((zero.change_pct - 0.0).abs() < 1e-9);
         assert!((zero.current - 5.0).abs() < 1e-9);
         let neg =
-            Series::from_candles(&bars(&[-1.0, 5.0], 3_600)).expect("BUG: bars build a series");
+            Series::from_candles(bars(&[-1.0, 5.0], 3_600)).expect("BUG: bars build a series");
         assert!(neg.change_pct.is_finite());
     }
 
@@ -273,11 +282,11 @@ mod tests {
         // Per the Nexus contract an omitted flag must count as open — a
         // provider that cannot report market state must never dim the tile.
         let open =
-            Series::from_candles(&bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
+            Series::from_candles(bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
         assert!(open.market_open);
 
         let mut closed =
-            Series::from_candles(&bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
+            Series::from_candles(bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
         closed.set_market_open(Some(false));
         assert!(!closed.market_open);
     }
@@ -289,13 +298,13 @@ mod tests {
         // borrows the payload's, and the `-` never reaches the screen.
         let mut candles = bars(&[1.0, 2.0], 3_600);
         candles.quote_currency = Some("USD".to_owned());
-        let s = Series::from_candles(&candles).expect("BUG: bars build a series");
+        let s = Series::from_candles(candles).expect("BUG: bars build a series");
         assert_eq!(s.header_symbol("BTC-USD"), ("BTC", Some("USD")));
         assert_eq!(s.header_symbol("BTC"), ("BTC", Some("USD")));
         assert_eq!(s.header_symbol("BRK-B"), ("BRK-B", Some("USD")));
 
         let bare =
-            Series::from_candles(&bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
+            Series::from_candles(bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
         assert_eq!(bare.header_symbol("BTC"), ("BTC", None));
         assert_eq!(bare.header_symbol("ETH-EUR"), ("ETH", Some("EUR")));
     }
@@ -303,7 +312,7 @@ mod tests {
     #[test]
     fn closed_marked_excludes_indices() {
         let mut s =
-            Series::from_candles(&bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
+            Series::from_candles(bars(&[1.0, 2.0], 3_600)).expect("BUG: bars build a series");
         s.set_market_open(Some(false));
         assert!(s.is_closed_marked("AAPL"));
         assert!(!s.is_closed_marked("^GSPC"));
