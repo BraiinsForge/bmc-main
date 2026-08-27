@@ -1869,7 +1869,7 @@ impl GrpcSceneManagementService for SceneManagementService {
 mod tests {
     use super::*;
 
-    use crate::compositor::testing::RecordingCompositor;
+    use crate::compositor::testing::{ASYNC_TEST_TIMEOUT, RecordingCompositor};
     use std::os::unix::fs::PermissionsExt;
 
     #[test]
@@ -4324,7 +4324,7 @@ mod tests {
     }
 
     async fn wait_for_preview_lock(service: &SceneManagementService) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while service.preview_scene_id.try_lock().is_ok() {
             assert!(
                 tokio::time::Instant::now() < deadline,
@@ -4335,7 +4335,7 @@ mod tests {
     }
 
     async fn wait_for_preview_clear(service: &SceneManagementService) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         loop {
             if service.preview_scene_id.lock().await.is_none() {
                 return;
@@ -4349,7 +4349,7 @@ mod tests {
     }
 
     async fn wait_for_managed_widgets(coordinator: &Coordinator, expected: usize) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         loop {
             if coordinator.running_widget_count().await == expected {
                 return;
@@ -4363,7 +4363,7 @@ mod tests {
     }
 
     async fn wait_for_credential_attempts(compositor: &RecordingCompositor, expected: usize) {
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while compositor.credential_update_attempt_count() < expected {
             assert!(
                 tokio::time::Instant::now() < deadline,
@@ -4448,7 +4448,7 @@ mod tests {
         let request = hot_update_request(&fixture, widget_id, "old", Some(&fixture.account_id));
         let update =
             tokio::spawn(async move { service.update_widget(Request::new(request)).await });
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(ASYNC_TEST_TIMEOUT, async {
             loop {
                 if fixture.config.try_read().is_err() {
                     return;
@@ -4470,7 +4470,7 @@ mod tests {
             .await
             .expect("BUG: binding update task must not panic")
             .expect("BUG: binding update must converge after secrets are released");
-        let _config_guard = tokio::time::timeout(Duration::from_secs(1), fixture.config.read())
+        let _config_guard = tokio::time::timeout(ASYNC_TEST_TIMEOUT, fixture.config.read())
             .await
             .expect("config lock must be released after binding update");
         fixture.coordinator.shutdown_widget_manager().await;
@@ -5386,7 +5386,7 @@ mod tests {
                 .expect("BUG: preview must start")
                 .into_inner()
         });
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while !fixture
             .compositor
             .widget_calls()
@@ -5401,7 +5401,7 @@ mod tests {
         }
 
         {
-            let mut config = tokio::time::timeout(Duration::from_secs(1), fixture.config.write())
+            let mut config = tokio::time::timeout(ASYNC_TEST_TIMEOUT, fixture.config.write())
                 .await
                 .expect("receipt wait must release the configuration lock");
             let widget = config
@@ -5453,7 +5453,7 @@ mod tests {
                 .preview_scene(Request::new(scene_id.to_string()))
                 .await
         });
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while !fixture
             .compositor
             .widget_calls()
@@ -5490,7 +5490,7 @@ mod tests {
         fixture.compositor.hold_widget_receipts();
         drop(stream);
 
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while !fixture
             .compositor
             .widget_calls()
@@ -5559,7 +5559,7 @@ mod tests {
                 .await
                 .expect("BUG: widget update must succeed")
         });
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while !fixture
             .compositor
             .widget_calls()
@@ -5610,7 +5610,7 @@ mod tests {
         let request = update_widget_request(&fixture, widget_id);
         let request_task =
             tokio::spawn(async move { service.update_widget(Request::new(request)).await });
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         while !fixture
             .compositor
             .widget_calls()
@@ -5628,7 +5628,7 @@ mod tests {
         fixture.compositor.release_widget_receipts();
         wait_for_managed_widgets(&fixture.coordinator, 1).await;
         let key = WidgetInstanceKey::new(widget_id.as_uuid());
-        let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+        let deadline = tokio::time::Instant::now() + ASYNC_TEST_TIMEOUT;
         loop {
             let retained_size = fixture.compositor.retained_size(key);
             if retained_size

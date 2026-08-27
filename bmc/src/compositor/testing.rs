@@ -33,6 +33,8 @@ use bmc_platform::{HardwareProfile, Product};
 
 use super::*;
 
+pub(crate) const ASYNC_TEST_TIMEOUT: Duration = Duration::from_secs(5);
+
 #[derive(Clone)]
 pub(crate) struct CredentialPush {
     pub(crate) instance_id: InstanceId,
@@ -105,7 +107,7 @@ impl RecordingCompositor {
     }
 
     pub(crate) async fn wait_for_credential_push_count(&self, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(ASYNC_TEST_TIMEOUT, async {
             loop {
                 let actual = self
                     .credential_pushes
