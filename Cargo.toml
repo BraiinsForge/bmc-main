@@ -32,6 +32,7 @@ members = [
     "bmc-scheduler",
     "bmc-shared/*",
     "bmc-support",
+    "bmc-support-openwrt",
     "bmc-upgrade",
     "bmc-virt/console",
     "bmc-virt/ipc",
@@ -205,6 +206,7 @@ bmc-scheduler = { path = "bmc-scheduler" }
 bmc-shared-time = { path = "bmc-shared/time" }
 bmc-shared-utils = { path = "bmc-shared/utils" }
 bmc-support = { path = "bmc-support" }
+bmc-support-openwrt = { path = "bmc-support-openwrt" }
 bmc-svg-compiler = { path = "bmc-wasm-runtime/svg-compiler" }
 bmc-system-overlay = { path = "system-overlays/bmc-system-overlay" }
 bmc-upgrade = { path = "bmc-upgrade" }

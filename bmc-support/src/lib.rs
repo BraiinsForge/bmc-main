@@ -21,15 +21,9 @@
 
 mod filters;
 mod format;
-mod nix_profile;
 
-pub use filters::bmc::{
-    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BMC_SECRETS, BmcConfigCensor, SecretsExclusion,
-    UciWirelessCensor,
-};
 pub use filters::{SupportFilter, censor};
 pub use format::{ArchiveFormat, FinishWrite, PasswordProtectedZip, PlainZip};
-pub use nix_profile::NixProfileExtension;
 
 use anyhow::Result;
 use std::fs::File;

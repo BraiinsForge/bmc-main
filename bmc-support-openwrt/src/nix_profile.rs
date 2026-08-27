@@ -22,8 +22,8 @@
 //! Nix profile diagnostics as a reusable [`SupportExtension`]: a state summary
 //! of the profile directory plus every generation manifest.
 
-use crate::{SupportArchive, SupportExtension};
 use anyhow::Result;
+use bmc_support::{SupportArchive, SupportExtension};
 use std::path::{Path, PathBuf};
 use tracing::{error, info};
 
@@ -181,7 +181,7 @@ mod tests {
     use zip::ZipArchive;
 
     use super::*;
-    use crate::PlainZip;
+    use bmc_support::PlainZip;
 
     fn archive_entries(bytes: &[u8]) -> BTreeMap<String, Vec<u8>> {
         let mut archive = ZipArchive::new(Cursor::new(bytes)).expect("BUG: test archive opens");

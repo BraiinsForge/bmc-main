@@ -25,10 +25,10 @@
 
 mod consts;
 
-use anyhow::Result;
-use bmc_support::{
-    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BmcConfigCensor, NixProfileExtension, SecretsExclusion,
-    SupportArchive, SupportConfig, SupportExtension, SupportFilter, UciWirelessCensor,
+use bmc_support::{SupportConfig, SupportExtension, SupportFilter};
+use bmc_support_openwrt::{
+    BMC_CONFIG_DIR, BMC_CONFIG_LEGACY, BmcConfigCensor, LogReadExtension, NixProfileExtension,
+    SecretsExclusion, UciWirelessCensor,
 };
 use consts::{
     BOARD, BOS_MAJOR, BOS_MODE, BOS_PLATFORM, BOS_VERSION, ETC_DNSMASQ_CONF, ETC_HOSTS,
@@ -95,21 +95,6 @@ const FILTERS: &[&dyn SupportFilter] = &[&SecretsExclusion, &BmcConfigCensor, &U
 /// Device paths plus the shared generic procfs set.
 static FS_PATHS: LazyLock<Vec<&'static str>> =
     LazyLock::new(|| [DEVICE_FS_PATHS, bmc_support::PROC_PATHS].concat());
-
-/// Captures the in-memory system log. Registered last so it sees syslog
-/// every other collector emits during collection.
-#[derive(Debug)]
-struct LogReadExtension;
-
-impl SupportExtension for LogReadExtension {
-    fn name(&self) -> &'static str {
-        "logread"
-    }
-
-    fn collect(&self, archive: &mut SupportArchive<'_>) -> Result<()> {
-        archive.add_cmd_output(&["logread"])
-    }
-}
 
 /// Extensions run after the fs walk; `logread` stays last.
 const EXTENSIONS: &[&dyn SupportExtension] = &[

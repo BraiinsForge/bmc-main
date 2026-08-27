@@ -1067,6 +1067,7 @@ dependencies = [
  "bmc-shared-time",
  "bmc-shared-utils",
  "bmc-support",
+ "bmc-support-openwrt",
  "bmc-upgrade",
  "bmc-widget-protocol",
  "calloop 0.14.2",
@@ -1285,10 +1286,21 @@ dependencies = [
  "anyhow",
  "bmc-net-diag",
  "flate2",
- "regex",
  "tempfile",
  "tracing",
  "walkdir",
+ "zip",
+]
+
+[[package]]
+name = "bmc-support-openwrt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bmc-support",
+ "regex",
+ "tempfile",
+ "tracing",
  "zip",
 ]
 

@@ -19,16 +19,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! BMC credential filters — [`SupportFilter`] implementations carrying the
-//! board's config layout, secret store and UCI wireless knowledge.
+//! Credential filters for the OpenWrt board — [`SupportFilter`] implementations
+//! carrying its config layout, secret store and UCI wireless knowledge.
 
-use crate::SupportFilter;
+use bmc_support::SupportFilter;
 use regex::Regex;
 use std::path::Path;
 use tracing::warn;
 
 /// Account secrets, deliberately **never** collected — see [`SecretsExclusion`].
-pub const BMC_SECRETS: &str = "/etc/bmc/secrets.json";
+const BMC_SECRETS: &str = "/etc/bmc/secrets.json";
 /// Directory holding the current config and its timestamped backups.
 /// Collected wholesale so `config.json.backup.<ts>` snapshots ride
 /// along in the support archive.
@@ -126,7 +126,7 @@ mod tests {
     fn apply_bmc_filters(path: &Path, content: Vec<u8>) -> Vec<u8> {
         let filters: [&dyn SupportFilter; 3] =
             [&SecretsExclusion, &BmcConfigCensor, &UciWirelessCensor];
-        crate::censor(&filters, path, content)
+        bmc_support::censor(&filters, path, content)
     }
 
     #[test]

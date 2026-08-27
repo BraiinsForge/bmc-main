@@ -34,6 +34,7 @@ bmc-platform = { workspace = true, features = ["backlight", "linux-input"] }
 bmc-shared-time.workspace = true
 bmc-shared-utils.workspace = true
 bmc-support.workspace = true
+bmc-support-openwrt.workspace = true
 bmc-upgrade.workspace = true
 bmc-widget-protocol.workspace = true
 calloop.workspace = true

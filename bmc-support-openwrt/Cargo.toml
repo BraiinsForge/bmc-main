@@ -1,0 +1,19 @@
+[package]
+name = "bmc-support-openwrt"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+authors = ["Braiins <braiins@braiins.com>"]
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow.workspace = true
+bmc-support.workspace = true
+regex.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+zip.workspace = true

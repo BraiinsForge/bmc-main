@@ -18,8 +18,6 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-pub(crate) mod bmc;
-
 use std::path::Path;
 use tracing::warn;
 
