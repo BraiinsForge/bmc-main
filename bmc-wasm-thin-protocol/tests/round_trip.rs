@@ -78,6 +78,7 @@ fn build_frame_bytes<E: bincode::Encode>(version: u16, payload: &E) -> Vec<u8> {
     frame
 }
 
+#[expect(clippy::cast_ptr_alignment)]
 fn raw_sendmsg_with_fd(sender: &UnixStream, payload: &[u8], fd: std::os::fd::BorrowedFd<'_>) {
     let iov = libc::iovec {
         iov_base: payload.as_ptr().cast_mut().cast::<libc::c_void>(),
@@ -337,6 +338,7 @@ fn hello_without_scm_rights_is_protocol_error() {
 #[cfg(target_os = "linux")]
 #[test]
 #[serial]
+#[expect(clippy::cast_ptr_alignment)]
 fn too_many_fds_are_rejected_without_leaking_received_fd() {
     let (sender, receiver) = pair();
     let (fd_a, _fd_b) = pair();
