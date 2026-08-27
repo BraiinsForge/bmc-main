@@ -38,6 +38,16 @@ Each commit compiles and passes tests on its own (verify-at-every-commit). Commi
 imperative subject, ticket reference, body explaining *why*. Squash fixups into the commit they belong to so the history
 reviewers read is the history that merges.
 
+The commit message is the only place a ticket reference belongs. This is an open-source repo, and `git log` already ties
+every line back to its ticket, so strip `BDK-`/`BOS-` mentions from code comments, `docs/`, and protocol XML copyright
+blocks before offering the branch. Find the ones this branch added with:
+
+```bash
+git diff "$(git merge-base HEAD origin/master)"..HEAD | grep -E '^\+.*(BDK|BOS)-[0-9]'
+```
+
+Older references elsewhere in the tree are not this branch's to clean up.
+
 ## 5. The story addendum — only for Story-type tickets
 
 Check the ticket type (the Jira `issuetype` is `Story`, not `Task` / `Bug`). If it is a Story, the user-facing feature
@@ -69,6 +79,7 @@ When you do open the MR (with `glab`, run unsandboxed):
 
 - Never offer a branch for review with the scratch devlog still committed.
 - Never skip `just validate` (the formatter step is load-bearing) before calling a ticket done.
+- Never leave a ticket reference in code, docs or a protocol XML copyright block; the commit message is its only home.
 - Never finalize a Story ticket without the `docs/stories/` entry — route through `finalizing-story-ticket`.
 - Never treat push / MR creation as an automatic finalization step; it is a separate, explicit action.
 - Never open an MR with no assignee — the assignee is always the opener.
