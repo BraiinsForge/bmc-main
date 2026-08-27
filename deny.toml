@@ -56,10 +56,6 @@ skip = [
     { crate = "tiny-skia-path@0.11" },
     { crate = "imagesize@0.13" },
 
-    # syntect (via egui_extras) pulls bincode 1.x and plist's quick-xml 0.38
-    { crate = "bincode@1" },
-    { crate = "quick-xml@0.38" },
-
     # gltf (sdk-macros) uses base64 0.13
     { crate = "base64@0.13" },
 
