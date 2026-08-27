@@ -18,10 +18,11 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Pure state machine for the image widget — no SDK calls, unit-testable.
-//! The wasm shell turns host callbacks into [`Event`]s, runs [`step`], and
-//! executes the returned [`Action`]s. Folding the in-flight decode into the
-//! states that own it makes a stale completion impossible to install.
+//! Pure state machine for a fetched picture — no SDK calls, unit-testable.
+//! The widget turns host callbacks into [`Event`]s, runs [`step`],
+//! and executes the returned [`Action`]s.
+//! Folding the in-flight decode into the states that own it
+//! makes a stale completion impossible to install.
 
 use bmc_wasm_sdk::{BitmapId, ImageJobId};
 
@@ -32,18 +33,18 @@ pub struct Decode {
     pub aspect: f32,
 }
 
-/// Overlay badge on a shown image.
+/// Overlay badge on a shown picture.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Badge {
     Fresh,
     Updating,
-    /// Can't reach the source; the shown image is old but still valid data.
+    /// Can't reach the source; the shown picture is old but still valid data.
     Stale,
     /// The source answered with an unusable payload (broken / oversized image).
     Error(ErrorKind),
 }
 
-/// Why no image is shown.
+/// Why no picture is shown.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum ErrorKind {
     LoadFailed,
@@ -102,12 +103,14 @@ pub enum Event {
         kind: ErrorKind,
         transient: bool,
     },
-    ParamsChanged,
+    /// The widget should now be showing a different picture:
+    /// an edited URL or sizing, or a fresh publication date.
+    TargetChanged,
     Reload,
     Sleep,
 }
 
-/// A host side effect for the shell to run.
+/// A host side effect for the widget to run.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Action {
     EnablePollAfter(u32),
@@ -195,13 +198,13 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             ),
             other => (other, vec![]),
         },
-        // A URL/sizing change drops the shown image (Loading, not stale-over-wrong);
+        // A new target drops the shown picture (Loading, not stale-over-wrong);
         // evict stays out of here — it needs render scope (host import traps otherwise).
-        E::RestoreMiss | E::ParamsChanged => (
+        E::RestoreMiss | E::TargetChanged => (
             View::Loading { decode: None },
             vec![A::ResumePoll, A::RequestFrame],
         ),
-        // A refresh of a shown image keeps it and its badge; only the decode is tracked.
+        // A refresh of a shown picture keeps it and its badge; only the decode is tracked.
         E::DecodeStarted { job, aspect } => {
             let decode = Some(Decode { job, aspect });
             match view {
@@ -235,14 +238,14 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 },
                 vec![A::RequestFrame],
             ),
-            // Superseded completion (e.g. after a params change) — ignore.
+            // Superseded completion (e.g. after a target change) — ignore.
             other => (other, vec![]),
         },
         E::DecodeFailed { job } => match view {
             View::Loading { decode: Some(d) } if d.job == job => {
                 (View::Failed(ErrorKind::BadImage), vec![A::RequestFrame])
             }
-            // Fetch banked ok; flag the image + mark stale so is_stale matches.
+            // Fetch banked ok; flag the picture + mark stale so is_stale matches.
             View::Shown {
                 bitmap,
                 aspect,
@@ -260,7 +263,7 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             other => (other, vec![]),
         },
         E::FetchError { kind, transient } => match view {
-            // Keep the last image: unreachable → Stale (fast retry), bad body → Error.
+            // Keep the last picture: unreachable → Stale (fast retry), bad body → Error.
             View::Shown {
                 bitmap,
                 aspect,
@@ -282,8 +285,8 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                     actions,
                 )
             }
-            // No image to keep. A non-transient failure (bad body, oversized)
-            // still must slow the poll: without DeferPoll the shell falls back
+            // No picture to keep. A non-transient failure (bad body, oversized)
+            // still must slow the poll: without DeferPoll the widget falls back
             // to the fast retry_ms cadence and hammers an unfixable URL forever.
             _ if transient => (View::Failed(kind), vec![A::RequestFrame]),
             _ => (View::Failed(kind), vec![A::RequestFrame, A::DeferPoll]),
@@ -404,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn params_change_drops_in_flight_decode() {
+    fn target_change_drops_in_flight_decode() {
         let v = shown(
             Badge::Fresh,
             Some(Decode {
@@ -412,7 +415,7 @@ mod tests {
                 aspect: 1.0,
             }),
         );
-        let (next, _) = step(v, Event::ParamsChanged);
+        let (next, _) = step(v, Event::TargetChanged);
         assert!(matches!(next, View::Loading { decode: None }));
         // A late completion of the dropped job can no longer install.
         let (after, actions) = step(
@@ -543,8 +546,8 @@ mod tests {
     }
 
     #[test]
-    fn params_change_reloads_without_evicting() {
-        let (next, actions) = step(shown(Badge::Fresh, None), Event::ParamsChanged);
+    fn target_change_reloads_without_evicting() {
+        let (next, actions) = step(shown(Badge::Fresh, None), Event::TargetChanged);
         assert!(matches!(next, View::Loading { decode: None }));
         assert_eq!(actions, vec![Action::ResumePoll, Action::RequestFrame]);
     }

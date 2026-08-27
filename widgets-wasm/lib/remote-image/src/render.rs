@@ -18,7 +18,8 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Image widget rendering — the fitted image, status messages, and stale banner.
+//! Drawing surface shared by the picture widgets — the fitted picture, status
+//! messages, the background-refresh pill and the tap-to-reveal menu.
 
 #[expect(
     clippy::wildcard_imports,
@@ -27,17 +28,35 @@
 use bmc_wasm_sdk::*;
 
 use crate::machine::ErrorKind;
-use crate::manifest_params::Sizing;
 
 const ICON_RENEW: Svg = include_svg!("assets/renew.svg");
 
-pub const CONFIGURE_URL: &str = "Set an image URL";
 pub const LOADING: &str = "Loading image";
 pub const LOAD_FAILED: &str = "Failed to load image";
 pub const TOO_LARGE: &str = "Image too large";
 pub const BAD_IMAGE: &str = "Unsupported image";
 
-/// Text for a load error — centered when no image is up, else in the overlay.
+/// How the picture fills the viewport.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Fit {
+    /// Letterbox the whole picture inside the viewport.
+    Contain,
+    /// Fill the viewport and crop the overflow.
+    Cover,
+}
+
+impl Fit {
+    /// Stable token for the cache identity; a fit change must miss the cache.
+    #[must_use]
+    pub fn identity_token(self) -> &'static str {
+        match self {
+            Self::Contain => "contain",
+            Self::Cover => "cover",
+        }
+    }
+}
+
+/// Text for a load error — centered when no picture is up, else in the overlay.
 #[must_use]
 pub fn error_message(kind: ErrorKind) -> &'static str {
     match kind {
@@ -51,7 +70,7 @@ const MESSAGE_TEXT_SIZE: u32 = 24;
 const UPDATING_TEXT: &str = "Updating";
 const UPDATING_TEXT_SIZE: u32 = 14;
 
-/// Aspect ratio (`w / h`) of an image, defaulting to square on a zero height.
+/// Aspect ratio (`w / h`) of a picture, defaulting to square on a zero height.
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
@@ -72,18 +91,18 @@ fn contain(aspect: f32, w: f32, h: f32) -> (f32, f32, f32, f32) {
     }
 }
 
-/// The image drawn on black: `Contain` letterboxes the fit-within blob; `Cover`
+/// The picture drawn on black: `Contain` letterboxes the fit-within blob; `Cover`
 /// fills 1:1 (the host already cropped that blob to the viewport).
 #[must_use]
 #[expect(
     clippy::cast_precision_loss,
     reason = "viewport dimensions are < 2^24 and exact in f32"
 )]
-pub fn image_view(bitmap: BitmapId, aspect: f32, size: WidgetSize, sizing: Sizing) -> Node {
+pub fn image_view(bitmap: BitmapId, aspect: f32, size: WidgetSize, fit: Fit) -> Node {
     let (w, h) = (size.width as f32, size.height as f32);
-    let (x, y, dw, dh) = match sizing {
-        Sizing::Contain => contain(aspect, w, h),
-        Sizing::Cover => (0.0, 0.0, w, h),
+    let (x, y, dw, dh) = match fit {
+        Fit::Contain => contain(aspect, w, h),
+        Fit::Cover => (0.0, 0.0, w, h),
     };
     col(
         props!(background: BLACK),
@@ -94,7 +113,7 @@ pub fn image_view(bitmap: BitmapId, aspect: f32, size: WidgetSize, sizing: Sizin
     )
 }
 
-/// A centered status line (no URL / loading / error).
+/// A centered status line (not configured / loading / error).
 #[must_use]
 pub fn message_view(message: &str, _size: WidgetSize) -> Node {
     col(
@@ -155,7 +174,7 @@ fn tap_catcher() -> Node {
     )
 }
 
-/// The reveal menu — two stacked buttons, absolutely positioned over the image.
+/// The reveal menu — two stacked buttons, absolutely positioned over the picture.
 fn menu_panel() -> Node {
     center(
         props!(inset_top: 0.0, inset_right: 0.0, inset_bottom: 0.0, inset_left: 0.0),
@@ -175,6 +194,9 @@ fn menu_panel() -> Node {
 }
 
 /// Overlay the tap catcher (always) and the menu (when open) onto the root.
+///
+/// Callers that also decorate the picture — a caption, say — must compose that first,
+/// so a tap still lands on the catcher rather than on the decoration.
 #[must_use]
 pub fn with_interaction(mut root: Node, menu_open: bool) -> Node {
     if let Node::Column(_, children) | Node::Row(_, children) = &mut root {

@@ -23,7 +23,7 @@ use bmc_wasm_sdk::{
     include_nine_patch, include_skin, include_svg,
 };
 
-const SVG: Svg = include_svg!("widgets-wasm/image/assets/renew.svg");
+const SVG: Svg = include_svg!("widgets-wasm/lib/remote-image/assets/renew.svg");
 const BITMAP: Bitmap = include_bitmap!("widgets-wasm/spacex-launch/assets/unknown.png");
 static MESH: Mesh = include_mesh!("widgets-wasm-examples/mesh-demo/assets/suzanne.glb");
 const NINE_PATCH: NinePatchAsset = include_nine_patch!("bmc-render/assets/panel.9.png");

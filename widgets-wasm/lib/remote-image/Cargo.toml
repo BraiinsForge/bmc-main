@@ -19,23 +19,19 @@
 # the grant above.
 
 [package]
-name = "image-widget"
+name = "remote-image"
 version = "0.1.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
+publish = false
 
-# The manifest icon ships from the crate tree; the nix source filter keeps
-# only rust/toml/lock unless opted in here.
+# The menu's reload icon is embedded at compile time via the SDK include_svg!
+# macro; the nix source filter keeps only rust/toml/lock unless opted in here.
 [package.metadata.nix]
 include = ["assets/**"]
 
-[lib]
-name = "image"
-crate-type = ["cdylib"]
-
 [dependencies]
-bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
-remote-image = { path = "../lib/remote-image" }
+bmc-wasm-sdk = { path = "../../../bmc-wasm-runtime/sdk" }
 
 [lints]
 workspace = true

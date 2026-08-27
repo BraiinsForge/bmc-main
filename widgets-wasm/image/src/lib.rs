@@ -18,19 +18,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Image widget — fetches an image from a URL and displays it fitted to the
-//! widget viewport.
+//! Image widget — fetches a picture from an operator-configured URL
+//! and displays it fitted to the widget viewport.
+//! The picture pipeline itself lives in `remote-image`;
+//! this crate owns the URL, the refresh cadence and the poll that drives them.
 
-#[cfg(any(target_arch = "wasm32", test))]
-mod machine;
 mod manifest_params;
-#[cfg(any(target_arch = "wasm32", test))]
-pub mod render;
 
 #[cfg(target_arch = "wasm32")]
 mod wasm_glue {
-    use super::machine::{self, Action, Badge, ErrorKind, Event, View};
-    use super::{manifest_params, render};
+    use super::manifest_params::{self, Sizing};
     use std::cell::{Cell, RefCell};
 
     #[expect(
@@ -38,12 +35,13 @@ mod wasm_glue {
         reason = "widget render uses many SDK exports"
     )]
     use bmc_wasm_sdk::*;
+    use remote_image::machine::{self, Action, Badge, Event, View};
+    use remote_image::{Fit, picture, render};
 
     /// Menu clears itself this long after opening, untouched.
     const MENU_AUTO_DISMISS_MS: u32 = 10_000;
 
-    /// Displayed image; set() evicts the previous.
-    static IMAGE: BitmapSlot = BitmapSlot::new("image");
+    const CONFIGURE_URL: &str = "Set an image URL";
 
     thread_local! {
         static VIEW: RefCell<View> = const { RefCell::new(View::Loading { decode: None }) };
@@ -107,6 +105,13 @@ mod wasm_glue {
         u32::try_from(secs).unwrap_or(u32::MAX).saturating_mul(1000)
     }
 
+    fn fit() -> Fit {
+        match manifest_params::Params::current().sizing {
+            Sizing::Contain => Fit::Contain,
+            Sizing::Cover => Fit::Cover,
+        }
+    }
+
     // {{width}}/{{height}} expand to the viewport pixels — 1:1 with the
     // released Slint widget so existing server URLs carry over unchanged.
     fn expanded_url() -> Option<String> {
@@ -118,15 +123,11 @@ mod wasm_glue {
         )
     }
 
-    // Cache identity: expanded URL + sizing, so a URL/viewport/sizing change is a distinct blob.
+    // Cache identity: expanded URL + fit, so a URL/viewport/sizing change is a distinct blob.
     fn cache_identity() -> Option<String> {
         let mut id = expanded_url()?;
         id.push('\u{1f}');
-        id.push_str(
-            manifest_params::Params::current()
-                .sizing
-                .as_manifest_value(),
-        );
+        id.push_str(fit().identity_token());
         Some(id)
     }
 
@@ -135,63 +136,13 @@ mod wasm_glue {
     }
 
     fn on_image(_handle: PollHandle, response: &FetchResponse) {
-        dispatch(classify_response(response));
-    }
-
-    /// Probe the response and, on success, start the decode — yielding the event.
-    fn classify_response(response: &FetchResponse) -> Event {
-        // Ahead of the ok() check below, which would read a refusal as transient.
-        if response.outcome() == Some(FetchOutcome::BodyTooLarge) {
-            return Event::FetchError {
-                kind: ErrorKind::TooLarge,
-                transient: false,
-            };
-        }
-        let body = response
-            .body_ref()
-            .expect("BUG: image fetch did not retain its response body");
-        if !response.ok() || body.is_empty() {
-            return Event::FetchError {
-                kind: ErrorKind::LoadFailed,
-                transient: true,
-            };
-        }
-        let Some(dimensions) = host::image_dimensions_ref(&body) else {
-            return Event::FetchError {
-                kind: ErrorKind::BadImage,
-                transient: false,
-            };
-        };
-        let w = dimensions.width;
-        let h = dimensions.height;
-        if u64::from(w) * u64::from(h) > dimensions.max_source_pixels {
-            return Event::FetchError {
-                kind: ErrorKind::TooLarge,
-                transient: false,
-            };
-        }
-        let size = widget_size();
-        let identity = cache_identity().unwrap_or_default();
-        let cover = manifest_params::Params::current().sizing == manifest_params::Sizing::Cover;
-        let job = IMAGE.set_fit_ref(
-            body,
-            size.width,
-            size.height,
-            cover,
-            identity.as_bytes(),
+        dispatch(picture::classify_body(
+            response,
+            widget_size(),
+            fit(),
+            &cache_identity().unwrap_or_default(),
             on_decoded,
-        );
-        match job {
-            Ok(job) => Event::DecodeStarted {
-                job,
-                aspect: render::aspect_of(w, h),
-            },
-            // Decode slots full — retry later.
-            Err(_body) => Event::FetchError {
-                kind: ErrorKind::LoadFailed,
-                transient: true,
-            },
-        }
+        ));
     }
 
     fn on_decoded(job: ImageJobId, bitmap: Option<BitmapId>) {
@@ -219,7 +170,7 @@ mod wasm_glue {
             .as_ref()
             .is_none_or(|p| p.url != cur.url || p.sizing != cur.sizing)
         {
-            dispatch(Event::ParamsChanged);
+            dispatch(Event::TargetChanged);
         } else {
             request_frame();
         }
@@ -245,76 +196,13 @@ mod wasm_glue {
     pub extern "C" fn on_wake() {
         INITIAL_RESTORE.with(|f| f.set(false)); // wake subsumes the cold-start restore
         let has_bitmap = VIEW.with(|view| matches!(&*view.borrow(), View::Shown { .. }));
+        let identity = cache_identity().unwrap_or_default();
+        let interval = refresh_interval_ms();
         dispatch(if has_bitmap {
-            wake_event()
+            picture::wake(&identity, interval)
         } else {
-            restore_event()
+            picture::restore(&identity, interval)
         });
-    }
-
-    /// Restore the cached image if its identity matches; renderer-scope only.
-    fn restore_event() -> Event {
-        let Some((w, h, remaining, saved_at_secs)) = cached_image_state() else {
-            return Event::RestoreMiss;
-        };
-        let Some(bitmap) = assets::register_image(cache::lazy_get(IMAGE.name())) else {
-            return Event::RestoreMiss;
-        };
-        let aspect = render::aspect_of(w, h);
-        if remaining > 0 {
-            Event::Restored {
-                bitmap,
-                aspect,
-                remaining_ms: remaining,
-                saved_at_secs,
-            }
-        } else {
-            Event::RestoredStale {
-                bitmap,
-                aspect,
-                saved_at_secs,
-            }
-        }
-    }
-
-    fn wake_event() -> Event {
-        let Some((_, _, remaining, saved_at_secs)) = cached_image_state() else {
-            return Event::RestoreMiss;
-        };
-        if remaining > 0 {
-            Event::Woke {
-                remaining_ms: remaining,
-                saved_at_secs,
-            }
-        } else {
-            Event::WokeStale { saved_at_secs }
-        }
-    }
-
-    fn cached_image_state() -> Option<(u32, u32, u32, i64)> {
-        let identity = cache_identity()?;
-        let stat = cache::stat(IMAGE.name())?;
-        let (w, h, id_bytes) = parse_meta(&stat.metadata)?;
-        if id_bytes != identity.as_bytes() {
-            return None;
-        }
-        let remaining = remaining_ttl_ms(stat.saved_at);
-        let saved_at_secs = i64::try_from(stat.saved_at / 1000).unwrap_or(i64::MAX);
-        Some((w, h, remaining, saved_at_secs))
-    }
-
-    // Cache metadata is `[w u32 | h u32 | identity]` (the host write path).
-    fn parse_meta(meta: &[u8]) -> Option<(u32, u32, &[u8])> {
-        let w = u32::from_le_bytes(meta.get(0..4)?.try_into().ok()?);
-        let h = u32::from_le_bytes(meta.get(4..8)?.try_into().ok()?);
-        Some((w, h, meta.get(8..)?))
-    }
-
-    fn remaining_ttl_ms(saved_at_ms: u64) -> u32 {
-        let now_ms = u64::try_from(host::SystemTime::now().unix_secs)
-            .unwrap_or(0)
-            .saturating_mul(1000);
-        machine::ttl_remaining(now_ms, saved_at_ms, refresh_interval_ms())
     }
 
     fn menu_open() -> bool {
@@ -326,7 +214,10 @@ mod wasm_glue {
         // First render restores from cache (init() has no renderer scope).
         if INITIAL_RESTORE.with(Cell::get) {
             INITIAL_RESTORE.with(|f| f.set(false));
-            dispatch(restore_event());
+            dispatch(picture::restore(
+                &cache_identity().unwrap_or_default(),
+                refresh_interval_ms(),
+            ));
         }
 
         if menu_open() {
@@ -337,7 +228,7 @@ mod wasm_glue {
         let size = widget_size();
         let params = manifest_params::Params::current();
         let base = if params.url.trim().is_empty() {
-            render::message_view(render::CONFIGURE_URL, size)
+            render::message_view(CONFIGURE_URL, size)
         } else {
             VIEW.with(|v| match &*v.borrow() {
                 View::Shown {
@@ -346,7 +237,7 @@ mod wasm_glue {
                     badge,
                     ..
                 } => {
-                    let view = render::image_view(*bitmap, *aspect, size, params.sizing);
+                    let view = render::image_view(*bitmap, *aspect, size, fit());
                     match badge {
                         Badge::Updating => {
                             with_overlay(view, render::updating_pill(), widget_viewport().shape)

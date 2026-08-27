@@ -10,8 +10,8 @@ license = "GPL-3.0-or-later"
 include = [
     "../bmc-render/assets/panel.9.png",
     "../bmc-render/assets/skins/gallery_slider/**",
-    "../widgets-wasm/image/assets/renew.svg",
     "../widgets-wasm/iss-position/src/render/texture.jpg",
+    "../widgets-wasm/lib/remote-image/assets/renew.svg",
     "../widgets-wasm/spacex-launch/assets/*.png",
     "../widgets-wasm-examples/mesh-demo/assets/suzanne.glb",
     "../widgets-wasm-examples/metronome/assets/sounds/Perc_MetronomeQuartz_lo.wav",

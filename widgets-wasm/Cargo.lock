@@ -699,6 +699,7 @@ name = "image-widget"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
+ "remote-image",
 ]
 
 [[package]]
@@ -1015,6 +1016,13 @@ dependencies = [
 
 [[package]]
 name = "random-facts"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
+name = "remote-image"
 version = "0.1.0"
 dependencies = [
  "bmc-wasm-sdk",
