@@ -20,11 +20,10 @@
 
 pub mod args;
 pub mod host_client;
+pub mod host_connect;
 pub mod logging;
-pub mod ownership;
 pub mod paths;
 pub mod signal;
-pub mod spawn;
 pub mod wayland_fd;
 
 use anyhow::Result;
@@ -42,16 +41,13 @@ pub fn run(config: Config) -> Result<()> {
         wasm = %config.wasm.display(),
         asset_root = ?config.asset_root,
         host_socket = %config.host_socket.display(),
-        host_bin = %config.host_bin.display(),
-        lockfile = %config.lockfile.display(),
-        owner_record = %config.owner_record.display(),
         host_wait_ms = config.host_wait.as_millis(),
         ack_wait_ms = config.ack_wait.as_millis(),
         "starting bmc-wasm-thin"
     );
     let wayland = wayland_fd::connect_from_env()?;
     tracing::info!("connected to Wayland; connecting to wasm host");
-    let control = spawn::connect_or_spawn(&config)?;
+    let control = host_connect::connect(&config)?;
     tracing::info!("connected to wasm host; sending load request");
     let control = host_client::send_load_and_wait_ack(
         control,

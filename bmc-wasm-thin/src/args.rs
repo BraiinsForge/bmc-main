@@ -25,8 +25,6 @@ use std::time::Duration;
 use anyhow::{Context as _, Result};
 use clap::Parser;
 
-use crate::paths::{derive_lockfile_path, derive_owner_record_path};
-
 pub const DEFAULT_HOST_WAIT: Duration = Duration::from_secs(10);
 pub const DEFAULT_ACK_WAIT: Duration = Duration::from_secs(10);
 
@@ -42,9 +40,6 @@ pub struct RawArgs {
     #[arg(long, value_name = "PATH")]
     pub host_socket: Option<PathBuf>,
 
-    #[arg(long, value_name = "PATH")]
-    pub host_bin: Option<PathBuf>,
-
     #[arg(long = "host-wait-ms", value_name = "MS")]
     pub host_wait_ms: Option<u64>,
 
@@ -57,9 +52,6 @@ pub struct Config {
     pub wasm: PathBuf,
     pub asset_root: Option<PathBuf>,
     pub host_socket: PathBuf,
-    pub lockfile: PathBuf,
-    pub owner_record: PathBuf,
-    pub host_bin: PathBuf,
     pub host_wait: Duration,
     pub ack_wait: Duration,
 }
@@ -87,17 +79,6 @@ impl Config {
         let host_socket = raw
             .host_socket
             .unwrap_or_else(bmc_wasm_thin_protocol::default_socket_path);
-        let default_socket = bmc_wasm_thin_protocol::default_socket_path();
-        let lockfile = if host_socket == default_socket {
-            bmc_wasm_thin_protocol::default_lockfile_path()
-        } else {
-            derive_lockfile_path(&host_socket)
-        };
-        let owner_record = if host_socket == default_socket {
-            bmc_wasm_thin_protocol::default_owner_record_path()
-        } else {
-            derive_owner_record_path(&host_socket)
-        };
         let host_wait = parse_duration_override(
             "BMC_WASM_HOST_WAIT_MS",
             raw.host_wait_ms,
@@ -110,14 +91,10 @@ impl Config {
             lookup("BMC_WASM_HOST_ACK_WAIT_MS"),
             DEFAULT_ACK_WAIT,
         )?;
-        let host_bin = raw.host_bin.unwrap_or_else(default_host_bin);
         Ok(Self {
             wasm: raw.wasm,
             asset_root: raw.asset_root,
             host_socket,
-            lockfile,
-            owner_record,
-            host_bin,
             host_wait,
             ack_wait,
         })
@@ -140,11 +117,4 @@ fn parse_duration_override(
         return Ok(Duration::from_millis(ms));
     }
     Ok(default)
-}
-
-fn default_host_bin() -> PathBuf {
-    env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|dir| dir.join("bmc-wasm-host")))
-        .unwrap_or_else(|| PathBuf::from("bmc-wasm-host"))
 }

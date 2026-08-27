@@ -11,8 +11,6 @@ workspace = true
 anyhow = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 libc = { workspace = true }
-nix = { workspace = true }
-rustix = { workspace = true }
 signal-hook = { workspace = true }
 tracing = { workspace = true }
 
@@ -24,13 +22,9 @@ bmc-widget-protocol = { workspace = true }
 bmc-wasm-protocol = { path = "../bmc-wasm-runtime/protocol" }
 tempfile = { workspace = true }
 
-[[bin]]
-name = "bmc-wasm-thin-fakehost"
-path = "src/bin/bmc-wasm-thin-fakehost.rs"
-
 [[test]]
-name = "spawn_lock"
-path = "tests/spawn_lock.rs"
+name = "host_connect"
+path = "tests/host_connect.rs"
 
 [[test]]
 name = "idle_signal"

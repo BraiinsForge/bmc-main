@@ -37,9 +37,6 @@ fn device_smoke_thin_receives_ack_ok() {
     if let Ok(socket) = std::env::var("BMC_STAGE6_TEST_HOST_SOCKET") {
         cmd.arg("--host-socket").arg(socket);
     }
-    if let Ok(host_bin) = std::env::var("BMC_STAGE6_TEST_HOST_BIN") {
-        cmd.arg("--host-bin").arg(host_bin);
-    }
     let mut child = cmd.spawn().expect("BUG: spawn bmc-wasm-thin");
 
     std::thread::sleep(Duration::from_secs(2));

@@ -22,13 +22,8 @@ use std::path::Path;
 use std::time::Duration;
 
 use bmc_wasm_thin::args::{Config, RawArgs};
-use bmc_wasm_thin::paths::{
-    derive_lockfile_path, derive_owner_record_path, resolve_wayland_display_path,
-};
-use bmc_wasm_thin_protocol::{
-    default_lockfile_path, default_owner_record_path, default_socket_path,
-    socket_path_for_sdk_major,
-};
+use bmc_wasm_thin::paths::resolve_wayland_display_path;
+use bmc_wasm_thin_protocol::{default_socket_path, socket_path_for_sdk_major};
 
 #[test]
 fn socket_defaults_follow_runtime_sdk_major() {
@@ -36,51 +31,8 @@ fn socket_defaults_follow_runtime_sdk_major() {
     // socket-path scheme, not the SDK version, so minor/patch bumps shouldn't touch it.
     let major = bmc_wasm_protocol::SDK_VERSION.0;
     let socket = format!("/run/bmc/wasm-host-sdk-v{major}.sock");
-    let lock = format!("/run/bmc/wasm-host-sdk-v{major}.lock");
-    let owner = format!("/run/bmc/wasm-host-sdk-v{major}.owner");
     assert_eq!(socket_path_for_sdk_major(major), default_socket_path());
     assert_eq!(default_socket_path(), Path::new(&socket));
-    assert_eq!(default_lockfile_path(), Path::new(&lock));
-    assert_eq!(default_owner_record_path(), Path::new(&owner));
-}
-
-#[test]
-fn lockfile_path_follows_socket_override() {
-    assert_eq!(
-        derive_lockfile_path(Path::new("/tmp/test/host.sock")),
-        Path::new("/tmp/test/host.lock"),
-    );
-    assert_eq!(
-        derive_lockfile_path(Path::new("/tmp/test/host")),
-        Path::new("/tmp/test/host.lock"),
-    );
-    assert_eq!(
-        derive_lockfile_path(Path::new("/tmp/test/host.socket")),
-        Path::new("/tmp/test/host.socket.lock"),
-    );
-}
-
-#[test]
-fn owner_record_path_follows_socket_override() {
-    assert_eq!(
-        derive_owner_record_path(Path::new("/tmp/test/host.sock")),
-        Path::new("/tmp/test/host.owner"),
-    );
-    assert_eq!(
-        derive_owner_record_path(Path::new("/tmp/test/host")),
-        Path::new("/tmp/test/host.owner"),
-    );
-    assert_eq!(
-        derive_owner_record_path(Path::new("/tmp/test/host.socket")),
-        Path::new("/tmp/test/host.socket.owner"),
-    );
-}
-
-#[test]
-fn sdk_major_owner_records_are_independent() {
-    let first = derive_owner_record_path(&socket_path_for_sdk_major(0));
-    let second = derive_owner_record_path(&socket_path_for_sdk_major(1));
-    assert_ne!(first, second);
 }
 
 #[test]
@@ -109,14 +61,11 @@ fn config_defaults_use_protocol_paths() {
         wasm: Path::new("/tmp/widget.wasm").to_path_buf(),
         asset_root: None,
         host_socket: None,
-        host_bin: None,
         host_wait_ms: None,
         ack_wait_ms: None,
     };
     let config = Config::from_raw_with_env(raw, &[]).expect("BUG: valid raw args should normalize");
     assert_eq!(config.host_socket, default_socket_path());
-    assert_eq!(config.lockfile, default_lockfile_path());
-    assert_eq!(config.owner_record, default_owner_record_path());
     assert_eq!(config.host_wait, Duration::from_secs(10));
     assert_eq!(config.ack_wait, Duration::from_secs(10));
 }
@@ -127,7 +76,6 @@ fn production_config_entrypoint_reads_explicit_env_overrides() {
         wasm: Path::new("/tmp/widget.wasm").to_path_buf(),
         asset_root: None,
         host_socket: None,
-        host_bin: None,
         host_wait_ms: None,
         ack_wait_ms: None,
     };
