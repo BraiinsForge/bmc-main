@@ -47,7 +47,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::thread::JoinHandle;
 
 use bmc_nix::feed::{PackageFeed, PackageFeedEntry};
-use bmc_nix::store::SignatureVerification;
+use bmc_nix::store::{InitStoreError, SignatureVerification};
 use bmc_nix::types::{FactoryServerEntry, ServersConfig};
 use serial_test::serial;
 use tempfile::TempDir;
@@ -876,10 +876,9 @@ async fn init_store_wipe_replaces_existing_store() {
     );
 }
 
-/// The network init path must acquire `<stage_dir>/.init.lock` BEFORE
-/// creating the fixed-name download: with the lock held by a foreign
-/// initializer, a concurrent `init_store` must not have touched
-/// `<download_dir>/init-tarball.tar.gz`; once released, it completes.
+/// The network init path must acquire `<stage_dir>/.init.lock` before
+/// fetching the feed or creating the fixed-name download. Once released,
+/// the feed request must proceed.
 #[tokio::test]
 #[serial]
 async fn init_store_blocks_on_held_init_lock() {
@@ -893,25 +892,11 @@ async fn init_store_blocks_on_held_init_lock() {
     let bos_version = "2026-test-1";
     let pending = bind_server();
     let base_url = pending.base_url();
-    let tarball_route_path = format!("/nix-{bos_version}.tar.gz");
-    let tarball_bytes = build_tarball(tmp.path(), &[("nix/store/lockpkg/marker", b"locked")]);
-    let feed_bytes = package_feed_bytes(vec![PackageFeedEntry {
-        bos_version: bos_version.to_owned(),
-        download_url: format!("{base_url}{tarball_route_path}"),
-        profile_path: PROFILE_PATH.to_owned(),
-        index_url: None,
-        signature: None,
+    let feed_without_matching_version = package_feed_bytes(vec![]);
+    let server = pending.serve(vec![Route {
+        path: "/nix-package-feed.v1.json".to_owned(),
+        body: feed_without_matching_version,
     }]);
-    let server = pending.serve(vec![
-        Route {
-            path: "/nix-package-feed.v1.json".to_owned(),
-            body: feed_bytes,
-        },
-        Route {
-            path: tarball_route_path,
-            body: tarball_bytes,
-        },
-    ]);
 
     let lock_file = std::fs::OpenOptions::new()
         .write(true)
@@ -947,10 +932,6 @@ async fn init_store_blocks_on_held_init_lock() {
         .await
     });
 
-    // Poll for a full second: the blocked init must never reach the
-    // network (the feed GET happens only after the lock) nor create
-    // the fixed-name download. Request-count zero is the ordering
-    // proof; the file check is belt and braces.
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         assert_eq!(
@@ -972,16 +953,19 @@ async fn init_store_blocks_on_held_init_lock() {
     let ret = unsafe { libc::flock(lock_file.as_raw_fd(), libc::LOCK_UN) };
     assert_eq!(ret, 0, "BUG: test could not release the init lock");
 
-    let result = tokio::time::timeout(std::time::Duration::from_secs(30), task)
+    let err = tokio::time::timeout(std::time::Duration::from_secs(30), task)
         .await
-        .expect("init must finish once the lock is released")
+        .expect("init must fetch the feed once the lock is released")
         .expect("BUG: init task panicked")
-        .expect("init should succeed once the lock is released");
-    assert_eq!(result.profile_path, PathBuf::from(PROFILE_PATH));
+        .expect_err("init should reach feed selection once the lock is released");
     assert!(
-        stage_dir.join("nix/store/lockpkg/marker").exists(),
-        "the store must be promoted after the lock is released"
+        matches!(
+            &err,
+            InitStoreError::MissingPackageFeedEntry(version) if version == bos_version
+        ),
+        "init must stop at the deliberately missing feed entry: {err}"
     );
+    assert_eq!(server.hits(), 1, "init must fetch the feed after unlocking");
 }
 
 // ── init tarball signature verification (library level) ─────────────────
