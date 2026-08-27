@@ -251,44 +251,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn caches_retain_replay_payloads() {
-        // The wire fan-out needs live resources and is covered on-device;
-        // the caches backing `replay` are the testable half.
-        let mut s = DeviceInfoState::default();
-        s.set_device_state(BmcState::FactoryDefault);
-        s.set_setup_progress(SetupProgress::ConnectingToWifi {
-            wifi_ssid: "HomeNet".to_owned(),
-        });
-        s.set_access_point(Some(AccessPointInfo {
-            ssid: "Deck setup".to_owned(),
-            setup_url: "http://10.0.0.21/".to_owned(),
-        }));
-
-        assert_eq!(s.last_device_state, Some(BmcState::FactoryDefault));
-        assert_eq!(
-            s.last_setup_progress,
-            SetupProgress::ConnectingToWifi {
-                wifi_ssid: "HomeNet".to_owned()
-            }
-        );
-        assert_eq!(
-            s.last_access_point.as_ref().map(|ap| ap.ssid.as_str()),
-            Some("Deck setup")
-        );
-    }
-
-    #[test]
-    fn access_point_down_clears_the_cache() {
-        let mut s = DeviceInfoState::default();
-        s.set_access_point(Some(AccessPointInfo {
-            ssid: "Deck setup".to_owned(),
-            setup_url: "http://10.0.0.21/".to_owned(),
-        }));
-        s.set_access_point(None);
-        assert_eq!(s.last_access_point, None);
-    }
-
-    #[test]
     fn setup_progress_wire_carries_ssid_only_while_connecting() {
         let (state, ssid) = setup_progress_wire(&SetupProgress::ConnectingToWifi {
             wifi_ssid: "HomeNet".to_owned(),
@@ -354,5 +316,309 @@ mod tests {
         assert!(!delivers_boot_flow(BmcState::FactoryDefault));
         assert!(!delivers_boot_flow(BmcState::SetupPending));
         assert!(!delivers_boot_flow(BmcState::WifiReconfiguration));
+    }
+}
+
+/// Drives a real in-process Wayland client/server handshake over a
+/// `UnixStream::pair()` so the on-bind replay is checked as the client sees it:
+/// which events arrive, in which order, and with which arguments. Asserting the
+/// caches instead would pass just as happily with `replay` sending nothing.
+#[cfg(test)]
+mod replay_wire_test {
+    use std::os::unix::net::UnixStream;
+    use std::sync::Arc;
+
+    use ::deck_device_info_v1::client::deck_device_info_v1::{
+        self as client_api, DeviceState, SetupState,
+    };
+    use bmc::compositor::{AccessPointInfo, SetupProgress};
+    use bmc::manager::BmcState;
+    use smithay::reexports::wayland_server::Display;
+    use wayland_client::protocol::wl_registry;
+    use wayland_client::{Connection, Dispatch, EventQueue, QueueHandle};
+
+    use crate::compositor::state::{ClientState, CompositorState};
+
+    /// One replayed event, flattened to the arguments the overlay reads.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Seen {
+        DeviceState {
+            state: u32,
+            boot_flow_delivered: u32,
+        },
+        SetupProgress {
+            state: u32,
+            wifi_ssid: String,
+        },
+        AccessPoint {
+            ssid: String,
+            setup_url: String,
+        },
+    }
+
+    #[derive(Default)]
+    struct TestClient {
+        feed: Option<client_api::DeckDeviceInfoV1>,
+        seen: Vec<Seen>,
+    }
+
+    impl Dispatch<wl_registry::WlRegistry, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            registry: &wl_registry::WlRegistry,
+            event: wl_registry::Event,
+            (): &(),
+            _: &Connection,
+            qh: &QueueHandle<Self>,
+        ) {
+            if let wl_registry::Event::Global {
+                name,
+                interface,
+                version,
+            } = event
+                && interface == "deck_device_info_v1"
+            {
+                state.feed = Some(registry.bind::<client_api::DeckDeviceInfoV1, _, _>(
+                    name,
+                    version.min(1),
+                    qh,
+                    (),
+                ));
+            }
+        }
+    }
+
+    impl Dispatch<client_api::DeckDeviceInfoV1, ()> for TestClient {
+        fn event(
+            state: &mut Self,
+            _: &client_api::DeckDeviceInfoV1,
+            event: client_api::Event,
+            (): &(),
+            _: &Connection,
+            _: &QueueHandle<Self>,
+        ) {
+            let seen = match event {
+                client_api::Event::DeviceState {
+                    state: value,
+                    boot_flow_delivered,
+                } => Seen::DeviceState {
+                    state: value.into(),
+                    boot_flow_delivered,
+                },
+                client_api::Event::SetupProgress {
+                    state: value,
+                    wifi_ssid,
+                } => Seen::SetupProgress {
+                    state: value.into(),
+                    wifi_ssid,
+                },
+                client_api::Event::AccessPoint { ssid, setup_url } => {
+                    Seen::AccessPoint { ssid, setup_url }
+                }
+                other => panic!("BUG: unexpected deck_device_info_v1 event {other:?}"),
+            };
+            state.seen.push(seen);
+        }
+    }
+
+    /// A compositor with its globals up and no client attached yet.
+    fn compositor() -> (Display<CompositorState>, CompositorState) {
+        let display: Display<CompositorState> =
+            Display::new().expect("BUG: test Wayland display should initialize");
+        let compositor = CompositorState::new(
+            &display,
+            480,
+            1280,
+            480,
+            1280,
+            60_000,
+            "test-seat",
+            crate::compositor::settings::caps_for_product(bmc_platform::Product::Bmc100),
+        );
+        (display, compositor)
+    }
+
+    /// Bind `deck_device_info_v1` from a fresh client and return what the bind
+    /// replayed, in arrival order.
+    fn bind_and_collect(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+    ) -> Vec<Seen> {
+        let (server_stream, client_stream) =
+            UnixStream::pair().expect("BUG: unix socket pair should be creatable");
+        display
+            .handle()
+            .insert_client(server_stream, Arc::new(ClientState::default()))
+            .expect("BUG: test client stream should be insertable into a fresh display");
+
+        let conn = Connection::from_socket(client_stream)
+            .expect("BUG: test client socket should form a valid connection");
+        let mut queue: EventQueue<TestClient> = conn.new_event_queue();
+        let qh = queue.handle();
+        let mut client = TestClient::default();
+
+        conn.display().get_registry(&qh, ());
+        pump(display, compositor, &conn, &mut queue, &mut client);
+        assert!(
+            client.feed.is_some(),
+            "BUG: deck_device_info_v1 global should have been advertised"
+        );
+        // The bind itself, then the three events the server replayed to it.
+        pump(display, compositor, &conn, &mut queue, &mut client);
+
+        client.seen
+    }
+
+    fn pump(
+        display: &mut Display<CompositorState>,
+        compositor: &mut CompositorState,
+        conn: &Connection,
+        queue: &mut EventQueue<TestClient>,
+        client: &mut TestClient,
+    ) {
+        conn.flush()
+            .expect("BUG: test client flush should succeed on a live socket pair");
+        display
+            .dispatch_clients(compositor)
+            .expect("BUG: test server dispatch should succeed on a live socket pair");
+        display
+            .flush_clients()
+            .expect("BUG: test server flush should succeed on a live socket pair");
+        queue
+            .blocking_dispatch(client)
+            .expect("BUG: test client dispatch should succeed once the server has replied");
+    }
+
+    #[test]
+    fn a_bind_replays_the_three_events_the_overlay_needs() {
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_device_state(BmcState::FactoryDefault);
+        compositor
+            .device_info
+            .set_setup_progress(SetupProgress::ConnectingToWifi {
+                wifi_ssid: "HomeNet".to_owned(),
+            });
+        compositor
+            .device_info
+            .set_access_point(Some(AccessPointInfo {
+                ssid: "Deck setup".to_owned(),
+                setup_url: "http://10.0.0.21/".to_owned(),
+            }));
+
+        assert_eq!(
+            bind_and_collect(&mut display, &mut compositor),
+            vec![
+                Seen::DeviceState {
+                    state: DeviceState::FactoryDefault as u32,
+                    boot_flow_delivered: 0,
+                },
+                Seen::SetupProgress {
+                    state: SetupState::ConnectingToWifi as u32,
+                    wifi_ssid: "HomeNet".to_owned(),
+                },
+                Seen::AccessPoint {
+                    ssid: "Deck setup".to_owned(),
+                    setup_url: "http://10.0.0.21/".to_owned(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_bind_before_bmc_reports_replays_no_lifecycle_state() {
+        let (mut display, mut compositor) = compositor();
+
+        let seen = bind_and_collect(&mut display, &mut compositor);
+
+        assert!(
+            !seen
+                .iter()
+                .any(|event| matches!(event, Seen::DeviceState { .. })),
+            "an overlay up before bmc must keep waiting, not act on a guessed state: {seen:?}"
+        );
+        assert_eq!(
+            seen,
+            vec![
+                Seen::SetupProgress {
+                    state: SetupState::Idle as u32,
+                    wifi_ssid: String::new(),
+                },
+                Seen::AccessPoint {
+                    ssid: String::new(),
+                    setup_url: String::new(),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn a_finished_setup_replays_as_idle_rather_than_congratulating_again() {
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_device_state(BmcState::SetupPending);
+        compositor
+            .device_info
+            .set_setup_progress(SetupProgress::DeviceSetupSuccess);
+
+        let seen = bind_and_collect(&mut display, &mut compositor);
+
+        assert!(
+            seen.contains(&Seen::SetupProgress {
+                state: SetupState::Idle as u32,
+                wifi_ssid: String::new(),
+            }),
+            "a late binder must not be told the setup just succeeded: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn the_second_bind_is_told_the_boot_sequence_already_ran() {
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_device_state(BmcState::Operational);
+
+        let first = bind_and_collect(&mut display, &mut compositor);
+        assert!(
+            first.contains(&Seen::DeviceState {
+                state: DeviceState::Operational as u32,
+                boot_flow_delivered: 0,
+            }),
+            "the first binder is owed the boot sequence: {first:?}"
+        );
+
+        let second = bind_and_collect(&mut display, &mut compositor);
+        assert!(
+            second.contains(&Seen::DeviceState {
+                state: DeviceState::Operational as u32,
+                boot_flow_delivered: 1,
+            }),
+            "a client binding after the boot screens ran must not restart them: {second:?}"
+        );
+    }
+
+    #[test]
+    fn an_access_point_that_went_down_replays_as_empty_strings() {
+        let (mut display, mut compositor) = compositor();
+        compositor
+            .device_info
+            .set_access_point(Some(AccessPointInfo {
+                ssid: "Deck setup".to_owned(),
+                setup_url: "http://10.0.0.21/".to_owned(),
+            }));
+        compositor.device_info.set_access_point(None);
+
+        let seen = bind_and_collect(&mut display, &mut compositor);
+
+        assert!(
+            seen.contains(&Seen::AccessPoint {
+                ssid: String::new(),
+                setup_url: String::new(),
+            }),
+            "an AP that is down must not replay its old SSID: {seen:?}"
+        );
     }
 }
