@@ -29,6 +29,7 @@ members = [
     "mining-clock",
     "mining-info",
     "nameday",
+    "picture-of-the-day",
     "random-facts",
     "spacex-launch",
     "ticker-list",

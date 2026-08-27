@@ -85,6 +85,14 @@ as a large headline, and an optional date readout. Reads the day's names from th
 follows the device timezone to pick the correct local day, refreshes at local midnight, and truncates long name lists
 with an ellipsis. Renders at all four widget sizes on rectangular viewports.
 
+### [Picture of the Day Widget](picture-of-the-day.md)
+
+A widget that shows the current NASA Astronomy Picture of the Day, captioned with its title and the photographer's
+credit. Follows the feed rather than the clock: a half-hourly metadata check names the published date, and a picture is
+downloaded only when that date changes, so an unsynchronised device clock cannot make it ask for the wrong day. Shows
+the picture whole, with an optional title; the credit, where the feed names one, cannot be turned off. Renders at all
+four widget sizes on rectangular viewports.
+
 ### [Random Facts Widget](random-facts.md)
 
 A widget that shows a single random factoid, large and centered on the tile, under a fixed "Random Facts" header. Pulls

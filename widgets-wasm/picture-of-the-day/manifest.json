@@ -1,0 +1,39 @@
+{
+  "$schema": "../../bmc-widget-manifest/manifest.schema.json",
+  "uid": "5d416042-caf6-41bd-81b3-bc71fa494863",
+  "version": "0.1.0",
+  "name": "Picture of the Day",
+  "description": "Show today's picture from a selected source, with its title and credit",
+  "author": {
+    "name": "Braiins Forge",
+    "url": "https://braiinsforge.com"
+  },
+  "binary": "bin/picture-of-the-day",
+  "icon": "assets/icon.svg",
+  "category": "media",
+  "supported_viewports": [
+    {
+      "type": "rectangular"
+    }
+  ],
+  "params": {
+    "source": {
+      "name": "Source",
+      "description": "Feed to pull the daily picture from",
+      "type": "string",
+      "default_value": "nasa_apod",
+      "enum_values": [
+        {
+          "value": "nasa_apod",
+          "label": "NASA Astronomy Picture of the Day"
+        }
+      ]
+    },
+    "show_title": {
+      "name": "Show title",
+      "description": "Show the picture's title in the top-left corner",
+      "type": "boolean",
+      "default_value": true
+    }
+  }
+}
