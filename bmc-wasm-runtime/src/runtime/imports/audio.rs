@@ -119,8 +119,7 @@ fn register_audio_data(state: &mut HostState, name: String, data: Vec<u8>) -> u3
     state
         .audio
         .register(name, data.into(), duration_ms)
-        .to_wire()
-        .into()
+        .map_or(0, |id| id.to_wire().into())
 }
 
 fn register_audio_play_import(linker: &mut Linker<HostState>) -> Result<()> {
@@ -203,4 +202,25 @@ fn register_audio_stop_import(linker: &mut Linker<HostState>) -> Result<()> {
         },
     )?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use chrono::Local;
+
+    use super::*;
+    use crate::audio_registry::AudioRegistry;
+    use crate::runtime_limits::RuntimeResourceLimits;
+
+    #[test]
+    fn exhausted_registry_returns_absent_wire_id() {
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            Local::now().fixed_offset(),
+        );
+        state.audio = AudioRegistry::with_id_cap(2);
+
+        assert_ne!(register_audio_data(&mut state, "first".into(), vec![]), 0);
+        assert_eq!(register_audio_data(&mut state, "second".into(), vec![]), 0);
+    }
 }

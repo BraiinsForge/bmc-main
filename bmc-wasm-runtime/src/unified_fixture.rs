@@ -262,6 +262,7 @@ pub enum UnifiedEvent {
     // ── Audio ───────────────────────────────────────────────────
     /// An audio playback event (informational, no-op during replay).
     AudioPlay {
+        /// Registry handle at event time; eviction may reuse it for another sample.
         sound_id: u32,
         volume: u32,
         /// Human-readable sample name (from registration).

@@ -23,8 +23,8 @@
 //! Mirrors the bitmap / icon / mesh registries on the renderer side:
 //! registrations are deduped by tag, look up by ID is O(1), and eviction
 //! frees both the encoded sample data and any active `rodio::Sink`s for
-//! that ID. ID slots are not recycled — re-registering a tag after
-//! eviction allocates a fresh `AudioId`.
+//! that ID. Eviction invalidates the returned ID and releases its numeric
+//! value for a later registration; callers must discard evicted IDs.
 //!
 //! The active-sink half is gated on `feature = "audio"`. With the feature
 //! off, the registry still tracks samples (so callers can record fixture
@@ -34,15 +34,14 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::Arc;
 
-use bmc_wasm_protocol::AudioId;
+use bmc_wasm_protocol::{AudioId, IdPool};
 
 use crate::host_api::AudioSample;
 
-#[derive(Default)]
 pub struct AudioRegistry {
     samples: HashMap<AudioId, AudioSample>,
     by_name: HashMap<String, AudioId>,
-    next_id: u16,
+    ids: IdPool<AudioId>,
     /// Active playback sinks keyed by sample ID.
     /// A single sample may have several overlapping plays; sinks are pruned lazily by `push_sink`.
     #[cfg(feature = "audio")]
@@ -53,8 +52,14 @@ impl fmt::Debug for AudioRegistry {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.debug_struct("AudioRegistry")
             .field("count", &self.samples.len())
-            .field("next_id", &self.next_id)
+            .field("ids", &self.ids)
             .finish_non_exhaustive()
+    }
+}
+
+impl Default for AudioRegistry {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -64,9 +69,17 @@ impl AudioRegistry {
         Self {
             samples: HashMap::new(),
             by_name: HashMap::new(),
-            next_id: 1,
+            ids: IdPool::new(u16::MAX),
             #[cfg(feature = "audio")]
             sinks: HashMap::new(),
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_id_cap(exclusive_cap: u16) -> Self {
+        Self {
+            ids: IdPool::new(exclusive_cap),
+            ..Self::new()
         }
     }
 
@@ -85,11 +98,14 @@ impl AudioRegistry {
     /// Register a sample under `tag`. Idempotent: a second call with the
     /// same tag returns the cached ID; `data` / `duration_ms` from later
     /// calls are ignored.
-    pub fn register(&mut self, tag: String, data: Arc<[u8]>, duration_ms: u32) -> AudioId {
+    pub fn register(&mut self, tag: String, data: Arc<[u8]>, duration_ms: u32) -> Option<AudioId> {
         if let Some(&id) = self.by_name.get(&tag) {
-            return id;
+            return Some(id);
         }
-        let id = AudioId::alloc(&mut self.next_id);
+        let Some(id) = self.ids.alloc() else {
+            tracing::error!("audio registry exhausted ({tag})");
+            return None;
+        };
         self.samples.insert(
             id,
             AudioSample {
@@ -99,7 +115,7 @@ impl AudioRegistry {
             },
         );
         self.by_name.insert(tag, id);
-        id
+        Some(id)
     }
 
     /// Evict a single tag: drop the sample, the `tag → AudioId` mapping,
@@ -112,6 +128,7 @@ impl AudioRegistry {
         self.samples.remove(&id);
         #[cfg(feature = "audio")]
         self.stop(id);
+        self.ids.release(id);
         true
     }
 
@@ -166,11 +183,21 @@ mod tests {
         Arc::from(payload.to_vec())
     }
 
+    fn register(registry: &mut AudioRegistry, tag: &str) -> AudioId {
+        registry
+            .register(tag.into(), data(b"x"), 0)
+            .expect("BUG: test audio ID space must not be exhausted")
+    }
+
     #[test]
     fn register_is_idempotent_on_tag() {
         let mut reg = AudioRegistry::new();
-        let id1 = reg.register("ping".into(), data(b"first"), 100);
-        let id2 = reg.register("ping".into(), data(b"second"), 200);
+        let id1 = reg
+            .register("ping".into(), data(b"first"), 100)
+            .expect("BUG: test audio ID space must not be exhausted");
+        let id2 = reg
+            .register("ping".into(), data(b"second"), 200)
+            .expect("BUG: test audio ID space must not be exhausted");
         assert_eq!(id1, id2);
         // The original sample wins — the second call returns the cached ID
         // without overwriting.
@@ -182,7 +209,7 @@ mod tests {
     #[test]
     fn evict_removes_tag_and_sample() {
         let mut reg = AudioRegistry::new();
-        let id = reg.register("ping".into(), data(b"x"), 0);
+        let id = register(&mut reg, "ping");
         assert!(reg.get(id).is_some());
 
         assert!(reg.evict("ping"));
@@ -195,9 +222,9 @@ mod tests {
     #[test]
     fn evict_prefix_only_touches_matching_tags() {
         let mut reg = AudioRegistry::new();
-        let _ = reg.register("a:1".into(), data(b"x"), 0);
-        let _ = reg.register("a:2".into(), data(b"x"), 0);
-        let id_b = reg.register("b:1".into(), data(b"x"), 0);
+        register(&mut reg, "a:1");
+        register(&mut reg, "a:2");
+        let id_b = register(&mut reg, "b:1");
 
         assert_eq!(reg.evict_prefix("a"), 2);
         assert!(reg.get(id_b).is_some());
@@ -206,9 +233,9 @@ mod tests {
     #[test]
     fn evict_prefix_respects_segment_boundaries() {
         let mut reg = AudioRegistry::new();
-        let id_foo = reg.register("foo".into(), data(b"x"), 0);
-        let id_foobar = reg.register("foobar".into(), data(b"x"), 0);
-        let id_foo_child = reg.register("foo:child".into(), data(b"x"), 0);
+        let id_foo = register(&mut reg, "foo");
+        let id_foobar = register(&mut reg, "foobar");
+        let id_foo_child = register(&mut reg, "foo:child");
 
         assert_eq!(reg.evict_prefix("foo"), 2);
         assert!(reg.get(id_foo).is_none());
@@ -217,12 +244,26 @@ mod tests {
     }
 
     #[test]
-    fn register_after_evict_uses_fresh_id() {
+    fn reused_id_resolves_to_the_replacement_sample() {
         let mut reg = AudioRegistry::new();
-        let id1 = reg.register("ephemeral".into(), data(b"x"), 0);
-        assert!(reg.evict("ephemeral"));
-        let id2 = reg.register("ephemeral".into(), data(b"x"), 0);
-        // IDs are not recycled — eviction frees resources, not slots.
-        assert_ne!(id1, id2);
+        let old_id = register(&mut reg, "old");
+        assert!(reg.evict("old"));
+        let replacement_id = register(&mut reg, "replacement");
+
+        assert_eq!(old_id, replacement_id);
+        assert_eq!(
+            reg.get(replacement_id)
+                .expect("BUG: replacement sample must be registered")
+                .name,
+            "replacement"
+        );
+    }
+
+    #[test]
+    fn register_returns_none_when_ids_are_exhausted() {
+        let mut reg = AudioRegistry::with_id_cap(2);
+
+        assert!(reg.register("first".into(), data(b"x"), 0).is_some());
+        assert!(reg.register("second".into(), data(b"x"), 0).is_none());
     }
 }

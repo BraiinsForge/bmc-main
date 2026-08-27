@@ -75,7 +75,8 @@ macro_rules! define_slot {
 
             /// Replace the current registration under this slot's name with
             /// `data`. Any previously-registered payload (and, for audio,
-            /// any in-flight playback sinks) are evicted first.
+            /// any in-flight playback sinks) are evicted first. Any ID returned
+            /// by an earlier `set` is invalid after this call.
             #[must_use]
             pub fn set(&self, $data: &[u8]) -> Option<$id> {
                 let $name = self.name;
@@ -83,8 +84,8 @@ macro_rules! define_slot {
                 $register
             }
 
-            /// Drop the current registration under this slot's name without
-            /// re-registering.
+            /// Drop the current registration under this slot's name. Any ID
+            /// returned by an earlier `set` is invalid after this call.
             pub fn evict(&self) {
                 host::evict_prefix(self.name);
             }

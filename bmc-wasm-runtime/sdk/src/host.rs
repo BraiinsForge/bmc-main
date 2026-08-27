@@ -457,6 +457,7 @@ mod ffi {
     /// Drop every host-side asset (icon, bitmap, mesh, audio) whose tag
     /// starts with `prefix`. The host implicitly namespaces by guest ID,
     /// so the prefix only sees this widget's own registrations.
+    /// IDs for evicted assets become invalid and must be discarded.
     /// Returns the number of entries evicted across all four registries.
     #[expect(clippy::cast_possible_truncation)]
     pub fn evict_prefix(prefix: &str) -> u32 {
@@ -464,6 +465,7 @@ mod ffi {
     }
 
     /// Evict everything this widget registered — its whole namespace.
+    /// All previously returned asset IDs become invalid and must be discarded.
     /// Returns the number of entries evicted.
     pub fn evict_all() -> u32 {
         unsafe { host_evict_all() }
