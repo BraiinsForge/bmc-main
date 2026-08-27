@@ -46,48 +46,9 @@ pub const WIDGET_CACHE_DIR: &str = "/mnt/data/bmc/widget-cache";
 /// Per-bucket byte cap for the generic blob cache (content-agnostic).
 pub const WIDGET_CACHE_BUCKET_MAX_BYTES: u64 = 16 * 1_024 * 1_024;
 
-#[must_use]
-pub fn default_lockfile_path() -> std::path::PathBuf {
-    derive_lockfile_path(&default_socket_path())
-}
-
-#[must_use]
-pub fn default_owner_record_path() -> std::path::PathBuf {
-    derive_owner_record_path(&default_socket_path())
-}
-
-#[must_use]
-pub fn derive_lockfile_path(socket_path: &std::path::Path) -> std::path::PathBuf {
-    derive_socket_sibling_path(socket_path, "lock")
-}
-
-#[must_use]
-pub fn derive_owner_record_path(socket_path: &std::path::Path) -> std::path::PathBuf {
-    derive_socket_sibling_path(socket_path, "owner")
-}
-
-fn derive_socket_sibling_path(
-    socket_path: &std::path::Path,
-    extension: &str,
-) -> std::path::PathBuf {
-    if socket_path
-        .extension()
-        .is_some_and(|ext| ext.eq_ignore_ascii_case("sock"))
-    {
-        let mut p = socket_path.to_path_buf();
-        p.set_extension(extension);
-        return p;
-    }
-    let mut s = socket_path.as_os_str().to_owned();
-    s.push(".");
-    s.push(extension);
-    std::path::PathBuf::from(s)
-}
-
 /// Log file path for the host serving `socket_path`.
 ///
-/// One live host per socket is guaranteed by the lockfile, so deriving
-/// the log path from the socket keeps every log file single-writer.
+/// One live host binds each socket, so the winning host is the log's only steady writer.
 /// The full path is flattened into the file name (not just the stem) so
 /// distinct sockets with equal file names get distinct logs.
 #[must_use]

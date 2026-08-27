@@ -19,6 +19,7 @@
 // the grant above.
 
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::os::fd::AsRawFd;
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::ptr::NonNull;
@@ -37,47 +38,6 @@ use crate::slot::{SlotSurface, WidgetSlot};
 
 /// Let a startup/scene burst settle before the next GC, per review.
 const GC_SETTLE_DELAY: Duration = Duration::from_secs(5);
-
-/// Exit as soon as the last connection is gone: bmc shuts down and restarts
-/// immediately, and a host that lingers past its last slot would adopt the
-/// new bmc instance's thins (stale code after a package upgrade) or hold the
-/// socket against the replacement host's bind.
-#[derive(Debug)]
-pub struct HostLifetime {
-    ever_had_admission: bool,
-}
-
-impl HostLifetime {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            ever_had_admission: false,
-        }
-    }
-
-    /// Record loaded and rejected terminal outcomes, plus all admissions that
-    /// remain active afterwards.
-    ///
-    /// A successful load, or a rejection that leaves no active admission,
-    /// records that bootstrap work was handled so the host exits once
-    /// idle instead of lingering. A rejection among active siblings is ignored:
-    /// they keep the host alive and one bad widget must not tear it down.
-    pub fn note_admission_outcomes(
-        &mut self,
-        loaded: usize,
-        rejected: usize,
-        active_admissions: usize,
-    ) {
-        if loaded > 0 || (rejected > 0 && active_admissions == 0) {
-            self.ever_had_admission = true;
-        }
-    }
-
-    #[must_use]
-    pub fn should_continue(&self, active_admissions: usize, overlays_active: bool) -> bool {
-        active_admissions > 0 || overlays_active || !self.ever_had_admission
-    }
-}
 
 /// Pure-function inputs that `compute_poll_timeout_from_inputs` consumes per slot.
 ///
@@ -413,9 +373,7 @@ fn publish_gc_root(slots: &SlotTable) {
 ///
 /// One `POLLIN` can back several pending connections — a scene or post-upgrade
 /// restart reconnects every thin at once — so accepting one per wake would
-/// stall the rest behind the poll timeout. Draining to `WouldBlock` also lets
-/// the pre-exit sweep pick up a connection queued during the last slot's
-/// teardown, which the peer already saw `connect()` succeed for.
+/// stall the rest behind the poll timeout.
 pub fn accept_pending(listener: &UnixListener) -> Result<Vec<UnixStream>, FatalError> {
     let mut pending = Vec::new();
     loop {
@@ -432,35 +390,22 @@ pub fn accept_pending(listener: &UnixListener) -> Result<Vec<UnixStream>, FatalE
 fn stage_accept_burst(
     listener: &ListenSocket,
     pending: &mut Vec<PendingAdmission>,
-    lifetime: &mut HostLifetime,
-    slots_len: usize,
 ) -> Result<(), FatalError> {
-    let mut rejected = 0_usize;
     for client in accept_pending(listener.as_listener())? {
         match PendingAdmission::new(client, Instant::now()) {
             Ok(admission) => pending.push(admission),
             Err(error) => {
-                rejected += 1;
                 tracing::warn!(?error, "admission setup failed; slot rejected");
             }
         }
     }
-    lifetime.note_admission_outcomes(0, rejected, slots_len + pending.len());
     Ok(())
 }
 
-fn note_admission_outcomes(
-    lifetime: &mut HostLifetime,
-    loaded: usize,
-    rejected: usize,
-    slots: &SlotTable,
-    pending: &[PendingAdmission],
-    next_gc: &mut Instant,
-) {
+fn schedule_gc_after_load(loaded: usize, next_gc: &mut Instant) {
     if loaded > 0 {
         *next_gc = (*next_gc).min(Instant::now() + GC_SETTLE_DELAY);
     }
-    lifetime.note_admission_outcomes(loaded, rejected, slots.len() + pending.len());
 }
 
 enum AdmissionStep<Pending, Loaded, Rejected> {
@@ -494,12 +439,7 @@ fn fold_admission_pass<Pending, Loaded, Rejected>(
     pass
 }
 
-fn advance_pending_controls(
-    pending: &mut Vec<PendingAdmission>,
-    lifetime: &mut HostLifetime,
-    slots: &SlotTable,
-    next_gc: &mut Instant,
-) {
+fn advance_pending_controls(pending: &mut Vec<PendingAdmission>) {
     let pass: AdmissionPass<PendingAdmission, Box<WidgetSlot>, anyhow::Error> =
         fold_admission_pass(std::mem::take(pending), |admission| {
             match admission.advance_control(Instant::now()) {
@@ -513,16 +453,13 @@ fn advance_pending_controls(
     for error in &pass.rejected {
         tracing::warn!(?error, "admission control failed; slot rejected");
     }
-    let rejected = pass.rejected.len();
     *pending = pass.pending;
-    note_admission_outcomes(lifetime, 0, rejected, slots, pending, next_gc);
 }
 
 fn advance_pending_configures(
     pending: &mut Vec<PendingAdmission>,
     slots: &mut SlotTable,
     shared: &SharedHost,
-    lifetime: &mut HostLifetime,
     next_gc: &mut Instant,
 ) {
     let pass = fold_admission_pass(std::mem::take(pending), |admission| {
@@ -533,7 +470,6 @@ fn advance_pending_configures(
         }
     });
     let loaded = pass.loaded.len();
-    let rejected = pass.rejected.len();
     for slot in pass.loaded {
         let peer_pid = slot.peer_pid;
         let wasm = slot.wasm_basename.clone();
@@ -544,7 +480,7 @@ fn advance_pending_configures(
         tracing::warn!(?error, "admission configure failed; slot rejected");
     }
     *pending = pass.pending;
-    note_admission_outcomes(lifetime, loaded, rejected, slots, pending, next_gc);
+    schedule_gc_after_load(loaded, next_gc);
 }
 
 fn run_renderer_delivery_scope_if_ready<Guard>(
@@ -583,7 +519,6 @@ struct PostPollState<'a> {
     slots: &'a mut SlotTable,
     pending_admissions: &'a mut Vec<PendingAdmission>,
     pending_shutdown: &'a mut Vec<WidgetSlot>,
-    lifetime: &'a mut HostLifetime,
     next_gc: &'a mut Instant,
     listener_revents: i16,
     renderer_ptr: NonNull<dyn Renderer>,
@@ -605,24 +540,14 @@ impl ControlFirstPostPoll for PostPollState<'_> {
     }
 
     fn process_pending_controls(&mut self) -> Result<(), FatalError> {
-        advance_pending_controls(
-            self.pending_admissions,
-            self.lifetime,
-            self.slots,
-            self.next_gc,
-        );
+        advance_pending_controls(self.pending_admissions);
         Ok(())
     }
 
     fn process_listener(&mut self) -> Result<(), FatalError> {
         classify_listener_revents(self.listener_revents)?;
         if (self.listener_revents & libc::POLLIN) != 0 {
-            stage_accept_burst(
-                self.listener,
-                self.pending_admissions,
-                self.lifetime,
-                self.slots.len(),
-            )?;
+            stage_accept_burst(self.listener, self.pending_admissions)?;
         }
         Ok(())
     }
@@ -632,7 +557,6 @@ impl ControlFirstPostPoll for PostPollState<'_> {
             self.pending_admissions,
             self.slots,
             self.shared,
-            self.lifetime,
             self.next_gc,
         );
         Ok(())
@@ -750,7 +674,7 @@ fn run_loop(
     slots: &mut SlotTable,
     pending_shutdown: &mut Vec<WidgetSlot>,
     overlays: &mut Vec<HostedOverlay>,
-) -> Result<(), FatalError> {
+) -> Result<Infallible, FatalError> {
     listener
         .set_nonblocking()
         .map_err(FatalError::ControlSocketBindFailed)?;
@@ -767,21 +691,13 @@ fn run_loop(
         }
     }
 
-    let mut lifetime = HostLifetime::new();
     let mut pending_admissions: Vec<PendingAdmission> = Vec::new();
 
     // Defer the first publish + reconcile until widgets load.
     // An empty root now would let a peer's sweep wipe buckets we re-use;
     // the previous run's root protects them until the scheduled pass.
     let mut next_gc = Instant::now() + GC_SETTLE_DELAY;
-    while lifetime.should_continue(
-        slots.len() + pending_admissions.len(),
-        overlays.iter().any(HostedOverlay::running),
-    ) || !pending_shutdown.is_empty()
-        || overlays
-            .iter()
-            .any(|overlay| !overlay.running() || overlay.is_failed())
-    {
+    loop {
         let poll_now = Instant::now();
         let slot_ms = compute_poll_timeout(slots, poll_now);
         let mut wake = u64::try_from(slot_ms).ok().map(Duration::from_millis);
@@ -887,7 +803,6 @@ fn run_loop(
             slots,
             pending_admissions: &mut pending_admissions,
             pending_shutdown,
-            lifetime: &mut lifetime,
             next_gc: &mut next_gc,
             listener_revents: pollfds[LISTENER_INDEX].revents,
             renderer_ptr,
@@ -1064,24 +979,6 @@ fn run_loop(
         }
         *pending_shutdown = retry_shutdown;
 
-        // The loop-top exit check runs before the next poll()/accept(), so a
-        // thin that connected into the backlog while this iteration tore down
-        // the last slot would be orphaned: its connect() succeeded, but it is
-        // never accepted and the dropped listener resets it. Sweep the backlog
-        // once more before honoring a slots-driven exit — a queued connection
-        // revives the host instead of restarting it from scratch.
-        if !lifetime.should_continue(
-            slots.len() + pending_admissions.len(),
-            overlays.iter().any(HostedOverlay::running),
-        ) {
-            stage_accept_burst(
-                listener,
-                &mut pending_admissions,
-                &mut lifetime,
-                slots.len(),
-            )?;
-        }
-
         // Heartbeat + sweep on the next_gc deadline; republishing also picks up
         // teardowns. After a run the deadline resets a full period out.
         if Instant::now() >= next_gc {
@@ -1091,7 +988,6 @@ fn run_loop(
             next_gc = Instant::now() + cache_gc::gc_period();
         }
     }
-    Ok(())
 }
 
 pub fn run_with_slots(
@@ -1099,7 +995,7 @@ pub fn run_with_slots(
     renderer: &mut FemtoVgRenderer,
     listener: &ListenSocket,
     slots: &mut SlotTable,
-) -> Result<(), FatalError> {
+) -> Result<Infallible, FatalError> {
     let mut overlays = crate::overlays::build_overlays(&shared.egl);
     let mut pending_shutdown = Vec::new();
     let result = run_loop(
@@ -1125,7 +1021,7 @@ pub fn run(
     shared: &mut SharedHost,
     renderer: &mut FemtoVgRenderer,
     listener: &ListenSocket,
-) -> Result<(), FatalError> {
+) -> Result<Infallible, FatalError> {
     let mut slots = SlotTable::new();
     run_with_slots(shared, renderer, listener, &mut slots)
 }
@@ -1139,9 +1035,9 @@ mod tests {
     use bmc_wasm_thin_protocol::{HelloMsg, send_hello_with_fd};
 
     use super::{
-        AdmissionStep, HostLifetime, ListenSocket, PendingAdmission, SlotTable,
-        advance_pending_controls, compact_error_message, fold_admission_pass,
-        overlay_dispatch_error_kind, run_renderer_delivery_scope_if_ready, stage_accept_burst,
+        AdmissionStep, ListenSocket, PendingAdmission, advance_pending_controls,
+        compact_error_message, fold_admission_pass, overlay_dispatch_error_kind,
+        run_renderer_delivery_scope_if_ready, stage_accept_burst,
     };
 
     fn send_load_hello(thin: &UnixStream, widget_key: &str) -> UnixStream {
@@ -1161,7 +1057,7 @@ mod tests {
     }
 
     #[test]
-    fn pre_exit_backlog_revives_host_until_malformed_admission_is_tallied_once() {
+    fn listener_burst_accepts_and_removes_a_malformed_admission_once() {
         let directory = tempfile::tempdir().expect("BUG: temporary socket directory");
         let listener = ListenSocket::bind(&directory.path().join("host.sock"))
             .expect("BUG: loopback listener must bind");
@@ -1171,24 +1067,16 @@ mod tests {
         let thin = UnixStream::connect(directory.path().join("host.sock"))
             .expect("BUG: thin must enter listener backlog");
         let _wayland_peer = send_load_hello(&thin, "not-a-widget-key");
-        let mut lifetime = HostLifetime::new();
-        lifetime.note_admission_outcomes(1, 0, 1);
-        assert!(!lifetime.should_continue(0, false));
         let mut pending = Vec::new();
 
-        stage_accept_burst(&listener, &mut pending, &mut lifetime, 0)
-            .expect("BUG: pre-exit sweep must accept backlog");
+        stage_accept_burst(&listener, &mut pending).expect("BUG: listener must accept backlog");
         assert_eq!(pending.len(), 1);
-        assert!(lifetime.should_continue(pending.len(), false));
 
-        let slots = SlotTable::new();
-        let mut next_gc = Instant::now();
-        advance_pending_controls(&mut pending, &mut lifetime, &slots, &mut next_gc);
+        advance_pending_controls(&mut pending);
         assert!(pending.is_empty());
-        assert!(!lifetime.should_continue(0, false));
 
-        advance_pending_controls(&mut pending, &mut lifetime, &slots, &mut next_gc);
-        assert!(!lifetime.should_continue(0, false));
+        advance_pending_controls(&mut pending);
+        assert!(pending.is_empty());
     }
 
     #[test]
@@ -1198,23 +1086,19 @@ mod tests {
         let mut pending = vec![
             PendingAdmission::new(host, Instant::now()).expect("BUG: local admission must start"),
         ];
-        let slots = SlotTable::new();
-        let mut lifetime = HostLifetime::new();
-        let mut next_gc = Instant::now();
 
-        advance_pending_controls(&mut pending, &mut lifetime, &slots, &mut next_gc);
+        advance_pending_controls(&mut pending);
         assert!(matches!(
             pending.as_slice(),
             [PendingAdmission::AwaitConfigure { .. }]
         ));
         drop(thin);
 
-        advance_pending_controls(&mut pending, &mut lifetime, &slots, &mut next_gc);
+        advance_pending_controls(&mut pending);
         assert!(pending.is_empty());
-        assert!(!lifetime.should_continue(0, false));
 
-        advance_pending_controls(&mut pending, &mut lifetime, &slots, &mut next_gc);
-        assert!(!lifetime.should_continue(0, false));
+        advance_pending_controls(&mut pending);
+        assert!(pending.is_empty());
     }
 
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]

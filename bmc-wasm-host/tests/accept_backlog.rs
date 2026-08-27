@@ -23,9 +23,8 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use bmc_wasm_host::main_loop::accept_pending;
 
 // A thin's `connect()` into a listening-but-not-yet-accepting socket succeeds
-// and parks the connection in the kernel backlog. The host's pre-exit sweep
-// must drain that backlog in one non-blocking pass; otherwise a connection that
-// queued during the last slot's teardown is orphaned when the listener drops.
+// and parks the connection in the kernel backlog. Each listener wake must drain
+// the backlog in one non-blocking pass instead of delaying sibling thins.
 #[test]
 fn accept_pending_drains_the_whole_backlog_without_blocking() {
     let dir = tempfile::tempdir().expect("BUG: tempdir creation must succeed");

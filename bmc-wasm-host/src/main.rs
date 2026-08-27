@@ -22,7 +22,7 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use anyhow::Result;
-use bmc_wasm_host::startup::{StartupDecision, prepare_listener};
+use bmc_wasm_host::startup::prepare_listener;
 use bmc_wasm_thin_protocol::{default_socket_path, derive_image_decode_lock_path, derive_log_path};
 use clap::Parser;
 
@@ -37,13 +37,10 @@ const STAGING_MAX_WIDTH: u32 = 1280;
 const STAGING_MAX_HEIGHT: u32 = 480;
 
 #[derive(Parser, Debug)]
-#[command(about = "bmc-wasm-host - multi-widget WASM daemon")]
+#[command(about = "bmc-wasm-host - shared multi-widget WASM host")]
 struct Args {
     #[arg(long, value_name = "PATH")]
     host_socket: Option<PathBuf>,
-
-    #[arg(long, hide = true, value_name = "FD")]
-    release_lock_fd: Option<i32>,
 }
 
 fn main() -> Result<()> {
@@ -55,20 +52,10 @@ fn main() -> Result<()> {
 
     tracing::info!(
         socket = %socket_path.display(),
-        release_lock_fd = ?args.release_lock_fd,
         "starting bmc-wasm-host"
     );
 
-    let (listener, release_lock) = match prepare_listener(&socket_path, args.release_lock_fd)? {
-        StartupDecision::Run {
-            listener,
-            release_lock,
-        } => (listener, release_lock),
-        StartupDecision::AnotherHostAlive => {
-            tracing::info!("another bmc-wasm-host is already accepting connections");
-            std::process::exit(1);
-        }
-    };
+    let listener = prepare_listener(&socket_path)?;
     tracing::info!(socket = %socket_path.display(), "listening");
 
     let (mut shared, mut renderer) = bmc_wasm_host::host::SharedHost::init(
@@ -77,16 +64,11 @@ fn main() -> Result<()> {
         derive_image_decode_lock_path(&socket_path),
     )?;
 
-    if let Some(lock) = release_lock {
-        lock.release()?;
-        tracing::info!("released host readiness lock");
+    match bmc_wasm_host::main_loop::run(&mut shared, &mut renderer, &listener) {
+        Err(error) => {
+            tracing::error!(?error, "host exited with FatalError");
+            std::process::exit(1);
+        }
+        Ok(never) => match never {},
     }
-
-    let exit = bmc_wasm_host::main_loop::run(&mut shared, &mut renderer, &listener);
-    if let Err(e) = exit {
-        tracing::error!(?e, "host exited with FatalError");
-        std::process::exit(1);
-    }
-    tracing::info!("bmc-wasm-host exiting cleanly");
-    Ok(())
 }
