@@ -5,6 +5,13 @@ for a single widget.
 
 ## Widgets
 
+### [Bitcoin Mining Data Widget](bitcoin-mining-data.md)
+
+A dashboard for current Bitcoin difficulty, adjustment timing, hashprice, BTC-USD price, mining economics, block
+production, and network hashrate. It expands from a compact mining overview into historical charts and a full network
+dashboard across the four rectangular widget sizes, follows the Braiins Forge Nexus refresh lifetime, and distinguishes
+loading, stale, unavailable, and rate-limited data.
+
 ### [Block Height Widget](blockheight.md)
 
 A widget that displays the latest Bitcoin block height with an optional *found at* date and time, a configurable numeral
