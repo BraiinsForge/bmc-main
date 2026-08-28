@@ -23,6 +23,7 @@
 //! Adding a device is a new module here plus one `Instance` variant in [`crate::blueprint`].
 
 pub mod axeos;
+pub mod bitcoin_mining_data;
 pub mod bos;
 pub mod braiins_pool;
 pub mod formula_1;

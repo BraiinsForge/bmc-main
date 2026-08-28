@@ -55,6 +55,122 @@
       },
       "additionalProperties": false
     },
+    "BitcoinMiningDataParams": {
+      "description": "Scenario controls and values returned by the simulated Nexus endpoints.",
+      "type": "object",
+      "properties": {
+        "avg_fees_per_block_btc": {
+          "description": "Average transaction fees per block, in BTC.",
+          "type": "number",
+          "format": "double",
+          "default": 0.021
+        },
+        "bitcoin_price_usd": {
+          "description": "Bitcoin price, in USD.",
+          "type": "number",
+          "format": "double",
+          "default": 169420.0
+        },
+        "block_height": {
+          "description": "Latest Bitcoin block height.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 914038,
+          "minimum": 0
+        },
+        "blocks_last_24h": {
+          "description": "Blocks mined in the last 24 hours.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 151,
+          "minimum": 0
+        },
+        "blocks_this_epoch": {
+          "description": "Blocks mined in the current 2016-block epoch.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 1293,
+          "minimum": 0
+        },
+        "cache_age_secs": {
+          "description": "Cache age advertised in both Nexus response envelopes.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 0,
+          "minimum": 0
+        },
+        "difficulty": {
+          "description": "Bitcoin network difficulty.",
+          "type": "number",
+          "format": "double",
+          "default": 129700000000000.0
+        },
+        "epoch_block_time_secs": {
+          "description": "Current epoch block time, in seconds.",
+          "type": "integer",
+          "format": "uint64",
+          "default": 559,
+          "minimum": 0
+        },
+        "estimated_adjustment": {
+          "description": "Estimated difficulty adjustment as a ratio; `0.01` means 1%.",
+          "type": "number",
+          "format": "double",
+          "default": 0.104
+        },
+        "fail_after_secs": {
+          "description": "Answer 200 before this point, then switch to `status`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "fees_percent": {
+          "description": "Transaction fees as a percentage of the block reward.",
+          "type": "number",
+          "format": "double",
+          "default": 0.66
+        },
+        "hashprice_usd_per_th_day": {
+          "description": "Hashprice, in USD per TH/s per day.",
+          "type": "number",
+          "format": "double",
+          "default": 0.0562
+        },
+        "network_hashrate_ehs": {
+          "description": "Bitcoin network hashrate, in EH/s.",
+          "type": "number",
+          "format": "double",
+          "default": 877.8
+        },
+        "previous_adjustment": {
+          "description": "Previous difficulty adjustment as a ratio; `0.01` means 1%.",
+          "type": "number",
+          "format": "double",
+          "default": -0.0281
+        },
+        "revenue_usd": {
+          "description": "Total mining revenue, in USD.",
+          "type": "number",
+          "format": "double",
+          "default": 49350000.0
+        },
+        "status": {
+          "description": "HTTP status returned after startup, or after `fail_after_secs`.",
+          "$ref": "#/$defs/HttpStatus"
+        },
+        "warmup_secs": {
+          "description": "Answer 503 until this many seconds of scenario time have elapsed.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 0,
+          "minimum": 0
+        }
+      }
+    },
     "BosParams": {
       "description": "Tunables for a simulated BOS+ miner.",
       "type": "object",
@@ -471,6 +587,47 @@
             },
             "params": {
               "$ref": "#/$defs/BraiinsPoolParams"
+            },
+            "port": {
+              "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            }
+          },
+          "required": [
+            "device"
+          ]
+        },
+        {
+          "description": "A Nexus Bitcoin mining deployment — a cloud API on its port, never announced.",
+          "type": "object",
+          "properties": {
+            "count": {
+              "type": "integer",
+              "format": "uint",
+              "default": 1,
+              "minimum": 0
+            },
+            "device": {
+              "type": "string",
+              "const": "bitcoin-mining-data"
+            },
+            "label": {
+              "description": "Human label describing this entry's scenario, shown in the readout.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "params": {
+              "$ref": "#/$defs/BitcoinMiningDataParams"
             },
             "port": {
               "description": "Pinned TCP port for this entry (a `count` fans out from it);\nomitted = auto-assigned from the base port upward.",

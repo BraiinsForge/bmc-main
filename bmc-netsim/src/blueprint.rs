@@ -34,7 +34,7 @@ use serde::{Deserialize, Deserializer};
 use serde_json::Value as Json;
 
 use crate::cache::Cache;
-use crate::devices::{axeos, bos, braiins_pool, formula_1, ubos};
+use crate::devices::{axeos, bitcoin_mining_data, bos, braiins_pool, formula_1, ubos};
 use crate::http_status::HttpStatus;
 use crate::value::Value;
 
@@ -120,6 +120,21 @@ pub enum Instance {
         #[serde(default)]
         port: Option<u16>,
     },
+    /// A Nexus Bitcoin mining deployment — a cloud API on its port, never announced.
+    #[serde(rename = "bitcoin-mining-data")]
+    BitcoinMiningData {
+        /// Human label describing this entry's scenario, shown in the readout.
+        #[serde(default)]
+        label: Option<String>,
+        #[serde(default)]
+        params: bitcoin_mining_data::Params,
+        #[serde(default = "one")]
+        count: usize,
+        /// Pinned TCP port for this entry (a `count` fans out from it);
+        /// omitted = auto-assigned from the base port upward.
+        #[serde(default)]
+        port: Option<u16>,
+    },
     /// A Nexus Formula 1 deployment — a cloud API on its port, never announced.
     #[serde(rename = "formula-1")]
     Formula1 {
@@ -142,7 +157,14 @@ fn one() -> usize {
 }
 
 /// The device keys a blueprint may name, as written in the `device` field.
-const DEVICE_KEYS: &[&str] = &["bos", "bos-libre", "axeos", "braiins-pool", "formula-1"];
+const DEVICE_KEYS: &[&str] = &[
+    "bos",
+    "bos-libre",
+    "axeos",
+    "braiins-pool",
+    "bitcoin-mining-data",
+    "formula-1",
+];
 const INSTANCE_FIELDS: &[&str] = &["device", "label", "params", "count", "port"];
 
 /// One device's typed params, before they are folded into an [`Instance`].
@@ -151,6 +173,7 @@ enum DeviceParams {
     Ubos(ubos::Params),
     Axeos(axeos::Params),
     BraiinsPool(braiins_pool::Params),
+    BitcoinMiningData(bitcoin_mining_data::Params),
     Formula1(formula_1::Params),
 }
 
@@ -163,6 +186,7 @@ impl DeviceParams {
             "bos-libre" => DeviceParams::Ubos(map.next_value()?),
             "axeos" => DeviceParams::Axeos(map.next_value()?),
             "braiins-pool" => DeviceParams::BraiinsPool(map.next_value()?),
+            "bitcoin-mining-data" => DeviceParams::BitcoinMiningData(map.next_value()?),
             "formula-1" => DeviceParams::Formula1(map.next_value()?),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
@@ -179,6 +203,9 @@ impl DeviceParams {
             "braiins-pool" => {
                 DeviceParams::BraiinsPool(serde_json::from_value(json).map_err(E::custom)?)
             }
+            "bitcoin-mining-data" => {
+                DeviceParams::BitcoinMiningData(serde_json::from_value(json).map_err(E::custom)?)
+            }
             "formula-1" => DeviceParams::Formula1(serde_json::from_value(json).map_err(E::custom)?),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
@@ -190,6 +217,9 @@ impl DeviceParams {
             "bos-libre" => DeviceParams::Ubos(ubos::Params::default()),
             "axeos" => DeviceParams::Axeos(axeos::Params::default()),
             "braiins-pool" => DeviceParams::BraiinsPool(braiins_pool::Params::default()),
+            "bitcoin-mining-data" => {
+                DeviceParams::BitcoinMiningData(bitcoin_mining_data::Params::default())
+            }
             "formula-1" => DeviceParams::Formula1(formula_1::Params::default()),
             other => return Err(de::Error::unknown_variant(other, DEVICE_KEYS)),
         })
@@ -216,6 +246,12 @@ impl DeviceParams {
                 port,
             },
             DeviceParams::BraiinsPool(params) => Instance::BraiinsPool {
+                label,
+                params,
+                count,
+                port,
+            },
+            DeviceParams::BitcoinMiningData(params) => Instance::BitcoinMiningData {
                 label,
                 params,
                 count,
@@ -320,6 +356,7 @@ impl Instance {
             Instance::Ubos { .. } => "bos-libre",
             Instance::Axeos { .. } => "axeos",
             Instance::BraiinsPool { .. } => "braiins-pool",
+            Instance::BitcoinMiningData { .. } => "bitcoin-mining-data",
             Instance::Formula1 { .. } => "formula-1",
         }
     }
@@ -332,6 +369,7 @@ impl Instance {
             | Instance::Ubos { count, .. }
             | Instance::Axeos { count, .. }
             | Instance::BraiinsPool { count, .. }
+            | Instance::BitcoinMiningData { count, .. }
             | Instance::Formula1 { count, .. } => *count,
         }
     }
@@ -344,6 +382,7 @@ impl Instance {
             | Instance::Ubos { label, .. }
             | Instance::Axeos { label, .. }
             | Instance::BraiinsPool { label, .. }
+            | Instance::BitcoinMiningData { label, .. }
             | Instance::Formula1 { label, .. } => label.as_deref(),
         }
     }
@@ -356,6 +395,7 @@ impl Instance {
             | Instance::Ubos { port, .. }
             | Instance::Axeos { port, .. }
             | Instance::BraiinsPool { port, .. }
+            | Instance::BitcoinMiningData { port, .. }
             | Instance::Formula1 { port, .. } => *port,
         }
     }
@@ -368,6 +408,7 @@ impl Instance {
             Instance::Ubos { params, .. } => params.resource(name, port),
             Instance::Axeos { params, .. } => params.resource(name, port),
             Instance::BraiinsPool { params, .. } => params.resource(name, port),
+            Instance::BitcoinMiningData { params, .. } => params.resource(name, port),
             Instance::Formula1 { params, .. } => params.resource(name, port),
         }
     }
