@@ -67,7 +67,8 @@ testbed WIDGET ARGS="" BUCKET="default":
     wasm_file="$target/{{ wasm_target }}/debug/$(echo "$name" | tr - _).wasm"
     # Per-widget dev blob cache in the repo scratch dir, easy to find and
     # clear, so history survives a hot rebuild.
-    # BUCKET keeps concurrent runs apart: two sharing one collide on `<key>.tmp` in `DiskCache::put`.
+    # BUCKET keeps one scenario's artwork out of another's cap, so switching
+    # between them does not evict what the last run just filled.
     cache_dir="{{ parent_directory(dir) }}/.tmp/testbed-cache/$name/{{ BUCKET }}"
     mkdir -p "$cache_dir"
     exec cargo run {{ cargo_features }} --bin testbed --manifest-path {{ dir }}/Cargo.toml -- "$wasm_file" --widget-root "$root/$name" --cache-dir "$cache_dir" {{ ARGS }}

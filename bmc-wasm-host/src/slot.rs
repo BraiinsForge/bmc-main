@@ -377,6 +377,9 @@ impl WidgetSlot {
         let viewport_shape = bmc_wasm_protocol::ViewportShape::from(initial.viewport_shape);
         let display = bmc_wasm_runtime::RuntimeDisplayInfo::from(initial.display);
         let token = initial.token.clone();
+        let cache_dir = PathBuf::from(WIDGET_CACHE_DIR).join(&token);
+        // What orphans a temp is a crash, and a crash ends in this restart.
+        bmc_wasm_runtime::reclaim_orphaned_temps(&cache_dir);
         let (led_tx, led_rx) = mpsc::channel();
         let (runtime, module_lease) = instantiate_cached_runtime(
             module_load.lease,
@@ -397,10 +400,7 @@ impl WidgetSlot {
                 credential_secrets: credential_secrets.clone(),
                 led_request_sender: Some(led_tx),
                 image_decode_lock_path: Some(shared.image_decode_lock_path.clone()),
-                asset_cache: Some(DiskCache::new(
-                    PathBuf::from(WIDGET_CACHE_DIR).join(&token),
-                    WIDGET_CACHE_BUCKET_MAX_BYTES,
-                )),
+                asset_cache: Some(DiskCache::new(cache_dir, WIDGET_CACHE_BUCKET_MAX_BYTES)),
                 package_assets: asset_root.map(bmc_wasm_runtime::PackageAssetStore::new),
                 instance_token: Some(token.clone()),
                 ..RuntimeConfig::default()

@@ -40,7 +40,87 @@ const EXT: &str = "blob";
 /// Sidecar holding `saved_at` alone, so re-verifying an unchanged entry can
 /// restamp it without rewriting the payload. Shadows the header when present.
 const STAMP_EXT: &str = "ts";
-const STAMP_TMP_EXT: &str = "ts.tmp";
+
+/// How long a `.tmp` must sit untouched before a sweep treats it as dead.
+/// A put finishes in milliseconds; the gap is what stops one process
+/// from reclaiming another's temp mid-write.
+const TMP_ORPHAN_AGE: std::time::Duration = std::time::Duration::from_hours(1);
+
+/// Serialises a bucket's writers.
+/// Nothing else matches a `lock` extension, so sweeps pass over it.
+const LOCK_NAME: &str = ".put.lock";
+
+/// Holds a bucket's write lock for one `put`.
+///
+/// The content check and the write it decides on are two steps; without one,
+/// a writer can stamp its timestamp onto content another writer replaced.
+#[derive(Debug)]
+struct PutGuard {
+    file: fs::File,
+}
+
+impl PutGuard {
+    fn acquire(dir: &Path) -> io::Result<Self> {
+        let file = fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(dir.join(LOCK_NAME))?;
+        rustix::io::retry_on_intr(|| {
+            rustix::fs::flock(&file, rustix::fs::FlockOperation::LockExclusive)
+        })
+        .map_err(io::Error::from)?;
+        Ok(Self { file })
+    }
+}
+
+impl Drop for PutGuard {
+    /// The kernel frees it with the descriptor; this only reports the odd failure.
+    fn drop(&mut self) {
+        if let Err(error) = rustix::fs::flock(&self.file, rustix::fs::FlockOperation::Unlock) {
+            tracing::warn!(?error, "failed to release the cache write lock");
+        }
+    }
+}
+
+/// A temp path no concurrent writer can also be holding.
+///
+/// Two processes putting one key must not share a temp name:
+/// they would interleave into one file and rename a half-written result.
+/// The pid separates processes, the counter separates writes within one.
+fn temp_path(final_path: &Path, suffix: &str) -> PathBuf {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    final_path.with_extension(format!("{}.{seq}.{suffix}", std::process::id()))
+}
+
+/// Whether a `.tmp` has sat long enough to be a crashed put
+/// rather than one still running.
+/// An unreadable or future-dated mtime is left alone.
+fn is_orphaned_temp(entry: &fs::DirEntry) -> bool {
+    entry
+        .metadata()
+        .and_then(|meta| meta.modified())
+        .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age >= TMP_ORPHAN_AGE))
+}
+
+/// Delete the temps a crashed `put` left in a bucket, nothing else.
+///
+/// Not `sweep`: that deletes every entry whose key is absent from the live set,
+/// which only the widget owning the bucket can supply. Temps need no such list,
+/// so a caller holding just the directory can reclaim them safely.
+pub fn reclaim_orphaned_temps(dir: &Path) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) == Some("tmp") && is_orphaned_temp(&entry) {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
 
 fn read_stamp(blob_path: &Path) -> Option<u64> {
     let raw = fs::read(blob_path.with_extension(STAMP_EXT)).ok()?;
@@ -116,14 +196,16 @@ impl DiskCache {
             ));
         }
 
+        fs::create_dir_all(&self.dir)?;
+        let _writing = PutGuard::acquire(&self.dir)?;
+
         // A re-verified entry only needs a fresh stamp; rewriting an unchanged
         // payload would spend its full size in flash on every refresh.
         if self.matches(key, metadata, bytes) {
             return self.write_stamp(&path, saved_at);
         }
 
-        fs::create_dir_all(&self.dir)?;
-        let tmp = path.with_extension("tmp");
+        let tmp = temp_path(&path, "tmp");
         // Stream header/metadata/payload rather than concatenating one big buffer.
         let mut w = io::BufWriter::new(fs::File::create(&tmp)?);
         w.write_all(&saved_at.to_le_bytes())?;
@@ -149,7 +231,7 @@ impl DiskCache {
     /// either the old value or the new one, never a half-written u64.
     fn write_stamp(&self, blob_path: &Path, saved_at: u64) -> io::Result<()> {
         fs::create_dir_all(&self.dir)?;
-        let tmp = blob_path.with_extension(STAMP_TMP_EXT);
+        let tmp = temp_path(blob_path, "ts.tmp");
         fs::write(&tmp, saved_at.to_le_bytes())?;
         fs::rename(&tmp, blob_path.with_extension(STAMP_EXT))
     }
@@ -194,23 +276,21 @@ impl DiskCache {
     /// Mark-and-sweep: delete every entry whose key is not in `live`. Models
     /// `bmc-nix` `cleanup_stale_files` — the GC root is the live config set.
     pub fn sweep(&self, live: &HashSet<&str>) {
+        reclaim_orphaned_temps(&self.dir);
         let Ok(entries) = fs::read_dir(&self.dir) else {
             return;
         };
         for entry in entries.flatten() {
             let path = entry.path();
-            match path.extension().and_then(|e| e.to_str()) {
-                Some(EXT | STAMP_EXT) => {
-                    let key = path.file_stem().and_then(|s| s.to_str());
-                    if key.is_some_and(|k| !live.contains(k)) {
-                        let _ = fs::remove_file(&path);
-                    }
-                }
-                // A `.tmp` is a crashed put() between write and rename — always an orphan.
-                Some("tmp") => {
-                    let _ = fs::remove_file(&path);
-                }
-                _ => {}
+            if !matches!(
+                path.extension().and_then(|e| e.to_str()),
+                Some(EXT | STAMP_EXT)
+            ) {
+                continue;
+            }
+            let key = path.file_stem().and_then(|s| s.to_str());
+            if key.is_some_and(|k| !live.contains(k)) {
+                let _ = fs::remove_file(&path);
             }
         }
     }
@@ -483,9 +563,97 @@ mod tests {
     fn sweep_reclaims_tmp_orphans() {
         let (d, c) = cache(1 << 20);
         let tmp = d.path().join("k.tmp");
-        std::fs::write(&tmp, b"partial").expect("write tmp");
+        let file = std::fs::File::create(&tmp).expect("create tmp");
+        file.set_modified(std::time::SystemTime::now() - TMP_ORPHAN_AGE * 2)
+            .expect("age the tmp past the orphan threshold");
+        drop(file);
+
         c.sweep(&std::collections::HashSet::new());
         assert!(!tmp.exists());
+    }
+
+    /// The caller holds only the directory and cannot know which keys are live,
+    /// so touching a stored entry would risk deleting one still in use.
+    #[test]
+    fn reclaiming_temps_spares_every_stored_entry() {
+        let (d, c) = cache(1 << 20);
+        c.put("kept", TS, &[], b"a").expect("put kept");
+        let tmp = d.path().join("kept.tmp");
+        let file = std::fs::File::create(&tmp).expect("create tmp");
+        file.set_modified(std::time::SystemTime::now() - TMP_ORPHAN_AGE * 2)
+            .expect("age the tmp past the orphan threshold");
+        drop(file);
+
+        reclaim_orphaned_temps(d.path());
+        assert!(!tmp.exists(), "the crashed put's temp is reclaimed");
+        assert!(c.get("kept").is_some(), "a stored entry survives untouched");
+    }
+
+    /// A second testbed on one bucket is mid-`put` while this one sweeps;
+    /// reclaiming its temp would rename a truncated file into place.
+    #[test]
+    fn sweep_leaves_a_temp_another_writer_may_still_be_inside() {
+        let (d, c) = cache(1 << 20);
+        let tmp = d.path().join("k.tmp");
+        std::fs::write(&tmp, b"partial").expect("write tmp");
+
+        c.sweep(&std::collections::HashSet::new());
+        assert!(
+            tmp.exists(),
+            "a temp written moments ago belongs to a live put"
+        );
+    }
+
+    /// A second writer waits instead of slipping between another's check
+    /// and the stamp that check justified.
+    #[test]
+    fn a_put_holds_the_bucket_against_another_writer() {
+        let (d, _c) = cache(1 << 20);
+        std::fs::create_dir_all(d.path()).expect("BUG: bucket dir");
+        let held = PutGuard::acquire(d.path()).expect("BUG: first writer takes the bucket");
+
+        let contender = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(d.path().join(LOCK_NAME))
+            .expect("BUG: contender opens the lock file");
+        let error = rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .expect_err("a second writer must wait for the one holding the bucket");
+        assert_eq!(error, rustix::io::Errno::WOULDBLOCK);
+
+        drop(held);
+        rustix::fs::flock(
+            &contender,
+            rustix::fs::FlockOperation::NonBlockingLockExclusive,
+        )
+        .expect("the bucket frees on release");
+    }
+
+    /// Writers racing on one key used to share `<key>.tmp`,
+    /// so a rename could publish what another was still writing.
+    #[test]
+    fn concurrent_puts_of_one_key_leave_a_whole_entry() {
+        let (_d, c) = cache(1 << 20);
+        let payload = vec![7_u8; 64 * 1024];
+
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    c.put("shared", 1, b"meta", &payload).expect("BUG: put");
+                });
+            }
+        });
+
+        let blob = c.get("shared").expect("BUG: an entry survives the race");
+        assert_eq!(blob.metadata(), b"meta");
+        assert_eq!(
+            blob.bytes(),
+            payload.as_slice(),
+            "a reader must never see a torn write"
+        );
     }
 
     #[test]

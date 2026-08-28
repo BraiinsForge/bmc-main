@@ -154,6 +154,8 @@ fn reconcile_in(cache_dir: &Path, roots_dir: &Path, now: SystemTime) -> GcStats 
             }
             let token = entry.file_name().to_string_lossy().into_owned();
             if keep.contains(&token) {
+                // A kept bucket is never removed, so nothing else reclaims its temps.
+                bmc_wasm_runtime::reclaim_orphaned_temps(&entry.path());
                 stats.buckets_kept += 1;
                 continue;
             }
@@ -226,6 +228,33 @@ mod tests {
         assert_eq!(stats.buckets_removed, 1);
         assert!(cache.join("uuid-a-full").exists());
         assert!(!cache.join("uuid-b-2x1").exists());
+    }
+
+    /// Crashed puts would otherwise accumulate in a live bucket
+    /// for as long as the widget stays configured.
+    #[test]
+    fn reclaims_temps_inside_a_kept_bucket() {
+        let tmp = tempfile::tempdir().expect("BUG: tempdir");
+        let cache = tmp.path().join("widget-cache");
+        let roots = tmp.path().join("widget-gc-roots");
+        mk_bucket(&cache, "uuid-a-full");
+        let orphan = cache.join("uuid-a-full").join("k.tmp");
+        let file = std::fs::File::create(&orphan).expect("BUG: create temp");
+        // Comfortably past the runtime's one-hour orphan threshold,
+        // which is private to `disk_cache` and cannot be named from here.
+        file.set_modified(SystemTime::now() - Duration::from_hours(2))
+            .expect("BUG: age the temp past the orphan threshold");
+        drop(file);
+        write(&roots, "sdk-v0", &["uuid-a-full"]);
+
+        let stats = reconcile_in(&cache, &roots, SystemTime::now());
+
+        assert_eq!(stats.buckets_kept, 1);
+        assert!(!orphan.exists(), "the kept bucket's temp is reclaimed");
+        assert!(
+            cache.join("uuid-a-full").join("image").exists(),
+            "the kept bucket's contents are otherwise untouched"
+        );
     }
 
     #[test]

@@ -113,7 +113,7 @@ mod xml;
 
 mod audio_registry;
 pub mod disk_cache;
-pub use disk_cache::DiskCache;
+pub use disk_cache::{DiskCache, reclaim_orphaned_temps};
 mod host_api;
 mod image_decode_lock;
 pub mod led_request;
