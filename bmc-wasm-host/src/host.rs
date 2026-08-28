@@ -22,7 +22,7 @@ use bmc_gpu_render_lock::{
     GlSyncEntryPoints, GpuCompletionWaitStrategy, GpuRenderLock, GpuRenderLockGuard,
     detect_gpu_completion_wait_strategy,
 };
-use bmc_render::gpu::FemtoVgRenderer;
+use bmc_render::gpu::{FemtoVgRenderer, RenderTargetProbe};
 use bmc_wasm_runtime::FetchAgent;
 use bmc_widget::egl::{EglContext, SharedRenderScratch};
 use glow::HasContext;
@@ -86,16 +86,19 @@ impl SharedHost {
             egl.gl().finish();
         }
         drop(init_guard);
-        // Probed once at startup rather than assumed: the drop-shadow path
-        // degrades silently when offscreen targets are unavailable, so without
-        // this a driver that rejects them is indistinguishable from one that
-        // works. Gates whether a cached static layer is possible at all.
-        let mut renderer = renderer;
-        let render_to_texture = renderer.probe_render_to_texture();
-        tracing::info!(
-            ?render_to_texture,
-            "shared wasm host renderer initialized; offscreen render-target probe"
-        );
+        // The renderer probes offscreen targets on construction and refuses
+        // static layers unless they work; logged here because the degradation
+        // is otherwise invisible — a driver that rejects them just renders
+        // slower.
+        let render_to_texture = renderer.render_to_texture();
+        if render_to_texture == RenderTargetProbe::Working {
+            tracing::info!("shared wasm host renderer initialized; static layers available");
+        } else {
+            tracing::warn!(
+                ?render_to_texture,
+                "offscreen render targets unusable; static-layer caching disabled"
+            );
+        }
         Ok((
             Self {
                 egl,

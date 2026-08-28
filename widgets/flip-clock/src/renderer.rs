@@ -458,12 +458,10 @@ impl Renderer {
     ///
     /// Orthographic, so a digit looks the same wherever it sits on X.
     ///
-    /// `bottom` and `top` are swapped, which mirrors Y in clip space so the
-    /// finished frame lands bottom-up in the export buffer. The compositor
-    /// applies one scanout flip to every widget surface — femtovg's output
-    /// needs it, since femtovg draws top-left-origin content into a
-    /// bottom-left-origin framebuffer — and a widget driving its own GL has to
-    /// match that convention or it reaches the panel inverted.
+    /// `bottom` and `top` are swapped, mirroring Y in clip space so the frame
+    /// lands bottom-up in the export buffer. The compositor applies one scanout
+    /// flip to every widget surface, so a widget driving its own GL has to match
+    /// that convention or it reaches the panel inverted.
     pub fn projection(&self) -> Mat4 {
         #[expect(
             clippy::cast_precision_loss,

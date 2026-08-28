@@ -825,27 +825,32 @@ impl FrameScheduleState {
     }
 
     /// Request a full-WASM render after `delay_ms` (monotonic `now`).
-    /// Soonest-wins: a frame already requested sooner is left alone,
-    /// so a later delayed request can't postpone a pending render.
+    ///
+    /// Soonest-wins, with each field guarded on its own terms:
+    /// [`Self::widget_delay_ms`] lives for one frame, while
+    /// [`Self::deferred_wasm_render_at_ms`] outlives it by design. Guarding the
+    /// persistent deadline with the per-frame delay holds only within a frame —
+    /// once [`Self::begin_render_frame`] has cleared the delay, a later and
+    /// longer request would push the deadline out and lose the render owed.
     pub fn request_frame_after(&mut self, delay_ms: u32, now: u64) {
-        if self
-            .widget_delay_ms
-            .is_some_and(|pending| pending <= delay_ms)
-        {
-            return;
-        }
-        self.widget_delay_ms = Some(delay_ms);
-        self.deferred_wasm_render_at_ms = Some(now + u64::from(delay_ms));
+        self.widget_delay_ms = Some(
+            self.widget_delay_ms
+                .map_or(delay_ms, |pending| pending.min(delay_ms)),
+        );
+        let at = now + u64::from(delay_ms);
+        self.deferred_wasm_render_at_ms = Some(
+            self.deferred_wasm_render_at_ms
+                .map_or(at, |pending| pending.min(at)),
+        );
     }
 
     /// Whether anything wants the host to render a next frame, as of monotonic
     /// `now`.
     ///
     /// [`Self::deferred_wasm_render_at_ms`] counts, and must: an animation-only
-    /// frame clears [`Self::widget_delay_ms`] without the guest running to
-    /// re-request it, so once the animations it was rendering settle, the
-    /// widget's own `request_frame_after` deadline is the only thing left
-    /// wanting a frame.
+    /// frame clears [`Self::widget_delay_ms`] with no guest run to re-request
+    /// it, so once those animations settle the widget's own deadline is all
+    /// that is left wanting a frame.
     pub fn wants_next_frame(&self, now: u64) -> bool {
         self.widget_delay_ms.is_some()
             || self.has_active_animations
@@ -863,12 +868,9 @@ impl FrameScheduleState {
     /// Whether the next frame can replay the cached tree without running WASM.
     ///
     /// Only an *immediate* widget request (`request_frame()` ≡ `Some(0)`) blocks
-    /// the cached path. A deferred request (`request_frame_after(n)`, `n > 0`)
-    /// must not: the widget asked to run again in `n` ms, not on every frame in
-    /// between, and [`Self::deferred_wasm_render_at_ms`] already forces the full
-    /// WASM run once that deadline elapses. Blocking on any `Some` would make
-    /// the cached path unreachable for every widget that calls
-    /// `request_frame_after` from `render`, which is all of them.
+    /// the cached path. A deferred one asked to run again in `n` ms, not on
+    /// every frame in between, and [`Self::deferred_wasm_render_at_ms`] already
+    /// forces the guest run once that deadline elapses.
     pub fn is_animation_only_frame(&self) -> bool {
         (self.has_active_animations || self.host_frame_delay_ms.is_some())
             && !self.interaction_pending
@@ -1003,30 +1005,27 @@ pub(crate) struct HostState {
     /// full-screen pass per frame for nothing.
     pub static_layer_useful: bool,
 
-    /// Static-half hash of the last submitted tree, paired with the renderer
-    /// asset ledger's generation at that point. When a new tree matches both,
-    /// the cached layer is still valid and the frame blits instead of
-    /// re-rasterising static content — most of a guest frame's GPU cost.
+    /// What the cached static layer was captured from: the tree's
+    /// static-half hash, the renderer asset ledger's generation, and the
+    /// layout key of the dynamic nodes that size static content.
+    /// A frame matching all three can blit the layer rather than
+    /// re-rasterising it.
     ///
-    /// The generation is half the key because a static draw's *pixels* can come
-    /// from an asset rather than from the tree, so an unchanged tree alone does
-    /// not mean an unchanged layer.
-    pub last_static_key: Option<(u64, u64)>,
+    /// The generation is part of the key because a static draw's *pixels* can
+    /// come from an asset rather than from the tree, and the layout key because
+    /// a `RelTime` label's width moves the static siblings around it — see
+    /// `partition::host_layout_key`.
+    pub last_static_key: Option<(u64, u64, u64)>,
 
     /// How many upcoming frames must repaint in full because the export buffer
     /// they will paint does not hold what the frame before it showed.
     ///
-    /// A frame paints one of the host's export buffers, so changed static
-    /// content reaches only that one; the next frame draws into another,
-    /// scissored to damage, which covers dynamic regions only. The buffers
-    /// alternate on screen, so the change flickers in and out at the display
-    /// rate — a clicked button between its pressed and unpressed shading, a
-    /// counter between its old and new value.
+    /// A frame paints one buffer, so changed static content reaches only that
+    /// one while the next frame scissors to damage — and the two alternate on
+    /// screen, flickering the change in and out at the display rate.
     ///
-    /// Waking sets it to the full count rather than one: a dormant slot has no
-    /// render target at all (`bmc_wasm_host::lifecycle::has_render_target`), so
-    /// every buffer is newly allocated and holds nothing. Repainting only the
-    /// damage over one of those leaves the rest of the surface black.
+    /// Waking sets the full count rather than one: a dormant slot has no render
+    /// target, so every buffer is newly allocated and holds nothing.
     pub stale_export_buffers: usize,
 
     /// Cached deserialized tree for animation-only frames (tree, width, height).
@@ -1630,19 +1629,17 @@ impl HostState {
 /// Export buffers the host rotates through per slot.
 ///
 /// Frames that must reach every buffer, rather than only the one they paint,
-/// repeat this many times. The host owns the real count — `EXPORT_BUFFER_SLOTS`
-/// in `bmc_widget::egl` — and this has to match it or every
-/// `stale_export_buffers` count is short. `bmc-wasm-host` sees both crates and
-/// asserts they agree at compile time; nothing here can check it, which is why
-/// the assertion lives there rather than in this crate.
+/// repeat this many times. The host owns the real count
+/// (`bmc_widget::egl::EXPORT_BUFFER_SLOTS`) and asserts the two agree at
+/// compile time; this crate cannot see it to check for itself.
 pub const EXPORT_BUFFERS: usize = 2;
 
 impl HostState {
     /// Damage for the frame about to render, or empty to repaint everything.
     ///
     /// Reads [`Self::stale_export_buffers`] first: a frame catching a buffer up
-    /// on content it never received cannot scissor to the dynamic regions,
-    /// since what it is there to paint is not one of them.
+    /// on content it never received is painting exactly what the dynamic
+    /// regions leave out.
     pub(crate) fn frame_damage(&self, width: f32, height: f32) -> Vec<Rect> {
         if self.stale_export_buffers > 0 {
             return Vec::new();
@@ -1653,13 +1650,10 @@ impl HostState {
     /// Whether the next frame replays the cached tree instead of running the
     /// guest.
     ///
-    /// Two places act on this answer and must not disagree: `render`, which
-    /// takes the cached branch, and `next_frame_preserves_target`, which the
-    /// host asks *before* choosing whether to clear the target. Predicting
-    /// "replay" and then running the guest leaves the host preserving pixels
-    /// the guest may not repaint — the previous tree showing through the gaps
-    /// of the new one. Both callers read this, so a new input can only be
-    /// added in one place.
+    /// Answered here so the render path and the host's pre-frame
+    /// "does this preserve the target?" question cannot disagree: predicting a
+    /// replay and then running the guest preserves pixels the guest may not
+    /// repaint, and the previous tree shows through the gaps of the new one.
     pub(crate) fn will_replay_cached_tree(&self) -> bool {
         self.frame_schedule.is_animation_only_frame()
             && !self.interaction.has_pending_events()
@@ -1670,8 +1664,8 @@ impl HostState {
     /// Whether a `request_frame_after` deadline has come up, which forces the
     /// guest to run.
     ///
-    /// Reads `monotonic_ms` rather than counting `delta_ms` down: sub-millisecond
-    /// frames truncate `delta_ms` to 0 and stall a countdown.
+    /// Reads `monotonic_ms` rather than counting `delta_ms` down, which
+    /// sub-millisecond frames truncate to 0 and stall.
     pub(crate) fn deferred_wasm_render_due(&self) -> bool {
         self.frame_schedule
             .deferred_wasm_render_at_ms
@@ -1687,9 +1681,8 @@ impl HostState {
 /// Damage covering the last two frames, or empty to repaint everything.
 ///
 /// Empty when the regions cover more of the surface than `BMC_DAMAGE_MAX_PCT`
-/// (default 60): past that the bookkeeping and the extra draw calls cost more
-/// than the pixels they save, and a widget that animates its whole surface
-/// should not pay for tracking that can never help it.
+/// (default 60): past that the bookkeeping and extra draw calls cost more than
+/// the pixels they save.
 pub fn damage_rects(recent: &[Vec<Rect>; 2], width: f32, height: f32) -> Vec<Rect> {
     let surface = width * height;
     if surface <= 0.0 || recent.iter().all(Vec::is_empty) {
@@ -2075,10 +2068,9 @@ mod tests {
         assert!(!state.frame_damage(1280.0, 480.0).is_empty());
     }
 
-    /// The pair spans the buffer rotation: this frame paints into the buffer
-    /// the frame *before* last drew, so whatever that one moved is still stale
-    /// in it. Covering only the newest walk leaves that region unrepainted —
-    /// a trail behind anything that moves.
+    /// The pair spans the buffer rotation: this frame paints into the buffer the
+    /// frame *before* last drew, so covering only the newest walk leaves what
+    /// that one moved unrepainted — a trail behind anything moving.
     #[test]
     fn the_damage_span_covers_both_walks() {
         let newest = Rect::new(0.0, 0.0, 20.0, 20.0);
@@ -2097,10 +2089,9 @@ mod tests {
         }
     }
 
-    /// Waking allocates every export buffer afresh, and the damage history
+    /// Waking allocates every export buffer afresh, while the damage history
     /// survives dormancy describing a target that no longer exists. Scissoring
-    /// to it paints the moving regions onto an undefined buffer and leaves the
-    /// static half black — the flicker on swiping to a dormant scene.
+    /// to it leaves the static half black.
     #[test]
     fn every_buffer_repaints_in_full_after_waking() {
         let mut state = state_with_damage();
@@ -2141,9 +2132,8 @@ mod tests {
         assert!(state_that_would_replay().will_replay_cached_tree());
     }
 
-    /// A tap runs the guest. The host asks before it clears, so a prediction
-    /// that ignored the queue would keep the target and then let the guest
-    /// repaint only part of it.
+    /// A tap runs the guest, and the host asks before it clears — so ignoring
+    /// the queue keeps the target for a guest that repaints only part of it.
     #[test]
     fn a_queued_touch_stops_the_replay() {
         let mut state = state_that_would_replay();
@@ -2211,6 +2201,27 @@ mod tests {
         assert_eq!(s.effective_delay_ms(0), Some(16));
     }
 
+    /// An animation-only frame clears the delay with no guest run to re-request
+    /// it, which is where a later hook could postpone a render already owed.
+    #[test]
+    fn a_deadline_survives_the_frame_that_cleared_its_delay() {
+        let mut s = FrameScheduleState::new();
+        s.request_frame_after(1_000, 0);
+        assert_eq!(s.deferred_wasm_render_at_ms, Some(1_000));
+
+        // An animation-only frame: no guest run, and the per-frame delay goes.
+        s.begin_render_frame();
+        assert_eq!(s.widget_delay_ms, None);
+
+        // A touch or params hook asking for a far later frame.
+        s.request_frame_after(60_000, 500);
+        assert_eq!(
+            s.deferred_wasm_render_at_ms,
+            Some(1_000),
+            "the render owed at t=1000 must not be pushed to t=60500"
+        );
+    }
+
     #[test]
     fn request_frame_after_is_soonest_wins() {
         // A tap's pending immediate frame is not downgraded
@@ -2226,7 +2237,12 @@ mod tests {
         assert_eq!(s.deferred_wasm_render_at_ms, Some(1_500));
         s.request_frame_after(100, 2_000);
         assert_eq!(s.widget_delay_ms, Some(100));
-        assert_eq!(s.deferred_wasm_render_at_ms, Some(2_100));
+        assert_eq!(
+            s.deferred_wasm_render_at_ms,
+            Some(1_500),
+            "the earlier deadline is already overdue at t=2000; a shorter delay \
+             asked for later does not push it out"
+        );
         s.request_frame_after(900, 3_000);
         assert_eq!(s.widget_delay_ms, Some(100), "a later request is ignored");
     }

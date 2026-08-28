@@ -154,6 +154,34 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
     a + (b - a) * t
 }
 
+/// The range `apply_easing` can return for `easing`, rounded outwards.
+///
+/// Not every easing stays inside `0.0..=1.0`: the Back and Elastic families
+/// overshoot on purpose, so the eased lerp passes the endpoint it heads for.
+/// Damage tracking has to cover the reach, not the endpoints.
+#[must_use]
+pub fn easing_extremes(easing: Easing) -> (f32, f32) {
+    // Measured off `apply_easing` over a dense sweep, rounded outwards so the
+    // pair always contains the real extreme.
+    const BACK_OVERSHOOT: f32 = 1.101;
+    const BACK_UNDERSHOOT: f32 = -0.101;
+    const ELASTIC_OVERSHOOT: f32 = 1.374;
+
+    match easing {
+        Easing::EaseOutBack => (0.0, BACK_OVERSHOOT),
+        Easing::EaseInOutBack => (BACK_UNDERSHOOT, BACK_OVERSHOOT),
+        Easing::EaseOutElastic => (0.0, ELASTIC_OVERSHOOT),
+        Easing::Linear
+        | Easing::EaseIn
+        | Easing::EaseOut
+        | Easing::EaseInOut
+        | Easing::EaseInCubic
+        | Easing::EaseOutCubic
+        | Easing::EaseInOutCubic
+        | Easing::EaseOutBounce => (0.0, 1.0),
+    }
+}
+
 // ============================================================================
 // Color interpolation
 // ============================================================================
@@ -165,4 +193,72 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 #[must_use]
 pub fn interpolate_color(from: Color, to: Color, t: f32, _color_space: ColorSpace) -> Color {
     from.mix(to, t)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_easing, easing_extremes};
+    use bmc_wasm_protocol::Easing;
+
+    const EVERY_EASING: [Easing; 11] = [
+        Easing::Linear,
+        Easing::EaseIn,
+        Easing::EaseOut,
+        Easing::EaseInOut,
+        Easing::EaseInCubic,
+        Easing::EaseOutCubic,
+        Easing::EaseInOutCubic,
+        Easing::EaseOutBack,
+        Easing::EaseInOutBack,
+        Easing::EaseOutBounce,
+        Easing::EaseOutElastic,
+    ];
+
+    /// Damage tracking sizes its repaint from these bounds, so an easing
+    /// reaching past them paints outside the rectangle and stays on screen.
+    #[test]
+    fn easing_never_leaves_its_declared_extremes() {
+        const STEPS: u32 = 20_000;
+        for easing in EVERY_EASING {
+            let (min, max) = easing_extremes(easing);
+            for step in 0..=STEPS {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "step and STEPS are far below f32's exact range"
+                )]
+                let t = step as f32 / STEPS as f32;
+                let eased = apply_easing(easing, t);
+                assert!(
+                    (min..=max).contains(&eased),
+                    "{easing:?} at t={t} eased to {eased}, outside {min}..={max}"
+                );
+            }
+        }
+    }
+
+    /// A bound nobody has measured drifts wide, and a wide bound costs the full
+    /// repaint per frame that damage tracking exists to avoid.
+    #[test]
+    fn declared_extremes_stay_close_to_what_the_easings_reach() {
+        const STEPS: u32 = 20_000;
+        const SLACK: f32 = 0.01;
+        for easing in EVERY_EASING {
+            let (min, max) = easing_extremes(easing);
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for step in 0..=STEPS {
+                #[expect(
+                    clippy::cast_precision_loss,
+                    reason = "step and STEPS are far below f32's exact range"
+                )]
+                let t = step as f32 / STEPS as f32;
+                let eased = apply_easing(easing, t);
+                lo = lo.min(eased);
+                hi = hi.max(eased);
+            }
+            assert!(
+                lo - min < SLACK && max - hi < SLACK,
+                "{easing:?} declares {min}..={max} but reaches {lo}..={hi}"
+            );
+        }
+    }
 }

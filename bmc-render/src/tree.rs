@@ -40,10 +40,8 @@ static DEBUG_LAYOUT: AtomicBool = AtomicBool::new(false);
 /// When `BMC_GPU_PASS_TIMING=1` is set, block on the GPU at each render-pass
 /// boundary so a frame's GPU cost can be attributed per pass.
 ///
-/// Off by default because it is *not* free to observe: the fences serialise
-/// passes that normally pipeline, so the frame gets slower and the totals stop
-/// matching an uninstrumented run. Read the per-pass split as proportions, not
-/// as absolute times.
+/// Not free to observe: the fences serialise passes that normally pipeline, so
+/// read the split as proportions rather than as absolute times.
 static GPU_PASS_TIMING: AtomicBool = AtomicBool::new(false);
 
 /// Call once at startup to check the `DEBUG_LAYOUT` env var.
@@ -543,8 +541,31 @@ impl<'a> TreeReader<'a> {
         Ok(v)
     }
 
+    /// Deliberately does not reject NaN: the protocol spends it as a sentinel —
+    /// `PropsData::inset_*` for "auto", `Sphere`'s `light_lat`/`light_lon` for
+    /// "unlit" — so refusing it here rejects valid trees. A NaN that reaches a
+    /// rotation range is caught in `damage`, which fails open to the whole
+    /// canvas rather than inverting its sweep to nothing.
     fn read_f32(&mut self) -> Result<f32> {
         Ok(f32::from_bits(self.read_u32()?))
+    }
+
+    /// A finite, non-negative `f32`, for a width, height or radius.
+    ///
+    /// femtovg renders a negative extent as mirrored geometry while `damage`
+    /// computes `right < x` and reports nothing, so the old pixels are never
+    /// restored under target preservation.
+    fn read_extent(&mut self) -> Result<f32> {
+        let value = self.read_f32()?;
+        // Finite and non-negative both, since an extent has no sentinel
+        // reading the way the coordinates above do: NaN and either infinity
+        // are as meaningless here as a negative width.
+        anyhow::ensure!(
+            value.is_finite() && value >= 0.0,
+            "invalid extent {value} in tree at {}",
+            self.pos
+        );
+        Ok(value)
     }
 
     fn read_i64(&mut self) -> Result<i64> {
@@ -610,6 +631,17 @@ impl<'a> TreeReader<'a> {
             bail!("unexpected end of tree data reading props");
         };
         self.pos += PropsData::SIZE;
+        // taffy 0.9.2 passes a negative gap through `resolve_or_zero` and sums it
+        // into placement, so siblings genuinely overlap — while
+        // `can_overlap_siblings` models escape as `is_absolute() || margin < 0.0`
+        // and misses it, clearing the container for layering and painting the
+        // static and dynamic halves in the wrong order.
+        anyhow::ensure!(
+            props.gap >= 0.0,
+            "negative gap {} in tree at {}",
+            props.gap,
+            self.pos
+        );
         Ok(props)
     }
 
@@ -886,9 +918,9 @@ impl<'a> TreeReader<'a> {
             NODE_SKELETON => Ok(TreeNode::Skeleton(SkeletonData {
                 kind: SkeletonKind::try_from(self.read_u8()?)?,
                 chars: self.read_f32()?,
-                font_size: self.read_f32()?,
-                width: self.read_f32()?,
-                height: self.read_f32()?,
+                font_size: self.read_extent()?,
+                width: self.read_extent()?,
+                height: self.read_extent()?,
                 color: Color::from_raw(self.read_u32()?),
             })),
             NODE_PROGRESS_BAR => {
@@ -898,7 +930,7 @@ impl<'a> TreeReader<'a> {
                 } else {
                     None
                 };
-                let track_h = self.read_f32()?;
+                let track_h = self.read_extent()?;
                 let mode = ProgressKind::try_from(self.read_u8()?)?;
                 let fraction = self.read_f32()?;
                 let active = self.read_u8()? != 0;
@@ -946,25 +978,25 @@ impl<'a> TreeReader<'a> {
             DRAW_RECT => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let w = self.read_f32()?;
-                let h = self.read_f32()?;
+                let w = self.read_extent()?;
+                let h = self.read_extent()?;
                 let fill = self.read_fill()?;
                 Ok(DrawCommand::Rect { x, y, w, h, fill })
             }
             DRAW_CIRCLE => {
                 let cx = self.read_f32()?;
                 let cy = self.read_f32()?;
-                let r = self.read_f32()?;
+                let r = self.read_extent()?;
                 let fill = self.read_fill()?;
                 Ok(DrawCommand::Circle { cx, cy, r, fill })
             }
             DRAW_ARC => {
                 let cx = self.read_f32()?;
                 let cy = self.read_f32()?;
-                let radius = self.read_f32()?;
+                let radius = self.read_extent()?;
                 let start_angle = self.read_f32()?;
                 let end_angle = self.read_f32()?;
-                let width = self.read_f32()?;
+                let width = self.read_extent()?;
                 let fill = self.read_arc_fill()?;
                 let segments = self.read_arc_segments()?;
                 let cap = self.read_arc_cap()?;
@@ -983,8 +1015,8 @@ impl<'a> TreeReader<'a> {
             DRAW_ICON => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let w = self.read_f32()?;
-                let h = self.read_f32()?;
+                let w = self.read_extent()?;
+                let h = self.read_extent()?;
                 let color = Color::from_raw(self.read_u32()?);
                 let icon_id = self.read_icon_id()?;
                 let anti_alias = self.read_u8()? != 0;
@@ -1013,8 +1045,8 @@ impl<'a> TreeReader<'a> {
             DRAW_BITMAP => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let w = self.read_f32()?;
-                let h = self.read_f32()?;
+                let w = self.read_extent()?;
+                let h = self.read_extent()?;
                 let bitmap_id = self.read_bitmap_id()?;
                 Ok(DrawCommand::Bitmap {
                     x,
@@ -1052,7 +1084,7 @@ impl<'a> TreeReader<'a> {
                 })
             }
             DRAW_ORBIT => {
-                let radius = self.read_f32()?;
+                let radius = self.read_extent()?;
                 let angle = self.read_f32()?;
                 let inner = self.read_draw()?;
                 Ok(DrawCommand::Orbit {
@@ -1158,7 +1190,7 @@ impl<'a> TreeReader<'a> {
                     PathPaint::Fill(self.read_fill()?)
                 } else {
                     let color = Color::from_raw(self.read_u32()?);
-                    let width = self.read_f32()?;
+                    let width = self.read_extent()?;
                     let dash = if dashed {
                         // Both figures are read either way, so a rejected pattern
                         // doesn't desync the stream — it just draws solid.
@@ -1178,8 +1210,8 @@ impl<'a> TreeReader<'a> {
             DRAW_SPHERE => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let w = self.read_f32()?;
-                let h = self.read_f32()?;
+                let w = self.read_extent()?;
+                let h = self.read_extent()?;
                 let bitmap_id = self.read_bitmap_id()?;
 
                 let flags = self.read_u8()?;
@@ -1206,8 +1238,8 @@ impl<'a> TreeReader<'a> {
             DRAW_MESH => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let w = self.read_f32()?;
-                let h = self.read_f32()?;
+                let w = self.read_extent()?;
+                let h = self.read_extent()?;
                 let mesh_id = self.read_mesh_id()?;
 
                 let fov = self.read_f32()?;
@@ -1274,7 +1306,7 @@ impl<'a> TreeReader<'a> {
             DRAW_CURVED_TEXT => {
                 let cx = self.read_f32()?;
                 let cy = self.read_f32()?;
-                let radius = self.read_f32()?;
+                let radius = self.read_extent()?;
                 let angle = self.read_f32()?;
                 let anchor_raw = self.read_u8()?;
                 let anchor = ArcAnchor::try_from(anchor_raw)?;
@@ -1297,8 +1329,8 @@ impl<'a> TreeReader<'a> {
             DRAW_NINE_PATCH => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let w = self.read_f32()?;
-                let h = self.read_f32()?;
+                let w = self.read_extent()?;
+                let h = self.read_extent()?;
                 let bitmap_id = self.read_bitmap_id()?;
 
                 let left = self.read_u16()?;
@@ -1320,8 +1352,8 @@ impl<'a> TreeReader<'a> {
             DRAW_AUTOFIT_TEXT => {
                 let x = self.read_f32()?;
                 let y = self.read_f32()?;
-                let box_width = self.read_f32()?;
-                let box_height = self.read_f32()?;
+                let box_width = self.read_extent()?;
+                let box_height = self.read_extent()?;
                 let mode = AutoFit::from_u8(self.read_u8()?);
                 let min_size = self.read_u16()?;
                 let max_size = self.read_u16()?;
@@ -1349,6 +1381,43 @@ impl<'a> TreeReader<'a> {
 mod fill_decode_tests {
     use super::*;
     use bmc_wasm_protocol::Fill;
+
+    /// A negative extent paints mirrored geometry that `damage` reports nothing
+    /// for — see `read_extent`.
+    #[test]
+    fn a_negative_extent_is_refused_at_the_boundary() {
+        let mut data = vec![DRAW_RECT];
+        data.extend_from_slice(&100.0_f32.to_le_bytes());
+        data.extend_from_slice(&0.0_f32.to_le_bytes());
+        data.extend_from_slice(&(-50.0_f32).to_le_bytes());
+        data.extend_from_slice(&10.0_f32.to_le_bytes());
+        let mut reader = TreeReader::new(&data);
+        let err = reader
+            .read_draw()
+            .expect_err("a negative width must not reach the renderer")
+            .to_string();
+        assert!(err.contains("invalid extent"), "wrong rejection: {err}");
+    }
+
+    /// `f32::min`/`max` ignore NaN, so one in a rotation range leaves the sweep
+    /// at `+INF`/`-INF` and the draw reports no damage while still painting —
+    /// permanently, since a transition keeps it in its recorded `from`.
+    #[test]
+    fn a_non_finite_extent_is_refused_at_the_boundary() {
+        for bad in [f32::NAN, f32::INFINITY, f32::NEG_INFINITY] {
+            let mut data = vec![DRAW_RECT];
+            data.extend_from_slice(&0.0_f32.to_le_bytes());
+            data.extend_from_slice(&0.0_f32.to_le_bytes());
+            data.extend_from_slice(&bad.to_le_bytes());
+            data.extend_from_slice(&10.0_f32.to_le_bytes());
+            let mut reader = TreeReader::new(&data);
+            let err = reader
+                .read_draw()
+                .expect_err("a non-finite extent must not reach the tree")
+                .to_string();
+            assert!(err.contains("extent"), "wrong rejection for {bad}: {err}");
+        }
+    }
 
     #[test]
     fn rect_round_trips_a_radial_fill() {
@@ -1571,10 +1640,9 @@ use crate::{
 
 /// Which half of the static/dynamic partition the walk should emit.
 ///
-/// The walk always *traverses* the whole tree whatever the mode: `draw_counter`
-/// keys animation state and `canvas_index` keys transition state, and both are
-/// positional, so skipping traversal would re-key every animation and reset it
-/// to its first value each frame. Only emission is gated.
+/// The walk always *traverses* the whole tree whatever the mode: animation and
+/// transition state key on positional counters, so skipping traversal would
+/// re-key every animation. Only emission is gated.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum EmitMode {
     /// Emit everything — full frames, and the fallback whenever no cached
@@ -1601,8 +1669,7 @@ pub enum LayerUse {
     /// over it. For a frame whose static content has changed, or the first one.
     Capture,
     /// Blit the stored layer instead of rasterising the static half again.
-    /// This is what makes a guest frame cost close to a cached one. Falls back
-    /// to a full pass if the blit fails.
+    /// Falls back to a full pass if the blit fails.
     Reuse,
 }
 
@@ -1678,6 +1745,9 @@ pub struct TreeResult {
     /// How many nodes contributed to [`Self::dynamic_bounds`]. A union is only
     /// a good proxy for the repaint cost when the parts are close together.
     pub dynamic_node_count: usize,
+    /// Whether the frame asked for the static layer and did not get it, so the
+    /// caller must not treat the layer as holding this frame's static half.
+    pub static_layer_missed: bool,
 }
 
 /// Paragraph data for measurement and rendering
@@ -1731,13 +1801,10 @@ pub struct NodeContext {
     /// whether a dynamic-only walk may skip it wholesale. See
     /// [`crate::partition`].
     pub(crate) dynamic: bool,
-    /// Whether this node's **own paint** can change. Drives emission, and is
-    /// deliberately not the same question: a container holding an animated
-    /// child is a dynamic *subtree* but paints a static background, which must
-    /// come from the cached layer rather than be repainted over it.
-    ///
-    /// Both are left `false` at every construction site and overwritten by
-    /// [`build_taffy_node`], the only place the whole `TreeNode` is in scope.
+    /// Whether this node's **own paint** can change. Deliberately not the same
+    /// question: a container holding an animated child is a dynamic *subtree*
+    /// but paints a static background, which must come from the cached layer
+    /// rather than be repainted over it.
     pub(crate) self_dynamic: bool,
     background: Color,
     /// CSS-modeled box decoration: radius rounds background
@@ -1785,17 +1852,16 @@ pub struct ProcessContext<'a> {
     /// Regions to repaint, in logical pixels, when the frame can reuse what the
     /// target already holds. Empty means repaint everything.
     ///
-    /// These come from the *previous* frames' walks: layout is identical on a
-    /// cached frame, so last frame's dynamic rectangles are this frame's, and
-    /// the damage has to be known before the layer is composited rather than
-    /// after the walk that would discover it.
+    /// These come from the *previous* frames' walks: the damage has to be known
+    /// before the layer is composited rather than after the walk that would
+    /// discover it, and layout is identical on a cached frame.
     pub damage_rects: &'a [Rect],
     /// What this frame does with the cached static layer; see [`LayerUse`].
     pub static_layer: LayerUse,
     /// Identifies whose static layer to capture and blit. One renderer serves
-    /// every widget slot, so callers that share a renderer must pass distinct
-    /// keys or they overwrite each other's cached layer. Use the caller's asset
-    /// namespace so slot teardown reclaims the layer with its other assets.
+    /// every widget slot, so callers must pass distinct keys or they overwrite
+    /// each other's layer. Use the caller's asset namespace, so slot teardown
+    /// reclaims the layer with its other assets.
     pub static_layer_key: &'a str,
 }
 
@@ -1974,17 +2040,12 @@ fn layout_and_render_inner(
         timings.render_us = elapsed_us(t2);
     }
 
-    // Rebind rather than `drop`: `AnimationContext` holds no `Drop` impl, so
-    // this is purely about ending its borrows of `ctx` before the capture below
-    // takes `ctx` mutably. Everything it produced is consumed by now.
+    // Ends `anim_ctx`'s borrows of `ctx` before the check below takes it.
     let has_active = anim_ctx.has_active;
     let _ = anim_ctx;
 
-    // A modal is animating whenever its progress hasn't yet caught up to its
-    // target state (open=1.0, closed=0.0). Progress alone is ambiguous —
-    // e.g. progress==0.0 means "fully closed" only if `is_open` is also false;
-    // if `is_open` is true, it means the modal *just* started opening and
-    // needs more frames to animate up to 1.0.
+    // Progress alone is ambiguous: 0.0 means "fully closed" only when `is_open`
+    // is false, and otherwise means the modal has just started opening.
     let modal_animating = ctx.modal_states.values().any(|s| {
         if s.is_open {
             s.animation_progress < 1.0
@@ -1998,17 +2059,14 @@ fn layout_and_render_inner(
 
 /// Damage the whole surface while a modal is on screen.
 ///
-/// A modal paints outside the walk entirely: it lays out as a `Display::None`
-/// leaf and is drawn by an overlay pass afterwards, so nothing has described its
-/// backdrop — which covers the surface — to damage tracking. Left unrecorded,
-/// the darkening lands only inside whatever rects the walk happened to report,
-/// and the pixels it covered never repaint once it closes.
+/// A modal lays out as a `Display::None` leaf and is painted by a later overlay
+/// pass, so nothing has described its backdrop to damage tracking. Left
+/// unrecorded, the darkening lands only inside the rects the walk reported, and
+/// the pixels it covered never repaint once it closes.
 ///
 /// The whole surface, not the panel: the backdrop dims everything. Call after
-/// the overlay pass, which is where a modal's state first appears, or the frame
-/// it opens on records nothing. Recording it also cleans up afterwards, the
-/// damage history spanning two walks so the frame following the modal's last one
-/// still repaints in full.
+/// the overlay pass, where a modal's state first appears, or the frame it opens
+/// on records nothing.
 fn record_modal_damage(
     modal_states: &HashMap<String, ModalState>,
     width: f32,
@@ -2029,14 +2087,9 @@ fn record_modal_damage(
 
 /// Paint the frame's open modals, always emitting in full.
 ///
-/// A modal is never in the cached layer: [`crate::partition::has_static_content`]
-/// reports false for it, [`crate::partition::static_hash`] skips it, and layout
-/// gives it `Display::None` so the main walk never draws it. It is painted here
-/// instead, from its own Taffy tree, after that walk. So the static half of a
-/// modal's body has nowhere to come from, and leaving `emit` at
-/// [`EmitMode::DynamicOnly`] — where [`render_tree`] leaves it whenever the layer
-/// was blitted — silently dropped every static node inside an open modal, its
-/// body text included.
+/// A modal is never in the cached layer, so the static half of its body has
+/// nowhere else to come from: emitting under [`EmitMode::DynamicOnly`], which is
+/// where [`render_tree`] leaves `emit` after a blit, drops the body text.
 #[expect(clippy::too_many_arguments, reason = "render plumbing is irreducible")]
 fn render_modal_overlays(
     modals: &[ModalInfo],
@@ -2080,10 +2133,7 @@ fn render_modal_overlays(
 /// A refreshing frame renders in the same shape as one reusing the layer:
 /// static into the layer, blit, dynamic on top — so static content is
 /// rasterised once per guest frame rather than once for the screen and again
-/// for the layer.
-///
-/// Falls back to one full pass whenever the layer is unavailable, which is also
-/// what non-capturing callers (system overlay, storybook) always take.
+/// for the layer. Falls back to one full pass when the layer is unavailable.
 #[expect(clippy::too_many_arguments, reason = "render plumbing is irreducible")]
 #[expect(
     clippy::cast_possible_truncation,
@@ -2105,8 +2155,7 @@ fn render_tree(
     timings: &mut FrameTimings,
     anim_ctx: &mut AnimationContext<'_>,
 ) {
-    // Nothing to record without `frame-timings`, and the parameter stays
-    // so callers need no cfg of their own.
+    // The parameter stays either way, so callers need no cfg of their own.
     #[cfg(not(feature = "frame-timings"))]
     let _ = timings;
 
@@ -2122,10 +2171,12 @@ fn render_tree(
     let split = anim_ctx.emit == EmitMode::All
         && static_layer == LayerUse::Capture
         && renderer.begin_static_layer(static_layer_key, width as u32, height as u32);
+    if anim_ctx.emit == EmitMode::All && static_layer == LayerUse::Capture && !split {
+        result.static_layer_missed = true;
+    }
 
     // Nothing static changed since the layer was captured, so paint it rather
-    // than rasterising the same content again. This is what makes a guest frame
-    // cost close to a cached one: re-capturing was most of its GPU time.
+    // than rasterising the same content again.
     if !split && anim_ctx.emit == EmitMode::All && static_layer == LayerUse::Reuse {
         // Repaint only the damaged regions when the caller supplied them; the
         // rest of the target still holds a correct earlier frame.
@@ -2140,6 +2191,15 @@ fn render_tree(
                 timings.gpu_blit_us = renderer.flush_and_fence_us();
             }
             anim_ctx.emit = EmitMode::DynamicOnly;
+        } else {
+            // The walk below repaints every draw but only where a draw paints,
+            // so on a target the caller left uncleared, whatever the dynamic
+            // half painted last frame stays where it was. Lay down the frame
+            // base first, opaque black to match what `begin_static_layer`
+            // captured against. Only reachable with a captured layer, so the
+            // transparent-based overlays never take it.
+            renderer.fill_rect(0.0, 0.0, width, height, Color::from_rgb(0, 0, 0));
+            result.static_layer_missed = true;
         }
     }
 
@@ -2173,10 +2233,10 @@ fn render_tree(
         anim_ctx.emit = EmitMode::DynamicOnly;
         anim_ctx.draw_counter = 0;
         anim_ctx.canvas_index = 0;
-        // Emission is per pass, but the scroll container's offset advances
-        // inside the walk and belongs to the frame.
-        // The pass above already spent this drag.
-        interaction.clear_scroll_delta();
+        // The mesh atlas caches per slot and skips re-rendering when a slot
+        // already holds the same mesh, so a draw landing on a different slot
+        // depending on frame type would re-render on every alternation.
+        anim_ctx.mesh_slot_counter = 0;
     }
     render_taffy_node(
         taffy,
@@ -2262,8 +2322,7 @@ fn sweep_stale_state(
     frame_counter: u64,
     timings: &mut FrameTimings,
 ) {
-    // Nothing to record without `frame-timings`, and the parameter stays
-    // so callers need no cfg of their own.
+    // The parameter stays either way, so callers need no cfg of their own.
     #[cfg(not(feature = "frame-timings"))]
     let _ = timings;
 
@@ -2284,15 +2343,10 @@ fn sweep_stale_state(
 /// Build the taffy node for `node` and tag it with its static/dynamic
 /// classification.
 ///
-/// The classification rides on [`NodeContext`] because the render walk sees
-/// only taffy nodes — the originating [`TreeNode`] is out of scope by then, and
-/// this is the last point where both are available.
-///
-/// Recursion goes through this wrapper rather than
-/// [`build_taffy_node_inner`], so every node that owns a context gets tagged.
-/// Nodes built without a context (e.g. a bare spacer) simply stay untagged and
-/// are treated as dynamic by the consumer — conservative, and they draw
-/// nothing anyway.
+/// The classification rides on [`NodeContext`] because the render walk sees only
+/// taffy nodes, and this is the last point where both are in scope. Recursion
+/// goes through this wrapper so every node owning a context gets tagged; one
+/// built without a context stays untagged and is treated as dynamic.
 pub(crate) fn build_taffy_node(
     taffy: &mut TaffyTree<NodeContext>,
     node: &TreeNode,
@@ -2301,9 +2355,8 @@ pub(crate) fn build_taffy_node(
     modals: &mut Vec<ModalInfo>,
 ) -> Result<taffy::NodeId> {
     let id = build_taffy_node_inner(taffy, node, now_unix_secs, result, modals)?;
-    // O(nodes x depth) boolean work, against ~9.6 ms of Taffy build + layout on
-    // the reference widget — not worth threading a bottom-up accumulator
-    // through every arm below to avoid.
+    // O(nodes x depth) boolean work, negligible next to the Taffy build it
+    // wraps — not worth a bottom-up accumulator threaded through every arm.
     let dynamic = crate::partition::node_is_dynamic(node);
     let self_dynamic = crate::partition::node_self_is_dynamic(node);
     if let Some(ctx) = taffy.get_node_context_mut(id) {
@@ -2406,13 +2459,10 @@ fn build_taffy_node_inner(
             };
 
             let id = taffy.new_with_children(style, &child_ids)?;
-            // Attached unconditionally, where this was gated on the node having
-            // a background, border or nine-patch: the context is the only place
-            // the static/dynamic tag can live, and layout containers are
-            // precisely the subtree roots a cached static layer wants to skip.
-            // Pixel-neutral because the render walk guards the background on
-            // `!= Color::default()` and every other field on `Some`/non-empty,
-            // so an otherwise-empty context draws nothing.
+            // Attached even when nothing paints: the context is the only place
+            // the static/dynamic tag can live. Pixel-neutral, because the walk
+            // guards the background on `!= Color::default()` and every other
+            // field on `Some`, so an otherwise-empty context draws nothing.
             taffy.set_node_context(
                 id,
                 Some(NodeContext {
@@ -3045,17 +3095,14 @@ pub(crate) fn render_taffy_node(
         .get_node_context(node_id)
         .and_then(|ctx| ctx.touch_key.clone());
 
-    // Traverse everything, always. Skipping static subtrees outright would mean
-    // restoring the positional counters the skipped walk would have advanced,
-    // and replaying hit regions a skipped subtree never registers. Emission is
-    // what costs — a gated traversal already took draw recording from 12.2 ms
-    // to ~0.5 ms — and traversing uniformly means every pass advances the
-    // counters identically, so nothing needs restoring.
+    // Traverse everything, always: emission is what costs, and skipping a
+    // subtree would mean restoring the positional counters its walk would have
+    // advanced and replaying the hit regions it never registered.
     //
-    // A dynamic subtree still contains static nodes a dynamic-only pass must
-    // not repaint, and vice versa. An untagged node falls through to `true` —
-    // the conservative side, where it draws in every mode rather than
-    // vanishing.
+    // The gate is per node, not per subtree: a dynamic subtree still holds
+    // static nodes a dynamic-only pass must not repaint, and vice versa. An
+    // untagged node falls through to `true` and draws in every mode rather
+    // than vanishing.
     let emits = taffy
         .get_node_context(node_id)
         .is_none_or(|ctx| anim_ctx.emit.emits(ctx.self_dynamic));
@@ -3104,10 +3151,9 @@ pub(crate) fn render_taffy_node(
             renderer.draw_paragraph(&para.base_style, &para.spans, x, y, w);
         }
 
-        // Registration is unconditional; only the painting is gated. A pass that
-        // does not emit this button still has to claim its hit region and
-        // consume a pending click, or a button living in the half this pass
-        // skipped becomes dead.
+        // Registration is unconditional, only the painting is gated: a button
+        // whose half this pass skipped still has to claim its hit region and
+        // consume a pending click, or it goes dead.
         if let Some(ref btn) = ctx.button {
             let (clicked, click_pos) = if emits {
                 draw_button_with_target(
@@ -3149,8 +3195,8 @@ pub(crate) fn render_taffy_node(
             anim_ctx.draw_in_canvas = 0;
             // Split per draw: a canvas is tagged dynamic when any single draw
             // is, so the node-level gate is too coarse here. Skipping a
-            // non-`Modified` draw cannot desynchronise `draw_counter` — that
-            // counter only advances inside the `Modified` arm.
+            // non-`Modified` draw cannot desynchronise `draw_counter`, which
+            // only advances inside the `Modified` arm.
             let bands = crate::partition::canvas_bands(&ctx.draws);
             for (draw, band) in ctx.draws.iter().zip(bands) {
                 if anim_ctx.emit.emits_band(band) {
@@ -3177,21 +3223,20 @@ pub(crate) fn render_taffy_node(
     // `dynamic` on a container merely says a descendant animates, so counting
     // containers would union the whole subtree and report the root as damaged.
     //
-    // After the draws above, not before: that pass is what advances each
-    // transition's recorded span, and a rect taken beforehand would describe the
-    // span the *previous* walk interpolated — one guest frame stale, so a target
-    // the guest has just moved would sweep outside it.
+    // After the draws above, not before: that pass advances each transition's
+    // recorded span, and a rect taken beforehand describes the span the
+    // previous walk interpolated, so a target the guest just moved sweeps
+    // outside it.
     if taffy.child_count(node_id) == 0
         && let Some(ctx) = taffy.get_node_context(node_id)
         && ctx.dynamic
     {
         let node = Rect::new(x, y, w, h);
         // A canvas is one leaf holding many draws, so its own rect is far
-        // coarser than the draws the dynamic pass repaints; `crate::damage`
-        // bounds each of those — a [`Band::Above`] draw to its own still box —
-        // and only one it cannot bound falls back to the whole canvas.
-        // A dynamic leaf with no draws at all is host-driven — a time label, a
-        // progress bar, a modal — and repaints entirely.
+        // coarser than what the dynamic pass repaints: `crate::damage` bounds
+        // each draw, and only one it cannot bound falls back to the whole
+        // canvas. A dynamic leaf with no draws is host-driven and repaints
+        // entirely.
         let mut damaged = ctx.draws.is_empty().then_some(node);
         let bands = crate::partition::canvas_bands(&ctx.draws);
         for (draw, _) in ctx
@@ -3200,17 +3245,20 @@ pub(crate) fn render_taffy_node(
             .zip(bands)
             .filter(|(_, band)| !band.is_in_layer())
         {
-            let bounded = crate::damage::canvas_draw_damage(
+            match crate::damage::canvas_draw_damage(
                 draw,
                 node,
                 anim_ctx.transition_states,
                 canvas_index,
-            );
-            if let Some(rect) = bounded {
-                Rect::union_bounds(&mut damaged, rect);
-            } else {
-                damaged = Some(node);
-                break;
+            ) {
+                crate::damage::DrawDamage::Region(rect) => {
+                    Rect::union_bounds(&mut damaged, rect);
+                }
+                crate::damage::DrawDamage::Nothing => {}
+                crate::damage::DrawDamage::WholeCanvas => {
+                    damaged = Some(node);
+                    break;
+                }
             }
         }
         if let Some(damaged) = damaged {
@@ -3249,10 +3297,8 @@ pub(crate) fn render_taffy_node(
         }
     }
 
-    // Gated like every other paint site. An ungated one paints into the layer
-    // on a capture frame, again over the blit, and again on every frame that
-    // reuses it — and being static, nothing repaints underneath,
-    // so the copies blend onto each other.
+    // Gated like every other paint site: ungated, a static draw accumulates a
+    // copy per frame, since nothing repaints underneath it.
     if emits
         && let Some(ctx) = taffy.get_node_context(node_id)
         && let Some(ref notif) = ctx.notification
@@ -3322,6 +3368,10 @@ pub(crate) fn render_taffy_node(
         } else {
             interaction.get_scroll_delta_in(&scroll_region)
         };
+        // Once per container per frame: the offset advances inside the walk,
+        // and a capture frame walks the tree twice before the modal overlays
+        // are walked a third time.
+        let scroll_delta = interaction.take_scroll_delta(sk, scroll_delta);
 
         let state = scroll_states.entry(sk.clone()).or_default();
         state.scroll_offset += scroll_delta;
@@ -3487,8 +3537,6 @@ mod tests {
                 EmitMode::All.emits(dynamic),
                 "the default mode must emit everything"
             );
-            // Every node lands in exactly one of the two halves, so a static
-            // pass plus a dynamic pass reproduces a full frame.
             assert_ne!(
                 EmitMode::StaticOnly.emits(dynamic),
                 EmitMode::DynamicOnly.emits(dynamic),
@@ -3499,8 +3547,8 @@ mod tests {
         assert!(EmitMode::DynamicOnly.emits(true));
     }
 
-    /// The static/dynamic tag must survive the trip into `NodeContext` — the
-    /// render walk reads it from there and never sees the `TreeNode` again.
+    /// The tag must survive the trip into `NodeContext`, which is all the
+    /// render walk ever sees of it.
     #[test]
     fn build_taffy_node_tags_context_with_the_partition_classification() {
         fn build(node: &TreeNode) -> (TaffyTree<NodeContext>, taffy::NodeId) {
@@ -3532,8 +3580,6 @@ mod tests {
             "a canvas of plain draws must be tagged static"
         );
 
-        // A relative-time label re-formats on its own cadence, so the tag must
-        // propagate up through an enclosing container.
         let dynamic_tree = TreeNode::Column(
             PropsData::default(),
             vec![TreeNode::RelTime {
@@ -3799,16 +3845,13 @@ mod frame_pass_tests {
     use super::{MeshDrawArgs, PropsData, SpanData};
     use crate::tree::{ArcAnchor, ArcTextFacing, AutoFit, TextStyle};
 
-    /// Records which key each static-layer call carried. One renderer serves
-    /// every slot, so the key is the only thing keeping two slots' layers
-    /// apart — a caller passing a constant is the regression this catches.
+    /// Records which key each static-layer call carried: one renderer serves
+    /// every slot, so the key is all that keeps two slots' layers apart.
     #[derive(Default)]
     struct KeyRecordingRenderer {
-        /// Bounds of every shape this renderer was actually asked to paint.
         draws: Vec<crate::interaction::Rect>,
         calls: Vec<(&'static str, String)>,
         captured: Vec<String>,
-        /// Paragraph text this renderer was actually asked to paint.
         paragraphs: Vec<String>,
     }
 
@@ -4232,11 +4275,66 @@ mod frame_pass_tests {
         )
     }
 
-    /// A modal's body is not in the cached layer, so a frame that reuses the
-    /// layer must still emit it in full. This regressed once: `render_tree`
-    /// leaves `emit` at `DynamicOnly` after blitting, the modal pass inherited
-    /// it, and every static node inside an open modal — its body text included —
-    /// was silently dropped while the modal itself kept painting.
+    /// A modal that scrolls, with enough children to overflow its body.
+    fn scrollable_modal_tree() -> TreeNode {
+        let TreeNode::Column(props, mut children) = modal_tree(true) else {
+            unreachable!("BUG: modal_tree builds a Column")
+        };
+        if let Some(TreeNode::Modal { body, .. }) = children.last_mut() {
+            *body = (0..4)
+                .map(|_| TreeNode::Canvas {
+                    props: PropsData {
+                        width: 60.0,
+                        height: 60.0,
+                        ..PropsData::default()
+                    },
+                    touch_key: None,
+                    draws: Vec::new(),
+                })
+                .collect();
+        }
+        TreeNode::Column(props, children)
+    }
+
+    /// The modal overlays are walked after `render_tree` returns, so anything
+    /// that spends the frame's drag inside that walk strands them: a capture
+    /// frame is the *normal* case while a modal drags, because a non-zero
+    /// global delta forces the layer to recapture.
+    #[test]
+    fn a_modal_body_scrolls_on_a_capture_frame() {
+        use crate::interaction::TouchEvent;
+
+        let mut renderer = KeyRecordingRenderer::default();
+        let mut state = SlotState::default();
+
+        // Let the modal's entrance animation settle, so its body is on screen
+        // and the drag below can land in it.
+        for _ in 0..40 {
+            capture_once(&mut state, &mut renderer, &scrollable_modal_tree());
+        }
+
+        state
+            .interaction
+            .push_event(TouchEvent::Down { x: 50.0, y: 50.0 });
+        state
+            .interaction
+            .push_event(TouchEvent::Move { x: 50.0, y: 30.0 });
+        state.interaction.begin_frame();
+        capture_once(&mut state, &mut renderer, &scrollable_modal_tree());
+
+        let offset = state
+            .scroll_states
+            .get("confirm::body")
+            .map_or(0.0, |s| s.scroll_offset);
+        assert!(
+            offset > 0.0,
+            "the modal's body must take the drag the main tree's passes did not, got {offset}"
+        );
+    }
+
+    /// A modal's body is not in the cached layer, so a layer-reusing frame must
+    /// still emit it in full: inheriting `DynamicOnly` from the blit drops every
+    /// static node inside the modal while the modal itself keeps painting.
     #[test]
     fn an_open_modal_emits_its_static_body_on_a_layer_reusing_frame() {
         let mut state = SlotState::default();
@@ -4515,9 +4613,8 @@ mod frame_pass_tests {
     }
 
     /// The contract a damage-scissored frame rests on: everything the dynamic
-    /// pass paints falls inside the damage the walks reported, so the scissor
-    /// drops nothing. A draw outside it is a pixel that never lands — the
-    /// partial-redraw defect that otherwise only shows on hardware.
+    /// pass paints falls inside the reported damage, or the scissor drops a
+    /// pixel that then never lands.
     ///
     /// The span is two walks wide because the device rotates export buffers:
     /// this frame paints into the buffer the frame *before* last drew, so the
@@ -4557,8 +4654,7 @@ mod frame_pass_tests {
     }
 
     /// The backdrop dims the whole surface from outside the walk, so a frame
-    /// that scissors to the walk's rects darkens only those and leaves the rest
-    /// stale — and keeps the covered pixels once the modal closes.
+    /// scissored to the walk's rects darkens only those.
     #[test]
     fn an_open_modal_damages_the_whole_surface() {
         let mut renderer = KeyRecordingRenderer::default();
@@ -4590,16 +4686,13 @@ mod frame_pass_tests {
         );
     }
 
-    /// Two slots sharing one renderer must address distinct layers. Before the
-    /// layer was keyed, both captured into the same texture and each blitted
-    /// whatever the other had just written.
+    /// Two slots sharing one renderer must address distinct layers, or each
+    /// blits whatever the other just captured.
     #[test]
     fn each_slot_captures_under_its_own_key() {
         let mut renderer = KeyRecordingRenderer::default();
         let (mut a, mut b) = (SlotState::default(), SlotState::default());
 
-        // A revisits the renderer after B, which is when a shared layer would
-        // hand A whatever B had just captured.
         for (slot, key) in [(0, "widget-a"), (1, "widget-b"), (0, "widget-a")] {
             renderer.calls.clear();
             let state = if slot == 0 { &mut a } else { &mut b };
@@ -4609,8 +4702,6 @@ mod frame_pass_tests {
                 !renderer.calls.is_empty(),
                 "slot '{key}' made no static-layer calls, so this asserts nothing"
             );
-            // Every call this frame, not merely one of them: a call site that
-            // hard-codes the key leaves the others correct and hides itself.
             for (op, seen) in &renderer.calls {
                 assert_eq!(
                     seen, key,

@@ -580,11 +580,10 @@ pub trait Renderer {
     /// Submit everything recorded so far and block until the GPU has finished
     /// it, returning how long that took in microseconds.
     ///
-    /// Diagnostic only, for attributing a frame's GPU cost to individual
-    /// passes. Returns `0` for renderers with no GPU behind them. Calling this
-    /// defeats the pipelining between CPU recording and GPU execution, so it
-    /// belongs behind [`crate::tree::gpu_pass_timing_enabled`] rather than on
-    /// any normal path.
+    /// Diagnostic only, for attributing a frame's GPU cost to individual passes;
+    /// `0` for renderers with no GPU behind them. This defeats the pipelining
+    /// between CPU recording and GPU execution, so it belongs behind
+    /// [`crate::tree::gpu_pass_timing_enabled`] rather than on a normal path.
     fn flush_and_fence_us(&mut self) -> u32 {
         0
     }
@@ -1084,10 +1083,9 @@ impl Renderer for RenderTarget<'_, '_, '_> {
         self.renderer.text_layout_counters()
     }
 
-    // Forwarded, not defaulted: the trait's inert defaults would make a wrapped
-    // renderer report "no layer available" and caching would silently never
-    // happen, which looks exactly like a renderer that cannot render to a
-    // texture.
+    // Forwarded, not defaulted: the inert defaults would have a wrapped renderer
+    // report "no layer available", indistinguishable from one that genuinely
+    // cannot render to a texture.
     fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
         self.renderer.begin_static_layer(key, width, height)
     }
@@ -1118,12 +1116,11 @@ impl Renderer for RenderTarget<'_, '_, '_> {
 }
 
 /// `RenderTarget` wraps a renderer to resolve suspended assets at draw time, so
-/// every [`Renderer`] method has to reach the inner renderer. A method with a
-/// default body that the wrapper forgets to forward does not fail to compile —
-/// it silently answers with the default, and the whole feature behind it goes
-/// quiet. That cost a full-screen blit per frame once: `blit_static_layer_rects`
-/// defaults to the unscissored blit, so damage tracking computed its rects and
-/// then repainted everything, correctly and expensively.
+/// every [`Renderer`] method has to reach the inner renderer. A defaulted method
+/// the wrapper forgets to forward still compiles, silently answering with the
+/// default and taking the whole feature behind it quiet — an unforwarded
+/// `blit_static_layer_rects`, say, falls back to the unscissored blit and
+/// repaints everything, correctly and expensively.
 ///
 /// This asserts the source itself: every defaulted trait method must appear in
 /// the wrapper's impl.

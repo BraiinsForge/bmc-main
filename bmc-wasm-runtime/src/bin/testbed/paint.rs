@@ -103,17 +103,13 @@ impl ViewTargets {
 /// rotates between two textures.
 ///
 /// The device rotates export buffers, so a damage-tracked frame's regions have
-/// to span two of them — that span is what the runtime's `recent_dynamic_rects`
-/// pair tracks. A testbed drawing into a single persistent target would exercise
-/// partial redraw while never exercising the rotation, and would pass frames the
-/// Deck shows torn. Rotating here is what puts the artifact in front of whoever
-/// is running the testbed.
+/// to span two of them. A testbed drawing into one persistent target would
+/// exercise partial redraw and never the rotation, passing frames the Deck
+/// shows torn.
 ///
-/// The framebuffer's *name* stays put across the rotation, only its attachment
-/// moves: femtovg holds that name as its screen target and restores it mid-frame
-/// (`bmc-render/src/gpu/renderer.rs`, `drop_shadow`), so handing it a different
-/// framebuffer per frame would break that. This is what the host does on the
-/// device (`bmc-widget`'s `retarget_to`).
+/// The framebuffer's *name* stays put across the rotation and only its
+/// attachment moves, as on the device: femtovg holds that name as its screen
+/// target and restores it mid-frame, so it cannot change per frame.
 pub(super) struct RenderTargets {
     fbo: egui_glow::glow::Framebuffer,
     rbo: egui_glow::glow::Renderbuffer,

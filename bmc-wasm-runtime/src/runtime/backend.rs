@@ -1375,13 +1375,21 @@ impl WasmWidgetRuntime {
         let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
 
-        // An asset mutation since the layer was captured means a static draw's
-        // pixels may have changed while the tree did not, so this frame has to
-        // emit the static half again — which is also what gives a suspended
-        // asset the draw it needs to be restored on.
+        // An asset mutation since the capture means a static draw's pixels may
+        // have changed while the tree did not, so the static half is emitted
+        // again — which is also the draw a suspended asset is restored on.
         let stale_assets = state
             .last_static_key
-            .is_some_and(|(_, generation)| generation != state.renderer_assets.generation());
+            .is_some_and(|(_, generation, _)| generation != state.renderer_assets.generation());
+
+        // The tree is the object the capture was taken from, so its static hash
+        // cannot have moved — but a `RelTime` inside it renders from the clock,
+        // and a label that changed width has resized the static content around
+        // it. Recapture rather than blit a layer laid out for the old width.
+        let layout_key = bmc_render::partition::host_layout_key(tree_node, now_unix_secs);
+        let stale_layout = state
+            .last_static_key
+            .is_some_and(|(_, _, captured)| captured != layout_key);
 
         // Scissoring to the moving regions leaves the rest of the target as
         // the last frame left it, so a caller that cleared gets no damage and
@@ -1406,7 +1414,7 @@ impl WasmWidgetRuntime {
             // full-screen pass.
             static_layer: if !state.static_layer_useful {
                 bmc_render::tree::LayerUse::Ignore
-            } else if stale_assets {
+            } else if stale_assets || stale_layout {
                 bmc_render::tree::LayerUse::Capture
             } else {
                 bmc_render::tree::LayerUse::Reuse
@@ -1453,15 +1461,29 @@ impl WasmWidgetRuntime {
                 state.frame_schedule.has_active_animations = has_active;
                 state.frame_schedule.interaction_pending = had_interaction;
                 state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
-                if stale_assets {
+                if stale_assets || stale_layout {
                     // Re-read rather than reuse the value above: restoring an
-                    // asset during the walk bumps the generation again, and
-                    // without this every later cached frame would keep repainting
-                    // in full until the next guest frame refreshed the key.
+                    // asset during the walk bumps the generation again, and a
+                    // stale key repaints in full until the next guest frame.
                     let generation = state.renderer_assets.generation();
-                    if let Some((hash, _)) = state.last_static_key {
-                        state.last_static_key = Some((hash, generation));
+                    if let Some((hash, _, _)) = state.last_static_key {
+                        state.last_static_key = Some((hash, generation, layout_key));
                     }
+                    // The recapture reached the buffer this frame painted,
+                    // and no other. Every remaining buffer still holds the
+                    // old static half, and scissoring the next frame to
+                    // damage would leave it there. The guest path marks the
+                    // same debt when its static half changes.
+                    state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS - 1;
+                }
+                // A missed blit means the walk repainted every draw into a
+                // target the host did not clear, so the pixels no draw covers
+                // still hold the previous frame's dynamic half. Owe every
+                // buffer a full repaint and stop reusing the layer.
+                if result.static_layer_missed {
+                    state.last_static_key = None;
+                    state.static_layer_useful = false;
+                    state.stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
                 }
                 true
             }
@@ -1763,11 +1785,10 @@ impl WasmWidgetRuntime {
     /// Pure cache: the tree it was rasterised from is still in hand, so waking
     /// re-captures it.
     ///
-    /// Clearing the hash alongside is what makes that happen. Left set, the
-    /// first guest frame back hashes the same tree, concludes the layer is
-    /// still valid and asks to blit one that no longer exists — which degrades
-    /// to a full pass rather than corrupting, so the widget would go on
-    /// rendering correctly while silently never caching again.
+    /// Clearing the hash alongside is what makes that happen: left set, the
+    /// first guest frame back hashes the same tree and asks to blit a layer
+    /// that no longer exists. That degrades to a full pass rather than
+    /// corrupting, so the widget renders correctly and never caches again.
     pub fn release_static_layer(&mut self, renderer: NonNull<dyn Renderer>) {
         self.with_renderer(renderer, |rt| {
             let state = rt.store.data_mut();
@@ -1787,8 +1808,7 @@ impl WasmWidgetRuntime {
     ///
     /// Its export buffers hold nothing, while the damage history survived and
     /// describes the target they replaced. Scissoring to it would paint the
-    /// moving regions onto an undefined buffer and leave the rest black, which
-    /// is what a dormant scene showed for its first frames after a swipe.
+    /// moving regions onto an undefined buffer and leave the rest black.
     pub fn invalidate_export_buffers(&mut self) {
         self.store.data_mut().stale_export_buffers = crate::host_api::EXPORT_BUFFERS;
     }
@@ -2054,10 +2074,9 @@ impl WasmWidgetRuntime {
     /// The host has to know before it clears: the clear happens on the way in,
     /// and it would wipe exactly the pixels a damage-tracked frame reuses.
     ///
-    /// Everything read here is settled before the guest runs, and the
-    /// replay half of the answer comes from the same `will_replay_cached_tree`
-    /// that [`Self::render`] branches on — asking twice is what let the two
-    /// disagree.
+    /// Everything read here is settled before the guest runs, and the replay
+    /// half of the answer comes from the same `will_replay_cached_tree` that
+    /// [`Self::render`] branches on, so the two cannot disagree.
     #[must_use]
     pub fn next_frame_preserves_target(&self, width: f32, height: f32) -> bool {
         let state = self.store.data();

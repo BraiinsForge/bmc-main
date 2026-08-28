@@ -85,8 +85,7 @@ fn tab_bounds(x: f32, w: f32, tabs: usize, index: usize) -> (f32, f32) {
     (tx, tab_w)
 }
 
-/// Draw the pill and its tabs. The hit regions come from
-/// [`register_switcher_hits`], which runs on passes this one skips.
+/// Draw the pill and its tabs; [`register_switcher_hits`] owns the hit regions.
 pub(crate) fn render_switcher(
     data: &SwitcherData,
     x: f32,
@@ -131,10 +130,9 @@ pub(crate) fn render_switcher(
 
 /// Register each tab's hit region and collect the clicks landing on them.
 ///
-/// Split from the paint because the two run on different passes. Hit regions
-/// are rebuilt every frame and tested against the previous frame's set,
-/// so a pass that paints nothing still has to register.
-/// A cached frame that skipped it would swallow the next tap.
+/// Split from the paint because the two run on different passes: hit regions are
+/// rebuilt every frame and tested against the previous frame's set, so a pass
+/// that paints nothing still has to register or it swallows the next tap.
 pub(crate) fn register_switcher_hits(
     data: &SwitcherData,
     x: f32,

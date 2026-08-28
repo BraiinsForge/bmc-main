@@ -58,6 +58,10 @@ pub struct InteractionState {
     /// Position of the last scroll event (for hit-testing which container to scroll).
     scroll_pos: Option<(f32, f32)>,
 
+    /// Scroll containers that have already taken this frame's drag. Cleared
+    /// each frame; see [`InteractionState::take_scroll_delta`].
+    scrolled_this_frame: Vec<String>,
+
     /// High-level interaction events consumed this frame (clicks, scrolls).
     /// Populated during render when widgets consume input. Cleared each frame.
     pub action_log: Vec<ActionEvent>,
@@ -75,6 +79,7 @@ impl InteractionState {
             last_touch_pos: None,
             drag_delta_y: 0.0,
             scroll_pos: None,
+            scrolled_this_frame: Vec::new(),
             action_log: Vec::new(),
         }
     }
@@ -90,6 +95,7 @@ impl InteractionState {
         // Reset per-frame state
         self.drag_delta_y = 0.0;
         self.scroll_pos = None;
+        self.scrolled_this_frame.clear();
         self.action_log.clear();
 
         // A click the previous frame's build did not consume is stale: its
@@ -260,15 +266,24 @@ impl InteractionState {
         }
     }
 
-    /// Drop the scroll delta once a tree walk has applied it.
+    /// `delta` the first time `key`'s container asks for it this frame,
+    /// zero after that.
     ///
-    /// A capture frame walks the tree twice, and the scroll container
-    /// advances its own offset inside the walk. Left in place, the second
-    /// walk adds the same drag again: content moves at twice the finger,
-    /// and the layer captured on the first pass sits one delta above the
-    /// dynamic half.
-    pub fn clear_scroll_delta(&mut self) {
-        self.drag_delta_y = 0.0;
+    /// The offset advances inside the walk, and a frame can walk a container
+    /// more than once: a capture frame runs the tree twice, and the modal
+    /// overlays are walked again after both passes. Applying the drag on every
+    /// visit moves content at a multiple of the finger, and leaves the captured
+    /// layer a delta behind the dynamic half.
+    ///
+    /// Per container rather than per frame, because one drag legitimately feeds
+    /// every container under it — nested scroll regions share a wheel event —
+    /// and a frame-wide latch would starve all but the first.
+    pub fn take_scroll_delta(&mut self, key: &str, delta: f32) -> f32 {
+        if delta == 0.0 || self.scrolled_this_frame.iter().any(|seen| seen == key) {
+            return 0.0;
+        }
+        self.scrolled_this_frame.push(key.to_owned());
+        delta
     }
 
     /// Get the scroll delta if the wheel event landed inside `bounds`.

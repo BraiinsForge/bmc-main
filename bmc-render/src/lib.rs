@@ -196,9 +196,8 @@ pub struct ScrollState {
 /// Per-frame timing breakdown (microseconds).
 ///
 /// Diagnostic only, and gated on `frame-timings`, which `profiling` enables.
-/// Without that feature the fields go, and so do the clock reads that feed
-/// them: what is left is a zero-sized stand-in, and every per-frame message
-/// carrying one is 88 bytes lighter.
+/// Without that feature the fields go, along with the clock reads feeding them,
+/// leaving a zero-sized stand-in.
 #[cfg(feature = "frame-timings")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct FrameTimings {
@@ -216,8 +215,7 @@ pub struct FrameTimings {
     pub paragraph_misses: u32,
     /// Paragraph cache occupancy after layout (diagnostic).
     pub paragraph_entries: u32,
-    /// Live animation states after this frame's sweep (diagnostic). Sized to
-    /// judge whether the per-frame `retain` walk is worth optimising.
+    /// Live animation states after this frame's sweep (diagnostic).
     pub animation_state_count: usize,
     /// Live transition states after this frame's sweep (diagnostic).
     pub transition_state_count: usize,

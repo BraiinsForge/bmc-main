@@ -88,11 +88,10 @@ pub fn scanout_transform(profile: DisplayTransform) -> Transform {
 /// Whether the frame's sync point is waited on, folding GPU time into the
 /// `finish` stopwatch.
 ///
-/// Diagnostic only: it serialises the compositor against its own GPU work, so
-/// the frame rate drops while it is on. Without it the stopwatch measures
-/// submission — `frame.finish()` drops its sync point without blocking — which
-/// is not comparable to the widget host's glFinish-bounded passes.
-/// `BMC_COMPOSE_FENCE=1` enables it.
+/// Diagnostic only, enabled by `BMC_COMPOSE_FENCE=1`: it serialises the
+/// compositor against its own GPU work, so the frame rate drops while it is on.
+/// Without it the stopwatch measures submission alone, which is not comparable
+/// to the widget host's glFinish-bounded passes.
 fn compose_fence() -> bool {
     static FENCE: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FENCE.get_or_init(|| matches!(std::env::var("BMC_COMPOSE_FENCE").as_deref(), Ok("1")))
@@ -103,32 +102,25 @@ fn compose_fence() -> bool {
 /// through a staging surface.
 ///
 /// `zwp_linux_buffer_params_v1::Flags::YInvert` is the obvious signal, and it is
-/// unusable: smithay's `render_texture_from_to` negates the texture matrix's Y
-/// without the offset a `v' = 1 - v` flip needs.
-/// `gles/mod.rs:2716` is unchanged from our pinned c114b88 to master 92ba0e9.
-/// `build_texture_mat` normalises into UV space last,
-/// so the negation drops `v` into `[-1, 0]` and CLAMP_TO_EDGE then samples
-/// one edge row across the whole quad.
-/// The flag is read at import and stamped onto the `GlesTexture`,
-/// so a flagged buffer stays broken whatever transform we pass at draw time.
-/// Folding the flip into the transform instead routes it through
-/// `build_texture_mat`, the path display rotation already uses.
+/// unusable: smithay's `render_texture_from_to` (`gles/mod.rs:2716`, unchanged
+/// from our pinned c114b88 to master 92ba0e9) negates the texture matrix's Y
+/// without the offset a `v' = 1 - v` flip needs. `build_texture_mat` normalises
+/// into UV space last, so the negation drops `v` into `[-1, 0]` and
+/// CLAMP_TO_EDGE samples one edge row across the whole quad — and since the flag
+/// is stamped onto the `GlesTexture` at import, a flagged buffer stays broken
+/// whatever transform we pass at draw time. Folding the flip into the transform
+/// routes it through `build_texture_mat`, as display rotation already does.
 ///
-/// The rotation comes from [`scanout_transform`] and [`with_row_flip`] mirrors
-/// it, so the two cannot drift apart. Only `Deg270` (Bmc100) has been seen on
-/// hardware; `Deg0` (Bmm100, Bmm101) and `Deg90` (Bfm100) follow from the same
-/// derivation.
+/// Only `Deg270` (Bmc100) has been seen on hardware; `Deg0` (Bmm100, Bmm101)
+/// and `Deg90` (Bfm100) follow from the same derivation.
 ///
-/// ⚠ Applied to every widget surface, wasm or native, so it assumes all of them
-/// submit bottom-up buffers. That holds for anything painting straight into its
-/// export buffer — both the wasm host and `widgets/flip-clock`, which draws to
-/// a direct FBO with no staging. A widget that blits through a staging surface
-/// instead gets a Y flip from that blit's own UVs and would be inverted here;
-/// none does today, and telling them apart would need an orientation signal the
-/// buffer does not carry — `create_buffer_from_dmabuf` sends `Flags::empty()`,
-/// and the flag that could carry it is the broken one above.
-/// **Verified on hardware for the wasm path only** — put a native widget on
-/// screen before trusting this for it.
+/// ⚠ Applied to every widget surface, so it assumes all of them submit
+/// bottom-up buffers — true of anything painting straight into its export
+/// buffer, false of one blitting through a staging surface, which gets its Y
+/// flip from that blit's own UVs. Telling them apart needs an orientation
+/// signal that reaches here, and none does: `create_buffer_from_dmabuf` sends
+/// `Flags::empty()`, and `YInvert` — the one the protocol offers — is the
+/// broken flag above. **Verified on hardware for the wasm path only.**
 fn widget_transform(profile: DisplayTransform) -> Transform {
     with_row_flip(scanout_transform(profile))
 }
@@ -1003,8 +995,7 @@ impl SceneRenderer {
         // The stopwatches otherwise cover submission only: compose ends with
         // work still queued, and this sync point is normally dropped without
         // being waited on. Waiting folds the GPU time into `finish`, making it
-        // comparable to the widget host's glFinish-bounded passes — without it
-        // the two sides look an order of magnitude apart for the same work.
+        // comparable to the widget host's glFinish-bounded passes.
         if compose_fence() {
             sync.wait().ok();
         }

@@ -237,6 +237,20 @@ fn submit_tree(
     let w = width as f32;
     let h = height as f32;
     super::with_renderer_and_state(&mut caller, |renderer, state| {
+        // A tree submitted at another size means the guest and the host
+        // disagree about the surface, which invalidates the whole frame rather
+        // than one draw: taffy laid every node out for those dimensions, so the
+        // dynamic half is painted for the wrong surface too, and the static
+        // layer is captured at one size while the raw blit stretches it over
+        // another. Refuse the frame rather than paint a consistent-looking lie.
+        if width != state.widget_width || height != state.widget_height {
+            tracing::error!(
+                guest = format!("{width}x{height}"),
+                host = format!("{}x{}", state.widget_width, state.widget_height),
+                "tree submitted at a size the surface does not have; frame dropped"
+            );
+            return;
+        }
         #[cfg(feature = "frame-timings")]
         let deserialize_started = Instant::now();
         let tree_node = match tree::deserialize_tree(&data) {
@@ -249,21 +263,8 @@ fn submit_tree(
         #[cfg(feature = "frame-timings")]
         let deserialize_us =
             u32::try_from(deserialize_started.elapsed().as_micros()).unwrap_or(u32::MAX);
-        // Hashed before rendering: when the static half matches the previous
-        // guest frame's, the cached layer is still valid and this frame blits
-        // instead of re-rasterising content that did not change. That
-        // re-capture was most of a guest frame's GPU cost.
-        let static_key = (
-            bmc_render::partition::static_hash(
-                &tree_node,
-                &bmc_render::partition::HostPaintState {
-                    pressed_key: state.interaction.pressed_key(),
-                    scroll_offsets: &state.scroll_states,
-                },
-            ),
-            state.renderer_assets.generation(),
-        );
-        let static_unchanged = state.last_static_key == Some(static_key);
+        let now_unix_secs = state.system_time.timestamp();
+        let (static_key, static_unchanged) = static_layer_key(state, &tree_node, now_unix_secs);
         // A fully dynamic tree has nothing worth caching, and blitting the
         // resulting black layer costs a full-screen pass per frame.
         let layered = bmc_render::partition::has_static_content(&tree_node);
@@ -272,7 +273,6 @@ fn submit_tree(
         let delta_ms = state.delta_ms;
         let frame_counter = state.frame_counter;
         state.frame_counter += 1;
-        let now_unix_secs = state.system_time.timestamp();
         let mut timings = FrameTimings::default();
         #[cfg(feature = "frame-timings")]
         {
@@ -337,12 +337,43 @@ fn submit_tree(
     })
 }
 
+/// The key this frame's static half hashes to, and whether the cached layer
+/// still matches it.
+///
+/// Hashed before rendering: a static half matching the previous guest frame's
+/// leaves the cached layer valid, so this frame blits instead of re-rasterising
+/// content that did not change.
+fn static_layer_key(
+    state: &HostState,
+    tree_node: &bmc_render::tree::TreeNode,
+    now_unix_secs: i64,
+) -> ((u64, u64, u64), bool) {
+    let key = (
+        bmc_render::partition::static_hash(
+            tree_node,
+            &bmc_render::partition::HostPaintState {
+                pressed_key: state.interaction.pressed_key(),
+                scroll_offsets: &state.scroll_states,
+            },
+        ),
+        state.renderer_assets.generation(),
+        bmc_render::partition::host_layout_key(tree_node, now_unix_secs),
+    );
+    // The scroll container advances its offset inside the walk, so a hash taken
+    // before it describes the offset the previous frame ended on: reusing the
+    // layer would blit the static half one delta behind the dynamic one, for as
+    // long as the finger rests.
+    let scrolling = state.interaction.get_global_scroll_delta() != 0.0;
+    let unchanged = state.last_static_key == Some(key) && !scrolling;
+    (key, unchanged)
+}
+
 /// What a completed guest frame contributes to [`HostState`] beyond its draws.
 struct SubmittedFrame {
     tree_node: bmc_render::tree::TreeNode,
     w: f32,
     h: f32,
-    static_key: (u64, u64),
+    static_key: (u64, u64, u64),
     static_unchanged: bool,
     timings: bmc_render::FrameTimings,
     has_active: bool,
@@ -362,7 +393,17 @@ fn commit_submitted_frame(
     state.frame_schedule.interaction_pending = had_interaction;
     state.frame_schedule.host_frame_delay_ms = result.next_frame_delay_ms;
     state.cached_tree = Some((frame.tree_node, frame.w, frame.h));
-    state.last_static_key = Some(frame.static_key);
+    // A key recorded for a layer that was never captured would have the next
+    // frame blit an image that does not exist, and the host preserve a target
+    // on the strength of it. A capture or blit that failed is one way to get
+    // there; a tree with no static half, which never asked for a layer at all,
+    // is the other.
+    if result.static_layer_missed || !state.static_layer_useful {
+        state.last_static_key = None;
+        state.static_layer_useful = false;
+    } else {
+        state.last_static_key = Some(frame.static_key);
+    }
     // This frame painted the buffer it holds in full. A changed static half
     // still owes every other buffer, each of which keeps showing the old one
     // until it repaints in full too.

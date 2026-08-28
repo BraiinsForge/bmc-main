@@ -136,13 +136,11 @@ impl RendererAssetLedger {
 
     /// Bumped by every mutation below.
     ///
-    /// A cached static layer holds rasterised *pixels* for the draws in the
-    /// static half of a tree, and a bitmap or SVG draw's pixels come from here,
-    /// not from the tree. So an identical tree does not mean an identical
-    /// layer: re-register a tag with different bytes and the tree hashes the
-    /// same while what it should paint has changed. Pairing this with
-    /// `partition::static_hash` is what keeps the layer keyed by everything its
-    /// rasterisation reads.
+    /// A bitmap or SVG draw's pixels come from here rather than from the tree,
+    /// so an identical tree does not mean an identical cached static layer:
+    /// re-register a tag with different bytes and the tree hashes the same while
+    /// what it paints has changed. Paired with `partition::static_hash`, this
+    /// keeps the layer keyed by everything its rasterisation reads.
     pub(crate) fn generation(&self) -> u64 {
         self.generation
     }

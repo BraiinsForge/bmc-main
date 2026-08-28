@@ -20,29 +20,22 @@
 
 //! Screen region one dynamic canvas draw can occupy.
 //!
-//! Damage tracking repaints only what changed, and its granularity is whatever
-//! rectangles the walk reports. A canvas is a single layout leaf, so reporting
-//! the node's rect damages the whole canvas for one animated draw — an analog
-//! clock whose canvas fills the viewport reported 100% and repainted the
-//! surface to move three hands.
+//! Damage tracking repaints only the rectangles the walk reports, and a canvas
+//! is a single layout leaf — so reporting the node's rect repaints a whole
+//! viewport-sized canvas to move one animated draw. This module bounds the
+//! single draw instead.
 //!
-//! This module bounds a single draw instead. The bound must hold for **every**
-//! frame the rectangle is used in, not just the one it was computed from:
-//! damage is consumed a frame late (it has to be known before the static layer
-//! is composited, but is discovered during the walk) and spans the export
-//! buffer rotation. So the bound is taken over the whole *range* each transform
+//! The bound must hold for **every** frame the rectangle is used in, not just
+//! the one it was computed from: damage is consumed a frame late and spans the
+//! export buffer rotation. So it is taken over the whole *range* each transform
 //! can reach while the guest is idle — an animation's `from..to`, a
-//! transition's recorded `from..target` — rather than the value this frame
-//! happens to hold. Those ranges only change on a guest frame, and a guest
-//! frame repaints in full.
+//! transition's recorded `from..target` — rather than this frame's value. Those
+//! ranges only change on a guest frame, which repaints in full.
 //!
 //! Every bound over-approximates: over-covering costs pixels, under-covering
-//! leaves trails of stale content, and `BMC_DAMAGE_MAX_PCT` already abandons
-//! tracking when the total grows past the point of paying for itself. Anything
-//! this module cannot bound at all — a drop shadow (composited as a
-//! canvas-sized layer), an orbit whose angle moves, unmeasurable text extents,
-//! a transition with no recorded state yet — returns `None`, and the caller
-//! falls back to the whole canvas.
+//! leaves trails of stale content. Anything unboundable — a drop shadow, an
+//! orbit whose angle moves, unmeasured text extents, a transition with no
+//! recorded state — returns `None` and falls back to the whole canvas.
 
 use std::collections::HashMap;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -51,7 +44,7 @@ use crate::components::draw::{extract_draw_values, get_draw_bounds};
 use crate::interaction::Rect;
 use crate::tree::DrawCommand;
 use crate::{TransitionState, TransitionStateKey};
-use bmc_wasm_protocol::AnimProperty;
+use bmc_wasm_protocol::{AnimProperty, Easing};
 
 /// The accumulated transform range between the canvas and a leaf draw.
 ///
@@ -63,17 +56,28 @@ struct Transform {
     offset_x: (f32, f32),
     offset_y: (f32, f32),
     /// Largest scale factor reachable, as the product of every factor that can
-    /// enlarge the draw. Values below 1 shrink the box and so stay inside it,
-    /// which is why they contribute nothing.
+    /// enlarge the draw. Magnitudes below 1 shrink the box and so stay inside
+    /// it, which is why they contribute nothing.
     scale_max: f32,
-    /// `None` until something can rotate this draw. Kept distinct from a zero
-    /// range so a draw that never rotates skips the sweep entirely — the polar
-    /// round-trip inside it costs a pixel of precision, which is fine as slack
-    /// on a rotating draw and pure waste on a still one.
+    /// `None` until something can rotate this draw, kept distinct from a zero
+    /// range so a still draw skips the sweep: its polar round-trip costs a pixel
+    /// of precision, which is slack worth paying only when something moves.
     rotation: Option<(f32, f32)>,
     /// Extra reach on every side, for a stroke that is thicker somewhere in the
     /// transition than in the tree the leaf box was read from.
     margin: f32,
+}
+
+/// Which corner of a leaf box stays put as scale grows it.
+///
+/// Most leaves scale about their centre, as `render_draw_inner` does with
+/// `sx = x + (w - w * scale) / 2`. [`DrawCommand::AutofitText`] does not:
+/// it scales its box straight off `(x, y)`, and a centred bound then
+/// leaves the far edges out.
+#[derive(Clone, Copy)]
+enum ScaleAnchor {
+    Centre,
+    TopLeft,
 }
 
 impl Transform {
@@ -93,6 +97,20 @@ impl Transform {
         self
     }
 
+    /// Replace the accumulated offset, for a draw that positions its inner from
+    /// the canvas rather than from where its parent put it.
+    ///
+    /// `Centered` and `Orbit` compute an absolute offset in the renderer
+    /// (`components/draw.rs`, `new_offset_x`) and pass that down, dropping
+    /// whatever they were handed. Adding here instead predicts a rect the paint
+    /// never touches: the blit restores background somewhere else while the
+    /// dynamic pass compounds alpha over the real draw.
+    fn set_offset(mut self, dx: (f32, f32), dy: (f32, f32)) -> Self {
+        self.offset_x = dx;
+        self.offset_y = dy;
+        self
+    }
+
     fn add_rotation(mut self, range: (f32, f32)) -> Self {
         // An all-zero range is no rotation at all, and adding it would send a
         // still draw through the sweep for nothing.
@@ -107,12 +125,14 @@ impl Transform {
     /// Compose a reachable scale factor onto the accumulated one.
     ///
     /// Multiplicative, because the renderer composes simultaneous scales that
-    /// way (`acc_scale *= value` in `components/draw.rs`): two 1 → 2 scales on
-    /// one draw reach 4x, and a bound that took the larger of them would leave
-    /// everything past 2x unrepainted on the way back in. A factor below 1 only
-    /// shrinks the box, so it is clamped away rather than shrinking the bound.
+    /// way: two 1 → 2 scales on one draw reach 4x, and taking the larger would
+    /// leave everything past 2x unrepainted. A magnitude below 1 only shrinks
+    /// the box, so it is clamped away rather than narrowing the bound.
+    ///
+    /// By magnitude, because the renderer multiplies the extent by the signed
+    /// factor: -2 mirrors the draw across the ground 2 covers.
     fn compose_scale(mut self, factor: f32) -> Self {
-        self.scale_max *= factor.max(1.0);
+        self.scale_max *= factor.abs().max(1.0);
         self
     }
 
@@ -123,18 +143,31 @@ impl Transform {
 
     /// Apply the accumulated ranges to a leaf box, in canvas-local coordinates.
     fn apply(self, leaf: Rect, canvas_w: f32, canvas_h: f32) -> Rect {
-        // Scale is centred on the leaf's own box, matching the renderer's
-        // `sx = x + (w - w * scale) / 2`.
-        let grow_w = leaf.w * (self.scale_max - 1.0) / 2.0;
-        let grow_h = leaf.h * (self.scale_max - 1.0) / 2.0;
-        let grow_w = grow_w + self.margin;
-        let grow_h = grow_h + self.margin;
-        let scaled = Rect::new(
-            leaf.x - grow_w,
-            leaf.y - grow_h,
-            leaf.w + 2.0 * grow_w,
-            leaf.h + 2.0 * grow_h,
-        );
+        self.apply_anchored(leaf, canvas_w, canvas_h, ScaleAnchor::Centre)
+    }
+
+    /// [`Self::apply`] for a leaf whose scaling grows it about `anchor`.
+    fn apply_anchored(self, leaf: Rect, canvas_w: f32, canvas_h: f32, anchor: ScaleAnchor) -> Rect {
+        let grow_w = leaf.w * (self.scale_max - 1.0);
+        let grow_h = leaf.h * (self.scale_max - 1.0);
+        // The margin is an unscaled stroke delta, and the renderer scales
+        // the stroke along with the box (`ew = width * scale`),
+        // so the reach it stands for grows too.
+        let margin = self.margin * self.scale_max;
+        let scaled = match anchor {
+            ScaleAnchor::Centre => Rect::new(
+                leaf.x - grow_w / 2.0 - margin,
+                leaf.y - grow_h / 2.0 - margin,
+                leaf.w + grow_w + 2.0 * margin,
+                leaf.h + grow_h + 2.0 * margin,
+            ),
+            ScaleAnchor::TopLeft => Rect::new(
+                leaf.x - margin,
+                leaf.y - margin,
+                leaf.w + grow_w + 2.0 * margin,
+                leaf.h + grow_h + 2.0 * margin,
+            ),
+        };
         let mut moved = Rect::new(
             scaled.x + self.offset_x.0,
             scaled.y + self.offset_y.0,
@@ -219,9 +252,36 @@ fn sin_range(start: f32, end: f32) -> (f32, f32) {
     (lo, hi)
 }
 
-/// Screen-space region a repaint must cover for one dynamic canvas draw, or
-/// `None` when the draw's reach cannot be bounded and the caller must fall back
-/// to the whole canvas.
+/// Slack on every side for femtovg's antialiasing fringe: `expand_fill`
+/// displaces a ribbon about half a fringe width past the geometry `bounded`
+/// returns. Whether flooring absorbs it depends on where the edge lands, so
+/// without this a moving draw sheds its fringe from the damage set on roughly
+/// every other frame, and a cached frame never paints it back — a trailing line.
+const FRINGE_SLACK: f32 = 1.0;
+
+/// What one dynamic canvas draw asks a repaint to cover.
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum DrawDamage {
+    /// Screen-space region the repaint must cover.
+    Region(Rect),
+    /// The draw is scissored away entirely, so it paints nothing.
+    Nothing,
+    /// The draw's reach cannot be bounded; repaint the whole canvas.
+    WholeCanvas,
+}
+
+impl DrawDamage {
+    /// The bounded region, if there is one.
+    #[cfg(test)]
+    fn region(self) -> Option<Rect> {
+        match self {
+            Self::Region(rect) => Some(rect),
+            Self::Nothing | Self::WholeCanvas => None,
+        }
+    }
+}
+
+/// Screen-space region a repaint must cover for one dynamic canvas draw.
 ///
 /// `canvas` is the canvas node's screen rect; the returned rect is clipped to
 /// it, since the walk scissors every canvas to its own bounds. Edges are rounded
@@ -233,17 +293,33 @@ pub(crate) fn canvas_draw_damage(
     canvas: Rect,
     transitions: &HashMap<TransitionStateKey, TransitionState>,
     canvas_index: u16,
-) -> Option<Rect> {
-    let local = bounded(draw, Transform::IDENTITY, canvas, transitions, canvas_index)?;
-    let x = (canvas.x + local.x).floor().max(canvas.x);
-    let y = (canvas.y + local.y).floor().max(canvas.y);
-    let right = (canvas.x + local.x + local.w)
+) -> DrawDamage {
+    let Some(local) = bounded(draw, Transform::IDENTITY, canvas, transitions, canvas_index) else {
+        return DrawDamage::WholeCanvas;
+    };
+    // Fail open. `f32::min`/`max` ignore NaN, so a NaN sweep leaves `+INF`
+    // against `-INF` and inverts the comparison below: the draw would report
+    // *nothing* while still painting. The deserializer rejects these, so this
+    // is the second line, and over-damaging is the harmless direction.
+    if !local.x.is_finite() || !local.y.is_finite() || !local.w.is_finite() || !local.h.is_finite()
+    {
+        return DrawDamage::WholeCanvas;
+    }
+    let x = (canvas.x + local.x - FRINGE_SLACK).floor().max(canvas.x);
+    let y = (canvas.y + local.y - FRINGE_SLACK).floor().max(canvas.y);
+    let right = (canvas.x + local.x + local.w + FRINGE_SLACK)
         .ceil()
         .min(canvas.x + canvas.w);
-    let bottom = (canvas.y + local.y + local.h)
+    let bottom = (canvas.y + local.y + local.h + FRINGE_SLACK)
         .ceil()
         .min(canvas.y + canvas.h);
-    (right > x && bottom > y).then(|| Rect::new(x, y, right - x, bottom - y))
+    // Clipped away is not unboundable: reporting it as such would damage the
+    // whole canvas every frame for a draw that paints nothing.
+    if right > x && bottom > y {
+        DrawDamage::Region(Rect::new(x, y, right - x, bottom - y))
+    } else {
+        DrawDamage::Nothing
+    }
 }
 
 fn bounded(
@@ -268,7 +344,7 @@ fn bounded(
             let dy = (canvas.h - ih) / 2.0;
             bounded(
                 inner,
-                transform.add_offset((dx, dx), (dy, dy)),
+                transform.set_offset((dx, dx), (dy, dy)),
                 canvas,
                 transitions,
                 canvas_index,
@@ -288,7 +364,7 @@ fn bounded(
             let dy = canvas.h / 2.0 + radius * angle.sin() - ih / 2.0;
             bounded(
                 inner,
-                transform.add_offset((dx, dx), (dy, dy)),
+                transform.set_offset((dx, dx), (dy, dy)),
                 canvas,
                 transitions,
                 canvas_index,
@@ -330,10 +406,11 @@ fn bounded(
             box_width,
             box_height,
             ..
-        } => Some(transform.apply(
+        } => Some(transform.apply_anchored(
             Rect::new(*x, *y, *box_width, *box_height),
             canvas.w,
             canvas.h,
+            ScaleAnchor::TopLeft,
         )),
         DrawCommand::Qr { x, y, size, .. } => {
             Some(transform.apply(Rect::new(*x, *y, *size, *size), canvas.w, canvas.h))
@@ -381,12 +458,15 @@ fn modified_transform(
 ) -> Option<Transform> {
     let mut transform = transform;
     for anim in animations {
-        let (lo, hi) = (anim.from.min(anim.to), anim.from.max(anim.to));
+        let (lo, hi) = animated_range(anim);
         transform = match anim.property {
             AnimProperty::Rotate => transform.add_rotation((lo, hi)),
             AnimProperty::TranslateX => transform.add_offset((lo, hi), (0.0, 0.0)),
             AnimProperty::TranslateY => transform.add_offset((0.0, 0.0), (lo, hi)),
-            AnimProperty::Scale => transform.compose_scale(hi),
+            // The reachable ends are ordered, not ranked by reach.
+            // A -2 → 1 scale mirrors past twice the box on its way,
+            // so the bound follows the widest magnitude, not the upper end.
+            AnimProperty::Scale => transform.compose_scale(lo.abs().max(hi.abs())),
             // An orbit angle sweeps the inner draw around a radius this level
             // cannot see.
             AnimProperty::OrbitAngle => return None,
@@ -396,10 +476,8 @@ fn modified_transform(
     let Some(def) = transition else {
         return Some(transform);
     };
-    // The interpolation runs from the recorded `from` to the tree's current
-    // values, and the renderer applies each as a delta against those current
-    // values — so the reachable range is between zero and the recorded
-    // difference.
+    // The renderer applies the interpolation as a delta against the tree's
+    // current values: `target + delta * (1 - eased)`.
     let state = transitions.get(&(canvas_index, def.id_hash))?;
     let (from, target) = (state.from, extract_draw_values(inner));
     if (from.angle - target.angle) != 0.0 {
@@ -411,24 +489,62 @@ fn modified_transform(
     if matches!(inner, DrawCommand::Mesh { .. } | DrawCommand::Sphere { .. }) {
         return None;
     }
+    let (near, far) = transition_factors(def.easing);
+    let delta_range = |delta: f32| {
+        let (a, b) = (delta * near, delta * far);
+        (a.min(b), a.max(b))
+    };
     // An arc's leaf box is read from the tree's stroke width; a transition
-    // starting from a thicker one is wider than that box in between.
-    transform = transform.widen_by((from.arc_width - target.arc_width).max(0.0) / 2.0);
+    // starting from a thicker one — or overshooting a thinner one — is wider
+    // than that box in between.
+    let arc_delta = from.arc_width - target.arc_width;
+    let (_, widest) = delta_range(arc_delta);
+    transform = transform.widen_by(widest.max(0.0) / 2.0);
     transform = transform
         .add_offset(
-            signed_range(from.x - target.x),
-            signed_range(from.y - target.y),
+            delta_range(from.x - target.x),
+            delta_range(from.y - target.y),
         )
-        .add_rotation(signed_range(from.rotation - target.rotation));
+        // The renderer wraps the rotation delta to the shortest path, so a
+        // transition past half a turn travels the way round the raw
+        // difference does not: bounding the raw one leaves every pose in
+        // between outside the damage rect.
+        .add_rotation(delta_range(-crate::components::draw::shortest_angle_delta(
+            from.rotation,
+            target.rotation,
+        )));
     if target.w > 0.0 {
-        transform = transform.compose_scale(from.w / target.w);
+        // Width interpolates the same way, so the reachable scale applies
+        // the delta's factor about the target rather than the raw ratio.
+        let ratio_delta = from.w / target.w - 1.0;
+        let (lo, hi) = (1.0 + ratio_delta * near, 1.0 + ratio_delta * far);
+        transform = transform.compose_scale(lo.abs().max(hi.abs()));
     }
     Some(transform)
 }
 
-/// The range between zero and `delta`, in ascending order.
-fn signed_range(delta: f32) -> (f32, f32) {
-    (delta.min(0.0), delta.max(0.0))
+/// The factors the renderer can multiply a transition's delta by.
+///
+/// It interpolates `target + delta * (1 - eased)`. An easing confined
+/// to `0.0..=1.0` reaches no further than the recorded start; the Back
+/// and Elastic families leave that interval, putting the value *past
+/// the target*, on the opposite side from where it started.
+fn transition_factors(easing: Easing) -> (f32, f32) {
+    let (min_t, max_t) = crate::animation::easing_extremes(easing);
+    (1.0 - max_t, 1.0 - min_t)
+}
+
+/// Every value `anim` reaches, in ascending order.
+///
+/// Wider than its endpoints: the Back and Elastic easings leave
+/// `0.0..=1.0` deliberately, so the eased lerp passes the endpoint it is
+/// heading for — an elastic 1 → 2 scale reaches 2.37. Bounding by the
+/// endpoints alone leaves that overshoot unrepainted.
+fn animated_range(anim: &crate::tree::HostAnimationDef) -> (f32, f32) {
+    let (min_t, max_t) = crate::animation::easing_extremes(anim.easing);
+    let span = anim.to - anim.from;
+    let (a, b) = (anim.from + span * min_t, anim.from + span * max_t);
+    (a.min(b), a.max(b))
 }
 
 #[cfg(test)]
@@ -437,7 +553,8 @@ mod tests {
     use crate::PrevDrawValues;
     use crate::tree::{HostAnimationDef, HostTransitionDef};
     use bmc_wasm_protocol::{
-        ArcCap, ArcFill, ArcSegments, ColorSpace, Easing, Fill, LoopMode, TextStyle, colors::Color,
+        ArcCap, ArcFill, ArcSegments, AutoFit, ColorSpace, Easing, Fill, LoopMode, TextStyle,
+        colors::Color,
     };
 
     type Transitions = HashMap<TransitionStateKey, TransitionState>;
@@ -457,34 +574,31 @@ mod tests {
     }
 
     fn damage(draw: &DrawCommand) -> Option<Rect> {
-        canvas_draw_damage(draw, canvas(), &HashMap::new(), 0)
+        canvas_draw_damage(draw, canvas(), &HashMap::new(), 0).region()
     }
 
     #[test]
-    fn a_still_draw_damages_only_its_own_box() {
+    fn a_still_draw_damages_its_box_plus_the_aa_fringe() {
         let rect = damage(&square(10.0, 20.0, 30.0)).expect("BUG: a plain rect is bounded");
         assert_eq!(
             (rect.x, rect.y, rect.w, rect.h),
-            (10.0, 20.0, 30.0, 30.0),
+            (9.0, 19.0, 32.0, 32.0),
             "no transform, no expansion"
         );
     }
 
     #[test]
     fn a_quarter_turn_sweeps_the_corner_arc_not_the_whole_disc() {
-        // A 100 px square in the top-left corner of a square canvas, rotating a
-        // quarter turn about the canvas centre. Its far corner is at the pivot's
-        // distance and sweeps to the canvas's top-right; the disc would cover
-        // every side, a quarter turn only two.
+        // A corner square rotating a quarter turn about the canvas centre: the
+        // disc would cover every side, a quarter turn only two.
         let draw = DrawCommand::Rotated {
             angle: FRAC_PI_2,
             inner: Box::new(square(0.0, 0.0, 100.0)),
         };
         let square_canvas = Rect::new(0.0, 0.0, 400.0, 400.0);
         let rect = canvas_draw_damage(&draw, square_canvas, &HashMap::new(), 0)
+            .region()
             .expect("BUG: a rotation of a rect is bounded");
-        // Corners sit at radius 200·√2 ≈ 283 and 100·√2 ≈ 141 from the centre;
-        // a quarter turn about (200, 200) maps the box onto the top-right.
         assert!(rect.x >= 190.0, "left edge stays right of centre: {rect:?}");
         assert!(rect.y <= 10.0, "reaches the top edge: {rect:?}");
         assert!(
@@ -512,13 +626,44 @@ mod tests {
         };
         let square_canvas = Rect::new(0.0, 0.0, 400.0, 400.0);
         let rect = canvas_draw_damage(&draw, square_canvas, &HashMap::new(), 0)
+            .region()
             .expect("BUG: a rotate animation is bounded");
-        // Radius to the far corner is 200·√2 ≈ 283, so the disc overruns the
-        // canvas on every side and clips to all of it.
         assert_eq!(
             (rect.x, rect.y, rect.w, rect.h),
             (0.0, 0.0, 400.0, 400.0),
             "a full turn reaches every corner"
+        );
+    }
+
+    /// `Centered` drops the offset it was handed, so an outer translate never
+    /// reaches the paint — see [`Transform::set_offset`].
+    #[test]
+    fn an_outer_translate_does_not_move_a_centered_draw() {
+        let centred = DrawCommand::Centered {
+            inner: Box::new(square(0.0, 0.0, 30.0)),
+        };
+        let still = damage(&centred).expect("BUG: a centred square is bounded");
+
+        let animated = DrawCommand::Modified {
+            animations: vec![HostAnimationDef {
+                property: AnimProperty::TranslateY,
+                from: 20.0,
+                to: 40.0,
+                duration_ms: 1_000,
+                delay_ms: 0,
+                easing: Easing::Linear,
+                loop_mode: LoopMode::Forever,
+            }],
+            transition: None,
+            color_space: ColorSpace::default(),
+            inner: Box::new(centred),
+        };
+        let moved = damage(&animated).expect("BUG: the animated wrapper is bounded");
+
+        assert_eq!(
+            (moved.x, moved.y, moved.w, moved.h),
+            (still.x, still.y, still.w, still.h),
+            "the renderer discards the outer offset, so the bound must too"
         );
     }
 
@@ -541,7 +686,7 @@ mod tests {
         let rect = damage(&draw).expect("BUG: a translate animation is bounded");
         assert_eq!(
             (rect.x, rect.w),
-            (150.0, 180.0),
+            (149.0, 182.0),
             "from the leftmost reach to the rightmost"
         );
     }
@@ -569,15 +714,13 @@ mod tests {
         let rect = damage(&draw).expect("BUG: a scale animation is bounded");
         assert_eq!(
             (rect.x, rect.y, rect.w, rect.h),
-            (90.0, 90.0, 40.0, 40.0),
+            (89.0, 89.0, 42.0, 42.0),
             "2x about the centre of a 20x20 at (100, 100)"
         );
     }
 
-    /// `Draw::animate` takes several, and the renderer multiplies them
-    /// together. Bounding by the larger alone leaves the pixels between 2x and
-    /// 4x unrepainted while the draw contracts, so the previous frame stays on
-    /// screen out there.
+    /// Bounding by the larger alone strands the pixels between 2x and 4x, where
+    /// the previous frame then stays on screen.
     #[test]
     fn two_scale_animations_compose_rather_than_taking_the_larger() {
         let draw = DrawCommand::Modified {
@@ -589,7 +732,7 @@ mod tests {
         let rect = damage(&draw).expect("BUG: scale animations are bounded");
         assert_eq!(
             (rect.x, rect.y, rect.w, rect.h),
-            (70.0, 70.0, 80.0, 80.0),
+            (69.0, 69.0, 82.0, 82.0),
             "4x about the centre, not the 2x either one reaches alone"
         );
     }
@@ -607,8 +750,181 @@ mod tests {
         let rect = damage(&draw).expect("BUG: scale animations are bounded");
         assert_eq!(
             (rect.x, rect.y, rect.w, rect.h),
-            (90.0, 90.0, 40.0, 40.0),
+            (89.0, 89.0, 42.0, 42.0),
             "the 2x reach survives the shrink beside it"
+        );
+    }
+
+    #[test]
+    fn a_mirroring_scale_covers_its_reflected_extent() {
+        let draw = DrawCommand::Modified {
+            animations: vec![scaling(-2.0, 1.0)],
+            transition: None,
+            color_space: ColorSpace::default(),
+            inner: Box::new(square(100.0, 100.0, 20.0)),
+        };
+        let rect = damage(&draw).expect("BUG: scale animations are bounded");
+        assert_eq!(
+            (rect.x, rect.y, rect.w, rect.h),
+            (89.0, 89.0, 42.0, 42.0),
+            "-2x mirrors across the same extent 2x reaches"
+        );
+    }
+
+    /// An elastic scale passes its upper endpoint by 37%, and the eased value
+    /// is what the renderer multiplies the box by. Bounding at the endpoint
+    /// leaves the overshoot ring unrepainted on damage-tracked frames.
+    #[test]
+    fn an_overshooting_easing_widens_the_bound_past_its_endpoints() {
+        let mut anim = scaling(1.0, 2.0);
+        anim.easing = Easing::EaseOutElastic;
+        let draw = DrawCommand::Modified {
+            animations: vec![anim],
+            transition: None,
+            color_space: ColorSpace::default(),
+            inner: Box::new(square(100.0, 100.0, 20.0)),
+        };
+        let rect = damage(&draw).expect("BUG: scale animations are bounded");
+
+        // The eased value is the *scale*, not the box:
+        // 1 → 2 at 1.374 of the way reaches 2.374x.
+        // Bounding at the 2x endpoint gives 40px, which this must reject.
+        let (_, eased) = crate::animation::easing_extremes(Easing::EaseOutElastic);
+        let reached = 20.0 * (1.0 + eased);
+        assert!(
+            rect.w >= reached && rect.h >= reached,
+            "a {}x scale on a 20px box needs {reached}px of damage, got {rect:?}",
+            1.0 + eased
+        );
+        assert!(
+            rect.x <= 110.0 - reached / 2.0 && rect.y <= 110.0 - reached / 2.0,
+            "the widened box must stay centred on the draw, got {rect:?}"
+        );
+    }
+
+    /// Transitions ease with the same functions, and the renderer
+    /// interpolates `target + delta * (1 - eased)` — so an overshooting
+    /// easing carries the draw past its target, on the far side from
+    /// where it started.
+    #[test]
+    fn an_overshooting_transition_covers_the_far_side_of_its_target() {
+        let inner = square(200.0, 20.0, 30.0);
+        let mut recorded = extract_draw_values(&inner);
+        recorded.x -= 40.0;
+        let mut transitions = HashMap::new();
+        transitions.insert(
+            (0_u16, 7_u32),
+            TransitionState {
+                from: recorded,
+                target: extract_draw_values(&inner),
+                elapsed_ms: 0,
+                last_seen_frame: 0,
+            },
+        );
+        let draw = DrawCommand::Modified {
+            animations: Vec::new(),
+            transition: Some(HostTransitionDef {
+                id_hash: 7,
+                duration_ms: 500,
+                easing: Easing::EaseOutBack,
+            }),
+            color_space: ColorSpace::default(),
+            inner: Box::new(inner),
+        };
+        let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+            .region()
+            .expect("BUG: a transition with recorded state is bounded");
+
+        // Delta is -40 px, so the overshoot lands 40 × 0.101 past x=200.
+        let (_, eased) = crate::animation::easing_extremes(Easing::EaseOutBack);
+        let overshoot = 40.0 * (eased - 1.0);
+        assert!(
+            rect.x + rect.w >= 230.0 + overshoot,
+            "the bound must reach {overshoot}px past the target's right edge, got {rect:?}"
+        );
+        assert!(
+            rect.x <= 160.0,
+            "and still cover where it came from, got {rect:?}"
+        );
+    }
+
+    /// `render_draw_inner`'s `AutofitText` arm scales its box off `(x, y)`
+    /// rather than about the centre every other leaf uses, so a centred bound
+    /// stops half the growth short and strands the right and bottom edges.
+    #[test]
+    fn a_scaled_autofit_box_is_bounded_from_its_own_corner() {
+        let inner = DrawCommand::AutofitText {
+            x: 100.0,
+            y: 100.0,
+            box_width: 100.0,
+            box_height: 20.0,
+            mode: AutoFit::Shrink,
+            min_size: 8,
+            max_size: 40,
+            text: "wide".to_owned(),
+            style: TextStyle::default(),
+        };
+        let draw = DrawCommand::Modified {
+            animations: vec![scaling(1.0, 2.0)],
+            transition: None,
+            color_space: ColorSpace::default(),
+            inner: Box::new(inner),
+        };
+        let rect = damage(&draw).expect("BUG: an autofit box is bounded");
+        assert_eq!(
+            (rect.x, rect.y, rect.w, rect.h),
+            (99.0, 99.0, 202.0, 42.0),
+            "2x about the corner of a 100x20 box at (100, 100)"
+        );
+    }
+
+    /// The renderer scales the transition-interpolated stroke too — `ew =
+    /// width * scale` — so the margin standing for that stroke has to scale
+    /// with it or the thick end of the ring falls outside the repaint.
+    #[test]
+    fn a_scaled_arc_transition_scales_its_stroke_margin_too() {
+        let inner = DrawCommand::Arc {
+            cx: 200.0,
+            cy: 200.0,
+            radius: 50.0,
+            start_angle: 0.0,
+            end_angle: TAU,
+            width: 10.0,
+            fill: ArcFill::Solid(Color::from_rgb(255, 255, 255)),
+            segments: ArcSegments::Continuous,
+            cap: ArcCap::Butt,
+        };
+        let mut recorded = extract_draw_values(&inner);
+        recorded.arc_width = 40.0;
+        let mut transitions = HashMap::new();
+        transitions.insert(
+            (0_u16, 9_u32),
+            TransitionState {
+                from: recorded,
+                target: extract_draw_values(&inner),
+                elapsed_ms: 0,
+                last_seen_frame: 0,
+            },
+        );
+        let draw = DrawCommand::Modified {
+            animations: vec![scaling(1.0, 2.0)],
+            transition: Some(HostTransitionDef {
+                id_hash: 9,
+                duration_ms: 500,
+                easing: Easing::Linear,
+            }),
+            color_space: ColorSpace::default(),
+            inner: Box::new(inner),
+        };
+        let square_canvas = Rect::new(0.0, 0.0, 640.0, 640.0);
+        let rect = canvas_draw_damage(&draw, square_canvas, &transitions, 0)
+            .region()
+            .expect("BUG: an arc transition is bounded");
+
+        // Half-extent: (radius + recorded stroke / 2) x 2 = (50 + 20) x 2.
+        assert!(
+            rect.x <= 60.0 && rect.x + rect.w >= 340.0,
+            "the 2x ring at its thickest reaches 140px from the centre, got {rect:?}"
         );
     }
 
@@ -638,10 +954,11 @@ mod tests {
             inner: Box::new(inner),
         };
         let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+            .region()
             .expect("BUG: a transition with recorded state is bounded");
         assert_eq!(
             (rect.x, rect.w),
-            (160.0, 70.0),
+            (159.0, 72.0),
             "covers where it came from as well as where it is going"
         );
     }
@@ -688,12 +1005,11 @@ mod tests {
         from.arc_width = 24.0;
         let (draw, transitions) = transitioning(inner, from);
         let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+            .region()
             .expect("BUG: an arc transition is bounded");
-        // Ring reaches radius + width/2 = 52 at the tree's 4 px stroke, and 62
-        // at the 24 px stroke it is easing down from.
         assert_eq!(
             (rect.x, rect.w),
-            (138.0, 124.0),
+            (137.0, 126.0),
             "the widest stroke in the span sets the reach"
         );
     }
@@ -716,7 +1032,10 @@ mod tests {
         let from = extract_draw_values(&inner);
         let (draw, transitions) = transitioning(inner, from);
         assert!(
-            canvas_draw_damage(&draw, canvas(), &transitions, 0).is_none(),
+            matches!(
+                canvas_draw_damage(&draw, canvas(), &transitions, 0),
+                DrawDamage::WholeCanvas
+            ),
             "a 3D scale and position project outside the declared box"
         );
     }
@@ -769,21 +1088,23 @@ mod tests {
         let rect = damage(&square(-100.0, -100.0, 150.0)).expect("BUG: a plain rect is bounded");
         assert_eq!(
             (rect.x, rect.y, rect.w, rect.h),
-            (0.0, 0.0, 50.0, 50.0),
+            (0.0, 0.0, 51.0, 51.0),
             "the walk scissors each canvas to its own bounds"
         );
     }
 
     #[test]
     fn a_draw_entirely_outside_the_canvas_damages_nothing() {
-        assert!(damage(&square(-100.0, -100.0, 10.0)).is_none());
+        assert!(matches!(
+            canvas_draw_damage(&square(-100.0, -100.0, 10.0), canvas(), &HashMap::new(), 0),
+            DrawDamage::Nothing
+        ));
     }
 
     #[test]
     fn a_clock_hand_costs_a_quarter_of_a_deck_screen() {
-        // The shape the module exists for: the analog clock's second hand — a
-        // 338 px box whose pivot is its own centre, placed at the centre of a
-        // 1280×480 canvas, easing 6° per second between two recorded angles.
+        // The shape the module exists for: a clock's second hand, easing 6° a
+        // second about its own centre.
         let side = 338.0;
         let pivot_offset = side / 2.0;
         let inner = square(
@@ -817,8 +1138,9 @@ mod tests {
             color_space: ColorSpace::default(),
             inner: Box::new(rotated),
         };
-        let rect =
-            canvas_draw_damage(&draw, canvas(), &transitions, 0).expect("BUG: a hand is bounded");
+        let rect = canvas_draw_damage(&draw, canvas(), &transitions, 0)
+            .region()
+            .expect("BUG: a hand is bounded");
         let share = rect.w * rect.h / (1280.0 * 480.0);
         assert!(
             (0.20..0.30).contains(&share),

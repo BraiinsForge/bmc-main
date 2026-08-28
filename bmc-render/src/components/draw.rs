@@ -721,17 +721,19 @@ fn render_draw_inner(
                 });
                 state.last_seen_frame = anim_ctx.frame_counter;
 
-                // A frame that brings a new target does not advance the clock:
-                // `delta_ms` elapsed *before* that target appeared, so it
-                // belongs to the transition that just ended. Charging it to the
-                // one starting here hands a 500 ms transition a 1000 ms first
-                // step on a widget rendering at 1 Hz, finishing it before a
-                // single frame of it is drawn. Starting at 0 leaves it active,
-                // which is what makes the host schedule the animation frames
-                // that interpolate it.
-                if state.target == current_values {
-                    state.elapsed_ms = state.elapsed_ms.saturating_add(anim_ctx.delta_ms);
-                } else {
+                // Charged to the transition that was running, since `delta_ms`
+                // elapsed before any new target appeared. Advancing before the
+                // retarget below anchors `from` where that transition actually
+                // reached, while the new one still starts at zero — so a
+                // slow-rendering widget finishes the old transition instead of
+                // skipping the new one.
+                //
+                // Advancing only on unchanged-target frames strands `from`
+                // instead: a guest submitting a new value every frame
+                // re-anchors at `t = 0` forever, and the draw holds
+                // its first-ever value for the length of the interaction.
+                state.elapsed_ms = state.elapsed_ms.saturating_add(anim_ctx.delta_ms);
+                if state.target != current_values {
                     // D3-style: interpolate from current interpolated position
                     let t = if trans_def.duration_ms > 0 {
                         (state.elapsed_ms as f32 / trans_def.duration_ms as f32).min(1.0)
@@ -1428,7 +1430,7 @@ pub(crate) fn extract_draw_values(draw: &DrawCommand) -> PrevDrawValues {
 }
 
 /// Shortest-path delta for angle interpolation (wraps around TAU).
-fn shortest_angle_delta(from: f32, to: f32) -> f32 {
+pub(crate) fn shortest_angle_delta(from: f32, to: f32) -> f32 {
     let mut d = to - from;
     if d > std::f32::consts::PI {
         d -= std::f32::consts::TAU;
@@ -2261,6 +2263,59 @@ mod tests {
             panic!("BUG: expected one arc draw event");
         };
         *end_angle
+    }
+
+    /// A drag following a finger retargets every frame, and the clock has to
+    /// advance on those frames too: re-anchoring `from` at `t = 0` each time
+    /// pins the draw to its first value for the whole interaction.
+    #[test]
+    fn a_transition_retargeted_every_frame_still_advances() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+        // Settles the state at 1.0, the way a first frame does.
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+
+        let mut rendered = Vec::new();
+        for step in 1..=6_u8 {
+            let target = 1.0 + f32::from(step);
+            transition_arc_frame(&mut renderer, &mut anim_ctx, 100, target);
+            rendered.push(recorded_arc_end_angle(&renderer));
+        }
+
+        assert!(
+            rendered.windows(2).all(|w| w[1] > w[0]),
+            "each frame must land past the one before it, got {rendered:?}"
+        );
+        assert!(
+            rendered.last().is_some_and(|last| *last > 1.5),
+            "six frames of chasing a rising target must leave the start well \
+             behind, got {rendered:?}"
+        );
+    }
+
+    /// The advance belongs *before* the retarget, not after it. A frame slower
+    /// than the whole duration must still start the new transition at its old
+    /// position. Charged afterwards, the clock lands past the duration on the
+    /// retarget frame itself, and the new transition is skipped entirely.
+    #[test]
+    fn a_frame_slower_than_the_duration_still_starts_the_new_transition() {
+        let mut renderer = RecordingRenderer::default();
+        let mut animation_states = HashMap::new();
+        let mut transition_states = HashMap::new();
+        let mut anim_ctx = animation_context(&mut animation_states, &mut transition_states);
+
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 0, 1.0);
+        // 1500 ms against the arc's 1000 ms duration.
+        transition_arc_frame(&mut renderer, &mut anim_ctx, 1500, 3.0);
+
+        assert_eq!(
+            recorded_arc_end_angle(&renderer).to_bits(),
+            1.0_f32.to_bits(),
+            "the new transition starts where the old one ended, not at its target"
+        );
     }
 
     #[test]

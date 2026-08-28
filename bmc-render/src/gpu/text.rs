@@ -281,7 +281,15 @@ impl ParagraphLayoutCache {
         }
     }
 
-    /// Clear frame-local profiling state.
+    /// Reset the per-frame miss tally and clear frame-local profiling state.
+    ///
+    /// Deliberately no sweep by age. One cache serves every slot drawn
+    /// through the host renderer, and a slot re-stamps its entries only on
+    /// the frames it draws — so any age window narrower than the slot
+    /// round-robin evicts whichever slot drew least recently, leaving every
+    /// slot re-shaping its whole text set. Eviction is the capacity-based
+    /// LRU in [`Self::measure`], which does not depend on how many slots
+    /// are live.
     pub fn begin_frame(&mut self) {
         self.misses_this_frame = 0;
         if let Some(profile) = self.profile.as_mut() {
@@ -3938,9 +3946,9 @@ mod retention_tests {
         }
     }
 
-    /// Two slots alternating through the shared counter. Each slot re-stamps
-    /// its entries only every other increment, so a one-frame retention window
-    /// evicts whichever slot did not draw last — and both re-shape forever.
+    /// Two slots alternating through the shared counter: each re-stamps its
+    /// entries every other increment, so a one-frame retention window evicts
+    /// whichever drew second-to-last and both re-shape forever.
     #[test]
     fn two_alternating_slots_evict_each_other_every_frame() {
         let (mut cache, mut fonts) = (ParagraphLayoutCache::new(), font_system());

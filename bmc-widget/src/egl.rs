@@ -75,24 +75,20 @@ type GlEglImageTargetTexture2DOes = unsafe extern "C" fn(target: u32, image: *mu
 
 /// The non-colour attachment an export FBO carries, if any.
 ///
-/// One choice rather than two flags, because GLES 2.0 permits a driver to
-/// reject a framebuffer holding a separate depth *and* a separate stencil
-/// renderbuffer — and the GC400 does, with `GL_FRAMEBUFFER_UNSUPPORTED`
-/// (0x8CDD). Carrying both would need `GL_OES_packed_depth_stencil`: one
-/// `DEPTH24_STENCIL8_OES` renderbuffer bound to both attachment points. A
-/// `Both` variant is where that goes if it is ever needed; nothing wants it
-/// today.
+/// One choice rather than two flags, because GLES 2.0 lets a driver reject a
+/// framebuffer holding a separate depth *and* a separate stencil renderbuffer —
+/// and the GC400 does, with `GL_FRAMEBUFFER_UNSUPPORTED` (0x8CDD). Carrying
+/// both would need `GL_OES_packed_depth_stencil`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Attachment {
-    /// `DEPTH_COMPONENT16`, for a widget using `GL_DEPTH_TEST` — the 3D
-    /// flip-clock. Costs ~1.3 MB per buffer at the compositor's render size.
+    /// `DEPTH_COMPONENT16`, for a widget using `GL_DEPTH_TEST`.
     Depth,
     /// `STENCIL_INDEX8`, which femtovg's fills need. Borrowed from the
     /// context's size pool rather than allocated per buffer.
     Stencil,
-    /// Colour only. A target used as a blit source or destination needs
-    /// neither, and an `STENCIL_INDEX8` request costs ~4 bytes a pixel on this
-    /// driver rather than the 1 it asks for.
+    /// Colour only, for a target used as a blit source or destination: this
+    /// driver backs an `STENCIL_INDEX8` request with far more than the one byte
+    /// a pixel it asks for.
     None,
 }
 
@@ -168,20 +164,15 @@ pub struct EglContext {
     /// Stencil renderbuffers shared by every export buffer of a given size.
     ///
     /// femtovg needs a stencil attachment but keeps nothing in it between
-    /// frames — a damage-preserving frame skips the stencil clear outright and
-    /// still renders correctly — and renders are serialised by the
-    /// cross-process GPU lock, so no two buffers hold it attached at once. One
-    /// per size therefore serves both of a slot's export buffers, every slot
-    /// sharing that viewport, and the shared staging surface.
+    /// frames, and the cross-process GPU lock serialises renders, so no two
+    /// buffers hold one attached at once — one per size serves every buffer of
+    /// that viewport.
     ///
-    /// Keyed by size because GLES 2.0 requires every attachment on a
-    /// framebuffer to have identical dimensions (`FRAMEBUFFER_INCOMPLETE_
-    /// DIMENSIONS`), which makes a mismatch impossible by construction rather
-    /// than a thing to remember.
-    ///
-    /// Entries live as long as the context. A layout that stops using a size
-    /// strands one renderbuffer of it, which is bounded by the handful of
-    /// distinct viewport sizes a scene layout can produce.
+    /// Keyed by size because GLES 2.0 requires every attachment on a framebuffer
+    /// to share dimensions, which makes a mismatch impossible by construction.
+    /// Entries live as long as the context; a size that falls out of use strands
+    /// one renderbuffer, bounded by the handful of viewport sizes a layout can
+    /// produce.
     stencil_pool: RefCell<HashMap<(u32, u32), glow::Renderbuffer>>,
 }
 
@@ -328,10 +319,9 @@ impl EglContext {
         // linear, so a linear export forces the compositor's driver to keep
         // a full-size tiled shadow copy per imported buffer.
         //
-        // Vivante_tiled specifically, not a wider list: super-tiled was measured
-        // on the Deck and lost, its 64-row supertiles padding a 480-row buffer to
-        // 512 for 4.2 MB of `shared` on one fullscreen widget and 12.7 MB on
-        // four, with no change in frame time. A 4x4 tile divides 480 exactly.
+        // Vivante_tiled specifically, not a wider list: super-tiled's 64-row
+        // supertiles pad the buffer height for no gain in frame time, where a
+        // 4x4 tile divides it exactly.
         let bo = self
             .gbm
             .create_buffer_object_with_modifiers2::<()>(
@@ -419,10 +409,9 @@ impl EglContext {
             tex
         };
 
-        // Every resource from here on is this buffer's own, so a failure has to
-        // give back the EGLImage and texture created above — an allocation that
-        // half-succeeded and leaked would make the next attempt likelier to fail
-        // for the same reason.
+        // A failure from here on has to give back the EGLImage and texture
+        // above: leaking them makes the next attempt likelier to fail the same
+        // way.
         let (fbo, depth_rb, stencil_rb) =
             match self.make_export_fbo(texture, width, height, attachment) {
                 Ok(attachments) => attachments,
@@ -646,12 +635,11 @@ impl EglContext {
 
     /// Allocate a renderbuffer, failing if the driver could not back it.
     ///
-    /// `glRenderbufferStorage` reports `GL_OUT_OF_MEMORY` rather than failing the
-    /// handle, so an unchecked allocation returns a name whose storage does not
-    /// exist and every framebuffer it is attached to comes back incomplete. That
-    /// matters most for the pooled stencil in [`Self::shared_stencil`]: caching a
-    /// failed handle would turn one transient OOM into every later buffer of that
-    /// size being unusable for the life of the process.
+    /// `glRenderbufferStorage` reports `GL_OUT_OF_MEMORY` rather than failing
+    /// the handle, so an unchecked allocation returns a name with no storage and
+    /// every framebuffer it attaches to comes back incomplete. Caching such a
+    /// handle in [`Self::shared_stencil`] would turn one transient OOM into
+    /// every later buffer of that size being unusable.
     #[expect(clippy::cast_possible_wrap, reason = "GL dimensions fit in i32")]
     fn make_renderbuffer(
         &self,
@@ -861,11 +849,9 @@ pub struct ExportBuffer {
     /// GL depth renderbuffer (only allocated when [`Depth::Enabled`]).
     depth_rb: Option<glow::Renderbuffer>,
     /// Stencil renderbuffer (`STENCIL_INDEX8`), when the caller asked for one:
-    /// femtovg paints straight into this FBO and its fills need it, a widget
-    /// rendering its own 3D does not. Borrowed from the context's size pool, so
-    /// destroying this buffer must not free it — femtovg keeps nothing in it
-    /// between frames, and the cross-process GPU lock serialises renders, so no
-    /// two buffers hold it attached at once.
+    /// femtovg's fills need it, a widget rendering its own 3D does not.
+    /// Borrowed from [`WidgetEglContext::stencil_pool`], so destroying this
+    /// buffer must not free it.
     stencil_rb: Option<glow::Renderbuffer>,
     /// Buffer width in pixels.
     pub width: u32,
@@ -930,9 +916,9 @@ pub struct WidgetExportBuffer {
     texture: glow::Texture,
     fbo: glow::Framebuffer,
     /// Stencil renderbuffer, present when constructed with [`Stencil::Enabled`].
-    /// Borrowed from the context's pool and shared with every other buffer of
-    /// this size, so destroying this buffer must not free it — but the handle is
-    /// kept because a frame that borrows the framebuffer has to re-attach it.
+    /// Borrowed from the context's pool, so destroying this buffer must not free
+    /// it; the handle is kept because a frame that borrows the framebuffer has
+    /// to re-attach it.
     stencil_rbo: Option<glow::Renderbuffer>,
     /// Optional depth renderbuffer (`DEPTH_COMPONENT16`). Allocated only when
     /// constructed with [`Depth::Enabled`].

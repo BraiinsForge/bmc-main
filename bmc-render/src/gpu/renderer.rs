@@ -107,19 +107,19 @@ struct ShadowFboPool {
 /// A textured-quad program: two triangles, one `texture2D`, nothing else.
 ///
 /// Compositing the static layer is a straight copy, and femtovg's own fast path
-/// selects a costlier shader for it — same texture, same destination, same
-/// pixels. What remains is dominated by the write itself, close to this GPU's
-/// fill rate, so the way past it is drawing fewer pixels rather than cheaper
-/// ones.
+/// picks a costlier shader for it. What remains is dominated by the write
+/// itself, so the way past it is drawing fewer pixels, not cheaper ones.
 struct RawBlit {
     program: glow::Program,
     vbo: glow::Buffer,
+    /// Required on desktop GL core profile and ES 3.0+, where there is no
+    /// default vertex array to set attributes on. Only an extension on ES 2.0,
+    /// so it is tried and skipped when unavailable.
+    vao: Option<glow::VertexArray>,
     pos_loc: u32,
     uv_loc: u32,
 }
 
-/// Size of the vertex components; four per vertex, position then texture
-/// coordinate.
 const F32_BYTES: i32 = 4;
 
 impl RawBlit {
@@ -171,48 +171,79 @@ void main() {
                 return None;
             }
 
-            // No Y flip: the layer and the frame are both GL framebuffers with a
-            // bottom-left origin, so a straight copy preserves orientation.
-            // femtovg's paint needs `ImageFlags::FLIP_Y` because its image
-            // sampling applies its own convention, not because the texture is
-            // stored upside down — flipping here to match it renders the static
-            // half mirrored.
+            // No Y flip: layer and frame are both GL framebuffers with a
+            // bottom-left origin, so a straight copy keeps orientation.
+            // femtovg's paint needs `ImageFlags::FLIP_Y` only because its image
+            // sampling applies a convention of its own.
             let verts: [f32; 16] = [
                 -1.0, -1.0, 0.0, 0.0, //
                 1.0, -1.0, 1.0, 0.0, //
                 -1.0, 1.0, 0.0, 1.0, //
                 1.0, 1.0, 1.0, 1.0,
             ];
+            let vao = gl.create_vertex_array().ok();
+            if let Some(vao) = vao {
+                gl.bind_vertex_array(Some(vao));
+            }
+
             let Ok(vbo) = gl.create_buffer() else {
-                gl.delete_program(program);
+                Self::discard(gl, program, None, vao);
                 return None;
             };
             gl.bind_buffer(glow::ARRAY_BUFFER, Some(vbo));
             let bytes: Vec<u8> = verts.iter().flat_map(|v| v.to_ne_bytes()).collect();
             gl.buffer_data_u8_slice(glow::ARRAY_BUFFER, &bytes, glow::STATIC_DRAW);
 
+            if vao.is_some() {
+                gl.bind_vertex_array(None);
+            }
+
             let (Some(pos_loc), Some(uv_loc)) = (
                 gl.get_attrib_location(program, "a_pos"),
                 gl.get_attrib_location(program, "a_uv"),
             ) else {
-                gl.delete_buffer(vbo);
-                gl.delete_program(program);
+                Self::discard(gl, program, Some(vbo), vao);
                 return None;
             };
 
             Some(Self {
                 program,
                 vbo,
+                vao,
                 pos_loc,
                 uv_loc,
             })
+        }
+    }
+
+    /// Release what a failed [`Self::new`] had already allocated, and leave
+    /// no vertex array bound behind for whatever draws next.
+    ///
+    /// # Safety
+    ///
+    /// The caller's GL context must be current.
+    unsafe fn discard(
+        gl: &glow::Context,
+        program: glow::Program,
+        vbo: Option<glow::Buffer>,
+        vao: Option<glow::VertexArray>,
+    ) {
+        unsafe {
+            if let Some(vao) = vao {
+                gl.bind_vertex_array(None);
+                gl.delete_vertex_array(vao);
+            }
+            if let Some(vbo) = vbo {
+                gl.delete_buffer(vbo);
+            }
+            gl.delete_program(program);
         }
     }
 }
 
 /// Cached rasterisation of the static half of a widget tree.
 ///
-/// Geometry is recorded so a resize can be detected — the texture is the wrong
+/// Geometry is recorded so a resize can be detected: the texture is the wrong
 /// shape then and must be reallocated rather than reused.
 struct StaticLayer {
     image: femtovg::ImageId,
@@ -226,9 +257,8 @@ struct StaticLayer {
 
 /// Outcome of [`FemtoVgRenderer::probe_render_to_texture`].
 ///
-/// Only [`Self::Working`] means a cached static layer is viable; every other
-/// variant names a distinct failure so a device log says *why* rather than just
-/// "no".
+/// Only [`Self::Working`] means a cached static layer is viable; the rest name
+/// distinct failures so a device log says *why*.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderTargetProbe {
     /// RGBA8 offscreen target allocated and framebuffer-complete.
@@ -292,6 +322,11 @@ pub struct FemtoVgRenderer {
     /// Cached static layers, keyed by owning widget instance. One renderer
     /// serves every slot, so these cannot be a single slot-agnostic layer.
     static_layers: HashMap<String, StaticLayer>,
+    /// Probed in [`FemtoVgRenderer::new`]. Anything but
+    /// [`RenderTargetProbe::Working`] makes `begin_static_layer` refuse, so a
+    /// driver that cannot render into an RGBA8 texture keeps drawing full
+    /// frames instead of blitting a layer it never captured.
+    render_to_texture: RenderTargetProbe,
     /// 1x1 opaque white texture, tinted to paint solid rectangles through
     /// femtovg's texture-copy fast path. See [`FemtoVgRenderer::solid_texture`].
     solid_texture: Option<femtovg::ImageId>,
@@ -544,12 +579,10 @@ impl FemtoVgRenderer {
     ///
     /// Allocates a femtovg image the way a cached static layer would, attaches
     /// its texture to a framebuffer and reports completeness. Worth probing
-    /// rather than assuming: [`Self::acquire_shadow_fbos`] degrades silently to
-    /// an unblurred draw when allocation fails, so a driver that rejects
-    /// offscreen targets looks like working software with slightly wrong
-    /// shadows. GLES2 only guarantees RGBA4/RGB5_A1/RGB565 *renderbuffers* are
-    /// colour-renderable; RGBA8 textures need `GL_OES_rgb8_rgba8`.
-    pub fn probe_render_to_texture(&mut self) -> RenderTargetProbe {
+    /// rather than assuming: GLES2 only guarantees RGBA4/RGB5_A1/RGB565
+    /// *renderbuffers* are colour-renderable, and RGBA8 textures need
+    /// `GL_OES_rgb8_rgba8`.
+    fn probe_render_to_texture(&mut self) -> RenderTargetProbe {
         const PROBE_PX: u32 = 16;
 
         let Ok(image_id) = self.canvas.create_image_empty(
@@ -564,7 +597,7 @@ impl FemtoVgRenderer {
         let probe = unsafe {
             // Drain anything an earlier call left queued so `get_error` below
             // reports only this probe.
-            while self.gl.get_error() != glow::NO_ERROR {}
+            self.drain_gl_errors();
 
             match self.canvas.get_native_texture(image_id) {
                 Ok(native) => {
@@ -601,6 +634,18 @@ impl FemtoVgRenderer {
 
         self.canvas.delete_image(image_id);
         probe
+    }
+
+    /// Discard errors an earlier call left queued, so the next check reports
+    /// only its own. Bounded: a lost context returns `GL_CONTEXT_LOST` forever,
+    /// so an unbounded drain would hang startup instead of failing it.
+    unsafe fn drain_gl_errors(&self) {
+        const MAX_DRAIN: usize = 8;
+        for _ in 0..MAX_DRAIN {
+            if unsafe { self.gl.get_error() } == glow::NO_ERROR {
+                return;
+            }
+        }
     }
 
     /// Run `inner` translated to the canvas origin `(cx, cy)`.
@@ -727,7 +772,7 @@ impl FemtoVgRenderer {
         let mut icon_registry = SvgRegistry::new();
         icon_registry.register_builtins();
 
-        Ok(Self {
+        let mut renderer = Self {
             gl,
             canvas,
             screen_fbo,
@@ -751,9 +796,17 @@ impl FemtoVgRenderer {
             #[cfg(feature = "profiling")]
             glyph_report_every: ii_stopwatch::Every::new(std::time::Duration::from_secs(5)),
             static_layers: HashMap::new(),
+            render_to_texture: RenderTargetProbe::Working,
             solid_texture: None,
             raw_blit: None,
-        })
+        };
+        renderer.render_to_texture = renderer.probe_render_to_texture();
+        Ok(renderer)
+    }
+
+    /// Result of the startup offscreen render-target probe.
+    pub fn render_to_texture(&self) -> RenderTargetProbe {
+        self.render_to_texture
     }
 
     #[cfg(test)]
@@ -988,6 +1041,9 @@ impl FemtoVgRenderer {
             self.gl.use_program(Some(blit.program));
             self.gl.active_texture(glow::TEXTURE0);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            if let Some(vao) = blit.vao {
+                self.gl.bind_vertex_array(Some(vao));
+            }
             self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(blit.vbo));
             let stride = 4 * F32_BYTES;
             self.gl.enable_vertex_attrib_array(blit.pos_loc);
@@ -1005,6 +1061,9 @@ impl FemtoVgRenderer {
             self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
             self.gl.disable_vertex_attrib_array(blit.pos_loc);
             self.gl.disable_vertex_attrib_array(blit.uv_loc);
+            if blit.vao.is_some() {
+                self.gl.bind_vertex_array(None);
+            }
         }
         true
     }
@@ -1013,38 +1072,23 @@ impl FemtoVgRenderer {
     /// texture-copy fast path rather than its general fill shader.
     ///
     /// A plain colour fill runs `scissorMask()`, the edge-AA `strokeMask()` and
-    /// a `discard` for every fragment — the discard being especially unkind to a
+    /// a `discard` per fragment, the discard being especially unkind to a
     /// tile-based GPU. Tinting a 1x1 texture instead selects
-    /// `ShaderType::TextureCopyUnclipped`, which samples once, multiplies by the
-    /// tint and returns before any of that.
-    ///
-    /// Turning anti-aliasing off alone does **not** get there: it only sets the
-    /// stroke threshold so the discard never fires, while the shader still runs
-    /// it. `is_straight_tinted_image` additionally requires AA off, hence both.
+    /// `ShaderType::TextureCopyUnclipped`, which samples once and returns.
+    /// `is_straight_tinted_image` also requires anti-aliasing off, hence both.
     ///
     /// ⚠ **This gives up anti-aliasing, and femtovg's fallback does not give it
-    /// back.** AA there is geometry, not a shader flag: `expand_fill` emits a
-    /// fringe ribbon whose coverage ramp the fragment shader reads. In
-    /// `fill_path_internal` (femtovg 0.20.4, `src/lib.rs:875`) the fringe width
-    /// is decided from the AA flag and `expand_fill` runs *before* the fast-path
-    /// test below it, so a path that then declines the fast path is filled by
-    /// the general shader with no fringe to sample. Declining costs the speed
-    /// and keeps the hard edges.
+    /// back.** AA there is geometry: in `fill_path_internal` (femtovg 0.20.4,
+    /// `src/lib.rs:875`) the fringe ribbon the shader samples is emitted from
+    /// the AA flag *before* the fast-path test, so a path that then declines
+    /// the fast path is filled with no fringe to sample. So a rotated rect —
+    /// which fails `path_fill_is_rect`, testing axis-alignment on transformed
+    /// vertices — renders with stepped edges, and an axis-aligned rect at a
+    /// fractional position takes the fast path with binary coverage and steps
+    /// rather than slides as it animates.
     ///
-    /// Two consequences, both live:
-    /// - A rotated rect fails `path_fill_is_rect` (`src/path/cache.rs:875`),
-    ///   which tests axis-alignment on transformed vertices, and renders with
-    ///   stepped edges. The clock's 1px second hand is the visible case.
-    ///   `is_straight_tinted_image` cannot catch this — it reads the *paint's*
-    ///   own angle, which is always the 0.0 passed below; the canvas transform
-    ///   never reaches it.
-    /// - An axis-aligned rect at a fractional position satisfies those
-    ///   equalities as readily as one on the grid, so it takes the fast path
-    ///   with binary coverage: its edge snaps to whole pixels, and sub-pixel
-    ///   position animation steps rather than slides.
-    ///
-    /// Gating on an axis-aligned transform would close the first; closing the
-    /// second needs whole-device-pixel placement too.
+    /// Gating on an axis-aligned transform would close the first; the second
+    /// needs whole-device-pixel placement too.
     fn solid_paint(&mut self, x: f32, y: f32, w: f32, h: f32, color: Color) -> Paint {
         let Some(texture) = self.solid_texture() else {
             return Paint::color(to_femtovg_color(color.to_u32()));
@@ -1055,10 +1099,8 @@ impl FemtoVgRenderer {
 
     /// The shared 1x1 white texture, allocated on first use.
     ///
-    /// `NEAREST` filtering because the sample lands wherever the quad's
-    /// interpolated coordinate falls and there is nothing to interpolate
-    /// between; returns `None` if allocation fails, leaving the caller to paint
-    /// the ordinary way.
+    /// `NEAREST` because there is nothing to interpolate between. Returns
+    /// `None` if allocation fails, leaving the caller to paint the usual way.
     fn solid_texture(&mut self) -> Option<femtovg::ImageId> {
         if self.solid_texture.is_none() {
             let white = [femtovg::rgb::RGBA8::new(255, 255, 255, 255)];
@@ -1103,9 +1145,8 @@ impl Renderer for FemtoVgRenderer {
     fn fill_rect_paint(&mut self, x: f32, y: f32, w: f32, h: f32, fill: &Fill) {
         let mut path = Path::new();
         path.rect(x, y, w, h);
-        // Canvas rectangles arrive here rather than through `fill_rect`, and a
-        // solid one is the same job, so it takes the same fast path. Gradients
-        // have to run the general shader.
+        // A solid fill is the same job as `fill_rect`, so it takes the same
+        // fast path; gradients have to run the general shader.
         let paint = match fill {
             Fill::Solid(color) => self.solid_paint(x, y, w, h, *color),
             Fill::Linear { .. } | Fill::Radial { .. } => paint_for_fill(
@@ -2125,13 +2166,10 @@ impl Renderer for FemtoVgRenderer {
         {
             self.sphere_bitmap_id = None;
         }
-        // Static layers are keyed by the same namespace, so a departing slot
-        // reclaims its layer through the teardown path that already evicts its
-        // icons, bitmaps and meshes — no separate hook to forget.
-        //
-        // Deliberately not counted: this total is reported to the guest as the
-        // number of assets its own eviction removed, and a layer is renderer
-        // scratch the guest never registered.
+        // Static layers share the namespace, so a departing slot reclaims its
+        // layer along with its icons, bitmaps and meshes. Deliberately not
+        // counted: the total reports what the guest's own eviction removed, and
+        // a layer is renderer scratch the guest never registered.
         let canvas = &mut self.canvas;
         self.static_layers.retain(|key, layer| {
             if key.starts_with(prefix) {
@@ -2150,8 +2188,8 @@ impl Renderer for FemtoVgRenderer {
                 .mesh_renderer
                 .as_ref()
                 .is_some_and(|mesh| mesh.has_resident_prefix(prefix))
-            // Reclaiming a layer deletes a femtovg image, which is GPU work and
-            // has to be declared here or the eviction runs without the lock.
+            // Reclaiming a layer deletes a femtovg image, so the eviction needs
+            // the GPU lock.
             || self
                 .static_layers
                 .keys()
@@ -2188,6 +2226,9 @@ impl Renderer for FemtoVgRenderer {
         self.paragraph_cache.counters()
     }
     fn begin_static_layer(&mut self, key: &str, width: u32, height: u32) -> bool {
+        if self.render_to_texture != RenderTargetProbe::Working {
+            return false;
+        }
         let dpi_scale = self.dpi_scale;
         let fits = self.static_layers.get(key).is_some_and(|layer| {
             layer.width == width
@@ -2198,11 +2239,10 @@ impl Renderer for FemtoVgRenderer {
             // A geometry change makes the existing texture the wrong shape.
             self.invalidate_static_layer(key);
             let (pw, ph) = physical_size(width, height, dpi_scale);
-            // FLIP_Y, not a canvas transform: the layer is a GL FBO texture
-            // with a bottom-left origin, and the blit needs anti-aliasing off
-            // to hit femtovg's cheap `is_straight_tinted_image` path — which
-            // ignores the canvas transform. `FLIP_Y` is folded into the paint's
-            // inverse transform instead, so it survives that fast path.
+            // FLIP_Y, not a canvas transform: femtovg's cheap
+            // `is_straight_tinted_image` path ignores the canvas transform,
+            // while `FLIP_Y` folds into the paint's inverse transform and so
+            // survives it.
             let Ok(image) = self.canvas.create_image_empty(
                 pw,
                 ph,
@@ -2233,13 +2273,47 @@ impl Renderer for FemtoVgRenderer {
         // already the frame's, so only the target and the clear change here.
         self.canvas.set_render_target(RenderTarget::Image(image));
 
-        // Re-clear opaque, over the transparent clear `begin_frame_to_image`
-        // does for its other callers. A frame starts opaque black
-        // (`FrameClear::OpaqueBlack`), so rasterising static content against
-        // transparency here and compositing it later would blend those edges
-        // twice — visible as antialiasing drift on thin geometry and text.
-        // Opaque makes the layer exactly the frame's static half, and the blit
-        // a copy rather than a blend.
+        // femtovg swallows a failed retarget: `set_render_target` allocates the
+        // image's framebuffer on first use and drops the error, leaving the
+        // caller's export buffer bound. The static pass would then paint over
+        // the frame, `end_static_layer` would mark the layer captured anyway,
+        // and every later blit would copy an uninitialised texture over the
+        // widget. Ask GL what is bound instead of trusting the call.
+        //
+        // The flush is what makes the question answerable: `set_render_target`
+        // only queues the command, so without it GL still reports the frame's
+        // own target and the check reads as a failure on every capture.
+        self.canvas.flush();
+        // SAFETY: the renderer's GL context is current for the whole frame.
+        let bound = unsafe { self.gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING) };
+        let screen = self
+            .screen_fbo
+            .map_or(0, |fbo| i32::try_from(fbo.0.get()).unwrap_or(i32::MAX));
+        if bound == screen {
+            tracing::error!(
+                key,
+                "static layer retarget failed; falling back to a full pass"
+            );
+            self.canvas.set_render_target(RenderTarget::Screen);
+            self.invalidate_static_layer(key);
+            return false;
+        }
+        // `drop_shadow` restores `frame_target` after its offscreen pass, so the
+        // capture has to own it: a shadowed *static* draw sits in `Band::Below`
+        // and is emitted here, and leaving this on `Screen` would send that
+        // shadow — and every static draw queued after it — to the export buffer
+        // while the layer is still marked captured.
+        debug_assert!(
+            matches!(self.frame_target, RenderTarget::Screen),
+            "a static-layer capture may only borrow a screen-backed frame; \
+             `end_static_layer` hands the target back as `Screen`",
+        );
+        self.frame_target = RenderTarget::Image(image);
+
+        // Opaque, because the frame itself starts opaque black: rasterising
+        // static content against transparency and compositing it later blends
+        // those edges twice, which shows as antialiasing drift on thin geometry
+        // and text. Opaque makes the blit a copy rather than a blend.
         let (pw, ph) = physical_size(width, height, dpi_scale);
         #[expect(
             clippy::cast_possible_truncation,
@@ -2256,11 +2330,16 @@ impl Renderer for FemtoVgRenderer {
     }
 
     fn end_static_layer(&mut self, key: &str) {
+        // The capture is still only queued, and femtovg binds a target when it
+        // *executes* a command rather than at flush start. Draining here, while
+        // the layer's framebuffer is still bound, is what puts the static half
+        // into the layer; without it the rebind below sends the whole capture
+        // to the screen and leaves the layer undefined.
+        self.canvas.flush();
+        self.frame_target = RenderTarget::Screen;
         self.canvas.set_render_target(RenderTarget::Screen);
-        // femtovg's "Screen" is framebuffer 0, which is *not* this renderer's
-        // target — it draws into a caller-supplied FBO. `begin_frame_with_clear`
-        // binds it explicitly for the same reason; leaving the binding at 0 here
-        // sends everything after the capture to the default framebuffer.
+        // Keep GL agreeing with the retarget just queued, so raw passes before
+        // the next flush do not land in the layer.
         unsafe {
             self.gl.bind_framebuffer(glow::FRAMEBUFFER, self.screen_fbo);
         }
@@ -2281,9 +2360,8 @@ impl Renderer for FemtoVgRenderer {
             return true;
         }
 
-        // No canvas transform here on purpose — the fast path below ignores
-        // it. The Y-flip this texture needs comes from `ImageFlags::FLIP_Y`,
-        // set when the layer is allocated.
+        // No canvas transform: the fast path below ignores it, and the Y-flip
+        // comes from the `ImageFlags::FLIP_Y` set at allocation.
         self.canvas.save();
         let paint = Paint::image(image, 0.0, 0.0, w, h, 0.0, 1.0).with_anti_alias(false);
         let mut path = Path::new();
@@ -2329,6 +2407,9 @@ impl Renderer for FemtoVgRenderer {
             self.gl.use_program(Some(blit.program));
             self.gl.active_texture(glow::TEXTURE0);
             self.gl.bind_texture(glow::TEXTURE_2D, Some(texture));
+            if let Some(vao) = blit.vao {
+                self.gl.bind_vertex_array(Some(vao));
+            }
             self.gl.bind_buffer(glow::ARRAY_BUFFER, Some(blit.vbo));
             let stride = 4 * F32_BYTES;
             self.gl.enable_vertex_attrib_array(blit.pos_loc);
@@ -2345,9 +2426,8 @@ impl Renderer for FemtoVgRenderer {
             );
 
             for &rect in rects {
-                // The quad always covers the whole surface; the scissor is what
-                // restricts the pixels written, so the cost tracks the damage
-                // area rather than the number of rectangles.
+                // The quad covers the whole surface and the scissor restricts
+                // what is written, so cost tracks damage area, not rect count.
                 let (px, py, pw, ph) = scissor_box(rect, dpi, width_px, height_px);
                 self.gl.scissor(px, py, pw, ph);
                 self.gl.draw_arrays(glow::TRIANGLE_STRIP, 0, 4);
@@ -2356,6 +2436,9 @@ impl Renderer for FemtoVgRenderer {
             self.gl.disable(glow::SCISSOR_TEST);
             self.gl.disable_vertex_attrib_array(blit.pos_loc);
             self.gl.disable_vertex_attrib_array(blit.uv_loc);
+            if blit.vao.is_some() {
+                self.gl.bind_vertex_array(None);
+            }
         }
         true
     }
@@ -2400,12 +2483,11 @@ fn line_style(style: &TextStyle, size: f32) -> LineStyle {
 /// Logical size scaled to device pixels, saturating rather than wrapping.
 /// The `glScissor` box covering `rect`, in physical pixels.
 ///
-/// Taffy hands out fractional bounds, so both edges have to round outwards: a
-/// truncated origin *and* extent inscribe the box inside the damage rect, and
-/// the fractional column at the right or bottom edge is then never written. On
-/// a `FrameClear::Keep` frame that column keeps the previous frame's pixels,
-/// which is a one-pixel trail behind anything moving right or down. The scissor
-/// must cover the damage; covering a pixel too many only costs the pixel.
+/// Taffy hands out fractional bounds, so both edges round outwards: an
+/// inscribed box leaves the fractional edge column unwritten, and on a
+/// `FrameClear::Keep` frame that column keeps the previous frame's pixels — a
+/// one-pixel trail behind anything moving right or down. Covering a pixel too
+/// many only costs the pixel.
 ///
 /// GL's scissor origin is bottom-left, the tree's is top-left.
 #[expect(
@@ -2616,7 +2698,7 @@ fn build_femtovg_path(points: &[(f32, f32)], closed: bool, smooth: bool) -> Path
 #[cfg(test)]
 #[cfg(target_os = "linux")]
 mod tests {
-    use super::{FemtoVgRenderer, femtovg_baseline};
+    use super::{FemtoVgRenderer, RenderTargetProbe, femtovg_baseline};
     use crate::renderer::{AssetSuspendResult, AssetTagState, Renderer};
     use crate::test_harness::{GlHarness, create_readback_fbo, read_pixels_top_down};
     use crate::tree::VerticalAlign;
@@ -2639,6 +2721,41 @@ mod tests {
             femtovg_baseline(VerticalAlign::Baseline),
             femtovg::Baseline::Alphabetic
         );
+    }
+
+    /// A failed probe has to reach `begin_static_layer`: left ungated, the
+    /// capture pass runs into a broken framebuffer, `end_static_layer` marks
+    /// the layer captured anyway, and later frames blit content that was never
+    /// rasterised.
+    #[test]
+    fn a_failed_render_target_probe_refuses_static_layers() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+
+        renderer.render_to_texture = RenderTargetProbe::FramebufferIncomplete(0);
+
+        assert!(
+            !renderer.begin_static_layer("widget:static", 64, 64),
+            "an unusable offscreen target must not open a static layer"
+        );
+        renderer.end_static_layer("widget:static");
+        assert!(
+            !renderer.blit_static_layer("widget:static"),
+            "nothing was captured, so nothing may be blitted"
+        );
+    }
+
+    /// The gate is only safe if the probe itself is right: a false negative
+    /// silently costs every device the static-layer cache. llvmpipe supports
+    /// RGBA8 offscreen targets, so anything but `Working` is a probe bug.
+    #[test]
+    fn the_render_target_probe_reports_working_on_a_conformant_driver() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, 0, 0) }
+            .expect("BUG: renderer init failed");
+
+        assert_eq!(renderer.render_to_texture(), RenderTargetProbe::Working);
     }
 
     #[test]
@@ -2674,11 +2791,12 @@ mod tests {
 
     /// Drain any buffered GL errors so a subsequent `gl.get_error()` reflects
     /// only the operation under test.
+    /// Bounded so a lost context fails the test rather than hanging it.
     fn drain_gl_errors(gl: &glow::Context) {
-        loop {
-            let err = unsafe { gl.get_error() };
-            if err == glow::NO_ERROR {
-                break;
+        const MAX_DRAIN: usize = 8;
+        for _ in 0..MAX_DRAIN {
+            if unsafe { gl.get_error() } == glow::NO_ERROR {
+                return;
             }
         }
     }
@@ -3076,21 +3194,14 @@ mod tests {
         );
     }
 
-    /// Probes which single-channel ("8-bit indexed / palette") texture
-    /// formats this GL context accepts as a framebuffer color attachment.
-    /// FemtoVG's `PixelFormat::Gray8` maps to `GL_LUMINANCE` on GLES2 —
-    /// GLES2 does *not* guarantee LUMINANCE/ALPHA textures are
-    /// color-renderable (only RGBA4/RGB5_A1/RGB565 renderbuffers are
-    /// required-renderable per spec), so this must be checked per
-    /// driver/GPU rather than assumed.
+    /// Probes which single-channel texture formats this GL context accepts as a
+    /// framebuffer colour attachment. GLES2 guarantees none of them: only
+    /// RGBA4/RGB5_A1/RGB565 renderbuffers are required to be colour-renderable,
+    /// so femtovg's `Gray8` (`GL_LUMINANCE`) has to be checked per driver.
     ///
-    /// Run with `cargo test -p bmc-render probe_single_channel -- --nocapture`.
-    /// This only exercises the dev-machine Mesa llvmpipe software path via
-    /// `GlHarness` — llvmpipe is far more permissive than small embedded
-    /// GPUs (e.g. the Vivante GC400 this app targets per comments
-    /// elsewhere in this crate), so a pass here does NOT guarantee the
-    /// same formats work on real target hardware. Treat this as a first
-    /// filter, then re-run the equivalent check on-device.
+    /// Run with `-- --nocapture`. `GlHarness` is Mesa llvmpipe, far more
+    /// permissive than the embedded GPUs this targets, so a pass here does not
+    /// carry to the device — re-run the check there.
     #[test]
     #[expect(
         clippy::cast_possible_wrap,
@@ -3099,9 +3210,7 @@ mod tests {
     fn probe_single_channel_color_renderable_formats() {
         const GL_RED_EXT: u32 = 0x1903;
 
-        // Deliberately does not build a `FemtoVgRenderer`/`Canvas` here:
-        // this probe only needs raw GL framebuffer-completeness answers,
-        // which are independent of femtovg's own `Canvas::new()` init path.
+        // Raw GL completeness answers only, independent of femtovg's own init.
         let harness = GlHarness::new().expect("BUG: headless GL setup failed");
         let gl = &harness.gl;
 
@@ -3122,8 +3231,7 @@ mod tests {
 
             eprintln!("== Framebuffer completeness (color attachment 0, 4x4) ==");
 
-            // Known-good control: RGBA8 must be color-renderable everywhere,
-            // including GLES2. If this fails, the harness itself is broken.
+            // Control: RGBA8 is colour-renderable everywhere, GLES2 included.
             let rgba_ok = probe_format(
                 gl,
                 glow::RGBA as i32,
@@ -3162,9 +3270,8 @@ mod tests {
         }
     }
 
-    /// Create a `4x4` texture with the given format triple, attach it as
-    /// color attachment 0 of a fresh FBO, report + print completeness, then
-    /// clean up the GL objects.
+    /// Attach a `4x4` texture of this format as colour attachment 0 of a fresh
+    /// FBO and report completeness.
     #[expect(
         clippy::cast_possible_wrap,
         reason = "small fixed GL enum values fit i32"
@@ -3307,6 +3414,45 @@ mod multiline_text_tests {
         let pixels = read_pixels_top_down(&harness.gl, fbo, W, H);
         drop(renderer);
         pixels
+    }
+
+    /// `drop_shadow` hands the canvas back to `frame_target`, so a capture that
+    /// does not own that field loses the shadowed static draw and everything
+    /// queued after it to the screen, and the blit then wipes them.
+    #[test]
+    fn a_shadowed_static_draw_stays_inside_the_layer() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (fbo, fbo_id) = create_readback_fbo(&harness.gl, W, H);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), W, H, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+
+        renderer.begin_frame(W, H, 1.0);
+        assert!(
+            renderer.begin_static_layer("shadow-test", W, H),
+            "BUG: the layer must be allocatable on the test driver"
+        );
+        renderer.drop_shadow(
+            0.0,
+            0.0,
+            W,
+            H,
+            0.0,
+            0.0,
+            4.0,
+            Color::from_rgb(0, 0, 0),
+            &mut |r: &mut dyn Renderer| {
+                r.fill_rect(8.0, 8.0, 32.0, 32.0, Color::from_rgb(0, 255, 0));
+            },
+        );
+        renderer.fill_rect(8.0, 8.0, 32.0, 32.0, Color::from_rgb(0, 255, 0));
+        renderer.end_static_layer("shadow-test");
+        renderer.flush();
+
+        let screen = read_pixels_top_down(&harness.gl, fbo, W, H);
+        assert!(
+            screen.iter().all(|px| px[1] < 40),
+            "the capture leaked onto the screen instead of staying in the layer"
+        );
     }
 
     /// The whole point of `dpi_scale`: the caller keeps drawing in logical
@@ -3534,9 +3680,6 @@ mod scissor_tests {
     const W: i32 = 1280;
     const H: i32 = 480;
 
-    /// The reported case: at DPI 1 a rect of x=10.2 w=5.2 reaches 15.4, and a
-    /// truncated box covered 10..15 — leaving column 15 holding the previous
-    /// frame under `FrameClear::Keep`.
     #[test]
     fn a_fractional_right_edge_is_covered_not_clipped() {
         let (x, _, w, _) = scissor_box(Rect::new(10.2, 0.0, 5.2, 4.0), 1.0, W, H);
@@ -3574,8 +3717,8 @@ mod scissor_tests {
         );
     }
 
-    /// A rect reaching past the target would otherwise hand GL a box extending
-    /// beyond it, and a negative origin a negative width.
+    /// Unclamped, a rect past the target hands GL a box beyond it — and a
+    /// negative origin, a negative width.
     #[test]
     fn a_rect_outside_the_target_is_clamped_to_it() {
         let (x, y, w, h) = scissor_box(Rect::new(-20.0, -20.0, 40.0, 40.0), 1.0, W, H);

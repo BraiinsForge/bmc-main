@@ -916,12 +916,10 @@ impl<S: SlotSurface> WidgetSlot<S> {
         if !had_render_target && self.render_target.is_some() {
             self.rendered_since_acquire = false;
             self.runtime.invalidate_export_buffers();
-            // Pre-warm: render while the slot is still off-screen. Waking owes
-            // a full repaint of both fresh buffers and a re-capture of the
-            // static layer, and left to arrive on its own that work lands on
-            // the frame the scene slides in, competing with the slide for the
-            // GPU. `rendered_since_acquire` is false here, so this dirty flag
-            // is allowed through before the slot is `Visible`.
+            // Pre-warm while the slot is still off-screen: waking owes a full
+            // repaint of both fresh buffers and a re-capture of the static
+            // layer, which would otherwise land on the frame the scene slides
+            // in and compete with the slide for the GPU.
             self.surface.mark_needs_render();
         }
         let current = self.lifecycle.current();
@@ -1438,10 +1436,9 @@ struct HostRenderFrameContext {
     target_height: u32,
     wants_immediate: bool,
     status: RenderStatus,
-    /// Inner breakdown of the runtime's own render, so a device log separates
-    /// Taffy build+layout from draw-command recording. On a cached-tree frame
-    /// `wasm_us`/`deserialize_us` stay 0 — that is the signal the frame skipped
-    /// the guest, not a measurement gap.
+    /// Inner breakdown of the runtime's own render, separating Taffy
+    /// build+layout from draw-command recording. `wasm_us`/`deserialize_us`
+    /// stay 0 on a cached-tree frame, which is the signal it skipped the guest.
     timings: FrameTimings,
 }
 
@@ -1625,11 +1622,9 @@ fn bind_export_target_for_frame(
 ) -> anyhow::Result<()> {
     let preserve = matches!(contents, TargetContents::Preserved);
     // Seed a freshly allocated buffer from its sibling before anything paints
-    // into it. A `Prepared` slot drops its spare and keeps only the buffer on
-    // screen, so waking re-allocates the other one with undefined pixels — and a
-    // damage-scissored frame paints only the regions that moved, leaving the rest
-    // of the surface showing whatever the driver handed back. That is the static
-    // band flickering on a scene the compositor slid to.
+    // into it. A `Prepared` slot keeps only the buffer on screen, so waking
+    // re-allocates the other with undefined pixels, and a damage-scissored
+    // frame leaves everything it does not repaint showing them.
     let (fbo, seed) = {
         let (export, seed) = buffers.ensure_current_seeded(&shared.egl)?;
         (export.fbo, seed)
@@ -1677,8 +1672,8 @@ fn bind_export_target_for_frame(
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FrameStaging {
     /// Paint into the shared scratch, then blit it to the destination. Costs a
-    /// full-screen copy, which on this GPU is not cheap — measured at ~13 ms
-    /// for 480x1280 even through a one-line shader.
+    /// full-screen copy, which this GPU is slow at even through a one-line
+    /// shader.
     Shared,
     /// Paint straight into a buffer `render_fn` retargets the shared frame FBO
     /// at, skipping the copy. femtovg holds that FBO's id as its screen target

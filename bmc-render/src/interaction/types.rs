@@ -126,31 +126,38 @@ impl Rect {
 
     /// Merge overlapping rectangles in place into their bounding unions until none overlap.
     ///
-    /// The damage set spans two walks, so anything still moving contributes a rect
-    /// per walk — near-identical ones for content that barely moved. Left alone each
-    /// is scissored and drawn separately, painting the same pixels twice and
-    /// counting them twice against `BMC_DAMAGE_MAX_PCT`; an analog clock's hands
-    /// crossed that cap on the double count alone and fell back to full repaints.
+    /// The damage set spans two walks, so anything still moving contributes a
+    /// near-identical rect per walk. Left alone each is scissored and drawn
+    /// separately, painting the same pixels twice and counting them twice
+    /// against `BMC_DAMAGE_MAX_PCT` — enough on its own to cross the cap and
+    /// fall back to full repaints.
     ///
     /// Merging to the bounding box can cover pixels neither input did, which is
-    /// sound for damage (it only ever repaints more) and pays here because the
-    /// inputs are near-duplicates. The lists are a handful of rects per frame, so
-    /// the repeated rescan costs nothing worth optimising.
+    /// sound for damage and cheap here because the inputs are near-duplicates.
     #[must_use]
     pub fn coalesce(mut rects: Vec<Rect>) -> Vec<Rect> {
         let mut head: usize = 0;
         while head < rects.len() {
             let mut i = head + 1;
+            let mut merged = false;
             while i < rects.len() {
                 if rects[head].overlaps(rects[i]) {
                     let other = rects.swap_remove(i);
                     rects[head].union(other);
+                    merged = true;
                     i = head + 1;
                 } else {
                     i += 1;
                 }
             }
-            head += 1;
+            // A union reaches further than either input, so it can overlap a
+            // rect already passed over; restarting is what makes the result
+            // disjoint, which is the property the damage area count assumes.
+            if merged {
+                head = 0;
+            } else {
+                head += 1;
+            }
         }
 
         rects.shrink_to_fit();

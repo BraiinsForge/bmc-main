@@ -34,7 +34,7 @@ pub mod builtin_icons {
     include!(concat!(env!("OUT_DIR"), "/builtin_icons.rs"));
 }
 
-pub use renderer::{FemtoVgRenderer, FemtovgImageId};
+pub use renderer::{FemtoVgRenderer, FemtovgImageId, RenderTargetProbe};
 
 // `glyph_cache` is crate-private,
 // so the gate's own test crate cannot name the harness without this.
