@@ -31,12 +31,12 @@ use bmc_wasm_sdk::system::{
 };
 use gallery::SceneCtx;
 
-/// The deck-wide settings, as their own group on the Controls panel.
+/// The system-wide settings, as their own group on the Controls panel.
 ///
 /// Installs the snapshot it builds, so everything staged afterwards
 /// formats the way an operator with those settings sees it. Returns it
 /// too, for a scene that wants to label what it is showing.
-pub fn deck_settings(ctx: &mut SceneCtx) -> Snapshot {
+pub fn system_settings(ctx: &mut SceneCtx) -> Snapshot {
     ctx.group("System settings");
 
     let units = ctx.radio("Units", &["Metric", "Imperial"], 0);

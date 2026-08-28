@@ -133,7 +133,7 @@ fn size_stages<Build: FnOnce() -> Node>(
 ) {
     // Ahead of the settings group, which everything after it joins.
     let only = only_size(ctx);
-    deck_settings(ctx);
+    system_settings(ctx);
     seed_images();
     for (index, viewport) in viewports().enumerate() {
         if only.is_some_and(|wanted| wanted != index) {
@@ -269,7 +269,7 @@ fn live_practice(ctx: &mut SceneCtx, ui: &mut Ui) {
 #[scene]
 fn live_idle(ctx: &mut SceneCtx, ui: &mut Ui) {
     let only = only_size(ctx);
-    deck_settings(ctx);
+    system_settings(ctx);
     seed_images();
     for (index, viewport) in viewports().enumerate() {
         if only.is_some_and(|wanted| wanted != index) {
@@ -391,7 +391,7 @@ fn driver_unavailable(ctx: &mut SceneCtx, ui: &mut Ui) {
 /// ships — so one scene covers the field, not the one a param picks.
 #[scene]
 fn driver_grid(ctx: &mut SceneCtx, ui: &mut Ui) {
-    deck_settings(ctx);
+    system_settings(ctx);
     seed_images();
     for stats in fixtures::drivers() {
         let (name, team) = (stats.name.clone(), stats.team.clone());

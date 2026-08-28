@@ -32,7 +32,7 @@ pub use audio::RodioSink;
 pub use bmc_render::interaction::ActionEvent;
 pub use bridge::{CustomRenderFn, DeckSceneCtx, Fired};
 pub use images::seed_image;
-pub use settings::deck_settings;
+pub use settings::system_settings;
 pub use size::{
     AUTO_HEIGHT_MAX, DEVICE_HEIGHT, DEVICE_VIEWPORTS, DEVICE_WIDTH, DeckSize, DeviceViewport,
     DivHeight,
