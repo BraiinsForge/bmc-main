@@ -32,6 +32,10 @@ skip = [
     { crate = "tower@0.4" },
     { crate = "webpki-roots@0.25" },
 
+    # ureq 3.4 requires base64 0.23.
+    # Remove after the workspace, tonic, tonic-web, and usvg leave 0.22.
+    { crate = "base64@0.23" },
+
     # rand 0.8 → 0.9 migration (see BDK-465).
     { crate = "getrandom@0.2" },
     { crate = "getrandom@0.3" },

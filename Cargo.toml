@@ -445,7 +445,7 @@ tungstenite = "0.24.0"
 udev = "0.9"
 ufmt = { version = "0.2", features = ["std"] }
 unit-prefix = { version = "0.5.2", default-features = false }
-ureq = "3"
+ureq = "3.4"
 url = { version = "2.5.4", features = ["serde"] }
 usvg = "0.45"
 uuid = { version = "1.15.1", features = ["fast-rng", "serde", "v4"] }
