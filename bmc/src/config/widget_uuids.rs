@@ -67,3 +67,6 @@ pub(crate) const TICKER_SINGLE_UID: Uuid =
 pub(crate) const TICKER_LIST_UID: Uuid = Uuid::from_u128(0x51f4_8290_a8fd_466d_8693_1911_b06c_68c8);
 /// `widgets-wasm/formula-1`
 pub(crate) const FORMULA_1_UID: Uuid = Uuid::from_u128(0x2032_6ae9_741c_4374_b322_b91a_d377_a0a3);
+/// `widgets-wasm/bitcoin-mining-data`
+pub(crate) const BITCOIN_MINING_DATA_UID: Uuid =
+    Uuid::from_u128(0x020e_06d1_434e_4757_b4c3_21cf_92c4_4127);

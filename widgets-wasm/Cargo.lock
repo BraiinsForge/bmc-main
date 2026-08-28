@@ -68,6 +68,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "bitcoin-mining-data"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "mining",
+ "units",
+]
+
+[[package]]
 name = "bitflags"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

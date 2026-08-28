@@ -167,6 +167,7 @@ fn migration_fallbacks_match_the_shipped_manifests() {
     let image = load_wasm_manifest("image");
     let nameday = load_wasm_manifest("nameday");
     let pool = load_wasm_manifest("braiins-pool");
+    let bitcoin_mining_data = load_wasm_manifest("bitcoin-mining-data");
 
     assert_eq!(
         string_default(&clock, "numbers_font_style"),
@@ -241,6 +242,10 @@ fn migration_fallbacks_match_the_shipped_manifests() {
     assert!(
         pool.credentials.contains_key(&credential_slot),
         "the migration binds a slot the pool manifest does not declare"
+    );
+    assert!(
+        bitcoin_mining_data.params.is_empty(),
+        "Bitcoin Mining Data migration assumes the manifest has no parameters"
     );
 }
 

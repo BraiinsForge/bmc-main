@@ -605,6 +605,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b71798fca2c1fe1086445a7258a4bc81e6e49dcd24c8d0dd9a1e57395b603f51"
 
 [[package]]
+name = "bitcoin-mining-data"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "mining",
+ "units",
+]
+
+[[package]]
 name = "bitflags"
 version = "1.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -672,6 +681,7 @@ dependencies = [
 name = "bmc-gallery"
 version = "0.1.0"
 dependencies = [
+ "bitcoin-mining-data",
  "bmc-overlay-alarm",
  "bmc-overlay-device-info",
  "bmc-overlay-offline",

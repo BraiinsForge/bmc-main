@@ -60,9 +60,9 @@ use uuid::Uuid;
 
 use super::{Report, v0};
 use crate::config::widget_uuids::{
-    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID, HALVING_COUNTDOWN_UID,
-    ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID,
-    TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
+    BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID,
+    HALVING_COUNTDOWN_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
+    SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings, fits_running_widgets};
 use crate::data::{AccountId, SceneCycling};
@@ -320,6 +320,7 @@ fn upgrade_widget(widget: &v0::Widget) -> Option<Widget> {
         "remote_image" => with_no_bindings(dispatch_remote_image(widget)),
         "remote_widget" => with_no_bindings(dispatch_remote_widget(widget)?),
         "braiins_pool" => dispatch_braiins_pool(widget),
+        "blockchain_data" => with_no_bindings(dispatch_bitcoin_mining_data()),
         other => {
             warn!(
                 kind = %other,
@@ -537,6 +538,10 @@ fn dispatch_braiins_pool(widget: &v0::Widget) -> (Uuid, Value, BTreeMap<Credenti
     }
 
     (BRAIINS_POOL_UID, Value::Object(params), bindings)
+}
+
+fn dispatch_bitcoin_mining_data() -> (Uuid, Value) {
+    (BITCOIN_MINING_DATA_UID, json!({}))
 }
 
 /// The `pool` slot and the account a legacy pool widget names, if it names

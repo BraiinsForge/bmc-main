@@ -1,0 +1,49 @@
+{
+  "$schema": "../../bmc-netsim/blueprint.schema.json",
+
+  instances: [
+    {
+      device: "bitcoin-mining-data",
+      label: "Healthy Nexus Bitcoin data",
+      port: 20200,
+    },
+    {
+      device: "bitcoin-mining-data",
+      label: "Warming up — 503 until a minute in",
+      port: 20201,
+      params: { warmup_secs: 60 },
+    },
+    {
+      device: "bitcoin-mining-data",
+      label: "Initial hard failure",
+      port: 20202,
+      params: { status: 503 },
+    },
+    {
+      device: "bitcoin-mining-data",
+      label: "Stale cached Nexus data",
+      port: 20203,
+      params: { cache_age_secs: 1200 },
+    },
+    {
+      device: "bitcoin-mining-data",
+      label: "Rate limited",
+      port: 20204,
+      params: { status: 429 },
+    },
+    {
+      device: "bitcoin-mining-data",
+      label: "Extreme values and SI-prefix growth",
+      port: 20205,
+      params: {
+        bitcoin_price_usd: 999999999.99,
+        difficulty: 999900000000000000,
+        previous_adjustment: -0.9999,
+        estimated_adjustment: 9.9999,
+        network_hashrate_ehs: 1250000,
+        hashprice_usd_per_th_day: 9999.9999,
+        revenue_usd: 9999999999.99,
+      },
+    },
+  ],
+}

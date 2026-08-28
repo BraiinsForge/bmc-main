@@ -1,0 +1,121 @@
+size = "1280x560"
+sheet = "sheet.png"
+report = "capture.json"
+settle = true
+
+[[shot]]
+name = "healthy-full-usd"
+scene = "bmc_gallery::bitcoin_mining_data::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "healthy-large-usd"
+scene = "bmc_gallery::bitcoin_mining_data::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Large"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "healthy-medium-usd"
+scene = "bmc_gallery::bitcoin_mining_data::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Medium"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "healthy-small-usd"
+scene = "bmc_gallery::bitcoin_mining_data::Healthy"
+frames = 24
+
+[shot.knobs]
+Size = "Small"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "healthy-bmm100-usd"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM100"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "healthy-bmm101-usd"
+scene = "bmc_gallery::bitcoin_mining_data::Supported Devices"
+frames = 24
+
+[shot.knobs]
+Viewport = "BMM101"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "loading-full"
+scene = "bmc_gallery::bitcoin_mining_data::Loading"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "failed-full"
+scene = "bmc_gallery::bitcoin_mining_data::Failed"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "stale-full"
+scene = "bmc_gallery::bitcoin_mining_data::Stale"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "rate-limited-full"
+scene = "bmc_gallery::bitcoin_mining_data::Rate Limited"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "extremes-full"
+scene = "bmc_gallery::bitcoin_mining_data::Extremes"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "unit-rollover-full"
+scene = "bmc_gallery::bitcoin_mining_data::Unit Rollover"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"
+
+[[shot]]
+name = "flat-history-full"
+scene = "bmc_gallery::bitcoin_mining_data::Flat History"
+frames = 24
+
+[shot.knobs]
+Size = "Fullscreen"
+Numbers = "1 234.5"

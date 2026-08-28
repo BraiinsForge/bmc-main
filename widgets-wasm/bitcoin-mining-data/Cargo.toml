@@ -1,0 +1,19 @@
+[package]
+name = "bitcoin-mining-data"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+
+[package.metadata.nix]
+include = ["assets/**"]
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[dependencies]
+bmc-wasm-sdk = { path = "../../bmc-wasm-runtime/sdk" }
+mining = { path = "../lib/mining" }
+units = { path = "../lib/units" }
+
+[lints]
+workspace = true

@@ -13,6 +13,7 @@ workspace = true
 [workspace]
 resolver = "3"
 members = [
+    "bitcoin-mining-data",
     "blockheight",
     "braiins-pool",
     "clock",

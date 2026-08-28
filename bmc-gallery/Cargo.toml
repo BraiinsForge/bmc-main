@@ -86,6 +86,7 @@ path = "main.rs"
 # what CI and a fresh clone resolve through, and a scene API moves under us otherwise.
 gallery = { git = "https://github.com/kubijo/rs-gallery.git", rev = "8fa0a90a4dfad1c999db352233ff57e60e3f7d7e" }
 
+bitcoin-mining-data = { path = "../widgets-wasm/bitcoin-mining-data" }
 bmc-overlay-alarm = { path = "../system-overlays/bmc-overlay-alarm" }
 bmc-overlay-device-info = { path = "../system-overlays/bmc-overlay-device-info" }
 bmc-overlay-offline = { path = "../system-overlays/bmc-overlay-offline" }
@@ -123,6 +124,7 @@ gallery-build = { git = "https://github.com/kubijo/rs-gallery.git", rev = "8fa0a
 # through the glob — nothing under this manifest's own directory names them.
 [package.metadata.cargo-machete]
 ignored = [
+    "bitcoin-mining-data",
     "bmc-overlay-alarm",
     "bmc-overlay-device-info",
     "bmc-overlay-offline",

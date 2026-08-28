@@ -25,9 +25,10 @@ use bmc_widget_manifest::{ParamKey, ParamValue};
 use uuid::Uuid;
 
 use crate::config::widget_uuids::{
-    BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID, HALVING_COUNTDOWN_UID,
-    ISS_POSITION_UID, MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID, RANDOM_FACTS_UID,
-    REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
+    BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID,
+    HALVING_COUNTDOWN_UID, ISS_POSITION_UID, MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID,
+    RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID,
+    WEATHER_UID,
 };
 
 #[derive(Debug)]
@@ -63,7 +64,7 @@ pub fn default_widgets() -> Vec<DefaultWidget> {
 }
 
 #[must_use]
-pub fn widget_uids() -> [(&'static str, Uuid); 15] {
+pub fn widget_uids() -> [(&'static str, Uuid); 16] {
     [
         ("clock", CLOCK_UID),
         ("weather", WEATHER_UID),
@@ -80,6 +81,7 @@ pub fn widget_uids() -> [(&'static str, Uuid); 15] {
         ("ticker-single", TICKER_SINGLE_UID),
         ("ticker-list", TICKER_LIST_UID),
         ("formula-1", FORMULA_1_UID),
+        ("bitcoin-mining-data", BITCOIN_MINING_DATA_UID),
     ]
 }
 

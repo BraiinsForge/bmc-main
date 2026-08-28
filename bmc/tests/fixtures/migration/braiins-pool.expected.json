@@ -91,6 +91,20 @@
           "widget_type_id": "69ed377c-701b-4cdb-b4b6-0308cfe56b64"
         },
         {
+          "col": 2,
+          "id": "707d032d-7be6-4c58-a1c6-708988c5a1f0",
+          "params": {},
+          "placement": {
+            "slot_span": {
+              "columns": 2,
+              "rows": 1
+            }
+          },
+          "row": 1,
+          "viewport_shape": "rectangular",
+          "widget_type_id": "020e06d1-434e-4757-b4c3-21cf92c44127"
+        },
+        {
           "col": 0,
           "id": "d9de2913-f795-4de6-b79f-d2a9469e204e",
           "params": {
