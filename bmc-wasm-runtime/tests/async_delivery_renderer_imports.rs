@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 
 use bmc_render::gpu::FemtoVgRenderer;
 use bmc_render::renderer::Renderer;
-use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{InterceptedReply, RuntimeConfig, WasmWidgetRuntime};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 
 mod common;
@@ -246,7 +246,9 @@ fn fetch_response_callback_can_register_renderer_asset() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(move |_method, _url| Some((200, png.clone())))),
+            fetch_interceptor: Some(Box::new(move |_method, _url| {
+                Some(InterceptedReply::new(200, png.clone()))
+            })),
             ..RuntimeConfig::default()
         },
     )
@@ -288,7 +290,9 @@ fn fetch_response_callback_without_renderer_import_needs_no_gpu_fence() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, Vec::new())))),
+            fetch_interceptor: Some(Box::new(|_method, _url| {
+                Some(InterceptedReply::new(200, Vec::new()))
+            })),
             ..RuntimeConfig::default()
         },
     )
@@ -325,7 +329,9 @@ fn fetch_response_callback_querying_a_resident_asset_needs_no_gpu_fence() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(move |_method, _url| Some((200, png.clone())))),
+            fetch_interceptor: Some(Box::new(move |_method, _url| {
+                Some(InterceptedReply::new(200, png.clone()))
+            })),
             ..RuntimeConfig::default()
         },
     )
@@ -370,7 +376,9 @@ fn fetch_response_callback_drawing_text_acquires_gpu_access() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, Vec::new())))),
+            fetch_interceptor: Some(Box::new(|_method, _url| {
+                Some(InterceptedReply::new(200, Vec::new()))
+            })),
             ..RuntimeConfig::default()
         },
     )
@@ -406,7 +414,9 @@ fn fetch_response_callback_drawing_button_acquires_gpu_access() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, Vec::new())))),
+            fetch_interceptor: Some(Box::new(|_method, _url| {
+                Some(InterceptedReply::new(200, Vec::new()))
+            })),
             ..RuntimeConfig::default()
         },
     )

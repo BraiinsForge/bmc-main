@@ -115,6 +115,24 @@ A blockheight excerpt for reference:
 The fetch event stubs the live API call with a fixed JSON payload; without it, the widget would attempt real network in
 the sandbox and fail the capture.
 
+### Response headers are allowlisted
+
+A recorded `fetch` event carries the reply's response headers, so replay judges a body by the same `Content-Type` that
+the live path would have judged it by. **Only headers named on an explicit allowlist are ever written to a fixture**,
+namely `RECORDED_RESPONSE_HEADERS` in `bmc-wasm-runtime/src/unified_fixture.rs`:
+
+```rust
+pub const RECORDED_RESPONSE_HEADERS: &[&str] = &["content-type"];
+```
+
+Everything else is dropped at record time. This is a security boundary rather than a tidiness one: fixtures are
+committed, this repository mirrors publicly, and a recording made against a real authenticated origin must never bake a
+`Set-Cookie` into the tree.
+
+Adding a header is deliberate. Extend the constant and update `recorded_headers_are_only_the_allowlist`, which pins the
+set so an addition shows up in review rather than sliding in with whatever change wanted it. A fixture recorded before
+its header was allowlisted simply does not carry one; absent means the origin sent none, never a parse failure.
+
 ## Record A Fixture
 
 Recording uses the testbed. `just wasm::record <widget> <target> [name]` builds the widget, launches the testbed on the

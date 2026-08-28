@@ -137,7 +137,7 @@ pub fn build_unified_recording_config(
     };
 
     let events = fetch_events;
-    rt_config.fetch_observer = Some(Box::new(move |key, status, body| {
+    rt_config.fetch_observer = Some(Box::new(move |key, status, headers, body| {
         // Parse "METHOD URL" key
         let (method, url) = key.split_once(' ').unwrap_or(("GET", key));
         let at_ms = take_clock.load(std::sync::atomic::Ordering::Relaxed);
@@ -147,6 +147,7 @@ pub fn build_unified_recording_config(
                 method: method.to_owned(),
                 url: url.to_owned(),
                 status,
+                headers: crate::unified_fixture::recordable_headers(headers),
                 body: FixtureBody::from_bytes(body),
             },
         };

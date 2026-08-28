@@ -373,6 +373,21 @@ pub struct CompletedImageDecode {
 }
 
 impl CompletedFetch {
+    /// A reply an interceptor supplied in place of the network,
+    /// carrying whatever headers it stands in for.
+    pub(crate) fn intercepted(
+        request_id: FetchRequestId,
+        reply: crate::runtime::InterceptedReply,
+    ) -> Self {
+        Self {
+            request_id,
+            status: reply.status,
+            headers: reply.headers,
+            body: reply.body,
+            context: FetchCompletionContext::Normal,
+        }
+    }
+
     /// An outcome the host decided without hearing the origin out,
     /// so it carries no headers.
     pub(crate) fn host_decided(
@@ -1777,6 +1792,28 @@ mod tests {
             aborted.response.headers.is_empty(),
             "an abort must not carry the origin's headers"
         );
+    }
+
+    /// The joint between a replayed fixture and what a widget can read:
+    /// a fixture's headers have to survive into the delivered response,
+    /// or replay judges a body the live path would have refused.
+    #[test]
+    fn an_intercepted_reply_carries_its_headers_into_delivery() {
+        let request_id = FetchRequestId::from_wire(1).expect("BUG: 1 is a valid id");
+        let delivered = CompletedFetch::intercepted(
+            request_id,
+            crate::runtime::InterceptedReply {
+                status: FetchOutcome::Http(200).to_wire(),
+                headers: vec![("content-type".to_owned(), "application/json".to_owned())],
+                body: b"{}".to_vec(),
+            },
+        );
+
+        assert_eq!(
+            delivered.headers,
+            vec![("content-type".to_owned(), "application/json".to_owned())]
+        );
+        assert_eq!(delivered.context, FetchCompletionContext::Normal);
     }
 
     #[test]

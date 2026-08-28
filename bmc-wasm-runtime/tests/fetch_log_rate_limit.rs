@@ -28,7 +28,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use chrono::Local;
 
-use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{InterceptedReply, RuntimeConfig, WasmWidgetRuntime};
 
 mod common;
 use common::headless_egl;
@@ -136,7 +136,8 @@ fn runtime_for(
             // the refusal path at all. Nothing dials out: the placeholder names
             // a slot no secret is bound to, so the request is refused first.
             fetch_interceptor: Some(Box::new(move |_method, url| {
-                (!url.contains("{{")).then(|| (status.load(Ordering::Relaxed), Vec::new()))
+                (!url.contains("{{"))
+                    .then(|| InterceptedReply::new(status.load(Ordering::Relaxed), Vec::new()))
             })),
             ..RuntimeConfig::default()
         },

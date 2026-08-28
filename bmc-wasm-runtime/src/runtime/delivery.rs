@@ -235,7 +235,7 @@ impl WasmWidgetRuntime {
                     continue;
                 };
                 if let Some(ref observer) = state.fetch_observer {
-                    observer(&key.joined(), resp.status, &resp.body);
+                    observer(&key.joined(), resp.status, &resp.headers, &resp.body);
                 }
                 #[cfg(feature = "testing")]
                 {
@@ -1458,13 +1458,8 @@ impl WasmWidgetRuntime {
                 .fetch_interceptor
                 .as_ref()
                 .and_then(|f| f(&method, &url));
-            if let Some((status, body)) = intercepted {
-                let _ = settle.send(CompletedFetch::host_decided(
-                    request_id,
-                    status,
-                    body,
-                    FetchCompletionContext::Normal,
-                ));
+            if let Some(reply) = intercepted {
+                let _ = settle.send(CompletedFetch::intercepted(request_id, reply));
                 continue;
             }
 

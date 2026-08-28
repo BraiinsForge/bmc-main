@@ -172,13 +172,8 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 .fetch_interceptor
                 .as_ref()
                 .and_then(|f| f(&method, &url));
-            if let Some((status, body)) = intercepted {
-                let _ = settle.send(CompletedFetch::host_decided(
-                    request_id,
-                    status,
-                    body,
-                    FetchCompletionContext::Normal,
-                ));
+            if let Some(reply) = intercepted {
+                let _ = settle.send(CompletedFetch::intercepted(request_id, reply));
                 return request_id.to_wire();
             }
 

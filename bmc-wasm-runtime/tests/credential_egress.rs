@@ -38,7 +38,9 @@ use std::time::{Duration, Instant};
 
 use bmc_widget_manifest::credential;
 
-use bmc_wasm_runtime::{BoundCredential, CredentialView, RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{
+    BoundCredential, CredentialView, InterceptedReply, RuntimeConfig, WasmWidgetRuntime,
+};
 
 mod common;
 use common::headless_egl;
@@ -414,7 +416,7 @@ fn outcome_line_for(
     // without dialling anything and without a connect failure to wait on.
     let config = RuntimeConfig {
         fetch_interceptor: Some(Box::new(|_method, url: &str| {
-            (!url.contains("{{")).then(|| (500, Vec::new()))
+            (!url.contains("{{")).then(|| InterceptedReply::new(500, Vec::new()))
         })),
         ..RuntimeConfig::default()
     };

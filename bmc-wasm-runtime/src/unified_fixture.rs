@@ -130,6 +130,32 @@ impl FixtureBody {
     }
 }
 
+// ── Recorded response headers ───────────────────────────────────────
+
+/// The only response headers a fixture ever records.
+///
+/// An allowlist, not a filter: a header not named here never reaches
+/// a committed fixture, so recording against a real origin cannot bake
+/// a session cookie into a repository that mirrors publicly.
+///
+/// Adding one is deliberate: `recorded_headers_are_only_the_allowlist`
+/// pins the set, so a new entry shows up in review
+/// rather than sliding in with the change that wanted it.
+pub const RECORDED_RESPONSE_HEADERS: &[&str] = &["content-type"];
+
+/// The headers of `sent` that [`RECORDED_RESPONSE_HEADERS`] admits.
+#[must_use]
+pub fn recordable_headers(sent: &[(String, String)]) -> Vec<(String, String)> {
+    sent.iter()
+        .filter(|(name, _)| {
+            RECORDED_RESPONSE_HEADERS
+                .iter()
+                .any(|allowed| name.eq_ignore_ascii_case(allowed))
+        })
+        .cloned()
+        .collect()
+}
+
 // ── Event types ─────────────────────────────────────────────────────
 
 /// A single event in the unified timeline.
@@ -203,6 +229,11 @@ pub enum UnifiedEvent {
         method: String,
         url: String,
         status: u32,
+        /// What [`RECORDED_RESPONSE_HEADERS`] admitted of the reply's own.
+        /// Absent in fixtures recorded before headers were carried at all,
+        /// which replays as an origin that sent none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        headers: Vec<(String, String)>,
         body: FixtureBody,
     },
 
@@ -652,6 +683,7 @@ mod tests {
                         method: "GET".into(),
                         url: "https://example.com/api".into(),
                         status: 200,
+                        headers: vec![("content-type".into(), "application/json".into())],
                         body: FixtureBody::Text("{\"ok\":true}".into()),
                     },
                 },
@@ -864,5 +896,73 @@ mod tests {
         let loaded = load_unified_fixture(&jsonl_path).expect("BUG: load via dispatch");
         assert_eq!(loaded.header.time, fixture.header.time);
         assert_eq!(loaded.events.len(), fixture.events.len());
+    }
+
+    /// Changing the set is a deliberate act, so it has to change this too.
+    /// Everything named here reaches a committed fixture; nothing else can.
+    #[test]
+    fn recorded_headers_are_only_the_allowlist() {
+        assert_eq!(RECORDED_RESPONSE_HEADERS, ["content-type"]);
+    }
+
+    #[test]
+    fn only_allowlisted_headers_are_recordable() {
+        let sent = vec![
+            ("content-type".to_owned(), "application/json".to_owned()),
+            ("set-cookie".to_owned(), "session=hunter2".to_owned()),
+            ("authorization".to_owned(), "Bearer sk-live".to_owned()),
+            ("etag".to_owned(), "\"abc\"".to_owned()),
+        ];
+        assert_eq!(
+            recordable_headers(&sent),
+            vec![("content-type".to_owned(), "application/json".to_owned())],
+            "a secret an origin set must never reach a committed fixture"
+        );
+    }
+
+    #[test]
+    fn a_recordable_header_is_matched_whatever_its_case() {
+        let sent = vec![("Content-Type".to_owned(), "application/json".to_owned())];
+        assert_eq!(recordable_headers(&sent).len(), 1);
+    }
+
+    #[test]
+    fn a_fetch_events_headers_survive_the_round_trip() {
+        let event = TimelineEvent {
+            at_ms: 0,
+            event: UnifiedEvent::Fetch {
+                method: "GET".into(),
+                url: "https://example.test/data".into(),
+                status: 200,
+                headers: vec![("content-type".into(), "application/json".into())],
+                body: FixtureBody::Text("{}".into()),
+            },
+        };
+        let line = serde_json::to_string(&event).expect("BUG: serialize fetch event");
+        let back: TimelineEvent = serde_json::from_str(&line).expect("BUG: deserialize");
+
+        let UnifiedEvent::Fetch { headers, .. } = back.event else {
+            panic!("BUG: a fetch event round-trips as one");
+        };
+        assert_eq!(
+            headers,
+            vec![("content-type".to_owned(), "application/json".to_owned())]
+        );
+    }
+
+    /// A fixture recorded before headers were carried has none, and must load.
+    #[test]
+    fn a_fetch_event_without_headers_still_parses() {
+        let line = r#"{"type":"fetch","method":"GET","url":"https://example.test/data",
+                       "status":200,"body":{"text":"{}"}}"#;
+        let event: UnifiedEvent = serde_json::from_str(line).expect("BUG: parse headerless fetch");
+
+        let UnifiedEvent::Fetch { headers, .. } = event else {
+            panic!("BUG: parsed as a fetch event");
+        };
+        assert!(
+            headers.is_empty(),
+            "absent headers mean an origin that sent none, never a parse failure"
+        );
     }
 }

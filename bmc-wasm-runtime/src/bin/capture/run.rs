@@ -55,8 +55,8 @@ use bmc_wasm_runtime::unified_fixture::{
     validate_fixture,
 };
 use bmc_wasm_runtime::{
-    DiskCache, FixtureEvent, FixtureEventKind, PackageAssetStore, RenderStatus, RuntimeConfig,
-    SystemSnapshot, WasmWidgetRuntime,
+    DiskCache, FixtureEvent, FixtureEventKind, InterceptedReply, PackageAssetStore, RenderStatus,
+    RuntimeConfig, SystemSnapshot, WasmWidgetRuntime,
 };
 
 /// Fixed timestep per frame (ms).
@@ -559,7 +559,11 @@ fn run_unified_capture(
             let idx = (*counter).min(queue.len().saturating_sub(1));
             *counter = counter.saturating_add(1);
             let fix = &queue[idx];
-            Some((fix.status, fix.body.clone()))
+            Some(InterceptedReply {
+                status: fix.status,
+                headers: fix.headers.clone(),
+                body: fix.body.clone(),
+            })
         }));
     }
     rt_config.event_fixtures = network_events;
@@ -1323,6 +1327,7 @@ fn prepare_unified_blob_dir(ctx: &CaptureCtx, widget_name: &str) -> PathBuf {
 /// A pre-recorded fetch response for the interceptor.
 struct FetchEntry {
     status: u32,
+    headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
 
@@ -1346,11 +1351,13 @@ fn split_unified_events(
                 method,
                 url,
                 status,
+                headers,
                 body,
             } => {
                 let key = format!("{method} {url}");
                 fetches.entry(key).or_default().push(FetchEntry {
                     status: *status,
+                    headers: headers.clone(),
                     body: body.to_bytes(),
                 });
             }
@@ -2241,15 +2248,18 @@ mod tests {
                         method: "GET".to_owned(),
                         url: "http://miner/api/v1/miner/stats".to_owned(),
                         status: 200,
+                        headers: vec![("content-type".to_owned(), "application/json".to_owned())],
                         body: FixtureBody::Text("first".to_owned()),
                     },
                 },
+                // No headers, as a fixture recorded before they were carried.
                 TimelineEvent {
                     at_ms: 1,
                     event: UnifiedEvent::Fetch {
                         method: "GET".to_owned(),
                         url: "http://miner/api/v1/miner/stats".to_owned(),
                         status: 200,
+                        headers: Vec::new(),
                         body: FixtureBody::Text("second".to_owned()),
                     },
                 },
@@ -2264,5 +2274,14 @@ mod tests {
         assert_eq!(entries.len(), 2);
         assert_eq!(entries[0].body, b"first");
         assert_eq!(entries[1].body, b"second");
+        assert_eq!(
+            entries[0].headers,
+            vec![("content-type".to_owned(), "application/json".to_owned())],
+            "each reply keeps its own headers, not the queue's first"
+        );
+        assert!(
+            entries[1].headers.is_empty(),
+            "a fixture recorded without headers replays as an origin that sent none"
+        );
     }
 }

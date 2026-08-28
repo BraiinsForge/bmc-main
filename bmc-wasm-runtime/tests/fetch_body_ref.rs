@@ -27,7 +27,7 @@ use image::{DynamicImage, ImageFormat, Rgba, RgbaImage};
 
 use bmc_render::MAX_DECODE_IMAGE_PIXELS;
 use bmc_wasm_runtime::{
-    RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, WasmWidgetRuntime,
+    InterceptedReply, RuntimeConfig, RuntimeDisplayInfo, RuntimeResourceLimits, WasmWidgetRuntime,
 };
 
 #[derive(Clone, Copy)]
@@ -216,7 +216,9 @@ fn runtime_with_resource_limits(
         },
         Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(move |_method, _url| Some((200, body.clone())))),
+            fetch_interceptor: Some(Box::new(move |_method, _url| {
+                Some(InterceptedReply::new(200, body.clone()))
+            })),
             resource_limits,
             ..RuntimeConfig::default()
         },

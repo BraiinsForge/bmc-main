@@ -28,7 +28,7 @@
 use chrono::Local;
 
 use bmc_wasm_protocol::FetchOutcome;
-use bmc_wasm_runtime::{RuntimeConfig, WasmWidgetRuntime};
+use bmc_wasm_runtime::{InterceptedReply, RuntimeConfig, WasmWidgetRuntime};
 
 mod common;
 use common::headless_egl;
@@ -138,7 +138,9 @@ fn cancel_removes_a_queued_delayed_fetch_entirely() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, b"ok".to_vec())))),
+            fetch_interceptor: Some(Box::new(|_method, _url| {
+                Some(InterceptedReply::new(200, b"ok".to_vec()))
+            })),
             ..RuntimeConfig::default()
         },
     )
@@ -188,7 +190,9 @@ fn cancel_rewrites_the_settlement_of_a_fetch_already_away() {
         common::test_display(64, 64),
         chrono::Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, b"ok".to_vec())))),
+            fetch_interceptor: Some(Box::new(|_method, _url| {
+                Some(InterceptedReply::new(200, b"ok".to_vec()))
+            })),
             ..RuntimeConfig::default()
         },
     )

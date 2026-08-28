@@ -178,18 +178,40 @@ pub enum RenderStatus {
     Dead,
 }
 
+/// A reply an interceptor answers with in place of the network.
+#[derive(Debug)]
+pub struct InterceptedReply {
+    pub status: u32,
+    /// Stands in for the origin's own, so a replayed reply is judged
+    /// by whatever the live one would have been judged by.
+    pub headers: Vec<(String, String)>,
+    pub body: Vec<u8>,
+}
+
+impl InterceptedReply {
+    /// A reply carrying no headers, standing in only a status and a body.
+    #[must_use]
+    pub fn new(status: u32, body: Vec<u8>) -> Self {
+        Self {
+            status,
+            headers: Vec::new(),
+            body,
+        }
+    }
+}
+
 /// A callback that can intercept fetch requests before they hit the network.
-/// Return `Some((status, body))` to short-circuit, `None` to proceed normally.
+/// Return `Some(reply)` to short-circuit, `None` to proceed normally.
 ///
 /// `Send`, so a host can build the config on one thread
 /// and construct the runtime on another; the runtime stays where it is built.
-pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<(u32, Vec<u8>)> + Send>;
+pub type FetchInterceptor = Box<dyn Fn(&str, &str) -> Option<InterceptedReply> + Send>;
 
 /// A callback invoked when a fetch response is delivered.
-/// Called with `(method_and_url, status, body)`.
+/// Called with `(method_and_url, status, headers, body)`.
 ///
 /// `Send` for the same reason as [`FetchInterceptor`].
-pub type FetchObserver = Box<dyn Fn(&str, u32, &[u8]) + Send>;
+pub type FetchObserver = Box<dyn Fn(&str, u32, &[(String, String)], &[u8]) + Send>;
 
 /// Host-side limits for resources spawned on behalf of a widget.
 pub use crate::runtime_limits::RuntimeResourceLimits;

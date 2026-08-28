@@ -31,7 +31,7 @@
 
 use chrono::Local;
 
-use bmc_wasm_runtime::{RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
+use bmc_wasm_runtime::{InterceptedReply, RuntimeConfig, RuntimeDisplayInfo, WasmWidgetRuntime};
 
 fn trapping_callback_wat() -> String {
     format!(
@@ -94,7 +94,9 @@ fn delivery_callback_trap_is_reported_not_swallowed() {
         },
         Local::now().fixed_offset(),
         RuntimeConfig {
-            fetch_interceptor: Some(Box::new(|_method, _url| Some((200, b"ok".to_vec())))),
+            fetch_interceptor: Some(Box::new(|_method, _url| {
+                Some(InterceptedReply::new(200, b"ok".to_vec()))
+            })),
             ..RuntimeConfig::default()
         },
     )
