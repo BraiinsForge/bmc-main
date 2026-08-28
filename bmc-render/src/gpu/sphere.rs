@@ -298,6 +298,8 @@ impl SphereRenderer {
         let light_lon_rad = light_lon.to_radians();
 
         unsafe {
+            // SAFETY: the caller's GL context is current for the whole pass.
+            let caller_state = super::offscreen::OffscreenPassState::capture(gl);
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.fbo));
             gl.viewport(0, 0, self.width as i32, self.height as i32);
 
@@ -347,7 +349,7 @@ impl SphereRenderer {
             if self.vao.is_some() {
                 gl.bind_vertex_array(None);
             }
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            caller_state.restore(gl);
         }
 
         Some(self.image_id)
@@ -437,6 +439,7 @@ unsafe fn create_offscreen_fbo(
         );
         gl.bind_texture(glow::TEXTURE_2D, None);
 
+        let caller_state = super::offscreen::OffscreenPassState::capture(gl);
         let fbo = gl
             .create_framebuffer()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
@@ -449,7 +452,7 @@ unsafe fn create_offscreen_fbo(
             0,
         );
         let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        caller_state.restore(gl);
 
         if status != glow::FRAMEBUFFER_COMPLETE {
             gl.delete_framebuffer(fbo);

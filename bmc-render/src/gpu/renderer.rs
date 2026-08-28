@@ -3153,6 +3153,61 @@ mod tests {
         assert_eq!(renderer.sphere_bitmap_id, None);
     }
 
+    /// The sphere rasterises into an FBO of its own, and leaving either that or
+    /// the default framebuffer bound sends the rest of the frame somewhere the
+    /// caller never asked for.
+    #[test]
+    fn sphere_pass_restores_the_frames_framebuffer() {
+        let harness = GlHarness::new().expect("BUG: headless GL setup failed");
+        let (_fbo, fbo_id) = create_readback_fbo(&harness.gl, 64, 64);
+        let mut renderer = unsafe { FemtoVgRenderer::new(harness.load_fn(), 64, 64, fbo_id, 0) }
+            .expect("BUG: renderer init failed");
+        let bitmap_id = renderer
+            .register_bitmap("widget-42:sphere", &one_px_png([255, 0, 0, 255]))
+            .expect("BUG: bitmap registration should succeed");
+
+        renderer.begin_frame(64, 64, 1.0);
+        // The sphere is smaller than the frame, so a leaked viewport is visible
+        // as a different rectangle rather than an identical one.
+        unsafe { harness.gl.viewport(0, 0, 128, 96) };
+        let state = || unsafe {
+            let mut viewport = [0; 4];
+            harness
+                .gl
+                .get_parameter_i32_slice(glow::VIEWPORT, &mut viewport);
+            (
+                harness.gl.get_parameter_i32(glow::FRAMEBUFFER_BINDING),
+                viewport,
+            )
+        };
+        let before = state();
+        assert_eq!(
+            before,
+            (fbo_id.cast_signed(), [0, 0, 128, 96]),
+            "the frame must start on the renderer's target and viewport"
+        );
+
+        renderer.draw_sphere(
+            0.0,
+            0.0,
+            64.0,
+            64.0,
+            bitmap_id,
+            0.0,
+            0.0,
+            2.0,
+            f32::NAN,
+            f32::NAN,
+            false,
+        );
+
+        assert_eq!(
+            state(),
+            before,
+            "the sphere's offscreen pass must hand back the frame's framebuffer and viewport"
+        );
+    }
+
     /// `draw_sphere` with an unregistered (or already-evicted) `BitmapId`
     /// must skip the GL path entirely rather than sampling whatever
     /// texture was last bound.

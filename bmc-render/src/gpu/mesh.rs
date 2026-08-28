@@ -786,6 +786,8 @@ impl MeshRenderer {
 
         unsafe {
             ii_stopwatch::stopwatch_start!(self.setup_w);
+            // SAFETY: the caller's GL context is current for the whole pass.
+            let caller_state = super::offscreen::OffscreenPassState::capture(gl);
             gl.bind_framebuffer(glow::FRAMEBUFFER, Some(self.draw_fbo));
             gl.viewport(vx, vy, sw, sh);
 
@@ -952,7 +954,7 @@ impl MeshRenderer {
                 );
                 ii_stopwatch::stopwatch_stop!(self.blit_w);
             }
-            gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+            caller_state.restore(gl);
         }
 
         #[cfg(feature = "profiling")]
@@ -1165,6 +1167,7 @@ unsafe fn create_offscreen_fbo_with_depth(
             .create_framebuffer()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let fbo_guard = FramebufferGuard::new(gl, fbo);
+        let caller_state = super::offscreen::OffscreenPassState::capture(gl);
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
         gl.framebuffer_texture_2d(
             glow::FRAMEBUFFER,
@@ -1181,7 +1184,7 @@ unsafe fn create_offscreen_fbo_with_depth(
         );
 
         let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        caller_state.restore(gl);
 
         if status != glow::FRAMEBUFFER_COMPLETE {
             // Guards drop at scope end and free the GL handles.
@@ -1241,6 +1244,7 @@ unsafe fn create_msaa_fbo(
             .create_framebuffer()
             .map_err(|e| anyhow::anyhow!("{e}"))?;
         let fbo_guard = FramebufferGuard::new(gl, fbo);
+        let caller_state = super::offscreen::OffscreenPassState::capture(gl);
         gl.bind_framebuffer(glow::FRAMEBUFFER, Some(fbo));
         gl.framebuffer_renderbuffer(
             glow::FRAMEBUFFER,
@@ -1256,7 +1260,7 @@ unsafe fn create_msaa_fbo(
         );
 
         let status = gl.check_framebuffer_status(glow::FRAMEBUFFER);
-        gl.bind_framebuffer(glow::FRAMEBUFFER, None);
+        caller_state.restore(gl);
 
         if status != glow::FRAMEBUFFER_COMPLETE {
             // Guards drop at scope end and free the GL handles.

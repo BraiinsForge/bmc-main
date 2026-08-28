@@ -25,6 +25,7 @@ mod curved_text;
 pub(crate) mod glyph_cache;
 mod lru;
 pub mod mesh;
+mod offscreen;
 pub(crate) mod renderer;
 mod sphere;
 pub mod svg;
