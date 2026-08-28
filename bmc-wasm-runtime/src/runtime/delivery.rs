@@ -376,13 +376,11 @@ impl WasmWidgetRuntime {
                     .remove(&request_id);
                 continue;
             }
-            self.store.data_mut().delivering_fetch_content_type = resp
-                .content_type
-                .take()
-                .map(|content_type| (request_id, content_type));
+            self.store.data_mut().delivering_fetch_headers =
+                Some((request_id, std::mem::take(&mut resp.headers)));
             let result = on_response.call(&mut self.store, callback_args);
             let state = self.store.data_mut();
-            state.delivering_fetch_content_type = None;
+            state.delivering_fetch_headers = None;
             state.active_fetch_bodies.remove(&request_id);
             if let Err(e) = result {
                 self.record_guest_trap("__on_fetch_response", &e);
@@ -1518,7 +1516,7 @@ impl WasmWidgetRuntime {
                 let _ = tx.send(CompletedFetch {
                     request_id,
                     status: reply.status,
-                    content_type: reply.content_type,
+                    headers: reply.headers,
                     body: reply.body,
                     context: FetchCompletionContext::Normal,
                 });

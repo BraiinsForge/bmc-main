@@ -27,8 +27,8 @@ use std::time::Duration;
 
 use anyhow::Result;
 use bmc_wasm_protocol::{
-    FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId, SocketId,
-    SsdpSearchId, UdpBroadcastId, WebsocketId,
+    FetchOutcome, FetchRequestId, HttpListenerId, HttpRequestId, MdnsBrowseId, MdnsRegId,
+    MediaTypePart, SocketId, SsdpSearchId, UdpBroadcastId, WebsocketId,
 };
 use wasmi::{Caller, Extern, Linker};
 
@@ -53,7 +53,8 @@ pub(super) fn register(linker: &mut Linker<HostState>) -> Result<()> {
     register_fetch_after_import(linker)?;
     register_fetch_body_ref_import(linker)?;
     register_fetch_cancel_import(linker)?;
-    register_fetch_content_type_import(linker)?;
+    register_fetch_header_import(linker)?;
+    register_fetch_media_type_import(linker)?;
     register_websocket_imports(linker)?;
     register_socket_connect_imports(linker)?;
     register_socket_io_imports(linker)?;
@@ -229,7 +230,7 @@ fn register_fetch_now_import(linker: &mut Linker<HostState>) -> Result<()> {
                 let _ = tx.send(CompletedFetch {
                     request_id,
                     status: reply.status,
-                    content_type: reply.content_type,
+                    headers: reply.headers,
                     body: reply.body,
                     context: FetchCompletionContext::Normal,
                 });
@@ -329,25 +330,94 @@ fn register_fetch_cancel_import(linker: &mut Linker<HostState>) -> Result<()> {
     Ok(())
 }
 
-fn register_fetch_content_type_import(linker: &mut Linker<HostState>) -> Result<()> {
+/// A header of the response being delivered right now.
+///
+/// Absent once delivery moves on, so a stashed request id reads nothing
+/// rather than another response's headers.
+/// Names compare case-insensitively, per RFC 9110 §5.1.
+fn delivering_header(state: &HostState, request_id: FetchRequestId, name: &str) -> Option<String> {
+    let (delivering, headers) = state.delivering_fetch_headers.as_ref()?;
+    if *delivering != request_id {
+        return None;
+    }
+    headers
+        .iter()
+        .find(|(field, _)| field.eq_ignore_ascii_case(name))
+        .map(|(_, value)| value.clone())
+}
+
+fn register_fetch_header_import(linker: &mut Linker<HostState>) -> Result<()> {
     linker.func_wrap(
         "env",
-        "host_fetch_content_type",
-        |mut caller: Caller<'_, HostState>, request_id: u32, out_ptr: u32, out_cap: u32| -> i32 {
+        "host_fetch_header",
+        |mut caller: Caller<'_, HostState>,
+         request_id: u32,
+         name_ptr: u32,
+         name_len: u32,
+         out_ptr: u32,
+         out_cap: u32|
+         -> i32 {
             let Some(request_id) = FetchRequestId::from_wire(request_id) else {
                 return -1;
             };
-            let content_type = match &caller.data().delivering_fetch_content_type {
-                Some((delivering, content_type)) if *delivering == request_id => {
-                    content_type.clone()
-                }
-                Some(_) | None => return -1,
+            let Some(name) = read_string(&caller, name_ptr, name_len) else {
+                return -1;
             };
-            write_to_wasm(&mut caller, &content_type, out_ptr, out_cap)
+            let Some(value) = delivering_header(caller.data(), request_id, &name) else {
+                return -1;
+            };
+            write_to_wasm(&mut caller, &value, out_ptr, out_cap)
         },
     )?;
 
     Ok(())
+}
+
+fn register_fetch_media_type_import(linker: &mut Linker<HostState>) -> Result<()> {
+    linker.func_wrap(
+        "env",
+        "host_fetch_media_type",
+        |mut caller: Caller<'_, HostState>,
+         request_id: u32,
+         part: u32,
+         out_ptr: u32,
+         out_cap: u32|
+         -> i32 {
+            let Some(request_id) = FetchRequestId::from_wire(request_id) else {
+                return -1;
+            };
+            let Some(part) = MediaTypePart::from_wire(part) else {
+                return -1;
+            };
+            let Some(raw) = delivering_header(caller.data(), request_id, "content-type") else {
+                return -1;
+            };
+            let Some(piece) = media_type_piece(&raw, part) else {
+                return -1;
+            };
+            write_to_wasm(&mut caller, &piece, out_ptr, out_cap)
+        },
+    )?;
+
+    Ok(())
+}
+
+/// One piece of a `Content-Type`, or `None` when the header does not parse
+/// or carries no such piece. `mime` lowercases it, so callers need not.
+fn media_type_piece(raw: &str, part: MediaTypePart) -> Option<String> {
+    let media_type: mime::Mime = raw.parse().ok()?;
+    // `mime` takes `application/` and reports an empty subtype
+    // rather than refusing it; `""` would read as a subtype.
+    if media_type.type_().as_str().is_empty() || media_type.subtype().as_str().is_empty() {
+        return None;
+    }
+    Some(match part {
+        MediaTypePart::Essence => media_type.essence_str().to_owned(),
+        MediaTypePart::Type => media_type.type_().as_str().to_owned(),
+        MediaTypePart::Subtype => media_type.subtype().as_str().to_owned(),
+        // Absent rather than empty: `application/json` has no suffix at all.
+        MediaTypePart::Suffix => media_type.suffix()?.as_str().to_owned(),
+    })
 }
 
 fn register_websocket_imports(linker: &mut Linker<HostState>) -> Result<()> {
@@ -966,4 +1036,159 @@ fn register_http_response_import(linker: &mut Linker<HostState>) -> Result<()> {
     )?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use bmc_wasm_protocol::MediaTypePart;
+
+    use super::{delivering_header, media_type_piece};
+    use crate::host_api::HostState;
+    use crate::runtime_limits::RuntimeResourceLimits;
+
+    fn part(raw: &str, part: MediaTypePart) -> Option<String> {
+        media_type_piece(raw, part)
+    }
+
+    fn subtype(raw: &str) -> Option<String> {
+        part(raw, MediaTypePart::Subtype)
+    }
+
+    fn suffix(raw: &str) -> Option<String> {
+        part(raw, MediaTypePart::Suffix)
+    }
+
+    /// The widget's own JSON gate, checked against the pieces it reads.
+    fn names_json(raw: &str) -> bool {
+        subtype(raw).as_deref() == Some("json") || suffix(raw).as_deref() == Some("json")
+    }
+
+    #[test]
+    fn splits_a_plain_media_type() {
+        assert_eq!(
+            part("application/json", MediaTypePart::Essence).as_deref(),
+            Some("application/json")
+        );
+        assert_eq!(
+            part("application/json", MediaTypePart::Type).as_deref(),
+            Some("application")
+        );
+        assert_eq!(subtype("application/json").as_deref(), Some("json"));
+        assert_eq!(
+            suffix("application/json"),
+            None,
+            "a subtype with no `+` has no suffix, which is not the same as an empty one"
+        );
+    }
+
+    #[test]
+    fn normalises_case_and_drops_parameters() {
+        assert_eq!(
+            part("Application/JSON; charset=utf-8", MediaTypePart::Essence).as_deref(),
+            Some("application/json"),
+            "the essence is the type alone, lowercased"
+        );
+        assert_eq!(subtype("APPLICATION/JSON").as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn reads_an_rfc_6839_suffix() {
+        assert_eq!(
+            subtype("application/vnd.api+json").as_deref(),
+            Some("vnd.api")
+        );
+        assert_eq!(suffix("application/vnd.api+json").as_deref(), Some("json"));
+    }
+
+    #[test]
+    fn only_a_media_type_that_names_json_passes() {
+        for raw in [
+            "application/json",
+            "Application/JSON; charset=utf-8",
+            "application/vnd.api+json",
+            "text/json",
+        ] {
+            assert!(names_json(raw), "{raw} names JSON");
+        }
+        for raw in [
+            "application/notjson",
+            "application/json-seq",
+            "text/html; profile=json",
+            "text/html",
+            "application/xml",
+        ] {
+            assert!(!names_json(raw), "{raw} does not name JSON");
+        }
+    }
+
+    #[test]
+    fn a_header_that_does_not_parse_yields_nothing() {
+        for raw in [
+            "",
+            "   ",
+            "json",
+            "application",
+            "application/",
+            "/json",
+            "application//json",
+            "application/json/extra",
+            "app lication/json",
+            "application/js on",
+            ";charset=utf-8",
+            "application/json; charset",
+        ] {
+            assert_eq!(subtype(raw), None, "{raw:?} must not parse to a subtype");
+            assert!(!names_json(raw), "{raw:?} must not read as JSON");
+        }
+    }
+
+    #[test]
+    fn a_header_is_found_whatever_its_case() {
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+        );
+        let id = bmc_wasm_protocol::FetchRequestId::from_wire(1).expect("BUG: 1 is a valid id");
+        state.delivering_fetch_headers = Some((
+            id,
+            vec![("content-type".to_owned(), "application/json".to_owned())],
+        ));
+
+        for name in ["content-type", "Content-Type", "CONTENT-TYPE"] {
+            assert_eq!(
+                delivering_header(&state, id, name).as_deref(),
+                Some("application/json"),
+                "{name} must find the header RFC 9110 says is the same one"
+            );
+        }
+        assert_eq!(delivering_header(&state, id, "retry-after"), None);
+    }
+
+    #[test]
+    fn another_requests_headers_are_never_returned() {
+        let mut state = HostState::new(
+            RuntimeResourceLimits::default(),
+            chrono::Local::now().fixed_offset(),
+        );
+        let delivering =
+            bmc_wasm_protocol::FetchRequestId::from_wire(1).expect("BUG: 1 is a valid id");
+        let other = bmc_wasm_protocol::FetchRequestId::from_wire(2).expect("BUG: 2 is a valid id");
+        state.delivering_fetch_headers = Some((
+            delivering,
+            vec![("content-type".to_owned(), "application/json".to_owned())],
+        ));
+
+        assert_eq!(
+            delivering_header(&state, other, "content-type"),
+            None,
+            "a stashed id must not read the response being delivered now"
+        );
+
+        state.delivering_fetch_headers = None;
+        assert_eq!(
+            delivering_header(&state, delivering, "content-type"),
+            None,
+            "headers are unreadable once delivery has moved on"
+        );
+    }
 }

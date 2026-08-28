@@ -50,7 +50,7 @@ pub use arc::*;
 pub use assets::*;
 pub use colors::*;
 pub use display::{DisplayShape, ViewportShape};
-pub use fetch::FetchOutcome;
+pub use fetch::{FetchOutcome, MediaTypePart};
 pub use fill::*;
 pub use ids::*;
 pub use image_meta::{decode_image_meta, encode_image_meta};

@@ -100,9 +100,49 @@ impl FetchOutcome {
     }
 }
 
+/// Which piece of a parsed `Content-Type` a widget is asking for.
+///
+/// The host parses once and answers in pieces,
+/// so a widget never carries a second parser to disagree with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MediaTypePart {
+    /// `type/subtype`, lowercased and without parameters.
+    Essence,
+    Type,
+    Subtype,
+    /// RFC 6839's structured syntax, what follows the subtype's last `+`:
+    /// `json` in `application/vnd.api+json`.
+    Suffix,
+}
+
+impl MediaTypePart {
+    #[must_use]
+    pub const fn to_wire(self) -> u32 {
+        match self {
+            Self::Essence => 0,
+            Self::Type => 1,
+            Self::Subtype => 2,
+            Self::Suffix => 3,
+        }
+    }
+
+    /// `None` for a part this build has no meaning for, so a newer widget
+    /// asks for nothing rather than the wrong piece.
+    #[must_use]
+    pub const fn from_wire(raw: u32) -> Option<Self> {
+        match raw {
+            0 => Some(Self::Essence),
+            1 => Some(Self::Type),
+            2 => Some(Self::Subtype),
+            3 => Some(Self::Suffix),
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FetchOutcome, HOST_OUTCOME_BASE};
+    use super::{FetchOutcome, HOST_OUTCOME_BASE, MediaTypePart};
 
     #[test]
     fn round_trips_every_outcome() {
@@ -162,5 +202,25 @@ mod tests {
         assert!(!FetchOutcome::Http(404).is_ok());
         assert!(!FetchOutcome::Network.is_ok());
         assert!(!FetchOutcome::BodyTooLarge.is_ok());
+    }
+
+    #[test]
+    fn round_trips_every_media_type_part() {
+        for part in [
+            MediaTypePart::Essence,
+            MediaTypePart::Type,
+            MediaTypePart::Subtype,
+            MediaTypePart::Suffix,
+        ] {
+            assert_eq!(MediaTypePart::from_wire(part.to_wire()), Some(part));
+        }
+    }
+
+    /// The probe is the slot the next part would take,
+    /// so claiming it means updating this.
+    #[test]
+    fn unknown_media_type_parts_decode_to_none() {
+        assert_eq!(MediaTypePart::from_wire(4), None);
+        assert_eq!(MediaTypePart::from_wire(u32::MAX), None);
     }
 }

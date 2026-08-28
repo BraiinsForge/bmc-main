@@ -57,7 +57,7 @@ use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::time::Duration;
 
-use bmc_wasm_protocol::{FetchOutcome, FetchRequestId};
+use bmc_wasm_protocol::{FetchOutcome, FetchRequestId, MediaTypePart};
 
 #[cfg(target_arch = "wasm32")]
 use crate::json::JsonDoc;
@@ -69,13 +69,18 @@ use crate::json::JsonDoc;
 pub const DEFAULT_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Response from an HTTP fetch request.
+///
+/// Headers are not carried in here: the host holds them for this
+/// callback's span, and [`header`] and [`media_type`] read them on demand.
+///
+/// [`header`]: FetchResponse::header
+/// [`media_type`]: FetchResponse::media_type
 #[derive(Debug)]
 pub struct FetchResponse {
     /// Raw wire status. Prefer [`FetchResponse::outcome`], which types it.
     pub status: u32,
     /// Request ID returned by [`FetchRequest::send`], for correlating responses.
     pub request_id: FetchRequestId,
-    content_type: Option<String>,
     body: FetchResponseBody,
 }
 
@@ -118,11 +123,39 @@ impl FetchResponse {
         FetchOutcome::from_wire(self.status)
     }
 
-    /// The origin's `Content-Type`, absent when it sent none — or when
-    /// the outcome was the host's own rather than an origin's answer.
+    /// One of the origin's headers, by name, matched case-insensitively.
+    /// Absent for every outcome the host decided itself.
+    ///
+    /// Readable only while this response's own callback runs.
     #[must_use]
-    pub fn content_type(&self) -> Option<&str> {
-        self.content_type.as_deref()
+    pub fn header(&self, name: &str) -> Option<String> {
+        read_host_string(|ptr, cap| unsafe {
+            host_fetch_header(
+                self.request_id.to_wire(),
+                name.as_ptr(),
+                buffer_len(name.len()),
+                ptr,
+                cap,
+            )
+        })
+    }
+
+    /// The origin's `Content-Type`, verbatim.
+    /// Ask [`media_type`] when the question is what the type *means*.
+    ///
+    /// [`media_type`]: FetchResponse::media_type
+    #[must_use]
+    pub fn content_type(&self) -> Option<String> {
+        self.header("content-type")
+    }
+
+    /// One piece of the `Content-Type`, parsed host-side. Absent when the
+    /// header is missing, unparsable, or carries no such piece.
+    #[must_use]
+    pub fn media_type(&self, part: MediaTypePart) -> Option<String> {
+        read_host_string(|ptr, cap| unsafe {
+            host_fetch_media_type(self.request_id.to_wire(), part.to_wire(), ptr, cap)
+        })
     }
 
     /// Response body as bytes, or an empty slice when [`Self::body_ref`] owns it.
@@ -205,7 +238,14 @@ unsafe extern "C" {
     ) -> u32;
     fn host_fetch_cancel(request_id: u32) -> u32;
     fn host_fetch_response_body_ref(request_id: u32) -> u32;
-    fn host_fetch_content_type(request_id: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
+    fn host_fetch_header(
+        request_id: u32,
+        name_ptr: *const u8,
+        name_len: u32,
+        out_ptr: *mut u8,
+        out_cap: u32,
+    ) -> i32;
+    fn host_fetch_media_type(request_id: u32, part: u32, out_ptr: *mut u8, out_cap: u32) -> i32;
 }
 
 type Callback = fn(&FetchResponse);
@@ -483,28 +523,28 @@ fn optional_bytes_raw(b: Option<&[u8]>) -> (*const u8, u32) {
     }
 }
 
-/// The delivered response's `Content-Type`, readable only
-/// while its own `__on_fetch_response` runs.
-fn read_content_type(request_id: FetchRequestId) -> Option<String> {
-    let mut buf = vec![0_u8; 128];
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "buffer lengths fit u32 on wasm32"
-    )]
-    let actual = unsafe {
-        host_fetch_content_type(request_id.to_wire(), buf.as_mut_ptr(), buf.len() as u32)
-    };
-    let actual = usize::try_from(actual).ok()?;
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "buffer lengths fit u32 on wasm32"
+)]
+fn buffer_len(len: usize) -> u32 {
+    len as u32
+}
+
+/// Guessing wrong costs one extra host call;
+/// a `Content-Type` never needs it.
+const HEADER_READ_HINT: usize = 128;
+
+/// Read a host-written string through `call`, which reports the full byte
+/// length whatever buffer it got, and a negative value for one it lacks.
+///
+/// A value that changed length between the calls is dropped, not truncated.
+fn read_host_string(mut call: impl FnMut(*mut u8, u32) -> i32) -> Option<String> {
+    let mut buf = vec![0_u8; HEADER_READ_HINT];
+    let actual = usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()?;
     if actual > buf.len() {
         buf = vec![0_u8; actual];
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "buffer lengths fit u32 on wasm32"
-        )]
-        let again = unsafe {
-            host_fetch_content_type(request_id.to_wire(), buf.as_mut_ptr(), buf.len() as u32)
-        };
-        if usize::try_from(again).ok()? != actual {
+        if usize::try_from(call(buf.as_mut_ptr(), buffer_len(buf.len()))).ok()? != actual {
             return None;
         }
     }
@@ -544,7 +584,6 @@ pub extern "C" fn __on_fetch_response(request_id: u32, status: u32, body_ptr: u3
     let response = FetchResponse {
         status,
         request_id,
-        content_type: read_content_type(request_id),
         body,
     };
 
@@ -566,7 +605,6 @@ mod tests {
         FetchResponse {
             status: 200,
             request_id: FetchRequestId::from_wire(1).expect("BUG: one is a valid request ID"),
-            content_type: None,
             body,
         }
     }

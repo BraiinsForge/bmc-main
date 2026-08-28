@@ -171,8 +171,9 @@ pub enum FetchCompletionContext {
 pub struct CompletedFetch {
     pub request_id: FetchRequestId,
     pub status: u32,
-    /// Absent for every host-decided outcome.
-    pub content_type: Option<String>,
+    /// The origin's own headers, lowercased.
+    /// Empty for a host-decided outcome: no origin answered.
+    pub headers: Vec<(String, String)>,
     pub body: Vec<u8>,
     pub context: FetchCompletionContext,
 }
@@ -262,7 +263,7 @@ impl FetchState {
             let key = self.in_flight.remove(&response.request_id);
             if self.cancelled.remove(&response.request_id) {
                 response.status = FetchOutcome::Aborted.to_wire();
-                response.content_type = None;
+                response.headers.clear();
                 response.body.clear();
             }
             settled.push(SettledFetch { key, response });
@@ -373,7 +374,7 @@ pub struct CompletedImageDecode {
 
 impl CompletedFetch {
     /// An outcome the host decided without hearing the origin out,
-    /// so it carries no content type.
+    /// so it carries no headers.
     pub(crate) fn host_decided(
         request_id: FetchRequestId,
         status: u32,
@@ -383,7 +384,7 @@ impl CompletedFetch {
         Self {
             request_id,
             status,
-            content_type: None,
+            headers: Vec::new(),
             body,
             context,
         }
@@ -395,7 +396,7 @@ impl CompletedFetch {
             request_id: bmc_wasm_protocol::FetchRequestId::from_wire(1)
                 .expect("BUG: 1 is non-zero so from_wire returns Some"),
             status: bmc_wasm_protocol::FetchOutcome::Network.to_wire(),
-            content_type: None,
+            headers: Vec::new(),
             body: Vec::new(),
             context: FetchCompletionContext::Normal,
         }
@@ -1075,9 +1076,9 @@ pub(crate) struct HostState {
 
     pub(crate) fetch_log_limiter: FetchLogLimiter,
 
-    /// The content type of the response being delivered right now,
-    /// held only for the span of its `__on_fetch_response` call.
-    pub(crate) delivering_fetch_content_type: Option<(FetchRequestId, String)>,
+    /// Headers of the response being delivered right now, held only for its
+    /// `__on_fetch_response` call — the one window a widget can read them in.
+    pub(crate) delivering_fetch_headers: Option<(FetchRequestId, Vec<(String, String)>)>,
 
     #[cfg(feature = "testing")]
     pub(crate) fetch_log_probe: FetchLogProbe,
@@ -1395,7 +1396,7 @@ impl HostState {
             hermetic: None,
             fetch_observer: None,
             fetch_log_limiter: FetchLogLimiter::default(),
-            delivering_fetch_content_type: None,
+            delivering_fetch_headers: None,
             #[cfg(feature = "testing")]
             fetch_log_probe: FetchLogProbe::default(),
             fetch_agent: crate::runtime::build_fetch_agent(),
@@ -1747,7 +1748,7 @@ mod tests {
                 .send(CompletedFetch {
                     request_id,
                     status: FetchOutcome::Http(200).to_wire(),
-                    content_type: Some("application/json".to_owned()),
+                    headers: vec![("content-type".to_owned(), "application/json".to_owned())],
                     body: b"{}".to_vec(),
                     context: FetchCompletionContext::Normal,
                 })
@@ -1772,9 +1773,9 @@ mod tests {
             Some(FetchOutcome::Aborted)
         );
         assert!(aborted.response.body.is_empty());
-        assert_eq!(
-            aborted.response.content_type, None,
-            "an abort must not carry the origin's content type"
+        assert!(
+            aborted.response.headers.is_empty(),
+            "an abort must not carry the origin's headers"
         );
     }
 

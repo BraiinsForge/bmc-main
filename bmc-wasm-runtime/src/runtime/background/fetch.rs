@@ -30,8 +30,18 @@ use ureq::Agent;
 /// The value is arbitrary; nothing measured it.
 const MAX_FETCH_BODY_BYTES: u64 = 10 * 1024 * 1024;
 
+/// Cap on the response headers kept for a widget to read.
+/// A few hundred bytes is normal; the cap bounds a hostile origin.
+const MAX_FETCH_HEADER_BYTES: usize = 8 * 1_024;
+
 pub(crate) fn build_fetch_agent() -> Agent {
-    Agent::config_builder().build().into()
+    // A 4xx or 5xx is an answer, not a transport failure.
+    // ureq would hand it back as an error carrying only the status,
+    // dropping the headers and body the origin sent with it.
+    Agent::config_builder()
+        .http_status_as_error(false)
+        .build()
+        .into()
 }
 
 /// Whether a request may follow redirects.
@@ -57,10 +67,39 @@ impl Redirects {
 pub(in crate::runtime) struct FetchedReply {
     /// A [`FetchOutcome`] wire value.
     pub status: u32,
-    pub content_type: Option<String>,
+    /// Names arrive lowercased from `http`, so a lookup compares directly.
+    pub headers: Vec<(String, String)>,
     /// For host-decided outcomes this carries a reason string instead,
     /// empty when the origin never answered.
     pub body: Vec<u8>,
+}
+
+/// The origin's headers, bounded by [`MAX_FETCH_HEADER_BYTES`].
+/// A value that is not valid text is skipped: a mangled header
+/// is worse to compare against than none.
+fn kept_headers(headers: &ureq::http::HeaderMap) -> Vec<(String, String)> {
+    let mut kept = Vec::new();
+    let mut budget = MAX_FETCH_HEADER_BYTES;
+    let mut skipped = 0_usize;
+    for (name, value) in headers {
+        let Ok(value) = value.to_str() else { continue };
+        // Skipped, not stopped at: a fat header early would otherwise cost
+        // every later one, and `Content-Type` has no fixed place.
+        let Some(left) = budget.checked_sub(name.as_str().len() + value.len()) else {
+            skipped += 1;
+            continue;
+        };
+        budget = left;
+        kept.push((name.as_str().to_owned(), value.to_owned()));
+    }
+    if skipped > 0 {
+        tracing::warn!(
+            skipped,
+            cap = MAX_FETCH_HEADER_BYTES,
+            "response headers dropped: the origin sent more than the cap"
+        );
+    }
+    kept
 }
 
 /// Perform an HTTP request.
@@ -120,22 +159,18 @@ pub(in crate::runtime) fn do_fetch(
     };
     let failed = |status: FetchOutcome, body: Vec<u8>| FetchedReply {
         status: status.to_wire(),
-        content_type: None,
+        headers: Vec::new(),
         body,
     };
     match result {
         Ok(response) => {
             let status = FetchOutcome::Http(response.status().as_u16()).to_wire();
-            let content_type = response
-                .headers()
-                .get(ureq::http::header::CONTENT_TYPE)
-                .and_then(|value| value.to_str().ok())
-                .map(str::to_owned);
+            let headers = kept_headers(response.headers());
             let mut body = response.into_body();
             match body.with_config().limit(MAX_FETCH_BODY_BYTES).read_to_vec() {
                 Ok(body) => FetchedReply {
                     status,
-                    content_type,
+                    headers,
                     body,
                 },
                 Err(ureq::Error::BodyExceedsLimit(limit)) => failed(
@@ -148,6 +183,8 @@ pub(in crate::runtime) fn do_fetch(
                 ),
             }
         }
+        // Unreachable while the agent keeps `http_status_as_error` off.
+        // A status that did arrive must not read as a transport failure.
         Err(ureq::Error::StatusCode(code)) => failed(FetchOutcome::Http(code), Vec::new()),
         Err(_) => failed(FetchOutcome::Network, Vec::new()),
     }
@@ -155,13 +192,17 @@ pub(in crate::runtime) fn do_fetch(
 
 #[cfg(test)]
 mod tests {
+    use std::fmt::Write as _;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::time::{Duration, Instant};
 
     use bmc_wasm_protocol::FetchOutcome;
 
-    use super::{MAX_FETCH_BODY_BYTES, Redirects, build_fetch_agent, do_fetch};
+    use super::{
+        FetchedReply, MAX_FETCH_BODY_BYTES, MAX_FETCH_HEADER_BYTES, Redirects, build_fetch_agent,
+        do_fetch,
+    };
 
     #[test]
     fn per_call_timeout_trips_on_a_stalled_server() {
@@ -277,7 +318,118 @@ mod tests {
             FetchOutcome::from_wire(reply.status),
             Some(FetchOutcome::Http(200))
         );
-        assert_eq!(reply.content_type.as_deref(), Some("application/json"));
+        assert_eq!(
+            header(&reply, "content-type"),
+            Some("application/json"),
+            "the origin's own header must reach the reply"
+        );
         assert_eq!(reply.body, b"{}");
+    }
+
+    /// A refusal is an answer: its headers say why and for how long,
+    /// which a widget can only act on if they survive the trip.
+    #[test]
+    fn an_error_status_keeps_the_headers_and_body_it_answered_with() {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        let _serve = std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut buf = [0_u8; 1024];
+                let _ = sock.read(&mut buf);
+                // Each line ends in a literal `\r`, so the wire gets its CRLFs
+                // while the source reads as the response it is.
+                let _ = sock.write_all(
+                    indoc::indoc! {"
+                        HTTP/1.1 503 Service Unavailable\r
+                        Content-Type: application/json\r
+                        Retry-After: 120\r
+                        Content-Length: 14\r
+                        \r
+                        {\"warming\":1}
+                    "}
+                    .as_bytes(),
+                );
+            }
+        });
+
+        let agent = build_fetch_agent();
+        let url = format!("http://{addr}/");
+        let reply = do_fetch(
+            &agent,
+            "GET",
+            &url,
+            &[],
+            None,
+            Duration::from_secs(5),
+            Redirects::Follow,
+        );
+
+        assert_eq!(
+            FetchOutcome::from_wire(reply.status),
+            Some(FetchOutcome::Http(503))
+        );
+        assert_eq!(header(&reply, "retry-after"), Some("120"));
+        assert_eq!(header(&reply, "content-type"), Some("application/json"));
+        assert_eq!(
+            reply.body, b"{\"warming\":1}\n",
+            "an error's body is the origin's explanation, not something to drop"
+        );
+    }
+
+    #[test]
+    fn a_header_past_the_cap_does_not_cost_the_ones_after_it() {
+        let filler = "x".repeat(1_000);
+        let listener = TcpListener::bind("127.0.0.1:0").expect("BUG: bind loopback");
+        let addr = listener.local_addr().expect("BUG: local addr");
+        // `Content-Type` sits last, behind more filler than the cap allows:
+        // exhausting the budget must not decide whether it arrives.
+        let _serve = std::thread::spawn(move || {
+            if let Ok((mut sock, _)) = listener.accept() {
+                let mut buf = [0_u8; 1024];
+                let _ = sock.read(&mut buf);
+                let mut reply = String::from("HTTP/1.1 200 OK\r\n");
+                for i in 0..16 {
+                    let _ = writeln!(reply, "X-Filler-{i}: {filler}\r");
+                }
+                reply.push_str("Content-Type: application/json\r\n");
+                reply.push_str("Content-Length: 2\r\n\r\n{}");
+                let _ = sock.write_all(reply.as_bytes());
+            }
+        });
+
+        let agent = build_fetch_agent();
+        let url = format!("http://{addr}/");
+        let reply = do_fetch(
+            &agent,
+            "GET",
+            &url,
+            &[],
+            None,
+            Duration::from_secs(5),
+            Redirects::Follow,
+        );
+
+        let kept: usize = reply
+            .headers
+            .iter()
+            .map(|(name, value)| name.len() + value.len())
+            .sum();
+        assert!(
+            kept <= MAX_FETCH_HEADER_BYTES,
+            "kept {kept} bytes of headers, over the {MAX_FETCH_HEADER_BYTES} cap"
+        );
+        assert_eq!(
+            header(&reply, "content-type"),
+            Some("application/json"),
+            "a header small enough to fit must land however late it arrives"
+        );
+    }
+
+    fn header<'a>(reply: &'a FetchedReply, name: &str) -> Option<&'a str> {
+        reply
+            .headers
+            .iter()
+            .find(|(k, _)| k == name)
+            .map(|(_, v)| v.as_str())
     }
 }

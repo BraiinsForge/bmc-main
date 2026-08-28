@@ -48,6 +48,7 @@ taffy.workspace = true
 # Network + JSON/XML (for host-side fetch and parsing)
 mdns-sd.workspace = true
 memmap2.workspace = true
+mime.workspace = true
 roxmltree.workspace = true
 rrule.workspace = true
 rustix.workspace = true

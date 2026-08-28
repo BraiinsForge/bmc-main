@@ -77,9 +77,13 @@ fn valid_reply(resource: Resource, response: &FetchResponse) -> Option<JsonDoc> 
         );
         return None;
     }
-    // Absent is tolerated; a captive portal's `text/html` is refused unread.
+    // Absent is tolerated; a captive portal's `text/html` and a header
+    // the host could not parse are not — neither names JSON.
     if let Some(content_type) = response.content_type()
-        && !media_type_names_json(content_type)
+        && !media_type_names_json(
+            response.media_type(MediaTypePart::Subtype).as_deref(),
+            response.media_type(MediaTypePart::Suffix).as_deref(),
+        )
     {
         log_warn!(
             "formula-1: {} answered as {}; keeping the last good data",

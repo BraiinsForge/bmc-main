@@ -1553,6 +1553,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "memmap2",
+ "mime",
  "notify",
  "owo-colors",
  "raw-window-handle",

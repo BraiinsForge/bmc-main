@@ -123,14 +123,14 @@ impl Resource {
     }
 }
 
-/// Whether the media type names JSON as the envelope — the plain type
-/// or an RFC 6839 `+json` suffix, in whatever casing RFC 9110 §8.3 allows.
+/// Whether a media type names JSON: the `json` subtype itself,
+/// or an RFC 6839 `+json` suffix.
+///
+/// Takes the host's parse, not the raw header — a second matcher here could
+/// disagree with it, and a body would be read that should not have been.
 #[must_use]
-pub fn media_type_names_json(content_type: &str) -> bool {
-    let media_type = content_type
-        .split_once(';')
-        .map_or(content_type, |(t, _)| t);
-    media_type.trim().to_ascii_lowercase().ends_with("json")
+pub fn media_type_names_json(subtype: Option<&str>, suffix: Option<&str>) -> bool {
+    subtype.is_some_and(|subtype| subtype == "json" || suffix == Some("json"))
 }
 
 /// Whether `view` reads `resource`,
@@ -415,29 +415,42 @@ mod tests {
         }
     }
 
+    /// Pieces as the host hands them over: `application/json` is the `json`
+    /// subtype unsuffixed, `application/vnd.api+json` is `vnd.api` plus `json`.
     #[test]
-    fn a_legally_cased_media_type_names_json() {
-        assert!(media_type_names_json("Application/JSON; charset=utf-8"));
+    fn the_json_subtype_and_the_json_suffix_both_name_json() {
+        assert!(media_type_names_json(Some("json"), None));
+        assert!(media_type_names_json(Some("vnd.api"), Some("json")));
         assert!(
-            media_type_names_json("Application/JSON ; charset=utf-8"),
-            "a parameter may be spaced off the type it follows"
+            media_type_names_json(Some("json"), Some("json")),
+            "a suffixed json subtype is still json"
         );
     }
 
     #[test]
-    fn a_json_suffix_names_json() {
-        assert!(media_type_names_json("application/vnd.api+json"));
-    }
-
-    #[test]
-    fn a_type_merely_containing_json_does_not() {
+    fn a_subtype_merely_containing_json_does_not() {
         assert!(
-            !media_type_names_json("application/json-seq"),
+            !media_type_names_json(Some("json-seq"), None),
             "a JSON sequence is not one JSON document"
         );
         assert!(
-            !media_type_names_json("text/html; profile=json"),
-            "json in a parameter names nothing"
+            !media_type_names_json(Some("notjson"), None),
+            "a subtype ending in the letters is not the subtype"
+        );
+        assert!(
+            !media_type_names_json(Some("html"), None),
+            "json in a parameter never reaches the subtype"
+        );
+    }
+
+    /// A header the host could not parse arrives as no pieces at all, and must
+    /// read as "not JSON" rather than as "no opinion".
+    #[test]
+    fn an_unparsable_media_type_names_nothing() {
+        assert!(!media_type_names_json(None, None));
+        assert!(
+            !media_type_names_json(None, Some("json")),
+            "a suffix without a subtype is not a media type this trusts"
         );
     }
 }
