@@ -33,10 +33,8 @@ factory-reset device can be set up from a phone without knowing anything about i
 > As a user, I want to re-run Wi-Fi setup from the device so that I can move the Deck to another network without the web
 > UI.
 
-- Starting Wi-Fi setup again from the settings tray shows the same setup screens as a first boot.
-- The screens step aside after eight minutes without progress, so a device that is otherwise working goes back to its
-  scenes instead of sitting on a setup screen.
-- Starting the setup again from the tray brings the screens straight back.
+- Starting Wi-Fi setup again from the settings tray shows the same setup screens as a first boot, and they stay up the
+  same way: the device keeps showing its setup network until the new credentials arrive.
 - On success the device returns to its scenes directly, since it was already configured before.
 
 ### Understand a setup that cannot continue

@@ -49,9 +49,6 @@ const SUCCESS_VISIBLE_FOR: Duration = Duration::from_secs(10);
 const FAILURE_VISIBLE_FOR: Duration = Duration::from_secs(5);
 /// How long an operational boot waits for an IP before showing failure.
 const WAIT_FOR_IP: Duration = Duration::from_secs(20);
-/// Reconfiguration AP screen auto-hide; the AP stays up (legacy
-/// `WIFI_RECONFIG_TIMEOUT`). A later setup event revives the flow.
-const RECONFIG_SCREEN_TIMEOUT: Duration = Duration::from_mins(8);
 /// How long an unresolved setup failure holds a device that has scenes behind
 /// it. Long enough to read and act on, and no longer:
 /// the tray also shows a setup AP that is still up,
@@ -104,9 +101,7 @@ impl Mode {
 enum Screen {
     /// Lifecycle unknown yet — stay unmapped rather than guess a flow.
     Hidden,
-    SetupStart {
-        since: Instant,
-    },
+    SetupStart,
     SetupConnecting,
     /// `to_scenes` distinguishes the reconfiguration success (straight back to scenes)
     /// from first-boot success (on to the setup connect-info).
@@ -166,7 +161,7 @@ impl Screen {
     fn setup_in_progress(self) -> bool {
         matches!(
             self,
-            Screen::SetupStart { .. }
+            Screen::SetupStart
                 | Screen::SetupConnecting
                 | Screen::SetupConnected { .. }
                 | Screen::SetupConnectInfo { .. }
@@ -188,17 +183,6 @@ impl Screen {
 /// screen and whether it changed.
 fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) -> (Screen, bool) {
     let next = match screen {
-        Screen::SetupStart { since } => {
-            // Only the reconfiguration entry times out;
-            // a first boot has no scenes worth returning to.
-            if mode == Mode::WifiReconfiguration
-                && now.duration_since(since) >= RECONFIG_SCREEN_TIMEOUT
-            {
-                Screen::Done
-            } else {
-                screen
-            }
-        }
         Screen::SetupConnecting => {
             // Only a SetupPending boot self-advances on the address: in AP
             // mode the join outcome arrives as an explicit setup event.
@@ -228,7 +212,7 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         }
         Screen::SetupError { since } => {
             if now.duration_since(since) >= HOLD {
-                Screen::SetupStart { since: now }
+                Screen::SetupStart
             } else {
                 screen
             }
@@ -277,7 +261,7 @@ fn step(screen: Screen, mode: Mode, now: Instant, station_ip: Option<Ipv4Addr>) 
         } if mode.has_fallback() && now.duration_since(since) >= FATAL_SCREEN_TIMEOUT => {
             Screen::Done
         }
-        Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => screen,
+        Screen::Hidden | Screen::SetupStart | Screen::SetupFatal { .. } | Screen::Done => screen,
     };
     let changed = next != screen;
     (next, changed)
@@ -303,8 +287,6 @@ enum NextWake {
 /// `None` when only external events can move it.
 fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
     match screen {
-        Screen::SetupStart { since } => (mode == Mode::WifiReconfiguration)
-            .then_some(NextWake::At(since + RECONFIG_SCREEN_TIMEOUT)),
         Screen::SetupConnecting => (mode == Mode::SetupPending).then_some(NextWake::Poll),
         Screen::SetupConnected { since, .. }
         | Screen::SetupCompleted { since }
@@ -321,7 +303,7 @@ fn next_deadline(screen: Screen, mode: Mode) -> Option<NextWake> {
         } => mode
             .has_fallback()
             .then_some(NextWake::At(since + FATAL_SCREEN_TIMEOUT)),
-        Screen::Hidden | Screen::SetupFatal { .. } | Screen::Done => None,
+        Screen::Hidden | Screen::SetupStart | Screen::SetupFatal { .. } | Screen::Done => None,
     }
 }
 
@@ -405,7 +387,7 @@ impl DeviceInfoOverlay {
     fn view(&self) -> DeviceInfoView {
         match self.screen {
             Screen::Hidden | Screen::Done => DeviceInfoView::Done,
-            Screen::SetupStart { .. } => DeviceInfoView::SetupStart {
+            Screen::SetupStart => DeviceInfoView::SetupStart {
                 ap: self.ap.clone(),
             },
             Screen::SetupConnecting => DeviceInfoView::SetupConnecting {
@@ -487,9 +469,7 @@ impl SystemOverlay for DeviceInfoOverlay {
         match self.mode {
             Mode::FactoryDefault | Mode::WifiReconfiguration => {
                 if !self.screen.setup_in_progress() {
-                    self.screen = Screen::SetupStart {
-                        since: Instant::now(),
-                    };
+                    self.screen = Screen::SetupStart;
                 }
             }
             Mode::SetupPending => {
@@ -720,7 +700,7 @@ mod tests {
         // the device really is waiting in setup right now.
         let mut overlay = overlay_with_ip(None);
         overlay.on_device_state(DeviceState::FactoryDefault, true);
-        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+        assert!(matches!(overlay.screen, Screen::SetupStart));
 
         let mut pending = overlay_with_ip(Some(Ipv4Addr::new(10, 0, 0, 5)));
         pending.on_device_state(DeviceState::SetupPending, true);
@@ -848,7 +828,7 @@ mod tests {
         overlay.on_setup_progress(SetupStep::WifiConnectionFailed, "");
         let start = t0();
         let _ = overlay.tick(start + HOLD);
-        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+        assert!(matches!(overlay.screen, Screen::SetupStart));
     }
 
     #[test]
@@ -871,22 +851,21 @@ mod tests {
     }
 
     #[test]
-    fn reconfig_setup_start_times_out_but_events_revive_it() {
-        let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::WifiReconfiguration, false);
-        let _ = overlay.tick(t0() + RECONFIG_SCREEN_TIMEOUT);
-        assert_eq!(overlay.screen, Screen::Done, "AP screen auto-hides");
-
-        overlay.on_setup_progress(SetupStep::ConnectingToWifi, "HomeNet");
-        assert_eq!(overlay.screen, Screen::SetupConnecting, "late join revives");
-    }
-
-    #[test]
-    fn first_boot_setup_start_never_times_out() {
-        let mut overlay = overlay_with_ip(None);
-        overlay.on_device_state(DeviceState::FactoryDefault, false);
-        let _ = overlay.tick(t0() + RECONFIG_SCREEN_TIMEOUT + HOLD);
-        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+    fn setup_start_never_times_out() {
+        for state in [
+            DeviceState::FactoryDefault,
+            DeviceState::WifiReconfiguration,
+        ] {
+            let mut overlay = overlay_with_ip(None);
+            overlay.on_device_state(state, false);
+            let tick = overlay.tick(t0() + Duration::from_hours(1));
+            assert_eq!(overlay.screen, Screen::SetupStart, "{state:?}");
+            assert!(tick.visible, "{state:?}");
+            assert_eq!(
+                tick.next_wake, None,
+                "{state:?}: only a setup event moves it"
+            );
+        }
     }
 
     #[test]
@@ -933,7 +912,7 @@ mod tests {
         overlay.on_setup_progress(SetupStep::UnexpectedError { restarting: false }, "");
 
         overlay.on_device_state(DeviceState::WifiReconfiguration, false);
-        assert!(matches!(overlay.screen, Screen::SetupStart { .. }));
+        assert!(matches!(overlay.screen, Screen::SetupStart));
     }
 
     #[test]
@@ -1104,7 +1083,7 @@ mod tests {
         overlay.on_device_state(DeviceState::FactoryDefault, false);
         overlay.on_upgrade_state(succeeded(UpgradeKind::Packages, Duration::from_secs(3)));
         assert!(
-            matches!(overlay.screen, Screen::SetupStart { .. }),
+            matches!(overlay.screen, Screen::SetupStart),
             "a package restart must not skip the setup screens"
         );
     }
