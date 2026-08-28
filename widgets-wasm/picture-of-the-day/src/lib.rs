@@ -260,7 +260,10 @@ mod wasm_glue {
                 request_frame();
             }
         } else {
-            dispatch(Event::TargetChanged);
+            // Superseded, not wrong: a picture already on screen keeps its place
+            // until the new one decodes, so a publication we cannot fetch
+            // does not cost the reader the one they already had.
+            dispatch(Event::TargetSuperseded);
         }
     }
 

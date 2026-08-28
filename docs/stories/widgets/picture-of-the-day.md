@@ -44,13 +44,16 @@ names a date it is not already showing.
 - While the feed cannot be reached the picture stays up untouched, with nothing drawn over it, and the checks resume on
   their own every thirty seconds. So a Deck that started before its network reaches the first picture shortly after the
   network comes up, rather than waiting out a full check.
-- When the date does move, the widget clears to *Loading image* for the few seconds the new picture takes to download
-  and decode, then shows it. Holding the old picture under an *Updating* overlay across that gap is not implemented yet.
-  A download that fails leaves *Failed to load image* on screen and retries — after five minutes if it reached nothing,
-  at the next feed check if what arrived was a broken picture.
+- When the date does move, the picture already on screen stays up under an *Updating* overlay while the new one is
+  downloaded and decoded, and is replaced only once the new one is ready. So a publication the Deck cannot reach costs
+  the reader nothing: they keep the picture they had, tagged *Last refresh N ago* once it is more than a day and a half
+  old, and a picture that arrives broken says so over the old one rather than instead of it. The download retries after
+  five minutes if it reached nothing, at the next feed check if what arrived was unusable.
+- *Loading image* and *Failed to load image* are reachable only when there is no picture to keep: a first run, or a
+  cache that could not be restored.
+- Changing *Source* is the one case that does clear the screen, because the picture shown is then from the wrong feed.
 - Tapping the picture reveals a menu with *Reload*, which re-checks the feed and re-downloads immediately. The current
-  picture stays up under an *Updating* overlay while that runs, and a reload that cannot reach the feed leaves it in
-  place, tagged *Last refresh N ago* once the picture on screen is more than a day and a half old.
+  picture stays up under *Updating* while that runs.
 
 ## Constraints
 

@@ -27,10 +27,25 @@
 use bmc_wasm_sdk::{BitmapId, ImageJobId};
 
 /// An in-flight host decode; its completion is matched by `job`.
+///
+/// `superseded` marks one the widget has already asked to replace.
+/// It stays tracked all the same: the bitmap id names a slot, not a snapshot,
+/// so these pixels reach the shown picture whether the view wants them or not,
+/// and its aspect has to arrive with them.
 #[derive(Clone, Copy)]
 pub struct Decode {
     pub job: ImageJobId,
     pub aspect: f32,
+    pub superseded: bool,
+}
+
+impl Decode {
+    fn supersede(self) -> Self {
+        Self {
+            superseded: true,
+            ..self
+        }
+    }
 }
 
 /// Overlay badge on a shown picture.
@@ -103,9 +118,13 @@ pub enum Event {
         kind: ErrorKind,
         transient: bool,
     },
-    /// The widget should now be showing a different picture:
-    /// an edited URL or sizing, or a fresh publication date.
+    /// The widget was asked for a different picture — an edited URL or sizing.
+    /// What is on screen is no longer what was asked for, so it goes.
     TargetChanged,
+    /// The source published something newer.
+    /// What is on screen is still the picture that was asked for, only older,
+    /// so it stays up while the new one is fetched.
+    TargetSuperseded,
     Reload,
     Sleep,
 }
@@ -198,15 +217,20 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             ),
             other => (other, vec![]),
         },
-        // A new target drops the shown picture (Loading, not stale-over-wrong);
-        // evict stays out of here — it needs render scope (host import traps otherwise).
+        // A new target drops the shown picture (Loading, not stale-over-wrong).
+        // `TargetSuperseded` is the case that keeps it.
+        // Evict stays out of here — it needs render scope (host import traps otherwise).
         E::RestoreMiss | E::TargetChanged => (
             View::Loading { decode: None },
             vec![A::ResumePoll, A::RequestFrame],
         ),
         // A refresh of a shown picture keeps it and its badge; only the decode is tracked.
         E::DecodeStarted { job, aspect } => {
-            let decode = Some(Decode { job, aspect });
+            let decode = Some(Decode {
+                job,
+                aspect,
+                superseded: false,
+            });
             match view {
                 View::Shown {
                     bitmap,
@@ -233,15 +257,36 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
                 View::Shown {
                     bitmap,
                     aspect: d.aspect,
-                    badge: Badge::Fresh,
+                    // The refresh that superseded this decode is still coming.
+                    badge: if d.superseded {
+                        Badge::Updating
+                    } else {
+                        Badge::Fresh
+                    },
                     decode: None,
                 },
                 vec![A::RequestFrame],
             ),
-            // Superseded completion (e.g. after a target change) — ignore.
+            // A completion from before a target change — ignore.
             other => (other, vec![]),
         },
         E::DecodeFailed { job } => match view {
+            // A failed decode registers nothing, so the picture is untouched
+            // and the refresh that superseded it decides the badge.
+            View::Shown {
+                bitmap,
+                aspect,
+                badge,
+                decode: Some(d),
+            } if d.job == job && d.superseded => (
+                View::Shown {
+                    bitmap,
+                    aspect,
+                    badge,
+                    decode: None,
+                },
+                vec![],
+            ),
             View::Loading { decode: Some(d) } if d.job == job => {
                 (View::Failed(ErrorKind::BadImage), vec![A::RequestFrame])
             }
@@ -291,13 +336,20 @@ pub fn step(view: View, event: Event) -> (View, Vec<Action>) {
             _ if transient => (View::Failed(kind), vec![A::RequestFrame]),
             _ => (View::Failed(kind), vec![A::RequestFrame, A::DeferPoll]),
         },
-        E::Reload => match view {
-            View::Shown { bitmap, aspect, .. } => (
+        // Both fetch again over a picture that is still worth showing:
+        // a newer publication supersedes it, a reload re-asks for it.
+        E::Reload | E::TargetSuperseded => match view {
+            View::Shown {
+                bitmap,
+                aspect,
+                decode,
+                ..
+            } => (
                 View::Shown {
                     bitmap,
                     aspect,
                     badge: Badge::Updating,
-                    decode: None,
+                    decode: decode.map(Decode::supersede),
                 },
                 vec![A::ResumePoll, A::RequestFrame],
             ),
@@ -357,6 +409,13 @@ mod tests {
     fn bmp(n: u16) -> BitmapId {
         BitmapId::from_wire(n).expect("nonzero bitmap id")
     }
+    fn decode(n: u32, aspect: f32) -> Decode {
+        Decode {
+            job: job(n),
+            aspect,
+            superseded: false,
+        }
+    }
     fn shown(badge: Badge, decode: Option<Decode>) -> View {
         View::Shown {
             bitmap: bmp(1),
@@ -369,10 +428,7 @@ mod tests {
     #[test]
     fn decoded_matching_job_shows_image() {
         let v = View::Loading {
-            decode: Some(Decode {
-                job: job(1),
-                aspect: 1.5,
-            }),
+            decode: Some(decode(1, 1.5)),
         };
         let (next, actions) = step(
             v,
@@ -390,10 +446,7 @@ mod tests {
     #[test]
     fn decoded_stale_job_is_ignored() {
         let v = View::Loading {
-            decode: Some(Decode {
-                job: job(2),
-                aspect: 1.0,
-            }),
+            decode: Some(decode(2, 1.0)),
         };
         let (next, actions) = step(
             v,
@@ -408,13 +461,7 @@ mod tests {
 
     #[test]
     fn target_change_drops_in_flight_decode() {
-        let v = shown(
-            Badge::Fresh,
-            Some(Decode {
-                job: job(5),
-                aspect: 1.0,
-            }),
-        );
+        let v = shown(Badge::Fresh, Some(decode(5, 1.0)));
         let (next, _) = step(v, Event::TargetChanged);
         assert!(matches!(next, View::Loading { decode: None }));
         // A late completion of the dropped job can no longer install.
@@ -500,13 +547,7 @@ mod tests {
 
     #[test]
     fn failed_refresh_flags_last_good_as_error() {
-        let v = shown(
-            Badge::Fresh,
-            Some(Decode {
-                job: job(1),
-                aspect: 1.0,
-            }),
-        );
+        let v = shown(Badge::Fresh, Some(decode(1, 1.0)));
         let (next, actions) = step(v, Event::DecodeFailed { job: job(1) });
         assert!(matches!(
             next,
@@ -550,6 +591,100 @@ mod tests {
         let (next, actions) = step(shown(Badge::Fresh, None), Event::TargetChanged);
         assert!(matches!(next, View::Loading { decode: None }));
         assert_eq!(actions, vec![Action::ResumePoll, Action::RequestFrame]);
+    }
+
+    #[test]
+    fn a_superseded_target_keeps_the_picture_a_changed_one_drops_it() {
+        let (superseded, actions) = step(shown(Badge::Fresh, None), Event::TargetSuperseded);
+        assert!(
+            matches!(
+                superseded,
+                View::Shown {
+                    badge: Badge::Updating,
+                    ..
+                }
+            ),
+            "a newer publication leaves the old picture up until the new one decodes"
+        );
+        assert!(actions.contains(&Action::ResumePoll));
+
+        let (changed, _) = step(shown(Badge::Fresh, None), Event::TargetChanged);
+        assert!(
+            matches!(changed, View::Loading { .. }),
+            "an edited target means the shown picture is not what was asked for"
+        );
+    }
+
+    #[test]
+    fn a_superseded_target_with_nothing_shown_loads() {
+        let (next, actions) = step(View::Loading { decode: None }, Event::TargetSuperseded);
+        assert!(matches!(next, View::Loading { decode: None }));
+        assert!(actions.contains(&Action::ResumePoll));
+    }
+
+    #[test]
+    fn a_superseded_target_keeps_tracking_its_in_flight_decode() {
+        let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
+        let (next, _) = step(v, Event::TargetSuperseded);
+        let (after, actions) = step(
+            next,
+            Event::Decoded {
+                job: job(5),
+                bitmap: bmp(9),
+            },
+        );
+        assert!(
+            matches!(after, View::Shown { bitmap, aspect, badge: Badge::Updating, .. }
+                if bitmap == bmp(9) && aspect == 2.0),
+            "the host gave the slot this decode's pixels, so its aspect comes too, \
+             and the publication that superseded it is still being fetched"
+        );
+        assert!(actions.contains(&Action::RequestFrame));
+    }
+
+    #[test]
+    fn a_reload_during_a_decode_takes_the_completion_and_keeps_updating() {
+        let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
+        let (next, _) = step(v, Event::Reload);
+        assert!(
+            matches!(next, View::Shown { decode: Some(d), .. } if d.job == job(5) && d.superseded),
+            "the decode the reload replaced is still running and still owns the slot"
+        );
+        let (after, _) = step(
+            next,
+            Event::Decoded {
+                job: job(5),
+                bitmap: bmp(9),
+            },
+        );
+        assert!(
+            matches!(after, View::Shown { bitmap, aspect, badge: Badge::Updating, decode: None }
+                if bitmap == bmp(9) && aspect == 2.0),
+            "aspect and pixels move together, and the pill stays up until the reload lands"
+        );
+    }
+
+    #[test]
+    fn a_superseded_decode_failing_leaves_the_picture_alone() {
+        let v = shown(Badge::Fresh, Some(decode(5, 2.0)));
+        let (next, _) = step(v, Event::Reload);
+        let (after, actions) = step(next, Event::DecodeFailed { job: job(5) });
+        assert!(
+            matches!(
+                after,
+                View::Shown {
+                    badge: Badge::Updating,
+                    decode: None,
+                    ..
+                }
+            ),
+            "nothing reached the slot, so the picture keeps its badge \
+             and the reload decides what happens next"
+        );
+        assert!(
+            actions.is_empty(),
+            "no repaint and no stale mark for a picture that never changed"
+        );
     }
 
     #[test]
