@@ -168,6 +168,7 @@ fn migration_fallbacks_match_the_shipped_manifests() {
     let nameday = load_wasm_manifest("nameday");
     let pool = load_wasm_manifest("braiins-pool");
     let bitcoin_mining_data = load_wasm_manifest("bitcoin-mining-data");
+    let picture = load_wasm_manifest("picture-of-the-day");
 
     assert_eq!(
         string_default(&clock, "numbers_font_style"),
@@ -196,6 +197,15 @@ fn migration_fallbacks_match_the_shipped_manifests() {
     assert_eq!(
         string_default(&nameday, "country"),
         expected.nameday_country
+    );
+    assert_eq!(string_default(&picture, "source"), expected.picture_source);
+    assert_eq!(
+        boolean_default(&picture, "show_title"),
+        expected.picture_show_title
+    );
+    assert!(
+        string_enum(&picture, "source").contains(expected.picture_source),
+        "the migration writes a source the picture manifest does not declare"
     );
 
     assert_eq!(

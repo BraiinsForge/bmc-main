@@ -29,9 +29,11 @@ typed credential instances. Every later schema bump adds one more step to the sa
   all of its widgets fit within the remaining capacity.
 - Each upgrade step translates the widgets it has an equivalent for and drops the rest. In the current v0 → v1 step that
   means the clock, block height, halving countdown, image, Braiins Pool, and ticker widgets keep their settings, plus
-  the Braiins Forge remote widgets that now have a WASM equivalent — weather, nameday, ISS position, random facts, and
-  SpaceX launch (matched by their URL to the WASM widget's ID). Their positions and user-configured settings carry over
-  and they work immediately.
+  the Braiins Forge remote widgets that now have a WASM equivalent — weather, nameday, ISS position, random facts,
+  SpaceX launch, and NASA picture of the day (matched by their URL to the WASM widget's ID). Their positions carry over
+  and they work immediately, and so do their settings wherever the WASM widget has somewhere to put them. Picture of the
+  day arrives on the default source with the title shown, because the legacy widget carried nothing the WASM widget
+  recognises; the SpaceX widget's seconds toggle drops for the same reason.
 - The Braiins Pool widget also keeps its account: the pool account it used is bound to the new widget's account slot, so
   the user never re-enters the API key. A legacy pool widget that had no account arrives unbound and shows its bind
   prompt.
@@ -42,7 +44,7 @@ typed credential instances. Every later schema bump adds one more step to the sa
   maps to the closest supported window (`24h` becomes `1d`, longer windows clamp to `1mo`). An unusable period, or a
   symbol list with no usable entry at all, falls back to the shipped manifest default rather than dropping the widget.
 - Any widget the step has no mapping for is dropped, with a `warn!` line naming the unsupported kind or URL. For v0 → v1
-  this includes the blockchain-data widget and the remote Formula 1, NASA picture of the day, and debug widgets, none of
-  which have a WASM counterpart. Dropped widgets are not preserved as empty placeholders.
+  this includes the blockchain-data widget and the remote Formula 1 and debug widgets, none of which have a WASM
+  counterpart. Dropped widgets are not preserved as empty placeholders.
 - Saved accounts survive too. The version `1` → `2` step migrates a Braiins Pool account to the typed-credential shape,
   keeping its name and token; the user never re-enters it.

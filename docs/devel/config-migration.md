@@ -77,16 +77,17 @@ Native v0 kinds:
 
 Legacy `remote_widget` entries, dispatched by URL slug under `https://widgets.braiinsforge.com/<slug>`:
 
-| Slug            | Target manifest              | Param translation                                          |
-| --------------- | ---------------------------- | ---------------------------------------------------------- |
-| `weather`       | `widgets-wasm/weather`       | `location` pass-through, `time_zone` pinned to default     |
-| `nameday`       | `widgets-wasm/nameday`       | `country` enum-guarded, camelCase `showDate` → `show_date` |
-| `iss-position`  | `widgets-wasm/iss-position`  | none (manifest has no params)                              |
-| `random-facts`  | `widgets-wasm/random-facts`  | none (manifest has no params)                              |
-| `spacex-launch` | `widgets-wasm/spacex-launch` | none (legacy `showSeconds` drops with the mapping)         |
+| Slug                      | Target manifest                   | Param translation                                          |
+| ------------------------- | --------------------------------- | ---------------------------------------------------------- |
+| `weather`                 | `widgets-wasm/weather`            | `location` pass-through, `time_zone` pinned to default     |
+| `nameday`                 | `widgets-wasm/nameday`            | `country` enum-guarded, camelCase `showDate` → `show_date` |
+| `iss-position`            | `widgets-wasm/iss-position`       | none (manifest has no params)                              |
+| `random-facts`            | `widgets-wasm/random-facts`       | none (manifest has no params)                              |
+| `spacex-launch`           | `widgets-wasm/spacex-launch`      | none (legacy `showSeconds` drops with the mapping)         |
+| `nasa-picture-of-the-day` | `widgets-wasm/picture-of-the-day` | both required params take the manifest default             |
 
 Widgets with **no native counterpart drop**: native kinds `ticker_btc`, `blockchain_data`; remote slugs `exchange-rate`,
-`formula-1`, `nasa-picture-of-the-day`, `ticker-list`, `ticker-single-candlestick`, and `ticker-single-sparkline`.
+`formula-1`, `ticker-list`, `ticker-single-candlestick`, and `ticker-single-sparkline`.
 
 ### Required params are always filled
 

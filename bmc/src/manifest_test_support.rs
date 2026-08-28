@@ -27,8 +27,8 @@ use uuid::Uuid;
 use crate::config::widget_uuids::{
     BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID,
     HALVING_COUNTDOWN_UID, ISS_POSITION_UID, MINING_CLOCK_UID, MINING_INFO_UID, NAMEDAY_UID,
-    RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID,
-    WEATHER_UID,
+    PICTURE_OF_THE_DAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID,
+    TICKER_SINGLE_UID, WEATHER_UID,
 };
 
 #[derive(Debug)]
@@ -64,7 +64,7 @@ pub fn default_widgets() -> Vec<DefaultWidget> {
 }
 
 #[must_use]
-pub fn widget_uids() -> [(&'static str, Uuid); 16] {
+pub fn widget_uids() -> [(&'static str, Uuid); 17] {
     [
         ("clock", CLOCK_UID),
         ("weather", WEATHER_UID),
@@ -82,6 +82,7 @@ pub fn widget_uids() -> [(&'static str, Uuid); 16] {
         ("ticker-list", TICKER_LIST_UID),
         ("formula-1", FORMULA_1_UID),
         ("bitcoin-mining-data", BITCOIN_MINING_DATA_UID),
+        ("picture-of-the-day", PICTURE_OF_THE_DAY_UID),
     ]
 }
 
@@ -95,6 +96,8 @@ pub struct MigrationManifestExpectations {
     pub image_refresh_seconds: i32,
     pub nameday_country: &'static str,
     pub nameday_countries: &'static [&'static str],
+    pub picture_source: &'static str,
+    pub picture_show_title: bool,
     pub translated_font_styles: [&'static str; 3],
     pub pool_style: &'static str,
     pub pool_chart_frame: &'static str,

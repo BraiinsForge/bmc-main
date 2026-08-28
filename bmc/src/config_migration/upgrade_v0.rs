@@ -61,8 +61,8 @@ use uuid::Uuid;
 use super::{Report, v0};
 use crate::config::widget_uuids::{
     BITCOIN_MINING_DATA_UID, BLOCK_HEIGHT_UID, BRAIINS_POOL_UID, CLOCK_UID, FORMULA_1_UID,
-    HALVING_COUNTDOWN_UID, ISS_POSITION_UID, NAMEDAY_UID, RANDOM_FACTS_UID, REMOTE_IMAGE_UID,
-    SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
+    HALVING_COUNTDOWN_UID, ISS_POSITION_UID, NAMEDAY_UID, PICTURE_OF_THE_DAY_UID, RANDOM_FACTS_UID,
+    REMOTE_IMAGE_UID, SPACEX_LAUNCH_UID, TICKER_LIST_UID, TICKER_SINGLE_UID, WEATHER_UID,
 };
 use crate::config::{CONFIG_VERSION, Config, MigratedSettings, fits_running_widgets};
 use crate::data::{AccountId, SceneCycling};
@@ -102,6 +102,10 @@ const DEFAULT_REFRESH_SECONDS: i32 = 3600;
 const MIN_REFRESH_SECONDS: i32 = 300;
 /// Nameday `country` fallback — nameday manifest `default_value`.
 const DEFAULT_NAMEDAY_COUNTRY: &str = "cz";
+/// Picture-of-the-day `source` fallback — manifest `default_value`.
+const DEFAULT_PICTURE_SOURCE: &str = "nasa_apod";
+/// Picture-of-the-day `show_title` fallback — manifest `default_value`.
+const PICTURE_SHOW_TITLE_DEFAULT: bool = true;
 /// Pool `style` fallback — braiins-pool manifest `default_value`.
 const POOL_STYLE_DEFAULT: &str = "overview";
 /// Pool `chart_frame` fallback — braiins-pool manifest `default_value`.
@@ -174,6 +178,8 @@ pub(crate) fn manifest_test_expectations()
         image_refresh_seconds: DEFAULT_REFRESH_SECONDS,
         nameday_country: DEFAULT_NAMEDAY_COUNTRY,
         nameday_countries: NAMEDAY_COUNTRIES,
+        picture_source: DEFAULT_PICTURE_SOURCE,
+        picture_show_title: PICTURE_SHOW_TITLE_DEFAULT,
         translated_font_styles: ["light", "medium", "bold"].map(|style| {
             translate_font_style(style).expect("BUG: known v0 font style must translate")
         }),
@@ -895,6 +901,9 @@ fn dispatch_formula_1_widget_params(params: &Value) -> Value {
 /// the manifest's schema; `iss-position`, `random-facts`, and
 /// `spacex-launch` take no params in their current manifests, so any
 /// legacy params (e.g. spacex `showSeconds`) drop with the mapping.
+/// `nasa-picture-of-the-day` has no v0 param the current manifest
+/// recognises, and both of its params are required,
+/// so both take the manifest default.
 /// URLs outside the Braiinsforge host, and slugs without a native
 /// counterpart, are dropped — the now-redundant metadata (`name`,
 /// `description`, `widget_url`, `icon_url`) goes with them because
@@ -944,6 +953,13 @@ fn dispatch_remote_widget(widget: &v0::Widget) -> Option<(Uuid, Value)> {
             dispatch_ticker_single_params(&inner_params, "candlestick"),
         )),
         "ticker-list" => Some((TICKER_LIST_UID, dispatch_ticker_list_params(&inner_params))),
+        "nasa-picture-of-the-day" => Some((
+            PICTURE_OF_THE_DAY_UID,
+            json!({
+                "source": DEFAULT_PICTURE_SOURCE,
+                "show_title": PICTURE_SHOW_TITLE_DEFAULT,
+            }),
+        )),
         _ => {
             warn!(
                 id = %widget.id,
@@ -1620,19 +1636,40 @@ mod tests {
 
     #[test]
     fn remote_widget_slug_without_native_equivalent_drops() {
-        // Braiinsforge-hosted remote widgets without a native
-        // counterpart drop until they gain one.
-        let slug = "nasa-picture-of-the-day";
+        // Remote widgets without native counterpart drop.
         let w = mk_widget(
             "remote_widget",
             json!({
-                "widget_url": format!("https://widgets.braiinsforge.com/{slug}"),
+                "widget_url": "https://widgets.braiinsforge.com/cute-widget-without-equivalent",
                 "params": {},
             }),
         );
         assert!(
             upgrade_widget(&w).is_none(),
-            "slug `{slug}` has no native equivalent and must drop"
+            "widget that has no native equivalent must drop"
+        );
+    }
+
+    #[test]
+    fn remote_widget_picture_of_the_day_fills_both_required_params() {
+        // v0 carried no param the current manifest recognises,
+        // and the boot-load path injects no defaults, so the mapping writes both.
+        let w = mk_widget(
+            "remote_widget",
+            json!({
+                "widget_url": "https://widgets.braiinsforge.com/nasa-picture-of-the-day",
+                "params": { "someLegacyKey": 1 },
+            }),
+        );
+        let upgraded =
+            upgrade_widget(&w).expect("BUG: picture-of-the-day must survive the upgrade");
+        assert_eq!(upgraded.widget_type_id, PICTURE_OF_THE_DAY_UID);
+        assert_eq!(
+            upgraded.params,
+            param_map(&[
+                ("source", str_param("nasa_apod")),
+                ("show_title", ParamValue::Boolean(true)),
+            ])
         );
     }
 

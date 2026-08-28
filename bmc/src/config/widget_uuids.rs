@@ -70,3 +70,6 @@ pub(crate) const FORMULA_1_UID: Uuid = Uuid::from_u128(0x2032_6ae9_741c_4374_b32
 /// `widgets-wasm/bitcoin-mining-data`
 pub(crate) const BITCOIN_MINING_DATA_UID: Uuid =
     Uuid::from_u128(0x020e_06d1_434e_4757_b4c3_21cf_92c4_4127);
+/// `widgets-wasm/picture-of-the-day`
+pub(crate) const PICTURE_OF_THE_DAY_UID: Uuid =
+    Uuid::from_u128(0x5d41_6042_caf6_41bd_81b3_bc71_fa49_4863);
