@@ -76,6 +76,7 @@ let
       (mesaOverlay { }) final prev
       // applianceOverlay final prev
       // {
+        libdrm = prev.libdrm.override { withIntel = false; };
         linux-pam = prev.linux-pam.overrideAttrs (old: {
           outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
         });
