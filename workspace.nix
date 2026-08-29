@@ -77,6 +77,21 @@ let
       // applianceOverlay final prev
       // {
         libdrm = prev.libdrm.override { withIntel = false; };
+        libinput = (applianceOverlay final prev).libinput.overrideAttrs (old:
+          let
+            oldBuildInputs = old.buildInputs or [ ];
+            oldMesonFlags = old.mesonFlags or [ ];
+          in
+          assert lib.assertMsg (builtins.elem prev.lua5_4 oldBuildInputs)
+            "ARMv7 libinput no longer includes lua5_4 in buildInputs";
+          assert lib.assertMsg
+            (builtins.all (flag: !(lib.hasPrefix "-Dlua-plugins=" flag)) oldMesonFlags)
+            "ARMv7 libinput now defines lua-plugins upstream";
+          {
+            buildInputs = lib.remove prev.lua5_4 oldBuildInputs;
+            disallowedReferences = (old.disallowedReferences or [ ]) ++ [ prev.lua5_4 ];
+            mesonFlags = oldMesonFlags ++ [ "-Dlua-plugins=disabled" ];
+          });
         # Smithay links libxkbcommon unconditionally, but Deck does not use keyboard input.
         libxkbcommon = prev.libxkbcommon.overrideAttrs (old:
           let
