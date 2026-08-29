@@ -112,7 +112,6 @@ export default defineConfig({
         lightningcssLoader: { errorRecovery: true },
 
         rspack: {
-            devtool: 'source-map',
             experiments: {
                 css: true,
                 futureDefaults: true,
