@@ -306,6 +306,7 @@ stdenv.mkDerivation {
 
   passthru = {
     driverLink = throw "mesa.driverLink is disabled — glvnd is off";
+    providesEglLoader = true;
     inherit
       eglPlatforms
       galliumDrivers;

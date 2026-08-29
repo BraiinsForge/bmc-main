@@ -359,15 +359,13 @@ let
     frontend = frontend.build;
     inherit sounds;
     widgetRuntimeDeps = {
-      # Native GPU widgets: smithay/EGL dlopen's the full GL stack.
-      # libgbm is part of mesa's lib/ output, no separate entry needed.
+      # The custom Mesa provides EGL directly; upstream Mesa needs libGL's GLVND loader.
       native = pkgs: with pkgs; [
         wayland
         libxkbcommon
         libdrm
         mesa
-        libGL
-      ];
+      ] ++ lib.optional (!(mesa.providesEglLoader or false)) libGL;
     };
     # Compositor: native widget deps + compositor-specific input libs.
     compositorRuntimeDeps = pkgs:
