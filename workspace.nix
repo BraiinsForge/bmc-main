@@ -77,6 +77,44 @@ let
       // applianceOverlay final prev
       // {
         libdrm = prev.libdrm.override { withIntel = false; };
+        # Smithay links libxkbcommon unconditionally, but Deck does not use keyboard input.
+        libxkbcommon = prev.libxkbcommon.overrideAttrs (old:
+          let
+            oldBuildInputs = old.buildInputs or [ ];
+            oldMesonFlags = old.mesonFlags or [ ];
+            mesonFlags = map
+              (flag:
+                if lib.hasPrefix "-Dxkb-config-root=" flag
+                then "-Dxkb-config-root=/etc/xkb"
+                else if lib.hasPrefix "-Dx-locale-root=" flag
+                then "-Dx-locale-root=/etc/X11/locale"
+                else flag)
+              oldMesonFlags ++ [ "-Denable-x11=false" ];
+          in
+          assert lib.assertMsg (builtins.elem prev.xkeyboard_config oldBuildInputs)
+            "ARMv7 libxkbcommon no longer includes xkeyboard_config in buildInputs";
+          assert lib.assertMsg (builtins.elem prev.libxcb oldBuildInputs)
+            "ARMv7 libxkbcommon no longer includes libxcb in buildInputs";
+          assert lib.assertMsg
+            (builtins.any (lib.hasPrefix "-Dxkb-config-root=") oldMesonFlags)
+            "ARMv7 libxkbcommon no longer defines xkb-config-root";
+          assert lib.assertMsg
+            (builtins.any (lib.hasPrefix "-Dx-locale-root=") oldMesonFlags)
+            "ARMv7 libxkbcommon no longer defines x-locale-root";
+          assert lib.assertMsg
+            (builtins.all (flag: !(lib.hasPrefix "-Denable-x11=" flag)) oldMesonFlags)
+            "ARMv7 libxkbcommon now defines enable-x11 upstream";
+          {
+            buildInputs = builtins.filter
+              (input: input != prev.xkeyboard_config && input != prev.libxcb)
+              oldBuildInputs;
+            disallowedReferences = (old.disallowedReferences or [ ]) ++ [
+              prev.xkeyboard_config
+              prev.libxcb
+              prev.libx11
+            ];
+            inherit mesonFlags;
+          });
         linux-pam = prev.linux-pam.overrideAttrs (old: {
           outputs = lib.filter (o: o != "man") (old.outputs or [ "out" ]);
         });
