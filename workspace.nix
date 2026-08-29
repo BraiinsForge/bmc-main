@@ -184,10 +184,6 @@ let
       wayland
       libxkbcommon
       libinput
-      # TODO: disable systemdSupport like the minimal workspace does — no
-      # logind on the device. Changes the closure, so batch it with the
-      # next nixpkgs bump to avoid an extra Deck redownload.
-      seatd
       (compositorUdev pkgs)
       libdrm
       mesa
@@ -213,9 +209,6 @@ let
     targetDeps = pkgs: with pkgs; [
       wayland
       libxkbcommon
-      # No logind on the device (OpenWRT); avoids the systemd closure,
-      # whose libbpf does not compile for armv7-musl.
-      (seatd.override { systemdSupport = false; })
       (compositorUdev pkgs)
       libdrm
       alsa-lib
@@ -375,11 +368,10 @@ let
         libGL
       ];
     };
-    # Compositor: native widget deps + compositor-specific input/seat libs.
+    # Compositor: native widget deps + compositor-specific input libs.
     compositorRuntimeDeps = pkgs:
       (deps.widgetRuntimeDeps.native pkgs) ++ (with pkgs; [
         libinput
-        seatd
         (compositorUdev pkgs)
       ]);
   };

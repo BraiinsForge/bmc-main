@@ -71,9 +71,9 @@ Install the following host tools:
 
 The `nix develop` shell provides the Rust toolchain, Protobuf compiler, `pkg-config`, Node.js, and Yarn. GPU libraries
 from Nix are currently not supported, so running the widget testbed requires the native development libraries from your
-system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL/EGL, ALSA, libinput, seatd, udev, and
-libdrm. Package names differ between distributions. Building for and deploying to the device via
-`nix run .#deck -- deploy` does not need these libraries.
+system package manager: Fontconfig, FreeType, Wayland, libxkbcommon, Mesa/OpenGL/EGL, ALSA, libinput, udev, and libdrm.
+Package names differ between distributions. Building for and deploying to the device via `nix run .#deck -- deploy` does
+not need these libraries.
 
 Deploying to a physical device additionally requires root SSH access and a `/mnt/data` partition on the device.
 

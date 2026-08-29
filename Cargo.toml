@@ -339,7 +339,6 @@ khronos-egl = { version = "6", features = ["dynamic"] }
 libc = "0.2"
 libloading = "0.8"
 libm = "0.2"
-libseat = "0.2.4"
 log = "0.4.27"
 lyon = "1.0"
 markdown = "1.0.0-alpha.23"
