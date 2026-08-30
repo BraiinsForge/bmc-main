@@ -141,6 +141,154 @@ mod tests {
         draws
     }
 
+    fn icon_draws(node: Node) -> Vec<Draw> {
+        let Node::Column(_, children) = node else {
+            panic!("BUG: sparkline root must be a column");
+        };
+        let Some(Node::Row(_, header)) = children.into_iter().next() else {
+            panic!("BUG: the header row must lead the sparkline");
+        };
+        let Some(Node::Canvas { draws, .. }) = header.into_iter().nth(1) else {
+            panic!("BUG: the icon canvas must follow the header's edge padding");
+        };
+        draws
+    }
+
+    /// A draw reduced to what the marker pins down: shape, geometry and color.
+    #[derive(Debug, PartialEq)]
+    enum Shape {
+        Circle(f32, f32, f32, Fill),
+        Rect(f32, f32, f32, f32, Fill),
+        Glyph(Color),
+        Other,
+    }
+
+    fn shapes(draws: &[Draw]) -> Vec<Shape> {
+        draws
+            .iter()
+            .map(|draw| {
+                if let Draw::Circle { cx, cy, r, fill } = draw {
+                    return Shape::Circle(*cx, *cy, *r, *fill);
+                }
+                if let Draw::Rect { x, y, w, h, fill } = draw {
+                    return Shape::Rect(*x, *y, *w, *h, *fill);
+                }
+                if let Draw::Text { style, .. } = draw {
+                    return Shape::Glyph(style.color);
+                }
+                Shape::Other
+            })
+            .collect()
+    }
+
+    fn header_text_colors(node: &Node) -> Vec<Color> {
+        fn collect(node: &Node, colors: &mut Vec<Color>) {
+            match node {
+                Node::Column(_, children) | Node::Row(_, children) | Node::Center(_, children) => {
+                    for child in children {
+                        collect(child, colors);
+                    }
+                }
+                Node::Paragraph { base_style, .. } => colors.push(base_style.color),
+                Node::Canvas { draws, .. } => {
+                    colors.extend(draws.iter().filter_map(|draw| {
+                        let Draw::Text { style, .. } = draw else {
+                            return None;
+                        };
+                        Some(style.color)
+                    }));
+                }
+                _ => {}
+            }
+        }
+
+        let Node::Column(_, children) = node else {
+            panic!("BUG: sparkline root must be a column");
+        };
+        let Some(header) = children.first() else {
+            panic!("BUG: the header row must lead the sparkline");
+        };
+        let mut colors = Vec::new();
+        collect(header, &mut colors);
+        colors
+    }
+
+    fn chart_stroke_color(draws: &[Draw]) -> Color {
+        draws
+            .iter()
+            .find_map(|draw| {
+                let Draw::Path {
+                    paint: PathPaint::Stroke { color, .. },
+                    ..
+                } = draw
+                else {
+                    return None;
+                };
+                Some(*color)
+            })
+            .expect("BUG: the sparkline must contain a stroked path")
+    }
+
+    #[test]
+    fn a_closed_instrument_wears_a_pause_marker_instead_of_dimming() {
+        let ws = WidgetSize::from_dimensions(1_280, 480);
+        let d = band_for(ws.variant).scaled(ws.fit()).icon_diameter;
+        let mut closed = series();
+        closed.market_open = false;
+
+        let open_icon = shapes(&icon_draws(series_view(&series(), "BTC-USD", "1D", ws)));
+        let closed_icon = shapes(&icon_draws(series_view(&closed, "BTC-USD", "1D", ws)));
+
+        assert_eq!(
+            closed_icon[..open_icon.len()],
+            open_icon[..],
+            "the marker covers the instrument icon instead of dimming it"
+        );
+
+        let box_w = d * 0.40;
+        let box_h = d * 0.60;
+        let (left, top) = ((d - box_w) / 2.0, (d - box_h) / 2.0);
+        let bg = Fill::Solid(BACKGROUND);
+        assert_eq!(
+            closed_icon[open_icon.len()..],
+            [
+                Shape::Circle(
+                    d / 2.0,
+                    d / 2.0,
+                    d / 2.0,
+                    Fill::Solid(SYMBOL_COLOR.with_alpha(0.9)),
+                ),
+                Shape::Rect(left, top, box_w * 0.35, box_h, bg),
+                Shape::Rect(left + box_w * 0.50, top, box_w * 0.50, box_h, bg),
+            ],
+            "the disc paints under a two-bar pause glyph"
+        );
+    }
+
+    #[test]
+    fn a_closed_instrument_dims_only_the_chart() {
+        let ws = WidgetSize::from_dimensions(1_280, 480);
+        let open = series();
+        let mut closed = series();
+        closed.market_open = false;
+        let open_node = series_view(&open, "BTC-USD", "1D", ws);
+        let closed_node = series_view(&closed, "BTC-USD", "1D", ws);
+
+        assert_eq!(
+            chart_stroke_color(&canvas_draws(open_node.clone())),
+            TREND_UP
+        );
+        assert_eq!(
+            chart_stroke_color(&canvas_draws(closed_node.clone())),
+            TREND_UP.with_alpha(CLOSED_ALPHA)
+        );
+        assert_eq!(
+            header_text_colors(&open_node),
+            header_text_colors(&closed_node),
+            "closed-market alpha must not dim the header"
+        );
+    }
+
     #[test]
     #[expect(
         clippy::cast_precision_loss,

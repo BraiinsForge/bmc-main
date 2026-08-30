@@ -57,7 +57,8 @@ const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
 /// further than any real price goes.
 /// Past that, and at the host's 12 px search floor, the host wraps anyway.
 const PRICE_BOX_LINES: f32 = 1.6;
-const CLOSED_ALPHA: f32 = 0.4;
+/// The alpha the chart drops to while the market is closed.
+const CLOSED_ALPHA: f32 = 0.7;
 
 #[expect(
     clippy::cast_precision_loss,
