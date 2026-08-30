@@ -18,23 +18,16 @@
 // under any terms, and such a grant shall be considered distinct from
 // the grant above.
 
-//! Per-size layout bands and their `fit`-scaling.
+//! Per-size layout bands and their geometry scaling.
 //!
 //! Each [`SizeVariant`] carries a canonical band (font sizes, chart height,
 //! paddings) at that variant's canonical viewport. The band is then multiplied
-//! by [`WidgetSize::fit`] so an
-//! off-canonical viewport (e.g. BMM101's 480×320) shrinks instead of
-//! overflowing — the same scaling the digital/analog clock faces use.
-//!
-//! This deliberately scales the price font with the viewport,
-//! diverging from the best-practices "keep typography stable" rule,
-//! because BMM101 support needs it and `fit` never inflates a band,
-//! exactly like the clock.
-//! The header font is the exception and holds its authored size.
+//! by [`WidgetSize::fit`] so an off-canonical viewport shrinks instead of
+//! overflowing.
 
 use bmc_wasm_sdk::{SizeVariant, scale_font};
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub struct SizeBand {
     pub price_font: u32,
     /// Symbol / period / change-badge font.
@@ -105,12 +98,13 @@ const SMALL: SizeBand = SizeBand {
 };
 
 impl SizeBand {
-    /// Multiply the price font and the geometry by `fit`.
-    /// The header font and the visibility flags pass through unscaled.
+    /// Multiply viewport-bound geometry by `fit`.
     #[must_use]
     pub fn scaled(self, fit: f32) -> Self {
         Self {
-            price_font: scale_font(self.price_font, fit),
+            // The price autofits to the box the scaled geometry gives it,
+            // so shrinking the font here would only shrink it a second time.
+            price_font: self.price_font,
             // BMM101's 480x320 viewport fits Large at 0.667, which would shrink
             // a 24 px header to 16 px, unreadable on that screen.
             header_font: self.header_font,
@@ -154,13 +148,20 @@ mod tests {
     }
 
     #[test]
-    fn fit_scales_the_price_font_and_geometry_but_not_the_header_or_visibility() {
+    fn fit_scales_geometry_and_contained_fonts_but_not_the_price_or_header() {
         let full = band_for(SizeVariant::Full);
         let scaled = full.scaled(0.5);
-        assert_eq!(scaled.price_font, 100);
         assert!(
             (scaled.edge_padding - full.edge_padding * 0.5).abs() < f32::EPSILON,
-            "geometry shrinks with the viewport alongside the price font"
+            "geometry shrinks with the viewport"
+        );
+        assert_eq!(
+            scaled.glyph_font, 7,
+            "the icon glyph follows the disc it sits in"
+        );
+        assert_eq!(
+            scaled.price_font, full.price_font,
+            "the price holds its size and autofits to the scaled box instead"
         );
         assert_eq!(scaled.header_font, full.header_font);
         assert!(scaled.show_period);
