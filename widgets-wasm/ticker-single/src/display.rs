@@ -26,9 +26,11 @@
 //! off-canonical viewport (e.g. BMM101's 480×320) shrinks instead of
 //! overflowing — the same scaling the digital/analog clock faces use.
 //!
-//! This deliberately scales fonts with the viewport, diverging from the
-//! best-practices "keep typography stable" rule, because BMM101 support needs
-//! it and `fit` is band-bounded (never inflates), exactly like the clock.
+//! This deliberately scales the price font with the viewport,
+//! diverging from the best-practices "keep typography stable" rule,
+//! because BMM101 support needs it and `fit` never inflates a band,
+//! exactly like the clock.
+//! The header font is the exception and holds its authored size.
 
 use bmc_wasm_sdk::{SizeVariant, scale_font};
 
@@ -59,7 +61,7 @@ pub struct SizeBand {
 }
 
 const FULL: SizeBand = SizeBand {
-    price_font: 154,
+    price_font: 200,
     header_font: 24,
     icon_diameter: 24.0,
     glyph_font: 14,
@@ -78,16 +80,12 @@ const FULL: SizeBand = SizeBand {
 };
 
 const LARGE: SizeBand = SizeBand {
-    price_font: 51,
-    header_font: 20,
-    icon_diameter: 20.0,
+    price_font: 96,
     ..FULL
 };
 
 const MEDIUM: SizeBand = SizeBand {
-    price_font: 40,
-    header_font: 16,
-    icon_diameter: 16.0,
+    price_font: 96,
     top_padding: 12.0,
     edge_padding: 12.0,
     show_x_labels: false,
@@ -95,9 +93,7 @@ const MEDIUM: SizeBand = SizeBand {
 };
 
 const SMALL: SizeBand = SizeBand {
-    price_font: 24,
-    header_font: 14,
-    icon_diameter: 14.0,
+    price_font: 64,
     badge_padding: 4.0,
     top_padding: 8.0,
     header_left_gap: 8.0,
@@ -109,13 +105,15 @@ const SMALL: SizeBand = SizeBand {
 };
 
 impl SizeBand {
-    /// Multiply fonts and geometry by `fit`; visibility flags are layout
-    /// structure and pass through unscaled.
+    /// Multiply the price font and the geometry by `fit`.
+    /// The header font and the visibility flags pass through unscaled.
     #[must_use]
     pub fn scaled(self, fit: f32) -> Self {
         Self {
             price_font: scale_font(self.price_font, fit),
-            header_font: scale_font(self.header_font, fit),
+            // BMM101's 480x320 viewport fits Large at 0.667, which would shrink
+            // a 24 px header to 16 px, unreadable on that screen.
+            header_font: self.header_font,
             icon_diameter: self.icon_diameter * fit,
             glyph_font: scale_font(self.glyph_font, fit),
             badge_padding: self.badge_padding * fit,
@@ -156,10 +154,15 @@ mod tests {
     }
 
     #[test]
-    fn fit_scales_geometry_and_fonts_but_not_visibility() {
-        let scaled = band_for(SizeVariant::Full).scaled(0.5);
-        assert_eq!(scaled.price_font, 77);
-        assert_eq!(scaled.header_font, 12);
+    fn fit_scales_the_price_font_and_geometry_but_not_the_header_or_visibility() {
+        let full = band_for(SizeVariant::Full);
+        let scaled = full.scaled(0.5);
+        assert_eq!(scaled.price_font, 100);
+        assert!(
+            (scaled.edge_padding - full.edge_padding * 0.5).abs() < f32::EPSILON,
+            "geometry shrinks with the viewport alongside the price font"
+        );
+        assert_eq!(scaled.header_font, full.header_font);
         assert!(scaled.show_period);
     }
 
