@@ -80,9 +80,19 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         ));
         draws.push(path!(line, stroke: CHART_STROKE, color: trend.with_alpha(alpha)));
     }
-    draws.push(Draw::text(
-        w / 2.0,
-        h / 2.0 - header_h,
+    // Above 100 000 a price loses its decimals but its digits grow without bound
+    // (BTC-KRW reaches nine), so tile width runs out before font size does.
+    let price_center_y = h / 2.0 - header_h;
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "font sizes are small integers, exact in f32"
+    )]
+    let price_box_h = band.price_font as f32 * PRICE_BOX_LINES;
+    draws.push(Draw::autofit_text(
+        band.edge_padding,
+        price_center_y - price_box_h / 2.0,
+        (w - band.edge_padding * 2.0).max(1.0),
+        price_box_h,
         super::price_text(symbol, series.current),
         style!(
             size: band.price_font,
@@ -97,4 +107,77 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
         props!(background: BACKGROUND, width: w, height: h),
         [header, canvas(props!(width: w, height: canvas_h), draws)],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prices::candle::CandleBar;
+
+    fn series() -> Series {
+        Series {
+            bars: vec![CandleBar {
+                t_secs: 0,
+                open: 90.0,
+                high: 105.0,
+                low: 85.0,
+                close: 100.0,
+                volume: None,
+            }],
+            current: 120.0,
+            change_pct: 100.0 / 3.0,
+            quote_currency: Some("USD".to_owned()),
+            market_open: true,
+        }
+    }
+
+    fn canvas_draws(node: Node) -> Vec<Draw> {
+        let Node::Column(_, children) = node else {
+            panic!("BUG: sparkline root must be a column");
+        };
+        let Some(Node::Canvas { draws, .. }) = children.into_iter().nth(1) else {
+            panic!("BUG: sparkline chart must follow the header");
+        };
+        draws
+    }
+
+    #[test]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "viewport and font sizes are small integers, exact in f32"
+    )]
+    fn the_price_shrinks_to_the_tile_rather_than_being_sliced() {
+        let ws = WidgetSize::from_dimensions(1_280, 480);
+        let draws = canvas_draws(series_view(&series(), "BTC-USD", "1D", ws));
+        let band = band_for(ws.variant).scaled(ws.fit());
+        let boxes: Vec<_> = draws
+            .iter()
+            .filter_map(|draw| {
+                let Draw::AutofitText {
+                    box_width,
+                    box_height,
+                    style,
+                    ..
+                } = draw
+                else {
+                    return None;
+                };
+                Some((*box_width, *box_height, style.size))
+            })
+            .collect();
+
+        let [(box_width, box_height, size)] = boxes[..] else {
+            panic!("BUG: the sparkline must autofit exactly one price");
+        };
+        assert_eq!(size, band.price_font);
+        assert!(
+            (box_width - (ws.width as f32 - band.edge_padding * 2.0)).abs() < f32::EPSILON,
+            "the price spans the tile between its edge paddings before it shrinks"
+        );
+        let one_line = band.price_font as f32 * 1.4;
+        assert!(
+            box_height >= one_line && box_height < one_line * 2.0,
+            "a second authored-size line must not fit in the autofit box"
+        );
+    }
 }

@@ -112,6 +112,7 @@ pub fn series_view(
     };
     let volume_h = if has_volume { band.volume_height } else { 0.0 };
     let plot_h = (canvas_h - volume_h - labels_h).max(1.0);
+    let axis_box_h = band.axis_font as f32 * PRICE_BOX_LINES;
 
     let mut draws = Vec::new();
     if let Some((min, max)) = price_range(&bars, series.current) {
@@ -124,9 +125,11 @@ pub fn series_view(
             let y = price_to_y(tick, min, max, 0.0, plot_h);
             draws.push(dashed_line(plot_x, y, plot_w, grid));
             let label_y = clamp_center_y(y, plot_h, band.axis_font as f32);
-            draws.push(Draw::text(
+            draws.push(Draw::autofit_text(
                 w - band.axis_width,
-                label_y,
+                label_y - axis_box_h / 2.0,
+                band.axis_width,
+                axis_box_h,
                 price_text(symbol, tick),
                 style!(
                     size: band.axis_font,
@@ -170,9 +173,11 @@ pub fn series_view(
             badge_h,
             trend.with_alpha(alpha),
         ));
-        draws.push(Draw::text(
+        draws.push(Draw::autofit_text(
             w - band.axis_width,
-            price_y,
+            price_y - axis_box_h / 2.0,
+            band.axis_width,
+            axis_box_h,
             price_text(symbol, series.current),
             style!(
                 size: band.axis_font,
@@ -367,5 +372,56 @@ mod tests {
             );
         }
         assert_eq!(paths.last().map(|(_, color)| *color), Some(TREND_UP));
+    }
+
+    fn autofit_boxes(draws: &[Draw]) -> Vec<(f32, f32, u32)> {
+        draws
+            .iter()
+            .filter_map(|draw| {
+                let Draw::AutofitText {
+                    box_width,
+                    box_height,
+                    style,
+                    ..
+                } = draw
+                else {
+                    return None;
+                };
+                Some((*box_width, *box_height, style.size))
+            })
+            .collect()
+    }
+
+    #[test]
+    #[expect(
+        clippy::cast_precision_loss,
+        reason = "font sizes are small integers, exact in f32"
+    )]
+    fn axis_price_boxes_are_shorter_than_two_authored_lines() {
+        let series = series();
+        let ws = WidgetSize::from_dimensions(1_280, 720);
+        let draws = canvas_draws(series_view(&series, "AAPL", Period::D7, "7d", ws));
+        let band = band_for(ws.variant).scaled(ws.fit());
+        let boxes = autofit_boxes(&draws);
+        let (min, max) = price_range(&series.bars, series.current)
+            .expect("BUG: finite bars must have a price range");
+
+        assert_eq!(
+            boxes.len(),
+            nice_ticks(min, max, Y_TICK_TARGET).len() + 1,
+            "every tick label and the current-price badge must autofit"
+        );
+        let one_line = band.axis_font as f32 * 1.4;
+        for (box_width, box_height, size) in boxes {
+            assert_eq!(size, band.axis_font);
+            assert!(
+                (box_width - band.axis_width).abs() < f32::EPSILON,
+                "an axis price shrinks to the gutter instead of spilling into the plot"
+            );
+            assert!(
+                box_height >= one_line && box_height < one_line * 2.0,
+                "a second authored-size line must not fit in the autofit box"
+            );
+        }
     }
 }

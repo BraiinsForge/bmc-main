@@ -50,6 +50,13 @@ const BADGE_BG_ALPHA: f32 = 0.15;
 /// reference design previews.
 const CHART_FILL_TOP_ALPHA: f32 = 0.15;
 const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
+/// Height of a price autofit box, as a multiple of its font size.
+/// It sits above the 1.4 line-height, so one line always fits.
+/// Below 2.8, the fit search reaches a wrapped layout
+/// only once the price shrinks past 4/7 of its authored size,
+/// further than any real price goes.
+/// Past that, and at the host's 12 px search floor, the host wraps anyway.
+const PRICE_BOX_LINES: f32 = 1.6;
 const CLOSED_ALPHA: f32 = 0.4;
 
 #[expect(
