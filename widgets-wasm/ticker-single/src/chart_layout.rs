@@ -116,6 +116,7 @@ pub fn clamp_center_y(y: f32, height: f32, item_height: f32) -> f32 {
 
 /// One drawable candle: a centred wick span and a body rect, both in
 /// screen coordinates, with the bar's direction.
+#[derive(Debug)]
 pub struct CandleShape {
     pub x_center: f32,
     pub body_w: f32,

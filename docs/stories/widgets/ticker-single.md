@@ -70,8 +70,8 @@ price axis, a volume strip, and time labels. Price history comes from the Braiin
 
 > As a user, I want to be able to tell stale numbers from live ones so I do not act on an old price.
 
-- When the data reports that the instrument's market is closed, its icon and chart dim while the text stays legible.
-  Indices are never dimmed this way.
+- When the data reports that the instrument's market is closed, a pause marker covers its icon and its chart dims while
+  the text stays legible. Indices are never marked or dimmed this way.
 - When a refresh has been failing for longer than 90 seconds, a *last refresh* pill appears in the corner while the last
   known chart stays on screen.
 - If the symbol is not recognized the widget shows `Symbol {symbol} not found` and keeps polling normally.

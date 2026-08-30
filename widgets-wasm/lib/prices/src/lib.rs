@@ -20,7 +20,7 @@
 
 //! Shared price-series logic for the ticker widgets: period/candle mapping,
 //! symbol→instrument mapping, the Nexus candle envelope parser, sparkline
-//! geometry, and HTTP-status classification.
+//! geometry, closed-market presentation, and HTTP-status classification.
 //!
 //! Everything here is host-pure and unit-tested except the `wasm32`-gated
 //! `impl JsonLookup for JsonDoc` in [`candle`]. The widget owns the poll loop
@@ -36,6 +36,7 @@ pub const FETCH_TIMEOUT: core::time::Duration = core::time::Duration::from_secs(
 
 pub mod candle;
 pub mod chart;
+pub mod closed_market;
 pub mod fetch;
 pub mod format;
 pub mod instrument;

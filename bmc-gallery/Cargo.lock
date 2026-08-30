@@ -698,8 +698,10 @@ dependencies = [
  "formula-1",
  "gallery",
  "gallery-build",
+ "prices",
  "rodio",
  "taffy",
+ "ticker-single",
  "tracing",
  "tracing-subscriber",
 ]
@@ -4739,6 +4741,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "prices"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+]
+
+[[package]]
 name = "proc-macro-crate"
 version = "3.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6001,6 +6010,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1ad99c4c6d32803332c548b1af0540b357b3f5fc0be8f6c6bfe8b2e6ae784070"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "ticker-single"
+version = "0.1.0"
+dependencies = [
+ "bmc-wasm-sdk",
+ "prices",
 ]
 
 [[package]]

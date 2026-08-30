@@ -101,6 +101,8 @@ bmc-wasm-sdk = { path = "../bmc-wasm-runtime/sdk" }
 braiins-pool = { path = "../widgets-wasm/braiins-pool" }
 fleet-management = { path = "../widgets-wasm/fleet-management" }
 formula-1 = { path = "../widgets-wasm/formula-1" }
+prices = { path = "../widgets-wasm/lib/prices" }
+ticker-single = { path = "../widgets-wasm/ticker-single", features = ["scene"] }
 
 # Keep in step with the root manifest; see it for why the fork exists.
 femtovg = { git = "https://github.com/BraiinsForge/femtovg.git", rev = "45047b19d18b0b444aca195a3fd13b2fb83bc525" }
@@ -134,6 +136,8 @@ ignored = [
     "braiins-pool",
     "fleet-management",
     "formula-1",
+    "prices",
+    "ticker-single",
 ]
 
 # rustc 1.97.1 aborts (SIGABRT, no diagnostic) generating code for this dylib

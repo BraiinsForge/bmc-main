@@ -26,6 +26,7 @@ use prices::instrument::{base_symbol, split_pair};
 
 /// The rendered series: the OHLCV bars, the current price, the period change,
 /// the quote currency, and whether the market is open.
+#[derive(Debug)]
 pub struct Series {
     pub bars: Vec<CandleBar>,
     pub current: f64,
@@ -79,8 +80,9 @@ impl Series {
         self.change_pct >= 0.0
     }
 
-    /// A market-closed instrument that is not a `^`-prefixed index is dimmed
-    /// with a stop marker. `Series` has no symbol, so the caller passes it.
+    /// A market-closed instrument that is not a `^`-prefixed index dims
+    /// its chart and wears a pause marker over its icon.
+    /// `Series` has no symbol, so the caller passes it.
     #[must_use]
     pub fn is_closed_marked(&self, symbol: &str) -> bool {
         !self.market_open && !symbol.starts_with('^')
@@ -103,6 +105,7 @@ pub use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision
 
 /// The currency icon: a glyph and a representative solid disc color. `None` for
 /// `^`-prefixed indices, which have no icon.
+#[derive(Debug)]
 pub struct IconStyle {
     pub glyph: String,
     pub rgb: (u8, u8, u8),

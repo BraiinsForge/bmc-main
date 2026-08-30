@@ -26,7 +26,7 @@ pub mod chart_layout;
 pub mod display;
 mod manifest_params;
 pub mod model;
-#[cfg(any(target_arch = "wasm32", test))]
+#[cfg(any(target_arch = "wasm32", test, feature = "scene"))]
 pub mod render;
 
 #[cfg(any(target_arch = "wasm32", test))]

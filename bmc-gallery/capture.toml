@@ -59,6 +59,41 @@ name = "auto-sized-stage"
 scene = "bmc_gallery::fleet::Status Tags"
 frames = 4
 
+[[shot]]
+name = "ticker-single-closed-market"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 4
+
+[shot.knobs]
+"Market open" = false
+
+# Both candlestick shots omit x-axis labels because the native gallery has no timezone host;
+# wasm replay exercises their production calendar conversion.
+[[shot]]
+name = "ticker-single-candlestick-open-rising"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 4
+
+[shot.knobs]
+"Market open" = true
+View = "Candlestick"
+Trend = "Rising"
+
+[[shot]]
+name = "ticker-single-candlestick-closed-falling"
+scene = "bmc_gallery::ticker::Ticker Single"
+frames = 4
+
+[shot.knobs]
+"Market open" = false
+View = "Candlestick"
+Trend = "Falling"
+
+[[shot]]
+name = "ticker-list-mixed-trends"
+scene = "bmc_gallery::ticker_list::Ticker List"
+frames = 4
+
 # The two shots straddle the 92 px cutoff:
 # below it the headline comes from the cache,
 # above it femtovg path-renders the run instead.

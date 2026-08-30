@@ -51,15 +51,12 @@ pub fn series_view(series: &Series, symbol: &str, period_label: &str, ws: Widget
     } else {
         TREND_DOWN
     };
-    let alpha = if series.is_closed_marked(symbol) {
-        CLOSED_ALPHA
-    } else {
-        1.0
-    };
+    let closed = series.is_closed_marked(symbol);
+    let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
 
     let header_h = header_height(&band);
     let canvas_h = (h - header_h).max(0.0);
-    let header = super::header_row(series, symbol, period_label, &band, trend, alpha, header_h);
+    let header = super::header_row(series, symbol, period_label, &band, trend, closed, header_h);
 
     // ── chart + price canvas ────────────────────────────────────────────
     let mut draws = Vec::new();
@@ -245,22 +242,10 @@ mod tests {
             "the marker covers the instrument icon instead of dimming it"
         );
 
-        let box_w = d * 0.40;
-        let box_h = d * 0.60;
-        let (left, top) = ((d - box_w) / 2.0, (d - box_h) / 2.0);
-        let bg = Fill::Solid(BACKGROUND);
+        let expected_marker = shapes(&pause_marker(d, SYMBOL_COLOR, BACKGROUND));
         assert_eq!(
             closed_icon[open_icon.len()..],
-            [
-                Shape::Circle(
-                    d / 2.0,
-                    d / 2.0,
-                    d / 2.0,
-                    Fill::Solid(SYMBOL_COLOR.with_alpha(0.9)),
-                ),
-                Shape::Rect(left, top, box_w * 0.35, box_h, bg),
-                Shape::Rect(left + box_w * 0.50, top, box_w * 0.50, box_h, bg),
-            ],
+            expected_marker,
             "the disc paints under a two-bar pause glyph"
         );
     }
@@ -280,7 +265,7 @@ mod tests {
         );
         assert_eq!(
             chart_stroke_color(&canvas_draws(closed_node.clone())),
-            TREND_UP.with_alpha(CLOSED_ALPHA)
+            TREND_UP.with_alpha(CLOSED_CHART_ALPHA)
         );
         assert_eq!(
             header_text_colors(&open_node),

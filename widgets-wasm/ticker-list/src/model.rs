@@ -91,7 +91,7 @@ impl TickerRow {
         self.change_pct >= 0.0
     }
 
-    /// A market-closed row (and not a `^` index) is dimmed with a stop marker.
+    /// A closed non-index gets a pause marker and a grey sparkline.
     #[must_use]
     pub fn is_closed_marked(&self) -> bool {
         !self.market_open && !self.symbol.starts_with('^')

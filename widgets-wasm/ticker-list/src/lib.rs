@@ -25,7 +25,7 @@
 pub mod layout;
 mod manifest_params;
 pub mod model;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "scene", test))]
 pub mod render;
 #[cfg(any(target_arch = "wasm32", test))]
 mod symbols;

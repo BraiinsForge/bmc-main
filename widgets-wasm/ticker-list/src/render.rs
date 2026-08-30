@@ -22,15 +22,19 @@
 //! single column otherwise), each row's symbol/company, optional
 //! sparkline, and price/change, with hairline dividers between cells.
 
-#[expect(
-    clippy::wildcard_imports,
-    reason = "widget render uses many SDK exports and macros"
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "widget render uses many SDK exports and macros"
+    )
 )]
 use bmc_wasm_sdk::*;
 
 use crate::layout::{Band, band_for};
 use crate::model::{RowState, TickerRow, truncate_name};
 use prices::chart;
+use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
 use prices::format::{MIN_PRICE, PricePrecision, change_text, price_precision};
 
 const BACKGROUND: Color = BLACK;
@@ -45,9 +49,8 @@ const CHART_STROKE: f32 = 2.0;
 const CHART_INSET: f32 = 2.0;
 const CHART_FILL_TOP_ALPHA: f32 = 0.15;
 const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
-const CLOSED_ALPHA: f32 = 0.4;
 const ERROR_ROW_ALPHA: f32 = 0.6;
-const CLOSED_MARKER_SCALE: f32 = 0.4;
+const CLOSED_MARKER_SCALE: f32 = 0.75;
 
 fn fixed_width(width: f32) -> Node {
     col(props!(width: width), Vec::<Node>::new())
@@ -68,22 +71,17 @@ fn empty_row() -> Node {
     )
 }
 
-/// The gray stop-marker square shown when the market is closed. A filled rect
-/// node, not a text glyph — the embedded fonts have no Geometric Shapes
-/// coverage, so U+25A0 would render as a missing-glyph box.
 fn closed_marker(band: &Band) -> Node {
     #[expect(
         clippy::cast_precision_loss,
         reason = "scaled font sizes are small, exact in f32"
     )]
-    let side = scale_font(band.symbol_font, CLOSED_MARKER_SCALE) as f32;
-    col(
-        props!(width: side, height: side, background: SECONDARY),
-        Vec::<Node>::new(),
-    )
+    let diameter = scale_font(band.symbol_font, CLOSED_MARKER_SCALE) as f32;
+    let draws = pause_marker(diameter, SECONDARY, BACKGROUND);
+    canvas(props!(width: diameter, height: diameter), draws)
 }
 
-/// `symbol` line, with a gray stop-marker after it when the market is closed
+/// `symbol` line, with a pause marker after it when the market is closed
 /// and, when the row is stale, a badge aging from its last good load.
 fn symbol_line(
     symbol: &str,
@@ -111,7 +109,7 @@ fn sparkline_node(series: &[f64], trend: Color, closed: bool, band: &Band) -> No
     let margin = band.row_padding;
     let (w, h) = (band.chart_width, band.chart_height);
     let color = if closed { SECONDARY } else { trend };
-    let alpha = if closed { CLOSED_ALPHA } else { 1.0 };
+    let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
     let line = chart::series_points(series, w, h, CHART_INSET);
     let canvas_node = if line.len() < 2 {
         fixed_width(w)
@@ -381,4 +379,45 @@ pub fn message_view(message: &str, ws: WidgetSize) -> Node {
             spacer(1.0),
         ],
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sparkline_stroke_color(node: Node) -> Color {
+        let Node::Row(_, children) = node else {
+            panic!("BUG: the sparkline wrapper must be a row");
+        };
+        let Some(Node::Canvas { draws, .. }) = children.get(1) else {
+            panic!("BUG: the sparkline canvas must follow its left margin");
+        };
+        draws
+            .iter()
+            .find_map(|draw| {
+                let Draw::Path {
+                    paint: PathPaint::Stroke { color, .. },
+                    ..
+                } = draw
+                else {
+                    return None;
+                };
+                Some(*color)
+            })
+            .expect("BUG: the sparkline must contain a stroked path")
+    }
+
+    #[test]
+    fn a_closed_sparkline_uses_the_grey_deck_alpha() {
+        let band = band_for(SizeVariant::Full);
+        let series = [1.0, 2.0];
+        assert_eq!(
+            sparkline_stroke_color(sparkline_node(&series, TREND_UP, false, &band)),
+            TREND_UP
+        );
+        assert_eq!(
+            sparkline_stroke_color(sparkline_node(&series, TREND_UP, true, &band)),
+            SECONDARY.with_alpha(CLOSED_CHART_ALPHA)
+        );
+    }
 }

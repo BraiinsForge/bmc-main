@@ -37,6 +37,7 @@ use crate::display::{SizeBand, band_for};
 use crate::model::{
     IconStyle, MIN_PRICE, PricePrecision, Series, change_text, icon_for, price_precision,
 };
+use prices::closed_market::{CLOSED_CHART_ALPHA, pause_marker};
 
 const BACKGROUND: Color = BLACK;
 const SYMBOL_COLOR: Color = Color::from_rgb(0xc6, 0xc6, 0xc6);
@@ -50,16 +51,9 @@ const BADGE_BG_ALPHA: f32 = 0.15;
 /// reference design previews.
 const CHART_FILL_TOP_ALPHA: f32 = 0.15;
 const CHART_FILL_BOTTOM_ALPHA: f32 = 0.02;
-/// Height of a price autofit box, as a multiple of its font size.
-/// It sits above the 1.4 line-height, so one line always fits.
-/// Below 2.8, the fit search reaches a wrapped layout
-/// only once the price shrinks past 4/7 of its authored size,
-/// further than any real price goes.
-/// Past that, and at the host's 12 px search floor, the host wraps anyway.
+/// At 1.6 lines the box clears the 1.4 line-height;
+/// wrapping needs 2.8 lines and cannot start before the font shrinks below 4/7.
 const PRICE_BOX_LINES: f32 = 1.6;
-/// The alpha the chart drops to while the market is closed.
-const CLOSED_ALPHA: f32 = 0.7;
-
 #[expect(
     clippy::cast_precision_loss,
     reason = "viewport and font sizes are small integers, exact in f32"
@@ -73,27 +67,31 @@ fn fixed_width(width: f32) -> Node {
     col(props!(width: width), Vec::<Node>::new())
 }
 
-fn icon_node(icon: &IconStyle, diameter: f32, glyph_font: u32, alpha: f32) -> Node {
-    let disc = Color::from_rgb(icon.rgb.0, icon.rgb.1, icon.rgb.2).with_alpha(alpha);
-    let glyph = WHITE.with_alpha(alpha);
-    canvas(
-        props!(width: diameter, height: diameter),
-        [
-            Draw::circle(diameter / 2.0, diameter / 2.0, diameter / 2.0, disc),
-            Draw::text(
-                diameter / 2.0,
-                diameter / 2.0,
-                icon.glyph.clone(),
-                style!(
-                    size: glyph_font,
-                    weight: FontWeight::BOLD,
-                    color: glyph,
-                    align: TextAlign::Center,
-                    valign: VerticalAlign::Center,
-                ),
+fn icon_node(icon: &IconStyle, diameter: f32, glyph_font: u32, closed: bool) -> Node {
+    let mut draws = vec![
+        Draw::circle(
+            diameter / 2.0,
+            diameter / 2.0,
+            diameter / 2.0,
+            Color::from_rgb(icon.rgb.0, icon.rgb.1, icon.rgb.2),
+        ),
+        Draw::text(
+            diameter / 2.0,
+            diameter / 2.0,
+            icon.glyph.clone(),
+            style!(
+                size: glyph_font,
+                weight: FontWeight::BOLD,
+                color: WHITE,
+                align: TextAlign::Center,
+                valign: VerticalAlign::Center,
             ),
-        ],
-    )
+        ),
+    ];
+    if closed {
+        draws.extend(pause_marker(diameter, SYMBOL_COLOR, BACKGROUND));
+    }
+    canvas(props!(width: diameter, height: diameter), draws)
 }
 
 fn badge_node(text_str: String, trend: Color, band: &SizeBand) -> Node {
@@ -114,12 +112,17 @@ fn header_row(
     period_label: &str,
     band: &SizeBand,
     trend: Color,
-    alpha: f32,
+    closed: bool,
     header_h: f32,
 ) -> Node {
     let mut header_children = vec![fixed_width(band.edge_padding)];
     if let Some(icon) = icon_for(symbol) {
-        header_children.push(icon_node(&icon, band.icon_diameter, band.glyph_font, alpha));
+        header_children.push(icon_node(
+            &icon,
+            band.icon_diameter,
+            band.glyph_font,
+            closed,
+        ));
         header_children.push(fixed_width(band.header_left_gap));
     }
     let (base, quote) = series.header_symbol(symbol);

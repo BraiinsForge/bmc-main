@@ -91,11 +91,8 @@ pub fn series_view(
     } else {
         TREND_DOWN
     };
-    let alpha = if series.is_closed_marked(symbol) {
-        CLOSED_ALPHA
-    } else {
-        1.0
-    };
+    let closed = series.is_closed_marked(symbol);
+    let alpha = if closed { CLOSED_CHART_ALPHA } else { 1.0 };
 
     let header_h = header_height(&band);
     let canvas_h = (h - header_h).max(0.0);
@@ -233,7 +230,7 @@ pub fn series_view(
         }
     }
 
-    let header = super::header_row(series, symbol, period_label, &band, trend, alpha, header_h);
+    let header = super::header_row(series, symbol, period_label, &band, trend, closed, header_h);
     col(
         props!(background: BACKGROUND, width: w, height: h),
         [header, canvas(props!(width: w, height: canvas_h), draws)],

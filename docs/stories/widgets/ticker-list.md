@@ -72,9 +72,8 @@ fetched independently so one bad symbol never blanks the others.
 > As a user, I want to know that a price is not moving because the market is shut rather than because the widget is
 > stuck.
 
-- When the data reports that an instrument's market is closed, the row shows a small marker after the symbol and its
-  sparkline turns gray.
-- Indices are never marked this way.
+- When the data reports that an instrument's market is closed, a pause marker follows its symbol and its sparkline dims
+  to gray while the text stays legible. Indices are never marked or dimmed this way.
 
 ## Constraints
 
