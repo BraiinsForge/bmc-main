@@ -19,10 +19,12 @@
 # the grant above.
 
 { pkgs
+, armv7Pkgs
 , ty-bin
 , profiles
 , crates
 , deckPackages
+, frontend
 , wasmExamples
 , wasmWidgetsBundle
 , wasmStackSize
@@ -87,6 +89,30 @@ let
   thinChangedService = mkDependencyService [ thinChangedLauncher fakeHost ];
   orderedDependencyService = mkDependencyService [ fakeThin fakeHost ];
   productionDependencyService = mkDependencyService [ launcher wasmHost bmcSystemConfig ];
+  deckRuntimePackages =
+    assert lib.assertMsg (builtins.hasAttr "bos-avahi" deckPackages)
+      "bos-avahi no longer exists; remove its Deck runtime closure exclusion";
+    builtins.removeAttrs deckPackages [
+      "bmc-frontend" # Development-only frontend wrapper.
+      "bos-avahi" # Deprecated; its closure contains forbidden packages and will be removed soon.
+    ];
+  deckRuntimeClosure = pkgs.closureInfo {
+    rootPaths = lib.mapAttrsToList (_: package: package.pkg) deckRuntimePackages;
+  };
+  forbiddenDeckRuntimePackages = map lib.getName (with armv7Pkgs; [
+    hwdata
+    libglvnd
+    libpciaccess
+    libx11
+    libxcb
+    lua5_4
+    ncurses
+    readline
+    seatd
+    systemd
+    xkeyboard_config
+  ]);
+  forbiddenDeckRuntimePattern = lib.concatStringsSep "|" forbiddenDeckRuntimePackages;
 
   productionCrates = {
     inherit (crates) bmc bmc-openwrt wasm-thin wasm-host;
@@ -112,6 +138,22 @@ let
     (lib.splitString "\n" (builtins.readFile ../scripts/license_header_extensions.txt));
 in
 {
+  deck-runtime-closure = pkgs.runCommand "deck-runtime-closure" { } ''
+    if grep -E "/[0-9a-z]{32}-(${forbiddenDeckRuntimePattern})(-|$)" ${deckRuntimeClosure}/store-paths; then
+      echo "forbidden package entered the active Deck runtime closure (bos-avahi excluded)" >&2
+      exit 1
+    fi
+    if [ -n "$(find -L ${frontend} -type f -name '*.map' -print -quit)" ]; then
+      echo "production frontend contains source maps" >&2
+      exit 1
+    fi
+    if grep -R -l 'sourceMappingURL' ${frontend}; then
+      echo "production frontend contains source map references" >&2
+      exit 1
+    fi
+    touch $out
+  '';
+
   production-widget-source-boundary =
     assert lib.assertMsg
       (builtins.all (path: builtins.elem path productionSourceFiles) expectedProductionRoots)

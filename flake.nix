@@ -88,7 +88,9 @@
         };
         checks = import ./nix/checks.nix {
           inherit pkgs ty-bin;
+          armv7Pkgs = workspace.bmc.armv7-nixpkgs;
           deckPackages = workspace.legacyPackages.deck-packages;
+          frontend = workspace.deps.frontend;
           inherit (workspace.bmc) profiles crates;
           inherit (workspace) wasmExamples wasmWidgetsBundle wasmStackSize;
           inherit (workspace) wasmWrapperTestPackages;
@@ -290,10 +292,11 @@
             "workspace-deps-armv7"
             "workspace-deps-armv7-musl"
             "bmc-nix-cli-armv7-release"
+            "deck-runtime-closure"
             "nextest-armv7"
             "wasm-regression-report"
           ]
-          // workspace.checks // checks
+          // workspace.checks // builtins.removeAttrs checks [ "deck-runtime-closure" ]
           // { wasm-regression = wasmRegression.check; };
 
         bmc = workspace.bmc;
@@ -303,6 +306,7 @@
         lib = { inherit (workspace) mkInitArtifacts; };
 
         packages = workspace.packages // {
+          deck-runtime-closure = checks.deck-runtime-closure;
           wasm-capture = capture.package;
           wasm-stack-usage-report = capture.stackUsageReport;
           wasm-regression-report = wasmRegression.report;

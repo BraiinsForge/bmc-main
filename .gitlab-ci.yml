@@ -298,6 +298,32 @@ wasm-regression:
     paths:
       - wasm-regression
 
+deck-runtime-closure:
+  stage: regression
+  needs:
+    - workspace-deps
+    - workspace-deps-armv7
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "schedule" && $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+    - changes:
+        compare_to: "refs/heads/$CI_DEFAULT_BRANCH"
+        paths:
+          - ".gitlab-ci.yml"
+          - "Cargo.lock"
+          - "flake.lock"
+          - "*.nix"
+          - "**/*.nix"
+          - "frontend/.yarnrc.yml"
+          - "frontend/justfile"
+          - "frontend/package.json"
+          - "frontend/rsbuild.config.ts"
+          - "frontend/tsconfig.json"
+          - "frontend/yarn.lock"
+    - when: never
+  tags: [nix]
+  script:
+    - nix build -L .#deck-runtime-closure --no-link
+
 ############################
 ######## Apps Stage ########
 ############################
